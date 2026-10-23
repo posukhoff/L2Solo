@@ -476,7 +476,7 @@ function withinSkillRadius(source, target, semantic) {
 function chooseMusicAction(provider, targets, timestamp) {
     const skill = ColdCombatProfile.partyMusicSkills(provider.profile)
         .map((candidate) => {
-            const semantic = C4SkillRules.resolve(candidate);
+            const semantic = C4SkillRules.resolveCached(candidate);
             const affected = targets.filter((target) => target.vitals.hp > 0
                 && withinSkillRadius(provider, target, semantic)
                 && !activeMusicEffectForSkill(target.profile, candidate, timestamp));
@@ -521,7 +521,7 @@ function refreshFighterProfile(fighter, effects, timestamp) {
 function applyMusicAction(provider, action, timestamp) {
     if (!action?.affected?.length) return 0;
     const effect = ColdCombatProfile.partyMusicEffect(action.skill, timestamp);
-    const semantic = C4SkillRules.resolve(action.skill);
+    const semantic = C4SkillRules.resolveCached(action.skill);
     const targets = action.affected.length === 1 && action.affected[0] === provider
         ? action.affected
         : [provider, ...action.affected.filter((target) => target !== provider)];
@@ -531,11 +531,11 @@ function applyMusicAction(provider, action, timestamp) {
 }
 
 function coldBuffSkill(skill) {
-    const semantic = C4SkillRules.resolve(skill || {});
+    if (!skill || skill.passive === true) return false;
+    const semantic = C4SkillRules.resolveCached(skill);
     const skillType = String(semantic.skillType || '');
     const durationMs = Math.max(0, Number(semantic.durationMs ?? skill?.buffTime) || 0);
-    return skill && skill.passive !== true
-        && semantic.effectType === 'buff'
+    return semantic.effectType === 'buff'
         && ['friendly', 'ally', 'party'].includes(semantic.target)
         && semantic.isDance !== true
         && !['hot', 'healHot', 'manaHot'].includes(skillType)
@@ -544,7 +544,7 @@ function coldBuffSkill(skill) {
 }
 
 function coldSkillAdapter(record) {
-    const semantic = C4SkillRules.resolve(record || {});
+    const semantic = C4SkillRules.resolveCached(record || {});
     return {
         coldRecord: record,
         fetchSelfId: () => Number(record?.selfId || 0),
@@ -664,9 +664,17 @@ function coldBuffPlan(fighters, timestamp) {
         {},
         {
             skills,
-            recipients: (_members, _provider, skill) => (
-                ['party', 'ally'].includes(skill.fetchSemantic().target) ? actors : []
-            ),
+            recipients: (_members, provider, skill) => {
+                const target = skill.fetchSemantic().target;
+                if (target === 'party') return actors;
+                if (target !== 'ally') return [];
+                // Forecast the same clan coverage as admission. A stronger
+                // Paagrio cannot replace a weaker chant on foreign members.
+                const source = provider.fighter.state;
+                const clanId = Number(source.clanId || source.stats?.clanId || 0);
+                return actors.filter(actor => actor === provider || clanId > 0
+                    && clanId === Number(actor.fighter.state.clanId || actor.fighter.state.stats?.clanId || 0));
+            },
             isAura: (skill) => ['party', 'ally'].includes(skill.fetchSemantic().target),
             effects: (actor) => (actor.fighter.profile.effects || [])
                 .filter((effect) => !effect?.expiresAt || Number(effect.expiresAt) > timestamp),
@@ -1717,6 +1725,12 @@ const BackgroundResolver = {
         if (state.activity === 'traveling') {
             const travelResult = resolveTravel(state, timestamp);
             if (travelResult) return travelResult;
+        }
+
+        if (require('./RaidSupplyPolicy').held(state, timestamp) && state.activity !== 'dead' && Number(state.vitals?.hp) > 0) {
+            return { patch: { activity: ['shopping', 'merchant'].includes(state.activity) ? 'shopping' : 'party_wait' }, events: [],
+                materialize: { exp: 0, sp: 0, adena: 0, items: [] }, nextResolveAt: timestamp + 30000,
+                debug: { reason: 'raid_supply_preparing', fights: 0, wins: 0 } };
         }
 
         if (state.stats?.supplyErrand) {

@@ -174,7 +174,12 @@ const BackgroundPartyResolver = {
         const marked = !!Roster.markerFor(party);
         const admission = marked ? Roster.admission(party, members, spot, { owner: raidOwner, timestamp,
             arrived: require('./PartyHuntingAssembly').ready(party, members, spot) }) : null;
-        if (marked && (!admission.ok || !admission.held && party.stats?.raidEncounter?.status === 'defeated')) {
+        // Sitting is not hunting readiness. A complete, current roster must
+        // still run the recovery below; rejecting it here drops every MP/HP
+        // tick and leaves preparation permanently waiting for its own rest.
+        const recoveringAssembly = admission?.reason === 'party_assembling'
+            && members.some(member => member.activity === 'resting') && !party.stats?.raidEncounter?.encounter;
+        if (marked && (!admission.ok && !recoveringAssembly || !admission.held && party.stats?.raidEncounter?.status === 'defeated')) {
             const reason = admission.reason || 'raid_roster_not_opened';
             const cancelled = Roster.CANCEL_REASONS.includes(reason);
             const nextResolveAt = cancelled ? null : timestamp + 30000;
@@ -227,7 +232,13 @@ const BackgroundPartyResolver = {
         // A party shares its hunting cadence.  If even one member is resting,
         // pause the whole group: otherwise the resolver keeps granting fights
         // and draining the exhausted member on every cold tick.
-        if (members.some((state) => state.activity === 'resting') && !raidCombatActive) {
+        // Buff completion is not resource readiness. The ordinary party's
+        // 18% MP floor can admit an exhausted healer after paid raid buffs,
+        // while the clan estimate budgets 85% of maximum mana. Finish the
+        // native recovery (95% HP/required MP) before opening a new raid.
+        const raidRecovery = marked && raidObjective && !raidCombatActive && !admission?.held && party.stats?.raidPreparation?.status === 'ready'
+            && members.some(state => !invoke('GameServer/Bot/AI/RestPolicy').raidReady(state));
+        if ((members.some((state) => state.activity === 'resting') || raidRecovery) && !raidCombatActive) {
             const partyRestUntil = Math.max(
                 Number(party.stats?.restUntil || 0),
                 ...members.map((state) => Number(state.stats?.restUntil || 0))
@@ -303,7 +314,8 @@ const BackgroundPartyResolver = {
         }
 
         const raid = raidObjective;
-        const raidComposition = raid ? ClanRaidPolicy.composition(members) : null;
+        const raidComposition = raid ? (party.stats?.objective?.opportunisticRaid
+            ? require('./OpportunisticRaidPolicy').composition(members) : ClanRaidPolicy.composition(members)) : null;
         const understaffed = !admission?.held && party.stats?.objective?.clanGoalKey
             && members.length < Math.max(2, Number(party.stats.objective.minPartySize) || 3);
         const raidRosterIncomplete = raid && !admission?.held && !raidComposition.ready;
@@ -332,6 +344,14 @@ const BackgroundPartyResolver = {
             };
         }
 
+        if (party.stats?.objective?.opportunisticRaid) {
+            // Travel/rest are simulated; this roster opens its encounter only
+            // as native actors, including actual adds, healing and shot use.
+            return { memberResults: members.map(state => ({ state, result: { patch: {}, events: [],
+                materialize: { exp: 0, sp: 0, adena: 0, items: [] }, nextResolveAt: timestamp + 10000 } })),
+                atomic: true, events: [], partyPatch: {}, nextResolveAt: timestamp + 10000,
+                debug: { reason: 'raid_wait_native_activation', fights: 0, wins: 0 } };
+        }
         if (raid && !raidCombatActive) {
             const preparation = BackgroundResolver.prepareRaidParty(members, timestamp);
             const previous = party.stats?.raidPreparation || {};
