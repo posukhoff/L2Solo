@@ -1,6 +1,6 @@
-// A player hit by a mob without hitting back leaves the combat stance 15 s
-// after the last received hit (C4 AttackStanceTaskManager), also when someone
-// else kills the mob.
+// A mob miss is an exchange too (C4): it renews the victim's combat stance,
+// the stop comes 15 s after the last miss. The rest of the stance rules is
+// covered by test_player_combat_stance.js.
 const assert = require('assert');
 
 require('../src/Global');
@@ -43,18 +43,15 @@ const Generics = invoke(path.actor);
 
 const PLAYER_ID = 2000001;
 const STOP = ServerResponse.autoAttackStop(PLAYER_ID);
-const ATTACK_PACKET_ID = 0x05; // C4 Attack: marks when a swing starts
 
 function player() {
     const session = {
         persistenceMode: 'ephemeral',
         packets: [],
-        swingsAt: [],
         messagesAt: [],
         dataSendToMe() { this.messagesAt.push(now); },
         dataSendToMeAndOthers(data) {
             this.packets.push(data);
-            if (data[0] === ATTACK_PACKET_ID) this.swingsAt.push(now);
         }
     };
     const actor = {
@@ -82,19 +79,6 @@ function player() {
 
 const mob = { fetchKind: () => 'Monster', fetchId: () => 1000001 };
 
-// A live mob next to the player for the player's own swings.
-function standingMob() {
-    return {
-        state: new State(),
-        fetchKind: () => 'Monster',
-        fetchId: () => 1000002,
-        x: 30,
-        fetchLocX() { return this.x; }, fetchLocY: () => 0, fetchLocZ: () => 0,
-        fetchRadius: () => 10,
-        fetchCollectiveEvasion: () => 0,
-        isDead() { return this.state.fetchDead(); }
-    };
-}
 
 // Edge stub: the roll. Near 1 every swing misses (no damage path).
 const originalRandom = Math.random;
@@ -112,86 +96,6 @@ function hit(actor, time) {
     Generics.receivedHit(actor.session, actor, 10, { source: mob });
 }
 
-{
-    now = 0;
-    const victim = player();
-    hit(victim, 0);
-    assert.strictEqual(victim.state.fetchCombats(), true, 'a received hit enters the stance');
-    advanceTo(14999);
-    assert.strictEqual(stops(victim), 0, 'the stance holds until 15 s after the hit');
-    advanceTo(15000);
-    assert.strictEqual(stops(victim), 1, 'the victim gets AutoAttackStop 15 s after the last hit');
-    assert.strictEqual(victim.state.fetchCombats(), false);
-    assert.strictEqual(victim.automation.aborted, 0, 'the stance end does not stop movement or actions');
-}
-
-{
-    now = 0;
-    const victim = player();
-    hit(victim, 0);
-    hit(victim, 10000);
-    advanceTo(15000);
-    assert.strictEqual(stops(victim), 0, 'a later hit extends the stance');
-    advanceTo(24999);
-    assert.strictEqual(stops(victim), 0);
-    advanceTo(25000);
-    assert.strictEqual(stops(victim), 1, 'the stance ends 15 s after the second hit');
-}
-
-{
-    now = 0;
-    const victim = player();
-    hit(victim, 0);
-    advanceTo(5000);
-    Generics.abortCombatState(victim.session, victim);
-    assert.strictEqual(stops(victim), 1, 'the killer path ends the stance');
-    advanceTo(60000);
-    assert.strictEqual(stops(victim), 1, 'the timer does not send a second stop');
-}
-
-{
-    now = 0;
-    const victim = player();
-    hit(victim, 0);
-    victim.session.actor = null; // logged out
-    advanceTo(15000);
-    assert.strictEqual(stops(victim), 0, 'no stop for an actor that left its session');
-}
-
-{
-    // Stun, sleep, petrify and fake death drop the flag without a packet; the
-    // client still shows the stance until the timer sends the stop.
-    now = 0;
-    const victim = player();
-    hit(victim, 0);
-    victim.state.setCombats(false);
-    advanceTo(15000);
-    assert.strictEqual(stops(victim), 1, 'a silently dropped stance still gets its AutoAttackStop');
-}
-
-{
-    // The player fights back with its own swing loop until the mob runs out of
-    // reach and the player does not chase; the stance ends 15 s after the last
-    // own swing.
-    now = 0;
-    const victim = player();
-    const target = standingMob();
-    hit(victim, 0);
-    withMisses(() => {
-        advanceTo(1000);
-        victim.attack.meleeHit(victim.session, target);
-        advanceTo(30000);
-        target.x = 2000; // out of reach: the next swing turns into a chase the player drops
-        advanceTo(40000);
-    });
-    const swings = victim.session.swingsAt;
-    assert(swings.length > 5 && swings[swings.length - 1] > 15000, 'the own swing loop ran past the first 15 s');
-    const lastSwing = swings[swings.length - 1];
-    advanceTo(lastSwing + 14999);
-    assert.strictEqual(stops(victim), 0, 'no stop before 15 s after the last own swing');
-    advanceTo(lastSwing + 15000);
-    assert.strictEqual(stops(victim), 1, 'the stance ends 15 s after the last own swing');
-}
 
 {
     // A mob miss is an exchange too: hit at 0 s, miss at 10 s, stop at 25 s.

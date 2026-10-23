@@ -717,7 +717,11 @@ function preferredTarget(state = {}, options = {}) {
     const weaponFirst = !hasCurrentGradeWeapon || missingDualSword
         ? allCandidates.filter(({ item }) => BotEquipmentCompatibility.isWeaponSlot(Number(item.etc?.slot || 0)))
         : allCandidates.filter(({ item }) => !BotEquipmentCompatibility.isWeaponSlot(Number(item.etc?.slot || 0)));
-    const progressionCandidates = options.wishTargetId ? allCandidates : weaponFirst.length ? weaponFirst : allCandidates;
+    // A clan already pays for the whole admitted roster. Let attainable slot
+    // upgrades compete on their gain and cost instead of hiding armour behind
+    // a weapon whose only source the clan cannot yet fight.
+    const progressionCandidates = options.wishTargetId || options.clanCrafting
+        ? allCandidates : weaponFirst.length ? weaponFirst : allCandidates;
     const cap = progressionPriceCap(requiredRank, state.level);
     const affordable = progressionCandidates.filter(({ item }) => options.wishTargetId || Number(item.template?.price || 0) <= cap);
     // The entry weapon for some weapon families costs more than the early
@@ -1787,6 +1791,8 @@ function targetHasAvailableRoute(target, state = {}, options = {}) {
 }
 
 function sourceIsExcluded(source, options = {}) {
+    if (Number.isFinite(options.maxSourceLevel) && !(source?.sourceKind === 'raid' || source?.raidBoss)
+        && sourceTargetLevel(source) > options.maxSourceLevel) return true;
     const excluded = options.excludedSpotIds;
     if (!excluded || !source?.spotId) return false;
     return excluded instanceof Set
@@ -1803,7 +1809,9 @@ function bestSourceForState(sources = [], state = {}, options = {}) {
     let firstAllowed = null;
     for (const source of sources) {
         if (sourceIsExcluded(source, options) || !sourceWithinVoluntaryHuntBand(state, source, minGap)) continue;
-        if (soloSafeForSource(state, source)) return source;
+        // A clan route takes the first allowed source: the clan pays for the
+        // whole roster, so solo safety does not order it.
+        if (options.clanCrafting || soloSafeForSource(state, source)) return source;
         firstAllowed ||= source;
     }
     return firstAllowed;
@@ -2986,12 +2994,13 @@ function rawPlanFor(state = {}, options = {}) {
         ? missingMaterialPlans.reduce((sum, material) => sum + (material.source?.effort ?? Infinity), 0)
         : Infinity;
     const offer = decisionMarketOffer(target.item, state, planningOptions);
-    const craftFirst = rankIndex(target.item.etc?.rank) >= 3 && target.recipe && Number.isFinite(craftKills);
+    const clanRaid = options.clanCrafting && direct?.raidBoss === true;
+    const craftFirst = !clanRaid && rankIndex(target.item.etc?.rank) >= 3 && target.recipe && Number.isFinite(craftKills);
     const buy = offer && !craftFirst && marketEffort(offer, state) <= Math.min(directEffort, craftKills);
     const directAssessment = direct ? partyNeedAssessmentForSource(state, direct) : null;
     const soloSafe = direct && directAssessment.need === 'solo_ok';
     const strategy = buy ? 'market'
-        : direct && (!target.recipe || !Number.isFinite(craftKills) || !craftFirst && soloSafe && directEffort <= craftKills * 0.8) ? 'direct_drop'
+        : direct && (!target.recipe || !Number.isFinite(craftKills) || !craftFirst && (soloSafe || clanRaid) && directEffort <= craftKills * 0.8) ? 'direct_drop'
             : target.recipe ? 'craft' : 'blocked';
     const next = strategy === 'direct_drop'
         ? direct && { ...direct, itemId: Number(target.item.selfId) }

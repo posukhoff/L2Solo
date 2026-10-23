@@ -6,7 +6,6 @@ const Backpack       = invoke('GameServer/Actor/Backpack');
 const Automation     = invoke('GameServer/Automation');
 const EffectStats    = invoke('GameServer/Effects/EffectStats');
 const ClanReviewEvents = require('../Clan/ClanReviewEvents');
-const AbortCombatState = require('./Generics/AbortCombatState');
 
 class Actor extends ActorModel {
     constructor(session, data) {
@@ -36,6 +35,7 @@ class Actor extends ActorModel {
     }
 
     destructor() {
+        require('./CombatStance').clear(this);
         invoke('GameServer/Skills/ChargeLifecycle').dispose(this);
         // A player-owned summon retains follow/feed/lifetime timers. Dispose it
         // while the owner and session are still valid; otherwise a timer can
@@ -55,7 +55,6 @@ class Actor extends ActorModel {
 
         this.attack.destructor();
         this.automation.destructor(this);
-        AbortCombatState.cancelStanceEnd(this);
     }
 
     // Request packets

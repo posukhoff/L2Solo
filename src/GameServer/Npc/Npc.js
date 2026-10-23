@@ -303,6 +303,7 @@ class Npc extends NpcModel {
             return true;
         }
 
+        invoke('GameServer/Npc/NpcWander').cancel(this, session);
         this.switchCombatTarget(target);
         this.state.setCombats(true);
 

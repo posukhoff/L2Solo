@@ -26,10 +26,8 @@ function session(items = [], race = 0, maxLoad = 1000000, expand = 0) {
         fetchId: () => 9601, fetchRace: () => race, fetchMaxLoad: () => maxLoad,
         isDead: () => false, fetchIsOnline: () => true, backpack,
         skillset: { fetchSkill: () => ({ fetchLevel: () => expand }) }
-    }, packets: [], deleted: [], dataSendToMe(packet) {
-        this.packets.push(packet);
-        if (packet[0] === 0x12) this.deleted.push(packet.readInt32LE(1));
-    } };
+    }, packets: [], dataSendToMe(packet) { this.packets.push(packet); },
+    deleted: [], dataSendToMeAndOthers(packet, ground) { this.deleted.push(ground.fetchId()); } };
 }
 function world(drops, award = () => {}) {
     return { items: { spawns: drops }, awards: [], purchaseItem(...args) {

@@ -6,7 +6,6 @@ const RaidBossState = invoke('GameServer/World/RaidBossState');
 const RaidBossMinionManager = invoke('GameServer/World/RaidBossMinionManager');
 const RaidEntityIndex = invoke('GameServer/World/RaidEntityIndex');
 const NpcObjectIndex = require('./NpcObjectIndex');
-const NpcVisibility = invoke('GameServer/World/NpcVisibility');
 const CharacterLocationRuntime = require('./CharacterLocationRuntime');
 const PvpPartyMembershipKeys = require('./PvpPartyMembershipKeys');
 const PlayerActivitySignal = require('../Bot/Population/PlayerActivitySignal');
@@ -395,7 +394,6 @@ const World = {
 
     removeUser(session) {
         removeIndexedSession(currentUserLocationIndex(this.user), session);
-        NpcVisibility.forgetSession(session);
         const wasPresent = this.user.sessions.includes(session);
         this.user.sessions = this.user.sessions.filter((ob) => ob !== session);
         this.user.revision += 1;
@@ -461,9 +459,6 @@ const World = {
             membership.actor = null;
             membership.id = null;
             membership.cellX = membership.cellY = undefined;
-            // The client leaves the world (character select, logout, another
-            // character): the ground items it held are gone with it.
-            NpcVisibility.forgetSession(session);
             return true;
         } finally {
             if (accepted) notifyActorPublication(runtime, 'upsert', retired, 'retire');
