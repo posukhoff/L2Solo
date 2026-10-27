@@ -199,7 +199,7 @@ function preparedProject(network, limit, onCut = null) {
         if (!wish.object?.itemId && !wish.object?.materials) continue;
         try { rootTuple(wish.key); } catch (_) { return null; }
         const { rows, farms, line } = rootRows(network, wish, onCut);
-        let first = wish.funded === true || wish.key === gapKey || line > 0;
+        let first = wish.funded === true || wish.earmarked === true || wish.key === gapKey || line > 0;
         for (const [id, row] of rows) if (!watched.has(id)) {
             watched.add(id);
             (first ? firsts : rooted).push(row);

@@ -205,8 +205,16 @@ function goalTerms(goal, itemId = goal?.target?.itemId) {
         : { r: goal.plan.valueRate, ...(typeof key === 'string' ? { key } : {}) };
 }
 // The root a buy goal spends for (spendable's held money): a bid's intent,
-// else the card's root (NeedsEvaluator: plan.rootKey).
-const goalKey = goal => goal?.intent?.key ?? goal?.plan?.rootKey;
+// else the card's root (NeedsEvaluator: plan.wishKey).
+const goalKey = goal => goal?.intent?.key ?? goal?.plan?.wishKey;
+// The money price a purchase's cash and fees cost (the departure gate,
+// ColdMarketService.worthwhileTravel): the held price for a root that is no
+// resale (spendable admits it with money the wallet holds), else the money
+// price.
+function cashPrice(packet, key, moneyPrice) {
+    return typeof key === 'string' && !resaleKey(key) && Array.isArray(packet) && packet.length >= 4
+        ? Math.min(Number(moneyPrice), heldPrice(packet)) : Number(moneyPrice);
+}
 // ARCH-NOTE: round value rates upward to three digits so a stored money floor
 // never falls below 1/hour; applying the same monotone rounding keeps funded ratios admissible.
 // Idempotent: a rounded ratio rounds to itself (value * scale of 3.86e-6 is
@@ -230,10 +238,11 @@ function packetFor(network, hour, reserve) {
     const packet = [Math.round(hour), significant(network.moneyPrice), Math.round(reserve), Math.round(network.gap ? cashCharge(network.gap) : 0)];
     let cumulative = 0, count = 0;
     for (const wish of network.queue) {
-        // An unsupported wish keeps its queue place without money (MVP-1),
-        // unless the bot saves for it (WishNetwork.moneyQueue: earmarked).
-        if (!fundable(wish) && !wish.earmarked) continue;
-        if (fundable(wish) && !wish.funded) break;
+        // A row for each funded root and each root the bot saves for
+        // (WishNetwork.moneyQueue: earmarked); an unsupported wish keeps its
+        // queue place without money (MVP-1), a resale root below the floor
+        // takes none, and nothing past the cutoff is funded.
+        if (!wish.funded && !wish.earmarked) continue;
         cumulative += cashCharge(wish); count++;
         const ratio = significant(wish.ratio);
         if (count <= PACKET_ROWS) packet.push(ratio, Math.round(cumulative), Number(wish.object?.itemId || 0));
@@ -252,5 +261,5 @@ function packetFor(network, hour, reserve) {
 // One rule for the planner (an offer) and the gates (a plan).
 function offerEscrow(offer, escrow = 0) { return offer?.sourceType === 'npc' ? escrow : 0; }
 function tripEscrow(plan, escrow = 0) { return offerEscrow(plan?.market, escrow); }
-module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, heldPrice, resaleKey, goalKey, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
+module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, heldPrice, resaleKey, goalKey, cashPrice, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }) };
