@@ -163,8 +163,11 @@ function purchaseFor(buyer) {
         board.put({ id: recordId, kind: 'shop', storeType: AfkTrade.SELL,
             ownerId: 2004012, town: 'Giran', botOwned: true, revision: 1,
             lines: [{ lineId: recordId, selfId: id, count: 1, enchant: 0,
-                // A bot asks only above the NPC buy-back (PriceDecision.chooseAsk).
-                price: Math.max(Math.ceil(forecast.price(id)), PriceDecision.buyback(id) + 1) }] });
+                // A bot asks only above the NPC buy-back (PriceDecision.chooseAsk); a bid
+                // lies over the buy-back (pricefloor, its lowest step buy-back + 1) and
+                // under the ask (BidPurchaseAlternative.cap: ask - 1), so the ask leaves
+                // that one step: at buy-back + 1 no bid exists and the buyer only buys.
+                price: Math.max(Math.ceil(forecast.price(id)), PriceDecision.buyback(id) + 2) }] });
     }
     const economy = Economy.forState(buyer, deps);
     const goals = Needs.evaluate(buyer, { spot: { id: 'field' }, now: 1000, economy });

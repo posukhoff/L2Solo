@@ -26,13 +26,15 @@ const adapters = {
     'GameServer/Bot/AI/BotGear': { wishKitsFor: require('../src/GameServer/Bot/AI/BotGear').wishKitsFor },
     'GameServer/Bot/AI/GearAcquisitionPlanner': { sourceGround: () => null, sourceRouteReader: () => () => true, roleFor: () => 'melee', gradeForLevel: () => 'c',
         suitable: () => true, considerable: () => true, itemScore: () => 1, withReadiness: fn => fn(),
-        equipmentCandidate: () => true, equipmentItemBetter: (item, current) => !current },
+        equipmentCandidate: () => true, equipmentItemBetter: (item, current) => !current,
+        // The planner's one readiness rule (personalCraftPlan): nothing held, nothing ready.
+        craftReadiness: recipe => ({ materials: recipe.materials.map(row => ({ ...row })), recipe: null, status: null }) },
     'GameServer/Bot/Population/ColdCombatProfile': { skillsFor: () => [], candidateProfiles: () => ({
         before: { pAtk: 100, pDef: 100, mDef: 100 }, after: () => ({ pAtk: 200, pDef: 100, mDef: 100 }) }) },
     'GameServer/Bot/Economy/BotImprovementPolicy': { opportunities: () => [], crystalPath: () => null },
     'GameServer/Items/C4RecipeItems': { resolveVariantsByProductId: id => allowCraft ? recipeVariants.filter(row => row.productId === Number(id)) : [],
         resolveByRecipeId: id => recipeVariants.find(row => row.recipeId === Number(id)) || null },
-    'GameServer/Items/C4DualSwordCombinations': { resolveByProductId: () => null, resolveByRecipeId: () => null },
+    'GameServer/Items/C4DualSwordCombinations': { resolveByProductId: () => null, resolveByRecipeId: () => null, isCombination: () => false },
     'GameServer/Items/SoulCrystalProgression': require('../src/GameServer/Items/SoulCrystalProgression'),
     'GameServer/Bot/Economy/CraftShopService': { canCraft: () => ownCraft, isServiceCrafter: () => false, marketProducer: () => false },
     'GameServer/Skills/SkillBookCatalog': { missingBooks: () => [] },
@@ -232,17 +234,23 @@ assert.equal(deep.activity?.activity, 'shopping');
 assert.equal(deep.activity.town, 'Dion', 'the bot shops where the amount it needs is sold');
 assert.equal(deep.activity.amount, 45);
 stock(101, 1);
+// One valuation of a gear step (b8e82840c, R3 G7): a step whose cost in
+// hours (12 at 1200) passes its value is no wish at all, not an unfunded one.
 board.put({ id: 11, ownerId: 2, storeType: 1, kind: 'sell_ad', town: 'Giran',
     lines: [{ lineId: 11, selfId: 101, count: 1, price: 1200 }] });
-const expensive = run(false);
-assert.equal(expensive.queue[0].price, 1200, 'observed ask replaces the optimistic 100-adena forecast in the purse');
+assert(!run(false).queue.some(row => row.key === 'power:101:7'), 'an ask dearer than the step is worth drops the step');
+// An ask the step still pays for, over a 100-adena wallet.
+board.put({ id: 11, ownerId: 2, storeType: 1, kind: 'sell_ad', town: 'Giran',
+    lines: [{ lineId: 11, selfId: 101, count: 1, price: 120 }] });
+const expensive = run(false, { wallet: 100, context: { wallet: 100 } });
+assert.equal(expensive.queue[0].price, 120, 'observed ask replaces the optimistic 100-adena forecast in the purse');
 assert.equal(expensive.queue[0].funded, false);
 assert.equal(expensive.activity, null, 'an unaffordable actual ask cannot execute shopping');
 const paidTrip = town => town === 'Giran' ? 6 : Infinity;
 // The road inside the horizon: a path past it waits (E212), this case is the fees.
-paidTrip.details = town => ({ known: town === 'Giran', hours: 0.5, fees: 400 });
-const travelTooDear = run(false, { wallet: 1500, context: { trip: paidTrip, wallet: 1500, persona: { ...persona, traits: { ...persona.traits, commitment: 0.5 } } } });
-assert.equal(travelTooDear.queue[0].price, 1600, 'the purse includes actual future road fees');
+paidTrip.details = town => ({ known: town === 'Giran', hours: 0.5, fees: 10 });
+const travelTooDear = run(false, { wallet: 125, context: { trip: paidTrip, wallet: 125, persona: { ...persona, traits: { ...persona.traits, commitment: 0.5 } } } });
+assert.equal(travelTooDear.queue[0].price, 130, 'the purse includes actual future road fees');
 assert.equal(travelTooDear.queue[0].funded, false);
 assert.equal(travelTooDear.activity, null);
 assert.equal(run(false, { context: { trip: undefined } }).activity, null,
@@ -460,7 +468,8 @@ assert.equal(provider.knownWorkshop(recipe, state, context, indexed).characterId
 serviceIndex.remove('cheaper');
 assert.equal(provider.knownWorkshop(recipe, state, context, indexed).characterId, 22,
     'withdrawal reveals the next public source without a new crowd scan');
-const planned = provider.personalCraftPlan(state, { network: { activity: { rootKey: 'power:101:7', activity: 'crafting' },
+// personalCraftPlan serves the network's focus (focusWish, goalhold).
+const planned = provider.personalCraftPlan(state, { network: { focus: ['power:101:7'], activity: { rootKey: 'power:101:7', activity: 'crafting' },
     queue: [{ key: 'power:101:7', object: { itemId: 101 }, ratio: 2, plan: craftPath }], plans: new Map() } });
 assert.equal(planned.craftProviders[301].characterId, 2);
 assert.equal(planned.valueRate, 2, 'paid service inherits the personal root funding rate');
