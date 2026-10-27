@@ -321,9 +321,11 @@ async function run() {
         const quote = remoteBuyer.market.decisions.find(decision => Number(decision.item.selfId) === 1864);
         assert.strictEqual(quote.action, 'list');
         assert.strictEqual(quote.reason, 'stock_quote');
-        assert.strictEqual(quote.priced.ask.stockQuote, true);
+        // A stock quote is an ask of unknown demand (PriceDecision.chooseAsk known false).
+        assert.strictEqual(quote.priced.ask.known, false);
         assert.strictEqual(quote.priced.ask.price, 52);
         assert.strictEqual(quote.priced.market.buyback, 50);
+        assert.strictEqual(quote.item.gain, 0, 'a public asking price is not income');
         assert(Number.isNaN(quote.priced.ask.money), 'the native quote has no forecast receipts');
         const recordShape = record => [Number(record.ownerId), record.kind, record.status,
             Number(record.storeType), record.town, Number(record.custodyPolicy),
