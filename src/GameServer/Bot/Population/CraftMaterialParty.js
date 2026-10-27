@@ -2,7 +2,10 @@
 
 const { levelForGrade } = require('../AI/GearGradeRule');
 const { partyIdOf } = require('./PartyId');
-const KillRewards = require('./ColdKillRewards');
+// lazy: ColdKillRewards needs the server's invoke at load; pure readers
+// (competition, party review) load this module without it.
+let KillRewards = null;
+const killRewards = () => KillRewards ||= require('./ColdKillRewards');
 const Network = require('../Economy/WishNetwork');
 
 // The one owner of what a material party serves: craft targets of these
@@ -22,7 +25,7 @@ const requestOf = state => isObjective(state.stats?.partyRequest) ? state.stats.
 // and a class declaration cannot substitute for the learned Spoil skill.
 function partySpoiler(members) {
     const member = members.slice(0, MAX_MEMBERS).find(state => invoke('GameServer/Bot/AI/BotRoles').isSpoiler(state));
-    return member ? KillRewards.spoilerFor(member,
+    return member ? killRewards().spoilerFor(member,
         { skills: require('./ColdCombatProfile').skillsFor(member) }) : null;
 }
 
@@ -128,7 +131,7 @@ function request(state, plan, { spots = [], economy, memo = null, timestamp = Da
         return null;
     };
     const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
-    const spoiler = KillRewards.spoilerFor(state, { skills: Profile.skillsFor(state) });
+    const spoiler = killRewards().spoilerFor(state, { skills: Profile.skillsFor(state) });
     const camps = campsFor(state, material.selfId, spots, spoiler);
     if (!camps.length) return noRequest();
     const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
