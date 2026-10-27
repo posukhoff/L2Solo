@@ -43,7 +43,10 @@ assert.equal(result.activity.price, 3 * price, 'command cost remains the real co
 assert.equal(result.activity.valueHours, 100 * 99 / crystals);
 const advert = Intent.project({}, result, {}).find(row => row.itemId === 626);
 assert.equal(advert.amount, 3, 'public input demand cannot order the entire future 163-shield supply');
-assert.equal(advert.valueHours, result.activity.valueHours);
+// The advert's value walks the root's price split (TradeIntent.inputSplit):
+// the same value up to float rounding of another summation order.
+assert(Math.abs(advert.valueHours - result.activity.valueHours) <= 1e-12 * result.activity.valueHours,
+    'the public input demand carries the leaf\'s own value');
 
 result = build({ incoming: 2, wallet: 10000000 });
 assert.equal(result.queue[0].price, 161 * price, 'accepted incoming lowers cash still needed');
