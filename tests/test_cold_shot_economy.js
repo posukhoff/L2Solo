@@ -77,11 +77,12 @@ async function images(ids) {
         life: (await Database.execute(['SELECT * FROM bot_life_state WHERE characterId=?', [id]]))[0] })));
 }
 // The worker's selection (ShotCraftPolicy.selectionFor) for a D-shot craft:
-// the seller's helmet line and the buyer's bid line, read now from the board.
+// the seller's helmet line and the buyer's bid line, read now from the board,
+// at a funded root's money-queue ratio (r).
 function shotCraft(supplierId, buyerId, batches = 7) {
     const ask = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === supplierId);
     const bid = Afk.offers(1463, Afk.BUY).find(row => Number(row.sourceId) === buyerId);
-    return { recipeId: 20, batches, gear: [45, 0, ask.recordId, ask.lineId, ask.price, ask.expectedRevision].map(Number),
+    return { recipeId: 20, batches, r: 1, gear: [45, 0, ask.recordId, ask.lineId, ask.price, ask.expectedRevision].map(Number),
         ...(bid ? { exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) } : {}) };
 }
 (async() => {
@@ -126,7 +127,10 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         const refused = shotCraft(supplier.characterId, buyer.characterId);
         assert.equal(Shots.recheck(crafter, refused), null);
         await Shots.execute(crafter, { craft: refused }, now);
-        assert.deepEqual(await images([crafter.characterId, supplier.characterId]), refusedBefore,
+        // The refusal sends the step back to the worker (its mind moves); no
+        // item, adena or character row changes.
+        const physical = rows => rows.map(({ items, character }) => ({ items, character }));
+        assert.deepEqual(physical(await images([crafter.characterId, supplier.characterId])), physical(refusedBefore),
             'below-floor production cannot debit, crystallize or consume materials');
 
         const oldOffer = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === supplier.characterId);
@@ -293,7 +297,7 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         // (gear source -3) and the consumer's bid line, read now from the board.
         const cSelection = (batches = 5) => {
             const bid = Afk.offers(cRecipe.productId, Afk.BUY).find(row => Number(row.sourceId) === cConsumer.characterId);
-            return { recipeId: 21, batches, gear: [1459, -3, Policy.townCode('Giran'), 0, 100, 0],
+            return { recipeId: 21, batches, r: 1, gear: [1459, -3, Policy.townCode('Giran'), 0, 100, 0],
                 exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) };
         };
         const cTarget = Shots.recheck(cCrafter, cSelection());

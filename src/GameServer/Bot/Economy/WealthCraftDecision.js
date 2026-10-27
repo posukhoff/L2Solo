@@ -139,9 +139,8 @@ function* producerStep(state, producers, knownRecipes, { context, options }) {
     if (!best) return null;
     // The one route packer keeps the root's exit (a buyer line, a listing
     // town or own use), the gear the crystals come from and the own reserve.
-    // The root's ratio main funds the inputs at (0: held inputs only).
-    const selection = { ...Shots.selectionFor({ ...best, personalStock: best.personalStock || options.stock }),
-        ...(Number.isFinite(best.r) && best.r > 0 ? { r: Number(best.r) } : {}) };
+    // It carries the root's ratio main funds the inputs at (none: held inputs only).
+    const selection = Shots.selectionFor({ ...best, personalStock: best.personalStock || options.stock });
     // The held scroll main learns before the craft.
     const step = !best.shot ? { wealth: { ...selection, ...(best.learn ? { scroll: [Number(best.recipe.recipeItemId)] } : {}) } }
         : best.learn ? { recipeTarget: Number(best.recipe.recipeId), recipeRoute: selection } : { craft: selection };

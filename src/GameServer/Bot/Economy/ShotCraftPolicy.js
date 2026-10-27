@@ -59,8 +59,11 @@ function selectionFor(route) {
             code === 0 ? Number(quote.lineId || 0) : 0, Number(source.price || 0),
             code === 0 ? Number(quote.revision ?? quote.expectedRevision ?? 0) : 0];
     }
+    // r: the ratio main funds the inputs at (a root's, WealthCraftDecision.producerStep).
+    const r = Number(route.r);
     return { recipeId: Number(route.recipe.recipeId), batches: Number(route.batches),
-        ...(exit ? { exit } : {}), ...(gear ? { gear } : {}), ...(ownReserve > 0 ? { ownReserve } : {}) };
+        ...(exit ? { exit } : {}), ...(gear ? { gear } : {}), ...(ownReserve > 0 ? { ownReserve } : {}),
+        ...(Number.isFinite(r) && r > 0 ? { r } : {}) };
 }
 function availableMaterial(state, selfId) {
     const row = state.inventory?.[selfId];
