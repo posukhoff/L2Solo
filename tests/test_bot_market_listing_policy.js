@@ -201,7 +201,10 @@ assert.strictEqual(nearbyTinySale.answers[0].receipts, 20000, 'a backed bid is r
 const distantTinySale = tinySale(30000, 1);
 assert.strictEqual(distantTinySale.answers.length, 0,
     'the same 20000 Adena receipts do not pay a 30000 Adena trip plus an hour of lost activity');
-assert.strictEqual(distantTinySale.decisions[0].reason, 'expected_value',
+// With the answer lost, the sale owner (MarketPricing.disposition, R2
+// 2dc0f96f0, ported in R3) lists the lot at an ask of unknown demand over
+// the buy-back in place of the NPC or keeping: a valuation, not lot admission.
+assert.deepStrictEqual([distantTinySale.decisions[0].action, distantTinySale.decisions[0].reason], ['list', 'stock_quote'],
     'the travel loss is decided by shared valuation, not lot admission');
 assert.strictEqual(tinyStock.inventory[1865].amount, 2, 'comparing trips never moves the physical lot');
 
@@ -259,19 +262,22 @@ const again = sameQuote.result;
 assert.deepStrictEqual(again.listings.map((item) => [item.selfId, item.price]), sale.listings.map((item) => [item.selfId, item.price]),
     'one decision point, one roll: the same answer when asked again');
 const freshQuote = observeDisposition(suppliedOptions({ now: now + 1 }));
-const decisionCalls = quote => quote.calls.filter(call => call.key.length === 4 && call.key[0] === 'dispose');
+// The one roll of a sale is its ask's near-best roll (R2 2dc0f96f0, ported in
+// R3: the disposition itself is by value, no roll), keyed by the decision point.
+const decisionCalls = quote => quote.calls.filter(call => call.key.length === 5 && call.key[0] === 'dispose'
+    && call.key[4] === 'ask');
 const firstCalls = decisionCalls(firstQuote);
 assert.strictEqual(firstCalls.length, items.length);
 assert.deepStrictEqual(new Set(firstCalls.map(call => call.key[2])), new Set(items),
     'every original material reaches the actual native disposition roll');
-for (const call of firstCalls) assert.deepStrictEqual(call.key, ['dispose', state.characterId, call.key[2], now]);
+for (const call of firstCalls) assert.deepStrictEqual(call.key, ['dispose', state.characterId, call.key[2], now, 'ask']);
 assert(firstCalls.every(call => call.value >= 0 && call.value < 1));
 assert.deepStrictEqual(decisionCalls(sameQuote), firstCalls,
     'the same point uses the same actual key and native roll');
 const freshCalls = decisionCalls(freshQuote);
 assert.strictEqual(freshCalls.length, items.length);
 assert.deepStrictEqual(new Set(freshCalls.map(call => call.key[2])), new Set(items));
-for (const call of freshCalls) assert.deepStrictEqual(call.key, ['dispose', state.characterId, call.key[2], now + 1],
+for (const call of freshCalls) assert.deepStrictEqual(call.key, ['dispose', state.characterId, call.key[2], now + 1, 'ask'],
     'a new point reaches native selection with a new actual key, even if the same price wins');
 assert(freshQuote.result.listings.every(item => item.price > 0));
 // Only selected lines carry their current quote and public event cursors.
@@ -284,12 +290,17 @@ for (const listing of sale.listings) {
     assert.strictEqual(listing.pricing.seenFills, 0);
 }
 
-// A line the bot has keeps its slot and its price; the free slots go by the roll.
+// A line the bot has keeps its price; it holds a slot only by its gain over
+// the NPC, as every other listing (R2 2dc0f96f0, ported in R3, deleted the
+// kept-line bypass): a slot's loser takes its next-best answer.
 const kept = new Map([[items[0], 4321], [items[1], 4322]]);
 const review = MarketListingPolicy.evaluate(state, suppliedOptions({ kept, slots: 3 }));
-assert.deepStrictEqual(review.listings.filter((item) => kept.has(item.selfId)).map((item) => [item.selfId, item.price])
-    .sort((a, b) => a[0] - b[0]), [[items[0], 4321], [items[1], 4322]]);
-assert.strictEqual(review.listings.length, 3, 'one free slot left');
+const keptListed = review.listings.filter((item) => kept.has(item.selfId));
+assert(keptListed.length > 0 && keptListed.every((item) => item.price === kept.get(item.selfId)), 'a kept line keeps its price');
+assert.strictEqual(review.listings.length, 3, 'three slots');
+const leastListed = Math.min(...review.listings.map((item) => item.gain));
+assert(review.decisions.filter((decision) => decision.reason === 'no_board_slot')
+    .every((decision) => decision.item.gain <= leastListed), 'the slots go to the largest gains, kept lines among them');
 
 // A recipe has no first place and no rule of its own: it competes by its gain.
 const recipeState = { ...state, inventory: { ...bag, 1804: { selfId: 1804, amount: 1, kind: 'Other.Recipe' } } };
