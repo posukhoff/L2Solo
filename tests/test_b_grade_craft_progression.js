@@ -46,7 +46,7 @@ function verify(recipeId, missing = false, slot = 14, classId = 3, targetId = nu
             persona: { primaryDrive: 'progression', understanding: 1,
                 traits: { ambition: 0, commitment: 0, caution: 0, empathy: 0, sociability: 0 } } } };
     for (const row of Gear.planFor({ classId, level: 40 }).items) equipped(state.inventory, row.selfId, row.slot);
-    assert.equal(Progression.assess(state).required, false, 'the C milestone is closed');
+    assert.equal(Progression.assess(state).milestone.required, false, 'the C milestone is closed');
     // Other slots are already top B; the selected equipment improvement remains a
     // choice of sources, with only this published recipe's complete stock.
     const conflicts = [7, 14].includes(slot) ? [7, 14]

@@ -84,7 +84,7 @@ for (const level of [52, 61]) {
     delete missingHelmet.inventory[helmet.selfId];
     const assessment = Progression.assess(missingHelmet);
     assert(assessment.gaps.has(6), 'a missing helmet remains an equipment opportunity');
-    assert.equal(assessment.required, false, 'a C helmet cannot hold higher-grade progression');
+    assert.equal(assessment.milestone.required, false, 'a C helmet cannot hold higher-grade progression');
     const candidate = Data.items.find(item => item.selfId === 500);
     assert.equal(Progression.priority(6, assessment), 0, 'helmet shopping stays optional');
     assert.equal(Planner.marketPlanForTarget(missingHelmet, candidate.selfId,
@@ -102,7 +102,6 @@ for (const level of [52, 61]) {
 // The last paired C slot must win over a cheap B offer and a persisted B goal.
 // Completing that slot immediately opens higher-grade planning on the same bot.
 const Index = invoke('GameServer/Item/ItemTemplateIndex');
-const Providers = invoke('GameServer/Bot/Economy/WishProviders');
 const exchangeEar = Data.items.find(item => item.selfId === 852);
 const higherEar = Data.items.find(item => item.etc?.rank === 'b' && item.etc?.slot === 1
     && Planner.considerable(item, { ...bot(54, 52), inventory: kit(54, 40) }));
@@ -120,7 +119,7 @@ for (const level of [52, 60, 61, 78]) {
     completeC.inventory[ear.selfId] = ear;
     const missingC = { ...completeC, inventory: { ...completeC.inventory,
         [ear.selfId]: { ...ear, amount: 1, equippedCount: 1, equippedSlots: [1] } } };
-    assert.deepEqual([...Progression.assess(missingC).gaps.keys()], [2]);
+    assert.deepEqual([...Progression.assess(missingC).milestone.gaps.keys()], [2]);
     assert.equal(Planner.gradeForLevel(level), level >= 76 ? 's' : level >= 61 ? 'a' : 'b',
         'expertise stays at the physical level');
     const offerForC = item => item.selfId === ear.selfId ? { price: 100, town: 'Giran', count: 1 } : null;
@@ -128,10 +127,10 @@ for (const level of [52, 60, 61, 78]) {
     assert.equal(nativeC.target?.selfId, ear.selfId, 'native planning also fills a second identical C piece');
     assert.equal(nativeC.target.slot, 2);
     assert.equal(Planner.marketPlanForTarget(missingC, ear.selfId, { findMarketOffer: offerForC }).target.slot, 2);
-    assert.equal(Planner.considerable(higherEar, missingC), false);
-    assert.equal(Planner.preferredTarget(missingC, { wishTargetId: higherEar.selfId }), null);
-    assert.equal(Planner.marketPlanForTarget(missingC, higherEar.selfId,
-        { findMarketOffer: () => ({ price: 1, town: 'Giran', count: 1 }) }), null);
+    // No C floor under a wish (b8e82840c, game-decisions 10-24 "Gear target =
+    // the strongest item the bot can really get, every grade"): a B piece is a
+    // candidate at B expertise before the C kit closes; the wish values it.
+    assert(Planner.considerable(higherEar, missingC));
 
     const staleB = { status: 'active', strategy: 'direct_drop', grade: 'b',
         plannedForLevel: level, rateModelVersion: Planner.RATE_MODEL_VERSION,
@@ -139,45 +138,46 @@ for (const level of [52, 60, 61, 78]) {
         target: { selfId: higherEar.selfId, slot: 2 }, clanGoal: { clanId: 1, goalKey: 'old-b-earring' } };
     const member = { ...missingC, clanId: 1,
         stats: { ...missingC.stats, equipmentPlan: staleB, wishFocus: [`power:${higherEar.selfId}:2`, 0, 1] } };
-    assert.equal(Planner.acquisitionTargetAllowed(member, staleB), false);
-    assert.equal(Planner.clanGoalPlanLocked(member, staleB), false);
-    assert.equal(Planner.replanContextFor(member, staleB, timestamp).routeCurrent, false);
-    assert.equal(Planner.replanContextFor(member, staleB, timestamp).invalidSource.reason, 'c_kit_incomplete');
-    assert.equal(Planner.bestSourceForPlan(member, staleB, []), null);
-    assert.equal(Planner.safeFallbackForPlan(member, staleB, []), null);
+    assert.equal(Planner.acquisitionTargetAllowed(member, staleB), true, 'a B plan is no C-floor breach');
     const cPlan = { ...staleB, grade: 'c', target: { selfId: ear.selfId, slot: 2 } };
     assert.equal(Planner.replanContextFor(member, cPlan, timestamp).routeCurrent, true,
         'a current C route stays reusable above level 52');
-    const choices = Providers.gearCandidates(member);
-    assert([...choices.values()].flat().every(item => ['none', 'd', 'c'].includes(item.etc.rank)),
-        'the candidate catalogue cannot nominate higher grades before full C');
 
     const offers = new BoardIndex();
     offers.put({ id: 101, ownerId: 990335, storeType: 1, kind: 'shop', town: 'Giran',
         lines: [{ lineId: 10, selfId: ear.selfId, count: 1, enchant: 0, price: 100 },
             { lineId: 11, selfId: higherEar.selfId, count: 1, enchant: 0, price: 1 }] });
     const waiting = review(member, offers);
-    assert(waiting.projection.roots.includes(`power:${ear.selfId}:2`));
+    // The stronger B earring on sale takes the open slot (the strongest
+    // reachable step, game-decisions 10-24), not the C one.
+    assert(waiting.projection.roots.includes(`power:${higherEar.selfId}:2`));
     assert(!waiting.projection.roots.some(key => key.startsWith('level:')),
         'XP remains optional only after the C milestone is closed');
-    assert(waiting.network.queue.filter(row => row.object?.slot).every(row =>
-        Index.find(Data.items, row.object.itemId)?.etc.rank === 'c'));
-    assert.equal(waiting.network.activity.rootKey, `power:${ear.selfId}:2`,
-        'the missing C earring wins even when B is cheaper and was the old focus');
-    const crystalPath = waiting.projection.nodes.find(row => row.key === `item:${ear.selfId}`)
+    // Luxury stays a C route after 52: a B kit missing its second earring,
+    // with only the C earring on sale, fills that slot with it.
+    const bKit = kit(54, 52), side = Object.values(bKit).find(row => row.equippedSlots.includes(2));
+    bKit[side.selfId] = side.equippedSlots.length > 1 ? { ...side, amount: 1, equippedCount: 1, equippedSlots: [1] } : undefined;
+    if (!bKit[side.selfId]) delete bKit[side.selfId];
+    for (const kind of ['shots', 'potions', 'scrolls']) {
+        const itemId = supplies.stock(kind).itemId;
+        bKit[itemId] = { selfId: itemId, amount: 100000 };
+    }
+    const cOnly = new BoardIndex();
+    cOnly.put({ id: 102, ownerId: 990335, storeType: 1, kind: 'shop', town: 'Giran',
+        lines: [{ lineId: 12, selfId: ear.selfId, count: 1, enchant: 0, price: 100 }] });
+    const cReview = review({ ...bot(54, level), inventory: bKit }, cOnly);
+    assert(cReview.projection.roots.includes(`power:${ear.selfId}:2`), 'the C earring on sale fills the open slot');
+    const crystalPath = cReview.projection.nodes.find(row => row.key === `item:${ear.selfId}`)
         ?.paths.find(row => row.kind === 'luxury_exchange');
     assert(crystalPath, 'Luxury remains an available C acquisition route after 52');
-    const clanPlan = invoke('GameServer/Clan/ClanEquipmentPlanner').planForMember(member, [], [], {
-        throwOnError: true, maxExpectedKills: Infinity, craftRecipes: [] });
-    assert.notEqual(clanPlan.target?.selfId, higherEar.selfId, 'the clan retires an unfinished higher-grade plan');
 
     const delivered = Planner.equipInventoryUpgrades(member, { ...member.inventory,
         [ear.selfId]: { ...ear, amount: 2 } });
     const finished = { ...member, inventory: delivered };
-    assert.equal(Progression.assess(finished).required, false);
+    assert.equal(Progression.assess(finished).milestone.required, false);
     assert(Planner.considerable(higherEar, finished));
     const next = review(finished, offers);
-    assert.equal(Progression.assess(finished).rank, 3);
+    assert.equal(Progression.acquisition(finished).rank, 3, 'the closed C kit opens the B acquisition kit');
     assert(next.projection.roots.some(key => key.startsWith('power:')
         && Index.find(Data.items, Number(key.split(':')[1]))?.etc.rank === 'b'),
         'delivery of the last C piece opens B progression without another level-up');
@@ -185,7 +185,7 @@ for (const level of [52, 60, 61, 78]) {
         [ear.selfId]: { ...delivered[ear.selfId], amount: 1, equippedCount: 1, equippedSlots: [1] },
         [higherEar.selfId]: { selfId: higherEar.selfId, amount: 1, equipped: true,
             equippedCount: 1, equippedSlots: [2], slot: 2 } } };
-    assert.equal(Progression.assess(bWorn).required, false, 'worn B satisfies the C minimum without a downgrade');
+    assert.equal(Progression.assess(bWorn).milestone.required, false, 'worn B satisfies the C minimum without a downgrade');
 }
 
 const board = new BoardIndex();
@@ -217,10 +217,13 @@ assert.equal(provider.requiresRecipeLearning, false, 'the customer does not lear
 assert(!provider.grossRequirements.some(row => row.key === `item:${recipe.recipeItemId}`));
 const exchangePath = ctx.projection.nodes.find(row => row.key === 'item:162')?.paths.find(row => row.kind === 'luxury_exchange');
 assert(exchangePath, 'native C choices include the authored Luxury route');
-assert.deepEqual(exchangePath.grossRequirements, [{ key: 'item:1458', amount: 5375 }]);
-assert(!ctx.projection.nodes.some(row => row.key === 'item:1459'), 'the bot Luxury path never acquires C crystals');
+// Bots pay the player's price, C and D crystals (game-decisions 10-25).
+assert.deepEqual(exchangePath.grossRequirements, [{ key: 'item:1459', amount: 1075 }, { key: 'item:1458', amount: 5375 }]);
 // From here the bot has its own Crystallize (248), the only way a bot breaks gear.
-const stocked = { ...source, level: 40, inventory: { ...source.inventory, 1463: { selfId: 1463, amount: 20000 } },
+// It holds the exchange's C crystals (luxury costs C and D, game-decisions
+// 10-25): the D crystals are what it still lacks below.
+const stocked = { ...source, level: 40, inventory: { ...source.inventory, 1463: { selfId: 1463, amount: 20000 },
+    1459: { selfId: 1459, amount: 1075 } },
     stats: { ...source.stats, coldCombat: { ...source.stats.coldCombat, skills: [...source.stats.coldCombat.skills,
         ...Profile.skillSnapshotsFromRecords([{ selfId: 248, level: 1 }])] } } };
 const dStock = { ...stocked, inventory: { ...stocked.inventory, 1458: { selfId: 1458, amount: 10000 } } };
@@ -229,7 +232,7 @@ assert.equal(readyExchange.network.activity?.kind, 'luxury_exchange', 'a prepare
 assert.equal(readyExchange.network.activity.activity, 'improving');
 const exchangePlan = invoke('GameServer/Bot/Economy/WishProviders').personalCraftPlan(dStock, readyExchange);
 assert.equal(exchangePlan?.strategy, 'luxury_exchange');
-assert(exchangePlan.materials.every(row => row.selfId === 1458));
+assert(exchangePlan.materials.every(row => [1458, 1459].includes(row.selfId)));
 const clanStock = { ...dStock, level: 47, clanId: 1,
     stats: { ...dStock.stats, wishFocus: ['power:850:2', 0, 0] } };
 const clanExchange = review(clanStock);

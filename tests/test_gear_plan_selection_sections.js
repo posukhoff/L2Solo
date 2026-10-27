@@ -25,7 +25,8 @@ const plan = { status: 'active', strategy: 'direct_drop',
 // controls that input and the expensive choice, not resource authority,
 // source admission, native failure counters or plan finalization. The actual
 // worker integration is covered separately by test_wish_sections_worker.
-const economy = { statsPacket: {}, network: {
+// The plan's target is the focus root (WishProviders.focusWish, goalhold).
+const economy = { statsPacket: {}, network: { focus: ['gear', 0, 0],
     queue: [{ key: 'gear', object: { itemId: target.selfId, slot: target.etc.slot } }],
     activity: { key: 'drop', activity: 'hunting', kind: 'item', rootKey: 'gear' } } };
 const original = { ...Planner }; let choices = 0;

@@ -85,7 +85,7 @@ assert.equal(Number(dropped.target?.selfId), Number(target.selfId));
 // inputs subtracted), not the item's stockless plan: a bot holding the craft
 // inputs crafts although the stockless pass, pricing them again, buys.
 const rootKey = `power:${target.selfId}:${slot}`;
-const economy = { network: {
+const economy = { network: { focus: [rootKey, 0, 0],
     queue: [{ key: rootKey, object: { itemId: target.selfId, slot }, plan: { requirements: [
         { key: `item:${target.selfId}`, amount: 1, plan: { kind: 'craft', recipeId: recipe.recipeId } }] } }],
     activity: { rootKey, activity: 'crafting', kind: 'craft', recipeId: recipe.recipeId },
