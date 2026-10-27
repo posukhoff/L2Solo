@@ -38,8 +38,12 @@ const sandbox = { module: { exports: {} }, invoke: global.invoke, utils: { infoW
     require: name => name === './EconomyDiagnostics' ? { active: () => false, enabled: () => false }
         : name === '../Population/ColdEconomyDecision' ? Decision
         : name === '../Population/CombinedErrandPolicy' ? { pending: () => [], ERRAND_MS: 1 }
+        // No fixed-price seller in this town (as MarketOpportunity.fixedStoreOffers above).
+        : name === './FixedShotOffers' ? { staticOffers: () => [] }
         : name === './OfferOrder' ? { farmingOrigin: () => null, tripCost: () => () => 0 }
-        : name === './OfferQuery' ? { cheapestTown: (_board, _id, options) => { quoted.push(options); return null; } } : {} };
+        // The real errand rule (which purposes take only lines that settle at once).
+        : name === './OfferQuery' ? { cheapestTown: (_board, _id, options) => { quoted.push(options); return null; },
+            settledOnlyFor: require(root + '/src/GameServer/Bot/Economy/OfferQuery').settledOnlyFor } : {} };
 vm.runInNewContext(fs.readFileSync(root + '/src/GameServer/Bot/Economy/ColdMarketService.js', 'utf8'), sandbox, { filename: 'ColdMarketService.js' });
 const Market = sandbox.module.exports;
 const bot = extra => ({ characterId: 7, name: 'Arrival', phase: 'cold', activity: 'shopping', level: 45, adena: 100000,

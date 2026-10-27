@@ -5,7 +5,8 @@ const Data = invoke('GameServer/DataCache');
 const Index = invoke('GameServer/Item/ItemTemplateIndex');
 const StarterItemCatalog = require('../../Knowledge/StarterItemCatalog');
 const Compatibility = invoke('GameServer/Bot/AI/BotEquipmentCompatibility');
-const { GRADES: RANKS, gradeForLevel, levelForGrade, topGradeOf } = invoke('GameServer/Bot/AI/GearGradeRule');
+// require, not invoke: the grade table is pure and is read at load (SHOP_TOP).
+const { GRADES: RANKS, gradeForLevel, levelForGrade, topGradeOf } = require('./GearGradeRule');
 // The author's working kit (milestone) ends at the top grade a shop sells
 // (GearGradeRule's source table: the luxury shop's C); his acquisition kit
 // runs one grade further (B), and the grades past it are buy-only while that
