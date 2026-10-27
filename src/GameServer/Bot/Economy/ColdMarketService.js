@@ -403,7 +403,9 @@ function worthwhileTravel(state, plan, options = {}) {
                     return known;
                 }
             };
-    const result = EconomicValuation.acquisition(valuation, plan, route);
+    // Held money pays a root that is no resale (PurchaseFunding.cashPrice).
+    const moneyPrice = PurchaseFunding.cashPrice(state.stats?.money, options.key, context.moneyPrice);
+    const result = EconomicValuation.acquisition({ ...valuation, moneyPrice }, plan, route);
     return result.known && result.valueHours > 0;
 }
 const deniedTrips = new WeakMap();
@@ -1038,6 +1040,7 @@ const ColdMarketService = {
     acquireMaterials,
     errandGoal,
     goalErrand,
+    goalFunding,
     errandDeparts,
     departOrEndErrand,
     pendingErrand

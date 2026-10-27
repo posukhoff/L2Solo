@@ -57,12 +57,9 @@ function beginMarketTravel(state, goal, timestamp = Date.now(), { economy = null
             return null;
         }
         if (!errand) {
+            // Its funding terms (r, valueHours, survivalCost, its root's key), as its purchase's.
             const request = { selfId: Number(goal.target?.itemId), amount: Number(goal.target?.amount || 1),
-                town: goal.plan.marketTown, purpose: goal.plan?.purpose };
-            for (const field of ['valueHours', 'survivalCost']) {
-                if (goal.plan?.[field] !== undefined) request[field] = goal.plan[field];
-            }
-            if (goal.plan?.valueRate !== undefined) request.r = goal.plan.valueRate;
+                town: goal.plan.marketTown, purpose: goal.plan?.purpose, ...Market.goalFunding(goal) };
             if (!Market.canTravelForPurchase(state, request, gate)) return null;
         }
     }

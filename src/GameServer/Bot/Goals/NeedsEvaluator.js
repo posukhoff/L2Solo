@@ -87,7 +87,7 @@ function evaluate(state = {}, options = {}) {
                     ? { valueHours: leaf.amount > 0 ? leaf.valueHours * amount / leaf.amount : leaf.valueHours } : {}),
                 // Its funded root's place in the money queue (the card's r, or
                 // the full network's root) funds it: PurchaseFunding.goalTerms.
-                ...(ratio > 0 ? { valueRate: ratio, rootKey: leaf.rootKey } : {}),
+                ...(ratio > 0 ? { valueRate: ratio } : {}),
                 purpose: wish?.object?.kind, requiredAdena: 0, reserve: Economy.survivalReserve(state) } }];
     }
     if (leaf.activity === 'selling') return [{ ...common, type: 'sell_inventory',

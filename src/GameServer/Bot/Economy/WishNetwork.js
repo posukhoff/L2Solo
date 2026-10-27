@@ -643,7 +643,7 @@ function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0, heldPrice = 
             wish.earmarked = spends && worth && !cutoffFound && !neverReady(wish) && cashCharge(wish) > 0 && cashCharge(wish) <= available;
             if (wish.earmarked) available -= cashCharge(wish);
             // A never root is no gap: earning more never brings its unit.
-            if (wish.progressionPriority > 0 && !awaitingKit && !neverReady(wish)) awaitingKit = wish;
+            if (wish.progressionPriority > 0 && !awaitingKit && !neverReady(wish) && !wish.earmarked) awaitingKit = wish;
             continue;
         }
         // The first gap holds the marginal price of money. Smaller desires
@@ -1588,7 +1588,9 @@ class WishNetwork {
         }
         // Only funded wishes with their own money-packet row can be paid by
         // every itemId spend site; the merged tail stays protected but waits.
-        const funded = new Set(packetRowWishes(queue.filter(wish => wish.funded || wish.earmarked)).map(wish => wish.key));
+        // Packet rows are funded and saved-for roots (packetFor); only a funded one is a step.
+        const funded = new Set(packetRowWishes(queue.filter(wish => wish.funded || wish.earmarked))
+            .filter(wish => wish.funded).map(wish => wish.key));
         // A step that spends no money stays available toward an unsupported
         // wish (farming its material); only money waits for a step now.
         // Only a root the bot may focus (focusWishes: the active priority

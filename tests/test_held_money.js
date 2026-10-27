@@ -70,6 +70,14 @@ assert.equal(rich.activity?.rootKey, 'power:500:6', 'the bot goes shopping for i
 assert(row(rich, 'power:500:6').effort < 34000 / 20000, 'held cash costs no hunt hours in its effort');
 assert.equal(rich.moneyPrice, 1 / 20000, 'the next adena earned stays at the hunt rate');
 assert(spend(rich, 1e6, 20000, 500) >= 34000, 'the purchase is funded');
+// Its trip pays (ColdMarketService.worthwhileTravel: the cash and fees at
+// PurchaseFunding.cashPrice, the held price for its root): 6 minutes away.
+const Valuation = require('../src/GameServer/Bot/Economy/EconomicValuation');
+const trip = (network, key) => Valuation.acquisition({ moneyPrice: Funding.cashPrice(Funding.packetFor(network, 20000, 0), key, network.moneyPrice),
+    riskWeight: 1, itemUsefulness: () => Funding.significant(.69 / 34000) * 34000 }, { units: 1, selfId: 500, cost: 34000 },
+    { known: true, hours: .1, fees: 500 }).valueHours;
+assert(trip(rich, 'power:500:6') > 0, 'the rich bot travels for the helmet');
+assert(trip(rich, 'resale:500') < 0, 'a resale root pays its trip at the money price');
 // Without the money, earning it at the hunt rate is not worth the helmet.
 const broke = build(10000, 20000, helmet);
 assert.equal(spend(broke, 10000, 20000, 500), 0, 'no funding for the helmet');
