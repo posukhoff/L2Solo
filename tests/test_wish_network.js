@@ -77,7 +77,7 @@ assert.equal(overpriced.queue[0].funded, true, 'held money with no other use buy
 assert.equal(overpriced.gap, null);
 assert.equal(overpriced.moneyPrice, .001, 'the next adena earned stays at the hunt rate');
 assert.equal(overpriced.heldPrice, .0005, 'held money is worth its cheapest use');
-assert.equal(moneyQueue([{ key: 'resale:57', valueHours: .5, price: 1000 }], 50000, 0, .001).queue[0].funded, false,
+assert.equal(moneyQueue([{ key: 'resale:57', object: { itemId: 57, kind: 'resale' }, valueHours: .5, price: 1000 }], 50000, 0, .001).queue[0].funded, false,
     'a resale root below the hunt rate takes no money');
 const short = moneyQueue([{ key: 'luxury', valueHours: .5, price: 1000 }], 500, 0, .001);
 assert.equal(short.queue[0].funded, false);

@@ -292,9 +292,10 @@ function rootRows(network, wish, onCut = null) {
 // it neither raises standing bids nor authorizes a different or larger buy.
 function meetingPurchase(network, intents, { selfId, count, price, town, enchant = 0 }, state = null) {
     if (!network?.quantityPrepared) return null;
+    // lazy: cycle WishNetwork requires TradeIntent at load.
+    Network ||= require('./WishNetwork');
     const ordinary = intents?.find(row => row.itemId === selfId && row.amount >= count
-        && purchaseWorth(row, (Network ||= require('./WishNetwork')).rootMoneyPrice(network,
-            network.queue?.find(wish => wish.key === row.key))) >= price);
+        && purchaseWorth(row, Network.rootMoneyPrice(network, network.queue?.find(wish => wish.key === row.key))) >= price);
     const leaf = network.activity;
     const nativeQuote = nativePurchase(leaf) && Number(leaf.valueHours) > 0;
     const actual = (network.queue || []).filter(wish => wish.funded === true)
