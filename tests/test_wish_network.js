@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { WishNetwork, moneyQueue, MAX_NODES } = require('../src/GameServer/Bot/Economy/WishNetwork');
+const { WishNetwork, moneyQueue, heldPriceOf, MAX_NODES } = require('../src/GameServer/Bot/Economy/WishNetwork');
 
 const queue = moneyQueue([
     { key: 'sword', price: 100, valueHours: 10 },
@@ -69,17 +69,20 @@ assert.equal(stock.activity.amount, 10);
 assert.equal(stock.activity.price, 100, 'funded leaf spends the complete required quantity');
 console.log('wish funding, complete progress hour and acquisition quantity: PASS');
 
-// Held money is priced by its best other use (T53): nothing else wants the
-// 50000 held, so a wish below the hunt rate takes it; a resale root (money
-// for money) still needs the hunt rate, and money still to earn too.
-const overpriced = moneyQueue([{ key: 'luxury', valueHours: .5, price: 1000 }], 50000, 0, .001);
+// Held money is priced by its best other use (T53, heldPriceOf): nothing
+// else wants the 50000 held (free money), so a wish below the hunt rate
+// takes it; a resale root (money for money) still needs the hunt rate, and
+// money still to earn too.
+const luxury = [{ key: 'luxury', valueHours: .5, price: 1000 }];
+assert.equal(heldPriceOf(luxury, 50000, 0, .001), 0, 'a wallet that covers every wish holds free money');
+const overpriced = moneyQueue(luxury, 50000, 0, .001, 0);
 assert.equal(overpriced.queue[0].funded, true, 'held money with no other use buys a wish below the hunt rate');
 assert.equal(overpriced.gap, null);
 assert.equal(overpriced.moneyPrice, .001, 'the next adena earned stays at the hunt rate');
-assert.equal(overpriced.heldPrice, .0005, 'held money is worth its cheapest use');
+assert.equal(heldPriceOf(luxury, 500, 0, .001), .0005, 'short of it, held money is worth what it saves for');
 assert.equal(moneyQueue([{ key: 'resale:57', object: { itemId: 57, kind: 'resale' }, valueHours: .5, price: 1000 }], 50000, 0, .001).queue[0].funded, false,
     'a resale root below the hunt rate takes no money');
-const short = moneyQueue([{ key: 'luxury', valueHours: .5, price: 1000 }], 500, 0, .001);
+const short = moneyQueue(luxury, 500, 0, .001, .0005);
 assert.equal(short.queue[0].funded, false);
 assert.equal(short.gap, null, 'a wish below the hunt rate is no reason to earn');
 const wealthy = network.build({ ...input, inputKey: 'wealthy-hour', wallet: 1e8, hourAdena: 1000 });
