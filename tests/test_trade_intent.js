@@ -82,10 +82,11 @@ const axeRoot = plan => ({ key: 'power:162:7', object: { itemId: 162 }, valueHou
     plan: { missingAmount: 1, requirements: [{ key: 'item:162', amount: 1, plan }] } });
 const bought = Intent.project({}, { quantityPrepared: true, moneyPrice, queue: [axeRoot(priced(1, 6e6))] }, {}, 8);
 assert.deepEqual(bought.map(row => [row.itemId, row.amount]), [[162, 1]], 'a chosen purchase bids the item alone');
-assert(Math.abs(bought[0].worth - 6.4e6) < 1e-6, 'the bought item keeps the root worth');
+// Its bid stops at the bot's price belief (user 10-27, T53): 6M, not the root's 6.4M.
+assert(Math.abs(bought[0].worth - 6e6) < 1e-6, 'the bought item keeps the root worth up to its belief');
 const exchanged = Intent.project({}, { quantityPrepared: true, moneyPrice, queue: [axeRoot({ kind: 'exchange', missingAmount: 1,
     grossRequirements: [{ key: 'item:1458', amount: 5000 }],
-    requirements: [{ key: 'item:1458', amount: 5000, plan: priced(5000, 1200) }] })] }, {}, 8);
+    requirements: [{ key: 'item:1458', amount: 5000, plan: priced(5000, 5000 * 1300) }] })] }, {}, 8);
 assert.deepEqual(exchanged.map(row => [row.itemId, row.amount]), [[1458, 5000]], 'a chosen exchange bids its inputs, not its product');
 assert(Math.abs(exchanged[0].worth * exchanged[0].amount - 6.4e6) < 1e-6, 'the inputs share the root worth whole');
 // A kit C gear root (a progression root) on the luxury path stands in the

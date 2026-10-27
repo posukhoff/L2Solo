@@ -1905,7 +1905,8 @@ function planTrimmer(unresolved = new Set()) {
 function compactNetwork(network) {
     const unresolved = new Set(), trim = planTrimmer(unresolved);
     const row = wish => ({ key: wish.key, need: wish.need, object: wish.object, price: wish.price, reserved: wish.reserved,
-        valueHours: wish.valueHours, ratio: wish.ratio, funded: wish.funded, held: wish.held,
+        valueHours: wish.valueHours, ratio: wish.ratio, funded: wish.funded,
+        ...(wish.heldCash > 0 ? { heldCash: wish.heldCash } : {}), ...(wish.waitValueHours > 0 ? { waitValueHours: wish.waitValueHours } : {}),
         supported: wish.supported, resolved: wish.resolved, progressionPriority: wish.progressionPriority,
         ...(wish.scrollCash !== undefined ? { scrollCash: wish.scrollCash } : {}),
         ...(wish.ownValueHours !== undefined ? { ownValueHours: wish.ownValueHours } : {}),
@@ -2033,8 +2034,11 @@ function view(state, plan, deps, built = {}) {
         () => potionRest(state, plan, plan.timestamp));
     // Reprice funding against this physical wallet. Reuse of benefit/source
     // calculations is never a retained permission to spend an old balance.
+    // The held money keeps the build's price (its best use among every
+    // root, WishNetwork.heldPriceOf): the queue here holds only its kept roots.
+    const floor = plan.hourAdena > 0 ? 1 / plan.hourAdena : 0;
     const funding = moneyQueue(plan.network.queue, Funding.budget(state, deps.buyOrderEscrow),
-        plan.survivalReserve, plan.hourAdena > 0 ? 1 / plan.hourAdena : 0);
+        plan.survivalReserve, floor, plan.network.heldPrice ?? floor);
     const inputKey = plan.key;
     const network = { ...plan.network, inputKey, ...funding };
     const statsPacket = plan.pending ? plan.statsPacket : { ...plan.statsPacket,
