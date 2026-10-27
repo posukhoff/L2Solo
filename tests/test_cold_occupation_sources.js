@@ -213,9 +213,10 @@ assert(releasedGear.some(row => row.offer?.recordId === 706), 'backed gear stays
         craftBoard.put({ id: 713, ownerId: 702, storeType: 3, kind: 'shop', town: 'Giran', revision: 1,
             lines: [{ lineId: 7130, selfId: leatherRecipe.productId, count: 1, price: 90000 }] });
         const sources = drain(Sources.prepare(crafter, { board: craftBoard, timestamp: 1000 })).value;
-        // The producer root chose the buyer line 713 as the exit; the step sizes the craft on it.
+        // The producer root chose the buyer line 713 as the exit; the step sizes the craft on it,
+        // spending at the root's money-queue ratio r (2c1810b46; here a funded root).
         const queue = [{ key: `resale:${leatherRecipe.productId}`, amount: leatherRecipe.productCount,
-            recipeId: leatherRecipe.recipeId, exit: [713, 7130, 90000, 1], recipeReady: true }];
+            recipeId: leatherRecipe.recipeId, exit: [713, 7130, 90000, 1], recipeReady: true, r: 1 }];
         const chosen = drain(Wealth.producerStep(crafter, queue, [{ recipeId: leatherRecipe.recipeId }], sources)).value;
         return chosen && chosen.basket.purchases.find(row => Number(row.selfId) === item).lines[0].line.recordId;
     };
@@ -237,7 +238,7 @@ assert(releasedGear.some(row => row.offer?.recordId === 706), 'backed gear stays
         lines: [{ lineId: 7330, selfId: 1867, count: 600, price: 1 }] });
     const sources = drain(Sources.prepare(crafter, { board: lotBoard, timestamp: 1000 })).value;
     const queue = [{ key: `resale:${leatherRecipe.productId}`, amount: 10 * leatherRecipe.productCount,
-        recipeId: leatherRecipe.recipeId, exit: [731, 7310, 90000, 1], recipeReady: true }];
+        recipeId: leatherRecipe.recipeId, exit: [731, 7310, 90000, 1], recipeReady: true, r: 1 }];
     const chosen = drain(Wealth.producerStep(crafter, queue, [{ recipeId: leatherRecipe.recipeId }], sources)).value;
     assert.equal(chosen?.batches, 7, 'a bid behind cheaper asks is crafted for the units it takes');
 }
