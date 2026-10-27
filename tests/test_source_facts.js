@@ -31,23 +31,31 @@ try {
             equippedCount: 1, slot: Number(weapon.etc.slot) } } };
     };
     const base = { characterId: 990001, level: 42, adena: 0, spotId: 'facts-test', loc: spots[0].center, inventory: {} };
-    const warsmith = armed({ ...base, stats: { classId: 57, coldCombat: { skills: [{ selfId: 254, level: 1 }] } } });
+    // Spoil 4 (magic level 36), the level a level-42 warsmith holds: Spoil 1
+    // (magic level 10) never lands on a level-40 mob (Formulas.spoilSuccessChance).
+    const warsmith = armed({ ...base, stats: { classId: 57, coldCombat: { skills: [{ selfId: 254, level: 4 }] } } });
     const noSpoil = armed({ ...base, characterId: 990002, stats: { classId: 54, coldCombat: { skills: [] } } });
     const facts = (state, options = {}) => drain(Planner.sourceFacts(state, 99101, 50,
         { spots, spotValue, timestamp: 1, ...options })).value;
     const byKind = rows => Object.fromEntries(rows.map(row => [row.kind, row]));
 
-    // On the current spot: no trip; hours from kills x yield x the NPC's share (1 of 4);
+    // On the current spot: no trip; hours from kills x yield x the share an
+    // aimed kill gives the NPC (SpotRewardExpectation.killShare targeted, the
+    // kill roll's owner; R3 G24: a drop hunt aims at the mob that drops it):
+    // 99002 is no NPC of the data, so every aimed kill here is 99001's;
     // an hour costs the bot's hour less what the spot gives back (1 - 0.75).
+    const Share = invoke('GameServer/Bot/Economy/SpotRewardExpectation');
+    assert.equal(Share.killShare(spots[0], Data.npcRewards.at(-1), { targeted: true }), 1);
     const own = byKind(facts(warsmith));
     assert.equal(own.drop.status, 'ready');
-    assert.equal(own.drop.perHour, 25);
-    assert.equal(own.drop.hours, 2);
+    assert.equal(own.drop.perHour, 100);
+    assert.equal(own.drop.hours, 0.5);
     assert.equal(own.drop.netHourCost, 0.25);
     assert.equal(own.drop.tripHours, 0);
-    assert.equal(own.drop.costHours, 0.5);
+    assert.equal(own.drop.costHours, 0.125);
     assert.equal(own.spoil.status, 'ready', 'a warsmith with Spoil learned can spoil');
-    assert.equal(own.spoil.hours, 1);
+    // Spoil: 2 per spoiled kill, every aimed kill, times the chance Spoil lands (the cold roll's owner).
+    assert.equal(own.spoil.hours, 50 / (100 * 2 * Share.spoilLanding(4, 42, 40)));
 
     // Spoil eligibility is the executor's rule (learned skill 254), not the class (E189).
     assert.equal(byKind(facts(noSpoil)).spoil.reason, 'spoil_skill');
