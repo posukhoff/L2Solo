@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { ensureGeodata } = require('../scripts/geodata-bootstrap');
+const { ensureGeodata, inspectDirectory, MANIFEST_NAME } = require('../scripts/geodata-bootstrap');
 
 const rootDir = path.resolve(__dirname, '..');
 const testRoot = path.join(rootDir, 'tmp', `test-geodata-bootstrap-${process.pid}-${Date.now()}`);
@@ -150,6 +150,60 @@ async function main() {
         }), /checksum mismatch/);
         assert.strictEqual(fs.existsSync(badTarget), false, 'failed install must not create the target directory');
         assert.deepStrictEqual(await fs.promises.readdir(path.join(testRoot, 'bad-temp')), []);
+
+        const hash = value => crypto.createHash('sha256').update(value).digest('hex');
+        const manifestFiles = { '20_22.l2j': 'alpha', '22_22.l2j': 'bravo!' };
+        const manifest = { schemaVersion: 1, format: 'L2J', profile: 'fixture', regions:
+            Object.entries(manifestFiles).map(([name, contents]) => ({
+                region: name.slice(0, -4), bytes: Buffer.byteLength(contents), sha256: hash(contents)
+            })) };
+        const manifestTarget = path.join(testRoot, 'manifest', 'Geodata');
+        await fs.promises.mkdir(manifestTarget, { recursive: true });
+        for (const [name, contents] of Object.entries(manifestFiles)) {
+            await fs.promises.writeFile(path.join(manifestTarget, name), contents);
+        }
+        const manifestPath = path.join(manifestTarget, MANIFEST_NAME);
+        await fs.promises.writeFile(manifestPath, JSON.stringify(manifest));
+        const manifestReady = await ensureGeodata({ targetDirectory: manifestTarget, logger: () => {} });
+        assert.strictEqual(manifestReady.fileCount, 2, 'a complete manifest replaces pack-specific region counts');
+
+        await fs.promises.writeFile(path.join(manifestTarget, '20_22.l2j'), 'Alpha');
+        await assert.rejects(() => ensureGeodata({ targetDirectory: manifestTarget }), /checksum mismatch/,
+            'same-size corruption must fail before startup');
+        await fs.promises.writeFile(path.join(manifestTarget, '20_22.l2j'), 'alpha');
+        await fs.promises.writeFile(path.join(manifestTarget, '11_23.l2j'), 'unused');
+        await assert.rejects(() => ensureGeodata({ targetDirectory: manifestTarget }), /unexpected geodata file/,
+            'leftovers from a different chronicle must not silently join the pack');
+        await fs.promises.unlink(path.join(manifestTarget, '11_23.l2j'));
+        await fs.promises.unlink(path.join(manifestTarget, '22_22.l2j'));
+        assert.strictEqual((await inspectDirectory(manifestTarget)).reason, 'missing manifest region');
+        await fs.promises.writeFile(path.join(manifestTarget, '22_22.l2j'), 'bravo!');
+        await fs.promises.writeFile(manifestPath, JSON.stringify({ ...manifest, regions: [manifest.regions[0], manifest.regions[0]] }));
+        assert.strictEqual((await inspectDirectory(manifestTarget)).reason, 'invalid or duplicate manifest region');
+        await fs.promises.writeFile(manifestPath, JSON.stringify({ ...manifest, regions: [{ ...manifest.regions[0], region: '../20_22' }] }));
+        assert.strictEqual((await inspectDirectory(manifestTarget)).valid, false);
+        await fs.promises.writeFile(manifestPath, '{broken');
+        assert.strictEqual((await inspectDirectory(manifestTarget)).reason, 'invalid geodata manifest JSON');
+        await fs.promises.unlink(manifestPath);
+        assert.strictEqual((await inspectDirectory(manifestTarget)).valid, false, 'an unmanifested legacy pack is not a C4 installation');
+        await assert.rejects(() => ensureGeodata({ targetDirectory: path.join(testRoot, 'no-source') }),
+            /Install client-generated L2J geodata/, 'missing data must not fetch the retired High Five pack');
+
+        const manifestArchive = createStoredZip({ ...manifestFiles, [MANIFEST_NAME]: JSON.stringify(manifest) });
+        const manifestServer = http.createServer((request, response) => response.end(manifestArchive));
+        await new Promise(resolve => manifestServer.listen(0, '127.0.0.1', resolve));
+        try {
+            const installed = await ensureGeodata({
+                targetDirectory: path.join(testRoot, 'manifest-download'),
+                tempDirectory: path.join(testRoot, 'manifest-download-temp'),
+                url: `http://127.0.0.1:${manifestServer.address().port}/pack.zip`,
+                sha256: hash(manifestArchive), logger: () => {}
+            });
+            assert.strictEqual(installed.downloaded, true);
+            assert.strictEqual(installed.fileCount, 2);
+        } finally {
+            await new Promise(resolve => manifestServer.close(resolve));
+        }
 
         console.log('Geodata bootstrap checks passed');
     } finally {

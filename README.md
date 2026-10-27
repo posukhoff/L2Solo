@@ -188,13 +188,14 @@ Use **Saved Games** while the server is stopped to save a full copy of your worl
 
 **Load** replaces the current database with the selected save and leaves the server stopped. **Delete** permanently removes that save. Both actions ask for confirmation. All saves are manual: loading never creates an automatic backup. Configuration files and launcher settings are not part of a save.
 
-On the first server start, L2Solo checks `data/Geodata`. If the region files are missing, it downloads the verified C4 geodata pack from `https://l2solo.com/files/geodata.zip` and installs it before opening the game server. The archive is about 209 MiB and expands to about 900 MiB. You can prepare it without starting the server with:
+Before opening the game server, L2Solo verifies `data/Geodata` against its `.l2solo-geodata-manifest.json`: the exact region set, file sizes and SHA-256 checksums must match. The C4 pack generated from the local client contains 141 regions (about 681 MiB). The malformed client map `15_21` is excluded because its terrain belongs to `15_20`. See [client geodata](docs/client-geodata.md) for installation and rollback.
 
 ```bash
 npm run geodata
+npm run test:geodata
 ```
 
-Custom mirrors and external geodata directories can be configured with `L2NODE_GEODATA_URL`, `L2NODE_GEODATA_SHA256`, and `L2NODE_GEODATA_DIR`.
+Install the complete pack, including its manifest, before starting. For a verified archive mirror, configure both `L2NODE_GEODATA_URL` and `L2NODE_GEODATA_SHA256`; the starter verifies the archive and its manifest before installation. `L2NODE_GEODATA_DIR` selects an external directory. There is no automatic fallback to the retired High Five pack.
 
 ## Configuration
 

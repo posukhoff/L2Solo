@@ -114,8 +114,8 @@
   "schemaVersion": 1,
   "sha256": {
     "items.json": "88d4da1ca8ea0cfc34a7dbaeffd022d7686bbb08ade9ef8b58c296cf4e793ce5",
-    "mobs.json": "051ec1c54d8a68f3e4279708ad0b1fe457f782d6341ded1fe24cff3e50e2f343",
+    "mobs.json": "f8ca6252f3c55ede43b3911a39bfe1e87c9ae0b49f3f54207ced93feb1923b6b",
     "skills.json": "1e1a38648b0de31b4fd7dee7cefd704463d3e2c0b962af246b2dc99dc31b362a",
-    "spawns.json": "bcc0d32e510c3045523610d7cac036d6702b473ced0713f22f063cb4a872a65a"
+    "spawns.json": "718f466e9a3eab4d76935bdbcc3235c53a106f549f0ae36b92dcdf7261a8445a"
   }
 }

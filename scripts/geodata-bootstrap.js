@@ -10,22 +10,13 @@ const { pipeline } = require('stream/promises');
 const extract = require('extract-zip');
 
 const rootDir = path.resolve(__dirname, '..');
-const DEFAULT_URL = 'https://l2solo.com/files/geodata.zip';
-const DEFAULT_SHA256 = '044e5507c3f0f55785a4698fec3ebd5e0e69bc9cce5bd5b669b8758c4a43f26d';
-const DEFAULT_FILE_COUNT = 203;
-const DEFAULT_REQUIRED_FILES = {
-    '21_22.l2j': 5478234,
-    '22_20.l2j': 5295298,
-    '23_20.l2j': 3530634
-};
+const MANIFEST_NAME = '.l2solo-geodata-manifest.json';
 
 function defaultLogger(message) {
     console.info(`Geodata   :: ${message}`);
 }
 
 async function inspectDirectory(directory, options = {}) {
-    const minimumFileCount = Number(options.minimumFileCount ?? DEFAULT_FILE_COUNT);
-    const requiredFiles = options.requiredFiles || DEFAULT_REQUIRED_FILES;
     let entries;
 
     try {
@@ -36,6 +27,13 @@ async function inspectDirectory(directory, options = {}) {
     }
 
     const geodataFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.l2j'));
+    // Explicit fixture/legacy validation remains available to callers. Normal
+    // startup uses a complete manifest rather than a particular pack's sizes.
+    if (options.minimumFileCount === undefined && options.requiredFiles === undefined) {
+        return inspectManifest(directory, entries, geodataFiles.length);
+    }
+    const requiredFiles = options.requiredFiles || {};
+    const minimumFileCount = Number(options.minimumFileCount ?? Object.keys(requiredFiles).length);
     if (geodataFiles.length < minimumFileCount) {
         return { valid: false, exists: true, fileCount: geodataFiles.length };
     }
@@ -55,6 +53,48 @@ async function inspectDirectory(directory, options = {}) {
     }
 
     return { valid: true, exists: true, fileCount: geodataFiles.length };
+}
+
+async function fileSha256(filename) {
+    const hash = crypto.createHash('sha256');
+    for await (const chunk of fs.createReadStream(filename)) hash.update(chunk);
+    return hash.digest('hex');
+}
+
+async function inspectManifest(directory, entries, fileCount) {
+    const invalid = (reason, invalidFile) => ({ valid: false, exists: true, fileCount, reason, invalidFile });
+    let manifest;
+    try {
+        manifest = JSON.parse(await fs.promises.readFile(path.join(directory, MANIFEST_NAME), 'utf8'));
+    } catch (error) {
+        if (error.code === 'ENOENT') return invalid(`missing ${MANIFEST_NAME}`);
+        if (error instanceof SyntaxError) return invalid('invalid geodata manifest JSON');
+        throw error;
+    }
+    if (manifest.schemaVersion !== 1 || manifest.format !== 'L2J'
+        || !Array.isArray(manifest.regions) || !manifest.regions.length) {
+        return invalid('unsupported geodata manifest');
+    }
+    const files = new Map();
+    for (const row of manifest.regions) {
+        if (!row || !/^\d{2}_\d{2}$/.test(row.region) || files.has(`${row.region}.l2j`)
+            || !Number.isSafeInteger(row.bytes) || row.bytes <= 0
+            || typeof row.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sha256)) {
+            return invalid('invalid or duplicate manifest region');
+        }
+        files.set(`${row.region}.l2j`, row);
+    }
+    const actual = entries.filter(entry => entry.name.endsWith('.l2j'));
+    const extra = actual.find(entry => !entry.isFile() || !files.has(entry.name));
+    if (extra) return invalid('unexpected geodata file', extra.name);
+    for (const [name, row] of files) {
+        const entry = actual.find(candidate => candidate.name === name);
+        if (!entry) return invalid('missing manifest region', name);
+        const filename = path.join(directory, name);
+        if ((await fs.promises.stat(filename)).size !== row.bytes) return invalid('region size mismatch', name);
+        if (await fileSha256(filename) !== row.sha256) return invalid('region checksum mismatch', name);
+    }
+    return { valid: true, exists: true, fileCount, profile: manifest.profile || null };
 }
 
 function openDownload(url, redirects = 5) {
@@ -162,10 +202,10 @@ async function ensureGeodata(options = {}) {
         || process.env.L2NODE_GEODATA_DIR
         || path.join(rootDir, 'data', 'Geodata'));
     const tempDirectory = path.resolve(options.tempDirectory || path.join(rootDir, 'tmp', 'geodata-bootstrap'));
-    const url = options.url || process.env.L2NODE_GEODATA_URL || DEFAULT_URL;
+    const url = options.url || process.env.L2NODE_GEODATA_URL;
     const expectedSha256 = String(options.sha256
         || process.env.L2NODE_GEODATA_SHA256
-        || DEFAULT_SHA256).toLowerCase();
+        || '').toLowerCase();
     const validationOptions = {
         minimumFileCount: options.minimumFileCount,
         requiredFiles: options.requiredFiles
@@ -179,9 +219,16 @@ async function ensureGeodata(options = {}) {
     if (existing.exists) {
         const entries = await fs.promises.readdir(targetDirectory);
         if (entries.length > 0) {
-            throw new Error(`Geodata directory is incomplete (${existing.fileCount} region files): ${targetDirectory}`);
+            throw new Error(`Geodata directory is incomplete (${existing.fileCount} region files): ${targetDirectory}`
+                + (existing.reason ? ` (${existing.reason}${existing.invalidFile ? `: ${existing.invalidFile}` : ''})` : ''));
         }
         await fs.promises.rmdir(targetDirectory);
+    }
+
+    // The retired automatic pack was mostly High Five geometry. Never fetch
+    // it as a C4 fallback when a client-generated installation is absent.
+    if (!url || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
+        throw new Error(`Install client-generated L2J geodata with ${MANIFEST_NAME}, or set both L2NODE_GEODATA_URL and L2NODE_GEODATA_SHA256 to a verified archive`);
     }
 
     await fs.promises.mkdir(path.dirname(targetDirectory), { recursive: true });
@@ -262,10 +309,7 @@ async function ensureGeodata(options = {}) {
 }
 
 module.exports = {
-    DEFAULT_FILE_COUNT,
-    DEFAULT_REQUIRED_FILES,
-    DEFAULT_SHA256,
-    DEFAULT_URL,
+    MANIFEST_NAME,
     ensureGeodata,
     inspectDirectory
 };
