@@ -27,8 +27,8 @@ const TRADED = [1786, 1792, 1793, 1800, 1803, 2143, 2151, 2173, 2174, 2175, 1867
             selfId: 626, amount: 1, enchant, equipped: enchant === 3 ? 1 : 0, slot: enchant === 3 ? 8 : 0
         });
         const shieldsBefore = (await Database.fetchItems(id)).filter(row => row.selfId === 626);
-        // Small stacks: their gain over the NPC price stays below a spare shield's,
-        // so both spares are quoted (the 1000-unit stacks below are the sale trip's).
+        // Small stacks: one unit each, so the spare shields keep their slots
+        // (the 1000-unit stacks below are the sale trip's).
         for (const selfId of TRADED) await Database.setItem(id, { selfId, amount: 1, slot: 0 });
         const place = Town.marketTown('Elven Village').center;
         const spot = invoke('GameServer/Bot/Population/SpotProfiles').ensure().filter(row => row.center)
@@ -63,7 +63,8 @@ const TRADED = [1786, 1792, 1793, 1800, 1803, 2143, 2151, 2173, 2174, 2175, 1867
             { name: 'board', from: null, to: 0, full: true, rows: [], removed: [], last: true },
             { name: 'market', from: null, to: 0, full: true, rows: marketRows.map(row => [row[0], row]), removed: [], last: true }
         ] }];
-        const native = await nativeDecision(state, { townVisit: true, tablePages });
+        const visitAt = Date.now();
+        const native = await nativeDecision(state, { townVisit: true, tablePages, timestamp: visitAt });
         const plan = native.plan.economyPlan;
         assert(plan, 'an ordinary shopping command carries its market publication');
         assert.equal(plan.shop, 'Elven Village', 'open in the town actually visited');
@@ -76,9 +77,22 @@ const TRADED = [1786, 1792, 1793, 1800, 1803, 2143, 2151, 2173, 2174, 2175, 1867
             `the native worker quotes the +1 spare despite a +0 copy in the bag: ${JSON.stringify(plan.sell)}`);
         assert(!shieldPlans.some(row => row[4] === 3), 'the worn shield stays reserved');
         // Board lines by gain over the NPC buy-back times units (user
-        // 2026-10-23): a 1000-unit stack can take a spare shield's slot.
-        const gains = plan.sell.map(([selfId, count, price]) => (price - Price.buyback(selfId)) * count);
-        assert.deepEqual(gains, gains.slice().sort((a, b) => b - a), 'the largest gain over the NPC price is quoted first');
+        // 2026-10-23), the sale owner's gain (MarketPricing.disposition: the
+        // Adena the stock is expected to bring over the buy-back), read from
+        // the same sale decision on main at the worker's decision point. The
+        // deals are Giran's and demand is per town (MarketDemand.forecast, the
+        // author's split kept in R3): in Elven Village every line is a quote
+        // of unknown demand, gain 0, and the slots go by the owner's next key.
+        const sale = invoke('GameServer/Bot/Economy/MarketListingPolicy').evaluate(state, { now: visitAt,
+            board: Afk.boardIndex(), economy: invoke('GameServer/Bot/Economy/EconomyContext').forState(state, { timestamp: visitAt }) });
+        const owned = new Map(sale.listings.map(row => [`${row.selfId}:${row.enchant || 0}`, row]));
+        const quoted = plan.sell.map(([selfId, , price, , enchant]) => {
+            const listing = owned.get(`${selfId}:${enchant}`);
+            assert.equal(listing?.price, price, `main and the worker price ${selfId}+${enchant} alike`);
+            return listing;
+        });
+        assert.deepEqual(quoted, invoke('GameServer/Bot/Economy/MarketListingPolicy').prioritizeListings(quoted),
+            'the largest gain over the NPC price is quoted first');
         const Economy = invoke('GameServer/Bot/Economy/EconomyContext'), saved = Economy.forState;
         let outcome;
         try {

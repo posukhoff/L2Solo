@@ -15,7 +15,9 @@ const partsOwner = 730183, partsBuyer = 730184;
 // Gain over the NPC buy-back (PriceDecision.buyback) times units, which
 // ranks the board slots: 1835 (10 - 3) x 100000 = 700000; 79 (6700000 -
 // 6550000) x 2 = 300000; 1786 (50000 - 125) x 2 = 99750; 1101 (80000 -
-// 10150) x 1 = 69850; 1869 (100 - 100) x 10000 = 0.
+// 10150) x 1 = 69850; 1869 (100 - 100) x 10000 = 0. The selected listings
+// carry it as Listing.evaluate's do (its `gain`, MarketPricing.disposition),
+// read once the datapack is loaded.
 const listings = [
     { selfId: 1835, count: 100000, price: 10, kind: 'Other.Shot' },
     { selfId: 1869, count: 10000, price: 100 },
@@ -23,6 +25,7 @@ const listings = [
     { selfId: 1101, count: 1, price: 80000 },
     { selfId: 79, count: 2, price: 6700000 }
 ];
+const withGain = row => ({ ...row, gain: (row.price - invoke('GameServer/Bot/Economy/PriceDecision').buyback(row.selfId)) * row.count });
 
 async function groupedReplacement() {
     await Database.createAccount('bot_showcase_parts', 'fixture');
@@ -151,7 +154,7 @@ async function groupedReplacement() {
         }, 'showcase_fixture');
         // Fix only the already selected sale prices. The worker plan, native
         // writers, index, projections, custody and purchase remain real.
-        Listing.evaluate = () => ({ listings, decisions: [], answers: [] });
+        Listing.evaluate = () => ({ listings: listings.map(withGain), decisions: [], answers: [] });
         Goals.review = async () => null;
         const prepare = () => Plan.decide(state, { ...Decision.economyFor(state), network: { activity: null } },
             { board: Afk.boardIndex(), now: Date.now(), npcOffersFor: () => [], findSpot: () => null });

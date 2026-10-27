@@ -156,8 +156,8 @@ function stateWithEscrow(state, stock) {
 // The bot's shop lines and what it lists past them (sell ads), from the
 // sale decision (MarketListingPolicy.evaluate) on its bag and its shop: a kept
 // line keeps its price (the bot's own look reprices it, MarketPricing.look); a new
-// one is listed at the bot's ask. The most valuable unit asks fill the shop
-// first; the rest become ads. Returns { lines, listed, listings }.
+// one is listed at the bot's ask. The listings of the largest gain over the NPC fill
+// the shop first; the rest become ads. Returns { lines, listed, listings }.
 function sellLines(state, stock, inventory, evaluateOptions = {}) {
     const existing = stock?.storeType === AfkTrade.SELL
         ? stock.lines.filter((line) => Number(line.count) > 0).map((line) => ({
@@ -220,8 +220,9 @@ function sellLines(state, stock, inventory, evaluateOptions = {}) {
             break;
         }
     };
-    for (const listing of ListingPolicy.prioritizeListings(listings, { board: AfkTrade.boardIndex(),
-        characterId: state.characterId, timestamp: evaluateOptions.now })) {
+    // A worker plan's rows come ranked (ColdEconomyPlan ranks them by gain;
+    // the plan carries no gain): their order stands.
+    for (const listing of classified.ranked ? listings : ListingPolicy.prioritizeListings(listings)) {
         existing.filter(line => lineKey(line) === lineKey(listing)).forEach(keepExisting);
         appendListing(listing);
     }
@@ -700,7 +701,7 @@ async function executePlan(state, plan, { step = work => work(), beforeWrite = (
                 : state.activity !== 'shopping' || state.currentRegion !== plan.shop
                     || !invoke('GameServer/Bot/Economy/BotImprovementService').inTown(state)))
                 return { state, reason: 'shop_visit_changed' };
-            return listOnBoard(state, { decided: { listings }, planTowns });
+            return listOnBoard(state, { decided: { listings, ranked: true }, planTowns });
         }
         return listSellAds(ownerId, state, listings, shop,
             () => Database.fetchItems(ownerId, 'market_execute_plan'), { planTowns });
