@@ -643,7 +643,7 @@ function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0, heldPrice = 
             wish.earmarked = spends && worth && !cutoffFound && !neverReady(wish) && cashCharge(wish) > 0 && cashCharge(wish) <= available;
             if (wish.earmarked) available -= cashCharge(wish);
             // A never root is no gap: earning more never brings its unit.
-            if (wish.progressionPriority > 0 && !awaitingKit && !neverReady(wish) && !wish.earmarked) awaitingKit = wish;
+            if (wish.progressionPriority > 0 && !awaitingKit && !neverReady(wish)) awaitingKit = wish;
             continue;
         }
         // The first gap holds the marginal price of money. Smaller desires
