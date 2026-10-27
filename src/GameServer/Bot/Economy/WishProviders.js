@@ -1384,8 +1384,6 @@ function buildProjection(state, ctx, deps) {
         // the wallet holds costs no hunt hours, so its return earns none.
         const itemPrice = price(item.selfId);
         if (!(itemPrice > 0)) continue;
-        // Held or lacking: the wallet threshold this value turns on.
-        ctx.walletBoundary?.(itemPrice + positive(ctx.survivalReserve));
         const value = gain * benefitHorizon + (ctx.hunt.perHour > 0
             ? (future - currentPrice) * Network.lackingHours(itemPrice, held, 1 / ctx.hunt.perHour) / itemPrice : 0);
         if (!(value > 0)) continue;
