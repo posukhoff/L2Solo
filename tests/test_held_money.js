@@ -54,8 +54,11 @@ const bid = (network, wallet, hourAdena, itemId) => {
         plan: { estimatedCost: intent.worth, purpose: intent.kind, valueRate: intent.valueRate } });
 };
 
-// The price of cash: the held part at the held price, the rest at the hunt rate.
+// The price of cash: the held part at the held price (never above the hunt
+// rate: spent money can be earned again), the rest at the hunt rate.
 assert.equal(cashHours(300, 100, .001, .01), 100 * .001 + 200 * .01);
+assert.equal(cashHours(300, 100, .05, .01), 300 * .01, 'held money dearer than hunting costs the hunt rate');
+assert.equal(cashHours(300, 0, .05, .01), cashHours(300, 0, 0, .01), 'a bot holding nothing pays the hunt rate (the author\'s)');
 assert.equal(cashFor(cashHours(300, 100, .001, .01), 100, .001, .01), 300, 'cashFor inverts cashHours');
 
 // A level-30 bot with 1M buys a 34k helmet for its empty slot: earning it
@@ -91,6 +94,11 @@ assert.equal(spend(coming, 1.5e6, 20000, 500), 0, 'saving for the coming weapon 
 // With the C weapon covered, the rest of the wallet still buys the helmet.
 const both = build(3e6, 20000, saving);
 assert(spend(both, 3e6, 20000, 600) >= 2e6 && spend(both, 3e6, 20000, 500) >= 34000, 'both purchases funded');
+// Saving for a C weapon no seller offers yet: its cash is still held for it,
+// so the helmet does not take it (no seller is no reason to spend the money).
+const noSeller = build(2e5, 20000, [...helmet, gear(600, 100), wanted(600, 2e6)]);
+assert(noSeller.heldPrice > .69 / 34000, 'the unsold weapon keeps the held money dear');
+assert.equal(spend(noSeller, 2e5, 20000, 500), 0, 'the helmet does not take the money saved for the unsold weapon');
 
 // A level-53 bot with 26M on a 1.5k/h field bids for a 5M C weapon no one
 // sells yet: 24 h of benefit would be worth only 36k at the hunt rate; its
@@ -98,12 +106,12 @@ assert(spend(both, 3e6, 20000, 600) >= 2e6 && spend(both, 3e6, 20000, 500) >= 34
 const weapon = [gear(700, 24), wanted(700, 5e6)];
 const wealthy = build(26e6, 1500, weapon);
 assert.equal(bid(wealthy, 26e6, 1500, 700)?.price, 5e6, 'the bid is the price belief, not above it');
-// Poor, the same bot bids what it holds (no other use for it: a piece no
-// seller offers yet takes no held money, heldPriceOf) plus its value at the
-// hunt rate for the rest; its bid stops at its wallet.
+// Poor, the same bot saves its money for this weapon (its own value per
+// adena prices it) and bids what it holds plus the rest of its value at the
+// hunt rate; its bid stops at its wallet.
 const poorNetwork = build(1e5, 1500, weapon);
 const poorWorth = Intent.project({}, poorNetwork, {}, 8).find(line => line.itemId === 700).worth;
-assert(Math.abs(poorWorth - (1e5 + 24 * 1500)) < 1e-6, 'held money, then the hunt rate');
+assert(Math.abs(poorWorth - (1e5 + (24 - 1e5 * 24 / 5e6) * 1500)) < 1e-6, 'held money, then the hunt rate');
 assert.equal(bid(poorNetwork, 1e5, 1500, 700)?.price, 1e5, 'never above the wallet');
 // A wish worth little, the wallet covering all: cheap money buys it, still
 // no higher than its belief.
@@ -122,6 +130,25 @@ const resale = { key: 'resale:800', need: 'power', object: { itemId: 800, amount
     paths: [{ requirements: [{ key: 'item:801', amount: 1 }] }] };
 const trader = build(1e6, 1000, [resale, shop(801, 1000)]);
 assert.equal(row(trader, 'resale:800')?.funded ?? false, false, 'a sale below the hunt rate takes no held money');
+
+// The executed path on the main thread: a bid's certificate (TradeIntent.encode,
+// 9 fields) carries its root key, not a flag; the meeting's funding terms
+// (TradeMeeting.fundingTerms, the worker's consent and the native accept)
+// read it, and spendable admits held money for a root that is no resale.
+const TradeMeeting = require('../src/GameServer/AfkTrade/TradeMeeting');
+const meeting = (network, wallet, hourAdena, certificate) => {
+    const request = { lines: [{ payer: 'A', count: 1, price: 1, certificate }],
+        parties: { A: { route: { fee: 0 }, survivalCost: 0 } } };
+    const terms = TradeMeeting.fundingTerms(request, 'A');
+    delete terms.amount;
+    return Funding.spendable(stateOf(network, wallet, hourAdena), 0, terms);
+};
+const wealthyIntent = Intent.project({}, wealthy, {}, 8).find(line => line.itemId === 700);
+assert(wealthyIntent.valueRate < wealthy.moneyPrice, 'the weapon ranks below the hunt rate');
+const certificate = Intent.encode({ ...wealthyIntent, price: 5e6 });
+assert(meeting(wealthy, 26e6, 1500, certificate) >= 5e6, 'main funds the held bid from its certificate');
+const resaleCertificate = Intent.encode({ ...wealthyIntent, key: 'resale:700', price: 5e6 });
+assert.equal(meeting(wealthy, 26e6, 1500, resaleCertificate), 0, 'a resale root at that rate spends no held money');
 // An old packet (no held price after its rows) spends at its money price.
 assert.equal(Funding.heldPrice([1000, .001, 0, 0, .002, 500, 1]), .001);
 assert.equal(Funding.heldPrice([1000, .001, 0, 0, .002, 500, 1, .0001]), .0001);

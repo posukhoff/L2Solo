@@ -274,7 +274,6 @@ function rootRows(network, wish, onCut = null) {
             rows.set(id, { itemId: id, amount: amount + (previous?.amount || 0), worth: 0,
                 kind: wish.object?.kind, key: wish.key, recipeId, valueHours: value + (previous?.valueHours || 0),
                 valueRate: Funding.significant(wish.ratio), capCash: capCash + (previous?.capCash ?? 0),
-                ...(wish.heldCash > 0 ? { held: true } : {}),
                 ...(quote && integer(quote.amount) && quote.amount > 0 ? { quote } : {}) });
             return;
         }
@@ -354,7 +353,7 @@ function meetingPurchase(network, intents, { selfId, count, price, town, enchant
     let valueRate = intent.valueRate;
     if (state?.stats?.wishFocus?.[0] === wish.key && Array.isArray(packet)) {
         for (let at = 4; at + 2 < packet.length; at += 3) {
-            if (Number(packet[at + 2]) === Number(wish.object?.itemId) && packet[at] > 0 && packet[at] >= Funding.spendPrice(packet)) {
+            if (Number(packet[at + 2]) === Number(wish.object?.itemId) && packet[at] > 0 && packet[at] >= Funding.heldPrice(packet)) {
                 valueRate = Number(packet[at]); break;
             }
         }
