@@ -126,7 +126,7 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
         // above the planner's estimate lowers it by the same factor (E187).
         // The queue's own order still decides which money is held for others.
         const quoted = options.quoteScale > 0 ? r * options.quoteScale : r;
-        if (quoted > 0 && quoted >= spendPrice(packet)) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
+        if (quoted >= packet[1] || quoted > 0 && quoted >= heldPrice(packet)) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
     }
     // Native utility terms take precedence over a free/clan allowance too.
     if (Array.isArray(packet) && packet.length >= 4 && !options.upperBound && options.valueHours !== undefined) {

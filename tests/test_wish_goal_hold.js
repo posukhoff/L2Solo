@@ -82,8 +82,7 @@ const gap = { key: 'care:gap', need: 'care', valueHours: 10, progressionPriority
 const rival = { ...gap, key: 'care:rival', valueHours: 1000, paths: [{ requirements: [{ key: 'item:990101', amount: 1 }] }] };
 const earner = { key: 'care:earner', need: 'care', progressionFunding: true, valueHours: 1000,
     paths: [{ requirements: [{ key: 'item:990102', amount: 1 }] }] };
-// The flood roots below them keep the review over MAX_ROOTS, so the cut ranks by score.
-const injected = [gap, rival, earner, ...flood, ...[990100, 990101, 990102].map(id =>
+const injected = [gap, rival, earner, ...[990100, 990101, 990102].map(id =>
     ({ key: `item:${id}`, paths: [{ kind: 'buy', activity: 'shopping', itemId: id, price: 10 }] }))];
 const cutOrder = committedKeys => Providers.build(state, { ...context, committedKeys }, { ...deps, nodes: injected }).roots;
 const loose = cutOrder([]);

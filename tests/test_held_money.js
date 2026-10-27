@@ -98,21 +98,23 @@ assert(spend(both, 3e6, 20000, 600) >= 2e6 && spend(both, 3e6, 20000, 500) >= 34
 const weapon = [gear(700, 24), wanted(700, 5e6)];
 const wealthy = build(26e6, 1500, weapon);
 assert.equal(bid(wealthy, 26e6, 1500, 700)?.price, 5e6, 'the bid is the price belief, not above it');
-// Poor, the same bot bids what it holds (its only use: the weapon's own
-// rate prices it) plus the rest of the value at the hunt rate.
-// Its bid stops at its wallet.
+// Poor, the same bot bids what it holds (no other use for it: a piece no
+// seller offers yet takes no held money, heldPriceOf) plus its value at the
+// hunt rate for the rest; its bid stops at its wallet.
 const poorNetwork = build(1e5, 1500, weapon);
 const poorWorth = Intent.project({}, poorNetwork, {}, 8).find(line => line.itemId === 700).worth;
-assert(Math.abs(poorWorth - (1e5 + (24 - 1e5 * 24 / 5e6) * 1500)) < 1e-6, 'held money, then the hunt rate');
+assert(Math.abs(poorWorth - (1e5 + 24 * 1500)) < 1e-6, 'held money, then the hunt rate');
 assert.equal(bid(poorNetwork, 1e5, 1500, 700)?.price, 1e5, 'never above the wallet');
 // A wish worth little, the wallet covering all: cheap money buys it, still
 // no higher than its belief.
 const trinket = bid(build(26e6, 1500, [gear(900, .001), wanted(900, 2e5)]), 26e6, 1500, 900);
 assert.equal(trinket?.price, 2e5, 'free money bids no more than the belief');
-// The time a bid saves: a piece that pays 1 h/h from now, still waiting for
-// its seller, may bid the belief plus that wait's worth at the money price.
-const waiting = build(26e6, 1500, [gear(700, 24, { benefitPerHour: 1, horizonHours: 24 }), wanted(700, 5e6)]);
-assert(bid(waiting, 26e6, 1500, 700).price >= 5e6, 'the wait raises the cap, never below the belief');
+// The time a bid saves: a piece that pays 1 h/h from now, its seller 4 h
+// away (a unit wait), may bid its belief plus those 4 h at the money price.
+const late = { key: 'item:700', price: 5e6, paths: [{ kind: 'buy', activity: 'shopping', price: 5e6, itemId: 700,
+    executable: true, quoted: false, availableUnits: 1, waitHours: 4 }] };
+const waiting = build(26e6, 1500, [gear(700, 24, { benefitPerHour: 1, horizonHours: 24 }), late]);
+assert.equal(bid(waiting, 26e6, 1500, 700)?.price, 5e6 + 4 * 1500, 'the belief plus the wait at the money price');
 
 // A resale root (craft, crystals, farm for sale) turns money into money:
 // its price stays at the hunt rate whatever the wallet holds.

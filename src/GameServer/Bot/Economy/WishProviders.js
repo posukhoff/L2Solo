@@ -1231,7 +1231,7 @@ function buildProjection(state, ctx, deps) {
     // speculative farm goal. The value is the line's gain over buy-back,
     // the effort the farm hours at their net cost plus the trip (WishNetwork
     // finiteProduction keeps the root only while the value beats it; its
-    // rank counts the farm hours, WishNetwork rootEffort).
+    // rank counts the farm hours, WishNetwork committedEffort).
     // The loop over the board's buy items reads no depth, sale or path: the
     // pre-cut keeps the 8 lines of the best gain per kill for this bot (the
     // spread over buy-back times the units per kill of the item's best
@@ -1347,12 +1347,6 @@ function buildProjection(state, ctx, deps) {
             positive(values.get(material.selfId)) + improvement.valueHours / Math.max(1, material.amount));
     }
     const candidates = [];
-    const wallet = ctx.wallet ?? positive(state.adena), held = Math.max(0, wallet - positive(ctx.survivalReserve));
-    // The held money's price of the bot's last build (its money packet,
-    // WishNetwork.heldPriceOf), else the hunt rate: gear resale and the
-    // candidates' solves price held cash at it.
-    const huntPrice = ctx.hunt.perHour > 0 ? 1 / ctx.hunt.perHour : 0, packet = state.stats?.money;
-    const heldPrice = Array.isArray(packet) && packet.length >= 4 ? Funding.heldPrice(packet) : huntPrice;
     const planningState = preparation || state;
     const wornFor = wornReader(planningState), gainFor = gearGainReader(state, timestamp, {}, ctx);
     let futureGain;
@@ -1384,14 +1378,10 @@ function buildProjection(state, ctx, deps) {
         // hunt hours it adds per hour, HuntCycle) over the stage's hours (the
         // level weights the horizon only) plus resale. A step into a kit gap
         // carries the gap's priority to stand among the kit roots; its value
-        // decides whether it is worth taking. Resale is money back at the
-        // rate the step pays (Network.cashHours, as its price in the solver):
-        // the held part at the held price, the lacking part at the hunt rate.
-        const itemPrice = price(item.selfId);
-        if (!(itemPrice > 0)) continue;
-        const value = gain * benefitHorizon + (huntPrice > 0
-            ? (future - currentPrice) * Network.cashHours(itemPrice, held, heldPrice, huntPrice) / itemPrice : 0);
-        if (!(value > 0)) continue;
+        // decides whether it is worth taking.
+        const value = gain * benefitHorizon
+            + (ctx.hunt.perHour > 0 ? (future - currentPrice) / ctx.hunt.perHour : 0);
+        if (!(value > 0) || !(price(item.selfId) > 0)) continue;
         candidates.push({ item, slot, value, gain, notBeforeHours: early ? horizon : 0,
             horizonHours: early ? horizon + futureHorizon : horizon,
             progressionPriority: Progression.priority(slot, progression, item, { grade: false }) });
@@ -1403,7 +1393,7 @@ function buildProjection(state, ctx, deps) {
     blocks?.lap('benefits');
     const admission = { candidates: 0, evaluations: 0, maxScratch: 0, rounds: 0, pending: [], admitted: [] };
     const solverOptions = { hourAdena: ctx.hourAdena, riskWeight: ctx.riskWeight, stockFor: ctx.stockFor || null,
-        wallet, survivalReserve: ctx.survivalReserve, heldPrice };
+        wallet: ctx.wallet ?? positive(state.adena), survivalReserve: ctx.survivalReserve };
     const real = nodes, realKeys = nodeKeys, gear = [];
     for (const candidate of candidates) {
         nodes = []; nodeKeys = new Set(); scratch = true; readScope = ctx.readScope?.open() || null;
