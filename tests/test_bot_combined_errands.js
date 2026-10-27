@@ -285,8 +285,12 @@ async function run() {
             slot: 0, stackable: true }] }))?.lines?.length === 1);
     const clanPlan = Market.planPurchase({ ...clanBuyer, currentRegion: 'Dion' }, gear.recipeItemId, 1, { towns: ['Dion'], purpose: 'clan', money: 500000 });
     assert(clanPlan, 'the clan plan finds the scroll');
+    // The clan's treasury pays what the member's free money does not
+    // (ClanPurchaseCredit.fund): this crafter's money is held for its own
+    // wishes, so the clan part is the whole price, already in its wallet.
     const clanBought = await withNativeInput(await Life.upsertState({ ...clanBuyer, activity: 'shopping', currentRegion: 'Dion' },
-        'combined_clan_funding'), async accepted => Market.buyHere(await Life.upsertState(accepted, 'combined_clan_accepted'), clanPlan));
+        'combined_clan_funding'), async accepted => Market.buyHere(await Life.upsertState(accepted, 'combined_clan_accepted'),
+        { ...clanPlan, tag: { clanPart: 100 } }));
     assert.equal(clanBought.units, 1);
     assert.equal((await Database.fetchCharacterRecipes(clanBuyer.characterId)).length, 0, 'a scroll bought for the clan is not learned');
     assert.equal(physical(await Database.fetchItems(clanBuyer.characterId), gear.recipeItemId), 1, 'the clan scroll stays held for the deposit');
