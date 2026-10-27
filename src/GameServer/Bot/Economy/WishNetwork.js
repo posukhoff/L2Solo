@@ -617,7 +617,7 @@ const ownRatio = row => TradeIntent.rootValue(row) / row.price;
 // floor hold none. A wallet covering them all has no other use for the
 // rest: 0, and each bid stops at its price belief (TradeIntent.rootRows).
 function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0, heldPrice = floor, heldMoney = true) {
-    let available = Math.max(0, nonnegative(wallet) - nonnegative(survivalReserve));
+    let available = spendableOf(wallet, survivalReserve);
     const queue = queueRows(wishes, floor);
     let moneyPrice = nonnegative(floor), cutoffFound = false, gap = null, awaitingKit = null;
     let saving = available, savingPrice = null;
@@ -658,8 +658,56 @@ function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0, heldPrice = 
     return { queue, moneyPrice, heldPrice: heldMoney ? Math.min(heldPrice, moneyPrice) : moneyPrice, available, gap: gap || awaitingKit,
         savingPrice: savingPrice ?? 0 };
 }
+// The wallet a solve or a queue may spend, and the price of money earned
+// (hours per adena, the queue's floor; hoursPerAdena: Infinity with no hunt).
+const spendableOf = (wallet, survivalReserve) => Math.max(0, nonnegative(wallet) - nonnegative(survivalReserve));
+const moneyFloor = hourAdena => hourAdena > 0 ? 1 / hourAdena : 0;
+const hoursPerAdena = hourAdena => hourAdena > 0 ? 1 / hourAdena : Infinity;
 // The build's held-money price (moneyQueue's savingPrice) of `wishes`.
 const heldPriceOf = (wishes, wallet, survivalReserve = 0, floor = 0) => moneyQueue(wishes, wallet, survivalReserve, floor, 0).savingPrice;
+// Whether a root stays beside the active priority (settle's filter): it
+// stands at it, or it is a never root above it.
+const standsAt = (row, active) => !active || standingPriority(row, active) === active
+    || neverReady(row) && standingPriority(row, active) > active;
+// The held money's price before a build (T79): heldPriceOf over the rows
+// that stand at their own active priority (settle's filter), each at the
+// priority it stands at. Gear admission (WishProviders) reads it over each
+// family's best row and the roots built before it, so admission prices held
+// cash as the build will; the build reads the rows admission left out
+// (`ahead`) beside its own roots, the same set.
+function heldPriceAhead(rows, wallet, survivalReserve = 0, floor = 0) {
+    const active = activePriority(rows);
+    return heldPriceOf(rows.filter(row => standsAt(row, active))
+        .map(row => ({ ...row, progressionPriority: standingPriority(row, active) })), wallet, survivalReserve, floor);
+}
+// A farm for sale (its farm hours are committed, committedHours).
+const farmSale = node => !!node?.paths?.some(path => path.kind === 'farm_sale');
+// The rank effort of a root whose hours are committed: a progression
+// root, or a farm_sale root (its farm hours are hours the bot spends on
+// it even where the spot pays for them, so its score is its value per
+// farm hour). At least its elapsed hours plus its cash in hours. The one
+// floor of rootEffortAt; an activity leaf of such a root takes its root's
+// effort (build).
+const committedHours = node => nonnegative(node?.progressionPriority) > 0 || farmSale(node);
+// A root's effort from its plan's at the held money's price `rate` (T53):
+// a spending root's cash is priced as the bot pays it (cashHours), the
+// part the wallet holds at `rate`, the part it lacks at the hunt rate; its
+// effort keeps the rest of its plan. A resale root (or heldMoney false, a
+// clan's purse) keeps its whole price at the hunt rate and its floor counts
+// only the cash the wallet lacks. The one root pricing of the solver
+// (rootWish, allocate, priceHeld) and of gear admission (priceRoot).
+function rootEffortAt(wish, node, rate, spendable, adenaToHours, heldMoney) {
+    wish.effort = wish.plan?.effort ?? Infinity;
+    if (!wish.plan) return;
+    const price = nonnegative(wish.plan.price), spends = heldMoney && !resale(wish);
+    const cash = cashHours(price, spendable, spends ? rate : 0, adenaToHours);
+    if (spends && Number.isFinite(adenaToHours)) wish.effort = Math.max(0, wish.effort - price * adenaToHours + cash);
+    if (committedHours(node)) wish.effort = Math.max(wish.effort, wish.plan.hours + cash);
+}
+// A root solved by a solver of these options (createSolver's) priced again
+// at `rate` (gear admission's pre-pass, WishProviders): no second solve.
+const priceRoot = (wish, node, rate, { wallet = 0, survivalReserve = 0, hourAdena = 0, heldMoney = true } = {}) =>
+    rootEffortAt(wish, node, nonnegative(rate), spendableOf(wallet, survivalReserve), hoursPerAdena(hourAdena), heldMoney);
 
 // Providers supply game effects and available paths, never policy priorities.
 // One bounded DAG serves individual characters and group actors alike. The
@@ -716,7 +764,9 @@ function sameResult(before, after) {
 }
 // One solver per node set. build() and the provider's candidate admission
 // use the same path facts, quantity reader and root valuation (MVP-6); its
-// scratch maps die with the caller's build.
+// scratch maps die with the caller's build. heldPrice: the held money's
+// price (hours per adena) its roots and routes price held cash at (T53,
+// T79); none given, the hunt rate (all cash as if earned).
 function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, wallet = 0, survivalReserve = 0,
     heldMoney = true, heldPrice = null, diagnostic = false, detail = false, trace = null }) {
     const byKey = new Map();
@@ -736,7 +786,15 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     // can afford a longer source chain when it is nearer the root.
     const producerPlans = new Map();
     const completionPlans = new Map(), producerCompletionPlans = new Map();
-    const adenaToHours = hourAdena > 0 ? 1 / hourAdena : Infinity;
+    const adenaToHours = hoursPerAdena(hourAdena);
+    // MVP-4: one horizon H per root; a benefit per hour starts when the
+    // path is ready (funding delay at net income, then the path's hours).
+    // An unknown delay keeps the interest unresolved: no money, no gap.
+    const spendable = spendableOf(wallet, survivalReserve);
+    // The held money's price (heldPrice; priceHeld sets the build's once it
+    // has read it). Without one, the hunt rate: the cash costs what it does
+    // when earned (no held discount on a route, rootEffortAt's whole price).
+    let heldRate = heldPrice ?? (Number.isFinite(adenaToHours) ? adenaToHours : 0);
     // One route per member and town for the basket. Scratch descriptions
     // die with this build; plans retain bounded entry indices only. Group
     // members visiting the same town do not share each other's paid trips.
@@ -1092,9 +1150,15 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
         // short, costs its shortCash more (routeCash, routeEffort) and is
         // ready when all n arrive (shortHours); the step it takes now keeps
         // its own price for funding and leaves.
+        // The cash of a route the wallet covers costs the held money's price
+        // (heldRate, as rootEffortAt prices a root's), not the hunt rate
+        // (T79): sort only, the stored effort stays the step's. A producer
+        // root's inputs (planning) turn money into money: the hunt rate.
         if (choices.length > 1) {
             const routeCash = choice => nonnegative(choice.price + (choice.shortCash || 0));
-            const routeEffort = choice => choice.effort + (choice.shortCash && Number.isFinite(adenaToHours) ? choice.shortCash * adenaToHours : 0);
+            const held = !planning && heldMoney && Number.isFinite(adenaToHours);
+            const routeEffort = choice => choice.effort + (choice.shortCash && Number.isFinite(adenaToHours) ? choice.shortCash * adenaToHours : 0)
+                + (held ? cashHours(routeCash(choice), spendable, heldRate, adenaToHours) - routeCash(choice) * adenaToHours : 0);
             const completionHours = choice => choice.hours + nonnegative(choice.shortHours) + (adenaToHours > 0
                 ? Valuation.fundingDelay({ requiredCash: routeCash(choice), spendableCash: spendable, incomePerHour: hourAdena }) ?? Infinity
                 : routeCash(choice) > wallet ? Infinity : 0);
@@ -1136,7 +1200,6 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     // inputs. An input no seller offers yet keeps the root's queue place and
     // becomes its buy ad without cash. The root stays only while its value
     // beats its effort (held inputs at their exit value).
-    const farmSale = node => !!node?.paths?.some(path => path.kind === 'farm_sale');
     const finiteProduction = key => {
         const node = byKey.get(key);
         return resale(node) && node.paths?.some(path => ['craft', 'farm_sale', 'crystallize'].includes(path.kind));
@@ -1163,10 +1226,6 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     const rootAmount = node => resale(node)
         && node.paths?.some(path => path.kind === 'craft' && path.trial === true && path.repeatable === false)
         && Number.isSafeInteger(node.object.amount) && node.object.amount > 0 ? node.object.amount : 1;
-    // MVP-4: one horizon H per root; a benefit per hour starts when the
-    // path is ready (funding delay at net income, then the path's hours).
-    // An unknown delay keeps the interest unresolved: no money, no gap.
-    const spendable = Math.max(0, nonnegative(wallet) - nonnegative(survivalReserve));
     // keptHours (a learned recipe's unspent price or later crafts' margin,
     // WishProviders producer roots, CraftProfitPolicy.keptRecipeValue) is
     // capital the bot holds whatever this lot's craft rolls give: credited
@@ -1212,34 +1271,13 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     // The author's priority value: full benefit, before its ready delay.
     const fullValue = (wish, node) => wish.plan ? nonnegative(node.valueHours) * (1 - Math.min(1, nonnegative(node.progress)))
         * Number(wish.plan.successProbability ?? 1) + nonnegative(node.keptHours) : 0;
-    // The rank effort of a root whose hours are committed: a progression
-    // root, or a farm_sale root (its farm hours are hours the bot spends on
-    // it even where the spot pays for them, so its score is its value per
-    // farm hour). At least its elapsed hours plus the cash it lacks at the
-    // hour's adena. The one floor of rootWish and allocate; an activity leaf
-    // of such a root takes its root's effort (build).
-    const committedHours = node => nonnegative(node?.progressionPriority) > 0 || farmSale(node);
-    // A spending root's cash is priced as the bot pays it (cashHours): the
-    // part the wallet holds at the held money's price (heldRate: the build's
-    // heldPriceOf, priceHeld), the part it lacks at the hunt rate; its effort
-    // keeps the rest of its plan. Its path choice stays at the hunt rate (one
-    // currency between paths); a resale root keeps its whole price.
-    // No price given (a caller outside a build: gear admission, the review's
-    // root cut): the author's rule, the cash at the hunt rate and its floor
-    // counting only the cash the wallet lacks.
-    let heldRate = heldPrice;
-    const rootEffort = wish => {
-        if (!wish.plan) return;
-        const price = nonnegative(wish.plan.price), spends = heldMoney && !resale(wish) && heldRate !== null;
-        const cash = cashHours(price, spendable, spends ? heldRate : 0, adenaToHours);
-        if (spends && Number.isFinite(adenaToHours)) wish.effort = Math.max(0, wish.effort - price * adenaToHours + cash);
-        if (committedHours(byKey.get(wish.key))) wish.effort = Math.max(wish.effort, wish.plan.hours + cash);
-    };
+    // A root's effort at the held money's price (rootEffortAt).
+    const rootEffort = wish => rootEffortAt(wish, byKey.get(wish.key), heldRate, spendable, adenaToHours, heldMoney);
     // The held money's price once the build has read it (heldPriceOf): every
     // solved root's effort again from its plan's.
     const priceHeld = (rate, wishes) => {
         heldRate = nonnegative(rate);
-        for (const wish of wishes) { wish.effort = wish.plan?.effort ?? Infinity; rootEffort(wish); }
+        for (const wish of wishes) rootEffort(wish);
     };
     const rootWish = key => {
         const node = byKey.get(key);
@@ -1334,7 +1372,7 @@ class WishNetwork {
     build({ actorKey, inputKey, characterId, decisionSeq = 0, activityLeaf = 0, nodes, roots, wallet = 0, survivalReserve = 0,
         playedHours = 0, persona = {}, previous = {}, hourAdena = 0, riskWeight = 1, moneyPaths = [], remembered = true,
         caller = 'wish_network', trigger = 'request', stockFor = null, completionKey = null, reconsider = true,
-        reconsiderReasons = null, capped = [], heldMoney = true }) {
+        reconsiderReasons = null, capped = [], heldMoney = true, aheadPrice = null, ahead = [] }) {
         const diagnostic = Diagnostics.active();
         if (diagnostic) Diagnostics.count('network', 'request');
         if (typeof actorKey !== 'string' || !actorKey || typeof inputKey !== 'string'
@@ -1357,11 +1395,15 @@ class WishNetwork {
         const trace = detail ? { owner: Number(characterId), caller, trigger,
             inputHash: fnv1a32(inputKey), decisionSeq, activityLeaf } : null;
         if (diagnostic) Diagnostics.count('network', 'miss', !remembered ? 'uncached_actor' : !retain ? 'held_plan_only' : cached ? 'input_dependency_changed' : 'not_retained');
-        const solver = createSolver({ nodes, hourAdena, riskWeight, stockFor, wallet, survivalReserve, heldMoney, diagnostic, detail, trace });
+        // aheadPrice: the held money's price gear admission read (WishProviders,
+        // heldPriceAhead), the price its routes are chosen at until this
+        // build reads its own (priceHeld below).
+        const solver = createSolver({ nodes, hourAdena, riskWeight, stockFor, wallet, survivalReserve, heldMoney,
+            heldPrice: heldMoney ? aheadPrice : null, diagnostic, detail, trace });
         const { byKey, plans, earns, committedHours, tripValue, tripEffort } = solver;
         const kept = wish => wish.valueHours > 0 && wish.plan && earns(wish);
         let wishes = roots.map(solver.rootWish);
-        const floor = hourAdena > 0 ? 1 / hourAdena : 0;
+        const floor = moneyFloor(hourAdena);
         const committed = committedKeys(previous);
         let heldClaims = null, claimPlans = null, alone = null, claimable = wishes;
         // Wishes whose plan is no longer their alone solve (re-solved on a taken claim).
@@ -1428,17 +1470,20 @@ class WishNetwork {
             active = activePriority(wishes);
             if (active) {
                 for (const wish of wishes) wish.progressionPriority = standingPriority(wish, active);
-                wishes = wishes.filter(wish => wish.progressionPriority === active
-                    || neverReady(wish) && wish.progressionPriority > active);
+                wishes = wishes.filter(wish => standsAt(wish, active));
             }
             const reachable = wishes.some(wish => !neverReady(wish));
             focusWishes = wishes.filter(wish => wish.progressionPriority === active && !(reachable && neverReady(wish)));
         };
         settle(committed);
-        // The held money's price over the roots the build keeps (heldPriceOf),
-        // before the focus reads their efforts.
+        // The held money's price over the roots the build keeps (heldPriceOf)
+        // and the gear rows admission left out (`ahead`: each family's best
+        // row a cap left out, WishProviders; value, price and priority only,
+        // the same rows its pre-pass read), by admission's one rule
+        // (heldPriceAhead), before the focus reads their efforts.
         const priceHeld = () => {
-            const price = heldMoney ? heldPriceOf(wishes, wallet, survivalReserve, floor) : floor;
+            const price = !heldMoney ? floor : ahead.length ? heldPriceAhead([...wishes, ...ahead], wallet, survivalReserve, floor)
+                : heldPriceOf(wishes, wallet, survivalReserve, floor);
             solver.priceHeld(price, wishes);
             return price;
         };
@@ -1659,6 +1704,9 @@ class WishNetwork {
             activityLeaf: individual && activity ? fnv1a32(activity.key) : 0 };
         if (diagnostic) {
             Diagnostics.count('network', 'build');
+            // T79: the held price admission chose its gear at against the build's own.
+            if (heldMoney && aheadPrice !== null) Diagnostics.count('network', 'held_ahead',
+                heldPrice === aheadPrice ? 'same' : heldPrice > aheadPrice ? 'dearer' : 'cheaper');
             const outcome = completion ? 'completion' : heldActivity ? 'held'
                 : heldLeaf ? 'outscored' : !inputActivityLeaf ? activity ? 'fresh' : 'none'
                 : focus?.[0] !== previous.focus?.[0] ? 'focus_moved' : 'gone';
@@ -1685,4 +1733,4 @@ class WishNetwork {
     }
 }
 
-module.exports = { WishNetwork, committedKeys, createSolver, sizedBuy, endSizedBuys, shortOf, createQuantityInputs, quantityInputsHold, eachQuantityRow, admitRoots, activePriority, priorityOrder, claimOrder, pinned, score, moneyQueue, heldPriceOf, cashHours, cashFor, rootMoneyPrice, remainingQuantity, fundable, cashCharge, remember, MAX_NODES, MAX_PATHS, MAX_ROOTS, MAX_DEPTH, QUANTITY_INPUT_LIMIT, QUANTITY_INPUT_BYTES, QUANTITY_THRESHOLDS, NO_THRESHOLDS };
+module.exports = { WishNetwork, committedKeys, createSolver, priceRoot, heldPriceAhead, moneyFloor, sizedBuy, endSizedBuys, shortOf, createQuantityInputs, quantityInputsHold, eachQuantityRow, admitRoots, activePriority, priorityOrder, claimOrder, pinned, score, moneyQueue, heldPriceOf, cashHours, cashFor, rootMoneyPrice, remainingQuantity, fundable, cashCharge, remember, MAX_NODES, MAX_PATHS, MAX_ROOTS, MAX_DEPTH, QUANTITY_INPUT_LIMIT, QUANTITY_INPUT_BYTES, QUANTITY_THRESHOLDS, NO_THRESHOLDS };
