@@ -2,7 +2,6 @@
 const Profit = require('./CraftProfitPolicy');
 const Commit = require('./EconomyCommit');
 const Diagnostics = require('./EconomyDiagnostics');
-const ShotCraftPolicy = require('./ShotCraftPolicy');
 const TwinCluster = require('./TwinCluster');
 const { isMainThread } = require('node:worker_threads');
 const TableChannel = require('../Population/ColdTableChannel').shared;
@@ -332,10 +331,10 @@ function bookFor(id) {
     if (!encodedRecipes.has(id)) encodedRecipes.set(id, invoke('GameServer/Bot/Economy/RecipeBookCodec').pack(knownRecipes.get(id)));
     return encodedRecipes.get(id);
 }
-// A bot's recipe knowledge for planning: the packed book and its packed shot
-// recipes; empty until knownFor has loaded the bot's recipes.
+// A bot's recipe knowledge for planning: the packed book; empty until
+// knownFor has loaded the bot's recipes.
 function knowledgeFor(id) {
-    return { knownShotRecipes: ShotCraftPolicy.packKnown(cachedRecipes(id)), recipeBook: bookFor(id) };
+    return { recipeBook: bookFor(id) };
 }
 const recipeRow = id => ({ characterId: Number(id), ...knowledgeFor(id) });
 // The 'recipes' table: one row per bot whose recipes main has loaded; the cold

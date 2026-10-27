@@ -1,7 +1,5 @@
 // Native shot decisions, shared by town reviews and the cold worker.
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
-const { partyIdOf } = require('../Population/PartyId');
-const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const Basket = require('./WealthCraftPolicy');
 const Profit = require('./CraftProfitPolicy');
@@ -14,11 +12,9 @@ const Trip = require('./EconomicTrip');
 const Crystals = require('./BotCrystallization');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
-const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 // The shot recipes: every recipe whose product is a D+ shop shot
 // (ShotStock.gradedShopShot, the classifier MarketDemand reads), in recipe-id
-// order (packKnown's bitmap positions). Recipe data is a restart input:
-// built once, at the first read.
+// order. Recipe data is a restart input: built once, at the first read.
 let shotRecipeIds = null;
 function shotRecipes() {
     shotRecipeIds ||= Object.freeze(Object.values(Recipes.loadRecipeItems() || {})
@@ -81,17 +77,13 @@ function batchCount(state, candidate) {
         Math.floor(potential / candidate.requiredCrystals), Profit.mpBatches(availableMp, candidate.recipe)));
 }
 
-function eligible(state, now = Date.now()) {
-    return state?.phase === 'cold' && ['hunting', 'resting', 'shopping', 'grouped'].includes(state.activity)
-        && CraftShopService.isServiceCrafter(state) && CraftShopService.craftLevelFor(state) >= 2
-        && !partyIdOf(state) && !state.stats?.craftStationId
-        && !invoke('GameServer/Bot/Population/CombinedErrandPolicy').pending(state, now).length
-        && !(state.stats?.equipmentPlan?.strategy === 'craft'
-            && GearAcquisitionPlanner.planRunning(state.stats.equipmentPlan));
-}
-// Heavy shot planning uses the same bounded basket/outcome iterator as wealth.
-// Source adapters provide one indexed quote/route per yield; native rechecks
-// use the synchronous convenience adapter only for the selected recipe/quantity.
+// The shot leaf: sizes one shot recipe's craft with the bounded basket
+// iterator wealth uses, its crystals from crystals, held, bought or crafted
+// gear (prepareCrystal) and its own use beside the sale. The producer root
+// (WishProviders) picks the recipe and its exit; WealthCraftDecision.producerStep
+// passes that exit (options.keepExit); main's recheck passes the step's exit
+// alone. Both fund at the root's ratio (below). Source adapters
+// provide one indexed quote/route per yield.
 function* recipeShotSearch(state, recipe, context, options = {}) {
     const rank = ShotStock.SHOP_SHOT_RANK.get(Number(recipe.productId)), crystalId = CRYSTAL_IDS[String(rank).toUpperCase()];
     const output = options.itemTemplate?.(recipe.productId) || invoke('GameServer/Item/ItemTemplateIndex')
@@ -109,9 +101,9 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
     const ownStock = options.ownStock || new Map();
     const ownFor = id => ownStock.get(Number(id)) || null;
     const trip = context.trip;
-    // A shot search request (shotSearch) passes searchMemo: its recipes and
-    // 1..64 batches share the rank walks below, none of which depends on the
-    // missing count. It lives as long as the request's iterator.
+    // A producer step passes searchMemo: its shot rows and 1..64 batches
+    // share the rank walks below, none of which depends on the missing
+    // count. It lives as long as the step's iterator.
     const memo = options.searchMemo || null;
     // The first walk of a rank keeps the uncached walk's yields (one per row),
     // so no planner unit grows; later batches read the list without them.
@@ -253,7 +245,9 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
     };
     const preparePurchase = (id, amount, allocation) => Number(id) === crystalId ? prepareCrystal(id, amount, allocation)
         : options.preparePurchase(state, id, amount, { npc: true, cost: trip });
-    const exits = options.prepareExits ? yield* options.prepareExits(state, recipe, output, trip) : [];
+    // Only the exit the caller keeps (the root's; any when none is given).
+    const keep = options.keepExit || (() => true);
+    const exits = (options.prepareExits ? yield* options.prepareExits(state, recipe, output, trip) : []).filter(keep);
     const personal = options.stock || context.stock?.('shots');
     const ownShots = Number(personal?.itemId) === Number(recipe.productId);
     const missing = ownShots ? Math.max(0, Number(personal.survivalMissing || 0) + Number(personal.missing || 0)) : 0;
@@ -264,8 +258,9 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
     const ownUnitHours = ownShots ? TradeIntent.inputValue(Number(personal.benefitHours || 0)
         / Math.max(1, Number(personal.target || missing)), context.soldPrice(Number(recipe.productId)),
         hourAdena > 0 ? 1 / hourAdena : 0) : 0;
-    if (missing && ownUnitHours > 0) exits.push({ type: 'use', price: 0, count: 0, ownUseUnits: missing,
-        ownUseUnitHours: ownUnitHours, residualUnitValue: 0 });
+    const ownUse = missing && ownUnitHours > 0 ? { type: 'use', price: 0, count: 0, ownUseUnits: missing,
+        ownUseUnitHours: ownUnitHours, residualUnitValue: 0 } : null;
+    if (ownUse && keep(ownUse)) exits.push(ownUse);
     // The units of the product already made (Price.heldUnits): owned, incoming
     // unless the owned count holds them, and on the bot's own plain sell lines.
     const existingOutput = Price.heldUnits(ownFor(Number(recipe.productId))?.count,
@@ -274,14 +269,15 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
     const outputReserve = Number(personal?.itemId) === Number(recipe.productId)
         ? Math.max(0, Number(personal.target || 0) - Number(state.inventory?.[recipe.productId]?.amount || 0)
             - Number(state.acceptedIncoming?.[recipe.productId] || 0)) : 0;
+    // A producer root's craft (the worker's step and main's recheck of it)
+    // spends at its root's money-queue ratio, the product's money-packet row
+    // (PurchaseFunding.itemRatio, goalTerms; none: held inputs only).
+    const r = PurchaseFunding.itemRatio(state.stats?.money, recipe.productId);
     const selected = yield* Basket.searchQuantity({ state: { ...state,
-        adena: PurchaseFunding.spendable(state, 0, { upperBound: true }) }, recipe, exits, ownedFor: ownFor,
+        adena: PurchaseFunding.spendable(state, 0, { r }) }, recipe, exits, ownedFor: ownFor,
         planFor: () => null, context: { ...context, existingOutput,
             outputReserve, reservedOutputUnitHours: ownUnitHours, preparePurchase } });
     if (!selected) return null;
-    const cash = selected.basket.cashCost + selected.basket.actualCashFees;
-    const r = cash > 0 ? selected.valueHours / cash : Infinity;
-    if (cash > PurchaseFunding.spendable(state, 0, { r })) return null;
     const orePurchase = selected.basket.purchases.find(row => row.selfId === oreId);
     const crystalPurchase = selected.basket.purchases.find(row => row.selfId === crystalId);
     return { ...selected, output, rank, crystalId, requiredCrystals, ore,
@@ -289,96 +285,6 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
         gear: crystalPurchase?.source || null, salePrice: selected.exit.price,
         profit: selected.expectedProfit, cost: selected.basket.cost, demand: selected.exit.count,
         r, context, personalStock: personal };
-}
-function* shotSearch(state, knownRecipes, context, options) {
-    const ids = new Set();
-    for (const row of knownRecipes || []) { ids.add(Number(row.recipeId ?? row)); yield 'recipe'; }
-    for (const id of unpackKnown(options.knownShotRecipes || [])) { ids.add(id); yield 'recipe'; }
-    let best = null, recipeChoice = null;
-    const shared = { ...options, knownRecipes, searchMemo: new Map() };
-    for (const id of shotRecipes()) {
-        const recipe = Recipes.resolveByRecipeId(id);
-        yield 'recipe';
-        if (!recipe || !CraftShopService.canCraft(state, recipe)) continue;
-        const route = yield* recipeShotSearch(state, recipe, context, shared);
-        if (!route) continue;
-        if (ids.has(id)) {
-            if (!best || route.valueHours > best.valueHours) best = route;
-            continue;
-        }
-        // A free scroll the learner takes is learned (Wealth.heldScroll); else it is bought.
-        const learnable = Wealth.heldScroll(state, recipe);
-        const scrollPurchase = !learnable && options.preparePurchase
-            ? yield* options.preparePurchase(state, Number(recipe.recipeItemId), 1, { npc: false, cost: context.trip }) : null;
-        const scrollExits = options.prepareExits ? yield* options.prepareExits(state,
-            { productId: recipe.recipeItemId }, { template: { kind: 'Other.Recipe' } }, context.trip) : [];
-        let sale = null;
-        for (const exit of scrollExits) { if (!sale || exit.price > sale.price) sale = exit; yield 'quote'; }
-        const decision = Wealth.recipePaths(state, recipe, { route, sale,
-            acquisition: scrollPurchase?.whole ? { available: true, price: scrollPurchase.cost,
-                hours: scrollPurchase.tripDetails?.hours || 0 } : null, context });
-        yield 'utility';
-        if (['learn', 'acquire'].includes(decision.best.kind)
-            && (!recipeChoice || decision.best.valueHours > recipeChoice.valueHours)) recipeChoice = {
-            recipe, route, decision, valueHours: decision.best.valueHours };
-    }
-    if (recipeChoice && (!best || recipeChoice.valueHours > best.valueHours)) {
-        options.onSelection?.(recipeChoice.valueHours);
-        return {
-        recipeTarget: Number(recipeChoice.recipe.recipeId), recipeRoute: selectionFor(recipeChoice.route) };
-    }
-    options.onSelection?.(Number(best?.valueHours || 0));
-    return best ? { craft: selectionFor(best) } : null;
-}
-function createShot(state, knownRecipes, context, options = {}) {
-    const cursor = { iterator: null, done: false, value: null, stage: 0, units: 0, mode: 'action', selectedValueHours: 0 };
-    cursor.iterator = shotSearch(state, knownRecipes, context, { ...options,
-        onSelection: value => { cursor.selectedValueHours = value; } });
-    return cursor;
-}
-const STAGES = Object.freeze(['stock', 'recipe', 'ingredient', 'owned', 'quote', 'trip', 'exit', 'without', 'success',
-    'utility', 'candidate', 'funding', 'exits']);
-// A shot search yields one 'edge' per gear row it walks: up to EDGE_STEPS of
-// them run as one step, as the worker batches its own edges; the stage table
-// has no 'edge', so the worker could not batch them.
-const EDGE_STEPS = 64;
-function stepShot(cursor) {
-    if (cursor.done) return true;
-    let next = cursor.iterator.next(); cursor.units++;
-    for (let edges = 1; next.value === 'edge' && edges < EDGE_STEPS; edges++) { next = cursor.iterator.next(); cursor.units++; }
-    cursor.stage = typeof next.value === 'object' ? Number(next.value?.stage || 0)
-        : STAGES.indexOf(next.value) + 1;
-    if (next.done) { cursor.done = true; cursor.value = next.value; cursor.iterator = null; }
-    return cursor.done;
-}
-function resultShot(cursor) { return cursor.done ? cursor.value : null; }
-// The one answer to "which craft does the crafter take" (the worker's
-// occupation step): the more valuable of the producer root's wealth step
-// and the shot step, each { step, valueHours }. Both values are the whole
-// step's net value in the bot's hours at the same hour price
-// (WealthCraftPolicy.searchQuantity; a shot recipe to learn or buy:
-// recipePaths, net of the scroll). The shot step must beat the wealth step;
-// a tie keeps the wealth step. A step of no positive value is none.
-function moreValuableStep(wealth, shot) {
-    const worth = row => row?.step && Number(row.valueHours) > 0 ? Number(row.valueHours) : 0;
-    return worth(shot) > worth(wealth) ? shot.step : worth(wealth) > 0 ? wealth.step : null;
-}
-
-// ARCH-NOTE: the native catalogue has fifteen shot recipes. Ordinary contexts
-// carry <=8 IDs; a rare larger collection uses one negative 15-bit bitmap, so
-// every known recipe is retained within the fixed eight-number/64-byte budget.
-function packKnown(ids) {
-    const all = shotRecipes();
-    const shot = [...new Set(ids.map(Number))].filter(id => all.includes(id));
-    if (shot.length <= 8) return shot;
-    return [-1 - shot.reduce((mask, id) => mask | (1 << all.indexOf(id)), 0)];
-}
-function unpackKnown(ids = []) {
-    if (ids.length === 1 && Number(ids[0]) < 0) {
-        const mask = -1 - Number(ids[0]);
-        return shotRecipes().filter((id, at) => mask & (1 << at));
-    }
-    return ids.map(Number).filter(id => shotRecipes().includes(id));
 }
 // The command header reserves 59 B. Sparse tuples retain source identity in
 // the remaining 69 B; exact public revisions let native rechecks recover the
@@ -440,5 +346,5 @@ function unpackStep(step) {
 }
 
 module.exports = { get SHOT_RECIPE_IDS() { return shotRecipes(); },
-    availableMaterial, batchCount, eligible, packKnown, unpackKnown, packStep, unpackStep,
-    recipeShotSearch, createShot, stepShot, resultShot, moreValuableStep, exitTuple, selectionFor, townCode, townForCode };
+    availableMaterial, batchCount, packStep, unpackStep,
+    recipeShotSearch, exitTuple, selectionFor, townCode, townForCode };

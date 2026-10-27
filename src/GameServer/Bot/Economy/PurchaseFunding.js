@@ -26,6 +26,13 @@ function moneyReached(state, escrow = 0, packet = state?.stats?.money) {
     for (let i = 5; i < packet.length; i += 3) fundedPrice = Math.max(fundedPrice, Number(packet[i]) || 0);
     return budget(state, escrow) - nonnegative(packet[2]) >= fundedPrice + Number(packet[3]);
 }
+// The ratio of an item's money-packet row (its funded root, packetFor), 0
+// when the item owns none: the funding of a goal that carries no ratio (goalTerms).
+function itemRatio(packet, itemId) {
+    if (!Array.isArray(packet)) return 0;
+    for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i + 2] === Number(itemId)) return packet[i];
+    return 0;
+}
 function budgetFor(packet, wallet, escrow, r, capture = null) {
     let prior = 0;
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i] > r) prior = packet[i + 1];
@@ -105,10 +112,7 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
         queueBudget = clanPart + (packet[3] === 0 ? budgetFor(packet, wallet - clanPart, 0, -Infinity, capture) : 0);
     }
     else {
-        let r = Number(options.r ?? 0);
-        if (options.itemId && options.r === undefined) {
-            for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i + 2] === Number(options.itemId)) { r = packet[i]; break; }
-        }
+        const r = options.itemId && options.r === undefined ? itemRatio(packet, options.itemId) : Number(options.r ?? 0);
         // Worth buying is value per Adena at the price really paid: a quote
         // above the planner's estimate lowers it by the same factor (E187).
         // The queue's own order still decides which money is held for others.
@@ -214,5 +218,5 @@ function packetFor(network, hour, reserve) {
 // One rule for the planner (an offer) and the gates (a plan).
 function offerEscrow(offer, escrow = 0) { return offer?.sourceType === 'npc' ? escrow : 0; }
 function tripEscrow(plan, escrow = 0) { return offerEscrow(plan?.market, escrow); }
-module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
+module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }) };

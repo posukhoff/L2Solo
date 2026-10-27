@@ -305,7 +305,7 @@ function capture(economy, state, seen = state) {
     const activity = leaf ? new CompactActivity(leaf) : null;
     // The leaf's producer root keeps its exit identity on the card (restart).
     const producer = activity?.rootKey ? economy?.network?.producers?.find(row => row.key === activity.rootKey) : null;
-    if (producer && Array.isArray(producer.exit)) activity.exitKey = [Number(producer.exit[0]), Number(producer.exit[1])];
+    if (producer && Array.isArray(producer.exit) && producer.key.startsWith('resale:')) activity.exitKey = [Number(producer.exit[0]), Number(producer.exit[1])];
     if (activity) {
         const rows = CraftInputReservations.heldCraftRows(seen, economy?.network?.heldClaims);
         if (rows.length) activity.craftReservations = rows;

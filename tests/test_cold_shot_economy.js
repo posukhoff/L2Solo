@@ -12,6 +12,7 @@ const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Shots = invoke('GameServer/Bot/Economy/ColdShotEconomyService');
 const Policy = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
+const Wealth = invoke('GameServer/Bot/Economy/WealthCraftDecision');
 const Workshop = invoke('GameServer/Bot/Economy/CraftWorkshopService');
 const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
 const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
@@ -46,6 +47,12 @@ async function measuredEconomy(state, now) {
     const context = Economy.forState(state, { timestamp: now });
     return Life.upsertState({ ...state, stats: { ...state.stats, ...context.statsPacket } }, 'native_craft_money');
 }
+// The producer root of `itemId` funded: its money-packet row at a ratio above
+// the money price (PurchaseFunding.itemRatio, what a craft step spends at).
+function fundRoot(state, itemId) {
+    return Life.upsertState({ ...state, stats: { ...state.stats,
+        money: [...state.stats.money.slice(0, 4), 1, 0, Number(itemId)] } }, 'native_craft_funded_root');
+}
 // MVP-1: money waits only behind a path with a step now, so a native review
 // reads the bot's prepared town routes, as the live worker does.
 function preparedRoutes(state) {
@@ -76,7 +83,8 @@ async function images(ids) {
         life: (await Database.execute(['SELECT * FROM bot_life_state WHERE characterId=?', [id]]))[0] })));
 }
 // The worker's selection (ShotCraftPolicy.selectionFor) for a D-shot craft:
-// the seller's helmet line and the buyer's bid line, read now from the board.
+// the seller's helmet line and the buyer's bid line, read now from the board,
+// its root funded through the product's money-packet row (fundRoot).
 function shotCraft(supplierId, buyerId, batches = 7) {
     const ask = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === supplierId);
     const bid = Afk.offers(1463, Afk.BUY).find(row => Number(row.sourceId) === buyerId);
@@ -113,7 +121,7 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         await Database.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 1 }, crafter.characterId);
         // The learned Crystallize reaches the worker's view as the live refresh puts it there.
         crafter = { ...crafter, stats: { ...crafter.stats, coldCombat: Profile.legacySnapshot(crafter, await Database.fetchSkills(crafter.characterId), now) } };
-        crafter = await measuredEconomy(crafter, now);
+        crafter = await fundRoot(await measuredEconomy(crafter, now), 1463);
         const recipe = Recipes.resolveByRecipeId(20);
         assert.equal(crafter.stats.money[0], 77000, 'labour uses three measured native hunting rounds');
         assert(crafter.stats.money[1] >= 1 / crafter.stats.money[0]);
@@ -125,8 +133,13 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         const refused = shotCraft(supplier.characterId, buyer.characterId);
         assert.equal(Shots.recheck(crafter, refused), null);
         await Shots.execute(crafter, { craft: refused }, now);
-        assert.deepEqual(await images([crafter.characterId, supplier.characterId]), refusedBefore,
+        // The refusal sends the step back to the worker (its mind moves); no
+        // item, adena or character row changes.
+        const physical = rows => rows.map(({ items, character }) => ({ items, character }));
+        const refusedAfter = await images([crafter.characterId, supplier.characterId]);
+        assert.deepEqual(physical(refusedAfter), physical(refusedBefore),
             'below-floor production cannot debit, crystallize or consume materials');
+        assert.notEqual(refusedAfter[0].life.mindJson, refusedBefore[0].life.mindJson, 'a refused craft step goes back to the worker');
 
         const oldOffer = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === supplier.characterId);
         assert(oldOffer, 'the expensive physical helmet remains in its seller escrow');
@@ -189,7 +202,7 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         // The learner breaks bought gear with its own Crystallize (248).
         await Database.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 1 }, recipeBuyer.characterId);
         recipeBuyer = { ...recipeBuyer, stats: { ...recipeBuyer.stats, coldCombat: Profile.legacySnapshot(recipeBuyer, await Database.fetchSkills(recipeBuyer.characterId), now) } };
-        recipeBuyer = await measuredEconomy(recipeBuyer, now);
+        recipeBuyer = await fundRoot(await measuredEconomy(recipeBuyer, now), 1463);
         assert(Shots.recheck(recipeBuyer, shotCraft(supplier.characterId, buyer.characterId)),
             'the requested recipe has a profitable native route');
         // An expensive scroll is refused before acquisition. A later cheap
@@ -268,9 +281,9 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         // The scan/candidate timer was retired by C2a/C2c. Eligibility remains
         // the native class/recipe rule; named worker plans perform the work.
         assert.equal(Shots.candidates, undefined);
-        assert(Policy.eligible({ ...result, level: 78, stats: { ...result.stats, classId: 118 } }, now));
-        assert(Policy.eligible({ ...result, level: 60, stats: { ...result.stats, classId: 57 } }, now));
-        assert(!Policy.eligible({ ...result, party: { partyId: 9 } }, now));
+        assert(Wealth.eligible({ ...result, level: 78, stats: { ...result.stats, classId: 118 } }, { now }));
+        assert(Wealth.eligible({ ...result, level: 60, stats: { ...result.stats, classId: 57 } }, { now }));
+        assert(!Wealth.eligible({ ...result, party: { partyId: 9 } }, { now }));
         console.log('PASS native Maestro/Warsmith eligibility and no retired population scan');
 
         const cRecipe = Recipes.resolveByRecipeId(21);
@@ -287,7 +300,7 @@ function shotCraft(supplierId, buyerId, batches = 7) {
             { selfId: 1459, amount: 1 },
             { selfId: 1463, amount: 1000 }, { selfId: 129, amount: 1, equipped: true, slot: 7 }],
         { classId: 57, level: 55, name: 'CLearner' });
-        cCrafter = await measuredEconomy(cCrafter, now);
+        cCrafter = await fundRoot(await measuredEconomy(cCrafter, now), 1464);
         // The worker's selection for a C-shot craft: crystals bought in Giran
         // (gear source -3) and the consumer's bid line, read now from the board.
         const cSelection = (batches = 5) => {

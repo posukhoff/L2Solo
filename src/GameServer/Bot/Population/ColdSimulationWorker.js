@@ -267,12 +267,12 @@ const occupationPlanner = new ColdOccupationPlanner({
     // party goal query passes main's escrow and recipe book).
     sameInput: (left, right) => left.mode === right.mode && left.sourceState === right.sourceState
         && left.routeKey === right.routeKey && (left.mode === 'wish' || left.state === right.state
-        && left.assetsKey === right.assetsKey && left.knownShotRecipes === right.knownShotRecipes && left.recipeBook === right.recipeBook && left.stock === right.stock
+        && left.assetsKey === right.assetsKey && left.recipeBook === right.recipeBook && left.stock === right.stock
         && left.sourceReady === right.sourceReady && left.buyOrderEscrow === right.buyOrderEscrow),
     capture: (id, input, read, readScope) => {
         const book = RecipeBookCodec.unpack(input.recipeBook);
         return { state: input.state, board: boardReady(), timestamp: input.timestamp, read, readScope,
-            knownRecipes: book || [], knownShotRecipes: input.knownShotRecipes || [], recipesKnown: book !== null, book,
+            knownRecipes: book || [], recipesKnown: book !== null, book,
             buyOrderEscrow: input.buyOrderEscrow, stock: input.stock || null, economy: input.economy || null,
             routeRows: input.routeRows || null, routeKey: input.routeKey, mode: input.mode || 'occupation', meeting: input.meeting, pending: input.pending,
             // The ask's trigger for the rebuild table (a refresh or near build
@@ -457,27 +457,12 @@ const occupationPlanner = new ColdOccupationPlanner({
         }
         if (!prepared) return null;
         const Wealth = invoke('GameServer/Bot/Economy/WealthCraftDecision');
-        const options = { ...prepared.options, knownShotRecipes: input.knownShotRecipes, stock: input.stock,
-            buyOrderEscrow: input.buyOrderEscrow, now: input.timestamp };
-        // lazy: worker the craft policies load with the first prepared step, as WealthCraftDecision above
-        let wealth = null, shot = null;
-        if (Wealth.eligible(input.state, options)) {
-            // The producer root's craft, sized (WealthCraftDecision.producerStep).
-            const value = yield* Wealth.producerStep(input.state, input.economy?.network?.producers, input.knownRecipes, prepared);
-            // The one route packer keeps the root's exit (a buyer line or a
-            // listing town), the value ratio main funds the inputs at and the
-            // held scroll main learns before the craft (producerStep).
-            if (value) wealth = { valueHours: value.valueHours, step: { wealth: { ...Shots.selectionFor({ ...value, personalStock: input.stock }),
-                ...(Number.isFinite(value.r) && value.r > 0 ? { r: Number(value.r) } : {}),
-                ...(value.scroll ? { scroll: value.scroll } : {}) } } };
-        }
-        if (Shots.eligible(input.state, input.timestamp)) {
-            const cursor = Shots.createShot(input.state, input.knownRecipes, prepared.context, options);
-            while (!Shots.stepShot(cursor)) yield cursor.stage;
-            shot = { valueHours: cursor.selectedValueHours, step: Shots.resultShot(cursor) };
-        }
-        // The crafter takes the more valuable craft (ShotCraftPolicy.moreValuableStep).
-        const selected = Shots.moreValuableStep(wealth, shot);
+        const options = { ...prepared.options, stock: input.stock, buyOrderEscrow: input.buyOrderEscrow, now: input.timestamp };
+        // The producer root's craft, sized by its leaf (WealthCraftDecision.producerStep,
+        // the one answer to which craft the crafter takes); this step only executes it.
+        // A held card's view has no producer rows: no craft until a build.
+        const selected = Wealth.eligible(input.state, options) ? (yield* Wealth.producerStep(input.state,
+            input.economy?.network?.producers, input.knownRecipes, { context: prepared.context, options }))?.step || null : null;
         const economyPlan = input.economy ? yield* invoke('GameServer/Bot/Population/ColdEconomyPlan').prepare(input.state, input.economy, {
             ...prepared.options, now: input.timestamp, board: input.board, persona: BotPersona.of(input.state),
             tripCost: prepared.context.trip, preparedCraft: selected,
@@ -488,7 +473,7 @@ const occupationPlanner = new ColdOccupationPlanner({
                 tripHours: decision.tripHours, tripFees: decision.tripFees
             }) } : null),
             findSpot: id => SpotIndex.spotById(planningSpots, id),
-            buyOrderEscrow: input.buyOrderEscrow, knownShotRecipes: input.knownShotRecipes
+            buyOrderEscrow: input.buyOrderEscrow
         }) : null;
         return { selected, economyPlan, ...(input.mode === 'refresh' ? { economyDecision:
             ColdEconomyDecision.capture({ ...input.economy, shot: economyPlan?.shot || null }, input.state) } : {}) };
@@ -601,7 +586,7 @@ function occupationFor(state, timestamp, options = {}, mode = 'occupation') {
     return occupationPlanner.request(id, { state, sourceState, timestamp, assetsKey: assetsKey(state),
         // The party goal query passes its own (main's) escrow; else the board's sum.
         buyOrderEscrow: options.buyOrderEscrow ?? escrowFor(state.characterId),
-        knownShotRecipes: recipes.knownShotRecipes || [], recipeBook: recipes.recipeBook, stock: options.stock || null, economy,
+        recipeBook: recipes.recipeBook, stock: options.stock || null, economy,
         sourceReady: tables.ready('board') && tables.ready('market'), mode, routeKey, routeRows });
 }
 // A build's workshop (the crafter's best recipe and its income per hour,
@@ -630,9 +615,9 @@ function assetsKey(state) {
     return `${PersonalWarehouseIndex.version(state)}:${ClanSupplyPolicy.version(state)}`;
 }
 const economyPlanHash = plan => require('../Fnv1a').fnv1a32(JSON.stringify(plan));
-// A service crafter's recipe book and packed known shot recipes, from main's
-// 'recipes' table (CraftWorkshopService); none for any other bot.
-const NO_RECIPES = Object.freeze({ knownShotRecipes: Object.freeze([]), recipeBook: undefined });
+// A service crafter's packed recipe book, from main's 'recipes' table
+// (CraftWorkshopService); none for any other bot.
+const NO_RECIPES = Object.freeze({ recipeBook: undefined });
 function recipeKnowledgeOf(state) {
     return state && CraftEligibility.isServiceCrafter(state)
         && tables.rows('recipes').get(Number(state.characterId)) || NO_RECIPES;

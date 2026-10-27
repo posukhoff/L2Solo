@@ -42,8 +42,8 @@ function learnsRecipe(state, recipe, item = state?.inventory?.[recipe.recipeItem
 // learned"): every learn point learns it unless the bot knows it already
 // (LifeState.learnCraftableRecipes, BotWarehouseService.learnActorRecipes),
 // and the craft of an unknown recipe learns it first. Read by recipePaths
-// and ShotCraftPolicy.shotSearch (worker) and ColdWealthCraftService.recheck
-// (main); the producer step reads WishProviders' scrollSource verdict instead.
+// and ColdWealthCraftService.recheck (main); the producer step reads
+// WishProviders' scrollSource verdict instead.
 // reserved: the executor's ItemDisposition.reservedEquipmentAmounts, or a
 // function giving it, called only for a scroll the learner takes.
 function heldScroll(state, recipe, item = state?.inventory?.[recipe.recipeItemId], reserved = {}) {
@@ -63,50 +63,91 @@ function ownComponent(state, known) {
         return null;
     };
 }
-// The cold wealth step sizes the craft a WishProviders producer root chose
-// (network.producers {key, amount, recipeId, exit, recipeReady, r}, WishNetwork.build: a kept
-// `resale:` root with a chosen exit, priced (r = its money-queue ratio) or all
-// inputs owned): the root alone picks the recipe and
-// its one exit (ShotCraftPolicy.exitTuple); this step only finds
-// the batches, up to the root's amount, the cash its ratio may spend and that
-// exit's demand pay for. Only a row WishProviders' scrollSource found ready
-// (recipeReady: a known recipe, or an unknown one whose free scroll the learner takes; the
-// step carries it as `scroll`, main learns it before the craft); a scroll to
-// find (SOURCE) is no craft yet: the root acts on the scroll alone
-// (TradeIntent.scrollFirst), bought, farmed or bid for by its item node's path.
-// prepared: ColdOccupationSources.prepare (context, options).
+// The cold craft step: the one answer to "which craft does the crafter take"
+// (the worker's occupation step only executes it). A WishProviders producer
+// root picks the recipe and its one exit (network.producers {key, amount,
+// recipeId, exit, recipeReady, r}, WishNetwork.build: a kept `resale:` root
+// with a chosen exit, or a stock root its item node crafts itself, exit own
+// use [-1, units]; ShotCraftPolicy.exitTuple); this step only sizes each row
+// by its leaf and takes the row of the most net value (shotpick 10-24): the
+// batches (up to the root's amount on a buyer line or own use) that the cash
+// its ratio may spend and that exit's demand pay for. A shot recipe's leaf is ShotCraftPolicy's
+// (crystals from gear, its own use), every other recipe's
+// WealthCraftPolicy.searchQuantity; own use is the shot leaf's exit only.
+// Only a row WishProviders' scrollSource found ready (recipeReady: a known
+// recipe, or an unknown one whose free scroll the learner takes; main learns
+// it before the craft); a scroll to find (SOURCE) is no craft yet: the root
+// acts on the scroll alone (TradeIntent.scrollFirst), bought, farmed or bid
+// for by its item node's path.
+// prepared: ColdOccupationSources.prepare's context and options (with the
+// bot's shots stock). Returns { valueHours, step } or null; the step is
+// packed by ShotCraftPolicy.packStep: { wealth }, a shot { craft }, or a shot
+// recipe to learn first { recipeTarget, recipeRoute }.
 function* producerStep(state, producers, knownRecipes, { context, options }) {
     // lazy: cycle ShotCraftPolicy requires this module
-    const { exitTuple } = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
+    const Shots = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
     const known = new Set((knownRecipes || []).map(row => Number(row.recipeId ?? row)));
     const preparePurchase = (id, missing) => options.preparePurchase(state, id, missing, { npc: true, cost: context.trip });
     const ownedFor = id => options.ownStock.get(Number(id)) || null;
+    // The shot leaf's rank walks, shared by this step's shot rows.
+    const searchMemo = new Map();
     let best = null;
     for (const producer of producers || []) {
         const chosen = producer.exit;
         const recipe = Recipes.resolveByRecipeId(Number(producer.recipeId));
         if (!producer.recipeReady || !recipe || !CraftShopService.canCraft(state, recipe)) continue;
+        const shot = Shots.SHOT_RECIPE_IDS.includes(Number(recipe.recipeId)), ownUse = chosen[0] === -1;
+        if (ownUse && !shot) continue;
         const learn = !known.has(Number(producer.recipeId));
-        const exits = (yield* options.prepareExits(state, recipe)).filter(exit => {
-            const tuple = exitTuple(exit);
-            return tuple?.[0] === chosen[0] && tuple[1] === chosen[1];
-        });
+        // The root's exit: a buyer line by its line, a listing by its town,
+        // own use by its kind (its units are the leaf's stock count).
+        const keepExit = exit => {
+            const tuple = Shots.exitTuple(exit);
+            return tuple?.[0] === chosen[0] && (chosen[0] === -1 || tuple[1] === chosen[1]);
+        };
         // Cash inputs spend at the root's money-queue ratio (one rule for
-        // every reader, PurchaseFunding.goalTerms): the batches are sized
-        // within what that ratio may spend (Policy's cash bound is state.adena).
+        // every reader, PurchaseFunding.goalTerms; a shot row reads it from
+        // its product's money-packet row, as main's recheck does): the
+        // batches are sized within what that ratio may spend.
         const r = producer.r;
-        const candidate = exits.length ? yield* Policy.searchQuantity({
-            state: { ...state, adena: PurchaseFunding.spendable(state, 0, { r }) }, recipe, exits, ownedFor,
-            context: { ...context, preparePurchase, component: ownComponent(state, known), existingOutput: options.existing(recipe.productId),
-                maxBatches: Math.floor(Number(producer.amount || 0) / Number(recipe.productCount || 1)) } }) : null;
+        // The root's units: whole lots on a sale exit; own use the batches
+        // that make every missing unit (the solver's ceil). The shot leaf
+        // sizes a listing by its forecast, a larger lot at a lower ask (the
+        // exit's forQuantity, as the shot search did), which the root's
+        // one-ask lot does not see; a wealth row keeps the root's lot.
+        const lots = Number(producer.amount || 0) / Number(recipe.productCount || 1);
+        const maxBatches = ownUse ? Math.ceil(lots) : shot && chosen[0] === -2 ? undefined : Math.floor(lots);
+        let candidate = null;
+        if (shot) {
+            // Own use prices no sale exit: the leaf adds its own-use exit.
+            candidate = yield* Shots.recipeShotSearch(state, recipe, { ...context, maxBatches },
+                { ...options, knownRecipes, searchMemo, keepExit, ...(ownUse ? { prepareExits: null } : {}) });
+        } else {
+            const exits = (yield* options.prepareExits(state, recipe)).filter(keepExit);
+            // Policy's cash bound is state.adena.
+            candidate = exits.length ? yield* Policy.searchQuantity({
+                state: { ...state, adena: PurchaseFunding.spendable(state, 0, { r }) }, recipe, exits, ownedFor,
+                context: { ...context, preparePurchase, component: ownComponent(state, known),
+                    existingOutput: options.existing(recipe.productId), maxBatches } }) : null;
+        }
         yield 'funding';
         if (!candidate) continue;
         // The step's own net value at today's quotes must still be positive.
         if (candidate.valueHours > 0 && (!best || candidate.valueHours > best.valueHours)) {
-            best = { ...candidate, r, ...(learn ? { scroll: [Number(recipe.recipeItemId)] } : {}) };
+            best = { ...candidate, r, shot, learn };
         }
     }
-    return best;
+    if (!best) return null;
+    // The one route packer keeps the root's exit (a buyer line, a listing
+    // town or own use), the gear the crystals come from and the own reserve.
+    const selection = Shots.selectionFor({ ...best, personalStock: best.personalStock || options.stock });
+    // A wealth step carries the value ratio main funds the inputs at and the
+    // held scroll main learns before the craft.
+    const step = !best.shot ? { wealth: { ...selection,
+        ...(Number.isFinite(best.r) && best.r > 0 ? { r: Number(best.r) } : {}),
+        ...(best.learn ? { scroll: [Number(best.recipe.recipeItemId)] } : {}) } }
+        : best.learn ? { recipeTarget: Number(best.recipe.recipeId), recipeRoute: selection } : { craft: selection };
+    return { valueHours: best.valueHours, step };
 }
 // The same finite route value also decides whether consuming/acquiring the
 // physical scroll beats sale/holding/clan alternatives. No lifetime multiplier.

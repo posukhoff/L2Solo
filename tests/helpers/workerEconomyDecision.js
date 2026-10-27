@@ -91,7 +91,7 @@ parentPort.on('message', async message => {
     catch (error) { parentPort.postMessage({ probeId: message.msgId, error: error.stack, meetingTrace: error.meetingTrace }); }
 });`;
 
-// recipes: the bot's row of main's 'recipes' table ({ recipeBook, knownShotRecipes }), if any.
+// recipes: the bot's row of main's 'recipes' table ({ recipeBook }), if any.
 module.exports = async function workerEconomyDecision(state, { recipes = null, timestamp = Date.now(),
     boardRows = [], extraStates = [], tablePages = [], tables = [], recipeEarning = false, refreshEconomy = false, nativeRoutes = false, townVisit = false, meetingRequest = null, duringMeetingMarket = [] } = {}) {
     const epoch = `native:economy-decision:${state.characterId}`;

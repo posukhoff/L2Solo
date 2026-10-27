@@ -133,8 +133,15 @@ parentPort.on('message', message => {
         const response = await wait(message => message.probeId === 'probe'); if (response.error) throw Error(response.error);
         const result = response.value;
         console.log(JSON.stringify({ edges: result.edges, shot: result.plan?.shot, huntHour: result.hour, forbiddenLoaded: result.forbiddenLoaded }));
-        const selectedStep = Policy.unpackStep(result.plan?.shot);
-        assert(result.edges & 1); assert(selectedStep?.recipeTarget > 0, 'native worker with no known recipe selects a profitable executable recipe');
+        // No known recipe: the producer root picks a shot recipe for the
+        // buyer line and acts on its scroll alone (a bid for it, the scroll's
+        // item node path); the craft step buys no scroll of its own.
+        const scrolls = new Set(Policy.SHOT_RECIPE_IDS.map(recipeId =>
+            Number(invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(recipeId).recipeItemId)));
+        assert(result.edges & 1);
+        assert(!Policy.unpackStep(result.plan?.shot)?.recipeTarget, 'the craft step buys no recipe scroll');
+        assert((result.plan?.buyAds || []).some(row => scrolls.has(Number(row[0]))),
+            'native worker with no known recipe bids for a profitable shot recipe scroll');
         assert(messages.some(message => message.type === 'economy_diagnostics'), 'worker emits sampled decision telemetry on the separate developer bridge');
         assert.deepEqual(result.forbiddenLoaded, [], 'pure craft decision loads no World actor, Network or database implementation');
 
@@ -143,43 +150,16 @@ parentPort.on('message', message => {
             assert(Buffer.byteLength(JSON.stringify({ shot: packed })) - 2 <= 32);
             assert.deepEqual(Policy.unpackStep(packed), step);
         }
-        assert.deepEqual(Policy.unpackKnown(Policy.packKnown(Policy.SHOT_RECIPE_IDS)), Policy.SHOT_RECIPE_IDS);
-        assert(Buffer.byteLength(JSON.stringify({ knownShotRecipes: Policy.packKnown(Policy.SHOT_RECIPE_IDS) })) <= 64);
         // The real execute site rejects non-positive margin before any write.
         const before = await Database.fetchItems(id), previousAcquire = invoke('GameServer/Bot/Economy/ColdMarketService').acquire;
         let purchases = 0;
         invoke('GameServer/Bot/Economy/ColdMarketService').acquire = async () => { purchases++; throw Error('unexpected recipe spend'); };
         try {
-            const recipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(selectedStep.recipeTarget);
-            assert.strictEqual(await Shots.obtainRecipe(state, { recipe, route: { profit: 0 } }, now), state);
-            assert.strictEqual(await Shots.obtainRecipe(state, { recipe, route: { profit: -1 } }, now), state);
+            assert.strictEqual(await Shots.obtainRecipe(state, { recipe: offeredRecipe, route: { profit: 0 } }, now), state);
+            assert.strictEqual(await Shots.obtainRecipe(state, { recipe: offeredRecipe, route: { profit: -1 } }, now), state);
             assert.equal(purchases, 0);
             assert.deepEqual(await Database.fetchItems(id), before);
         } finally { invoke('GameServer/Bot/Economy/ColdMarketService').acquire = previousAcquire; }
-        const recipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(selectedStep.recipeTarget);
-        await Life.upsertState({ characterId: sellerId, accountName: 'bot_recipe_supplier', name: 'RecipeSupplier',
-            level: 30, exp: Number(DataCache.experience[29]), phase: 'cold', activity: 'shopping', currentRegion: 'Giran',
-            adena: Number((await Database.fetchItems(sellerId)).find(row => row.selfId === 57)?.amount || 0), inventory: Life.inventorySummaryFromItems(await Database.fetchItems(sellerId)),
-            loc: state.loc, vitals: { hp: 187, maxHp: 187, mp: 74, maxMp: 74 }, stats: { classId: 0 } }, 'shot_supplier_fixture');
-        state = await Life.upsertState({ ...result.state, activity: 'shopping', currentRegion: 'Giran' }, 'shot_plan_accepted_fixture');
-        const coordinator = new ColdSimulationCoordinator();
-        coordinator.fenceBot = () => { throw Error('economic_fence_forbidden'); };
-        const Market = require('../src/GameServer/Bot/Economy/BotAfkMarketService');
-        const Goals = invoke('GameServer/Bot/Goals/GoalService'), originalReview = Goals.review;
-        Goals.review = async () => null;
-        const wallet = state.adena;
-        try {
-            const execution = await Market.executePlan(state, { shot: result.plan.shot, sell: [], withdraw: [], buyAds: [], buyTown: 'Giran', travel: null },
-                { beforeWrite: () => {}, step: work => coordinator.step('economyPlan', id, work) });
-            assert((await Database.fetchCharacterRecipes(id)).some(row => Number(row.recipeId) === recipe.recipeId),
-                'main executes the worker recipe target from a genuine physical scroll');
-            assert.equal(execution.state.adena, wallet - 1, 'the quoted recipe price is paid once');
-            assert.equal((await Database.fetchItems(sellerId)).filter(row => row.selfId === recipe.recipeItemId).reduce((sum, row) => sum + row.amount, 0), 0);
-            assert.equal((await Database.fetchItems(id)).filter(row => row.selfId === recipe.recipeItemId).reduce((sum, row) => sum + row.amount, 0), 0,
-                'learning consumes the delivered physical scroll');
-            assert.equal(coordinator.counters.fences, 0);
-            assert.equal(coordinator.counters.afterCommitStepErrors.economyPlan, 0);
-        } finally { Goals.review = originalReview; }
         // An owned book without a supported profitable exit is held. Neither
         // ownership nor an old recipe-target packet invents a craft opportunity.
         const ownedRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(317);
@@ -200,6 +180,6 @@ parentPort.on('message', message => {
         // choice survives depends on the wall-clock second it lands in, so the
         // check is that this bot's worker records reach the writer at all.
         assert(diagnostics.some(row => row.owner === id && row.thread === 'worker'), 'sampled worker choices reach the existing history writer');
-        console.log('Native worker executable recipe decision, physical purchase, own-stock privacy, held unsupported book, zero economy fences and margin rejection passed');
+        console.log('Native worker recipe scroll bid, held unsupported book and margin rejection passed');
     } finally { await worker?.terminate(); await world.close(); }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });

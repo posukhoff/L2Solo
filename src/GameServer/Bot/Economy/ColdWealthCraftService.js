@@ -1,11 +1,9 @@
 const Policy = require('./WealthCraftPolicy');
-const { partyIdOf } = require('../Population/PartyId');
 const Shots = require('./ShotCraftPolicy');
 const WealthDecision = require('./WealthCraftDecision');
 const Profit = require('./CraftProfitPolicy');
 const Workshops = require('./CraftWorkshopService');
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
-const Karma = require('../../Karma');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
@@ -15,7 +13,6 @@ const LifeEvents = invoke('GameServer/Bot/Population/BotLifeEvents');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const ColdCrafting = invoke('GameServer/Bot/Economy/ColdCraftingService');
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
-const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const { personalOfferAllowed, offerAdmission } = require('../Population/PartyAdmission');
 const Price = require('./PriceDecision');
 const PriceBelief = require('./PriceBelief');
@@ -129,15 +126,9 @@ function recheck(state, step = {}, knownRecipes = Workshops.cachedRecipes(state.
     return { ...candidate, template, r, learn: learning };
 }
 
-function eligible(state) {
-    if (!state || state.phase !== 'cold' || !['hunting', 'resting', 'shopping'].includes(state.activity)
-        || invoke('GameServer/Bot/Economy/ColdMarketService').pendingErrand(state)
-        || partyIdOf(state) || Karma.closesTowns(state.stats?.karma)
-        || state.stats?.craftStationId || /^bot_craft_\d+$/i.test(String(state.accountName || ''))) return false;
-    if (!CraftShopService.isServiceCrafter(state)) return false;
-    if (CraftShopService.craftLevelFor(state) <= 0) return false;
-    return !(state.stats?.equipmentPlan?.strategy === 'craft'
-        && GearAcquisitionPlanner.planRunning(state.stats.equipmentPlan));
+// The worker's gate (WealthCraftDecision.eligible), one rule for both threads.
+function eligible(state, now = Date.now()) {
+    return WealthDecision.eligible(state, { now });
 }
 
 async function refreshCraftedInventory(state, recipe) {
@@ -413,4 +404,4 @@ async function tryCraft(state) {
     }
 }
 
-module.exports = { eligible, tryCraft, execute, recheck, rejectAccepted };
+module.exports = { eligible, mpChanged, tryCraft, execute, recheck, rejectAccepted };

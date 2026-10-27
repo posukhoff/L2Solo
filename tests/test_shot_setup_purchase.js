@@ -34,7 +34,7 @@ const native = require('./helpers/workerEconomyDecision');
     let rows; Market.publish({ register: (_name, source) => rows = source.allRows(), changed: () => {} });
     const boardRows = [[8001, [8001, 'sell_ad', 1, 910812, 'Giran', 1,
         [[9001, recipe.recipeItemId, 0, 3, 8000, null, 0]], 1, 1, 0]]];
-    const input = { timestamp, nativeRoutes: true, recipes: { recipeBook: Codec.pack([20]), knownShotRecipes: [20] },
+    const input = { timestamp, nativeRoutes: true, recipes: { recipeBook: Codec.pack([20]) },
         tablePages: [{ tables: [
             { name: 'board', from: null, to: 0, full: true, rows: boardRows, removed: [], last: true },
             { name: 'market', from: null, to: 0, full: true, rows: rows.map(row => [row[0], row]), removed: [], last: true }
@@ -75,7 +75,7 @@ const native = require('./helpers/workerEconomyDecision');
         invoke('GameServer/Bot/Economy/DecisionSections').sectionMask(['sources', 'benefits', 'money']));
     const crystalRows = [...boardRows, [8002, [8002, 'sell_ad', 1, 910812, 'Giran', 1,
         [[9002, 1459, 0, 100, 2000, null, 0]], 1, 1, 0]]];
-    const inputKit = { ...input, recipes: { recipeBook: Codec.pack([20, 21]), knownShotRecipes: [20, 21] },
+    const inputKit = { ...input, recipes: { recipeBook: Codec.pack([20, 21]) },
         tablePages: [{ tables: [
             { name: 'board', from: null, to: 0, full: true, rows: crystalRows, removed: [], last: true },
             { name: 'market', from: null, to: 0, full: true, rows: rows.map(row => [row[0], row]), removed: [], last: true }
