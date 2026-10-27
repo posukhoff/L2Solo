@@ -105,7 +105,6 @@ const provider = load('WishProviders.js', name => {
     if (name === '../AI/BotEquipmentCompatibility') return require('../src/GameServer/Bot/AI/BotEquipmentCompatibility');
     if (name === '../../Item/ItemTemplateIndex') return require('../src/GameServer/Item/ItemTemplateIndex');
     if (name.endsWith('BoardIndex')) return { SELL: 1 };
-    if (name === './BotImprovementPolicy') return { isCaster: () => false };
     if (name === './BotLuxuryExchange') return { recipes: () => new Map() };
     if (name === './WishPurchaseEvidence') return require('../src/GameServer/Bot/Economy/WishPurchaseEvidence');
     if (name === './EconomicTrip') return require('../src/GameServer/Bot/Economy/EconomicTrip');

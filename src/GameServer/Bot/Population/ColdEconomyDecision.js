@@ -331,8 +331,9 @@ function capture(economy, state, seen = state) {
                 // evicted 159-209 evaluated gains per actor. Sharing the clock
                 // reduced paired added P95 6.465 -> 3.335 ms on 300 native actors;
                 // the measured maximum 6.569 ms still exceeds the strict +5 ms limit.
-                const gain = invoke('GameServer/Bot/Economy/WishProviders').gearGain(state, item, economy.timestamp);
-                valueHours = Math.max(0, (gain.attack + gain.defence * economy.deathHours) * horizonHours);
+                // lazy: worker the wish providers load with the worker's economy, not with main's card reader.
+                const gain = invoke('GameServer/Bot/Economy/WishProviders').gearGain(state, item, economy, economy.timestamp);
+                valueHours = gain * horizonHours;
             }
         }
         clan = { horizonHours, huntPerHour: economy.hunt.perHour, plan: itemId ? { itemId, valueHours } : null };

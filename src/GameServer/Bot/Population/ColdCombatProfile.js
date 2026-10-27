@@ -740,7 +740,7 @@ function numbersPass(kitPart, effects, timestamp, sourceOptions) {
     const equipment = profile.equipment;
     const terms = powerTerms(profile, level, timestamp, sources);
     const stats = terms.stats = effectiveStats(terms, profile.base);
-    const { dex, con, wit, men } = stats;
+    const { con, wit, men } = stats;
     const power = formulaPower(terms, equipment, profile.base, stats);
     const classTransfer = level < 20 ? 0 : level < 40 ? 1 : 2;
     const maxMp = ((Formulas.calcMp(level, spellcaster ? 1 : 0, classTransfer, men) + number(equipment.bonusMp))
@@ -749,11 +749,6 @@ function numbersPass(kitPart, effects, timestamp, sourceOptions) {
         * multiplier(profile, 'maxCpMul', timestamp, sources) + add(profile, 'maxCpAdd', timestamp, sources));
     const cpRegen = Math.max(0, number(DataCache.revitalize?.hp?.[level]) * Formulas.calcLevelMod(level)
         * Formulas.calcBaseMod.CON(con) * multiplier(profile, 'regCp', timestamp, sources));
-    const accur = Formulas.calcAccur(level, dex, number(equipment.accur, number(profile.base.accur))) + add(profile, 'pAccuracyCombatAdd', timestamp, sources);
-    const evasion = Math.round((Formulas.calcEvasion(level, dex, number(equipment.evasion, number(profile.base.evasion)))
-        + add(profile, 'pEvasionRateAdd', timestamp, sources)) * multiplier(profile, 'pEvasionMul', timestamp, sources));
-    const critical = (Formulas.calcCritical(dex, number(equipment.critical, number(profile.base.critical)))
-        * multiplier(profile, 'pCritRateMul', timestamp, sources)) + add(profile, 'pCritRateAdd', timestamp, sources);
     const mCritRate = Formulas.magicCriticalRate({
         multiplier: multiplier(profile, 'mCritRateMul', timestamp, sources),
         add: add(profile, 'mCritRateAdd', timestamp, sources),
@@ -765,8 +760,8 @@ function numbersPass(kitPart, effects, timestamp, sourceOptions) {
         maxLoad: Math.max(0, Formulas.calcMaxLoad(con) * multiplier(profile, 'maxLoadMul', timestamp, sources)
             + add(profile, 'maxLoad', timestamp, sources)),
         maxCp, cpRegen, maxHp: power.maxHp, maxMp: Math.max(1, maxMp), pAtk: power.pAtk, mAtk: power.mAtk,
-        pDef: power.pDef, mDef: power.mDef, accur: Math.max(1, accur), evasion: Math.max(0, evasion),
-        critical: Math.max(0, critical), mCritRate, atkSpd: power.atkSpd, castSpd: power.castSpd,
+        pDef: power.pDef, mDef: power.mDef, accur: power.accur, evasion: power.evasion,
+        critical: power.critical, mCritRate, atkSpd: power.atkSpd, castSpd: power.castSpd, con: power.con, men: power.men,
         weaponMask: (WEAPON_MASK_BY_KIND[equipment.weaponKind] || 0) | (number(equipment.shieldPDef) > 0 ? 1048576 : 0)
     } };
 }
@@ -788,6 +783,11 @@ function powerTerms(profile, level, timestamp, sources) {
     }
     terms.pAtkSpdMul = multiplier(profile, 'pAtkSpdMul', timestamp, sources);
     terms.castSpdMul = multiplier(profile, 'castSpdMul', timestamp, sources);
+    terms.accurAdd = add(profile, 'pAccuracyCombatAdd', timestamp, sources);
+    terms.evasionAdd = add(profile, 'pEvasionRateAdd', timestamp, sources);
+    terms.evasionMul = multiplier(profile, 'pEvasionMul', timestamp, sources);
+    terms.critMul = multiplier(profile, 'pCritRateMul', timestamp, sources);
+    terms.critAdd = add(profile, 'pCritRateAdd', timestamp, sources);
     return terms;
 }
 // The six base stats after the effects: { str, dex, con, int, wit, men }.
@@ -810,7 +810,14 @@ function formulaPower(terms, equipment, base, stats) {
         pDef: Math.max(1, Math.round(Formulas.calcPDef(level, number(equipment.pDef, number(base.pDef))) * terms.pDefMul) + terms.pDefAdd),
         mDef: Math.max(1, Math.round(Formulas.calcMDef(level, stats.men, number(equipment.mDef, number(base.mDef))) * terms.mDefMul) + terms.mDefAdd),
         atkSpd: Math.max(1, Math.round(Formulas.calcAtkSpd(stats.dex, number(equipment.atkSpd, number(base.atkSpd))) * terms.pAtkSpdMul)),
-        castSpd: Math.max(1, Math.round(Formulas.calcCastSpd(stats.wit) * terms.castSpdMul))
+        castSpd: Math.max(1, Math.round(Formulas.calcCastSpd(stats.wit) * terms.castSpdMul)),
+        accur: Math.max(1, Formulas.calcAccur(level, stats.dex, number(equipment.accur, number(base.accur))) + terms.accurAdd),
+        evasion: Math.max(0, Math.round((Formulas.calcEvasion(level, stats.dex, number(equipment.evasion, number(base.evasion)))
+            + terms.evasionAdd) * terms.evasionMul)),
+        critical: Math.max(0, Formulas.calcCritical(stats.dex, number(equipment.critical, number(base.critical))) * terms.critMul
+            + terms.critAdd),
+        // The effective CON and MEN: the seated regeneration (ColdRest) of the kit.
+        con: stats.con, men: stats.men
     };
 }
 

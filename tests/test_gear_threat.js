@@ -79,13 +79,12 @@ check('physical and magic threats give distinct necklace gains', () => {
     const necklace = Data.items.find(item => Number(item.selfId) === 118);
     assert.ok(necklace);
     const bot = state();
-    const values = new Map([1, 3].map(mask => [mask, Providers.gearGain(bot, necklace, 1000, mask)]));
-    assert.equal(values.get(1).defence, 0);
-    assert.ok(values.get(3).defence > 0);
-    assert.deepEqual(Providers.gearGain(bot, necklace, 1000), values.get(3), 'the default threat is both');
-    assert.equal(values.get(1).attack, values.get(3).attack);
+    const values = new Map([1, 3].map(mask => [mask, Providers.gearGain(bot, necklace, { gearThreatMask: mask }, 1000)]));
+    assert.equal(values.get(1), 0, 'M.Def earns nothing where the monsters only hit');
+    assert.ok(values.get(3) > 0, 'M.Def earns where the monsters cast');
+    assert.equal(Providers.gearGain(bot, necklace, {}, 1000), values.get(3), 'the default threat is both');
 });
-check('saved level-19 build: survival shots, then armour gaps; empty jewel slots take owned jewellery', () => {
+check('saved level-19 build: survival shots first; empty jewel slots take owned jewellery', () => {
     // Recorded build, not a reconstruction of its historical purchase order.
     // Prices/offers are native x10. The bot misses its NG kit milestone
     // (PersonalGearProgression): the survival shot tranche leads, then only
@@ -109,8 +108,8 @@ check('saved level-19 build: survival shots, then armour gaps; empty jewel slots
     const physical = Economy.forState(bot, deps);
     assert.equal(physical.gearThreatMask, 1);
     const physicalGear = physical.network.queue.filter(wish => wish.need === 'power' && wish.object?.itemId);
-    assert.ok(physicalGear.some(wish => [42, 51, 38, 34].includes(wish.object.itemId)), 'armour competes in the existing queue');
     assert.ok(!physicalGear.some(wish => [1, 2, 3, 4, 5].includes(wish.object.slot)), 'absent magic is not a defensive gain');
+    const armourCompetes = physicalGear.some(wish => [42, 51, 38, 34].includes(wish.object.itemId));
     Economy.reset();
     for (const row of Object.values(bot.inventory)) if (row.kind === 'Armor.Jewel') {
         row.equipped = false; row.equippedCount = 0; row.equippedSlots = [];
@@ -120,10 +119,15 @@ check('saved level-19 build: survival shots, then armour gaps; empty jewel slots
     assert.equal(magical.gearThreatMask, 3);
     const jewelRoots = magical.projection.roots.filter(key => /^power:\d+:[1-5]$/.test(key));
     assert.ok(jewelRoots.length > 0, 'empty jewel slots are kit gaps');
-    assert.ok(jewelRoots.every(key => Number(bot.inventory[key.split(':')[1]]?.amount) > 0),
-        'owned jewellery closes the gaps before purchases');
-    assert.ok(!magical.projection.roots.some(key => ['power:116:4', 'power:118:3'].includes(key)),
-        'jewellery below the NG milestone does not close a kit gap');
+    // A starter piece below the NG milestone closes no kit gap; it competes
+    // only by the hunt income it adds to an empty slot (HuntCycle).
+    const starters = magical.network.queue.filter(wish => ['power:116:4', 'power:116:5', 'power:118:3'].includes(wish.key));
+    assert.ok(starters.every(wish => !(wish.progressionPriority > 0)), 'jewellery below the NG milestone does not close a kit gap');
+    assert.ok(jewelRoots.some(key => Number(bot.inventory[key.split(':')[1]]?.amount) > 0), 'owned jewellery fills an empty slot');
+    // Known red (R3b): one level short of 20 the stage horizon is ~4 minutes,
+    // so armour adding 0.02-0.13 of the hour never repays its price and the
+    // queue is empty after the shots. Last: the jewellery checks above still run.
+    assert.ok(armourCompetes, 'armour competes in the existing queue');
     Economy.reset();
 });
 if (failures) process.exitCode = 1;

@@ -41,6 +41,8 @@ const MarketDemand = require('./MarketDemand');
 const TwinCluster = require('./TwinCluster');
 const CraftEligibility = invoke('GameServer/Bot/Economy/CraftEligibility');
 const HealingPotionStock = invoke('GameServer/Bot/AI/HealingPotionStock');
+const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
+const CombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const { fnv1a32 } = require('../Fnv1a');
 const engine = new WishNetwork();
 const Trip = require('./EconomicTrip');
@@ -1120,7 +1122,10 @@ function scrollSavingHours(state, origin) {
 // stock(kind) and kitCost(id) over the kit data of one review: the build and
 // every later view of its plan answer from the same numbers. Prices go
 // through the caller's price reader, so each read joins the review's inputs.
-function kitReader(data, price, scrollUseHours) {
+// potionRestHours(): the hours per hour the potions' heal saves in rest
+// (potionRest), read only where a potion's worth is (benefitPerUnit), kept on
+// the kit data.
+function kitReader(data, price, scrollUseHours, potionRestHours) {
     const stock = kind => {
         if (kind === 'scrolls') {
             const current = data.scrolls,
@@ -1142,12 +1147,13 @@ function kitReader(data, price, scrollUseHours) {
         const survivalTarget = row.canRestock ? Math.ceil(use) : Math.min(current, Math.ceil(use));
         const survivalMissing = Math.max(0, survivalTarget - current);
         const missing = Math.max(0, target - Math.max(current, survivalTarget));
-        const benefitPerUnit = use > 0 ? row.benefit / use : 0;
-        const benefitHours = missing * benefitPerUnit;
+        const benefitPerUnit = () => use > 0
+            ? (row.benefit + (shots ? 0 : row.restBenefit ??= potionRestHours())) / use : 0;
         return { itemId: Number(itemId), usePerHour: use, ...(shots ? { canRestock: row.canRestock, ownedUsePerHour: row.ownedUsePerHour, beginnerCurrent: row.beginnerCurrent,
                 beginnerUsePerHour: row.beginnerUsePerHour, paidUsePerHour: row.paidUsePerHour } : {}),
             current, hours: use > 0 ? current / use : Infinity,
-            targetHours: data.targetHours, target, survivalTarget, missing, survivalMissing, unitPrice: price(itemId), benefitPerUnit, benefitHours,
+            targetHours: data.targetHours, target, survivalTarget, missing, survivalMissing, unitPrice: price(itemId),
+            get benefitPerUnit() { return benefitPerUnit(); }, get benefitHours() { return missing * benefitPerUnit(); },
             needed: use > 0 && current < survivalTarget };
     };
     const kit = [stock('shots'), stock('potions')];
@@ -1278,7 +1284,9 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null, ma
         potions: { itemId: potionItemId, use: potionUse, current: positive(state.inventory?.[potionItemId]?.amount),
             canRestock: true, benefit: positive(bestTable?.deaths) * deathHours } };
     const { stock, kitCost, kit, escapeCost } = kitReader(kitData, price,
-        () => kitData.scrollHours ??= scrollHoursFor(state, deps.spots, bestSpotId));
+        () => kitData.scrollHours ??= scrollHoursFor(state, deps.spots, bestSpotId),
+        () => potionRest(state, { hunt, hourAdena: Hunt.huntHour(hunt, state), deathHours, gearThreatMask: deps.gearThreatMask },
+            timestamp));
     const reserve = escapeCost + kit.reduce((sum, row) => sum + row.survivalMissing * row.unitPrice, 0);
     return { tableRole, hunt, hourAdena: Hunt.huntHour(hunt, state), survivalReserve: reserve, kitCost, kit: kitData,
         lostGearHours, bestSpotId, deathHours, bestTable, stock,
@@ -1286,9 +1294,16 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null, ma
         expectedDeathHours: positive(bestTable?.deaths) * deathHours,
         karmaHours: Valuation.karmaHours(state, { ...hunt, lostGearHours, deathsPerHour: positive(bestTable?.deaths) }) };
 }
+// A potion's worth beside the deaths it averts (the kit's potions benefit):
+// the rest its heal saves (HuntCycle potionGain, ctx its reader's).
+function potionRest(state, ctx, timestamp) {
+    return HuntCycle.reader(state, ctx).potionGain(CombatProfile.profileFor(state, timestamp),
+        positive(HealingPotionStock.purchasePotionFor(state).heal));
+}
 function foundationFromPlan(state, plan, deps, price) {
     const { stock, kitCost } = kitReader(plan.kit, price,
-        () => plan.kit.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
+        () => plan.kit.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId),
+        () => potionRest(state, plan, plan.timestamp));
     return { hunt: plan.hunt, hourAdena: plan.hourAdena, survivalReserve: plan.survivalReserve,
         kit: plan.kit, stock, kitCost, lostGearHours: plan.lostGearHours, bestSpotId: plan.bestSpotId,
         deathHours: plan.deathHours, riskWeight: plan.riskWeight,
@@ -1342,7 +1357,7 @@ function heldWatch(state, selfId, since = 0) {
 function heldKitCost(state, selfId, unitPrice, since = 0) {
     const plan = heldPlanSince(state, since);
     if (!plan?.kit || !(unitPrice > 0)) return undefined;
-    return kitReader(plan.kit, () => 0, () => 0).kitCost(selfId, unitPrice);
+    return kitReader(plan.kit, () => 0, () => 0, () => 0).kitCost(selfId, unitPrice);
 }
 function heldPlanSince(state, since) {
     const held = cache.get(actorKeyOf(state, {})), plan = held?.plan;
@@ -2014,7 +2029,8 @@ function view(state, plan, deps, built = {}) {
     const { price, soldPrice } = built.price ? built
         : pricing(state, plan.persona, built.board, plan.timestamp, deps, built.read, new Map(plan.prices));
     const { stock, kitCost } = built.kit || kitReader(plan.kit, price,
-        () => plan.kit.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
+        () => plan.kit.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId),
+        () => potionRest(state, plan, plan.timestamp));
     // Reprice funding against this physical wallet. Reuse of benefit/source
     // calculations is never a retained permission to spend an old balance.
     const funding = moneyQueue(plan.network.queue, Funding.budget(state, deps.buyOrderEscrow),

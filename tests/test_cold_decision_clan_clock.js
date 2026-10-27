@@ -29,11 +29,11 @@ const item = Data.items.find(row => Number(row.selfId) === targetId);
 assert(Profile.fightProfile(state, timestamp).pDef > Profile.fightProfile(state, timestamp + 60001).pDef,
     'the native shield effect is active at the simulation clock and expired at the later clock');
 function verify(snapshot) {
-    const expected = Providers.gearGain(snapshot, item, timestamp);
+    const expected = Providers.gearGain(snapshot, item, economy, timestamp);
     const decision = capture(economy, snapshot);
     assert.equal(decision.clan.plan.itemId, targetId);
     assert.equal(decision.clan.plan.valueHours,
-        Math.max(0, (expected.attack + expected.defence * economy.deathHours) * economy.horizonHours),
+        expected * economy.horizonHours,
         'clan value uses the native projected-state effect at the same simulation timestamp');
     assert.equal(decision.clan.huntPerHour, economy.hunt.perHour);
     assert.equal(decision.clan.horizonHours, economy.horizonHours);

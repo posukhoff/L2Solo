@@ -338,6 +338,11 @@ const Formulas = {
         return Math.min(300, Math.max(0, (8 * witBonus * multiplier) + add));
     },
 
+    // The cold fight's hit chance (BackgroundResolver.hitSucceeds; HuntCycle).
+    coldHitChance(accuracy, evasion) {
+        return Math.min(0.98, Math.max(0.2, (80 + 2 * (Number(accuracy) - Number(evasion))) / 100));
+    },
+
     rollCritical(critical, rng = Math.random) {
         return (Number(critical) || 0) > rng() * 1000;
     },

@@ -21,6 +21,7 @@ const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const ProgressionCap = invoke('GameServer/Progression/ProgressionCap');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
 // A module read inside a hot function: require() walks the module path on
 // every call, so each path is resolved once here. The relative require keeps
 // the module's dependency boundary (tests pass their own require).
@@ -210,15 +211,16 @@ function wornReader(state) {
 function replacementWorn(wornFor, slot) {
     return Equipment.isWeaponSlot(slot) ? wornFor(7) || wornFor(14) : wornFor(slot);
 }
-// What wearing `item` in its slot adds to the bot: its kit profile against
-// the numbers with the item worn (ColdCombatProfile.candidateProfiles).
-function gearGain(state, item, timestamp = Date.now(), threatMask = 3) {
-    return gearGainReader(state, timestamp, {}, undefined, threatMask)(item);
+// What wearing `item` in its slot adds to the bot: the hours of its hour per
+// hour of hunting (HuntCycle.reader gain) of its kit profile with the item
+// worn against without (ColdCombatProfile.candidateProfiles). ctx: the
+// review's hunt, hour, death price and threat (HuntCycle.reader).
+function gearGain(state, item, ctx = {}, timestamp = Date.now()) {
+    return gearGainReader(state, timestamp, {}, ctx)(item);
 }
 // options: the kit profile slot (candidateProfiles; preparation: the future state).
-function gearGainReader(state, timestamp, options = {}, caster = require('./BotImprovementPolicy').isCaster(state), threatMask = 3) {
-    threatMask = threatMask === 1 ? 1 : 3;
-    let candidates, ownWeapon;
+function gearGainReader(state, timestamp, options = {}, ctx = {}) {
+    let candidates, ownWeapon, cycle;
     const role = Planner.roleFor(state), classId = Number(state.stats?.classId || state.classId || 0);
     const selectedWeapon = item => {
         if (!Planner.equipmentCandidate(item, state, role)) return false;
@@ -243,17 +245,14 @@ function gearGainReader(state, timestamp, options = {}, caster = require('./BotI
     };
     return (item, targetSlot = Number(item.etc.slot)) => {
         const slot = targetSlot;
-        if (Equipment.isWeaponSlot(slot) && !selectedWeapon(item)) return { attack: 0, defence: 0 };
+        if (Equipment.isWeaponSlot(slot) && !selectedWeapon(item)) return 0;
         candidates ||= Profile.candidateProfiles(state, timestamp, options);
+        cycle ||= HuntCycle.reader(state, ctx);
         // The item at enchant 0 in its slot; what it replaces comes off (a
         // weapon both hands, a two-handed one the shield, a jewel its side).
-        const before = candidates.before, after = candidates.after({ free: worn => Equipment.equipmentReplacementConflict(slot, worn),
+        const after = candidates.after({ free: worn => Equipment.equipmentReplacementConflict(slot, worn),
             wear: { selfId: Number(item.selfId), enchant: 0, slot } });
-        const attack = caster ? 'mAtk' : 'pAtk';
-        const attackGain = Math.max(0, Number(after[attack]) / Math.max(1, Number(before[attack])) - 1);
-        const defenceGain = Math.max(0, 1 - Number(before.pDef) / Math.max(1, Number(after.pDef)));
-        const magicGain = Math.max(0, 1 - Number(before.mDef) / Math.max(1, Number(after.mDef)));
-        return { attack: attackGain, defence: threatMask === 1 ? defenceGain : Math.max(defenceGain, magicGain) };
+        return Math.max(0, cycle.gain(candidates.before, after));
     };
 }
 // The one valuation of a gear step against its family (user 2026-10-24):
@@ -443,7 +442,6 @@ function buildProjection(state, ctx, deps) {
         quantityInputs?.incoming(id, value); return value;
     };
     const timestamp = ctx.timestamp ?? Date.now();
-    const magic = need('./BotImprovementPolicy').isCaster(state);
     const Recipes = invoke('GameServer/Items/C4RecipeItems'), Profit = need('./CraftProfitPolicy');
     // `nodes` is the current target: the real projection, or one gear
     // candidate's scratch arena while it is evaluated (MVP-6).
@@ -1350,7 +1348,7 @@ function buildProjection(state, ctx, deps) {
     }
     const candidates = [];
     const planningState = preparation || state;
-    const wornFor = wornReader(planningState), gainFor = gearGainReader(state, timestamp, {}, magic, ctx.gearThreatMask ?? 3);
+    const wornFor = wornReader(planningState), gainFor = gearGainReader(state, timestamp, {}, ctx);
     let futureGain;
     const acquisitionAllowed = id => {
         const item = need('../../Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, Number(id));
@@ -1369,23 +1367,24 @@ function buildProjection(state, ctx, deps) {
         if (Number(current?.selfId) === Number(item.selfId)) continue;
         const early = !!preparation && item.etc?.rank === 'c';
         const gain = early ? (futureGain ||= gearGainReader(preparation, timestamp,
-            { preparation: true }, magic, ctx.gearThreatMask ?? 3))(item, slot) : gainFor(item, slot);
+            { preparation: true }, ctx))(item, slot) : gainFor(item, slot);
         const benefitHorizon = early ? futureHorizon : horizon;
         const currentPrice = current ? price(current.selfId) : 0;
         const future = resale(price(item.selfId), { trend: MarketCounters.moveOf(MarketCounters.counterOf(item.selfId)),
             hours: benefitHorizon, understanding: ctx.persona.understanding, assertiveness: trait(ctx.persona, 'assertiveness'),
-            caution: trait(ctx.persona, 'caution'), nextBuyerUse: price(item.selfId) * Math.min(1, gain.attack + gain.defence),
+            caution: trait(ctx.persona, 'caution'), nextBuyerUse: price(item.selfId) * Math.min(1, gain),
             npcFloor: ctx.buyback(item.selfId) });
-        // One valuation for every gear step, at any grade: its benefit over
-        // the stage's hours (the level weights the horizon only) plus resale.
-        // A step into a kit gap carries the gap's priority to stand among
-        // the kit roots; its value decides whether it is worth taking.
-        const value = (gain.attack + gain.defence * ctx.deathHours) * benefitHorizon
+        // One valuation for every gear step, at any grade: its benefit (the
+        // hunt hours it adds per hour, HuntCycle) over the stage's hours (the
+        // level weights the horizon only) plus resale. A step into a kit gap
+        // carries the gap's priority to stand among the kit roots; its value
+        // decides whether it is worth taking.
+        const value = gain * benefitHorizon
             + (ctx.hunt.perHour > 0 ? (future - currentPrice) / ctx.hunt.perHour : 0);
         if (!(value > 0) || !(price(item.selfId) > 0)) continue;
         candidates.push({ item, slot, value, gain, notBeforeHours: early ? horizon : 0,
             horizonHours: early ? horizon + futureHorizon : horizon,
-            progressionPriority: Progression.priority(slot, progression) });
+            progressionPriority: Progression.priority(slot, progression, item, { grade: false }) });
     }
     // MVP-6: every nominated candidate is valued by the same path solver
     // the network uses, over its own scratch arena of item descriptors. A
@@ -1402,7 +1401,7 @@ function buildProjection(state, ctx, deps) {
         const keys = nodes.map(node => node.key);
         nodes = real; nodeKeys = realKeys; scratch = false; readScope = null; ctx.readScope?.close();
         if (!key) continue;
-        const benefitPerHour = (candidate.gain.attack + candidate.gain.defence * ctx.deathHours) * powerWeight;
+        const benefitPerHour = candidate.gain * powerWeight;
         gear.push({ candidate, keys, family: Equipment.isWeaponSlot(candidate.slot) ? 'weapon' : candidate.slot,
             node: { key: `power:${candidate.item.selfId}:${candidate.slot}`, need: 'power',
                 object: { itemId: Number(candidate.item.selfId), slot: candidate.slot }, price: price(candidate.item.selfId),

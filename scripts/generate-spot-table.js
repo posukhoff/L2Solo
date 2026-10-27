@@ -70,11 +70,15 @@ const ROLE_CLASSES = {
 };
 const ROLES = Object.keys(ROLE_CLASSES);
 const SHOTS = [1, 0];
-const ROW_FIELDS = ['minGap', 'refGap', 'kph', 'busy', 'deaths', 'exp', 'sp', 'adena', 'loot', 'shots', 'potions', 'stacks'];
+// The hunt cycle of a kill (HuntCycle): fight and rest seconds, the mob's
+// damage before heals (taken) and the HP and MP the bot ends short (hpLost,
+// mpLost: what its rest refills).
+const ROW_FIELDS = ['minGap', 'refGap', 'kph', 'busy', 'deaths', 'exp', 'sp', 'adena', 'loot', 'shots', 'potions', 'stacks',
+    'fight', 'rest', 'taken', 'hpLost', 'mpLost'];
 // Loot has no curve of its own: one rare drop in an hour of a curve spot
 // would swing it; it follows the adena curve (same drop groups, same
-// deep-blue rule, same monsters).
-const CURVE_FIELDS = ['kph', 'busy', 'deaths', 'exp', 'adena'];
+// deep-blue rule, same monsters). HP and MP lost follow taken and fight.
+const CURVE_FIELDS = ['kph', 'busy', 'deaths', 'exp', 'adena', 'fight', 'rest', 'taken'];
 const START = 1_750_000_000_000;
 
 function args() {
@@ -230,21 +234,13 @@ function loadSimulation(catalogueFile) {
 // A bot of the class and level in the author's kit for that level (BotGear),
 // with the shots of its weapon (or none) and the healing potions the author's
 // restock buys at that level, both never running out.
-function newBot(classId, level, shots, simulation = sim) {
-    const inventory = {};
-    for (const entry of simulation.BotGear.planFor({ classId, level }).items) {
-        const key = `kit-${entry.selfId}`;
-        const prior = inventory[key];
-        const amount = (prior?.amount || 0) + 1;
-        inventory[key] = { selfId: Number(entry.selfId), amount, equipped: true, equippedCount: amount,
-            equippedSlots: [...(prior?.equippedSlots || []), Number(entry.slot)], slot: Number(entry.slot) };
-    }
-    const bot = { characterId: 990001, name: 'SpotTable', classId, level, activity: 'hunting', phase: 'cold',
-        vitals: {}, stats: { classId }, inventory };
-    // Cold combat reads only learned skills (113e17913): the bot has learned its whole tree
-    // for the level, saved as a live bot's learned rows are.
-    bot.stats.coldCombat = { skillSource: 'database',
-        skills: simulation.CCP.skillSnapshotsFromRecords(simulation.CCP.skillRecordsFromTree(classId, level)) };
+// kit(bot): changes the worn gear before the shots are chosen (hunt).
+function newBot(classId, level, shots, simulation = sim, kit = null) {
+    // The reference bot the run time weighs kits against (HuntCycle).
+    const bot = invoke('GameServer/Bot/AI/HuntCycle').referenceState(classId, level,
+        { gear: simulation.BotGear, profile: simulation.CCP });
+    if (kit) kit(bot);
+    const inventory = bot.inventory;
     let shotId = 0;
     if (shots) {
         const plan = simulation.ShotStock.planForState(bot);
@@ -300,16 +296,18 @@ function countNewStacks(items, seen, definitions = invoke('GameServer/DataCache'
 
 // The author's cold combat for `hours` of game time. A death is counted and
 // the bot stands up at full health at once: the time a death costs belongs to
-// the price of death (step 3.5), not to the spot.
-function hunt(spot, role, level, shots, hours, simulation = sim) {
+// the price of death (step 3.5), not to the spot. kit(bot): changes the
+// reference bot's worn gear before the hunt (scripts/hunt-cycle-check.js).
+function hunt(spot, role, level, shots, hours, simulation = sim, kit = null) {
     const classId = classFor(role, level);
     const seed = hash(`${spot.id}|${role}|${shots}|${level}`);
     const rng = mulberry(seed);
     const random = Math.random;
     Math.random = mulberry(seed ^ 0x9e3779b9);
-    const sum = { kills: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0 };
+    const sum = { kills: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
+        fightMs: 0, restMs: 0, taken: 0, hpLost: 0, mpLost: 0 };
     try {
-        const made = newBot(classId, level, shots, simulation);
+        const made = newBot(classId, level, shots, simulation, kit);
         const seen = new Set(Object.values(made.bot.inventory).filter(item => item.amount > 0).map(item => Number(item.selfId)));
         let state = { ...made.bot, spotId: spot.id, loc: { ...spot.center } };
         const target = atSpot(spot);
@@ -330,7 +328,13 @@ function hunt(spot, role, level, shots, hours, simulation = sim) {
             sum.potions += Number(debug.potionsUsed || 0);
             // The bots' records count a cycle's combat and the rest it calls for.
             if (Number.isFinite(debug.combatMs)) {
-                sum.busyMs += Number(debug.combatMs) + Math.max(0, Number(patch.stats?.restUntil || t) - t);
+                const restMs = Math.max(0, Number(patch.stats?.restUntil || t) - t);
+                sum.busyMs += Number(debug.combatMs) + restMs;
+                sum.fightMs += Number(debug.combatMs);
+                sum.restMs += restMs;
+                sum.taken += Number(debug.damageTaken || 0);
+                sum.hpLost += Math.max(0, Number(state.vitals?.hp) - Number(patch.vitals?.hp ?? state.vitals?.hp));
+                sum.mpLost += Math.max(0, Number(state.vitals?.mp) - Number(patch.vitals?.mp ?? state.vitals?.mp));
             }
             const inventory = patch.inventory || state.inventory;
             state = { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) },
@@ -358,7 +362,9 @@ function perKill(sum, hours) {
     if (sum.kills <= 0) return null;
     const k = sum.kills;
     return { kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
-        adena: sum.adena / k, loot: sum.loot / k, shots: sum.shots / k, potions: sum.potions / k, stacks: sum.stacks / k };
+        adena: sum.adena / k, loot: sum.loot / k, shots: sum.shots / k, potions: sum.potions / k, stacks: sum.stacks / k,
+        fight: sum.fightMs / 1000 / k, rest: sum.restMs / 1000 / k, taken: sum.taken / k, hpLost: sum.hpLost / k,
+        mpLost: sum.mpLost / k };
 }
 
 // A row: the lowest level gap at which the role finds a safe target, then the
@@ -530,6 +536,23 @@ function lootRateResponse(spot) {
     return out;
 }
 
+// The accuracy and evasion of a kill at the spot: its monsters' numbers
+// weighted by their share of the kill draw (SpotRewardExpectation.composition).
+function spotMob(spot) {
+    const DataCache = invoke('GameServer/DataCache');
+    const ItemTemplateIndex = require('../src/GameServer/Item/ItemTemplateIndex');
+    const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
+    let share = 0, accur = 0, evasion = 0;
+    for (const entry of invoke('GameServer/Bot/Economy/SpotRewardExpectation').composition(spot)) {
+        const mob = Profile.npcCombatStats(ItemTemplateIndex.find(DataCache.npcs, entry.selfId));
+        if (!mob || !(entry.share > 0)) continue;
+        share += entry.share;
+        accur += entry.share * mob.accur;
+        evasion += entry.share * mob.evasion;
+    }
+    return share > 0 ? [round(accur / share), round(evasion / share)] : [0, 0];
+}
+
 function gitRevision() {
     try {
         const head = childProcess.execSync('git rev-parse --short HEAD', { cwd: root }).toString().trim();
@@ -648,9 +671,9 @@ async function main() {
             rowFields: ROW_FIELDS,
             curveFields: CURVE_FIELDS,
             // [id, level, density, kills per hour the spot allows, monsters per pull,
-            //  loot at drop rate 10 and 50 over rate x loot at rate 1]
+            //  loot at drop rate 10 and 50 over rate x loot at rate 1, the kills' mean accuracy and evasion]
             spots: spots.map((spot) => [spot.id, Number(spot.avgLevel), Number(spot.density), round(spotCap(spot)), 1,
-                ...lootRateResponse(spot)]),
+                ...lootRateResponse(spot), ...spotMob(spot)]),
             rows: rowResults.map((rows) => poolRowLoot(rows).map(packRow)),
             curves
         };
@@ -673,4 +696,4 @@ if (require.main === module) main().catch((error) => {
     process.exit(1);
 });
 
-module.exports = { hunt, perKill, countNewStacks, runPool, mergeStacks, buildCatalogue, rewardCatalog };
+module.exports = { hunt, perKill, countNewStacks, runPool, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor };

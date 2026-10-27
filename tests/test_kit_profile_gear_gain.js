@@ -17,8 +17,8 @@ state.stats.coldCombat = Profile.legacySnapshot(state, Profile.skillRecordsFromT
 
 const own = structuredClone(Profile.profileFor(state, timestamp));
 const better = template(2503);
-const gain = Providers.gearGain(state, better, timestamp, 1);
-assert(gain.attack > 0, 'a better weapon gives a positive attack gain');
+const gain = Providers.gearGain(state, better, { gearThreatMask: 1 }, timestamp);
+assert(gain > 0, 'a better weapon earns more an hour');
 const { before, after } = Profile.candidateProfiles(state, timestamp);
 const slot = Number(better.etc.slot);
 assert(after({ free: wornSlot => wornSlot === slot, wear: { selfId: better.selfId, slot } }).pAtk > before.pAtk,

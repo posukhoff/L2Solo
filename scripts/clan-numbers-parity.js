@@ -105,8 +105,7 @@ parentPort.on('message', message => {
         const fallback = (member, id, basics, horizon) => {
             const item = require('../src/GameServer/Item/ItemTemplateIndex').find(Data.items, id);
             if (!item?.etc?.slot) return 0;
-            const gain = require('../src/GameServer/Bot/Economy/WishProviders').gearGain(member, item);
-            return Math.max(0, (gain.attack + gain.defence * basics.deathHours) * horizon);
+            return require('../src/GameServer/Bot/Economy/WishProviders').gearGain(member, item, basics) * horizon;
         };
         const digest = context => ({ focus: context.network.focus, object: context.focusObject,
             queue: context.network.queue, income: context.incomePerHour, reserve: context.reserve, wallet: context.wallet });

@@ -92,7 +92,7 @@ function dropRows() {
 function roleSpoilLevel(role, level) {
     if (role !== 'spoiler') return 0;
     if (!spoilLevels.has(level)) spoilLevels.set(level, Rewards.spoilSkillLevel({ level,
-        stats: { classId: level < 20 ? 53 : level < 40 ? 54 : 55 } }));
+        stats: { classId: roleClass('spoiler', level) } }));
     return spoilLevels.get(level);
 }
 // value() is a pure function of the table, the rate profile and its four
@@ -220,7 +220,10 @@ function load() {
             busy: field(raw.rowFields, 'busy'), deaths: field(raw.rowFields, 'deaths'), exp: field(raw.rowFields, 'exp'),
             sp: field(raw.rowFields, 'sp'), adena: field(raw.rowFields, 'adena'), loot: field(raw.rowFields, 'loot'),
             shots: field(raw.rowFields, 'shots'), potions: field(raw.rowFields, 'potions'),
-            stacks: raw.rowFields.indexOf('stacks')
+            stacks: raw.rowFields.indexOf('stacks'),
+            // The hunt cycle columns (cycle); a table before them has none.
+            fight: raw.rowFields.indexOf('fight'), rest: raw.rowFields.indexOf('rest'), taken: raw.rowFields.indexOf('taken'),
+            hpLost: raw.rowFields.indexOf('hpLost'), mpLost: raw.rowFields.indexOf('mpLost')
         }
     };
     return table;
@@ -375,6 +378,44 @@ function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLev
         // Kept in the memo slot beside the row (recipeScrolls), not in rowAt.
         scrolls: rewards?.scrolls || null
     };
+}
+
+// One kill of the reference bot (the role's class in the author's kit) at the
+// spot for the role at the level, the hunt cycle model's input (HuntCycle):
+// fight and rest seconds, the mob's damage before heals (taken), the HP and
+// MP it ends short (hpLost, mpLost), deaths, money (adena and loot at the NPC
+// buy-back), shots and potions per kill, all at the bot's level gap (the
+// curves; HP lost follows taken, MP lost the fight); kph the kills per hour
+// its fights allow, cap the spot's, pull the monsters per pull; the kills'
+// mean accuracy and evasion. Null where value() has no row or the table has
+// no cycle columns.
+function cycle(spotId, role, level, shots = true, rewardOptions = {}) {
+    const t = load(), rates = ProgressionRates.profile();
+    refreshCatalog(rates);
+    refreshValueMemo(t, rates);
+    const s = t.spotIndex.get(String(spotId)), r = t.roleIndex.get(role);
+    if (s === undefined || r === undefined || t.f.fight < 0) return null;
+    const c = combat(t, s, r, level, shots);
+    if (!c) return null;
+    const skill = rewardOptions.spoilSkillLevel ?? roleSpoilLevel(role, level);
+    const slot = memoValue(t, rates, spotId, role, level, shots, skill);
+    if (memoFlags[slot] & NO_ROW) return null;
+    const n = memoNumbers, at = slot * ROW_NUMBERS, kills = n[at];
+    const { row, curve, gap, refGap } = c, f = t.f, spot = t.spots[s];
+    const fight = ratio(curve.fight, t.gaps, refGap, gap), taken = ratio(curve.taken, t.gaps, refGap, gap);
+    return { spotId: spot[0], kph: row[f.kph] * ratio(curve.kph, t.gaps, refGap, gap), cap: spot[3], pull: spot[4],
+        fight: row[f.fight] * fight, rest: row[f.rest] * ratio(curve.rest, t.gaps, refGap, gap),
+        taken: row[f.taken] * taken, hpLost: row[f.hpLost] * taken, mpLost: row[f.mpLost] * fight,
+        deaths: n[at + 1] / kills, money: (n[at + ADENA] + n[at + LOOT]) / kills,
+        shots: n[at + SHOTS] / kills, potions: n[at + POTIONS] / kills,
+        mobAccur: Number(spot[7]) || 0, mobEvasion: Number(spot[8]) || 0 };
+}
+
+// The class the table measured a role with at a level (its header's
+// roleClasses: below 20, 20-39, 40 and up), or null for an unknown role.
+function roleClass(role, level) {
+    const classes = load().header.inputs.roleClasses?.[role];
+    return classes ? classes[level < 20 ? 0 : level < 40 ? 1 : 2] : null;
 }
 
 // The level of a spot in the table (its monsters' average), or null.
@@ -569,4 +610,4 @@ function useFile(next = DEFAULT_FILE) {
     clearIncomeBases();
 }
 
-module.exports = { value, recipeScrolls, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };
+module.exports = { value, cycle, roleClass, recipeScrolls, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };

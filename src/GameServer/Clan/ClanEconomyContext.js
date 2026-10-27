@@ -168,8 +168,7 @@ function forClan(clan, inputs = {}) {
             if (Number(id) === Number(numbers?.plan?.itemId)) return positive(numbers.plan.valueHours);
             const item = require('../Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, id);
             if (!item?.etc?.slot) return 0;
-            const gain = WishProviders.gearGain(member, item, basics().timestamp);
-            return Math.max(0, (gain.attack + gain.defence * basics().deathHours) * clanHorizon);
+            return WishProviders.gearGain(member, item, basics(), basics().timestamp) * clanHorizon;
         };
         return { persona: member.persona || basics().persona, clanHorizon,
             hunt: { perHour: numbers?.huntPerHour ?? basics().hunt.perHour },

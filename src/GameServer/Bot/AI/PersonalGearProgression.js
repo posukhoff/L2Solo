@@ -85,7 +85,7 @@ function assess(state = {}) {
     const rank = RANKS.indexOf(gradeForLevel(level)), milestoneRank = Math.min(rank, SHOP_TOP);
     const own = kit(rank === 0 ? 10 : levelForGrade(RANKS[Math.min(rank, KIT_TOP)]), rank);
     const milestone = rank === milestoneRank ? own : kit(levelForGrade(RANKS[milestoneRank]), milestoneRank);
-    return { required: own.required, gaps: own.gaps, rank,
+    return { required: own.required, gaps: own.gaps, rank, starters, role, classId,
         milestone: { required: milestone.required, gaps: milestone.gaps, starters, role, classId } };
 }
 
@@ -122,15 +122,17 @@ function gapFor(slot, assessment) {
 }
 // The kit priority of a step into `slot`: its gap's, at any grade. Whether
 // the step is worth taking (stronger than worn, reachable, paying) is the
-// wish's valuation, not a grade gate here. A milestone reader passes the
-// item: under the milestone gap's grade (or a starter / weaker piece before
-// 20) it closes nothing.
-function priority(slot, assessment, item = null) {
+// wish's valuation, not a grade gate here. A reader that passes the item: a
+// starter or weaker piece before 20 closes nothing and competes by its value
+// alone; a milestone reader (grade, default) also closes nothing under the
+// gap's grade. The gear roots pass grade false: the level's grade is a
+// weight and a horizon only (game decision 10-24).
+function priority(slot, assessment, item = null, { grade = true } = {}) {
     const gap = gapFor(slot, assessment);
     if (!gap) return 0;
     // lazy: cycle GearAcquisitionPlanner loads this module at its top
     const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
-    if (item && (RANKS.indexOf(item.etc?.rank || 'none') < gap.rank || gap.rank === 0
+    if (item && (grade && RANKS.indexOf(item.etc?.rank || 'none') < gap.rank || gap.rank === 0
         && (assessment.starters.has(Number(item.selfId))
             || Planner.itemScore(item, assessment.role, assessment.classId) < gap.minScore))) return 0;
     return gap.priority;

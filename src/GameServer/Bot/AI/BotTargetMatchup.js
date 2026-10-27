@@ -140,13 +140,28 @@ function skillModifier(actor, target, skill, view = targetView(target)) {
         actor.backpack?.fetchTotalWeaponKind?.() || '');
 }
 
+// The damage rates of the cold fight, one owner (channels, soloSurvival,
+// HuntCycle's kit ratio): a profile's auto-attack and a spell of `power`
+// against a target's defence, and a target's hits against a profile.
+function attackRate(profile, target) {
+    return 70 * positive(profile.pAtk) / positive(target.basePDef || target.pDef) * positive(profile.atkSpd || 300) / 500;
+}
+function spellDamage(profile, target, power) {
+    return 91 * Math.sqrt(positive(profile.mAtk)) * power / positive(target.baseMDef || target.mDef);
+}
+function spellRate(profile, target, power, hitTime = 3000) {
+    return spellDamage(profile, target, power) / Math.max(0.5, number(hitTime, 3000) / 1000 * 333 / positive(profile.castSpd || 333));
+}
+function incomingRate(target, profile) {
+    return 70 * target.pAtk / profile.pDef * positive(target.atkSpd || 253) / 500;
+}
+
 function channels(profile, target) {
     const role = profile.role || Roles.combatRoleFor(profile);
     const kind = profile.equipment?.weaponKind || '';
     const physical = role !== 'mage';
     const result = [];
-    if (physical) result.push({ weight: 70 * positive(profile.pAtk) / positive(target.basePDef || target.pDef)
-        * positive(profile.atkSpd || 300) / 500,
+    if (physical) result.push({ weight: attackRate(profile, target),
     modifier: modifier(target, {}, false, kind), magic: false });
     for (const skill of profile.skills || []) {
         const semantic = skill.semantic || Rules.resolve(skill);
@@ -162,12 +177,11 @@ function channels(profile, target) {
         // An area skill hits every mob of a pull (F20; BotPullEstimate.pullView).
         const struck = Rules.hitsArea(semantic) ? Math.max(1, number(target.pull)) : 1;
         const weight = struck * (magic
-            ? 91 * Math.sqrt(positive(profile.mAtk)) * power / positive(target.baseMDef || target.mDef)
-                / Math.max(0.5, number(skill.hitTime, 3000) / 1000 * 333 / positive(profile.castSpd || 333))
+            ? spellRate(profile, target, power, skill.hitTime)
             : 70 * (positive(profile.pAtk) + power) / positive(target.basePDef || target.pDef)
                 / Math.max(1, number(skill.hitTime, 1500) / 1000));
         const hitDamage = struck * (magic
-            ? 91 * Math.sqrt(positive(profile.mAtk)) * power / positive(target.baseMDef || target.mDef)
+            ? spellDamage(profile, target, power)
             : 70 * (positive(profile.pAtk) + power) / positive(target.basePDef || target.pDef));
         result.push({ weight, modifier: modifier(target, semantic, magic, kind), magic,
             soloScore: profile.soloAttackScores?.[skill.selfId],
@@ -204,8 +218,7 @@ function soloSurvival(profiles, target, minimum = 1.5, attacksOf = channels) {
         || receivers.some(profile => profile.survivalKnown === false || !(profile.maxHp > 0) || !(profile.pDef > 0))) {
         return { eligible: true, survivalRatio: null };
     }
-    const lifetime = Math.max(...receivers.map(profile => profile.maxHp
-        / (70 * target.pAtk / profile.pDef * positive(target.atkSpd || 253) / 500)));
+    const lifetime = Math.max(...receivers.map(profile => profile.maxHp / incomingRate(target, profile)));
     const damage = profiles.reduce((sum, profile) => sum + Math.max(0, ...soloChannels(profile, target, attacksOf)
         .map(attack => Math.min((attack.survivalWeight ?? attack.weight) * lifetime,
             attack.damageBudget ?? Infinity) * attack.modifier)), 0);
@@ -416,5 +429,5 @@ function damageRate(profiles, target = {}) {
         .map(attack => (attack.survivalWeight ?? attack.weight) * attack.modifier)), 0);
 }
 
-module.exports = { MIN_EFFICIENCY, actorProfiles, coldProfiles, profileKey, targetView, skillModifier, damageRate,
+module.exports = { MIN_EFFICIENCY, actorProfiles, coldProfiles, profileKey, targetView, skillModifier, damageRate, attackRate, spellRate, incomingRate,
     profileStats, skillStats, evaluate, soloSurvival, soloCanHunt, soloSpotUpperBound, stateProfiles, spotMatchup, speciesVerdict };

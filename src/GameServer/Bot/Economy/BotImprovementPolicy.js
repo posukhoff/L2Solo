@@ -6,6 +6,7 @@ const Valuation = require('./EconomicValuation');
 const Tendency = require('../AI/TendencyRoll');
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Rewards = require('./SpotRewardExpectation');
+const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
 const positive = value => Math.max(0, Number(value) || 0);
 function template(id) { return ItemIndex.find(invoke('GameServer/DataCache').items, id); }
 function instances(state) {
@@ -33,15 +34,6 @@ function targets(state) {
     }
     return result;
 }
-function isCaster(state) {
-    return ['mage','healer','buffer','nuker','summoner'].includes(invoke('GameServer/Bot/AI/GearAcquisitionPlanner').roleFor(state));
-}
-function gainBetween(a, b, caster) {
-    const attack = caster ? 'mAtk' : 'pAtk', speed = caster ? 'castSpd' : 'atkSpd';
-    return { attack: Math.max(0, b[attack] * b[speed] / Math.max(1, a[attack] * a[speed]) - 1),
-        defence: Math.max(0, 1 - a.pDef / Math.max(1, b.pDef), 1 - a.mDef / Math.max(1, b.mDef),
-            1 - a.maxHp / Math.max(1, b.maxHp)) };
-}
 // Expected attempts to the COMPLETE target. A normal failure ends the chain;
 // blessed failures return to zero. Affine recurrence solves that renewal.
 function enchantCost(item, from, to, scroll, config) {
@@ -63,14 +55,15 @@ function enchantCost(item, from, to, scroll, config) {
     const zero = coefficients[0].a / (1 - coefficients[0].b);
     return { count: coefficients[from].a + coefficients[from].b * zero, reach: 1, lossChance: 0 };
 }
-// The share of the attack rate left without the worn weapon: bare, or the
-// best spare worn instead. candidates: the bot's candidateProfiles.
-function stuckCost(state, item, ctx, candidates = null) {
+// The share of the hunt income left without the worn weapon (HuntCycle
+// kept): bare, or the best spare worn instead. candidates: the bot's
+// candidateProfiles; cycle: its HuntCycle reader.
+function stuckCost(state, item, ctx, candidates = null, cycle = null) {
     if (!item.equipped || !adapter(item).isWeapon()) return 0;
     candidates ||= Profile.candidateProfiles(state, ctx.timestamp ?? Date.now());
-    const rate = profile => profile.pAtk * profile.atkSpd + profile.mAtk * profile.castSpd;
+    cycle ||= HuntCycle.reader(state, ctx);
     const slot = slotOf(item), free = worn => worn === slot;
-    const share = wear => Math.min(1, rate(candidates.after({ free, wear })) / Math.max(1, rate(candidates.before)));
+    const share = wear => cycle.kept(candidates.before, candidates.after({ free, wear }));
     let kept = share(null);
     for (const spare of instances(state)) {
         if (spare.id === item.id || !adapter(spare).isWeapon()) continue;
@@ -96,20 +89,18 @@ function opportunities(state, ctx) {
     const config = Rules.configWith(globalThis.options?.default?.Enchant);
     const horizon = Valuation.decisionHorizon(state, ctx);
     const weight = (ctx.persona.primaryDrive === 'progression' ? 1 : .5) + Valuation.trait(ctx.persona, 'caution');
-    // Gains: the bot's kit profile against its numbers after the change
-    // (candidateProfiles), read once per review.
-    const timestamp = ctx.timestamp ?? Date.now(), magic = isCaster(state);
-    let candidates;
+    // Gains: the hunt hours per hour (HuntCycle) of the bot's kit profile
+    // against its numbers after the change (candidateProfiles), read once per review.
+    const timestamp = ctx.timestamp ?? Date.now();
+    let candidates, cycle;
     const read = () => candidates ||= Profile.candidateProfiles(state, timestamp);
-    const value = change => {
-        const effect = gainBetween(read().before, read().after(change), magic);
-        return (effect.attack + effect.defence * ctx.deathHours) * horizon * weight;
-    };
+    const cycleOnce = () => cycle ||= HuntCycle.reader(state, ctx);
+    const value = change => Math.max(0, cycleOnce().gain(read().before, read().after(change))) * horizon * weight;
     const result = [];
     for (const { item, a, category } of targets(state)) {
         // What losing this weapon costs: once per item, only where a try can fail.
         let stuck = null;
-        const stuckOnce = () => stuck ?? (stuck = stuckCost(state, item, ctx, read()));
+        const stuckOnce = () => stuck ?? (stuck = stuckCost(state, item, ctx, read(), cycleOnce()));
         const equipped = item.equipped;
         const buyer = !equipped && ctx.board?.first(item.selfId, 3, { excludeOwner: state.characterId });
         if (!equipped && !buyer && !ctx.board?.first(item.selfId, 1, { excludeOwner: state.characterId })) continue;
@@ -232,4 +223,4 @@ function crystalPath(state, id, ctx, spots = []) {
     }
     return best;
 }
-module.exports = { isCaster, enchantedPrice, crystalPath, opportunities, instances, adapter, enchantCost, stuckCost };
+module.exports = { enchantedPrice, crystalPath, opportunities, instances, adapter, enchantCost, stuckCost };

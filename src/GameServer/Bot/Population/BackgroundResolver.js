@@ -359,8 +359,7 @@ function resolveDeathRecovery(state, timestamp = Date.now()) {
 }
 
 function hitSucceeds(accuracy, evasion, rng) {
-    const chance = clamp((80 + (2 * (Number(accuracy) - Number(evasion)))) / 100, 0.2, 0.98);
-    return rng() < chance;
+    return rng() < Formulas.coldHitChance(accuracy, evasion);
 }
 
 // A skill takes its C4 cast time, cut by a loaded spiritshot; a skill row
@@ -1231,6 +1230,8 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
     let mobHp = pending?.hp ?? mob.maxHp;
     let actions = 0;
     let overhitContext = null;
+    // The mob's damage to the bot before any heal (the spot table's damage taken per kill).
+    let taken = 0;
 
     // A resolve contains only a handful of fights, and a fight itself is
     // bounded by time and actions. This is deliberately cheaper than a live
@@ -1290,6 +1291,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             const damage = Formulas.calcMeleeDamage(mob.pAtk, mob.pAtkRnd, soloFighter.profile.pDef, { critical, rng })
                 * coldNpcWeaponModifier(mob, soloFighter.profile, timestamp + time, soloFighter);
             vitals.hp -= Math.max(0, damage);
+            taken += Math.max(0, damage);
             mobReadyAt += Math.max(250, Formulas.calcMeleeAtkTime(mob.atkSpd));
         } else {
             mobReadyAt += Math.max(250, Formulas.calcMeleeAtkTime(mob.atkSpd));
@@ -1327,7 +1329,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             debug: { actions, durationMs: time, skillUses: soloFighter.skillUses, shotActions: soloFighter.shotActions, heals: soloFighter.heals,
                 musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
                 potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
-                mobSelfId: mob.selfId || null, timedOut: !died, pullMobs, areaPullHits }
+                mobSelfId: mob.selfId || null, timedOut: !died, pullMobs, areaPullHits, damageTaken: taken }
         };
     }
 
@@ -1374,7 +1376,8 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
         debug: { actions, durationMs: time, skillUses: soloFighter.skillUses, shotActions: soloFighter.shotActions, heals: soloFighter.heals,
             musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
             potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
-            mobSelfId: mob.selfId || null, timedOut: false, overhit: kill.overhit, pullMobs, areaPullHits, killsPaid: pulled }
+            mobSelfId: mob.selfId || null, timedOut: false, overhit: kill.overhit, pullMobs, areaPullHits, killsPaid: pulled,
+            damageTaken: taken }
     };
 }
 
@@ -1936,6 +1939,7 @@ const BackgroundResolver = {
         let potionsUsed = 0;
         const drunkPotions = {};
         let combatMs = 0;
+        let damageTaken = 0;
         const foughtNpcIds = [];
         const soulCrystals = [];
         let attemptedFights = 0;
@@ -2009,6 +2013,7 @@ const BackgroundResolver = {
             summonUses += Number(result.debug?.summonUses || 0);
             summonActions += Number(result.debug?.summonActions || 0);
             potionsUsed += Number(result.debug?.potionsUsed || 0);
+            damageTaken += Number(result.debug?.damageTaken || 0);
             if (result.debug?.pullMobs > 0) {
                 pulls += 1;
                 pullMobs += result.debug.pullMobs;
@@ -2111,6 +2116,7 @@ const BackgroundResolver = {
                 summonActions,
                 potionsUsed,
                 drunkPotions,
+                damageTaken,
                 pulls,
                 pullMobs,
                 areaPullHits,
