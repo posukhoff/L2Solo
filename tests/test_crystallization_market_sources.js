@@ -48,7 +48,9 @@ function offer(id, price, count = 1, town = 'Giran') {
 let routeFees = 0;
 const trip = () => routeFees;
 trip.details = () => ({ known: true, hours: 0, fees: routeFees });
-const purchase = Evidence.reader(state, { board, trip }, { npcOffersFor: () => [] });
+// A reader keeps each item's first quote for its build (WishPurchaseEvidence
+// queries): every read below is a fresh build over the board as it is now.
+const purchase = id => Evidence.reader(state, { board, trip }, { npcOffersFor: () => [] })(id);
 const kit = () => invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(state, Date.now());
 offer(90, 1909712);
 assert.equal(Crystals.choices(state, purchase, 0, 'd', null, kit)[0].selfId, 90);
@@ -185,9 +187,11 @@ assert.deepEqual(crystalPaths(Economy.forState(unskilled, deps)), [],
     const broken = leaf.improvement.items[0].selfId;
     // The held decision keeps the piece out of a town sale until it is broken.
     const Reservations = invoke('GameServer/Bot/Economy/CraftInputReservations');
-    assert.equal(Reservations.reservedAmounts(both, filled.plan)[broken], 1,
-        'the piece chosen for the crystals is reserved from sale');
+    // The decision's claims travel with its stats packet (stats.heldClaims,
+    // CraftInputReservations' one reader).
     const published = { ...both, stats: { ...both.stats, ...filled.statsPacket } };
+    assert.equal(Reservations.reservedAmounts(published)[broken], 1,
+        'the piece chosen for the crystals is reserved from sale');
     assert.equal(Economy.forState(published, adDeps).network.activity?.rootKey, `resale:${crystal}`, 'the decision is held');
     // Of two spare types of the grade, the one whose crystals cost least by
     // the bot's own price of the gear (the held item node's price the solver
@@ -201,7 +205,9 @@ assert.deepEqual(crystalPaths(Economy.forState(unskilled, deps)), [],
     const picked = decide(pair);
     assert.deepEqual(picked.network.activity?.improvement?.items, [{ selfId: cheapest.selfId, amount: 1 }],
         'the spare with the cheapest crystals is broken');
-    assert(!Reservations.reservedAmounts(pair, picked.plan)[small.selfId], 'the other spare stays free');
+    const pickedState = { ...pair, stats: { ...pair.stats, ...picked.statsPacket } };
+    assert.equal(Reservations.reservedAmounts(pickedState)[cheapest.selfId], 1, 'fixture: the broken spare is reserved');
+    assert(!Reservations.reservedAmounts(pickedState)[small.selfId], 'the other spare stays free');
     // Only the bot's own skill of the grade breaks gear for an ad.
     assert.equal(resale(decide(bag([[small.selfId, 1], [weapon.selfId, 1]], { ...crafter, stats: { ...unskilled.stats,
         dwarvenCraftLevel: 1 } }))), undefined, 'without Crystallize the spare gear is not broken for the ad');
