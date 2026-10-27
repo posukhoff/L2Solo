@@ -12,6 +12,7 @@ const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Shots = invoke('GameServer/Bot/Economy/ColdShotEconomyService');
 const Policy = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
+const Wealth = invoke('GameServer/Bot/Economy/WealthCraftDecision');
 const Workshop = invoke('GameServer/Bot/Economy/CraftWorkshopService');
 const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
 const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
@@ -268,9 +269,9 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         // The scan/candidate timer was retired by C2a/C2c. Eligibility remains
         // the native class/recipe rule; named worker plans perform the work.
         assert.equal(Shots.candidates, undefined);
-        assert(Policy.eligible({ ...result, level: 78, stats: { ...result.stats, classId: 118 } }, now));
-        assert(Policy.eligible({ ...result, level: 60, stats: { ...result.stats, classId: 57 } }, now));
-        assert(!Policy.eligible({ ...result, party: { partyId: 9 } }, now));
+        assert(Wealth.eligible({ ...result, level: 78, stats: { ...result.stats, classId: 118 } }, { now }));
+        assert(Wealth.eligible({ ...result, level: 60, stats: { ...result.stats, classId: 57 } }, { now }));
+        assert(!Wealth.eligible({ ...result, party: { partyId: 9 } }, { now }));
         console.log('PASS native Maestro/Warsmith eligibility and no retired population scan');
 
         const cRecipe = Recipes.resolveByRecipeId(21);

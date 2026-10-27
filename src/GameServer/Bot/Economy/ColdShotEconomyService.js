@@ -25,6 +25,7 @@ const ColdCrafting = invoke('GameServer/Bot/Economy/ColdCraftingService');
 
 const Policy = require('./ShotCraftPolicy');
 const Wealth = require('./WealthCraftDecision');
+const WealthCraft = invoke('GameServer/Bot/Economy/ColdWealthCraftService');
 const { availableMaterial } = Policy;
 const Crystals = require('./BotCrystallization');
 const active = new Set();
@@ -152,7 +153,10 @@ function recheck(state, selected) {
         ? { ...personal, target: Math.max(Number(personal.target || 0), Number(selected.ownReserve)) } : null;
     if (stock) ownStock.get(Number(recipe.productId)).count = Math.max(0,
         Number(state.inventory?.[recipe.productId]?.amount || 0) + Number(state.acceptedIncoming?.[recipe.productId] || 0) - stock.target);
-    const options = { ownStock, ownLines, stock, ownIncludesIncoming: true, knownRecipes: scrap ? [{ recipeId: scrap.recipeId }] : [],
+    // The step's root ratio (WealthCraftDecision.producerStep; 0: held inputs
+    // only): the worker sized the step at it, main spends at it.
+    const options = { ownStock, ownLines, stock, ownIncludesIncoming: true, r: Number(selected.r || 0),
+        knownRecipes: scrap ? [{ recipeId: scrap.recipeId }] : [],
         itemTemplate: id => ItemIndex.find(DataCache.items, Number(id)), gearRowsFor: () => gear ? [gear] : [],
         prepareTrip: function* (town) { yield 'trip'; return trip.details?.(town) || { known: false }; },
         preparePurchase: function* (owner, id, amount, query) { yield 'quote'; return purchase(id, amount, query); },
@@ -392,7 +396,7 @@ async function review(state, now = Date.now(), options = {}) {
 }
 
 async function execute(state, step, now = Date.now()) {
-    if (!Policy.eligible(state, now)) return state;
+    if (!Wealth.eligible(state, { now })) return state;
     const recipeId = Number(step?.craft?.recipeId || step?.recipeTarget);
     const recipe = Recipes.resolveByRecipeId(recipeId);
     if (!recipe || !CraftShopService.canCraft(state, recipe)) return state;
@@ -409,7 +413,12 @@ async function execute(state, step, now = Date.now()) {
         && !(await Database.execute(['SELECT recipeId FROM character_recipes WHERE characterId=? AND recipeId=? LIMIT 1',
             [Number(state.characterId), Number(selected.gear[1])]])).length) return state;
     const candidate = recheck(state, selected);
-    if (!candidate) return state;
+    if (!candidate) {
+        // A refused step goes back to the worker as a wealth step does
+        // (ColdWealthCraftService.rejectAccepted); one waiting for MP holds.
+        if (Number(state.vitals?.mp || 0) < Number(recipe.mpCost || 0) * Number(selected.batches || 1)) return state;
+        return WealthCraft.rejectAccepted(state);
+    }
     if (step?.recipeTarget) {
         if (known) return state;
         const board = AfkTrade.boardIndex(), scrollId = Number(recipe.recipeItemId);

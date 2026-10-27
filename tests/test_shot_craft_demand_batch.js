@@ -60,8 +60,8 @@ Market.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure())
     const trip = () => 0;
     trip.details = () => ({ known: true, hours: 0, fees: 0 });
     const ownStock = new Map(recipe.materials.map(row => [Number(row.selfId), { count: row.amount * 64, unitValue: 0 }]));
-    const step = (exit, saleExits = []) => Basket.drain(Wealth.producerStep(state,
-        [{ key: 'stock:shots', amount: 1000, recipeId: 20, exit, recipeReady: true, r: 0 }], [20],
+    const step = (exit, { amount = 1000, r = 0, saleExits = [] } = {}) => Basket.drain(Wealth.producerStep(state,
+        [{ key: 'stock:shots', amount, recipeId: 20, exit, recipeReady: true, r }], [20],
         { context: { hourAdena, moneyPrice: 1 / hourAdena, mpPerHour: 1000, trip, price: () => 0, soldPrice: () => 140 },
             options: { ownStock, existing: () => 0,
                 stock: { itemId: recipe.productId, missing: 1000, survivalMissing: 0, target: 1000, benefitHours: 1000, unitPrice: 140 },
@@ -70,6 +70,8 @@ Market.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure())
     const own = step([-1, 1000]);
     assert.equal(own?.step.craft?.recipeId, 20, 'the own-use row is a shot craft step');
     assert.equal(own.step.craft.exit[0], -1, 'the step crafts for the bot\'s own use');
+    assert.equal(step([-1, 100], { amount: 100 })?.step.craft?.batches, 1, 'a shortfall under one batch (156 shots) still crafts');
+    assert.equal(step([-1, 1000], { r: .002 })?.step.craft?.r, .002, 'the step carries its root\'s ratio for main\'s recheck');
     assert.equal(step([-2, Policy.townCode('Giran')]), null, 'a listing the root chose but no exit offers is no craft');
     console.log('PASS the network\'s own-use row crafts the bot\'s shots');
 }

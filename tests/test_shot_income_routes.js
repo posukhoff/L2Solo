@@ -15,46 +15,6 @@ Market.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure())
 const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
 
 (async () => {
-    for (const recipeId of [20, 21, 22, 23, 24]) {
-        const recipe = Recipes.resolveByRecipeId(recipeId), board = new BoardIndex();
-        const state = { characterId: 910801, accountName: 'bot_pop_shot_income', name: 'ShotSmith',
-            phase: 'cold', activity: 'shopping', currentRegion: 'Giran', homeRegion: 'Giran', level: 76,
-            adena: 10000000, vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
-            inventory: Object.fromEntries(recipe.materials.map(row => [row.selfId,
-                { selfId: row.selfId, amount: row.amount, stackable: true }])), updatedAt: Date.now(), timing: {},
-            loc: { locX: 83396, locY: 147904, locZ: -3400 },
-            stats: { classId: 57, money: [1000, .001, 0, 0] } };
-        state.persona = invoke('GameServer/Bot/AI/BotPersona').generate(state);
-        const records = [
-            { id: 910810, ownerId: 910811, storeType: 3, kind: 'buy_ad', custodyPolicy: 1,
-                town: 'Giran', status: 'active', revision: 1,
-                lines: [{ id: 9108100, lineId: 9108100, selfId: recipe.productId, count: 100000, price: 100, enchant: 0 }] },
-            { id: 910820, ownerId: 910821, storeType: 1, kind: 'shop', custodyPolicy: 0,
-                town: 'Giran', status: 'active', revision: 1,
-                lines: [{ id: 9108200, lineId: 9108200, selfId: recipe.recipeItemId, count: 1, price: 1, enchant: 0 }] }
-        ];
-        for (const row of records) board.put(row);
-        Afk.boardIndex = () => board;
-        // No known recipe: the producer root takes the offered grade's
-        // recipe for the buyer line and acts on its scroll (WishProviders);
-        // the craft step buys no scroll of its own.
-        const offered = await probe(state, { nativeRoutes: true, recipes: { recipeBook: Codec.pack([]) },
-            boardRows: records.map(row => [row.id, rowOf(row)]) });
-        assert(offered.queue.some(row => row.key === `resale:${recipe.productId}`), `the producer root takes the offered grade recipe ${recipeId}`);
-        assert(offered.tradeIntents.some(row => row.itemId === recipe.recipeItemId), `the root acts on its recipe scroll for ${recipeId}`);
-        if (recipeId === 20 || recipeId === 21) {
-            const competitors = [317, 323, recipeId === 20 ? 21 : 20].map((id, at) => ({
-                id: 911000 + at, ownerId: 912000 + at, storeType: 3, kind: 'buy_ad', custodyPolicy: 1,
-                town: 'Giran', status: 'active', revision: 1, lines: [{ lineId: 913000 + at,
-                    selfId: Recipes.resolveByRecipeId(id).productId, count: 100000, price: 10000, enchant: 0 }] }));
-            const investing = { ...state, level: 52, stats: { ...state.stats,
-                shotRecipeDemand: { itemId: recipe.recipeItemId, at: Date.now(), amount: 1, maxSpend: 1000 } } };
-            const wishes = await probe(investing, { nativeRoutes: true, recipes: { recipeBook: Codec.pack([]) },
-                boardRows: [...records, ...competitors].map(row => [row.id, rowOf(row)]) });
-            assert(wishes.queue.some(row => row.key === `resale:${recipe.productId}`), 'recipe investment has a native earning root');
-            assert(wishes.tradeIntents.some(row => row.itemId === recipe.recipeItemId && row.worth >= 1), 'a meeting can certify the recipe purchase through the shared wish graph');
-        }
-    }
     // A shop is a real earning route even without a BUY ad. Its finite
     // customer forecast comes from completed trades of this item in this town.
     for (const recipeId of [20, 21, 22, 23, 24]) {
@@ -137,6 +97,46 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
         assert.equal(Shots.recheck(withOutput, selected.craft), null, 'unsold own stock prevents more production');
         Market.reset();
         assert.equal(Shots.recheck(state, selected.craft), null, 'missing current demand rejects before spending');
+    }
+    for (const recipeId of [20, 21, 22, 23, 24]) {
+        const recipe = Recipes.resolveByRecipeId(recipeId), board = new BoardIndex();
+        const state = { characterId: 910801, accountName: 'bot_pop_shot_income', name: 'ShotSmith',
+            phase: 'cold', activity: 'shopping', currentRegion: 'Giran', homeRegion: 'Giran', level: 76,
+            adena: 10000000, vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
+            inventory: Object.fromEntries(recipe.materials.map(row => [row.selfId,
+                { selfId: row.selfId, amount: row.amount, stackable: true }])), updatedAt: Date.now(), timing: {},
+            loc: { locX: 83396, locY: 147904, locZ: -3400 },
+            stats: { classId: 57, money: [1000, .001, 0, 0] } };
+        state.persona = invoke('GameServer/Bot/AI/BotPersona').generate(state);
+        const records = [
+            { id: 910810, ownerId: 910811, storeType: 3, kind: 'buy_ad', custodyPolicy: 1,
+                town: 'Giran', status: 'active', revision: 1,
+                lines: [{ id: 9108100, lineId: 9108100, selfId: recipe.productId, count: 100000, price: 100, enchant: 0 }] },
+            { id: 910820, ownerId: 910821, storeType: 1, kind: 'shop', custodyPolicy: 0,
+                town: 'Giran', status: 'active', revision: 1,
+                lines: [{ id: 9108200, lineId: 9108200, selfId: recipe.recipeItemId, count: 1, price: 1, enchant: 0 }] }
+        ];
+        for (const row of records) board.put(row);
+        Afk.boardIndex = () => board;
+        // No known recipe: the producer root takes the offered grade's
+        // recipe for the buyer line and acts on its scroll (WishProviders);
+        // the craft step buys no scroll of its own.
+        const offered = await probe(state, { nativeRoutes: true, recipes: { recipeBook: Codec.pack([]) },
+            boardRows: records.map(row => [row.id, rowOf(row)]) });
+        assert(offered.queue.some(row => row.key === `resale:${recipe.productId}`), `the producer root takes the offered grade recipe ${recipeId}`);
+        assert(offered.tradeIntents.some(row => row.itemId === recipe.recipeItemId), `the root acts on its recipe scroll for ${recipeId}`);
+        if (recipeId === 20 || recipeId === 21) {
+            const competitors = [317, 323, recipeId === 20 ? 21 : 20].map((id, at) => ({
+                id: 911000 + at, ownerId: 912000 + at, storeType: 3, kind: 'buy_ad', custodyPolicy: 1,
+                town: 'Giran', status: 'active', revision: 1, lines: [{ lineId: 913000 + at,
+                    selfId: Recipes.resolveByRecipeId(id).productId, count: 100000, price: 10000, enchant: 0 }] }));
+            const investing = { ...state, level: 52, stats: { ...state.stats,
+                shotRecipeDemand: { itemId: recipe.recipeItemId, at: Date.now(), amount: 1, maxSpend: 1000 } } };
+            const wishes = await probe(investing, { nativeRoutes: true, recipes: { recipeBook: Codec.pack([]) },
+                boardRows: [...records, ...competitors].map(row => [row.id, rowOf(row)]) });
+            assert(wishes.queue.some(row => row.key === `resale:${recipe.productId}`), 'recipe investment has a native earning root');
+            assert(wishes.tradeIntents.some(row => row.itemId === recipe.recipeItemId && row.worth >= 1), 'a meeting can certify the recipe purchase through the shared wish graph');
+        }
     }
     console.log('PASS producer root shot income and recipe scroll, worker-to-executor storefront craft for D/C/B/A/S');
 })().catch(error => { console.error(error.stack); process.exitCode = 1; }).finally(() => { Afk.boardIndex = originalBoard; });

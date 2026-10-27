@@ -305,7 +305,7 @@ function capture(economy, state, seen = state) {
     const activity = leaf ? new CompactActivity(leaf) : null;
     // The leaf's producer root keeps its exit identity on the card (restart).
     const producer = activity?.rootKey ? economy?.network?.producers?.find(row => row.key === activity.rootKey) : null;
-    if (producer && Array.isArray(producer.exit)) activity.exitKey = [Number(producer.exit[0]), Number(producer.exit[1])];
+    if (producer && Array.isArray(producer.exit) && producer.key.startsWith('resale:')) activity.exitKey = [Number(producer.exit[0]), Number(producer.exit[1])];
     if (activity) {
         const rows = CraftInputReservations.heldCraftRows(seen, economy?.network?.heldClaims);
         if (rows.length) activity.craftReservations = rows;
@@ -432,6 +432,9 @@ function view(state, decision, deps = {}, preparedBase = null) {
             : EconomicValuation.stageHours(state, basics().hunt.expPerHour, basics().persona);
     const own = { state, hourAdena, moneyPrice, survivalReserve: valid ? Number(packet[2]) : base.survivalReserve,
         board, network: { activity }, activity, wish,
+        // The card's held craft step (packed, ShotCraftPolicy.packStep): the
+        // view has no producer rows to size another (WealthCraftDecision.producerStep).
+        heldShot: decision?.shot ?? null,
         watchList: watchList(decision),
         materials: decision?.materials || [], inputHash: decision?.inputHash || 0, decided: !!decision,
         itemUsefulness, worth: id => known(id) !== null && moneyPrice > 0 ? itemUsefulness(id) / moneyPrice : basics().price(id) };

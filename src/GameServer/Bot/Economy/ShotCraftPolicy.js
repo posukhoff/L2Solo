@@ -1,7 +1,5 @@
 // Native shot decisions, shared by town reviews and the cold worker.
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
-const { partyIdOf } = require('../Population/PartyId');
-const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const Basket = require('./WealthCraftPolicy');
 const Profit = require('./CraftProfitPolicy');
@@ -14,7 +12,6 @@ const Trip = require('./EconomicTrip');
 const Crystals = require('./BotCrystallization');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
-const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 // The shot recipes: every recipe whose product is a D+ shop shot
 // (ShotStock.gradedShopShot, the classifier MarketDemand reads), in recipe-id
 // order. Recipe data is a restart input: built once, at the first read.
@@ -80,14 +77,6 @@ function batchCount(state, candidate) {
         Math.floor(potential / candidate.requiredCrystals), Profit.mpBatches(availableMp, candidate.recipe)));
 }
 
-function eligible(state, now = Date.now()) {
-    return state?.phase === 'cold' && ['hunting', 'resting', 'shopping', 'grouped'].includes(state.activity)
-        && CraftShopService.isServiceCrafter(state) && CraftShopService.craftLevelFor(state) >= 2
-        && !partyIdOf(state) && !state.stats?.craftStationId
-        && !invoke('GameServer/Bot/Population/CombinedErrandPolicy').pending(state, now).length
-        && !(state.stats?.equipmentPlan?.strategy === 'craft'
-            && GearAcquisitionPlanner.planRunning(state.stats.equipmentPlan));
-}
 // The shot leaf: sizes one shot recipe's craft with the bounded basket
 // iterator wealth uses, its crystals from crystals, held, bought or crafted
 // gear (prepareCrystal) and its own use beside the sale. The producer root
@@ -281,8 +270,9 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
         ? Math.max(0, Number(personal.target || 0) - Number(state.inventory?.[recipe.productId]?.amount || 0)
             - Number(state.acceptedIncoming?.[recipe.productId] || 0)) : 0;
     // A root's row spends at the root's money-queue ratio, the one rule of
-    // every producer row (PurchaseFunding.goalTerms); a recheck within the
-    // upper bound at the step's own value ratio.
+    // every producer row (PurchaseFunding.goalTerms), in the worker and in
+    // main's recheck of its step; without one, within the upper bound at the
+    // step's own value ratio.
     const rooted = options.r !== undefined;
     const selected = yield* Basket.searchQuantity({ state: { ...state,
         adena: PurchaseFunding.spendable(state, 0, rooted ? { r: options.r } : { upperBound: true }) }, recipe, exits, ownedFor: ownFor,
@@ -290,7 +280,7 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
             outputReserve, reservedOutputUnitHours: ownUnitHours, preparePurchase } });
     if (!selected) return null;
     const cash = selected.basket.cashCost + selected.basket.actualCashFees;
-    const r = cash > 0 ? selected.valueHours / cash : Infinity;
+    const r = rooted ? Number(options.r) : cash > 0 ? selected.valueHours / cash : Infinity;
     if (!rooted && cash > PurchaseFunding.spendable(state, 0, { r })) return null;
     const orePurchase = selected.basket.purchases.find(row => row.selfId === oreId);
     const crystalPurchase = selected.basket.purchases.find(row => row.selfId === crystalId);
@@ -360,5 +350,5 @@ function unpackStep(step) {
 }
 
 module.exports = { get SHOT_RECIPE_IDS() { return shotRecipes(); },
-    availableMaterial, batchCount, eligible, packStep, unpackStep,
+    availableMaterial, batchCount, packStep, unpackStep,
     recipeShotSearch, exitTuple, selectionFor, townCode, townForCode };
