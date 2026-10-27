@@ -453,7 +453,9 @@ function buildProjection(state, ctx, deps) {
     // and the one value cut (Network.admitRoots below) keeps roots by rank,
     // not by build order.
     let nodes = [], nodeKeys = new Set(), scratch = false;
-    const roots = [], values = new Map();
+    // rootNodes: the root nodes of `roots`, in order (gear admission's held
+    // price reads the ones built before it).
+    const roots = [], rootNodes = [], values = new Map();
     const add = node => { if (nodeKeys.has(node.key)) return false;
         nodes.push(node); nodeKeys.add(node.key); return true; };
     const rollback = mark => { for (const node of nodes.splice(mark)) nodeKeys.delete(node.key); };
@@ -481,7 +483,7 @@ function buildProjection(state, ctx, deps) {
     const root = node => {
         if (node.object?.itemId && !Sources.hasSource(node.object.itemId)) return false;
         if (!add(node)) return false;
-        roots.push(node.key); return true;
+        roots.push(node.key); rootNodes.push(node); return true;
     };
     // One path's inputs ({ selfId, amount, once } -> { key, amount, once })
     // at `depth`: all of them enter the graph leaving one slot for the node
@@ -1344,6 +1346,40 @@ function buildProjection(state, ctx, deps) {
         for (const material of materials) values.set(material.selfId,
             positive(values.get(material.selfId)) + improvement.valueHours / Math.max(1, material.amount));
     }
+    // Stock roots stand before gear admission: its held price reads them
+    // (the roots built before it).
+    for (const kind of ['shots', 'potions', 'scrolls']) {
+        const stock = ctx.stock(kind);
+        // A necessary refill covers the planned outing in the same purchase.
+        // Only the survival shortfall outranks unfinished equipment; once that
+        // floor is filled, optional stock cannot keep the kit on hold.
+        const amount = Number(stock?.survivalMissing || 0)
+            + (acquisitionKit.required && kind !== 'shots' ? 0 : Number(stock?.missing || 0));
+        if (Diagnostics.active() && Diagnostics.enabled(state.characterId)) Diagnostics.push({ owner: state.characterId,
+            caller: deps.caller || 'wish_provider', trigger: 'projection_build',
+            phase: 'wish_need', reason: !(amount > 0) ? 'target_satisfied' : !(stock.unitPrice > 0)
+                ? 'unknown_price' : !(stock.benefitPerUnit > 0) ? 'no_expected_benefit' : 'stock_shortfall',
+            decisionSeq: state.stats?.decisionSeq, activityLeaf: state.stats?.activityLeaf,
+            wishKey: `stock:${kind}`, item: stock?.itemId, target: stock?.target,
+            owned: stock?.current, missing: stock?.missing, requested: amount,
+            unitPrice: stock?.unitPrice, valueHours: amount * (stock?.benefitPerUnit || 0), wallet: state.adena });
+        if (!(amount > 0) || !(stock.unitPrice > 0) || !(stock.benefitPerUnit > 0)) continue;
+        const key = inputs([{ selfId: stock.itemId, amount }], 0)?.[0].key;
+        if (!key) continue;
+        const heldStock = nativeQuantities.physical(stock.itemId);
+        quantityInputs?.stockPhysical(`stock:${kind}`, stock.itemId, heldStock);
+        root({ key: `stock:${kind}`, need: 'power', object: { itemId: stock.itemId, amount, kind },
+            progressionPriority: acquisitionKit.required && stock.survivalMissing > 0 ? 4 : 0,
+            valueHours: amount * stock.benefitPerUnit * powerWeight, price: amount * stock.unitPrice,
+            // The survival tranche is the kit's cost (kitCost), already held
+            // by the survival reserve; the money queue charges only the rest.
+            reserved: Math.min(amount * stock.unitPrice, Math.max(0, Number(ctx.kitCost?.(stock.itemId)) || 0)),
+            // gross = held units + amount, so allocation leaves `amount`.
+            paths: [{ requirements: [{ key, amount }],
+                grossRequirements: [{ key, amount: amount
+                    + heldStock }] }] });
+        values.set(stock.itemId, stock.benefitPerUnit);
+    }
     const candidates = [];
     const planningState = preparation || state;
     const wornFor = wornReader(planningState), gainFor = gearGainReader(state, timestamp, {}, ctx);
@@ -1458,13 +1494,64 @@ function buildProjection(state, ctx, deps) {
             || (luxury ? Number(Network.fundable(b.wish)) - Number(Network.fundable(a.wish)) : 0)
             || (before(a, b) ? -1 : before(b, a) ? 1 : 0));
     };
+    // The held money's price admission prices held cash at (T79, user 10-28):
+    // the build's own rule (WishNetwork.heldPriceAhead, moneyQueue's
+    // savingPrice) over each family's best evaluated row (value per price,
+    // a never row out: `reps`, family -> its row in the build's compact
+    // form) and the roots built before admission (clan, producer, crystal,
+    // farm, improvement, stock: their node's value and price, no solve).
+    // The build reads the reps of the families no admitted root stands for
+    // (`ahead`) beside its own roots: one row set, so a wish a cap leaves
+    // out still keeps held money dear (a poor bot saving for a coming
+    // weapon), and a wallet that covers them all holds free money.
+    // The first round's routes are chosen at the same rule over each
+    // family's best node (its full value and price, before a solve: no
+    // ready delay, no never verdict), so a row's path is not picked at the
+    // hunt rate (a 34k buy against an hour's farm); its effort is then
+    // priced at the solved rows' price, no second solve.
+    // reps: family -> { row, ahead: its compact row }.
+    let reps = null, aheadPrice = null;
+    const aheadRow = wish => ({ key: wish.key, valueHours: wish.valueHours, price: wish.price,
+        progressionPriority: positive(wish.progressionPriority),
+        ...(wish.scrollCash !== undefined && Network.fundable(wish) ? { scrollCash: wish.scrollCash } : {}) });
+    const nodeRow = node => ({ key: node.key, object: node.object, valueHours: node.valueHours, price: node.price,
+        progressionPriority: positive(node.progressionPriority), progressionFunding: !!node.progressionFunding, reserved: positive(node.reserved) });
+    const priced = node => positive(node.valueHours) > 0 && positive(node.price) > 0;
+    const heldAt = rows => Network.heldPriceAhead([...rows, ...rootNodes.filter(priced).map(nodeRow)],
+        solverOptions.wallet, solverOptions.survivalReserve, Network.moneyFloor(ctx.hourAdena));
+    // The family's best by value per price (gear rows; a node or a wish).
+    const best = (rows, of) => {
+        const families = new Map();
+        for (const row of rows) {
+            const at = families.get(row.family), ratio = item => of(item).valueHours / of(item).price;
+            if (!at || ratio(row) > ratio(at)) families.set(row.family, row);
+        }
+        return families;
+    };
+    const routePrice = () => {
+        solverOptions.heldPrice = heldAt([...best(gear.filter(row => priced(row.node)), row => row.node).values()].map(row => nodeRow(row.node)));
+    };
+    const priceAhead = () => {
+        reps = new Map();
+        const solved = best(gear.filter(row => row.status === 'evaluated' && row.wish.valueHours > 0 && row.wish.price > 0
+            && !row.wish.plan?.never), row => row.wish);
+        for (const [family, row] of solved) reps.set(family, { row, ahead: aheadRow({ ...row.wish, key: row.node.key }) });
+        aheadPrice = heldAt([...reps.values()].map(rep => rep.ahead));
+        // Every later solve of this build (claim rounds, the shared-stock
+        // pass, the review's root cut) prices at it; the rows solved so far
+        // are priced again, no second solve.
+        solverOptions.heldPrice = aheadPrice;
+        for (const row of gear) if (row.wish) Network.priceRoot(row.wish, row.node, aheadPrice, solverOptions);
+    };
     // Family winners enter one at a time by score while the union of their
     // descriptors stays within Network.MAX_NODES; a winner that does not fit is pending
     // and the others proceed. Shared stock: after each admission except the
     // last, only candidates holding a newly claimed item are re-evaluated.
     function* admitGear() {
         let used = new Map();
+        routePrice();
         for (const row of gear) { evaluate(row, used); yield row; }
+        priceAhead();
         admission.rounds = gear.length ? 1 : 0;
         const admitted = [], closed = new Set(), union = new Set();
         const fits = row => [...row.keys, row.node.key].filter(key => !union.has(key)).length + union.size <= Network.MAX_NODES;
@@ -1596,38 +1683,6 @@ function buildProjection(state, ctx, deps) {
             valueHours: powerWeight, price: 0, paths: [{ kind: 'experience', activity: 'hunting',
                 spotId: ctx.hunt.progressSpotId || ctx.bestSpotId, costHours: 1, riskHours: ctx.expectedDeathHours }] });
     }
-    for (const kind of ['shots', 'potions', 'scrolls']) {
-        const stock = ctx.stock(kind);
-        // A necessary refill covers the planned outing in the same purchase.
-        // Only the survival shortfall outranks unfinished equipment; once that
-        // floor is filled, optional stock cannot keep the kit on hold.
-        const amount = Number(stock?.survivalMissing || 0)
-            + (acquisitionKit.required && kind !== 'shots' ? 0 : Number(stock?.missing || 0));
-        if (Diagnostics.active() && Diagnostics.enabled(state.characterId)) Diagnostics.push({ owner: state.characterId,
-            caller: deps.caller || 'wish_provider', trigger: 'projection_build',
-            phase: 'wish_need', reason: !(amount > 0) ? 'target_satisfied' : !(stock.unitPrice > 0)
-                ? 'unknown_price' : !(stock.benefitPerUnit > 0) ? 'no_expected_benefit' : 'stock_shortfall',
-            decisionSeq: state.stats?.decisionSeq, activityLeaf: state.stats?.activityLeaf,
-            wishKey: `stock:${kind}`, item: stock?.itemId, target: stock?.target,
-            owned: stock?.current, missing: stock?.missing, requested: amount,
-            unitPrice: stock?.unitPrice, valueHours: amount * (stock?.benefitPerUnit || 0), wallet: state.adena });
-        if (!(amount > 0) || !(stock.unitPrice > 0) || !(stock.benefitPerUnit > 0)) continue;
-        const key = inputs([{ selfId: stock.itemId, amount }], 0)?.[0].key;
-        if (!key) continue;
-        const heldStock = nativeQuantities.physical(stock.itemId);
-        quantityInputs?.stockPhysical(`stock:${kind}`, stock.itemId, heldStock);
-        root({ key: `stock:${kind}`, need: 'power', object: { itemId: stock.itemId, amount, kind },
-            progressionPriority: acquisitionKit.required && stock.survivalMissing > 0 ? 4 : 0,
-            valueHours: amount * stock.benefitPerUnit * powerWeight, price: amount * stock.unitPrice,
-            // The survival tranche is the kit's cost (kitCost), already held
-            // by the survival reserve; the money queue charges only the rest.
-            reserved: Math.min(amount * stock.unitPrice, Math.max(0, Number(ctx.kitCost?.(stock.itemId)) || 0)),
-            // gross = held units + amount, so allocation leaves `amount`.
-            paths: [{ requirements: [{ key, amount }],
-                grossRequirements: [{ key, amount: amount
-                    + heldStock }] }] });
-        values.set(stock.itemId, stock.benefitPerUnit);
-    }
     const paidInputs = state.stats?.equipmentPlan?.crystalPreparation && need('./BotCrystallization').preparation(state);
     // Paid inputs break where the bot stands (its own skill): no trip.
     if (paidInputs) root({ key: paidInputs.key, need: 'power', object: { itemId: paidInputs.plan.target.selfId },
@@ -1702,7 +1757,13 @@ function buildProjection(state, ctx, deps) {
     const cut = Network.admitRoots(roots, byKey);
     admission.pending.push(...cut.pending);
     for (const row of cut.pending) keepCapped(byKey.get(row.key));
-    for (const [key, scope] of builtBy) if (cut.kept.has(key)) ctx.readScope.keep(scope);
+    // The families no kept gear root stands for: their best rows the build's
+    // held price reads (priceAhead), whose item reads are the build's too
+    // (a listing of the piece it saves for moves its held price).
+    const standing = new Set(gear.filter(row => cut.kept.has(row.node.key)).map(row => row.family));
+    const leftOut = [...reps.entries()].filter(([family]) => !standing.has(family)).map(([, rep]) => rep);
+    const aheadKeys = new Set(leftOut.flatMap(rep => rep.row.keys));
+    for (const [key, scope] of builtBy) if (cut.kept.has(key) || aheadKeys.has(key)) ctx.readScope.keep(scope);
     if (Diagnostics.active()) {
         Diagnostics.count('provider', 'admission', 'candidate', admission.candidates);
         Diagnostics.count('provider', 'admission', 'evaluation', admission.evaluations);
@@ -1711,8 +1772,9 @@ function buildProjection(state, ctx, deps) {
         for (const row of admission.pending) Diagnostics.count('provider', 'admission_pending', row.reason);
     }
     const keptNodes = nodes.filter(node => cut.kept.has(node.key));
+    const ahead = leftOut.map(rep => rep.ahead);
     blocks?.lap('tail'); blocks?.done();
-    return { nodes: keptNodes, roots: cut.roots, values, moneyPaths, horizon, admission, sourceGround, capped };
+    return { nodes: keptNodes, roots: cut.roots, values, moneyPaths, horizon, admission, sourceGround, capped, aheadPrice, ahead };
 }
 // Only public recipe rows and a prepared route can prove a usable service.
 // This bounded indexed read is shared by visible and distant bots. No private

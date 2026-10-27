@@ -22,10 +22,10 @@ const gear = (itemId, valueHours, extra = {}) => ({ key: `power:${itemId}:6`, ne
     object: { itemId }, valueHours, progressionPriority: 0, ...extra,
     paths: [{ requirements: [{ key: `item:${itemId}`, amount: 1 }] }] });
 // A quantity build (stockFor), as the economy's: its intents are published.
-const build = (wallet, hourAdena, nodes) => new WishNetwork().build({ actorKey: 'held', inputKey: `${wallet}`, nodes,
+const build = (wallet, hourAdena, nodes, extra = {}) => new WishNetwork().build({ actorKey: 'held', inputKey: `${wallet}`, nodes,
     roots: nodes.filter(node => node.need).map(node => node.key), wallet, hourAdena,
     persona: { traits: { commitment: 0 } }, remembered: false, stockFor: () => ({}),
-    moneyPaths: [{ activity: 'hunting', incomePerHour: hourAdena }] });
+    moneyPaths: [{ activity: 'hunting', incomePerHour: hourAdena }], ...extra });
 const row = (network, key) => network.queue.find(wish => wish.key === key);
 // The bot's state after the build: its wallet and the build's money packet.
 const stateOf = (network, wallet, hourAdena) => ({ characterId: 7, adena: wallet,
@@ -116,6 +116,26 @@ assert.equal(row(covered, 'power:610:6').funded, false, 'the piece does not take
 assert(Funding.spendable(stateOf(covered, 2.5e6, 20000), 0, { r: Funding.significant(9 / 6e5), key: 'power:610:6' }) < 6e5,
     'main keeps the saved cash too');
 
+// T79: the build prices held money over the gear rows admission's caps left
+// out (`ahead`, WishProviders) beside its own roots: a weapon left out keeps
+// the money for it; one below the active priority (a kit gap first) does not.
+const aheadWeapon = { key: 'power:600:6', valueHours: 100, price: 2e6, progressionPriority: 0 };
+assert.equal(build(2e5, 20000, helmet).heldPrice, 0);
+const leftOut = build(2e5, 20000, helmet, { ahead: [aheadWeapon] });
+assert.equal(leftOut.heldPrice, 1 / 20000, 'the weapon a cap left out keeps the held money dear');
+assert.equal(spend(leftOut, 2e5, 20000, 500), 0, 'the helmet does not take the money saved for it');
+const gap = build(2e5, 20000, [gear(500, .69, { progressionPriority: 1 }), shop(500, 34000)], { ahead: [aheadWeapon] });
+assert.equal(gap.heldPrice, 0, 'a row below the active priority is no use of the money now');
+// The path choice at the held price (T79): a 34k buy against an hour of
+// farming at 20k/h. At the hunt rate (no price yet) the farm is cheaper;
+// with free held money (admission's price) the bot buys and keeps the hour.
+const farmed = { key: 'item:500', price: 34000, paths: [shop(500, 34000).paths[0],
+    { kind: 'drop', activity: 'hunting', costHours: 1, readyHours: 1, itemId: 500 }] };
+const route = network => network.plans.get('power:500:6').requirements[0].plan.kind;
+assert.equal(route(build(1e6, 20000, [gear(500, 5), farmed])), 'drop', 'at the hunt rate an hour of farming beats 1.7 h of cash');
+assert.equal(route(build(1e6, 20000, [gear(500, 5), farmed], { aheadPrice: 0 })), 'buy', 'held cash at its price buys the item');
+assert.equal(route(build(1e4, 20000, [gear(500, 5), farmed], { aheadPrice: 0 })), 'drop', 'cash the wallet lacks stays at the hunt rate');
+
 // A level-53 bot with 26M on a 1.5k/h field bids for a 5M C weapon no one
 // sells yet: 24 h of benefit would be worth only 36k at the hunt rate; its
 // bid reaches the weapon's price belief and stops there.
@@ -168,4 +188,4 @@ assert.equal(meeting(wealthy, 26e6, 1500, resaleCertificate), 0, 'a resale root 
 // An old packet (no held price after its rows) spends at its money price.
 assert.equal(Funding.heldPrice([1000, .001, 0, 0, .002, 500, 1]), .001);
 assert.equal(Funding.heldPrice([1000, .001, 0, 0, .002, 500, 1, .0001]), .0001);
-console.log('held money priced by its best other use (T53): PASS');
+console.log('held money priced by its best other use (T53), ahead rows and path choice (T79): PASS');
