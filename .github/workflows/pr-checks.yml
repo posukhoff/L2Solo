@@ -37,15 +37,23 @@ jobs:
         run: npm test -- --keep-going --shard=${{ matrix.shard }}/12
 
   # Real-map tests (scripts/run-tests.js --geodata). There is no default pack (docs/client-geodata.md): a repository
-  # that sets the variables L2NODE_GEODATA_URL and L2NODE_GEODATA_SHA256 runs them; elsewhere both jobs are skipped.
+  # that sets L2NODE_GEODATA_URL (a public archive) or L2NODE_GEODATA_RELEASE (the tag of a draft release of this
+  # repository holding the zip), with L2NODE_GEODATA_SHA256 (the starter refuses without it), runs them; elsewhere
+  # both jobs are skipped.
   geodata-pack:
     name: Geodata pack
-    if: vars.L2NODE_GEODATA_URL != ''
+    if: vars.L2NODE_GEODATA_URL != '' || vars.L2NODE_GEODATA_RELEASE != ''
     runs-on: ubuntu-latest
+    # Draft releases are listed only to a token with push access.
+    permissions:
+      contents: write
     timeout-minutes: 20
     steps:
+      # No git work after checkout: the write token stays out of .git/config while npm install scripts run.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # The installed pack is kept by its archive checksum; a miss is saved after this job. GitHub scopes a cache to
       # its branch (and the default branch's), so each ci-<ref> branch of tools/ci.sh installs the pack once.
@@ -67,12 +75,26 @@ jobs:
         if: steps.pack.outputs.cache-hit != 'true'
         run: npm install
 
+      # A draft release's zip is fetched with the run's token and served on loopback, so the starter installs it
+      # through the same checksum and manifest checks as a public URL.
       - name: Install the pack with the starter
         if: steps.pack.outputs.cache-hit != 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ vars.L2NODE_GEODATA_RELEASE }}
           L2NODE_GEODATA_URL: ${{ vars.L2NODE_GEODATA_URL }}
           L2NODE_GEODATA_SHA256: ${{ vars.L2NODE_GEODATA_SHA256 }}
-        run: npm run geodata
+        run: |
+          if [ -n "$RELEASE" ]; then
+            asset=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$RELEASE\") | .assets[] | select(.name | endswith(\".zip\")) | .id" | head -1)
+            [ -n "$asset" ] || { echo "no zip asset in release $RELEASE"; exit 1; }
+            mkdir -p tmp/geodata-release
+            gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > tmp/geodata-release/pack.zip
+            python3 -m http.server 8765 --bind 127.0.0.1 --directory tmp/geodata-release > /dev/null 2>&1 &
+            export L2NODE_GEODATA_URL=http://127.0.0.1:8765/pack.zip
+            for i in $(seq 20); do curl -sfI "$L2NODE_GEODATA_URL" > /dev/null && break; sleep 0.5; done
+          fi
+          npm run geodata
 
   geodata-tests:
     name: Geodata tests (${{ matrix.shard }}/3)
