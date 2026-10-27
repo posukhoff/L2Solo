@@ -28,7 +28,9 @@ async function main() {
             : ({ sourceName: `Trader${line.ownerId}`, itemName: `Item${line.selfId}`, projection: line.ref.projection,
                 locX: meetingX, locY: 0, locZ: 0, store: { shopId: line.recordId } }),
         buyFromShop() { throw Error('remote purchase forbidden'); }, sellToShop() { throw Error('remote sale forbidden'); } }),
-    meetings: () => ({ discard() {}, prepareTrade: async (id, store, item, count, options) => {
+    // No karma party here: the meeting is at the ad's own point (TradeMeetingService.meetingPoint).
+    meetings: () => ({ discard() {}, meetingPoint: record => ({ town: record.town, locX: record.locX, locY: record.locY, locZ: record.locZ }),
+        prepareTrade: async (id, store, item, count, options) => {
         if (prepareError) throw prepareError;
         prepares++;
         if (options.preview !== true) {
