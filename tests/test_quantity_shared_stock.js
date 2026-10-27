@@ -60,6 +60,11 @@ try {
     quantities.atLeast('stock', stem, 5, roots[3]);
     quantities.atLeast('stock', stem, 12, roots[17]);
     plan.quantityInputs = quantities.finish(); plan.quantityThresholds = quantities.thresholds();
+    // The fixture's roots read these items, so they are no unused loot: the
+    // build's free-loot bands (EconomyContext quantityBands) cover only stacks
+    // absent from every admitted requirement, and a real build reading them
+    // would carry none on them.
+    plan.quantityBands = plan.quantityBands.filter(band => !items.includes(band[0]));
     plan.eventProof = Economy.captureEventProof(published, deps(), { plan });
     assert(plan.eventProof, 'a build whose roots read the same bag counts keeps its proof');
     const options = { baseline: packet.wishSections, leaf: held.network.activity, timestamp: T };
