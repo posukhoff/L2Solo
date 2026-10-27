@@ -46,7 +46,11 @@ const adapters = {
 // Liquidation funding reads the shared sale and kept-stock readers (f75b6525); this
 // fixture sells nothing, so no inventory row is a sale candidate.
 Object.assign(adapters, { 'GameServer/Bot/Economy/PersonalWarehouseIndex': { saleState: state => state },
-    'GameServer/Bot/Economy/ItemDisposition': { saleCandidates: () => [], reservedEquipmentAmounts: () => ({}) },
+    // knownRecipeIds: the fixture's own book (the deps list, else its state's recipes).
+    'GameServer/Bot/Economy/ItemDisposition': { saleCandidates: () => [], reservedEquipmentAmounts: () => ({}),
+        knownRecipeIds: (state, book) => (Array.isArray(book) ? book : state.stats?.recipes || [])
+            .map(row => Number(row?.recipeId ?? row)).filter(id => id > 0),
+        productionSetup: (...args) => require('../src/GameServer/Bot/Economy/ItemDisposition').productionSetup(...args) },
     'GameServer/Inventory/ShotStock': { keptAmounts: () => ({}) },
     'GameServer/Bot/AI/HealingPotionStock': { keptAmounts: () => ({}) },
     'GameServer/Bot/Travel/ScrollStock': { keptAmounts: () => ({}) } });
@@ -100,7 +104,10 @@ const provider = load('WishProviders.js', name => {
     if (name === './EconomyDiagnostics') return { active: () => false, laps: () => null };
     if (name === './EconomicValuation') return valuation;
     if (name === './WishNetwork') return network;
-    if (name === '../AI/PersonalGearProgression') return { assess: () => ({ required: false, gaps: new Map() }), preparation: () => null, priority: () => 0, personal: () => false, allowsCGradeAcquisition: () => false,
+    if (name === '../AI/PersonalGearProgression') return {
+        // assess carries the C kit milestone; acquisition is the author's kit read from it.
+        assess: () => ({ required: false, gaps: new Map(), rank: 0, milestone: { required: false, gaps: new Map() } }),
+        acquisition: (_state, kit) => ({ required: kit.required, gaps: kit.gaps, rank: kit.rank }), preparation: () => null, priority: () => 0, personal: () => false, allowsCGradeAcquisition: () => false,
         isCGradeHelmet: require('../src/GameServer/Bot/AI/PersonalGearProgression').isCGradeHelmet };
     if (name === '../AI/BotEquipmentCompatibility') return require('../src/GameServer/Bot/AI/BotEquipmentCompatibility');
     if (name === '../../Item/ItemTemplateIndex') return require('../src/GameServer/Item/ItemTemplateIndex');
@@ -110,7 +117,8 @@ const provider = load('WishProviders.js', name => {
     if (name === './WishPurchaseEvidence') return require('../src/GameServer/Bot/Economy/WishPurchaseEvidence');
     if (name === './EconomicTrip') return require('../src/GameServer/Bot/Economy/EconomicTrip');
     // A buy's wait (buyWait): the town code, rival takers, observed supply.
-    if (['./ShotCraftPolicy', './CommittedExits', './MarketDemand'].includes(name)) return require(path.resolve(root, name));
+    if (['./ShotCraftPolicy', './CommittedExits', './MarketDemand', './RecipeProductionIndex',
+        './CraftEligibility', '../AI/GearGradeRule', './BotCrystallization', './PriceDecision'].includes(name)) return require(path.resolve(root, name));
     if (name === './WealthCraftDecision') return { freeAmount: (state, row) => Number(row.amount || 0), learnsRecipe: () => true };
     throw Error(name);
 }, invokeAdapter);
