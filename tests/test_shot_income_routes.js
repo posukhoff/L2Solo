@@ -90,7 +90,7 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
             assert.equal(town.town, 'Giran', 'the sale town follows observed shot buyers instead of the D-grade town prior');
             assert.equal(town.reason, 'supported_item_forecast');
         }
-        const tablePages = book => [{ tables: [
+        const tablePages = () => [{ tables: [
             { name: 'board', from: null, to: 0, full: true, rows: [[scroll.id, rowOf(scroll)]], removed: [], last: true },
             { name: 'market', from: null, to: 0, full: true, rows: rows.map(row => [row[0], row]), removed: [], last: true }
         ] }];
