@@ -23,15 +23,16 @@ const build = (name, nodes, extra = {}) => new WishNetwork().build({ actorKey: '
 const row = (result, key) => result.queue.find(wish => wish.key === key);
 
 // PLAN.md synthetic acceptance: mid C 3m gains 0.3, top C 4m gains 0.5.
+// Effort prices only the cash the 2m wallet lacks at the hunt rate (T53).
 const synthetic = build('mid-top', [gear('mid', 0.3, 3e6), gear('top', 0.5, 4e6)]);
-for (const [key, value, effort, ready] of [['mid', 11.4, 6, 2], ['top', 18, 8, 4]]) {
+for (const [key, value, effort, ready] of [['mid', 11.4, 2, 2], ['top', 18, 4, 4]]) {
     near(row(synthetic, key).valueHours, value, `${key} benefit`);
     near(row(synthetic, key).effort, effort, `${key} cash effort`);
     near(row(synthetic, key).readyHours, ready, `${key} ready delay`);
 }
-near(row(synthetic, 'mid').valueHours / row(synthetic, 'mid').effort, 1.9, 'mid score');
-near(row(synthetic, 'top').valueHours / row(synthetic, 'top').effort, 2.25, 'top score');
-done('synthetic mid C 11.4 / 6 and top C 18 / 8');
+near(row(synthetic, 'mid').valueHours / row(synthetic, 'mid').effort, 5.7, 'mid score');
+near(row(synthetic, 'top').valueHours / row(synthetic, 'top').effort, 4.5, 'top score');
+done('synthetic mid C 11.4 / 2 and top C 18 / 4');
 
 // The path's own hours follow the funding delay; trips are made once.
 const labour = build('labour', [gear('mid', 0.3, 1e6, { costHours: 3 })]);

@@ -538,6 +538,25 @@ function topScore(rows) {
     return best;
 }
 
+// A root that turns money into money (a craft, crystals or a farm for sale,
+// key 'resale:<id>' for the wish and its decoded intents): its value is
+// adena at the hunt rate, so its price stays at the hunt rate too.
+const resale = row => String(row?.key).startsWith('resale:');
+// The hours a cash price costs a bot holding `held` adena (user 10-27, T53):
+// only the part the wallet lacks is earned at the hunt rate (`huntPrice`,
+// hours per adena). The held part is priced by its best other use, which
+// the money queue decides (moneyQueue: heldPrice), never here. Readers: the
+// solver's spending root effort and route sort, WishProviders' gear resale.
+function lackingHours(cash, held, huntPrice) {
+    const lacking = nonnegative(cash) - nonnegative(held);
+    return lacking > 0 ? lacking * huntPrice : 0;
+}
+// The money price a queue root's rows turn hours into adena at (TradeIntent
+// bids, a clan's hall bid): a spending root the wallet covers at its queue
+// place pays with held money (moneyQueue: held, heldPrice); a resale root or
+// one the wallet does not cover pays with money still to earn (moneyPrice).
+const rootMoneyPrice = (network, root) => Number(root?.held === true
+    ? network?.heldPrice ?? network?.moneyPrice : network?.moneyPrice);
 // A progression root stands at least at its price in hours (the floor): its
 // queue place and funding read that raised value. What it passes down to its
 // inputs stays its own value (TradeIntent.rootValue, kept as ownValueHours
@@ -545,7 +564,17 @@ function topScore(rows) {
 // sets (1459 under a kit C gear root: price -> worth -> bid -> price).
 // A queue row passed again (EconomyContext.view reprices funding) floors its
 // own value, not the raised one.
-function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0) {
+// Money the wallet holds is priced by its best other use (user 10-27, T53):
+// a spending row it covers takes it unless a better use (a row before it in
+// the queue) waits for it; only money still to earn (the funding gap, a
+// resale root) must beat the hunt rate (`floor`). moneyPrice: the price of
+// the next adena earned (the gap's, at least the floor); heldPrice: the
+// price of the adena held, the gap's with a gap, else the first row the
+// wallet does not reach (the money it saves for) or the cheapest spending
+// row it covers, never above the floor (rootMoneyPrice reads both).
+// heldMoney false (a clan's purse, the author's: a large purse alone does
+// not make a residence worth it) prices every row at the floor, as before.
+function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0, heldMoney = true) {
     let available = Math.max(0, nonnegative(wallet) - nonnegative(survivalReserve));
     const queue = wishes.filter(wish => wish.valueHours > 0 && wish.price > 0)
         .map(wish => {
@@ -558,8 +587,15 @@ function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0) {
         })
         .sort((a, b) => nonnegative(b.progressionPriority) - nonnegative(a.progressionPriority)
             || b.ratio - a.ratio || a.key.localeCompare(b.key));
-    let moneyPrice = nonnegative(floor), cutoffFound = false, gap = null, awaitingKit = null;
+    let moneyPrice = nonnegative(floor), cutoffFound = false, gap = null, awaitingKit = null, cutoff = null, cheapest = null;
     for (const wish of queue) {
+        // A resale root below the floor is no use of money at all.
+        const earned = wish.progressionPriority > 0 || wish.ratio >= floor, spends = heldMoney && !resale(wish);
+        if (!earned && resale(wish) && heldMoney) { wish.funded = false; wish.held = false; continue; }
+        // A spending row the money held at its place covers pays with held
+        // money (heldPrice), its bid too while no seller lets it be funded.
+        wish.held = !cutoffFound && spends && cashCharge(wish) <= available;
+        if (wish.held && !(cheapest?.ratio <= wish.ratio)) cheapest = wish;
         // An unsupported wish keeps its place and interest, never the money.
         if (!fundable(wish)) {
             wish.funded = false;
@@ -569,14 +605,17 @@ function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0) {
         }
         // The first gap holds the marginal price of money. Smaller desires
         // do not spend the money earmarked toward that first missing goal.
-        wish.funded = !cutoffFound && (wish.progressionPriority > 0 || wish.ratio >= floor) && cashCharge(wish) <= available;
+        wish.funded = !cutoffFound && (earned || spends) && cashCharge(wish) <= available;
         if (wish.funded) available -= cashCharge(wish);
         else if (!cutoffFound) {
-            if (wish.progressionPriority > 0 || wish.ratio >= floor) { moneyPrice = Math.max(floor, wish.ratio); gap = wish; }
+            if (earned) { moneyPrice = Math.max(floor, wish.ratio); gap = wish; }
+            cutoff = wish;
             cutoffFound = true;
         }
     }
-    return { queue, moneyPrice, available, gap: gap || awaitingKit };
+    const saved = cutoff || cheapest;
+    const heldPrice = gap || !heldMoney ? moneyPrice : saved ? Math.min(nonnegative(floor), saved.ratio) : nonnegative(floor);
+    return { queue, moneyPrice, heldPrice, available, gap: gap || awaitingKit };
 }
 
 // Providers supply game effects and available paths, never policy priorities.
@@ -624,7 +663,7 @@ function equalValue(left, right, depth = 0) {
     return true;
 }
 function sameResult(before, after) {
-    return before.moneyPrice === after.moneyPrice && before.available === after.available
+    return before.moneyPrice === after.moneyPrice && before.heldPrice === after.heldPrice && before.available === after.available
         && before.hourAdena === after.hourAdena && before.decisionSeq === after.decisionSeq
         && before.activityLeaf === after.activityLeaf && equalValue(before.queue, after.queue)
         && equalValue(before.producers, after.producers)
@@ -636,7 +675,7 @@ function sameResult(before, after) {
 // use the same path facts, quantity reader and root valuation (MVP-6); its
 // scratch maps die with the caller's build.
 function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, wallet = 0, survivalReserve = 0,
-    diagnostic = false, detail = false, trace = null }) {
+    heldMoney = true, diagnostic = false, detail = false, trace = null }) {
     const byKey = new Map();
     for (const node of nodes) {
         if (typeof node?.key !== 'string' || !node.key || byKey.has(node.key)
@@ -1014,7 +1053,7 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
             const routeCash = choice => nonnegative(choice.price + (choice.shortCash || 0));
             const routeEffort = choice => choice.effort + (choice.shortCash && Number.isFinite(adenaToHours) ? choice.shortCash * adenaToHours : 0);
             const completionHours = choice => choice.hours + nonnegative(choice.shortHours) + (adenaToHours > 0
-                ? Math.max(0, routeCash(choice) - Math.max(0, wallet - survivalReserve)) * adenaToHours : routeCash(choice) > wallet ? Infinity : 0);
+                ? lackingHours(routeCash(choice), spendable, adenaToHours) : routeCash(choice) > wallet ? Infinity : 0);
             choices.sort((a, b) => readyFirst(a, b) || (completionFirst
                 ? Number(b.supported) - Number(a.supported) || completionHours(a) - completionHours(b) || routeEffort(a) - routeEffort(b)
                 : planning
@@ -1068,7 +1107,7 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     const earns = wish => {
         if (!finiteProduction(wish.key)) return true;
         // A farm_sale root pays its net effort (the plan's), not its rank
-        // floor (committedEffort): a farm the spot already pays for costs
+        // floor (rootEffort): a farm the spot already pays for costs
         // only its trip.
         const node = byKey.get(wish.key), effort = farmSale(node) ? wish.plan?.effort ?? Infinity : wish.effort;
         const plan = TradeIntent.lineOf(node) > 0 ? wish.plan : null, floor = nonnegative(plan?.bidFloor);
@@ -1128,9 +1167,16 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     // hour's adena. The one floor of rootWish and allocate; an activity leaf
     // of such a root takes its root's effort (build).
     const committedHours = node => nonnegative(node?.progressionPriority) > 0 || farmSale(node);
-    const committedEffort = wish => {
-        if (wish.plan && committedHours(byKey.get(wish.key))) wish.effort = Math.max(wish.effort,
-            wish.plan.hours + Math.max(0, wish.plan.price - spendable) * adenaToHours);
+    // A spending root's cash the wallet holds costs no hunt hours here
+    // (lackingHours; the money queue prices it by its best other use): its
+    // effort keeps the rest of its plan. Its path choice stays at the hunt
+    // rate (one currency between paths); a resale root keeps its whole price.
+    const rootEffort = wish => {
+        if (!wish.plan) return;
+        const lacking = lackingHours(wish.plan.price, spendable, adenaToHours);
+        if (heldMoney && !resale(wish) && Number.isFinite(adenaToHours)) wish.effort = Math.max(0,
+            wish.effort - nonnegative(wish.plan.price) * adenaToHours + lacking);
+        if (committedHours(byKey.get(wish.key))) wish.effort = Math.max(wish.effort, wish.plan.hours + lacking);
     };
     const rootWish = key => {
         const node = byKey.get(key);
@@ -1143,7 +1189,7 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
             scrollCash: scrollCash(plan), ...(node.bidsInputs > 0 ? { bidsInputs: node.bidsInputs } : {}) };
         value(wish, node, plan);
         wish.fullValueHours = fullValue(wish, node);
-        committedEffort(wish);
+        rootEffort(wish);
         return wish;
     };
     // Shared stock: re-solve one root against the stock already claimed. The
@@ -1158,7 +1204,7 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
         wish.supported = plan?.supported !== false;
         value(wish, byKey.get(wish.key), plan);
         wish.fullValueHours = fullValue(wish, byKey.get(wish.key));
-        committedEffort(wish);
+        rootEffort(wish);
         // Shared stock can change the full path's cost. A producer root
         // never funds a route whose effort consumes its entire expected
         // benefit; a rejected producer root claims no stock.
@@ -1225,7 +1271,7 @@ class WishNetwork {
     build({ actorKey, inputKey, characterId, decisionSeq = 0, activityLeaf = 0, nodes, roots, wallet = 0, survivalReserve = 0,
         playedHours = 0, persona = {}, previous = {}, hourAdena = 0, riskWeight = 1, moneyPaths = [], remembered = true,
         caller = 'wish_network', trigger = 'request', stockFor = null, completionKey = null, reconsider = true,
-        reconsiderReasons = null, capped = [] }) {
+        reconsiderReasons = null, capped = [], heldMoney = true }) {
         const diagnostic = Diagnostics.active();
         if (diagnostic) Diagnostics.count('network', 'request');
         if (typeof actorKey !== 'string' || !actorKey || typeof inputKey !== 'string'
@@ -1248,7 +1294,7 @@ class WishNetwork {
         const trace = detail ? { owner: Number(characterId), caller, trigger,
             inputHash: fnv1a32(inputKey), decisionSeq, activityLeaf } : null;
         if (diagnostic) Diagnostics.count('network', 'miss', !remembered ? 'uncached_actor' : !retain ? 'held_plan_only' : cached ? 'input_dependency_changed' : 'not_retained');
-        const solver = createSolver({ nodes, hourAdena, riskWeight, stockFor, wallet, survivalReserve, diagnostic, detail, trace });
+        const solver = createSolver({ nodes, hourAdena, riskWeight, stockFor, wallet, survivalReserve, heldMoney, diagnostic, detail, trace });
         const { byKey, plans, earns, committedHours, tripValue, tripEffort } = solver;
         const kept = wish => wish.valueHours > 0 && wish.plan && earns(wish);
         let wishes = roots.map(solver.rootWish);
@@ -1383,10 +1429,10 @@ class WishNetwork {
         // drop it from the queue (no bid, no SELL/TAKERS wake).
         const weighted = wishes.map(wish => ({ ...wish,
             valueHours: wish.valueHours * (wish === focused || neverReady(wish) ? 1 : 1 - loyalty) }));
-        const { queue, moneyPrice, available, gap } = moneyQueue(weighted, wallet, survivalReserve, hourAdena > 0 ? 1 / hourAdena : 0);
+        const { queue, moneyPrice, heldPrice, available, gap } = moneyQueue(weighted, wallet, survivalReserve, hourAdena > 0 ? 1 / hourAdena : 0, heldMoney);
         const fundingReason = wish => wish.funded ? 'funded' : wish === gap ? 'first_funding_gap'
             : wish.supported === false ? 'unsupported_path' : wish.resolved === false ? 'unresolved_path'
-                : wish.ratio < (hourAdena > 0 ? 1 / hourAdena : 0) ? 'below_money_floor' : 'priority_held';
+                : (resale(wish) || !heldMoney) && wish.ratio < (hourAdena > 0 ? 1 / hourAdena : 0) ? 'below_money_floor' : 'priority_held';
         if (diagnostic) for (const wish of queue) {
             Diagnostics.count('network', 'wish_funding', fundingReason(wish));
         }
@@ -1531,7 +1577,7 @@ class WishNetwork {
             if (taker) exitRows.push(taker);
             CommittedExits.commitBuild(characterId, exitRows);
         }
-        const result = { inputKey, queue, producers, moneyPrice, available, gap, hourAdena,
+        const result = { inputKey, queue, producers, moneyPrice, heldPrice, available, gap, hourAdena,
             quantityPrepared: !!stockFor,
             ...(heldClaims ? { heldClaims: claimRows(heldClaims, byKey, activity?.rootKey, claimPlans) } : {}),
             focus, dormant, activity, demands, plans, decisionSeq,
@@ -1564,4 +1610,4 @@ class WishNetwork {
     }
 }
 
-module.exports = { WishNetwork, committedKeys, createSolver, sizedBuy, endSizedBuys, shortOf, createQuantityInputs, quantityInputsHold, eachQuantityRow, admitRoots, activePriority, priorityOrder, claimOrder, pinned, score, moneyQueue, remainingQuantity, fundable, cashCharge, remember, MAX_NODES, MAX_PATHS, MAX_ROOTS, MAX_DEPTH, QUANTITY_INPUT_LIMIT, QUANTITY_INPUT_BYTES, QUANTITY_THRESHOLDS, NO_THRESHOLDS };
+module.exports = { WishNetwork, committedKeys, createSolver, sizedBuy, endSizedBuys, shortOf, createQuantityInputs, quantityInputsHold, eachQuantityRow, admitRoots, activePriority, priorityOrder, claimOrder, pinned, score, moneyQueue, lackingHours, rootMoneyPrice, remainingQuantity, fundable, cashCharge, remember, MAX_NODES, MAX_PATHS, MAX_ROOTS, MAX_DEPTH, QUANTITY_INPUT_LIMIT, QUANTITY_INPUT_BYTES, QUANTITY_THRESHOLDS, NO_THRESHOLDS };

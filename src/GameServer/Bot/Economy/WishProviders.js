@@ -1231,7 +1231,7 @@ function buildProjection(state, ctx, deps) {
     // speculative farm goal. The value is the line's gain over buy-back,
     // the effort the farm hours at their net cost plus the trip (WishNetwork
     // finiteProduction keeps the root only while the value beats it; its
-    // rank counts the farm hours, WishNetwork committedEffort).
+    // rank counts the farm hours, WishNetwork rootEffort).
     // The loop over the board's buy items reads no depth, sale or path: the
     // pre-cut keeps the 8 lines of the best gain per kill for this bot (the
     // spread over buy-back times the units per kill of the item's best
@@ -1347,6 +1347,7 @@ function buildProjection(state, ctx, deps) {
             positive(values.get(material.selfId)) + improvement.valueHours / Math.max(1, material.amount));
     }
     const candidates = [];
+    const wallet = ctx.wallet ?? positive(state.adena), held = Math.max(0, wallet - positive(ctx.survivalReserve));
     const planningState = preparation || state;
     const wornFor = wornReader(planningState), gainFor = gearGainReader(state, timestamp, {}, ctx);
     let futureGain;
@@ -1378,10 +1379,16 @@ function buildProjection(state, ctx, deps) {
         // hunt hours it adds per hour, HuntCycle) over the stage's hours (the
         // level weights the horizon only) plus resale. A step into a kit gap
         // carries the gap's priority to stand among the kit roots; its value
-        // decides whether it is worth taking.
-        const value = gain * benefitHorizon
-            + (ctx.hunt.perHour > 0 ? (future - currentPrice) / ctx.hunt.perHour : 0);
-        if (!(value > 0) || !(price(item.selfId) > 0)) continue;
+        // decides whether it is worth taking. Resale is money at the step's
+        // own rate (Network.lackingHours, as its price in the solver): money
+        // the wallet holds costs no hunt hours, so its return earns none.
+        const itemPrice = price(item.selfId);
+        if (!(itemPrice > 0)) continue;
+        // Held or lacking: the wallet threshold this value turns on.
+        ctx.walletBoundary?.(itemPrice + positive(ctx.survivalReserve));
+        const value = gain * benefitHorizon + (ctx.hunt.perHour > 0
+            ? (future - currentPrice) * Network.lackingHours(itemPrice, held, 1 / ctx.hunt.perHour) / itemPrice : 0);
+        if (!(value > 0)) continue;
         candidates.push({ item, slot, value, gain, notBeforeHours: early ? horizon : 0,
             horizonHours: early ? horizon + futureHorizon : horizon,
             progressionPriority: Progression.priority(slot, progression, item, { grade: false }) });
@@ -1393,7 +1400,7 @@ function buildProjection(state, ctx, deps) {
     blocks?.lap('benefits');
     const admission = { candidates: 0, evaluations: 0, maxScratch: 0, rounds: 0, pending: [], admitted: [] };
     const solverOptions = { hourAdena: ctx.hourAdena, riskWeight: ctx.riskWeight, stockFor: ctx.stockFor || null,
-        wallet: ctx.wallet ?? positive(state.adena), survivalReserve: ctx.survivalReserve };
+        wallet, survivalReserve: ctx.survivalReserve };
     const real = nodes, realKeys = nodeKeys, gear = [];
     for (const candidate of candidates) {
         nodes = []; nodeKeys = new Set(); scratch = true; readScope = ctx.readScope?.open() || null;
