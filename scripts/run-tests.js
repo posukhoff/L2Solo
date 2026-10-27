@@ -1216,6 +1216,7 @@ const optionalGeodataTests = new Set([
     'tests/test_c4_forest_of_the_dead.js',
     'tests/test_c4_garden_of_beasts.js',
     'tests/test_c4_ketra_orc_outpost.js',
+    'tests/test_c4_mobius_spawns.js',
     'tests/test_c4_necropolis_of_sacrifice.js',
     'tests/test_c4_necropolis_of_saints.js',
     'tests/test_c4_necropolis_of_the_disciples.js',

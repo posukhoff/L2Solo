@@ -10,6 +10,9 @@ if (workerData?.developerDiagnostics === true) observe(); // major-GC window for
 
 GeodataEngine.init();
 let navigationRevision = null;
+// Wall-clock cap of one town corridor search: past it the route fails with PATH_BUDGET and the mover falls back.
+// A test widens it (pool option townPathBudgetMs) to check a real route rather than its machine's speed.
+const townPathBudgetMs = workerData?.townPathBudgetMs ?? 150;
 
 parentPort.on('message', (message) => {
     if (!message || message.type !== 'path') return;
@@ -23,7 +26,7 @@ parentPort.on('message', (message) => {
     const cancelFlag = message.cancelBuffer ? new Int32Array(message.cancelBuffer) : null;
     const checkBudget = () => {
         const cancelled = cancelFlag && Atomics.load(cancelFlag, 0) !== 0;
-        if (cancelled || (request.townCorridor && performance.now() - startedAt > 150)) {
+        if (cancelled || (request.townCorridor && performance.now() - startedAt > townPathBudgetMs)) {
             throw Object.assign(new Error(cancelled ? 'path cancelled' : 'path work budget exceeded'), {
                 code: cancelled ? 'STALE_PATH' : 'PATH_BUDGET'
             });

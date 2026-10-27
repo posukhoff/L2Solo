@@ -1,6 +1,5 @@
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
+const verifyGeodataWhenAvailable = require('./helpers/verify_geodata_when_available');
 
 require('../src/Global');
 
@@ -106,10 +105,7 @@ GeodataEngine.getCellData = originalGetCellData;
 GeodataEngine.hasGeo = originalHasGeo;
 GeodataEngine.hasLineOfSight = originalHasLineOfSight;
 
-const crumaRegion = path.join(GeodataEngine.getGeodataDir(), '20_21.l2j');
-if (process.env.L2NODE_SKIP_RAW_GEODATA_TESTS === '1') {
-    console.log('SKIP: raw Cruma geodata checks are in npm run test:geodata');
-} else if (fs.existsSync(crumaRegion)) {
+verifyGeodataWhenAvailable(GeodataEngine, [[20, 21]], 'Cruma', () => {
     assert.strictEqual(
         GeodataEngine.hasLineOfSight(23741, 117274, -12089, 23765, 117288, -9047),
         false,
@@ -134,10 +130,7 @@ if (process.env.L2NODE_SKIP_RAW_GEODATA_TESTS === '1') {
                 'each detour segment must follow walkable geodata rather than jump vertically');
         }
     }
-
-} else {
-    console.log('SKIP: raw Cruma geodata region 20_21 is not available');
-}
+}, { preload: false });
 
 const npc = new Npc(990001, {
     selfId: 217,

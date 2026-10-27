@@ -95,9 +95,18 @@ async function run() {
         throw new Error('companion path must not execute A* on the game thread');
     };
     GeodataEngine.hasLineOfSight = () => false;
+    // Every pool is shut in finally: a live worker after a failed assert keeps the process from exiting.
+    const pools = [];
+    const openPool = (options) => {
+        const pool = new BoundedPathfindingWorkerPool(options);
+        pools.push(pool);
+        return pool;
+    };
 
     try {
-        const realPool = new BoundedPathfindingWorkerPool({ size: 1, queueLimit: 4 });
+        // The town search cap is wall-clock (150 ms in the game): the Giran route below takes ~110 ms on an idle M3
+        // and over 250 ms at background priority. A wide cap checks the route, not this machine's speed.
+        const realPool = openPool({ size: 1, queueLimit: 4, townPathBudgetMs: 60000 });
         const realFixture = companionFixture(realPool);
         const pending = issueMove(realFixture, { locX: 53327, locY: 102938, locZ: -1064 });
         assert.strictEqual(pending.strategy, 'worker_pending', 'eligible companion routes must return without blocking the game thread');
@@ -130,6 +139,25 @@ async function run() {
         assert.strictEqual(autonomousFixture.session.lastPathfinding.maxNodes, 30000);
         assert.strictEqual(autonomousFixture.session.lastPathfinding.arrivalRadius, 16);
         stopMove(autonomousFixture);
+
+        const cappedPool = openPool({ size: 1, queueLimit: 4, townPathBudgetMs: 0 });
+        const cappedFixture = makeAutonomous(companionFixture(
+            cappedPool,
+            { locX: 83384, locY: 149256, locZ: -3400 }
+        ));
+        issueMove(
+            cappedFixture,
+            { locX: 83265, locY: 150461, locZ: -3514 },
+            null,
+            { pathMaxNodes: 30000, arrivalRadius: 16 }
+        );
+        await cappedFixture.session.pendingPathRequest.promise;
+        assert.strictEqual(cappedFixture.session.lastPathfinding.strategy, 'worker_geodata_error_fallback',
+            'a town search over its time cap must give up rather than hold the worker');
+        assert.strictEqual(cappedFixture.session.lastPathfinding.error, 'PATH_BUDGET');
+        assert.strictEqual(cappedFixture.actor.state.towards, false,
+            'a capped search with no clear line must not start a move');
+        await cappedPool.shutdown();
 
         const helvetiaFixture = makeAutonomous(companionFixture(
             realPool,
@@ -233,7 +261,7 @@ async function run() {
         stopMove(gludioGatekeeperFixture);
         await realPool.shutdown();
 
-        const delayedPool = new BoundedPathfindingWorkerPool({
+        const delayedPool = openPool({
             size: 1,
             queueLimit: 2,
             workerPath: path.join(__dirname, 'fixtures', 'companion_path_worker.js')
@@ -327,6 +355,7 @@ async function run() {
 
         await delayedPool.shutdown();
     } finally {
+        await Promise.all(pools.map((pool) => pool.shutdown()));
         GeodataEngine.findPath = originalFindPath;
         GeodataEngine.hasLineOfSight = originalHasLineOfSight;
     }

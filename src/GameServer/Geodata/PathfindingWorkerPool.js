@@ -18,7 +18,8 @@ class BoundedPathfindingWorkerPool {
         this.workerPath = options.workerPath || path.join(__dirname, 'PathfindingWorker.js');
         this.workerFactory = options.workerFactory || ((workerPath) => new Worker(workerPath, { workerData: {
             developerDiagnostics: DiagnosticConfig.developerDiagnostics === true,
-            sharedGeodata: GeodataEngine.sharedDescriptor()
+            sharedGeodata: GeodataEngine.sharedDescriptor(),
+            ...(options.townPathBudgetMs !== undefined ? { townPathBudgetMs: options.townPathBudgetMs } : {})
         } }));
         this.restartLimit = Math.max(0, Number(options.restartLimit) || 3);
         this.workers = [];

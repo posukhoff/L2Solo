@@ -35,3 +35,76 @@ jobs:
         env:
           L2NODE_TEST_TIMEOUT_MS: 180000
         run: npm test -- --keep-going --shard=${{ matrix.shard }}/12
+
+  # Real-map tests (scripts/run-tests.js --geodata). There is no default pack (docs/client-geodata.md): a repository
+  # that sets the variables L2NODE_GEODATA_URL and L2NODE_GEODATA_SHA256 runs them; elsewhere both jobs are skipped.
+  geodata-pack:
+    name: Geodata pack
+    if: vars.L2NODE_GEODATA_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The installed pack is kept by its archive checksum; a miss is saved after this job. GitHub scopes a cache to
+      # its branch (and the default branch's), so each ci-<ref> branch of tools/ci.sh installs the pack once.
+      - name: Cache geodata
+        id: pack
+        uses: actions/cache@v4
+        with:
+          path: data/Geodata
+          key: geodata-${{ vars.L2NODE_GEODATA_SHA256 }}
+          lookup-only: true
+
+      - name: Setup Node.js
+        if: steps.pack.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        if: steps.pack.outputs.cache-hit != 'true'
+        run: npm install
+
+      - name: Install the pack with the starter
+        if: steps.pack.outputs.cache-hit != 'true'
+        env:
+          L2NODE_GEODATA_URL: ${{ vars.L2NODE_GEODATA_URL }}
+          L2NODE_GEODATA_SHA256: ${{ vars.L2NODE_GEODATA_SHA256 }}
+        run: npm run geodata
+
+  geodata-tests:
+    name: Geodata tests (${{ matrix.shard }}/3)
+    needs: geodata-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Restore geodata
+        uses: actions/cache/restore@v4
+        with:
+          path: data/Geodata
+          key: geodata-${{ vars.L2NODE_GEODATA_SHA256 }}
+          fail-on-cache-miss: true
+
+      # test:geodata: the commit's starter checks every region against the pack manifest, then the --geodata set runs.
+      - name: Run geodata tests
+        env:
+          L2NODE_TEST_TIMEOUT_MS: 180000
+        run: npm run test:geodata -- --keep-going --shard=${{ matrix.shard }}/3
