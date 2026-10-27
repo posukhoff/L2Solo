@@ -139,11 +139,17 @@ try {
         const weighted = { ...spot, npcEntries: [{ selfId: '990130', count: .25 },
             { selfId: 990130, count: .75 }, { selfId: 42, count: 3 },
             { selfId: 990130, count: -9 }, { selfId: 990130, count: 'bad' }] };
-        assert.equal(Income.itemHours(state, weighted, 100, goal, [state]), alone * 4,
-            'party acquisition keeps first numeric reward/NPC and fractional duplicate weights');
-        weighted.npcEntries.push({ selfId: 990130, count: 4 });
-        assert.equal(Income.itemHours(state, weighted, 100, goal, [state]), alone * 8 / 5,
-            'growing a static composition refreshes the same positive-weight rule');
+        // R3 G24 (4047be7fe): a party aims at its material's NPC and counts
+        // the share the kill roll gives that aim (ColdCombatProfile.killDraw):
+        // the first numeric reward/NPC row, duplicates and malformed weights
+        // or an NPC the data lacks (42) do not thin the aimed kill.
+        assert.equal(Income.itemHours(state, weighted, 100, goal, [state]), alone,
+            'party acquisition keeps first numeric reward/NPC; the aimed kill takes its target');
+        // An aggressive other monster of the encounter interrupts the aim (0.25):
+        // its kills roll no reward of the goal's NPC.
+        Data.npcs = [...Data.npcs, { selfId: 42, template: { level: 20, hostile: true } }];
+        assert.equal(Income.itemHours(state, weighted, 100, goal, [state]), alone / 0.75,
+            'a refreshed composition counts the aggressive interruption of the aim');
     } finally { Data.npcs = nativeNpcs; Data.npcRewards = nativeRewards; }
     const itemSpots = [spot, spots[1]];
     const itemState = { ...state, stats: { ...state.stats, partyRequest: goal,
