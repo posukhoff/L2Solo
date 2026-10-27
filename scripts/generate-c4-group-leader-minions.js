@@ -10,14 +10,15 @@ const root = path.resolve(__dirname, '..');
 const slug = 'c4_group_leader_minions';
 const filename = `${slug}.json`;
 
-// Group leaders of the Lisvus table that our world does not spawn (no template),
-// their 29 rows stay out: Hatu Brown Bear, Hatu Windsus, Wasp Leader and
-// Nightmare Lord (Lisvus spawnlist, not in our world), Tanor Silenos (no Lisvus
-// spawn), five raid bosses without a Lisvus spawn and four Four Sepulchers
-// Shadows of Halisha.
-const absentLeaderIds = [930, 933, 935, 936, 944, 10273, 10290, 10296, 10306, 10316, 10339, 10342, 10346, 10349];
+// Group leaders of the Lisvus table that our world does not spawn (spawns come from
+// L2J_Mobius C4, T43): 376, 398, 520, 522, 738 (not in Mobius spawns), Tanor Silenos
+// (no spawn), five raid bosses without a spawn and four Four Sepulchers Shadows of Halisha.
+const absentLeaderIds = [376, 398, 520, 522, 738, 936, 10273, 10290, 10296, 10306, 10316, 10339, 10342, 10346, 10349];
+// Spawned leaders Mobius gives no minions (its 928/929 and 931/932 stand alone beside
+// them): no group until T48 moves the minion rows to Mobius.
+const loneLeaderIds = new Set([930, 933]);
 const expectedNewMinionIds = [
-    940, 945, 946, 948, 949, 951, 952, 954, 955, 957, 958, 960, 961, 962, 964, 965,
+    940, 942, 943, 945, 946, 948, 949, 951, 952, 954, 955, 957, 958, 960, 961, 962, 964, 965,
     967, 968, 970, 971, 972, 975, 976, 978, 979, 981, 982, 984, 985, 987, 988, 990,
     992, 993, 995, 1040, 1059, 1060, 1074, 1076, 1077, 1079, 1080, 1082, 1083, 1091,
     1092, 1313, 1344, 1346, 1348, 1349, 1370, 1372, 1374, 1375, 1542, 1543, 1545,
@@ -56,42 +57,19 @@ const spawnedIds = new Set(jsonArrays('data/Npcs/Spawns')
 const absentIds = [...new Set(leaderRows.filter((row) => !spawnedIds.has(row.bossId)).map((row) => row.bossId))]
     .sort((a, b) => a - b);
 lib.assertExact(absentIds, absentLeaderIds, 'absent group leaders');
-if (absentIds.some((id) => knownNpcIds.has(id))) throw new Error('An absent group leader has a template');
-const rows = leaderRows.filter((row) => spawnedIds.has(row.bossId));
-if (rows.length !== 92) throw new Error(`Expected 92 rows of spawned group leaders, found ${rows.length}`);
+const rows = leaderRows.filter((row) => spawnedIds.has(row.bossId) && !loneLeaderIds.has(row.bossId));
+if (rows.length !== 90) throw new Error(`Expected 90 rows of spawned group leaders, found ${rows.length}`);
 
 const newMinionIds = [...new Set(rows.map((row) => row.minionId))]
     .filter((id) => !knownNpcIds.has(id))
     .sort((a, b) => a - b);
 lib.assertExact(newMinionIds, expectedNewMinionIds, 'new minion templates');
-const newMinionIdSet = new Set(newMinionIds);
 
-const npcRowsById = new Map(lib.tuples('sql/npc.sql').map((row) => [Number(row[0]), row]));
-const skillRows = lib.tuples('sql/npcskills.sql')
-    .filter((row) => newMinionIdSet.has(Number(row[0])))
-    .map((row) => ({ npcId: Number(row[0]), skillId: Number(row[1]), level: Number(row[2]) }));
-if (skillRows.length !== 368) throw new Error(`Expected 368 minion skill rows, found ${skillRows.length}`);
-const raceBySkill = new Map([
-    [4290, 'undead'], [4291, 'construct'], [4292, 'beast'], [4293, 'animal'],
-    [4294, 'plant'], [4295, 'humanoid'], [4296, 'spirit'], [4297, 'divine'],
-    [4298, 'demonic'], [4299, 'dragon'], [4300, 'giant'], [4301, 'insect'], [4302, 'fairy']
-]);
-const raceByNpc = new Map();
-skillRows.forEach((row) => {
-    if (raceBySkill.has(row.skillId)) raceByNpc.set(row.npcId, raceBySkill.get(row.skillId));
-});
-
-const existingItemsById = new Map(lib.loadedItems(filename).map((item) => [Number(item.selfId), item]));
-const npcs = newMinionIds.map((id) => {
-    const row = npcRowsById.get(id);
-    const race = raceByNpc.get(id);
-    // Lisvus spawns most of them as L2Minion; the rest are plain monsters
-    // that only ever appear as someone's minion.
-    if (!row || !['L2Minion', 'L2Monster'].includes(row[11]) || !race) {
-        throw new Error(`Invalid source minion ${id}: type=${row?.[11]} race=${race}`);
-    }
-    return lib.npcTemplate(row, race, existingItemsById);
-});
+// Lisvus spawns most of them as L2Minion; the rest are plain monsters
+// that only ever appear as someone's minion.
+const { npcs, rewards, skillRows, dropRows, items: missingItems, unknownSkillIds } =
+    lib.lisvusMonsters(newMinionIds, { slug, types: ['L2Minion', 'L2Monster'] });
+if (skillRows.length !== 375) throw new Error(`Expected 375 minion skill rows, found ${skillRows.length}`);
 
 // NPC Self Damage Shield (Lisvus skills 4100-4199.xml): a self buff, 600 s.
 const skillTemplates = [{
@@ -102,37 +80,9 @@ const skillTemplates = [{
         level: index + 1, power: 0, mp, hp: 0, itemId: 0, itemCount: 0
     }))
 }];
-const knownSkillIds = new Set([
-    ...jsonArrays('data/Skills/Active'),
-    ...jsonArrays('data/Skills/Passive'),
-    ...require(path.join(root, 'data/Npcs/Skills/active.json')),
-    ...fs.readdirSync(path.join(root, 'data/Npcs/Skills'))
-        .filter((name) => name.endsWith('_templates.json') && name !== `${slug}_templates.json`)
-        .flatMap((name) => require(path.join(root, 'data/Npcs/Skills', name)))
-].map((skill) => Number(skill.selfId)));
-const missingSkillIds = [...new Set(skillRows.map((row) => row.skillId))]
-    .filter((id) => !knownSkillIds.has(id))
-    .sort((a, b) => a - b);
-lib.assertExact(missingSkillIds, skillTemplates.map((skill) => skill.selfId), 'missing minion skill templates');
+lib.assertExact(unknownSkillIds, skillTemplates.map((skill) => skill.selfId), 'missing minion skill templates');
 
-const dropRows = lib.tuples('sql/droplist.sql').filter((row) => newMinionIdSet.has(Number(row[0])));
-if (dropRows.length !== 1026) throw new Error(`Expected 1026 minion drop rows, found ${dropRows.length}`);
-const sourceItemsById = lib.vendorItems();
-function itemName(itemId) {
-    const name = existingItemsById.get(itemId)?.template?.name ?? sourceItemsById.get(itemId)?.name;
-    if (!name) throw new Error(`Missing item template ${itemId}`);
-    return name;
-}
-const npcNameById = new Map(newMinionIds.map((id) => [id, npcRowsById.get(id)[2]]));
-const rewards = newMinionIds.map((id) => ({
-    selfId: id,
-    template: { name: npcNameById.get(id) },
-    ...lib.rewardGroups(dropRows.filter((row) => Number(row[0]) === id), itemName)
-}));
-const missingItems = [...new Set(dropRows.map((row) => Number(row[1])))]
-    .filter((id) => !existingItemsById.has(id))
-    .sort((a, b) => a - b)
-    .map((id) => lib.itemTemplate(sourceItemsById.get(id)));
+if (dropRows.length !== 1050) throw new Error(`Expected 1050 minion drop rows, found ${dropRows.length}`);
 // Recipe: Greater Spiritshot (B) Compressed Package (100%), recipe 505 of recipes.csv.
 lib.assertExact(missingItems.map((item) => item.selfId), [5275], 'item dependencies');
 

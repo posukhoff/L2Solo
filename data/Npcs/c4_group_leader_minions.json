@@ -61,6 +61,128 @@
     }
   },
   {
+    "selfId": 942,
+    "template": {
+      "kind": "Monster",
+      "name": "Nightmare Guide",
+      "title": "",
+      "level": 43,
+      "hostile": false
+    },
+    "base": {
+      "str": 40,
+      "dex": 30,
+      "con": 43,
+      "int": 21,
+      "wit": 20,
+      "men": 10
+    },
+    "stats": {
+      "pAtk": 332,
+      "pAtkRnd": 30,
+      "pDef": 189,
+      "mAtk": 163,
+      "mDef": 181,
+      "accur": 4.75,
+      "atkSpd": 278,
+      "castSpd": 253,
+      "atkRadius": 40
+    },
+    "speed": {
+      "walk": 66,
+      "run": 191
+    },
+    "vitals": {
+      "maxHp": 1728,
+      "maxMp": 618,
+      "revHp": 4.35,
+      "revMp": 2.14,
+      "corpseTime": 7000
+    },
+    "collision": {
+      "radius": 10,
+      "size": 42
+    },
+    "equipment": {
+      "weapon": 0,
+      "shield": 0,
+      "reuseTime": 0
+    },
+    "clan": {
+      "clanName": "",
+      "helpRadius": 0
+    },
+    "rewards": {
+      "exp": 1.775013520822,
+      "sp": 222
+    },
+    "traits": {
+      "race": "beast",
+      "undead": false
+    }
+  },
+  {
+    "selfId": 943,
+    "template": {
+      "kind": "Monster",
+      "name": "Nightmare Keeper",
+      "title": "",
+      "level": 45,
+      "hostile": false
+    },
+    "base": {
+      "str": 40,
+      "dex": 30,
+      "con": 43,
+      "int": 21,
+      "wit": 20,
+      "men": 10
+    },
+    "stats": {
+      "pAtk": 377,
+      "pAtkRnd": 30,
+      "pDef": 202,
+      "mAtk": 188,
+      "mDef": 193,
+      "accur": 4.75,
+      "atkSpd": 278,
+      "castSpd": 253,
+      "atkRadius": 40
+    },
+    "speed": {
+      "walk": 66,
+      "run": 191
+    },
+    "vitals": {
+      "maxHp": 1870,
+      "maxMp": 677,
+      "revHp": 4.35,
+      "revMp": 2.14,
+      "corpseTime": 7000
+    },
+    "collision": {
+      "radius": 10,
+      "size": 42
+    },
+    "equipment": {
+      "weapon": 0,
+      "shield": 0,
+      "reuseTime": 0
+    },
+    "clan": {
+      "clanName": "",
+      "helpRadius": 0
+    },
+    "rewards": {
+      "exp": 2.331358024691,
+      "sp": 328
+    },
+    "traits": {
+      "race": "beast",
+      "undead": false
+    }
+  },
+  {
     "selfId": 945,
     "template": {
       "kind": "Monster",

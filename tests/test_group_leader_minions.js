@@ -22,12 +22,15 @@ const world = {
 };
 const session = { dataSendToMeAndOthers() {}, dataSendToMe() {} };
 
+// One leader of the world's spawn row: its first fixed point, or one mob in its territory.
 function definitionFor(leaderId, period = undefined) {
-    const spawn = DataCache.npcSpawns.flatMap((area) => area.spawns)
-        .find((entry) => Number(entry.selfId) === leaderId && entry.coords?.length);
-    assert.ok(spawn, `group leader ${leaderId} has a spawn`);
+    const area = DataCache.npcSpawns.find((entry) => entry.spawns.some((row) => Number(row.selfId) === leaderId));
+    assert.ok(area, `group leader ${leaderId} has a spawn`);
+    const spawn = area.spawns.find((row) => Number(row.selfId) === leaderId);
     const npc = DataCache.npcs.find((entry) => entry.selfId === leaderId);
-    return { npc, spawn: { ...structuredClone(spawn), coords: [spawn.coords[0]], period }, bounds: [] };
+    return spawn.coords?.length
+        ? { npc, spawn: { ...structuredClone(spawn), coords: [spawn.coords[0]], period }, bounds: [] }
+        : { npc, spawn: { ...structuredClone(spawn), total: 1, period }, bounds: area.bounds };
 }
 
 function members(leader) {
