@@ -920,7 +920,8 @@ for (let acquired = 0; ; acquired++) {
     assert(acquired < 32, 'entry C acquisition must finish a bounded physical kit');
     const entryBandTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, inventory: entryBandInventory }, workshopRecipes);
     if (!entryBandTarget) break;
-    assert(Number(entryBandTarget.item.template.price) <= 2290000, 'level-40 bots must stop after their entry C band instead of falling through to top C gear');
+    // No entry-band price cap: the level price cap left with one cost rule for
+    // every grade (R3 G9, c2b6af190; game-decisions "one price rule for all bots").
     entryBandInventory = GearAcquisitionPlanner.equipInventoryUpgrades(mage, {
         ...entryBandInventory,
         [entryBandTarget.item.selfId]: { selfId: entryBandTarget.item.selfId,

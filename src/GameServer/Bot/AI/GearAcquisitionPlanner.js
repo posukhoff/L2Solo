@@ -660,14 +660,22 @@ function preferredTarget(state = {}, options = {}) {
     const acquisitionRank = gradeForLevel(acquisitionState.level);
     const acquisitionKit = Progression.acquisition(state, progression);
     const targetSlotFor = item => Number(options.wishSlot || missingPairedMilestoneSlot(state, item, acquisitionKit) || item.etc?.slot || 0);
-    const allCandidates = (options.wishTargetId ? [catalogItem(options.wishTargetId)].filter(Boolean) : BotGear.currentRankRows(DataCache.items, recipeRank || acquisitionRank))
+    // Without a wish target the rows run from the open acquisition kit's grade
+    // to the level's: the kit's own pieces, and the higher ones only through a
+    // real offer (the author's acquisition kit; a wish target is the wish's).
+    const kitRank = acquisitionKit.required ? acquisitionKit.rank : rankIndex(acquisitionRank);
+    const rowRanks = recipeRank ? [recipeRank] : GRADES.slice(kitRank, rankIndex(acquisitionRank) + 1);
+    const offerOnly = item => Progression.marketOnly(state, item, acquisitionKit)
+        || !options.wishTargetId && !recipeRank && rankIndex(item.etc?.rank) > kitRank;
+    const allCandidates = (options.wishTargetId ? [catalogItem(options.wishTargetId)].filter(Boolean)
+        : rowRanks.flatMap(rank => BotGear.currentRankRows(DataCache.items, rank)))
         .filter(item => Sources.hasSource(item.selfId))
         .filter((item) => rankIndex(item.etc?.rank) <= rankIndex(acquisitionRank))
         .filter((item) => options.wishTargetId ? considerable(item, acquisitionState, role, acquisitionRank)
-            : suitable(item, state, role, recipeRank || acquisitionRank))
+            : suitable(item, state, role, recipeRank || String(item.etc?.rank || 'none').toLowerCase()))
         .filter((item) => !excluded.has(Number(item.selfId)))
         .filter(item => !options.wishTargetId || Number(item.selfId) === Number(options.wishTargetId))
-        .map((item) => ({ item, slot: targetSlotFor(item), recipe: Progression.marketOnly(state, item, acquisitionKit)
+        .map((item) => ({ item, slot: targetSlotFor(item), recipe: offerOnly(item)
             ? null : recipesByProduct.get(Number(item.selfId)) || null }))
         .filter(({ item, recipe }) => !recipeNeedsExcludedMaterial(recipe, state, excludedMaterials)
             || !!decisionMarketOffer(item, state, options))
@@ -679,8 +687,11 @@ function preferredTarget(state = {}, options = {}) {
         .filter(({ item }) => options.wishTargetId && PAIRED_SLOTS[options.wishSlot]
             || missingPairedMilestoneSlot(state, item, acquisitionKit)
             || (missingDualSword && item.template?.kind === 'Weapon.Dual')
-            || isSlotUpgrade(item, ownedItems, role, classId));
-    const requiredRank = recipeRank || acquisitionRank;
+            || isSlotUpgrade(item, ownedItems, role, classId))
+        // An offer-only piece is reachable through a real offer alone: no
+        // ask, no craft or hunt toward it.
+        .filter(({ item }) => !offerOnly(item) || !!decisionMarketOffer(item, state, options));
+    const requiredRank = recipeRank || rowRanks[0];
     const hasCurrentGradeWeapon = ownedItems.some((item) => (
         BotEquipmentCompatibility.isWeaponSlot(Number(item.etc?.slot || 0))
         && ownedItemFitsBuild(item, role, classId)
@@ -1424,7 +1435,9 @@ function recipeNeedsExcludedMaterial(recipe, state, excluded, seen = new Set()) 
 function replanContextFor(state = {}, previousPlan = null, timestamp = Date.now()) {
     const currentGrade = gradeForLevel(state.level);
     const currentLevel = Number(state.level || 1);
-    const sameGrade = previousPlan?.grade === currentGrade;
+    // A plan carries its target's grade; any grade up to the level's is a
+    // step the bot may take (a lower-grade one included), at the same level.
+    const sameGrade = GRADES.includes(previousPlan?.grade) && rankIndex(previousPlan.grade) <= rankIndex(currentGrade);
     const levelingRecovery = levelingRecoveryFor(state, previousPlan, timestamp);
     const sourceNpcId = Number(previousPlan?.next?.npcId || 0);
     const sourceAllowed = !sourceNpcId || isPlanSourceEligible(previousPlan);
