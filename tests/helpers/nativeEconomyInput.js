@@ -49,7 +49,7 @@ module.exports = async function withNativeEconomyInput(state, consume, timestamp
         return originalFull.call(this, value, ...args);
     };
     const record = { input: before, timestamp, tableVersions: tables.map(table => [table.name, table.to, table.rows.length]),
-        nativeTables: structuredClone(tables), knownShotRecipes: Workshop.knowledgeFor(state.characterId).knownShotRecipes, statsPacket: captured.statsPacket,
+        nativeTables: structuredClone(tables), statsPacket: captured.statsPacket,
         decision: { ...native, data: Buffer.from(native.data).toString('base64') },
         activity: native.activity, queue: captured.queue, sourceKey: native.key,
         sourceUpdatedAt: native.updatedAt, publication: 'whole native packet + accepted command-held decision' };

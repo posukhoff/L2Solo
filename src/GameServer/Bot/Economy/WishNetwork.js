@@ -1503,11 +1503,22 @@ class WishNetwork {
         // the root's place in the money queue (rootRatio), the ratio the
         // step's cash inputs are funded at: 0 unless the root owns a
         // money-packet row (`funded` above; the merged tail waits).
+        // A stock root whose item node crafts the item itself (no workshop) is
+        // a row too: its exit is own use [-1, units] (ShotCraftPolicy.exitTuple,
+        // the units its node still orders), ready once the recipe is known.
         const producers = [];
-        for (const wish of wishes) if (wish.key.startsWith('resale:') && Array.isArray(wish.plan?.exit))
-            producers.push({ key: wish.key, amount: wish.object?.amount, recipeId: wish.plan.recipeId, exit: wish.plan.exit,
-                recipeReady: wish.plan.recipeReady === true,
-                r: funded.has(wish.key) ? rootRatio(queue.find(row => row.key === wish.key)) : 0 });
+        const ratio = wish => funded.has(wish.key) ? rootRatio(queue.find(row => row.key === wish.key)) : 0;
+        for (const wish of wishes) {
+            if (wish.key.startsWith('resale:') && Array.isArray(wish.plan?.exit)) {
+                producers.push({ key: wish.key, amount: wish.object?.amount, recipeId: wish.plan.recipeId, exit: wish.plan.exit,
+                    recipeReady: wish.plan.recipeReady === true, r: ratio(wish) });
+                continue;
+            }
+            const need = wish.key.startsWith('stock:') ? wish.plan?.requirements?.[0] : null, craft = need?.plan;
+            if (craft?.kind === 'craft' && !craft.workshop && need.amount > 0)
+                producers.push({ key: wish.key, amount: need.amount, recipeId: craft.recipeId, exit: [-1, need.amount],
+                    recipeReady: !craft.requiresRecipeLearning, r: ratio(wish) });
+        }
         // The bot's exits in flight replace the ones its last build committed:
         // the rows it can produce without waiting for money
         // (CommittedExits.exitRows: ready rows the cold craft step may take,

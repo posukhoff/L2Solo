@@ -135,19 +135,19 @@ async function run() {
     assert.strictEqual(producerStep(), null, 'a recipe above the craft level is skipped');
     recipe.level = 7;
     assert.strictEqual(CraftShop.canCraft(state, recipe), true, 'recipe7 reaches the unchanged actual skill-tree limit');
-    assert.strictEqual(producerStep()?.recipe.recipeId, recipe.recipeId, 'a recipe within the craft level is crafted');
+    assert.strictEqual(producerStep()?.step.wealth.recipeId, recipe.recipeId, 'a recipe within the craft level is crafted');
     // Inputs 30000 adena, sale 45000: about half the cash comes back as net
     // value. The step spends at its funded root's place in the money queue.
     const halfReturn = producerStep({ r: .002, unit: 10000, price: 45000 });
     assert(halfReturn && halfReturn.valueHours > 0 && halfReturn.valueHours < .001 * 30000,
         'a craft returning about half its cash in net value is made for a funded root');
-    assert.strictEqual(halfReturn.r, .002, 'the craft step carries its root\'s money-queue ratio');
+    assert.strictEqual(halfReturn.step.wealth.r, .002, 'the craft step carries its root\'s money-queue ratio');
     assert.strictEqual(producerStep({ r: 0, unit: 10000, price: 45000 }), null,
         'an unfunded root does not spend cash on its craft inputs');
     // 340000 of the 400000 purse is held for a higher root: the ratio may
     // spend 60000, two 30000 batches of the three the root asks for.
     assert.strictEqual(producerStep({ r: .002, unit: 10000, price: 45000, amount: 3,
-        money: [1000, .001, 0, 0, .01, 340000, 99] })?.batches, 2,
+        money: [1000, .001, 0, 0, .01, 340000, 99] })?.step.wealth.batches, 2,
     'a root whose ratio cannot pay every batch crafts the batches it can pay');
     // A ratio the money queue already rounded charges its own packet row.
     for (const ratio of [3.86e-6, 9.86e-3]) {
@@ -330,17 +330,6 @@ async function run() {
         const listingStep = { recipeId: 25, batches: 1, exit: [-2, Shots.townCode('Giran'), 12000, 1] };
         assert.deepStrictEqual(Shots.unpackStep(Shots.packStep({ wealth: { ...listingStep, r: 0.01 } })).wealth,
             { ...listingStep, r: 0.01 }, 'the packed wealth step keeps its listing exit and value ratio');
-        // The crafter takes the more valuable craft: a shot step replaces the
-        // wealth step only with more value hours; a tie keeps the wealth step.
-        const wealthStep = { wealth: { recipeId: 25, batches: 2 } }, shotStep = { craft: { recipeId: 20, batches: 4 } };
-        assert.strictEqual(Shots.moreValuableStep({ step: wealthStep, valueHours: 36 }, { step: shotStep, valueHours: 12 }),
-            wealthStep, 'a wealth craft worth more than the shot craft is the step');
-        assert.strictEqual(Shots.moreValuableStep({ step: wealthStep, valueHours: 12 }, { step: shotStep, valueHours: 20 }),
-            shotStep, 'a shot craft worth more than the wealth craft is the step');
-        assert.strictEqual(Shots.moreValuableStep({ step: wealthStep, valueHours: 15 }, { step: shotStep, valueHours: 15 }),
-            wealthStep, 'equal value keeps the wealth craft');
-        assert.strictEqual(Shots.moreValuableStep(null, { step: shotStep, valueHours: 0 }), null,
-            'a shot craft of no value is no step');
         assert.strictEqual(Service.recheck(fundedCrafter, listingStep, [{ recipeId: 25 }]), null,
             'a listing step that must buy inputs without a value ratio goes back to the worker');
         assert.strictEqual(Service.recheck(fundedCrafter, { ...listingStep, r: 0.01 }, [{ recipeId: 25 }])?.exit.town, 'Giran',

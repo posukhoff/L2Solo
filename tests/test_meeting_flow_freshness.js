@@ -36,7 +36,7 @@ const native = require('./helpers/workerEconomyDecision');
     const boardRows = [[8001, [8001, 'sell_ad', 1, 910822, 'Giran', 1,
         [[9001, recipe.recipeItemId, 0, 3, 8000, null, 0]], 1, 1, 0]]];
     const input = () => ({ timestamp, nativeRoutes: true,
-        recipes: { recipeBook: RecipeCodec.pack([21, 22, 23, 24]), knownShotRecipes: [21, 22, 23, 24] },
+        recipes: { recipeBook: RecipeCodec.pack([21, 22, 23, 24]) },
         tablePages: [{ tables: [
             { name: 'board', from: null, to: 0, full: true, rows: boardRows, removed: [], last: true },
             { name: 'market', from: null, to: 0, full: true,

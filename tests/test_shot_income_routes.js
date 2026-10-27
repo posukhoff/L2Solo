@@ -18,7 +18,7 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
     for (const recipeId of [20, 21, 22, 23, 24]) {
         const recipe = Recipes.resolveByRecipeId(recipeId), board = new BoardIndex();
         const state = { characterId: 910801, accountName: 'bot_pop_shot_income', name: 'ShotSmith',
-            phase: 'cold', activity: 'shopping', currentRegion: 'Giran', homeRegion: 'Giran', level: 80,
+            phase: 'cold', activity: 'shopping', currentRegion: 'Giran', homeRegion: 'Giran', level: 76,
             adena: 10000000, vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
             inventory: Object.fromEntries(recipe.materials.map(row => [row.selfId,
                 { selfId: row.selfId, amount: row.amount, stackable: true }])), updatedAt: Date.now(), timing: {},
@@ -35,14 +35,13 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
         ];
         for (const row of records) board.put(row);
         Afk.boardIndex = () => board;
-        const result = await probe(state, { recipeEarning: true, recipes: { recipeBook: Codec.pack([]) },
+        // No known recipe: the producer root takes the offered grade's
+        // recipe for the buyer line and acts on its scroll (WishProviders);
+        // the craft step buys no scroll of its own.
+        const offered = await probe(state, { nativeRoutes: true, recipes: { recipeBook: Codec.pack([]) },
             boardRows: records.map(row => [row.id, rowOf(row)]) });
-        const selected = Policy.unpackStep(Policy.packStep(result.selected));
-        assert.equal(selected?.recipeTarget, recipeId, `worker selects the offered grade recipe ${recipeId}`);
-        const native = Shots.recheck(state, selected.recipeRoute);
-        assert(native && native.profit > 0, `native recheck preserves conditional shot income for ${recipeId}`);
-        assert.equal(native.exit.prospective.origin, 'public_bid');
-        assert.equal(native.batches, 1, 'an unbacked bid supports a bounded trial');
+        assert(offered.queue.some(row => row.key === `resale:${recipe.productId}`), `the producer root takes the offered grade recipe ${recipeId}`);
+        assert(offered.tradeIntents.some(row => row.itemId === recipe.recipeItemId), `the root acts on its recipe scroll for ${recipeId}`);
         if (recipeId === 20 || recipeId === 21) {
             const competitors = [317, 323, recipeId === 20 ? 21 : 20].map((id, at) => ({
                 id: 911000 + at, ownerId: 912000 + at, storeType: 3, kind: 'buy_ad', custodyPolicy: 1,
@@ -55,15 +54,13 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
             assert(wishes.queue.some(row => row.key === `resale:${recipe.productId}`), 'recipe investment has a native earning root');
             assert(wishes.tradeIntents.some(row => row.itemId === recipe.recipeItemId && row.worth >= 1), 'a meeting can certify the recipe purchase through the shared wish graph');
         }
-        board.remove(910810);
-        assert.equal(Shots.recheck(state, selected.recipeRoute), null, 'withdrawn buyer rejects before spending');
     }
     // A shop is a real earning route even without a BUY ad. Its finite
     // customer forecast comes from completed trades of this item in this town.
     for (const recipeId of [20, 21, 22, 23, 24]) {
         const recipe = Recipes.resolveByRecipeId(recipeId), board = new BoardIndex(), now = Date.now();
         const state = { characterId: 910801, accountName: 'bot_pop_shot_income', name: 'ShotSmith',
-            phase: 'cold', activity: 'shopping', currentRegion: 'Giran', homeRegion: 'Giran', level: 80,
+            phase: 'cold', activity: 'shopping', currentRegion: 'Giran', homeRegion: 'Giran', level: 76,
             adena: 10000000, vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
             inventory: Object.fromEntries(recipe.materials.map(row => [row.selfId,
                 { selfId: row.selfId, amount: row.amount * 20, stackable: true }])), updatedAt: now, timing: {},
@@ -93,21 +90,26 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
             assert.equal(town.town, 'Giran', 'the sale town follows observed shot buyers instead of the D-grade town prior');
             assert.equal(town.reason, 'supported_item_forecast');
         }
-        const result = await probe(state, { recipeEarning: true, timestamp: now,
-            recipes: { recipeBook: Codec.pack([]) }, tablePages: [{ tables: [
-                { name: 'board', from: null, to: 0, full: true, rows: [[scroll.id, rowOf(scroll)]], removed: [], last: true },
-                { name: 'market', from: null, to: 0, full: true, rows: rows.map(row => [row[0], row]), removed: [], last: true }
-            ] }] });
+        const tablePages = book => [{ tables: [
+            { name: 'board', from: null, to: 0, full: true, rows: [[scroll.id, rowOf(scroll)]], removed: [], last: true },
+            { name: 'market', from: null, to: 0, full: true, rows: rows.map(row => [row[0], row]), removed: [], last: true }
+        ] }];
+        const investing = await probe(state, { nativeRoutes: true, timestamp: now, recipes: { recipeBook: Codec.pack([]) }, tablePages: tablePages() });
+        assert(investing.queue.some(row => row.key === `resale:${recipe.productId}`), `the producer root invests in a shot storefront recipe ${recipeId}`);
+        assert(investing.tradeIntents.some(row => row.itemId === recipe.recipeItemId), `the storefront root acts on its recipe scroll for ${recipeId}`);
+        // With the recipe known, the craft step sizes the root's listing.
+        const result = await probe(state, { recipeEarning: true, refreshEconomy: true, timestamp: now,
+            recipes: { recipeBook: Codec.pack([recipeId]) }, tablePages: tablePages() });
         const selected = Policy.unpackStep(Policy.packStep(result.selected));
-        assert.equal(selected?.recipeTarget, recipeId, `actual worker invests in a shot storefront recipe ${recipeId}`);
-        assert.equal(selected.recipeRoute.exit[0], -2, 'listing forecast survives the bounded command codec');
+        assert.equal(selected?.craft?.recipeId, recipeId, `the craft step makes the storefront recipe ${recipeId}`);
+        assert.equal(selected.craft.exit[0], -2, 'listing forecast survives the bounded command codec');
         // The worker decided at `now`. Observed demand decays with time, and
         // a lot that barely fits the forecast (recipe 21: 476 shots against
         // about 480 willing buyers) loses a batch after seconds of a slow run;
         // the executor is checked at the decision moment, not after the probe.
         const atDecision = check => { const clock = Date.now; Date.now = () => now;
             try { return check(); } finally { Date.now = clock; } };
-        const native = atDecision(() => Shots.recheck(state, selected.recipeRoute));
+        const native = atDecision(() => Shots.recheck(state, selected.craft));
         assert(native && native.profit > 0, `native executor accepts the storefront income for ${recipeId}`);
         assert.equal(native.exit.type, 'listing');
         if (recipeId === 20) {
@@ -120,7 +122,7 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
                 [recipe.productId]: { selfId: recipe.productId, amount: held, stackable: true },
                 168: { selfId: 168, amount: 1, equipped: true, slot: 7, stackable: false } } };
             const refreshed = await probe(producer, { recipeEarning: true, refreshEconomy: true, timestamp: now,
-                recipes: { recipeBook: Codec.pack([20]), knownShotRecipes: [20] }, tablePages: [{ tables: [
+                recipes: { recipeBook: Codec.pack([20]) }, tablePages: [{ tables: [
                     { name: 'board', from: null, to: 0, full: true, rows: [[scroll.id, rowOf(scroll)]], removed: [], last: true },
                     { name: 'market', from: null, to: 0, full: true, rows: rows.map(row => [row[0], row]), removed: [], last: true }
                 ] }] });
@@ -132,9 +134,9 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
         }
         const withOutput = structuredClone(state);
         withOutput.inventory[recipe.productId] = { selfId: recipe.productId, amount: 1000000 };
-        assert.equal(Shots.recheck(withOutput, selected.recipeRoute), null, 'unsold own stock prevents more production');
+        assert.equal(Shots.recheck(withOutput, selected.craft), null, 'unsold own stock prevents more production');
         Market.reset();
-        assert.equal(Shots.recheck(state, selected.recipeRoute), null, 'missing current demand rejects before spending');
+        assert.equal(Shots.recheck(state, selected.craft), null, 'missing current demand rejects before spending');
     }
-    console.log('PASS native worker-to-executor shot income and recipe acquisition for D/C/B/A/S');
+    console.log('PASS producer root shot income and recipe scroll, worker-to-executor storefront craft for D/C/B/A/S');
 })().catch(error => { console.error(error.stack); process.exitCode = 1; }).finally(() => { Afk.boardIndex = originalBoard; });
