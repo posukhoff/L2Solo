@@ -25466,7 +25466,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -28408,6 +28408,87 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 247.45
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 2474.5
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 12372.5
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70.00000009728,
+              "expectedAmountPerKill": 317.100000440678
+            },
+            "x10": {
+              "chancePercent": 96.629561823605,
+              "expectedAmountPerKill": 3064.123409684772
+            },
+            "x50": {
+              "chancePercent": 85.149867286861,
+              "expectedAmountPerKill": 13500.511477093663
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 344.75
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 3447.5
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 17237.5
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -30926,6 +31007,33 @@
           "groupIndexes": [
             0
           ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 849.1
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 8491
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 42455
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
           "mobId": 1040,
           "mobLevel": 49,
           "mobName": "Soldier of Darkness",
@@ -31184,6 +31292,33 @@
             "x50": {
               "chancePercent": 100,
               "expectedAmountPerKill": 231927.5
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 2027.2
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 20272
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 101360
             }
           }
         },
@@ -39181,6 +39316,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 8709.75
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 87097.5
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 435487.5
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -39203,6 +39365,60 @@
             "x50": {
               "chancePercent": 100,
               "expectedAmountPerKill": 828765
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 10739.05
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 107390.5
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 536952.5
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 11139.8
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 111398
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 556990
             }
           }
         },
@@ -39911,7 +40127,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -39932,6 +40148,33 @@
             "x50": {
               "chancePercent": 100,
               "expectedAmountPerKill": 58257.5
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 1320.55
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 13205.5
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 66027.5
             }
           }
         },
@@ -42853,6 +43096,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 70,
+              "expectedAmountPerKill": 10846.5
+            },
+            "x10": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 108465
+            },
+            "x50": {
+              "chancePercent": 100,
+              "expectedAmountPerKill": 542325
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -43594,6 +43864,33 @@
             "x50": {
               "chancePercent": 0.355619,
               "expectedAmountPerKill": 0.00355619
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.00620000787,
+              "expectedAmountPerKill": 0.000062000079
+            },
+            "x10": {
+              "chancePercent": 0.0620000787,
+              "expectedAmountPerKill": 0.000620000787
+            },
+            "x50": {
+              "chancePercent": 0.3100003935,
+              "expectedAmountPerKill": 0.003100003935
             }
           }
         },
@@ -45036,6 +45333,33 @@
             "x50": {
               "chancePercent": 0.1200000552,
               "expectedAmountPerKill": 0.001200000552
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.002700001889,
+              "expectedAmountPerKill": 0.000027000019
+            },
+            "x10": {
+              "chancePercent": 0.02700001889,
+              "expectedAmountPerKill": 0.000270000189
+            },
+            "x50": {
+              "chancePercent": 0.13500009445,
+              "expectedAmountPerKill": 0.001350000944
             }
           }
         },
@@ -77203,6 +77527,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.002800000566,
+              "expectedAmountPerKill": 0.000028000006
+            },
+            "x10": {
+              "chancePercent": 0.02800000566,
+              "expectedAmountPerKill": 0.000280000057
+            },
+            "x50": {
+              "chancePercent": 0.1400000283,
+              "expectedAmountPerKill": 0.001400000283
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -84273,6 +84624,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.001599999966,
+              "expectedAmountPerKill": 0.000016
+            },
+            "x10": {
+              "chancePercent": 0.01599999966,
+              "expectedAmountPerKill": 0.000159999997
+            },
+            "x50": {
+              "chancePercent": 0.0799999983,
+              "expectedAmountPerKill": 0.000799999983
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -85500,6 +85878,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.000999998706,
+              "expectedAmountPerKill": 0.000009999987
+            },
+            "x10": {
+              "chancePercent": 0.00999998706,
+              "expectedAmountPerKill": 0.000099999871
+            },
+            "x50": {
+              "chancePercent": 0.0499999353,
+              "expectedAmountPerKill": 0.000499999353
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -85917,7 +86322,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -86489,6 +86894,60 @@
             "x50": {
               "chancePercent": 0.0649998874,
               "expectedAmountPerKill": 0.000649998874
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.002700003228,
+              "expectedAmountPerKill": 0.000027000032
+            },
+            "x10": {
+              "chancePercent": 0.02700003228,
+              "expectedAmountPerKill": 0.000270000323
+            },
+            "x50": {
+              "chancePercent": 0.1350001614,
+              "expectedAmountPerKill": 0.001350001614
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.002699997585,
+              "expectedAmountPerKill": 0.000026999976
+            },
+            "x10": {
+              "chancePercent": 0.02699997585,
+              "expectedAmountPerKill": 0.000269999759
+            },
+            "x50": {
+              "chancePercent": 0.13499987925,
+              "expectedAmountPerKill": 0.001349998793
             }
           }
         },
@@ -91577,7 +92036,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -105365,6 +105824,33 @@
           "groupIndexes": [
             1
           ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.00639999762,
+              "expectedAmountPerKill": 0.000063999976
+            },
+            "x10": {
+              "chancePercent": 0.0639999762,
+              "expectedAmountPerKill": 0.000639999762
+            },
+            "x50": {
+              "chancePercent": 0.319999881,
+              "expectedAmountPerKill": 0.00319999881
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
           "mobId": 990,
           "mobLevel": 38,
           "mobName": "Pageos",
@@ -108669,6 +109155,33 @@
             "x50": {
               "chancePercent": 1.0761,
               "expectedAmountPerKill": 0.010761
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.010300001595,
+              "expectedAmountPerKill": 0.000103000016
+            },
+            "x10": {
+              "chancePercent": 0.10300001595,
+              "expectedAmountPerKill": 0.00103000016
+            },
+            "x50": {
+              "chancePercent": 0.51500007975,
+              "expectedAmountPerKill": 0.005150000798
             }
           }
         },
@@ -116023,6 +116536,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.00620000787,
+              "expectedAmountPerKill": 0.000062000079
+            },
+            "x10": {
+              "chancePercent": 0.0620000787,
+              "expectedAmountPerKill": 0.000620000787
+            },
+            "x50": {
+              "chancePercent": 0.3100003935,
+              "expectedAmountPerKill": 0.003100003935
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -123125,6 +123665,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.0343,
+              "expectedAmountPerKill": 0.000343
+            },
+            "x10": {
+              "chancePercent": 0.0343,
+              "expectedAmountPerKill": 0.00343
+            },
+            "x50": {
+              "chancePercent": 0.0343,
+              "expectedAmountPerKill": 0.01715
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -128680,7 +129247,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -132812,7 +133379,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -151732,6 +152299,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.004000018412,
+              "expectedAmountPerKill": 0.000040000184
+            },
+            "x10": {
+              "chancePercent": 0.01207877257,
+              "expectedAmountPerKill": 0.000120787726
+            },
+            "x50": {
+              "chancePercent": 0.041353262803,
+              "expectedAmountPerKill": 0.000413532628
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -151759,6 +152353,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.004999798442,
+              "expectedAmountPerKill": 0.000049997984
+            },
+            "x10": {
+              "chancePercent": 0.015935358623,
+              "expectedAmountPerKill": 0.000159353586
+            },
+            "x50": {
+              "chancePercent": 0.049972998428,
+              "expectedAmountPerKill": 0.000499729984
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -151781,6 +152402,33 @@
             "x50": {
               "chancePercent": 0.029501429115,
               "expectedAmountPerKill": 0.000295014291
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.005899962665,
+              "expectedAmountPerKill": 0.000058999627
+            },
+            "x10": {
+              "chancePercent": 0.035688999643,
+              "expectedAmountPerKill": 0.000356889996
+            },
+            "x50": {
+              "chancePercent": 0.080745086289,
+              "expectedAmountPerKill": 0.000807450863
             }
           }
         },
@@ -153806,6 +154454,33 @@
             "x50": {
               "chancePercent": 0.239638386612,
               "expectedAmountPerKill": 0.002396383866
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.042299995528,
+              "expectedAmountPerKill": 0.000422999955
+            },
+            "x10": {
+              "chancePercent": 0.127449165,
+              "expectedAmountPerKill": 0.00127449165
+            },
+            "x50": {
+              "chancePercent": 0.385864368192,
+              "expectedAmountPerKill": 0.003858643682
             }
           }
         },
@@ -158834,7 +159509,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -162742,6 +163417,33 @@
             "x50": {
               "chancePercent": 0.355619,
               "expectedAmountPerKill": 0.00355619
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.00620000787,
+              "expectedAmountPerKill": 0.000062000079
+            },
+            "x10": {
+              "chancePercent": 0.0620000787,
+              "expectedAmountPerKill": 0.000620000787
+            },
+            "x50": {
+              "chancePercent": 0.3100003935,
+              "expectedAmountPerKill": 0.003100003935
             }
           }
         },
@@ -173477,7 +174179,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -176980,6 +177682,33 @@
             "x50": {
               "chancePercent": 17.950421183084,
               "expectedAmountPerKill": 150.123859172987
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 13.226900058596,
+              "expectedAmountPerKill": 26.453800117192
+            },
+            "x10": {
+              "chancePercent": 30.129829426488,
+              "expectedAmountPerKill": 79.704848521339
+            },
+            "x50": {
+              "chancePercent": 18.244180093891,
+              "expectedAmountPerKill": 241.313946752923
             }
           }
         },
@@ -197811,6 +198540,60 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.2444,
+              "expectedAmountPerKill": 0.002444
+            },
+            "x10": {
+              "chancePercent": 0.2444,
+              "expectedAmountPerKill": 0.02444
+            },
+            "x50": {
+              "chancePercent": 0.2444,
+              "expectedAmountPerKill": 0.1222
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.6613,
+              "expectedAmountPerKill": 0.006613
+            },
+            "x10": {
+              "chancePercent": 0.6613,
+              "expectedAmountPerKill": 0.06613
+            },
+            "x50": {
+              "chancePercent": 0.6613,
+              "expectedAmountPerKill": 0.33065
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -201307,6 +202090,33 @@
             "x50": {
               "chancePercent": 21.81048830694,
               "expectedAmountPerKill": 0.728841096907
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 7.988299943814,
+              "expectedAmountPerKill": 0.079882999438
+            },
+            "x10": {
+              "chancePercent": 28.942486572164,
+              "expectedAmountPerKill": 0.289424865722
+            },
+            "x50": {
+              "chancePercent": 22.332893774957,
+              "expectedAmountPerKill": 0.892009270438
             }
           }
         },
@@ -208198,6 +209008,33 @@
             "raidMinion": false
           },
           "groupIndexes": [
+            2
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 19.970800017354,
+              "expectedAmountPerKill": 0.399416000347
+            },
+            "x10": {
+              "chancePercent": 36.23109644822,
+              "expectedAmountPerKill": 1.447127963154
+            },
+            "x50": {
+              "chancePercent": 22.332893774957,
+              "expectedAmountPerKill": 4.460057553885
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
             1
           ],
           "mobId": 1080,
@@ -215046,6 +215883,33 @@
             "x50": {
               "chancePercent": 41.506693276602,
               "expectedAmountPerKill": 0.636339111294
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.845399985044,
+              "expectedAmountPerKill": 0.04845399985
+            },
+            "x10": {
+              "chancePercent": 43.490046,
+              "expectedAmountPerKill": 0.43490046
+            },
+            "x50": {
+              "chancePercent": 36.693207885817,
+              "expectedAmountPerKill": 0.888966344706
             }
           }
         },
@@ -221943,6 +222807,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 3.507099951505,
+              "expectedAmountPerKill": 0.035070999515
+            },
+            "x10": {
+              "chancePercent": 35.07099951505,
+              "expectedAmountPerKill": 0.350709995151
+            },
+            "x50": {
+              "chancePercent": 41.190402006729,
+              "expectedAmountPerKill": 0.722294291624
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 942,
           "mobLevel": 43,
           "mobName": "Nightmare Guide",
@@ -222417,6 +223308,33 @@
             "x50": {
               "chancePercent": 20.414412529152,
               "expectedAmountPerKill": 0.257344073168
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 11.06879984793,
+              "expectedAmountPerKill": 0.110687998479
+            },
+            "x10": {
+              "chancePercent": 46.309588327789,
+              "expectedAmountPerKill": 0.512591569366
+            },
+            "x50": {
+              "chancePercent": 35.753868759923,
+              "expectedAmountPerKill": 1.978762105251
             }
           }
         },
@@ -224015,6 +224933,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 17.635799931988,
+              "expectedAmountPerKill": 0.70543199728
+            },
+            "x10": {
+              "chancePercent": 30.129829426488,
+              "expectedAmountPerKill": 2.125454575002
+            },
+            "x50": {
+              "chancePercent": 18.244180093891,
+              "expectedAmountPerKill": 6.43501420118
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -224205,7 +225150,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -229584,6 +230529,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 7.244200094774,
+              "expectedAmountPerKill": 0.072442000948
+            },
+            "x10": {
+              "chancePercent": 45.438123908762,
+              "expectedAmountPerKill": 0.454381239088
+            },
+            "x50": {
+              "chancePercent": 36.666301473384,
+              "expectedAmountPerKill": 1.328090096481
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 943,
           "mobLevel": 45,
           "mobName": "Nightmare Keeper",
@@ -231921,6 +232893,33 @@
             "x50": {
               "chancePercent": 21.571016973601,
               "expectedAmountPerKill": 10.946859604166
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 21.343100074167,
+              "expectedAmountPerKill": 1.707448005933
+            },
+            "x10": {
+              "chancePercent": 31.872002375469,
+              "expectedAmountPerKill": 5.44197863569
+            },
+            "x50": {
+              "chancePercent": 19.990005400314,
+              "expectedAmountPerKill": 17.065947259022
             }
           }
         },
@@ -238973,6 +239972,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 6.675300118864,
+              "expectedAmountPerKill": 2.002590035659
+            },
+            "x10": {
+              "chancePercent": 20.157265208381,
+              "expectedAmountPerKill": 6.047179562514
+            },
+            "x50": {
+              "chancePercent": 20.676536227433,
+              "expectedAmountPerKill": 20.703312710501
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -239103,6 +240129,33 @@
             "x50": {
               "chancePercent": 19.978822468107,
               "expectedAmountPerKill": 3.198129981712
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 30.353099866224,
+              "expectedAmountPerKill": 0.303530998662
+            },
+            "x10": {
+              "chancePercent": 42.19124399091,
+              "expectedAmountPerKill": 1.280635055143
+            },
+            "x50": {
+              "chancePercent": 24.214248223126,
+              "expectedAmountPerKill": 3.674887509259
             }
           }
         },
@@ -246079,6 +247132,33 @@
             "raidMinion": false
           },
           "groupIndexes": [
+            2
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 6.656899900572,
+              "expectedAmountPerKill": 0.133137998011
+            },
+            "x10": {
+              "chancePercent": 24.118678234377,
+              "expectedAmountPerKill": 0.482373564688
+            },
+            "x50": {
+              "chancePercent": 22.332893774957,
+              "expectedAmountPerKill": 1.4866783835
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
             1
           ],
           "mobId": 1080,
@@ -251717,6 +252797,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.845399985044,
+              "expectedAmountPerKill": 0.04845399985
+            },
+            "x10": {
+              "chancePercent": 43.490046,
+              "expectedAmountPerKill": 0.43490046
+            },
+            "x50": {
+              "chancePercent": 36.693207885817,
+              "expectedAmountPerKill": 0.888966344706
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -256692,6 +257799,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 5.26059998285,
+              "expectedAmountPerKill": 0.052605999829
+            },
+            "x10": {
+              "chancePercent": 52.6059998285,
+              "expectedAmountPerKill": 0.526059998285
+            },
+            "x50": {
+              "chancePercent": 41.190402006729,
+              "expectedAmountPerKill": 1.083431151285
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 942,
           "mobLevel": 43,
           "mobName": "Nightmare Guide",
@@ -257139,6 +258273,33 @@
             "x50": {
               "chancePercent": 19.738659708458,
               "expectedAmountPerKill": 0.769205709768
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 16.603199918224,
+              "expectedAmountPerKill": 0.166031999182
+            },
+            "x10": {
+              "chancePercent": 46.309588327789,
+              "expectedAmountPerKill": 0.768887360826
+            },
+            "x50": {
+              "chancePercent": 35.753868759923,
+              "expectedAmountPerKill": 2.968143184036
             }
           }
         },
@@ -258765,6 +259926,33 @@
         {
           "availability": {
             "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 5.878599830488,
+              "expectedAmountPerKill": 1.058147969488
+            },
+            "x10": {
+              "chancePercent": 17.712121015918,
+              "expectedAmountPerKill": 3.188181782865
+            },
+            "x50": {
+              "chancePercent": 18.244180093891,
+              "expectedAmountPerKill": 9.652521060661
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
             "knownReachable": false,
             "raidMinion": false
           },
@@ -258954,7 +260142,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -259922,6 +261110,33 @@
             "x50": {
               "chancePercent": 40.4316,
               "expectedAmountPerKill": 20.2158
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 66.1279,
+              "expectedAmountPerKill": 1.983837
+            },
+            "x10": {
+              "chancePercent": 66.1279,
+              "expectedAmountPerKill": 19.83837
+            },
+            "x50": {
+              "chancePercent": 66.1279,
+              "expectedAmountPerKill": 99.19185
             }
           }
         },
@@ -264819,6 +266034,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 7.244200094774,
+              "expectedAmountPerKill": 0.072442000948
+            },
+            "x10": {
+              "chancePercent": 45.438123908762,
+              "expectedAmountPerKill": 0.454381239088
+            },
+            "x50": {
+              "chancePercent": 36.666301473384,
+              "expectedAmountPerKill": 1.328090096481
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 943,
           "mobLevel": 45,
           "mobName": "Nightmare Keeper",
@@ -267156,6 +268398,33 @@
             "x50": {
               "chancePercent": 21.571016973601,
               "expectedAmountPerKill": 10.217068801568
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 11.38300014251,
+              "expectedAmountPerKill": 1.593620019951
+            },
+            "x10": {
+              "chancePercent": 31.872002375469,
+              "expectedAmountPerKill": 5.079186055357
+            },
+            "x50": {
+              "chancePercent": 19.990005400314,
+              "expectedAmountPerKill": 15.928236243156
             }
           }
         },
@@ -274856,6 +276125,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 10.012900118728,
+              "expectedAmountPerKill": 0.400516004749
+            },
+            "x10": {
+              "chancePercent": 30.196792427981,
+              "expectedAmountPerKill": 1.209429865949
+            },
+            "x50": {
+              "chancePercent": 20.676536227433,
+              "expectedAmountPerKill": 4.140641840931
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -274986,6 +276282,33 @@
             "x50": {
               "chancePercent": 19.978822468107,
               "expectedAmountPerKill": 0.959432995788
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 6.07060014863,
+              "expectedAmountPerKill": 0.060706001486
+            },
+            "x10": {
+              "chancePercent": 25.612617460336,
+              "expectedAmountPerKill": 0.256126174603
+            },
+            "x50": {
+              "chancePercent": 24.214248223126,
+              "expectedAmountPerKill": 0.734975101661
             }
           }
         },
@@ -277395,7 +278718,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -279023,6 +280346,33 @@
           "groupIndexes": [
             0
           ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 3.7494,
+              "expectedAmountPerKill": 0.037494
+            },
+            "x10": {
+              "chancePercent": 3.7494,
+              "expectedAmountPerKill": 0.37494
+            },
+            "x50": {
+              "chancePercent": 3.7494,
+              "expectedAmountPerKill": 1.8747
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
           "mobId": 943,
           "mobLevel": 45,
           "mobName": "Nightmare Keeper",
@@ -280608,7 +281958,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -281358,6 +282708,33 @@
             "x50": {
               "chancePercent": 4.241983484933,
               "expectedAmountPerKill": 0.042419834849
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.322999993158,
+              "expectedAmountPerKill": 0.003229999932
+            },
+            "x10": {
+              "chancePercent": 2.899097,
+              "expectedAmountPerKill": 0.02899097
+            },
+            "x50": {
+              "chancePercent": 5.925952948032,
+              "expectedAmountPerKill": 0.05925952948
             }
           }
         },
@@ -284384,6 +285761,33 @@
             "x50": {
               "chancePercent": 1.1891,
               "expectedAmountPerKill": 0.59455
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 3.7494,
+              "expectedAmountPerKill": 0.037494
+            },
+            "x10": {
+              "chancePercent": 3.7494,
+              "expectedAmountPerKill": 0.37494
+            },
+            "x50": {
+              "chancePercent": 3.7494,
+              "expectedAmountPerKill": 1.8747
             }
           }
         },
@@ -287492,6 +288896,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 20.025799805908,
+              "expectedAmountPerKill": 0.200257998059
+            },
+            "x10": {
+              "chancePercent": 30.196792427981,
+              "expectedAmountPerKill": 0.604714919943
+            },
+            "x50": {
+              "chancePercent": 20.676536227433,
+              "expectedAmountPerKill": 2.070320875851
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -287568,6 +288999,33 @@
             "x50": {
               "chancePercent": 24.010180439258,
               "expectedAmountPerKill": 0.462856253285
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 3.035300074315,
+              "expectedAmountPerKill": 0.030353000743
+            },
+            "x10": {
+              "chancePercent": 12.806308730168,
+              "expectedAmountPerKill": 0.128063087302
+            },
+            "x50": {
+              "chancePercent": 24.214248223126,
+              "expectedAmountPerKill": 0.367487550831
             }
           }
         },
@@ -289814,6 +291272,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.664100112275,
+              "expectedAmountPerKill": 0.006641001123
+            },
+            "x10": {
+              "chancePercent": 3.075420311544,
+              "expectedAmountPerKill": 0.030754203115
+            },
+            "x50": {
+              "chancePercent": 11.872074247586,
+              "expectedAmountPerKill": 0.118720742476
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -290754,6 +292239,33 @@
             "x50": {
               "chancePercent": 20.69472226248,
               "expectedAmountPerKill": 0.788541358556
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.232499967024,
+              "expectedAmountPerKill": 0.04232499967
+            },
+            "x10": {
+              "chancePercent": 12.752450205405,
+              "expectedAmountPerKill": 0.127524502054
+            },
+            "x50": {
+              "chancePercent": 18.244180093891,
+              "expectedAmountPerKill": 0.386092458229
             }
           }
         },
@@ -291755,6 +293267,33 @@
             "x50": {
               "chancePercent": 77.3988,
               "expectedAmountPerKill": 77.3988
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 50.1519,
+              "expectedAmountPerKill": 1.003038
+            },
+            "x10": {
+              "chancePercent": 50.1519,
+              "expectedAmountPerKill": 10.03038
+            },
+            "x50": {
+              "chancePercent": 50.1519,
+              "expectedAmountPerKill": 50.1519
             }
           }
         },
@@ -296019,6 +297558,33 @@
             "x50": {
               "chancePercent": 10.604960154876,
               "expectedAmountPerKill": 0.106049601549
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.807500038602,
+              "expectedAmountPerKill": 0.008075000386
+            },
+            "x10": {
+              "chancePercent": 7.247743,
+              "expectedAmountPerKill": 0.07247743
+            },
+            "x50": {
+              "chancePercent": 14.814883392114,
+              "expectedAmountPerKill": 0.148148833921
             }
           }
         },
@@ -301176,6 +302742,33 @@
             "x50": {
               "chancePercent": 10.126186443528,
               "expectedAmountPerKill": 0.101261864435
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.996999937082,
+              "expectedAmountPerKill": 0.019969999371
+            },
+            "x10": {
+              "chancePercent": 7.235349732751,
+              "expectedAmountPerKill": 0.072353497328
+            },
+            "x50": {
+              "chancePercent": 22.299393731725,
+              "expectedAmountPerKill": 0.222993937317
             }
           }
         },
@@ -309504,6 +311097,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.207299961006,
+              "expectedAmountPerKill": 0.01207299961
+            },
+            "x10": {
+              "chancePercent": 7.572602151452,
+              "expectedAmountPerKill": 0.075726021515
+            },
+            "x50": {
+              "chancePercent": 22.133611726853,
+              "expectedAmountPerKill": 0.221336117269
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 951,
           "mobLevel": 53,
           "mobName": "Pobby's Maid",
@@ -310383,6 +312003,33 @@
             "x50": {
               "chancePercent": 21.571016973601,
               "expectedAmountPerKill": 1.824476615187
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.742900004189,
+              "expectedAmountPerKill": 0.284574000251
+            },
+            "x10": {
+              "chancePercent": 15.116571868847,
+              "expectedAmountPerKill": 0.906994312131
+            },
+            "x50": {
+              "chancePercent": 19.990005400314,
+              "expectedAmountPerKill": 2.844317872463
             }
           }
         },
@@ -315172,6 +316819,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.438299994993,
+              "expectedAmountPerKill": 0.00438299995
+            },
+            "x10": {
+              "chancePercent": 4.38299994993,
+              "expectedAmountPerKill": 0.043829999499
+            },
+            "x50": {
+              "chancePercent": 9.026876586923,
+              "expectedAmountPerKill": 0.090268765869
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 949,
           "mobLevel": 58,
           "mobName": "Luminun",
@@ -315922,7 +317596,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -320639,6 +322313,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.190600003682,
+              "expectedAmountPerKill": 0.001906000037
+            },
+            "x10": {
+              "chancePercent": 1.19550902391,
+              "expectedAmountPerKill": 0.011955090239
+            },
+            "x50": {
+              "chancePercent": 3.49429852803,
+              "expectedAmountPerKill": 0.03494298528
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 951,
           "mobLevel": 53,
           "mobName": "Pobby's Maid",
@@ -321874,6 +323575,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.493299940237,
+              "expectedAmountPerKill": 0.044932999402
+            },
+            "x10": {
+              "chancePercent": 14.321046493682,
+              "expectedAmountPerKill": 0.143210464937
+            },
+            "x50": {
+              "chancePercent": 19.990005400314,
+              "expectedAmountPerKill": 0.449105445862
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -322247,6 +323975,33 @@
             "x50": {
               "chancePercent": 7.56558943703,
               "expectedAmountPerKill": 0.07565589437
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 5.249899987713,
+              "expectedAmountPerKill": 0.052498999877
+            },
+            "x10": {
+              "chancePercent": 31.756756682432,
+              "expectedAmountPerKill": 0.317567566824
+            },
+            "x50": {
+              "chancePercent": 27.371388622765,
+              "expectedAmountPerKill": 0.718485271157
             }
           }
         }
@@ -322659,6 +324414,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 91.2701,
+              "expectedAmountPerKill": 0.912701
+            },
+            "x10": {
+              "chancePercent": 91.2701,
+              "expectedAmountPerKill": 9.12701
+            },
+            "x50": {
+              "chancePercent": 91.2701,
+              "expectedAmountPerKill": 45.63505
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -322762,6 +324544,33 @@
             "x50": {
               "chancePercent": 31.8295,
               "expectedAmountPerKill": 15.91475
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 88.8656,
+              "expectedAmountPerKill": 0.888656
+            },
+            "x10": {
+              "chancePercent": 88.8656,
+              "expectedAmountPerKill": 8.88656
+            },
+            "x50": {
+              "chancePercent": 88.8656,
+              "expectedAmountPerKill": 44.4328
             }
           }
         }
@@ -325249,6 +327058,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.767999938156,
+              "expectedAmountPerKill": 0.286079996289
+            },
+            "x10": {
+              "chancePercent": 14.397830442912,
+              "expectedAmountPerKill": 0.863869826575
+            },
+            "x50": {
+              "chancePercent": 20.676536227433,
+              "expectedAmountPerKill": 2.95757170361
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -325352,6 +327188,33 @@
             "x50": {
               "chancePercent": 24.010180439258,
               "expectedAmountPerKill": 0.661228346166
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.336100104378,
+              "expectedAmountPerKill": 0.043361001044
+            },
+            "x10": {
+              "chancePercent": 18.294545930228,
+              "expectedAmountPerKill": 0.182945459302
+            },
+            "x50": {
+              "chancePercent": 24.214248223126,
+              "expectedAmountPerKill": 0.524977026488
             }
           }
         },
@@ -330327,6 +332190,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 5.6982,
+              "expectedAmountPerKill": 0.056982
+            },
+            "x10": {
+              "chancePercent": 5.6982,
+              "expectedAmountPerKill": 0.56982
+            },
+            "x50": {
+              "chancePercent": 5.6982,
+              "expectedAmountPerKill": 2.8491
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -331542,6 +333432,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 19.298,
+              "expectedAmountPerKill": 0.19298
+            },
+            "x10": {
+              "chancePercent": 19.298,
+              "expectedAmountPerKill": 1.9298
+            },
+            "x50": {
+              "chancePercent": 19.298,
+              "expectedAmountPerKill": 9.649
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -332590,6 +334507,33 @@
             "x50": {
               "chancePercent": 15.0381,
               "expectedAmountPerKill": 7.51905
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 7.6204,
+              "expectedAmountPerKill": 0.076204
+            },
+            "x10": {
+              "chancePercent": 7.6204,
+              "expectedAmountPerKill": 0.76204
+            },
+            "x50": {
+              "chancePercent": 7.6204,
+              "expectedAmountPerKill": 3.8102
             }
           }
         },
@@ -344287,6 +346231,33 @@
           "groupIndexes": [
             1
           ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.37060000083,
+              "expectedAmountPerKill": 0.003706000008
+            },
+            "x10": {
+              "chancePercent": 3.7060000083,
+              "expectedAmountPerKill": 0.037060000083
+            },
+            "x50": {
+              "chancePercent": 18.5300000415,
+              "expectedAmountPerKill": 0.185300000415
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
           "mobId": 990,
           "mobLevel": 38,
           "mobName": "Pageos",
@@ -344464,6 +346435,33 @@
             "x50": {
               "chancePercent": 59.8297,
               "expectedAmountPerKill": 0.598297
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.577199999955,
+              "expectedAmountPerKill": 0.005772
+            },
+            "x10": {
+              "chancePercent": 5.77199999955,
+              "expectedAmountPerKill": 0.057719999996
+            },
+            "x50": {
+              "chancePercent": 28.85999999775,
+              "expectedAmountPerKill": 0.288599999978
             }
           }
         },
@@ -345218,6 +347216,33 @@
             "x50": {
               "chancePercent": 19.644381,
               "expectedAmountPerKill": 0.19644381
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.34239999213,
+              "expectedAmountPerKill": 0.003423999921
+            },
+            "x10": {
+              "chancePercent": 3.4239999213,
+              "expectedAmountPerKill": 0.034239999213
+            },
+            "x50": {
+              "chancePercent": 17.1199996065,
+              "expectedAmountPerKill": 0.171199996065
             }
           }
         },
@@ -347111,6 +349136,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.34239999213,
+              "expectedAmountPerKill": 0.003423999921
+            },
+            "x10": {
+              "chancePercent": 3.4239999213,
+              "expectedAmountPerKill": 0.034239999213
+            },
+            "x50": {
+              "chancePercent": 17.1199996065,
+              "expectedAmountPerKill": 0.171199996065
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -348807,6 +350859,33 @@
             "x50": {
               "chancePercent": 19.644381,
               "expectedAmountPerKill": 0.19644381
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.34239999213,
+              "expectedAmountPerKill": 0.003423999921
+            },
+            "x10": {
+              "chancePercent": 3.4239999213,
+              "expectedAmountPerKill": 0.034239999213
+            },
+            "x50": {
+              "chancePercent": 17.1199996065,
+              "expectedAmountPerKill": 0.171199996065
             }
           }
         },
@@ -363903,6 +365982,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.218899999405,
+              "expectedAmountPerKill": 0.002188999994
+            },
+            "x10": {
+              "chancePercent": 2.18899999405,
+              "expectedAmountPerKill": 0.021889999941
+            },
+            "x50": {
+              "chancePercent": 10.94499997025,
+              "expectedAmountPerKill": 0.109449999702
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -365517,7 +367623,35 @@
           }
         }
       ],
-      "spoils": []
+      "spoils": [
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.6241,
+              "expectedAmountPerKill": 0.006241
+            },
+            "x10": {
+              "chancePercent": 0.6241,
+              "expectedAmountPerKill": 0.06241
+            },
+            "x50": {
+              "chancePercent": 0.6241,
+              "expectedAmountPerKill": 0.31205
+            }
+          }
+        }
+      ]
     },
     "template": {
       "etc": {
@@ -368402,6 +370536,33 @@
       "spoils": [
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.639,
+              "expectedAmountPerKill": 0.00639
+            },
+            "x10": {
+              "chancePercent": 0.639,
+              "expectedAmountPerKill": 0.0639
+            },
+            "x50": {
+              "chancePercent": 0.639,
+              "expectedAmountPerKill": 0.3195
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -368959,6 +371120,33 @@
             "x50": {
               "chancePercent": 8.2499999825,
               "expectedAmountPerKill": 0.082499999825
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.134600000034,
+              "expectedAmountPerKill": 0.001346
+            },
+            "x10": {
+              "chancePercent": 1.34600000034,
+              "expectedAmountPerKill": 0.013460000003
+            },
+            "x50": {
+              "chancePercent": 6.7300000017,
+              "expectedAmountPerKill": 0.067300000017
             }
           }
         },
@@ -371442,7 +373630,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -383523,6 +385711,33 @@
               "expectedAmountPerKill": 0.029014217425
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.298999969176,
+              "expectedAmountPerKill": 0.002989999692
+            },
+            "x10": {
+              "chancePercent": 2.683684,
+              "expectedAmountPerKill": 0.02683684
+            },
+            "x50": {
+              "chancePercent": 5.485634013414,
+              "expectedAmountPerKill": 0.054856340134
+            }
+          }
         }
       ],
       "spoils": [
@@ -383791,6 +386006,33 @@
             "x50": {
               "chancePercent": 5.262618256377,
               "expectedAmountPerKill": 0.052626182564
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.80199997518,
+              "expectedAmountPerKill": 0.008019999752
+            },
+            "x10": {
+              "chancePercent": 3.714028906089,
+              "expectedAmountPerKill": 0.037140289061
+            },
+            "x50": {
+              "chancePercent": 14.337301072397,
+              "expectedAmountPerKill": 0.143373010724
             }
           }
         },
@@ -391013,6 +393255,33 @@
             "x50": {
               "chancePercent": 2.136636040821,
               "expectedAmountPerKill": 0.021366360408
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.166400042296,
+              "expectedAmountPerKill": 0.001664000423
+            },
+            "x10": {
+              "chancePercent": 1.66400042296,
+              "expectedAmountPerKill": 0.01664000423
+            },
+            "x50": {
+              "chancePercent": 3.427042352325,
+              "expectedAmountPerKill": 0.034270423523
             }
           }
         },
@@ -399741,6 +402010,33 @@
               "expectedAmountPerKill": 0.004979004237
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 936,
+          "mobLevel": 40,
+          "mobName": "Tanor Silenos",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.021100028976,
+              "expectedAmountPerKill": 0.00021100029
+            },
+            "x10": {
+              "chancePercent": 0.189384,
+              "expectedAmountPerKill": 0.00189384
+            },
+            "x50": {
+              "chancePercent": 0.387113874807,
+              "expectedAmountPerKill": 0.003871138748
+            }
+          }
         }
       ],
       "spoils": []
@@ -400494,7 +402790,35 @@
     "kind": "Other.Recipe",
     "name": "Recipe: Heavy Doom Axe",
     "sources": {
-      "drops": [],
+      "drops": [
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.022900040115,
+              "expectedAmountPerKill": 0.000229000401
+            },
+            "x10": {
+              "chancePercent": 0.22900040115,
+              "expectedAmountPerKill": 0.002290004011
+            },
+            "x50": {
+              "chancePercent": 0.47163093387,
+              "expectedAmountPerKill": 0.004716309339
+            }
+          }
+        }
+      ],
       "spoils": [
         {
           "availability": {
@@ -400813,6 +403137,33 @@
               "expectedAmountPerKill": 0.004742178833
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.07240007658,
+              "expectedAmountPerKill": 0.000724000766
+            },
+            "x10": {
+              "chancePercent": 0.335281777485,
+              "expectedAmountPerKill": 0.003352817775
+            },
+            "x50": {
+              "chancePercent": 1.294291431068,
+              "expectedAmountPerKill": 0.012942914311
+            }
+          }
         }
       ],
       "spoils": []
@@ -400997,6 +403348,33 @@
             "x50": {
               "chancePercent": 4.39874813,
               "expectedAmountPerKill": 0.0439874813
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.018899948588,
+              "expectedAmountPerKill": 0.000188999486
+            },
+            "x10": {
+              "chancePercent": 0.118547002371,
+              "expectedAmountPerKill": 0.001185470024
+            },
+            "x50": {
+              "chancePercent": 0.34649559945,
+              "expectedAmountPerKill": 0.003464955994
             }
           }
         }
@@ -401185,6 +403563,33 @@
             "x50": {
               "chancePercent": 1.055094494053,
               "expectedAmountPerKill": 0.010550944941
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.018899948588,
+              "expectedAmountPerKill": 0.000188999486
+            },
+            "x10": {
+              "chancePercent": 0.118547002371,
+              "expectedAmountPerKill": 0.001185470024
+            },
+            "x50": {
+              "chancePercent": 0.34649559945,
+              "expectedAmountPerKill": 0.003464955994
             }
           }
         }
@@ -401697,6 +404102,33 @@
               "expectedAmountPerKill": 0.005122329953
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.018899948588,
+              "expectedAmountPerKill": 0.000188999486
+            },
+            "x10": {
+              "chancePercent": 0.118547002371,
+              "expectedAmountPerKill": 0.001185470024
+            },
+            "x50": {
+              "chancePercent": 0.34649559945,
+              "expectedAmountPerKill": 0.003464955994
+            }
+          }
         }
       ],
       "spoils": []
@@ -401802,6 +404234,33 @@
             "x50": {
               "chancePercent": 0.3958,
               "expectedAmountPerKill": 0.1979
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 938,
+          "mobLevel": 44,
+          "mobName": "Tanor Silenos Scout",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.2804,
+              "expectedAmountPerKill": 0.002804
+            },
+            "x10": {
+              "chancePercent": 0.2804,
+              "expectedAmountPerKill": 0.02804
+            },
+            "x50": {
+              "chancePercent": 0.2804,
+              "expectedAmountPerKill": 0.1402
             }
           }
         }
@@ -415352,6 +417811,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.00620000787,
+              "expectedAmountPerKill": 0.000062000079
+            },
+            "x10": {
+              "chancePercent": 0.0620000787,
+              "expectedAmountPerKill": 0.000620000787
+            },
+            "x50": {
+              "chancePercent": 0.3100003935,
+              "expectedAmountPerKill": 0.003100003935
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -415596,6 +418082,33 @@
             "x50": {
               "chancePercent": 0.355619,
               "expectedAmountPerKill": 0.00355619
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.00620000787,
+              "expectedAmountPerKill": 0.000062000079
+            },
+            "x10": {
+              "chancePercent": 0.0620000787,
+              "expectedAmountPerKill": 0.000620000787
+            },
+            "x50": {
+              "chancePercent": 0.3100003935,
+              "expectedAmountPerKill": 0.003100003935
             }
           }
         },
@@ -418995,6 +421508,33 @@
             "x50": {
               "chancePercent": 0.31378792175,
               "expectedAmountPerKill": 0.003137879217
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.00629973504,
+              "expectedAmountPerKill": 0.00006299735
+            },
+            "x10": {
+              "chancePercent": 0.060874063652,
+              "expectedAmountPerKill": 0.000608740637
+            },
+            "x50": {
+              "chancePercent": 0.268210801299,
+              "expectedAmountPerKill": 0.002682108013
             }
           }
         },
@@ -424394,6 +426934,33 @@
             "x50": {
               "chancePercent": 0.1200000552,
               "expectedAmountPerKill": 0.001200000552
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.002700001889,
+              "expectedAmountPerKill": 0.000027000019
+            },
+            "x10": {
+              "chancePercent": 0.02700001889,
+              "expectedAmountPerKill": 0.000270000189
+            },
+            "x50": {
+              "chancePercent": 0.13500009445,
+              "expectedAmountPerKill": 0.001350000944
             }
           }
         },
@@ -440501,6 +443068,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.34239999213,
+              "expectedAmountPerKill": 0.003423999921
+            },
+            "x10": {
+              "chancePercent": 3.4239999213,
+              "expectedAmountPerKill": 0.034239999213
+            },
+            "x50": {
+              "chancePercent": 17.1199996065,
+              "expectedAmountPerKill": 0.171199996065
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -440771,6 +443365,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.34239999213,
+              "expectedAmountPerKill": 0.003423999921
+            },
+            "x10": {
+              "chancePercent": 3.4239999213,
+              "expectedAmountPerKill": 0.034239999213
+            },
+            "x50": {
+              "chancePercent": 17.1199996065,
+              "expectedAmountPerKill": 0.171199996065
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -441036,6 +443657,33 @@
             "x50": {
               "chancePercent": 17.109815616145,
               "expectedAmountPerKill": 0.171098156161
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.34250016768,
+              "expectedAmountPerKill": 0.003425001677
+            },
+            "x10": {
+              "chancePercent": 3.309564112743,
+              "expectedAmountPerKill": 0.033095641127
+            },
+            "x50": {
+              "chancePercent": 14.58192191184,
+              "expectedAmountPerKill": 0.145819219118
             }
           }
         },
@@ -447829,6 +450477,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.215899996817,
+              "expectedAmountPerKill": 0.002158999968
+            },
+            "x10": {
+              "chancePercent": 2.15899996817,
+              "expectedAmountPerKill": 0.021589999682
+            },
+            "x50": {
+              "chancePercent": 10.79499984085,
+              "expectedAmountPerKill": 0.107949998409
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -454073,6 +456748,33 @@
             "x50": {
               "chancePercent": 0.4837,
               "expectedAmountPerKill": 0.24185
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.1145,
+              "expectedAmountPerKill": 0.011145
+            },
+            "x10": {
+              "chancePercent": 1.1145,
+              "expectedAmountPerKill": 0.11145
+            },
+            "x50": {
+              "chancePercent": 1.1145,
+              "expectedAmountPerKill": 0.55725
             }
           }
         }
@@ -481449,6 +484151,33 @@
               "expectedAmountPerKill": 0.30745
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.1561,
+              "expectedAmountPerKill": 0.011561
+            },
+            "x10": {
+              "chancePercent": 1.1561,
+              "expectedAmountPerKill": 0.11561
+            },
+            "x50": {
+              "chancePercent": 1.1561,
+              "expectedAmountPerKill": 0.57805
+            }
+          }
         }
       ]
     },
@@ -485683,6 +488412,33 @@
               "expectedAmountPerKill": 0.30060128
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.98740000405,
+              "expectedAmountPerKill": 0.049874000041
+            },
+            "x10": {
+              "chancePercent": 30.168888698311,
+              "expectedAmountPerKill": 0.301688886983
+            },
+            "x50": {
+              "chancePercent": 27.371388622765,
+              "expectedAmountPerKill": 0.682560325466
+            }
+          }
         }
       ],
       "spoils": [
@@ -485980,6 +488736,33 @@
             "x50": {
               "chancePercent": 15.1093,
               "expectedAmountPerKill": 7.55465
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 84.4224,
+              "expectedAmountPerKill": 0.844224
+            },
+            "x10": {
+              "chancePercent": 84.4224,
+              "expectedAmountPerKill": 8.44224
+            },
+            "x50": {
+              "chancePercent": 84.4224,
+              "expectedAmountPerKill": 42.2112
             }
           }
         }
@@ -488408,6 +491191,33 @@
             "x50": {
               "chancePercent": 20.69472226248,
               "expectedAmountPerKill": 0.394265490856
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 2.1162002043,
+              "expectedAmountPerKill": 0.021162002043
+            },
+            "x10": {
+              "chancePercent": 6.376075118786,
+              "expectedAmountPerKill": 0.063760751188
+            },
+            "x50": {
+              "chancePercent": 18.244180093891,
+              "expectedAmountPerKill": 0.19304168821
             }
           }
         },
@@ -493409,6 +496219,33 @@
         {
           "availability": {
             "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.920100012076,
+              "expectedAmountPerKill": 0.009201000121
+            },
+            "x10": {
+              "chancePercent": 2.772245641916,
+              "expectedAmountPerKill": 0.027722456419
+            },
+            "x50": {
+              "chancePercent": 8.393235162353,
+              "expectedAmountPerKill": 0.083932351624
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
             "knownReachable": false,
             "raidMinion": false
           },
@@ -493679,7 +496516,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -494159,6 +496996,33 @@
             "x50": {
               "chancePercent": 6.458170032277,
               "expectedAmountPerKill": 0.064581700323
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.301000041522,
+              "expectedAmountPerKill": 0.013010000415
+            },
+            "x10": {
+              "chancePercent": 7.869776921302,
+              "expectedAmountPerKill": 0.078697769213
+            },
+            "x50": {
+              "chancePercent": 17.805089045417,
+              "expectedAmountPerKill": 0.178050890454
             }
           }
         }
@@ -495166,7 +498030,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -498376,6 +501240,60 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.668799999932,
+              "expectedAmountPerKill": 0.016687999999
+            },
+            "x10": {
+              "chancePercent": 5.039240720176,
+              "expectedAmountPerKill": 0.050392407202
+            },
+            "x50": {
+              "chancePercent": 17.252501827467,
+              "expectedAmountPerKill": 0.172525018275
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 2.134300040455,
+              "expectedAmountPerKill": 0.021343000405
+            },
+            "x10": {
+              "chancePercent": 6.80244152791,
+              "expectedAmountPerKill": 0.068024415279
+            },
+            "x50": {
+              "chancePercent": 19.990005400314,
+              "expectedAmountPerKill": 0.21332334454
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -498479,6 +501397,33 @@
             "x50": {
               "chancePercent": 3.857235261679,
               "expectedAmountPerKill": 0.038572352617
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.252899967744,
+              "expectedAmountPerKill": 0.002528999677
+            },
+            "x10": {
+              "chancePercent": 1.067016435108,
+              "expectedAmountPerKill": 0.010670164351
+            },
+            "x50": {
+              "chancePercent": 3.061891327906,
+              "expectedAmountPerKill": 0.030618913279
             }
           }
         },
@@ -501314,6 +504259,33 @@
             "x50": {
               "chancePercent": 18.503270434254,
               "expectedAmountPerKill": 0.185032704343
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.66559989384,
+              "expectedAmountPerKill": 0.006655998938
+            },
+            "x10": {
+              "chancePercent": 2.411541394964,
+              "expectedAmountPerKill": 0.02411541395
+            },
+            "x50": {
+              "chancePercent": 7.432385862876,
+              "expectedAmountPerKill": 0.074323858629
             }
           }
         },
@@ -505717,6 +508689,33 @@
               "expectedAmountPerKill": 0.075339062357
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.98740000405,
+              "expectedAmountPerKill": 0.049874000041
+            },
+            "x10": {
+              "chancePercent": 30.168888698311,
+              "expectedAmountPerKill": 0.301688886983
+            },
+            "x50": {
+              "chancePercent": 27.371388622765,
+              "expectedAmountPerKill": 0.682560325466
+            }
+          }
         }
       ],
       "spoils": [
@@ -508571,6 +511570,33 @@
             "x50": {
               "chancePercent": 9.4558,
               "expectedAmountPerKill": 4.7279
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 16.7558,
+              "expectedAmountPerKill": 0.167558
+            },
+            "x10": {
+              "chancePercent": 16.7558,
+              "expectedAmountPerKill": 1.67558
+            },
+            "x50": {
+              "chancePercent": 16.7558,
+              "expectedAmountPerKill": 8.3779
             }
           }
         },
@@ -530957,6 +533983,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.304400001294,
+              "expectedAmountPerKill": 0.003044000013
+            },
+            "x10": {
+              "chancePercent": 3.04400001294,
+              "expectedAmountPerKill": 0.030440000129
+            },
+            "x50": {
+              "chancePercent": 15.2200000647,
+              "expectedAmountPerKill": 0.152200000647
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -548188,7 +551241,35 @@
     "name": "Dye of WIT (Wit+1 Men-1)",
     "sources": {
       "drops": [],
-      "spoils": []
+      "spoils": [
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.4191,
+              "expectedAmountPerKill": 0.004191
+            },
+            "x10": {
+              "chancePercent": 0.4191,
+              "expectedAmountPerKill": 0.04191
+            },
+            "x50": {
+              "chancePercent": 0.4191,
+              "expectedAmountPerKill": 0.20955
+            }
+          }
+        }
+      ]
     },
     "template": {
       "etc": {
@@ -575152,6 +578233,33 @@
               "expectedAmountPerKill": 0.00362937986
             }
           }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1039,
+          "mobLevel": 43,
+          "mobName": "Snipe Cohort",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.055300069811,
+              "expectedAmountPerKill": 0.000553000698
+            },
+            "x10": {
+              "chancePercent": 0.256092349305,
+              "expectedAmountPerKill": 0.002560923493
+            },
+            "x50": {
+              "chancePercent": 0.988595729104,
+              "expectedAmountPerKill": 0.009885957291
+            }
+          }
         }
       ],
       "spoils": []
@@ -576152,6 +579260,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.017499981489,
+              "expectedAmountPerKill": 0.000174999815
+            },
+            "x10": {
+              "chancePercent": 0.17499981489,
+              "expectedAmountPerKill": 0.001749998149
+            },
+            "x50": {
+              "chancePercent": 0.360415639925,
+              "expectedAmountPerKill": 0.003604156399
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -576930,6 +580065,33 @@
             "x50": {
               "chancePercent": 0.6872,
               "expectedAmountPerKill": 0.3436
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            0
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.9039,
+              "expectedAmountPerKill": 0.009039
+            },
+            "x10": {
+              "chancePercent": 0.9039,
+              "expectedAmountPerKill": 0.09039
+            },
+            "x50": {
+              "chancePercent": 0.9039,
+              "expectedAmountPerKill": 0.45195
             }
           }
         },
@@ -578229,6 +581391,33 @@
           "groupIndexes": [
             2
           ],
+          "mobId": 937,
+          "mobLevel": 42,
+          "mobName": "Tanor Silenos Grunt",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.210400006752,
+              "expectedAmountPerKill": 0.002104000068
+            },
+            "x10": {
+              "chancePercent": 2.10400006752,
+              "expectedAmountPerKill": 0.021040000675
+            },
+            "x50": {
+              "chancePercent": 4.333230473499,
+              "expectedAmountPerKill": 0.043332304735
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
           "mobId": 949,
           "mobLevel": 58,
           "mobName": "Luminun",
@@ -579033,7 +582222,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -580433,6 +583622,33 @@
             "x50": {
               "chancePercent": 1.4439,
               "expectedAmountPerKill": 0.72195
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.631,
+              "expectedAmountPerKill": 0.00631
+            },
+            "x10": {
+              "chancePercent": 0.631,
+              "expectedAmountPerKill": 0.0631
+            },
+            "x50": {
+              "chancePercent": 0.631,
+              "expectedAmountPerKill": 0.3155
             }
           }
         },
@@ -582702,6 +585918,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.026600175486,
+              "expectedAmountPerKill": 0.000266001755
+            },
+            "x10": {
+              "chancePercent": 0.096375352357,
+              "expectedAmountPerKill": 0.000963753524
+            },
+            "x50": {
+              "chancePercent": 0.297029446762,
+              "expectedAmountPerKill": 0.002970294468
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -584017,6 +587260,33 @@
             "x50": {
               "chancePercent": 0.10204298129,
               "expectedAmountPerKill": 0.001020429813
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.006699838709,
+              "expectedAmountPerKill": 0.000066998387
+            },
+            "x10": {
+              "chancePercent": 0.02826745325,
+              "expectedAmountPerKill": 0.000282674532
+            },
+            "x50": {
+              "chancePercent": 0.081115779588,
+              "expectedAmountPerKill": 0.000811157796
             }
           }
         },
@@ -586627,6 +589897,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.001899999196,
+              "expectedAmountPerKill": 0.000018999992
+            },
+            "x10": {
+              "chancePercent": 0.01899999196,
+              "expectedAmountPerKill": 0.00018999992
+            },
+            "x50": {
+              "chancePercent": 0.0949999598,
+              "expectedAmountPerKill": 0.000949999598
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -587222,6 +590519,33 @@
             "x50": {
               "chancePercent": 0.094999951,
               "expectedAmountPerKill": 0.00094999951
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.001899999196,
+              "expectedAmountPerKill": 0.000018999992
+            },
+            "x10": {
+              "chancePercent": 0.01899999196,
+              "expectedAmountPerKill": 0.00018999992
+            },
+            "x50": {
+              "chancePercent": 0.0949999598,
+              "expectedAmountPerKill": 0.000949999598
             }
           }
         },
@@ -589357,6 +592681,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.001899999196,
+              "expectedAmountPerKill": 0.000018999992
+            },
+            "x10": {
+              "chancePercent": 0.01899999196,
+              "expectedAmountPerKill": 0.00018999992
+            },
+            "x50": {
+              "chancePercent": 0.0949999598,
+              "expectedAmountPerKill": 0.000949999598
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -589952,6 +593303,33 @@
             "x50": {
               "chancePercent": 0.094999951,
               "expectedAmountPerKill": 0.00094999951
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.001899999196,
+              "expectedAmountPerKill": 0.000018999992
+            },
+            "x10": {
+              "chancePercent": 0.01899999196,
+              "expectedAmountPerKill": 0.00018999992
+            },
+            "x50": {
+              "chancePercent": 0.0949999598,
+              "expectedAmountPerKill": 0.000949999598
             }
           }
         },
@@ -593104,6 +596482,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.002900003982,
+              "expectedAmountPerKill": 0.00002900004
+            },
+            "x10": {
+              "chancePercent": 0.02900003982,
+              "expectedAmountPerKill": 0.000290000398
+            },
+            "x50": {
+              "chancePercent": 0.1450001991,
+              "expectedAmountPerKill": 0.001450001991
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -594614,6 +598019,33 @@
             "x50": {
               "chancePercent": 0.095000148,
               "expectedAmountPerKill": 0.00095000148
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.002900003982,
+              "expectedAmountPerKill": 0.00002900004
+            },
+            "x10": {
+              "chancePercent": 0.02900003982,
+              "expectedAmountPerKill": 0.000290000398
+            },
+            "x50": {
+              "chancePercent": 0.1450001991,
+              "expectedAmountPerKill": 0.001450001991
             }
           }
         },
@@ -599908,6 +603340,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.1142,
+              "expectedAmountPerKill": 0.001142
+            },
+            "x10": {
+              "chancePercent": 0.1142,
+              "expectedAmountPerKill": 0.01142
+            },
+            "x50": {
+              "chancePercent": 0.1142,
+              "expectedAmountPerKill": 0.0571
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -601215,7 +604674,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -601379,7 +604838,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -605805,6 +609264,33 @@
             "x50": {
               "chancePercent": 9.1885,
               "expectedAmountPerKill": 4.59425
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 11.3647,
+              "expectedAmountPerKill": 0.113647
+            },
+            "x10": {
+              "chancePercent": 11.3647,
+              "expectedAmountPerKill": 1.13647
+            },
+            "x50": {
+              "chancePercent": 11.3647,
+              "expectedAmountPerKill": 5.68235
             }
           }
         }
@@ -612369,6 +615855,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.266800000804,
+              "expectedAmountPerKill": 0.002668000008
+            },
+            "x10": {
+              "chancePercent": 2.66800000804,
+              "expectedAmountPerKill": 0.02668000008
+            },
+            "x50": {
+              "chancePercent": 13.3400000402,
+              "expectedAmountPerKill": 0.133400000402
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -613066,6 +616579,33 @@
             "x50": {
               "chancePercent": 13.18000003595,
               "expectedAmountPerKill": 0.13180000036
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.266800000804,
+              "expectedAmountPerKill": 0.002668000008
+            },
+            "x10": {
+              "chancePercent": 2.66800000804,
+              "expectedAmountPerKill": 0.02668000008
+            },
+            "x50": {
+              "chancePercent": 13.3400000402,
+              "expectedAmountPerKill": 0.133400000402
             }
           }
         },
@@ -614637,6 +618177,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.266800000804,
+              "expectedAmountPerKill": 0.002668000008
+            },
+            "x10": {
+              "chancePercent": 2.66800000804,
+              "expectedAmountPerKill": 0.02668000008
+            },
+            "x50": {
+              "chancePercent": 13.3400000402,
+              "expectedAmountPerKill": 0.133400000402
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -615312,6 +618879,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.266800000804,
+              "expectedAmountPerKill": 0.002668000008
+            },
+            "x10": {
+              "chancePercent": 2.66800000804,
+              "expectedAmountPerKill": 0.02668000008
+            },
+            "x50": {
+              "chancePercent": 13.3400000402,
+              "expectedAmountPerKill": 0.133400000402
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -615423,7 +619017,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -617715,6 +621309,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.511399996018,
+              "expectedAmountPerKill": 0.00511399996
+            },
+            "x10": {
+              "chancePercent": 5.11399996018,
+              "expectedAmountPerKill": 0.051139999602
+            },
+            "x50": {
+              "chancePercent": 25.5699998009,
+              "expectedAmountPerKill": 0.255699998009
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -618115,6 +621736,33 @@
             "x50": {
               "chancePercent": 17.444999852,
               "expectedAmountPerKill": 0.17444999852
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.511399996018,
+              "expectedAmountPerKill": 0.00511399996
+            },
+            "x10": {
+              "chancePercent": 5.11399996018,
+              "expectedAmountPerKill": 0.051139999602
+            },
+            "x50": {
+              "chancePercent": 25.5699998009,
+              "expectedAmountPerKill": 0.255699998009
             }
           }
         },
@@ -620010,6 +623658,33 @@
         }
       ],
       "spoils": [
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1519,
+          "mobLevel": 72,
+          "mobName": "Frenzy Stakato Drone",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 4.7654,
+              "expectedAmountPerKill": 0.047654
+            },
+            "x10": {
+              "chancePercent": 4.7654,
+              "expectedAmountPerKill": 0.47654
+            },
+            "x50": {
+              "chancePercent": 4.7654,
+              "expectedAmountPerKill": 2.3827
+            }
+          }
+        },
         {
           "availability": {
             "directSpawn": true,
@@ -623086,6 +626761,60 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.016699996772,
+              "expectedAmountPerKill": 0.010166999968
+            },
+            "x10": {
+              "chancePercent": 10.16699996772,
+              "expectedAmountPerKill": 0.101669999677
+            },
+            "x50": {
+              "chancePercent": 50.8349998386,
+              "expectedAmountPerKill": 0.508349998386
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1823,
+          "mobLevel": 80,
+          "mobName": "Executor of Sacrificial Offerings",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.026800002415,
+              "expectedAmountPerKill": 0.010268000024
+            },
+            "x10": {
+              "chancePercent": 10.26800002415,
+              "expectedAmountPerKill": 0.102680000242
+            },
+            "x50": {
+              "chancePercent": 51.34000012075,
+              "expectedAmountPerKill": 0.513400001207
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -623627,7 +627356,7 @@
         {
           "availability": {
             "directSpawn": false,
-            "knownReachable": false,
+            "knownReachable": true,
             "raidMinion": false
           },
           "groupIndexes": [
@@ -624922,6 +628651,33 @@
         },
         {
           "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 1.053799999434,
+              "expectedAmountPerKill": 0.010537999994
+            },
+            "x10": {
+              "chancePercent": 10.53799999434,
+              "expectedAmountPerKill": 0.105379999943
+            },
+            "x50": {
+              "chancePercent": 52.6899999717,
+              "expectedAmountPerKill": 0.526899999717
+            }
+          }
+        },
+        {
+          "availability": {
             "directSpawn": true,
             "knownReachable": true,
             "raidMinion": false
@@ -625540,6 +629296,60 @@
             "x50": {
               "chancePercent": 4.2413,
               "expectedAmountPerKill": 2.12065
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            1
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 5.5789,
+              "expectedAmountPerKill": 0.055789
+            },
+            "x10": {
+              "chancePercent": 5.5789,
+              "expectedAmountPerKill": 0.55789
+            },
+            "x50": {
+              "chancePercent": 5.5789,
+              "expectedAmountPerKill": 2.78945
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1435,
+          "mobLevel": 80,
+          "mobName": "Guide of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 6.8782,
+              "expectedAmountPerKill": 0.068782
+            },
+            "x10": {
+              "chancePercent": 6.8782,
+              "expectedAmountPerKill": 0.68782
+            },
+            "x50": {
+              "chancePercent": 6.8782,
+              "expectedAmountPerKill": 3.4391
             }
           }
         }
@@ -626674,6 +630484,60 @@
             "x50": {
               "chancePercent": 2.9214,
               "expectedAmountPerKill": 1.4607
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1433,
+          "mobLevel": 79,
+          "mobName": "Jamadar Beetle",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 5.5777,
+              "expectedAmountPerKill": 0.055777
+            },
+            "x10": {
+              "chancePercent": 5.5777,
+              "expectedAmountPerKill": 0.55777
+            },
+            "x50": {
+              "chancePercent": 5.5777,
+              "expectedAmountPerKill": 2.78885
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1436,
+          "mobLevel": 80,
+          "mobName": "Leader of Offering",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 7.1335,
+              "expectedAmountPerKill": 0.071335
+            },
+            "x10": {
+              "chancePercent": 7.1335,
+              "expectedAmountPerKill": 0.71335
+            },
+            "x50": {
+              "chancePercent": 7.1335,
+              "expectedAmountPerKill": 3.56675
             }
           }
         }
@@ -633962,6 +637826,33 @@
             "x50": {
               "chancePercent": 1.348438723171,
               "expectedAmountPerKill": 0.013484387232
+            }
+          }
+        },
+        {
+          "availability": {
+            "directSpawn": false,
+            "knownReachable": true,
+            "raidMinion": false
+          },
+          "groupIndexes": [
+            2
+          ],
+          "mobId": 1073,
+          "mobLevel": 64,
+          "mobName": "Guardian Warrior of Elmoreden",
+          "rateProfiles": {
+            "x1": {
+              "chancePercent": 0.266200131852,
+              "expectedAmountPerKill": 0.002662001319
+            },
+            "x10": {
+              "chancePercent": 0.964472265166,
+              "expectedAmountPerKill": 0.009644722652
+            },
+            "x50": {
+              "chancePercent": 2.972509633765,
+              "expectedAmountPerKill": 0.029725096338
             }
           }
         },
