@@ -7,6 +7,7 @@ const CharacterLocationRuntime = require('../../World/CharacterLocationRuntime')
 const workerProjectorRole = CharacterLocationRuntime.beginWorkerProjectorRole(epoch);
 const path = require('path');
 const { performance, monitorEventLoopDelay } = require('perf_hooks');
+const threadCpuMeter = require('../../ThreadCpuMeter');
 let heapTelemetry = null;
 
 const srcRoot = path.resolve(__dirname, '../../..');
@@ -1322,7 +1323,7 @@ function startKernel(config = {}) {
     // major-GC observer, two clock reads and one thread CPU read per heartbeat.
     heapTelemetry = invoke('GameServer/Bot/Population/WorkerHeapTelemetry').observe();
     previousElu = performance.eventLoopUtilization();
-    threadCpuMs = invoke('GameServer/ThreadCpuMeter')();
+    threadCpuMs = threadCpuMeter();
     // The longest loop delay per heartbeat is the health line's spike number (workerLag): always on,
     // a native histogram on a LAG_RESOLUTION_MS timer.
     eventLoopDelay = monitorEventLoopDelay({ resolution: LAG_RESOLUTION_MS });
