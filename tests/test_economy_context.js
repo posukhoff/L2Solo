@@ -208,12 +208,30 @@ async function run() {
     assert.equal(typeof context.statsPacket.decisionSeq, 'number');
     assert.equal(typeof context.statsPacket.activityLeaf, 'number');
     assert(context.statsPacket.activityLeaf !== 0);
+    // The build's own input state, its money packet not written back (a later
+    // build of the same step): the decision's own packet is no money refusal.
+    // Read before the published state: the first state off the read packet
+    // drops it (EconomyContext heldMoney, MONEY_MOVED, 0c305b080).
+    assert.equal(Economy.forState({ ...base }).plan, context.plan, 'the build input state keeps the decision');
+    {
+        // The same with a money packet: a copy of the one the build read keeps
+        // the decision; a packet moved since asks again.
+        const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
+        const priced = { ...base, characterId: 990041, stats: { ...base.stats, money: [0, 1, 0, 40] } };
+        try {
+            const built = Economy.forState(priced), own = built.statsPacket.money;
+            assert(own.length > 4 || !Funding.moneyReached(priced, 0, own),
+                'fixture: the build\'s own packet has another funding mark than its input');
+            const copied = { ...priced, stats: { ...priced.stats, money: priced.stats.money.slice() } };
+            assert.equal(Economy.forState(copied).plan, built.plan, 'a copy of the input packet keeps the decision');
+            // Another build's packet: one more funded row, out of the wallet's reach.
+            const moved = { ...priced, stats: { ...priced.stats, money: [...own, 1, 1e9, 0] } };
+            assert.notEqual(Economy.forState(moved).plan, built.plan, 'a moved money packet is refused');
+        } finally { Economy.forget(priced.characterId); }
+    }
     // A hit needs the state at the build's input or output.
     const published = { ...base, stats: { ...base.stats, ...context.statsPacket } };
     assert.equal(Economy.forState(published).plan, context.plan, 'unchanged own inputs reuse the complete context');
-    // The build's own input state, its money packet not written back (a later
-    // build of the same step): the decision's own packet is no money refusal.
-    assert.equal(Economy.forState({ ...base }).plan, context.plan, 'the build input state keeps the decision');
     assert.equal(Economy.forState(published, { rememberContext: false }).plan, context.plan,
         'an unkept caller can read an existing valid decision');
     const temporary = Economy.forState({ ...published, level: base.level + 1 }, { rememberContext: false });
@@ -223,12 +241,14 @@ async function run() {
         // Starter loot is not free stock, but a shot stock root owns all its
         // shots: the root cut's solves and the network build read one count,
         // so a cut review keeps its quantity proof (what a held build needs).
-        const shot = context.stock('shots').itemId;
-        const looted = { ...base, characterId: 990031, adena: 5000,
-            inventory: { ...base.inventory, [shot]: { selfId: shot, amount: 30, starterMobLootAmount: 20 } } };
+        // The C-grade Gladiator at 46: shots pay for it on the T43 table (the
+        // level-35 base no longer restocks them, so it has no shot root).
+        const shot = warriorContext.stock('shots').itemId;
+        const looted = { ...warrior, characterId: 990031, adena: 5000,
+            inventory: { ...warrior.inventory, [shot]: { selfId: shot, amount: 30, starterMobLootAmount: 20 } } };
         const cheapRoots = Array.from({ length: Network.MAX_ROOTS + 1 }, (_, index) => ({ key: `cheap-root-${index}`,
             need: 'power', valueHours: .02, paths: [{ kind: 'buy', activity: 'shopping', itemId: 990010 + index,
-                price: context.hourAdena / 2, executable: true }] }));
+                price: warriorContext.hourAdena / 2, executable: true }] }));
         const cut = Economy.forState(looted, { nodes: cheapRoots });
         assert(cut.projection.roots.includes('stock:shots') && cheapRoots.some(row => !cut.projection.roots.includes(row.key)),
             'fixture: the review cuts roots and keeps the shot stock root');
@@ -331,7 +351,10 @@ async function run() {
         const counts = { [potion]: 20, [quick]: 10, [healing]: 5, [bone]: 10 };
         const stacks = amounts => Object.fromEntries(Object.entries(amounts)
             .map(([id, amount]) => [id, { selfId: Number(id), amount, stackable: true }]));
-        const native = { ...base, characterId: 990029, inventory: { ...base.inventory, ...stacks(counts) } };
+        // A Gladiator at 55 (T43 table): the level-35 base's hour gives a
+        // drift budget under one quick healing potion.
+        const hunter = equippedFixture(990029, 2, 55, 20000);
+        const native = { ...hunter, inventory: { ...hunter.inventory, ...stacks(counts) } };
         const deps = () => ({ timestamp: T, memoryIdentity: 'fixture-memory', sourceReady: true });
         const errorsBefore = Config.knowledgeErrorsEnabled;
         Config.knowledgeErrorsEnabled = true;
@@ -355,8 +378,8 @@ async function run() {
             const budget = proof.hourAdena * options.baseline.incomeError;
             // The price the verdict charges a drift at: the context's own NPC buyback.
             const sell = held.buyback;
-            assert(budget > 11 * sell(potion) && budget < 40 * sell(potion) && budget < 10 * sell(quick),
-                'fixture: the drift budget lies between 11 and 40 mana potions and below 10 quick healing potions');
+            assert(budget >= 2 * sell(potion) + sell(quick) && budget < 40 * sell(potion) && budget < 10 * sell(quick),
+                'fixture: the drift budget covers 2 mana potions and a quick healing potion, below 40 mana or 10 quick potions');
             const bag = (amounts = {}, incoming = 0) => ({ ...published, acceptedIncoming: incoming ? { [potion]: incoming } : {},
                 inventory: { ...published.inventory, ...stacks(amounts) } });
             const reason = (state, value = proof) => Economy.heldBuildVerdict(state, value,
