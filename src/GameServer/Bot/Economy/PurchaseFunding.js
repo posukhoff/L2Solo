@@ -41,6 +41,12 @@ function itemRatio(packet, itemId) {
 function heldPrice(packet) {
     return packet.length % 3 === 2 ? Number(packet[packet.length - 1]) : Number(packet[1]);
 }
+// A funded row's ratio (the packet stores them rounded: significant).
+function namesRow(packet, r) {
+    const rate = significant(r);
+    for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i] === rate) return true;
+    return false;
+}
 function spendPrice(packet) { return Math.min(Number(packet[1]), heldPrice(packet)); }
 function budgetFor(packet, wallet, escrow, r, capture = null) {
     let prior = 0;
@@ -122,11 +128,17 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
     }
     else {
         const r = options.itemId && options.r === undefined ? itemRatio(packet, options.itemId) : Number(options.r ?? 0);
+        // Held money (T53): a packet row (funded, so paid with the money
+        // held: its item, or a ratio naming it) or a root the money held at
+        // its place bids for (held: goalTerms, stockTerms, a bid line's
+        // intent) spends at the held price; any other ratio (a craft for
+        // sale) still at the money price.
+        const held = options.held === true || r > 0 && namesRow(packet, r);
         // Worth buying is value per Adena at the price really paid: a quote
         // above the planner's estimate lowers it by the same factor (E187).
         // The queue's own order still decides which money is held for others.
         const quoted = options.quoteScale > 0 ? r * options.quoteScale : r;
-        if (quoted >= packet[1] || quoted > 0 && quoted >= heldPrice(packet)) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
+        if (quoted >= packet[1] || held && quoted > 0 && quoted >= heldPrice(packet)) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
     }
     // Native utility terms take precedence over a free/clan allowance too.
     if (Array.isArray(packet) && packet.length >= 4 && !options.upperBound && options.valueHours !== undefined) {
@@ -158,7 +170,7 @@ function stockAllowance(state, wish, itemId, survivalCost, scale = 1) {
 // A stock purchase's terms, the same for the planner and the native writer:
 // the kit's survival tranche and its stock wish's rank (else its packet row).
 function stockTerms(wish, itemId, survivalCost) {
-    return { itemId, survivalCost, ...(wish ? { r: significant(wish.ratio) } : {}) };
+    return { itemId, survivalCost, ...(wish ? { r: significant(wish.ratio), ...(wish.heldCash > 0 ? { held: true } : {}) } : {}) };
 }
 function nativeTerms(options = {}, itemId = 0) {
     const terms = { itemId: Math.max(0, Number(itemId) || 0) };
@@ -183,7 +195,8 @@ function leafRatio(leaf, wish) {
 // place in the money queue when the goal carries one, else the money
 // packet's row for its item.
 function goalTerms(goal, itemId = goal?.target?.itemId) {
-    return goal?.plan?.valueRate === undefined ? { itemId } : { r: goal.plan.valueRate };
+    return goal?.plan?.valueRate === undefined ? { itemId }
+        : { r: goal.plan.valueRate, ...(goal.intent?.held === true ? { held: true } : {}) };
 }
 // ARCH-NOTE: round value rates upward to three digits so a stored money floor
 // never falls below 1/hour; applying the same monotone rounding keeps funded ratios admissible.
