@@ -174,9 +174,11 @@ async function run() {
     };
     BotWarehouse.depositCold = async (state) => ({ state, count: 0 });
     await ColdMarketListingService.open({ ...materialCrafter, phase: 'cold', activity: 'shopping', level: 36,
-        inventory: { ...materialCrafter.inventory, 2250: craftState.inventory[2250] },
+        // A scroll it can learn is learned, never sold (every held learnable
+        // scroll, above): the NPC exit is shown with the spellbook.
+        inventory: { ...materialCrafter.inventory, [spellbook.selfId]: craftState.inventory[spellbook.selfId] },
         stats: { classId: 56, marketSellRetryAfter: 500000 } }, { now: 1000, forcedCleanup: { reason: 'npc_only_inventory' } });
-    assert.deepStrictEqual(calls, ['learn', ['npc', 2250]],
+    assert.deepStrictEqual(calls, ['learn', ['npc', Number(spellbook.selfId)]],
         'a sale pause still allows ordinary NPC liquidation after evaluating market alternatives');
 
     console.log('Bot recipe disposition checks passed');
