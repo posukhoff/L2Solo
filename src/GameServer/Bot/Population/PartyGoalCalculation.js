@@ -1,5 +1,6 @@
 'use strict';
 const { partyIdOf } = require('./PartyId');
+const threadCpuMeter = require('../../ThreadCpuMeter');
 
 // Complete group inputs are process-local. Only source versions and the joint
 // policy's small stats packet cross back to the main thread.
@@ -49,15 +50,14 @@ async function calculate(party, members, prepare, timestamp, current = () => tru
     if (require('./OpportunisticRaidPolicy').isObjective(party.stats?.objective)) {
         if (!current()) throw new Error('party_goal_expired');
         const objective = party.stats.objective;
-        const wall = performance.now(), cpu = process.threadCpuUsage?.();
+        const wall = performance.now(), cpuMs = threadCpuMeter();
         const raidAssessment = require('./OpportunisticRaidPolicy').assessment(members,
             invoke('GameServer/RaidBoss/RaidBossSourceCatalog').findById(objective.spotId), {
                 timestamp, reserve: objective.shotReserve,
                 fundSupplies: objective.fundRaidSupplies === true, worth: objective.raidWorth === true });
-        const used = cpu && process.threadCpuUsage(cpu);
         // Charge only synchronous forecast work on this worker thread. Queue
         // waits and other server threads must not inflate the search budget.
-        raidAssessment.workMs = used ? (used.user + used.system) / 1000 : performance.now() - wall;
+        raidAssessment.workMs = cpuMs() ?? performance.now() - wall;
         return { ...require('./PartyGoalPolicy').pending(party, members), raidAssessment };
     }
     // Declared material needs do not require personal or group wish rebuilds.

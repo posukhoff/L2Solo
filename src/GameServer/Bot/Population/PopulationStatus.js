@@ -22,6 +22,7 @@ const PvpEncounterRuntime = invoke('GameServer/Bot/Population/PvpEncounterRuntim
 const { heapRecord, heapsLine } = require('./WorkerHeapTelemetry');
 const { performance } = require('node:perf_hooks');
 let mainEluMark = performance.eventLoopUtilization();
+const mainCpuMs = require('../../ThreadCpuMeter')();
 // The counter tables a status line shows as rates since its previous line,
 // by line key: key -> { table: name -> row (numbers), at }. The first line
 // covers the time since this module loaded (the start).
@@ -137,29 +138,34 @@ const PopulationStatus = {
     },
 
     // The goal's numbers without diagnostics, in the full line's names: cold queue due now and the oldest wait,
-    // worker busy share since the last goal line with its busiest heartbeat (1 s) and longest loop delay (ms)
-    // (workerBusyText), main busy share since the last goal line (its only caller is the periodic summary:
-    // both windows reset), worker heap after the last major GC / its 10-min maximum,
+    // worker busy share and thread CPU share since the last goal line with its busiest heartbeat (1 s) and longest
+    // loop delay (ms) (workerBusyText), main busy share and thread CPU share since the last goal line (its only
+    // caller is the periodic summary: both windows reset), worker heap after the last major GC / its 10-min maximum,
     // how early a far step starts before its due (ColdSimulationKernel stepLeadMs); pvp= cold PvP fights running / steps, wall ms
     // and due fights left of the encounter runtime's longest pass since the last line (budget PASS_MS).
-    // The worker's busy share since the last summary line (summed heartbeat ms), its busiest 1 s beat and its
-    // longest loop delay; takes the coordinator's window (only the periodic summary lines call it). '-' when
-    // no beat came (boot, a worker restart): no data, not an idle worker.
+    // The worker's busy share since the last summary line (summed heartbeat ms), its thread CPU share over the
+    // same beats, its busiest 1 s beat and its longest loop delay; takes the coordinator's window (only the
+    // periodic summary lines call it). '-' when no beat came (boot, a worker restart): no data, not an idle worker.
     workerBusyText() {
         const busy = invoke('GameServer/Bot/Population/ColdSimulationCoordinator').takeBusyWindow();
         const ms = busy.activeMs + busy.idleMs;
-        if (!(ms > 0)) return 'workerElu=- workerEluMax=- workerLag=-';
-        return `workerElu=${(busy.activeMs / ms).toFixed(2)} workerEluMax=${busy.maxElu.toFixed(2)} workerLag=${Math.round(busy.lagMs)}ms`;
+        if (!(ms > 0)) return 'workerElu=- workerCpu=- workerEluMax=- workerLag=-';
+        return `workerElu=${(busy.activeMs / ms).toFixed(2)} workerCpu=${Number.isFinite(busy.cpuMs) ? (busy.cpuMs / ms).toFixed(2) : '-'}`
+            + ` workerEluMax=${busy.maxElu.toFixed(2)} workerLag=${Math.round(busy.lagMs)}ms`;
     },
 
     goalText(queue = {}, coordinator) {
         const worker = coordinator?.worker || {}, mb = bytes => bytes ? Math.round(bytes / 1024 / 1024) : '-';
+        // Main's thread CPU over the same wall window as its busy share (active + idle ms). A mark taken before the
+        // first loop turn (module load) counts ELU from that turn but CPU from the load: that first line has no CPU share.
+        const preLoop = mainEluMark.active + mainEluMark.idle === 0;
         const mainElu = performance.eventLoopUtilization(mainEluMark);
         mainEluMark = performance.eventLoopUtilization();
+        const mainWallMs = mainElu.active + mainElu.idle, mainCpu = mainCpuMs();
         const pvp = PvpEncounterRuntime.passPeak();
         const geodata = GeodataEngine.storageStats();
         return `coldDue=${queue.overdue || 0} coldDueAll=${queue.due || 0} coldDueAge=${Math.round((queue.oldestAgeMs || 0) / 1000)}s`
-            + ` ${this.workerBusyText()} mainElu=${mainElu.utilization.toFixed(2)} workerHeapGc=${mb(worker.heapAfterGc)}/${mb(worker.heapAfterGcMax10)}MB`
+            + ` ${this.workerBusyText()} mainElu=${mainElu.utilization.toFixed(2)} mainCpu=${!preLoop && mainCpu !== null && mainWallMs > 0 ? (mainCpu / mainWallMs).toFixed(2) : '-'} workerHeapGc=${mb(worker.heapAfterGc)}/${mb(worker.heapAfterGcMax10)}MB`
             + ` stepLead=${worker.stepLeadMs || 0}ms pvp=${pvp.live}/${pvp.steps}/${pvp.ms}ms/${pvp.left}`
             + ` geo=${mb(geodata.loadedBytes)}MB/${geodata.loadedRegions} geoViews=${mb(geodata.attachedBytes)}+${mb(worker.geodata?.attachedBytes)}MB`
             + ` geoRaw=${geodata.rawRegions || 0} geoIndexOnly=${geodata.indexOnlyRegions || 0}`
