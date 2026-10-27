@@ -33,11 +33,10 @@ function itemRatio(packet, itemId) {
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i + 2] === Number(itemId)) return packet[i];
     return 0;
 }
-// The packet's held-money price (WishNetwork.heldPriceOf, T53): its last
+// The packet's held-money price (WishNetwork.moneyQueue, T53): its last
 // element after the rows (packetFor); an older packet without one, its
-// money price. The lowest value per adena a funded row may spend at
-// (spendable, TradeIntent's focus bucket): every funded row is paid with
-// money the wallet holds.
+// money price. The lowest value per adena money the wallet holds may be
+// spent at (spendable, TradeIntent's focus bucket).
 function heldPrice(packet) {
     return packet.length % 3 === 2 ? Number(packet[packet.length - 1]) : Number(packet[1]);
 }
@@ -47,7 +46,11 @@ function namesRow(packet, r) {
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i] === rate) return true;
     return false;
 }
-function spendPrice(packet) { return Math.min(Number(packet[1]), heldPrice(packet)); }
+// A root that turns money into money (WishNetwork's resale object kind),
+// read from the root key a purchase carries on both sides (a certificate's
+// key, also under a group's member-prefixed key): its money is money to earn
+// back, never spent at the held price.
+const resaleKey = key => /(?:^|:)resale:/.test(key);
 function budgetFor(packet, wallet, escrow, r, capture = null) {
     let prior = 0;
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i] > r) prior = packet[i + 1];
@@ -128,12 +131,11 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
     }
     else {
         const r = options.itemId && options.r === undefined ? itemRatio(packet, options.itemId) : Number(options.r ?? 0);
-        // Held money (T53): a packet row (funded, so paid with the money
-        // held: its item, or a ratio naming it) or a root the money held at
-        // its place bids for (held: goalTerms, stockTerms, a bid line's
-        // intent) spends at the held price; any other ratio (a craft for
-        // sale) still at the money price.
-        const held = options.held === true || r > 0 && namesRow(packet, r);
+        // Held money (T53) spends at the held price for a root that is no
+        // resale (its key: goalTerms, stockTerms, a bid line's certificate,
+        // a meeting's), else for a funded packet row (its item, or a ratio
+        // naming it); a craft for sale still at the money price.
+        const held = typeof options.key === 'string' ? !resaleKey(options.key) : r > 0 && namesRow(packet, r);
         // Worth buying is value per Adena at the price really paid: a quote
         // above the planner's estimate lowers it by the same factor (E187).
         // The queue's own order still decides which money is held for others.
@@ -170,12 +172,13 @@ function stockAllowance(state, wish, itemId, survivalCost, scale = 1) {
 // A stock purchase's terms, the same for the planner and the native writer:
 // the kit's survival tranche and its stock wish's rank (else its packet row).
 function stockTerms(wish, itemId, survivalCost) {
-    return { itemId, survivalCost, ...(wish ? { r: significant(wish.ratio), ...(wish.heldCash > 0 ? { held: true } : {}) } : {}) };
+    return { itemId, survivalCost, ...(wish ? { r: significant(wish.ratio), key: wish.key } : {}) };
 }
 function nativeTerms(options = {}, itemId = 0) {
     const terms = { itemId: Math.max(0, Number(itemId) || 0) };
     if (typeof options.raidPreparationId === 'string') terms.raidPreparationId = options.raidPreparationId;
     if (Number.isFinite(Number(options.r)) || options.r === Infinity) terms.r = Number(options.r);
+    if (typeof options.key === 'string') terms.key = options.key;
     if (options.valueHours !== undefined && Number.isFinite(Number(options.valueHours))) terms.valueHours = Math.max(0, Number(options.valueHours));
     if (options.survivalCost !== undefined && Number.isFinite(Number(options.survivalCost))) terms.survivalCost = Math.max(0, Number(options.survivalCost));
     if (options.free === true) terms.free = true;
@@ -196,7 +199,7 @@ function leafRatio(leaf, wish) {
 // packet's row for its item.
 function goalTerms(goal, itemId = goal?.target?.itemId) {
     return goal?.plan?.valueRate === undefined ? { itemId }
-        : { r: goal.plan.valueRate, ...(goal.intent?.held === true ? { held: true } : {}) };
+        : { r: goal.plan.valueRate, ...(typeof goal.intent?.key === 'string' ? { key: goal.intent.key } : {}) };
 }
 // ARCH-NOTE: round value rates upward to three digits so a stored money floor
 // never falls below 1/hour; applying the same monotone rounding keeps funded ratios admissible.
@@ -242,5 +245,5 @@ function packetFor(network, hour, reserve) {
 // One rule for the planner (an offer) and the gates (a plan).
 function offerEscrow(offer, escrow = 0) { return offer?.sourceType === 'npc' ? escrow : 0; }
 function tripEscrow(plan, escrow = 0) { return offerEscrow(plan?.market, escrow); }
-module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, heldPrice, spendPrice, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
+module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, heldPrice, resaleKey, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }) };

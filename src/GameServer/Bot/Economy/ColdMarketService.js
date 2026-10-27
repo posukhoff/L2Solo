@@ -212,13 +212,15 @@ function fundingTerms(options = {}) {
             terms[name] = Number(options[name]);
         }
     }
+    // The root the money goes to (PurchaseFunding.spendable: held money or a resale).
+    if (typeof options.key === 'string') terms.key = options.key;
     return terms;
 }
 
 // A buy goal's funding terms for the native writer: its root's place in the
 // money queue (PurchaseFunding.goalTerms reads the same plan.valueRate).
 function goalFunding(goal) {
-    return fundingTerms({ ...goal?.plan, r: goal?.plan?.valueRate });
+    return fundingTerms({ ...goal?.plan, r: goal?.plan?.valueRate, key: goal?.intent?.key });
 }
 
 // The card's step for an arrival purchase: the plan's unit price, and the

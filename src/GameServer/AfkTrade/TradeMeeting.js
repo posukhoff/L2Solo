@@ -3,6 +3,7 @@ const BeginnerShots = require('../Items/C4BeginnerShots');
 // Native board custody. Every method is called within Database's one write
 // transaction, using its existing inventory, settlement and fencing owners.
 const Intent = require('../Bot/Economy/TradeIntent');
+const { resaleKey } = require('../Bot/Economy/PurchaseFunding');
 const MAX_COMMITMENTS = 8;
 const ascii = value => typeof value === 'string' && /^[\x20-\x7e]*$/.test(value);
 const safe = (n, positive = false) => Number.isSafeInteger(n) && n >= (positive ? 1 : 0);
@@ -44,12 +45,17 @@ function canonical(request) {
 // Can this side pay for the meeting: the one funding question the worker's
 // consent and the native accept both ask PurchaseFunding.spendable (escrow 0:
 // buy-ad escrow already left the wallet). amount = its paid lines + route fee;
-// r = the lowest certificate value rate; survival tranche = its kit costs.
+// r = the lowest certificate value rate; key = a resale certificate's root
+// (money to earn back, PurchaseFunding.spendable), else the lowest rate's;
+// survival tranche = its kit costs.
 function fundingTerms(request, side) {
     const paid = request.lines.filter(line => line.payer === side);
     const total = paid.reduce((amount, line) => sum(amount, requireSafe(line.count * line.price)), 0);
+    const intents = paid.filter(line => line.certificate).map(line => Intent.decode(line.certificate));
+    const lowest = intents.reduce((low, intent) => !low || intent.valueRate < low.valueRate ? intent : low, null);
+    const key = (intents.find(intent => resaleKey(intent.key)) || lowest)?.key;
     return { amount: sum(total, requireSafe(request.parties[side].route.fee)),
-        r: Math.min(...paid.map(line => line.certificate ? Intent.decode(line.certificate).valueRate : Infinity)),
+        r: lowest ? lowest.valueRate : Infinity, ...(key ? { key } : {}),
         free: total === 0, survivalCost: requireSafe(request.parties[side].survivalCost || 0) };
 }
 function create(io) {
