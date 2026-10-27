@@ -1192,6 +1192,7 @@ const tests = [
     'tests/test_wish_gear_replacement.js',
     'tests/test_kit_profile_gear_gain.js',
     'tests/test_hunt_cycle.js',
+    'tests/test_held_money.js',
     'tests/test_wish_quantity_allocation.js',
 ];
 
@@ -1448,6 +1449,7 @@ const defaultConfigTests = new Set([
     'tests/test_wish_gear_replacement.js',
     'tests/test_kit_profile_gear_gain.js',
     'tests/test_hunt_cycle.js',
+    'tests/test_held_money.js',
     'tests/test_wish_quantity_allocation.js',
 ]);
 // Gate: a test file nobody lists is a test CI never runs (E297). Checked before

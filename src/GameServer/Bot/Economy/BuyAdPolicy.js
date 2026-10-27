@@ -58,7 +58,7 @@ function retainedLines(state, lines, owned, town, { certify = false } = {}) {
         const price = heldPrice(line, owned, town), store = line.custodyPolicy === 0;
         const lineKit = Math.max(0, Number(line.survivalCost) || 0);
         const spendable = PurchaseFunding.spendable({ ...state, adena: money }, 0,
-            { ...(line.intent ? { r: line.intent.valueRate } : { itemId: line.selfId }), survivalCost: line.survivalCost });
+            { ...(line.intent ? { r: line.intent.valueRate, key: line.intent.key } : { itemId: line.selfId }), survivalCost: line.survivalCost });
         if (certify && Number(line.count) * Number(line.price) > spendable) throw Error('economy_plan_bid_unfunded');
         const available = Math.min(money, spendable,
             store ? storeAllowance(state, kit + lineKit) - storeTotal : Infinity);

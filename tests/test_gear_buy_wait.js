@@ -73,16 +73,20 @@ both.put({ id: 91, ownerId: 990472, storeType: 1, kind: 'shop', town: 'Giran',
 both.put({ id: 93, ownerId: 990473, storeType: 1, kind: 'shop', town: 'Dion',
     lines: [{ lineId: 94, selfId: armour.selfId, count: 1, enchant: 0, price: 1 }] });
 const beside = review(base, both);
-assert(String(beside.network.focus?.[0]).startsWith(`power:${armour.selfId}:`),
-    'a goal that can never be bought yields the focus to one the bot can buy');
+// Which reachable goal leads is the score's (value per effort; a 100M
+// wallet's held cash costs no hunt hours, T53); never the never item.
+const reachableFocus = network => { const key = String(network.focus?.[0]);
+    return !key.startsWith(`power:${higher.selfId}:`) && network.queue.some(wish => wish.key === key); };
+assert(reachableFocus(beside.network), 'a goal that can never be bought yields the focus to one the bot can reach');
+assert(beside.network.queue.find(wish => wish.key.startsWith(`power:${armour.selfId}:`))?.funded,
+    'the armour it can buy now is funded');
 assert((beside.watchList || []).some(row => row.itemId === higher.selfId && Number(row.worth) > 0),
     'the never item keeps its buy bid while another goal is the focus');
 // A bot of full commitment (loyalty 1) weighs every goal off its focus at
 // nothing, yet the never item's bid still stands: it is its visible demand.
 const own = invoke('GameServer/Bot/AI/BotPersona').of(base) || { traits: {}, understanding: 0.3 };
 const devoted = review(base, both, () => [], { ...own, traits: { ...own.traits, commitment: 1 } });
-assert(String(devoted.network.focus?.[0]).startsWith(`power:${armour.selfId}:`),
-    'a fully committed bot also focuses the goal it can buy');
+assert(reachableFocus(devoted.network), 'a fully committed bot also focuses a goal it can reach');
 assert((devoted.watchList || []).some(row => row.itemId === higher.selfId && Number(row.worth) > 0),
     'a fully committed bot keeps the buy bid for the never item');
 

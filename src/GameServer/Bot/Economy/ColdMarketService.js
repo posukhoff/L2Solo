@@ -212,13 +212,15 @@ function fundingTerms(options = {}) {
             terms[name] = Number(options[name]);
         }
     }
+    // The root the money goes to (PurchaseFunding.spendable: held money or a resale).
+    if (typeof options.key === 'string') terms.key = options.key;
     return terms;
 }
 
 // A buy goal's funding terms for the native writer: its root's place in the
 // money queue (PurchaseFunding.goalTerms reads the same plan.valueRate).
 function goalFunding(goal) {
-    return fundingTerms({ ...goal?.plan, r: goal?.plan?.valueRate });
+    return fundingTerms({ ...goal?.plan, r: goal?.plan?.valueRate, key: PurchaseFunding.goalKey(goal) });
 }
 
 // The card's step for an arrival purchase: the plan's unit price, and the
@@ -401,7 +403,9 @@ function worthwhileTravel(state, plan, options = {}) {
                     return known;
                 }
             };
-    const result = EconomicValuation.acquisition(valuation, plan, route);
+    // Held money pays a root that is no resale (PurchaseFunding.cashPrice).
+    const moneyPrice = PurchaseFunding.cashPrice(state.stats?.money, options.key, context.moneyPrice);
+    const result = EconomicValuation.acquisition({ ...valuation, moneyPrice }, plan, route);
     return result.known && result.valueHours > 0;
 }
 const deniedTrips = new WeakMap();
@@ -1036,6 +1040,7 @@ const ColdMarketService = {
     acquireMaterials,
     errandGoal,
     goalErrand,
+    goalFunding,
     errandDeparts,
     departOrEndErrand,
     pendingErrand

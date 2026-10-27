@@ -14,7 +14,10 @@ function expectedSpendable(state, { r = 0, escrow = 0, upperBound = false, free 
     if (upperBound) return Math.max(0, wallet - packet[2]);
     if (free && packet[3] !== 0) return 0;
     if (free) r = -Infinity;
-    else if (r < packet[1]) return 0;
+    // Held money (T53): a funded row's ratio at least the packet's held
+    // price (its last element after the rows) spends too.
+    else if (r < packet[1] && !(r > 0 && packet.length % 3 === 2 && r >= packet[packet.length - 1]
+        && packet.some((value, at) => at >= 4 && (at - 4) % 3 === 0 && at + 2 < packet.length && value === r))) return 0;
     let higherCost = 0;
     for (let at = 4; at + 2 < packet.length; at += 3) {
         if (packet[at] > r) higherCost = Math.max(higherCost, packet[at + 1]);
@@ -28,7 +31,8 @@ function assertFunding(state) {
     assert(packet[0] > 0 && packet[1] > 0, 'native hunting supplies a positive hour and money value');
     assert(packet.every(Number.isFinite), 'all native packet values are finite');
     assert(Number.isSafeInteger(packet[0]) && Number.isSafeInteger(packet[2]) && Number.isSafeInteger(packet[3]));
-    assert(packet.length <= 28 && (packet.length - 4) % 3 === 0, 'the actual funded list retains its eight-entry bound');
+    // Eight rows after the four heads, then the held-money price (T53).
+    assert(packet.length <= 29 && [1, 2].includes(packet.length % 3), 'the actual funded list retains its eight-entry bound');
     let priorCost = 0;
     for (let at = 4; at + 2 < packet.length; at += 3) {
         assert(packet[at + 1] >= priorCost && Number.isSafeInteger(packet[at + 1]));

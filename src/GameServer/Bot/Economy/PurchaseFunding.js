@@ -33,6 +33,24 @@ function itemRatio(packet, itemId) {
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i + 2] === Number(itemId)) return packet[i];
     return 0;
 }
+// The packet's held-money price (WishNetwork.moneyQueue, T53): its last
+// element after the rows (packetFor); an older packet without one, its
+// money price. The lowest value per adena money the wallet holds may be
+// spent at (spendable, TradeIntent's focus bucket).
+function heldPrice(packet) {
+    return packet.length % 3 === 2 ? Number(packet[packet.length - 1]) : Number(packet[1]);
+}
+// A packet row's ratio (the packet stores them rounded: significant).
+function namesRow(packet, r) {
+    const rate = significant(r);
+    for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i] === rate) return true;
+    return false;
+}
+// A root that turns money into money (WishNetwork's resale object kind),
+// read from the root key a purchase carries on both sides (a certificate's
+// key, also under a group's member-prefixed key): its money is money to earn
+// back, never spent at the held price.
+const resaleKey = key => /(?:^|:)resale:/.test(key);
 function budgetFor(packet, wallet, escrow, r, capture = null) {
     let prior = 0;
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i] > r) prior = packet[i + 1];
@@ -113,11 +131,17 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
     }
     else {
         const r = options.itemId && options.r === undefined ? itemRatio(packet, options.itemId) : Number(options.r ?? 0);
+        // Held money (T53) spends at the held price for a root that is no
+        // resale (its key: goalTerms, stockTerms, nativeTerms, a bid line's
+        // certificate, a meeting's), else for a packet row (funded or saved
+        // for: its item, or a ratio naming it); any other ratio with no root
+        // still at the money price.
+        const held = typeof options.key === 'string' ? !resaleKey(options.key) : r > 0 && namesRow(packet, r);
         // Worth buying is value per Adena at the price really paid: a quote
         // above the planner's estimate lowers it by the same factor (E187).
         // The queue's own order still decides which money is held for others.
         const quoted = options.quoteScale > 0 ? r * options.quoteScale : r;
-        if (quoted >= packet[1]) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
+        if (quoted >= packet[1] || held && quoted > 0 && quoted >= heldPrice(packet)) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
     }
     // Native utility terms take precedence over a free/clan allowance too.
     if (Array.isArray(packet) && packet.length >= 4 && !options.upperBound && options.valueHours !== undefined) {
@@ -149,12 +173,14 @@ function stockAllowance(state, wish, itemId, survivalCost, scale = 1) {
 // A stock purchase's terms, the same for the planner and the native writer:
 // the kit's survival tranche and its stock wish's rank (else its packet row).
 function stockTerms(wish, itemId, survivalCost) {
-    return { itemId, survivalCost, ...(wish ? { r: significant(wish.ratio) } : {}) };
+    return { itemId, survivalCost, ...(wish ? { r: significant(wish.ratio), key: wish.key } : {}) };
 }
 function nativeTerms(options = {}, itemId = 0) {
     const terms = { itemId: Math.max(0, Number(itemId) || 0) };
     if (typeof options.raidPreparationId === 'string') terms.raidPreparationId = options.raidPreparationId;
     if (Number.isFinite(Number(options.r)) || options.r === Infinity) terms.r = Number(options.r);
+    const key = options.key ?? options.rootKey;
+    if (typeof key === 'string') terms.key = key;
     if (options.valueHours !== undefined && Number.isFinite(Number(options.valueHours))) terms.valueHours = Math.max(0, Number(options.valueHours));
     if (options.survivalCost !== undefined && Number.isFinite(Number(options.survivalCost))) terms.survivalCost = Math.max(0, Number(options.survivalCost));
     if (options.free === true) terms.free = true;
@@ -174,7 +200,20 @@ function leafRatio(leaf, wish) {
 // place in the money queue when the goal carries one, else the money
 // packet's row for its item.
 function goalTerms(goal, itemId = goal?.target?.itemId) {
-    return goal?.plan?.valueRate === undefined ? { itemId } : { r: goal.plan.valueRate };
+    const key = goalKey(goal);
+    return goal?.plan?.valueRate === undefined ? { itemId }
+        : { r: goal.plan.valueRate, ...(typeof key === 'string' ? { key } : {}) };
+}
+// The root a buy goal spends for (spendable's held money): a bid's intent,
+// else the card's root (NeedsEvaluator: plan.wishKey).
+const goalKey = goal => goal?.intent?.key ?? goal?.plan?.wishKey;
+// The money price a purchase's cash and fees cost (the departure gate,
+// ColdMarketService.worthwhileTravel): the held price for a root that is no
+// resale (spendable admits it with money the wallet holds), else the money
+// price.
+function cashPrice(packet, key, moneyPrice) {
+    return typeof key === 'string' && !resaleKey(key) && Array.isArray(packet) && packet.length >= 4
+        ? Math.min(Number(moneyPrice), heldPrice(packet)) : Number(moneyPrice);
 }
 // ARCH-NOTE: round value rates upward to three digits so a stored money floor
 // never falls below 1/hour; applying the same monotone rounding keeps funded ratios admissible.
@@ -195,18 +234,22 @@ function packetRowWishes(funded) {
 }
 function packetFor(network, hour, reserve) {
     // lazy: cycle WishNetwork requires PurchaseFunding at load.
-    const { fundable, cashCharge } = WishNetwork ||= require('./WishNetwork');
+    const { cashCharge } = WishNetwork ||= require('./WishNetwork');
     const packet = [Math.round(hour), significant(network.moneyPrice), Math.round(reserve), Math.round(network.gap ? cashCharge(network.gap) : 0)];
     let cumulative = 0, count = 0;
     for (const wish of network.queue) {
-        // An unsupported wish keeps its queue place without money (MVP-1).
-        if (!fundable(wish)) continue;
-        if (!wish.funded) break;
+        // A row for each funded root and each root the bot saves for
+        // (WishNetwork.moneyQueue: earmarked); an unsupported wish keeps its
+        // queue place without money (MVP-1), a resale root below the floor
+        // takes none, and nothing past the cutoff is funded.
+        if (!wish.funded && !wish.earmarked) continue;
         cumulative += cashCharge(wish); count++;
         const ratio = significant(wish.ratio);
         if (count <= PACKET_ROWS) packet.push(ratio, Math.round(cumulative), Number(wish.object?.itemId || 0));
         else { const last = 4 + 3 * (PACKET_ROWS - 1); packet[last] = ratio; packet[last + 1] = Math.round(cumulative); packet[last + 2] = 0; }
     }
+    // The held-money price after the rows (heldPrice reads it by the length).
+    if (network.heldPrice >= 0) packet.push(significant(network.heldPrice));
     return packet;
 }
 // The buy-order escrow a purchase of `offer` is planned to spend. A departing
@@ -218,5 +261,5 @@ function packetFor(network, hour, reserve) {
 // One rule for the planner (an offer) and the gates (a plan).
 function offerEscrow(offer, escrow = 0) { return offer?.sourceType === 'npc' ? escrow : 0; }
 function tripEscrow(plan, escrow = 0) { return offerEscrow(plan?.market, escrow); }
-module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
+module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, heldPrice, resaleKey, goalKey, cashPrice, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }) };
