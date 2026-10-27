@@ -285,7 +285,12 @@ const point = { locX: 83396, locY: 147904, locZ: -3400 };
                     : later((_, reject) => reject(Error('trade_meeting_need_changed')));
                 await Meetings.prepareTrade(ids[1], { shopId: bid.id }, 1867, 3, decided);
                 await settle(); await settle();
-                assert.deepEqual(replanned, [ids[0]], 'the owner\'s refusal sends it to plan its ad again');
+                // The owner's refusal replans its ad, and the trader plans again
+                // with the refused line off its picks (b85274408, 10-25).
+                assert.deepEqual(replanned.slice().sort((a, b) => a - b), [ids[0], ids[1]].sort((a, b) => a - b),
+                    'the owner\'s refusal sends it to plan its ad again, and the trader off the refused line');
+                assert.deepEqual(Life.cachedState(ids[1]).stats.meetingRefused, [bid.lines[0].id, bid.revision],
+                    'the trader keeps the refused line and ad revision');
             } finally { Coordinator.requestEconomyRefresh = refresh; }
         } finally { Coordinator.requestMeetingPreparation = prepareMeeting; Meetings.reset(); }
         console.log('native meeting reserve/replay/route/refund/completion/mutual/cleanup/migration/certificate conservation pass');
