@@ -63,13 +63,12 @@ const heldInput = { actorKey: 'character:77', characterId: 77, inputKey: 'held',
     nodes: [{ key: 'old', need: 'care', valueHours: 1, paths: [{ activity: 'helping', costHours: 1 }] },
         { key: 'ready', need: 'power', valueHours: 1, paths: [{ activity: 'hunting', costHours: 1 }] }],
     activityLeaf: fnv1a32('old:old:helping') };
-// The held step survives while it exists and no step beats it by the bot's
-// loyalty (00a3dead; an outscored held step is pinned in test_wish_network.js):
-// with commitment 0 an equal step does not outscore it.
-// Without the held leaf this seed rolls the other step: 'old' below is the hold, not the roll.
+// The step serves the focus root (goalhold 9a72877e4; game-decisions 10-25
+// "Focus: no roulette"): a held leaf of another root holds nothing. The held
+// step inside the focus root is pinned in test_wish_network.js.
 assert.equal(new WishNetwork().build({ ...heldInput, activityLeaf: 0 }).activity.rootKey, 'ready');
 const heldNetwork = new WishNetwork();
-assert.equal(heldNetwork.build(heldInput).activity.rootKey, 'old');
+assert.equal(heldNetwork.build(heldInput).activity.rootKey, 'ready', 'an off-focus held leaf does not hold the step');
 assert.equal(heldNetwork.build({ ...heldInput, inputKey: 'gone', nodes: [{ ...heldInput.nodes[0],
     paths: [{ activity: 'helping', available: false }] }, heldInput.nodes[1]] }).activity.rootKey, 'ready');
 done('eight funding controls for bot and clan: money only behind a step now');
