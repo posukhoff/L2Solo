@@ -1348,6 +1348,11 @@ function buildProjection(state, ctx, deps) {
     }
     const candidates = [];
     const wallet = ctx.wallet ?? positive(state.adena), held = Math.max(0, wallet - positive(ctx.survivalReserve));
+    // The held money's price of the bot's last build (its money packet,
+    // WishNetwork.heldPriceOf), else the hunt rate: gear resale and the
+    // candidates' solves price held cash at it.
+    const huntPrice = ctx.hunt.perHour > 0 ? 1 / ctx.hunt.perHour : 0, packet = state.stats?.money;
+    const heldPrice = Array.isArray(packet) && packet.length >= 4 ? Funding.heldPrice(packet) : huntPrice;
     const planningState = preparation || state;
     const wornFor = wornReader(planningState), gainFor = gearGainReader(state, timestamp, {}, ctx);
     let futureGain;
@@ -1379,13 +1384,13 @@ function buildProjection(state, ctx, deps) {
         // hunt hours it adds per hour, HuntCycle) over the stage's hours (the
         // level weights the horizon only) plus resale. A step into a kit gap
         // carries the gap's priority to stand among the kit roots; its value
-        // decides whether it is worth taking. Resale is money at the step's
-        // own rate (Network.lackingHours, as its price in the solver): money
-        // the wallet holds costs no hunt hours, so its return earns none.
+        // decides whether it is worth taking. Resale is money back at the
+        // rate the step pays (Network.cashHours, as its price in the solver):
+        // the held part at the held price, the lacking part at the hunt rate.
         const itemPrice = price(item.selfId);
         if (!(itemPrice > 0)) continue;
-        const value = gain * benefitHorizon + (ctx.hunt.perHour > 0
-            ? (future - currentPrice) * Network.lackingHours(itemPrice, held, 1 / ctx.hunt.perHour) / itemPrice : 0);
+        const value = gain * benefitHorizon + (huntPrice > 0
+            ? (future - currentPrice) * Network.cashHours(itemPrice, held, heldPrice, huntPrice) / itemPrice : 0);
         if (!(value > 0)) continue;
         candidates.push({ item, slot, value, gain, notBeforeHours: early ? horizon : 0,
             horizonHours: early ? horizon + futureHorizon : horizon,
@@ -1398,7 +1403,7 @@ function buildProjection(state, ctx, deps) {
     blocks?.lap('benefits');
     const admission = { candidates: 0, evaluations: 0, maxScratch: 0, rounds: 0, pending: [], admitted: [] };
     const solverOptions = { hourAdena: ctx.hourAdena, riskWeight: ctx.riskWeight, stockFor: ctx.stockFor || null,
-        wallet, survivalReserve: ctx.survivalReserve };
+        wallet, survivalReserve: ctx.survivalReserve, heldPrice };
     const real = nodes, realKeys = nodeKeys, gear = [];
     for (const candidate of candidates) {
         nodes = []; nodeKeys = new Set(); scratch = true; readScope = ctx.readScope?.open() || null;

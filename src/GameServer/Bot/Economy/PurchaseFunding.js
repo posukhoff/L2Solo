@@ -33,6 +33,15 @@ function itemRatio(packet, itemId) {
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i + 2] === Number(itemId)) return packet[i];
     return 0;
 }
+// The packet's held-money price (WishNetwork.heldPriceOf, T53): its last
+// element after the rows (packetFor); an older packet without one, its
+// money price. The lowest value per adena a funded row may spend at
+// (spendable, TradeIntent's focus bucket): every funded row is paid with
+// money the wallet holds.
+function heldPrice(packet) {
+    return packet.length % 3 === 2 ? Number(packet[packet.length - 1]) : Number(packet[1]);
+}
+function spendPrice(packet) { return Math.min(Number(packet[1]), heldPrice(packet)); }
 function budgetFor(packet, wallet, escrow, r, capture = null) {
     let prior = 0;
     for (let i = 4; i + 2 < packet.length; i += 3) if (packet[i] > r) prior = packet[i + 1];
@@ -117,7 +126,7 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
         // above the planner's estimate lowers it by the same factor (E187).
         // The queue's own order still decides which money is held for others.
         const quoted = options.quoteScale > 0 ? r * options.quoteScale : r;
-        if (quoted >= packet[1]) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
+        if (quoted > 0 && quoted >= spendPrice(packet)) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
     }
     // Native utility terms take precedence over a free/clan allowance too.
     if (Array.isArray(packet) && packet.length >= 4 && !options.upperBound && options.valueHours !== undefined) {
@@ -207,6 +216,8 @@ function packetFor(network, hour, reserve) {
         if (count <= PACKET_ROWS) packet.push(ratio, Math.round(cumulative), Number(wish.object?.itemId || 0));
         else { const last = 4 + 3 * (PACKET_ROWS - 1); packet[last] = ratio; packet[last + 1] = Math.round(cumulative); packet[last + 2] = 0; }
     }
+    // The held-money price after the rows (heldPrice reads it by the length).
+    if (network.heldPrice >= 0) packet.push(significant(network.heldPrice));
     return packet;
 }
 // The buy-order escrow a purchase of `offer` is planned to spend. A departing
@@ -218,5 +229,5 @@ function packetFor(network, hour, reserve) {
 // One rule for the planner (an offer) and the gates (a plan).
 function offerEscrow(offer, escrow = 0) { return offer?.sourceType === 'npc' ? escrow : 0; }
 function tripEscrow(plan, escrow = 0) { return offerEscrow(plan?.market, escrow); }
-module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
+module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, itemRatio, heldPrice, spendPrice, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }) };

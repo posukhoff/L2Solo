@@ -8,6 +8,7 @@ const Funding = require('./PurchaseFunding');
 // WishNetwork loads this module at its top (lazy below).
 let Network = null;
 const integer = n => Number.isSafeInteger(n) && n >= 0;
+const nonnegative = value => Math.max(0, Number(value) || 0);
 // Selected NPC and configured shot quotes already have a native purchase owner.
 // Public BUY ads describe alternative player supply, not a duplicate store job.
 const isNativeSource = source => source === 'npc' || source === 'configured_store';
@@ -159,9 +160,10 @@ function lineOf(root) {
 // A bid and its later consent price the same remaining goal. The generic
 // item estimate can be lower than this goal's allocated usefulness (a kit
 // piece or craft input); it is only the fallback before money is prepared.
+// A row's cap (rootRows) bounds both.
 function purchaseWorth(intent, moneyPrice) {
     return intent?.key && moneyPrice > 0
-        ? Number(intent.valueHours) / Math.max(1, Number(intent.amount)) / moneyPrice
+        ? Math.min(Number(intent.valueHours) / Math.max(1, Number(intent.amount)) / moneyPrice, Number(intent.cap ?? Infinity))
         : Number(intent?.worth);
 }
 // A quantitative network already owns allocation and batch rounding. Readers
@@ -255,6 +257,15 @@ function rootRows(network, wish, onCut = null) {
                 ? shortOf(command, plan.missingAmount) : 0;
             const amount = short > 0 ? short : plan.missingAmount;
             if (short > 0) { value *= short / plan.missingAmount; onCut?.(); }
+            // The bid's cap (user 10-27, T53): the unit at the bot's price
+            // belief (the step's basePrice: its missing units at belief,
+            // before trips) plus this row's share of what the root's wait
+            // costs (waitValueHours, at the money price): no money price,
+            // however cheap, bids above it. An unpriced step has no cap.
+            const belief = nonnegative(plan.basePrice) / plan.missingAmount;
+            const saved = Number(network.moneyPrice) > 0 && rootValue(wish) > 0
+                ? nonnegative(wish.waitValueHours) * value / rootValue(wish) / Number(network.moneyPrice) : 0;
+            const capCash = belief > 0 ? belief * amount + saved : Infinity;
             const previous = rows.get(id);
             const quote = plan.kind === 'buy' && plan.sourceType === 'afk' && plan.quoted === true
                 && plan.executable === true && integer(plan.unitPrice) && plan.unitPrice > 0 && plan.town
@@ -262,7 +273,7 @@ function rootRows(network, wish, onCut = null) {
                     amount: Math.min(plan.missingAmount, Number(plan.availableUnits)) } : null;
             rows.set(id, { itemId: id, amount: amount + (previous?.amount || 0), worth: 0,
                 kind: wish.object?.kind, key: wish.key, recipeId, valueHours: value + (previous?.valueHours || 0),
-                valueRate: Funding.significant(wish.ratio),
+                valueRate: Funding.significant(wish.ratio), capCash: capCash + (previous?.capCash ?? 0),
                 ...(quote && integer(quote.amount) && quote.amount > 0 ? { quote } : {}) });
             return;
         }
@@ -280,7 +291,11 @@ function rootRows(network, wish, onCut = null) {
     visit(wish.key, wish.plan, line || rootValue(wish));
     for (const row of rows.values()) {
         if (line) { row.worth = row.valueHours / row.amount; row.valueHours *= moneyPrice > 0 ? moneyPrice : 0; row.line = true; }
-        else row.worth = moneyPrice > 0 ? row.valueHours / row.amount / moneyPrice : 0;
+        else {
+            if (Number.isFinite(row.capCash)) row.cap = row.capCash / row.amount;
+            row.worth = moneyPrice > 0 ? purchaseWorth(row, moneyPrice) : 0;
+        }
+        delete row.capCash;
     }
     if (moneyPrice > 0) for (const row of farms.values()) { row.worth = row.valueHours / row.amount / moneyPrice; row.farm = true; }
     return { rows, farms, line };
@@ -331,7 +346,7 @@ function meetingPurchase(network, intents, { selfId, count, price, town, enchant
     let valueRate = intent.valueRate;
     if (state?.stats?.wishFocus?.[0] === wish.key && Array.isArray(packet)) {
         for (let at = 4; at + 2 < packet.length; at += 3) {
-            if (Number(packet[at + 2]) === Number(wish.object?.itemId) && packet[at] > 0 && packet[at] >= packet[1]) {
+            if (Number(packet[at + 2]) === Number(wish.object?.itemId) && packet[at] > 0 && packet[at] >= Funding.spendPrice(packet)) {
                 valueRate = Number(packet[at]); break;
             }
         }
