@@ -4001,7 +4001,7 @@ function checkConditionalBidUnsafe(characterId, line, price = Number(line.price)
     // survival tranche every other restock may spend.
     const survivalCost = Math.max(0, Number(line.survivalCost) || 0);
     if (row) checkEconomyFundingUnsafe(characterId, { row }, total,
-        { ...(line.intent ? { r: line.intent.valueRate } : { itemId: Number(line.selfId) }), ...(survivalCost ? { survivalCost } : {}) }, wallet);
+        { ...(line.intent ? { r: line.intent.valueRate, ...(line.intent.held ? { held: true } : {}) } : { itemId: Number(line.selfId) }), ...(survivalCost ? { survivalCost } : {}) }, wallet);
 }
 
 // A bot's buy ads are its escrow store (custody 0, at most BOT_SHOP_LINES:

@@ -45,7 +45,8 @@ async function capture(state, options = {}, label = '') {
     assert(read, 'genuine capture must be accepted for its exact original state key');
     assert.deepEqual(accepted.stats.money, captured.statsPacket.money);
     const packet = accepted.stats.money;
-    assert(Array.isArray(packet) && packet.length >= 4 && packet.length <= 28 && (packet.length - 4) % 3 === 0);
+    // Rows of three after the four heads, then the held-money price (T53, PurchaseFunding.heldPrice).
+    assert(Array.isArray(packet) && packet.length >= 4 && packet.length <= 29 && [1, 2].includes(packet.length % 3));
     assert(packet.every(Number.isFinite), 'genuine stored money packet is numeric and finite');
     const wallet = Math.max(0, Number(state.adena ?? state.inventory?.[57]?.amount) || 0);
     const missingBefore = Funding.summary().moneyPacketMissing;
@@ -55,7 +56,11 @@ async function capture(state, options = {}, label = '') {
         if (query.upperBound) expected = Math.max(0, wallet - packet[2]);
         else if (!(query.free && packet[3] !== 0)) {
             const ratio = query.free ? -Infinity : query.r;
-            if (query.free || ratio >= packet[1]) {
+            // Held money (T53): a funded row's ratio at least the held price
+            // after the rows spends too.
+            const held = packet.length % 3 === 2 ? packet[packet.length - 1] : packet[1];
+            const row = packet.some((value, at) => at >= 4 && (at - 4) % 3 === 0 && at + 2 < packet.length && value === ratio);
+            if (query.free || ratio >= packet[1] || ratio > 0 && row && ratio >= held) {
                 let higher = 0;
                 for (let at = 4; at + 2 < packet.length; at += 3) if (packet[at] > ratio) higher = packet[at + 1];
                 expected = Math.max(0, wallet - packet[2] - higher);
