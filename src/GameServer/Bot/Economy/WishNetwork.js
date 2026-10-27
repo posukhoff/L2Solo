@@ -544,12 +544,13 @@ function topScore(rows) {
 const resale = row => row?.object?.kind === 'resale';
 // The hours a cash price costs a bot holding `held` adena (user 10-27, T53):
 // the part the wallet covers at the held money's price (`heldPrice`, its
-// best other use: heldPriceOf), only the part it lacks at the hunt rate
-// (`huntPrice`, hours per adena). Readers: the solver's root effort, the
-// gear resale in WishProviders; cashFor is its inverse.
+// best other use: heldPriceOf), the part it lacks at the price of money
+// earned (`huntPrice`, hours per adena), never below the held one: more
+// money held never makes a price cost more hours. Reader: the solver's
+// root effort; cashFor is its inverse.
 function cashHours(cash, held, heldPrice, huntPrice) {
     const covered = Math.min(nonnegative(cash), nonnegative(held)), lacking = nonnegative(cash) - covered;
-    return covered * nonnegative(heldPrice) + (lacking > 0 ? lacking * huntPrice : 0);
+    return covered * nonnegative(heldPrice) + (lacking > 0 ? lacking * Math.max(huntPrice, nonnegative(heldPrice)) : 0);
 }
 // The most cash `valueHours` is worth to a bot holding `held` adena: held
 // money first at its own price, the rest at the price of money still to
@@ -557,7 +558,8 @@ function cashHours(cash, held, heldPrice, huntPrice) {
 function cashFor(valueHours, held, heldPrice, huntPrice) {
     const value = nonnegative(valueHours), heldHours = nonnegative(held) * nonnegative(heldPrice);
     if (value <= heldHours && heldPrice > 0) return value / heldPrice;
-    return nonnegative(held) + (huntPrice > 0 ? (value - heldHours) / huntPrice : 0);
+    const earned = Math.max(huntPrice, nonnegative(heldPrice));
+    return nonnegative(held) + (earned > 0 ? (value - heldHours) / earned : 0);
 }
 // The money price a queue root's rows turn hours into adena at (TradeIntent
 // bids and consent, a clan's hall bid): its own value over the cash it is
@@ -593,9 +595,6 @@ function queueRows(wishes, floor) {
             || b.ratio - a.ratio || a.key.localeCompare(b.key));
 }
 const ownRatio = row => TradeIntent.rootValue(row) / row.price;
-// A row the money held may pay for (moneyQueue and heldPriceOf alike): not
-// a resale root (money into money, at the hunt rate) and fundable now.
-const heldUse = row => !resale(row) && fundable(row);
 // The price of the money a bot holds (hours per adena; user 10-27, T53,
 // docs/game-decisions.md): its best other use among the roots the build
 // keeps (after the stock split and the priority filter; the next stage's
@@ -610,9 +609,11 @@ const heldUse = row => !resale(row) && fundable(row);
 function heldPriceOf(wishes, wallet, survivalReserve = 0, floor = 0) {
     let available = Math.max(0, nonnegative(wallet) - nonnegative(survivalReserve));
     for (const row of queueRows(wishes, floor)) {
-        if (!heldUse(row)) continue;
-        if (cashCharge(row) > available) return row.progressionPriority > 0 || row.ratio >= floor
-            ? Math.max(nonnegative(floor), row.ratio) : ownRatio(row);
+        // moneyQueue's walk: a resale root takes money only above the floor,
+        // and spends it then; an unsupported root takes none.
+        const earned = row.progressionPriority > 0 || row.ratio >= floor;
+        if (!fundable(row) || resale(row) && !earned) continue;
+        if (cashCharge(row) > available) return earned ? Math.max(nonnegative(floor), row.ratio) : ownRatio(row);
         available -= cashCharge(row);
     }
     return 0;
@@ -1220,11 +1221,13 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     // heldPriceOf, priceHeld), the part it lacks at the hunt rate; its effort
     // keeps the rest of its plan. Its path choice stays at the hunt rate (one
     // currency between paths); a resale root keeps its whole price.
-    // No price given (a caller outside a build): the hunt rate, as before.
-    let heldRate = heldPrice ?? (Number.isFinite(adenaToHours) ? adenaToHours : 0);
+    // No price given (a caller outside a build: gear admission, the review's
+    // root cut): the author's rule, the cash at the hunt rate and its floor
+    // counting only the cash the wallet lacks.
+    let heldRate = heldPrice;
     const rootEffort = wish => {
         if (!wish.plan) return;
-        const price = nonnegative(wish.plan.price), spends = heldMoney && !resale(wish);
+        const price = nonnegative(wish.plan.price), spends = heldMoney && !resale(wish) && heldRate !== null;
         const cash = cashHours(price, spendable, spends ? heldRate : 0, adenaToHours);
         if (spends && Number.isFinite(adenaToHours)) wish.effort = Math.max(0, wish.effort - price * adenaToHours + cash);
         if (committedHours(byKey.get(wish.key))) wish.effort = Math.max(wish.effort, wish.plan.hours + cash);

@@ -274,6 +274,7 @@ function rootRows(network, wish, onCut = null) {
             rows.set(id, { itemId: id, amount: amount + (previous?.amount || 0), worth: 0,
                 kind: wish.object?.kind, key: wish.key, recipeId, valueHours: value + (previous?.valueHours || 0),
                 valueRate: Funding.significant(wish.ratio), capCash: capCash + (previous?.capCash ?? 0),
+                ...(wish.heldCash > 0 ? { held: true } : {}),
                 ...(quote && integer(quote.amount) && quote.amount > 0 ? { quote } : {}) });
             return;
         }
@@ -312,8 +313,12 @@ function meetingPurchase(network, intents, { selfId, count, price, town, enchant
     if (!network?.quantityPrepared) return null;
     // lazy: cycle WishNetwork requires TradeIntent at load.
     Network ||= require('./WishNetwork');
+    // Consent at the money price the row's bid used (rootRows): its root's,
+    // a farmed material's the money earned.
+    const rowPrice = row => row.farm ? Number(network.moneyPrice)
+        : Network.rootMoneyPrice(network, network.queue?.find(wish => wish.key === row.key));
     const ordinary = intents?.find(row => row.itemId === selfId && row.amount >= count
-        && purchaseWorth(row, Network.rootMoneyPrice(network, network.queue?.find(wish => wish.key === row.key))) >= price);
+        && purchaseWorth(row, rowPrice(row)) >= price);
     const leaf = network.activity;
     const nativeQuote = nativePurchase(leaf) && Number(leaf.valueHours) > 0;
     const actual = (network.queue || []).filter(wish => wish.funded === true)
