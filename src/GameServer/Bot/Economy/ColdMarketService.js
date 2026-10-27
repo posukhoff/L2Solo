@@ -220,7 +220,7 @@ function fundingTerms(options = {}) {
 // A buy goal's funding terms for the native writer: its root's place in the
 // money queue (PurchaseFunding.goalTerms reads the same plan.valueRate).
 function goalFunding(goal) {
-    return fundingTerms({ ...goal?.plan, r: goal?.plan?.valueRate, key: goal?.intent?.key });
+    return fundingTerms({ ...goal?.plan, r: goal?.plan?.valueRate, key: PurchaseFunding.goalKey(goal) });
 }
 
 // The card's step for an arrival purchase: the plan's unit price, and the

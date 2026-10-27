@@ -633,15 +633,21 @@ function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0, heldPrice = 
         // A resale root below the floor is no use of money at all.
         if (!earned && !spends && heldMoney) { wish.funded = false; continue; }
         // An unsupported wish keeps its place and interest, never the money.
+        // A spending root no seller offers yet, worth buying (worth, below),
+        // still holds the cash it needs (T53, savingPrice): the bot saves it,
+        // no later row spends it, and the packet carries it as a row
+        // (packetFor). A never root holds none.
+        const worth = earned || spends && ownRatio(wish) >= heldPrice;
         if (!fundable(wish)) {
             wish.funded = false;
+            wish.earmarked = spends && worth && !cutoffFound && !neverReady(wish) && cashCharge(wish) > 0 && cashCharge(wish) <= available;
+            if (wish.earmarked) available -= cashCharge(wish);
             // A never root is no gap: earning more never brings its unit.
             if (wish.progressionPriority > 0 && !awaitingKit && !neverReady(wish)) awaitingKit = wish;
             continue;
         }
         // The first gap holds the marginal price of money. Smaller desires
         // do not spend the money earmarked toward that first missing goal.
-        const worth = earned || spends && ownRatio(wish) >= heldPrice;
         wish.funded = !cutoffFound && worth && cashCharge(wish) <= available;
         if (wish.funded) available -= cashCharge(wish);
         else if (!cutoffFound) {
@@ -1154,7 +1160,7 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     // A direct production root is itself the craft path. Its finite output
     // quantity must enter allocation, just like an item requirement does;
     // otherwise even an eleven-batch goal requests one batch of inputs.
-    const rootAmount = node => node?.object?.kind === 'resale'
+    const rootAmount = node => resale(node)
         && node.paths?.some(path => path.kind === 'craft' && path.trial === true && path.repeatable === false)
         && Number.isSafeInteger(node.object.amount) && node.object.amount > 0 ? node.object.amount : 1;
     // MVP-4: one horizon H per root; a benefit per hour starts when the
@@ -1582,7 +1588,7 @@ class WishNetwork {
         }
         // Only funded wishes with their own money-packet row can be paid by
         // every itemId spend site; the merged tail stays protected but waits.
-        const funded = new Set(packetRowWishes(queue.filter(wish => wish.funded)).map(wish => wish.key));
+        const funded = new Set(packetRowWishes(queue.filter(wish => wish.funded || wish.earmarked)).map(wish => wish.key));
         // A step that spends no money stays available toward an unsupported
         // wish (farming its material); only money waits for a step now.
         // Only a root the bot may focus (focusWishes: the active priority

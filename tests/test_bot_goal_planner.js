@@ -67,7 +67,7 @@ function checkHot(label, state) {
     for (let index = 4; index + 2 < packet.length; index += 3) {
         const ownPrice = packet[index + 1] - cumulative;
         // A funded row spends at least at the held money's price (T53).
-        assert(ownPrice > 0 && packet[index] >= Funding.spendPrice(packet));
+        assert(ownPrice > 0 && packet[index] >= Funding.heldPrice(packet));
         assert(Funding.spendable(fundedState, 0, { r: packet[index] }) >= ownPrice,
             `${label}: every funded quote is admitted by the same payment rule`);
         cumulative = packet[index + 1];
