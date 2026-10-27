@@ -105,7 +105,7 @@ function heapSnapshotOptions() {
     return { execArgv: ['--heapsnapshot-near-heap-limit=1', `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`] };
 }
 
-const emptyBusyWindow = () => ({ activeMs: 0, idleMs: 0, maxElu: 0, lagMs: 0 });
+const emptyBusyWindow = () => ({ activeMs: 0, idleMs: 0, cpuMs: 0, maxElu: 0, lagMs: 0 });
 
 class ColdSimulationCoordinator {
     constructor(options = {}) {
@@ -432,11 +432,12 @@ class ColdSimulationCoordinator {
     }
 
     // The health line's worker numbers since its last line (PopulationStatus.goalText takes them):
-    // the busy share as summed active / idle ms, the busiest beat and the longest loop delay.
+    // the busy share as summed active / idle ms, the worker thread's CPU ms, the busiest beat and the longest loop delay.
     noteBusy(payload) {
         const window = this.busyWindow;
         window.activeMs += Number(payload.eluActiveMs) || 0;
         window.idleMs += Number(payload.eluIdleMs) || 0;
+        window.cpuMs += Number(payload.cpuMs) || 0;
         window.maxElu = Math.max(window.maxElu, Number(payload.eventLoopUtilization) || 0);
         window.lagMs = Math.max(window.lagMs, Number(payload.eventLoopLagMaxMs) || 0);
     }

@@ -179,6 +179,7 @@ let safetyStateReady = false;
 let safetyStateRepairs = 0;
 let safetyOrphanRepairs = 0;
 let previousElu = null;
+let threadCpuMs = null;
 let planningSpots = [];
 invoke('GameServer/Bot/AI/SpotValueTable').useSpots(() => planningSpots);
 let planningNpcOfferRows = [];
@@ -1318,9 +1319,10 @@ function startKernel(config = {}) {
     Config.developerDiagnostics = config.developerDiagnostics === true;
     Config.economyDiagnostics = Config.developerDiagnostics && config.economyDiagnostics === true;
     // Busy share and heap after GC are two of the goal's three numbers (read with diagnostics off): always on, one
-    // major-GC observer and two clock reads per heartbeat.
+    // major-GC observer, two clock reads and one thread CPU read per heartbeat.
     heapTelemetry = invoke('GameServer/Bot/Population/WorkerHeapTelemetry').observe();
     previousElu = performance.eventLoopUtilization();
+    threadCpuMs = invoke('GameServer/ThreadCpuMeter')();
     // The longest loop delay per heartbeat is the health line's spike number (workerLag): always on,
     // a native histogram on a LAG_RESOLUTION_MS timer.
     eventLoopDelay = monitorEventLoopDelay({ resolution: LAG_RESOLUTION_MS });
@@ -1812,7 +1814,7 @@ function startKernel(config = {}) {
                         pendingSpotKeys: large, pendingActorKeys: large, deliveryMode: 'addressed',
                         revenge: { evaluated: large, intents: large, at: frame.at, active: 128, sampledActors: 128, overflow: false } },
                     tables: tables.summary(), heapUsed: large, rss: large, v8Heap: { used: large, total: large, external: large, limit: large, afterGc: large, afterGcMax: large, late: large },
-                    eventLoopUtilization: 1, eluActiveMs: large, eluIdleMs: large, eventLoopLagP95Ms: large,
+                    eventLoopUtilization: 1, eluActiveMs: large, eluIdleMs: large, cpuMs: large, eventLoopLagP95Ms: large,
                     eventLoopLagMaxMs: large
                 }, 'x'.repeat(160));
                 return new (invoke('GameServer/Bot/Population/ColdCompetitionFrameSizer').ColdCompetitionFrameSizer)(message, report.recent);
@@ -1840,8 +1842,9 @@ function startKernel(config = {}) {
             ...heapTelemetry.snapshot(),
             geodata: GeodataEngine.storageStats(),
             // The beat's busy share and its active / idle ms: main sums the ms into the health line's
-            // busy share over its own window (a beat delayed by a long task lasts longer).
-            eventLoopUtilization: elu.utilization, eluActiveMs: elu.active, eluIdleMs: elu.idle,
+            // busy share over its own window (a beat delayed by a long task lasts longer); cpuMs is this thread's
+            // CPU in the beat, summed beside it (busy minus CPU share = time the system took).
+            eventLoopUtilization: elu.utilization, eluActiveMs: elu.active, eluIdleMs: elu.idle, cpuMs: threadCpuMs(),
             eventLoopLagMaxMs: lagMaxMs,
             occupationInvalidations: occupationPlanner.stats.invalidations,
             censusCrossings: DecisionSections.censusCrossings(),
