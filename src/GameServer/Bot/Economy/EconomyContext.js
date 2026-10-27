@@ -1905,7 +1905,7 @@ function planTrimmer(unresolved = new Set()) {
 function compactNetwork(network) {
     const unresolved = new Set(), trim = planTrimmer(unresolved);
     const row = wish => ({ key: wish.key, need: wish.need, object: wish.object, price: wish.price, reserved: wish.reserved,
-        valueHours: wish.valueHours, ratio: wish.ratio, funded: wish.funded,
+        valueHours: wish.valueHours, ratio: wish.ratio, funded: wish.funded, held: wish.held,
         supported: wish.supported, resolved: wish.resolved, progressionPriority: wish.progressionPriority,
         ...(wish.scrollCash !== undefined ? { scrollCash: wish.scrollCash } : {}),
         ...(wish.ownValueHours !== undefined ? { ownValueHours: wish.ownValueHours } : {}),

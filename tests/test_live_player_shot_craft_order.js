@@ -54,7 +54,9 @@ const near = context => ({ ...context, ...DecisionEvents.nearFields(context, con
     const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
     const equipmentPlan = { status: 'deferred', strategy: 'market', target: { selfId: 852, slot: 1 } };
     let state = customer.coldLifeState;
-    state = { ...state, stats: { ...state.stats, equipmentPlan,
+    // The refill is the bot's goal (its focus): a 1M wallet's other wishes
+    // (held cash costs no hunt hours, T53) never cut it from the review.
+    state = { ...state, stats: { ...state.stats, equipmentPlan, wishFocus: ['stock:shots', 0, 1],
         coldCombat: Profile.legacySnapshot(state, Profile.skillRecordsFromTree(1, 30)) } };
     customer.coldLifeState = await Life.upsertState(state, 'native_shot_order');
     const context = refillContext(customer.coldLifeState);
