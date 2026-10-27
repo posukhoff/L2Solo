@@ -31,7 +31,13 @@ const basket = { cashCost: 0, ownedValue: 0, actualCashFees: 0, travelHours: 0,
 const evaluate = (exit, extra = {}) => Policy.drain(Policy.evaluatePrepared({ state: craftState,
     recipe, basket, exit, context, ...extra }));
 assert(evaluate(trial).expectedSold > 0, 'a proven finite public bid can value one physical trial');
-assert.strictEqual(evaluate(trial, { batches: 2 }), null, 'native recheck cannot enlarge the first trial');
+// R3 (F52, 659736901): the author's one-batch trial gate is gone; a bid exit
+// takes the lots its buyer's line takes (Price.bidLots -> exit.maxBatches).
+const lots = Price.bidLots(state, line, { board, timestamp });
+assert.strictEqual(lots, 4, 'the buyer\'s line takes its own count');
+assert(evaluate({ ...trial, maxBatches: lots }, { batches: lots }).expectedSold > 0, 'a trial fills the lots its line takes');
+assert.strictEqual(evaluate({ ...trial, maxBatches: lots }, { batches: lots + 1 }), null,
+    'a trial never crafts more batches than its buyer\'s line takes');
 assert.strictEqual(evaluate({ ...trial, offer: { ...line, revision: 2 } }), null,
     'an inconsistent authority cannot turn a conditional bid into receipts');
 assert.strictEqual(evaluate({ ...trial, applicableUnits: NaN }), null, 'an unknown competitive tail stays unknown');
