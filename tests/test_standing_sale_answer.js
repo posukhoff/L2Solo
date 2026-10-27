@@ -49,7 +49,10 @@ try {
         get(target, key) { if (/^\d+$/.test(String(key))) rowsRead++; return target[key]; }
     });
     const forecast = Price.marketFor(1869, { board: { list: () => crowded, itemRevision: () => 1 }, ownerId: 42 });
-    assert.equal(rowsRead, 40, 'rival attention does not scan a growing crowd of listings');
+    // PriceDecision.marketFor stops once it retains its 20 rivals (RIVALS_SEEN,
+    // at most 2 * 20 asks inspected): 20 kept, the one that finds the cap, and
+    // the first uninspected ask (seenTo) = 22 rows of the 1000.
+    assert.equal(rowsRead, 22, 'rival attention does not scan a growing crowd of listings');
     assert.equal(forecast.truncated, true);
     assert.equal(forecast.known, false, 'uninspected stock does not manufacture a forecast');
 } finally { Rolls.roll = original; }
