@@ -1040,10 +1040,11 @@ function buildProjection(state, ctx, deps) {
         // reads its source (scrollSource), then its price; the reads stop once
         // no bound left can beat the best row found, the one row a full read
         // would pick.
-        // A committed product (its resale root a committed goal) keeps its
-        // rows past the cap and its scroll row beside the best one.
+        // A committed product (its resale root a committed goal, or the recipe
+        // whose scroll the bot is buying: its investment, shotRecipeDemand)
+        // keeps its rows past the cap and its scroll row beside the best one.
         const byNet = (a, b) => b.net - a.net || Number(b.known) - Number(a.known) || a.recipe.recipeId - b.recipe.recipeId;
-        const committedProduct = row => committed.has(`resale:${row.id}`);
+        const committedProduct = row => committed.has(`resale:${row.id}`) || Number(row.recipe.recipeItemId) === investmentId;
         let priced = admitted.filter(row => row.ready);
         if (priced.length > PRODUCER_PRICED) {
             priced.sort(byNet);
