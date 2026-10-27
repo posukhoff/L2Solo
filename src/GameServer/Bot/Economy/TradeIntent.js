@@ -297,7 +297,10 @@ function rootRows(network, wish, onCut = null) {
         }
         delete row.capCash;
     }
-    if (moneyPrice > 0) for (const row of farms.values()) { row.worth = row.valueHours / row.amount / moneyPrice; row.farm = true; }
+    // A farmed material bids at most its farm hours at the money price
+    // earned (hunting is earning), never at a held price.
+    const farmPrice = Number(network.moneyPrice);
+    if (farmPrice > 0) for (const row of farms.values()) { row.worth = row.valueHours / row.amount / farmPrice; row.farm = true; }
     return { rows, farms, line };
 }
 

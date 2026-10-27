@@ -593,24 +593,26 @@ function queueRows(wishes, floor) {
             || b.ratio - a.ratio || a.key.localeCompare(b.key));
 }
 const ownRatio = row => TradeIntent.rootValue(row) / row.price;
+// A row the money held may pay for (moneyQueue and heldPriceOf alike): not
+// a resale root (money into money, at the hunt rate) and fundable now.
+const heldUse = row => !resale(row) && fundable(row);
 // The price of the money a bot holds (hours per adena; user 10-27, T53,
-// docs/game-decisions.md): its best other use among every root the network
-// sees, the next stage's too (notBefore, valued later and discounted by the
-// wait: WishProviders' early gear). The held money goes down the queue's
-// order; the first spending root it cannot cover is what it saves for, and
-// its own value per adena (never a floor-raised one) prices it. A wallet
-// that covers them all has no other use for the rest: money is free (0),
-// the bot buys what it wants and each bid stops at its price belief
-// (TradeIntent.rootRows' cap). Never above the hunt rate (`floor`): money
-// held is never dearer than money earned. A root no seller offers yet is a
-// use too (its bid spends the money); a resale root (money into money) and
-// a never root (no unit comes) are none. Read once per build, before the
-// solve's efforts are final.
+// docs/game-decisions.md): its best other use among the roots the build
+// keeps (after the stock split and the priority filter; the next stage's
+// too: notBefore roots valued later and discounted by the wait,
+// WishProviders' early gear). The held money goes down the queue's order;
+// the first root it cannot cover is what it saves for: a gap worth earning
+// (a progression root, or above the hunt rate `floor`) makes it as dear as
+// money earned (moneyQueue's moneyPrice), any other root its own value per
+// adena (never a floor-raised one). A wallet that covers them all has no
+// other use for the rest: money is free (0), the bot buys what it wants
+// and each bid stops at its price belief (TradeIntent.rootRows' cap).
 function heldPriceOf(wishes, wallet, survivalReserve = 0, floor = 0) {
     let available = Math.max(0, nonnegative(wallet) - nonnegative(survivalReserve));
     for (const row of queueRows(wishes, floor)) {
-        if (resale(row) || neverReady(row)) continue;
-        if (cashCharge(row) > available) return Math.min(nonnegative(floor), ownRatio(row));
+        if (!heldUse(row)) continue;
+        if (cashCharge(row) > available) return row.progressionPriority > 0 || row.ratio >= floor
+            ? Math.max(nonnegative(floor), row.ratio) : ownRatio(row);
         available -= cashCharge(row);
     }
     return 0;
@@ -631,6 +633,8 @@ function moneyQueue(wishes, wallet, survivalReserve = 0, floor = 0, heldPrice = 
     let moneyPrice = nonnegative(floor), cutoffFound = false, gap = null, awaitingKit = null;
     for (const wish of queue) {
         const earned = wish.progressionPriority > 0 || wish.ratio >= floor, spends = heldMoney && !resale(wish);
+        // The money held at its place: what it pays with, or bids with while
+        // no seller lets it be funded (rootMoneyPrice).
         wish.heldCash = !cutoffFound && spends ? available : 0;
         // A resale root below the floor is no use of money at all.
         if (!earned && !spends && heldMoney) { wish.funded = false; continue; }
@@ -1351,10 +1355,7 @@ class WishNetwork {
         const { byKey, plans, earns, committedHours, tripValue, tripEffort } = solver;
         const kept = wish => wish.valueHours > 0 && wish.plan && earns(wish);
         let wishes = roots.map(solver.rootWish);
-        // The held money's price: its best use among every root (heldPriceOf).
         const floor = hourAdena > 0 ? 1 / hourAdena : 0;
-        const heldPrice = heldMoney ? heldPriceOf(wishes, wallet, survivalReserve, floor) : floor;
-        solver.priceHeld(heldPrice, wishes);
         const committed = committedKeys(previous);
         let heldClaims = null, claimPlans = null, alone = null, claimable = wishes;
         // Wishes whose plan is no longer their alone solve (re-solved on a taken claim).
@@ -1428,6 +1429,10 @@ class WishNetwork {
             focusWishes = wishes.filter(wish => wish.progressionPriority === active && !(reachable && neverReady(wish)));
         };
         settle(committed);
+        // The held money's price over the roots the build keeps (heldPriceOf),
+        // before the focus reads their efforts.
+        const heldPrice = heldMoney ? heldPriceOf(wishes, wallet, survivalReserve, floor) : floor;
+        solver.priceHeld(heldPrice, wishes);
         const loyalty = Math.min(1, nonnegative(persona.traits?.commitment ?? 0.5));
         // Only an event (reconsider: the caller's raised sections or due soft changes)
         // weighs a held choice against the others; an ordinary rebuild keeps it.
