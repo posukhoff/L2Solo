@@ -538,10 +538,10 @@ function topScore(rows) {
     return best;
 }
 
-// A root that turns money into money (a craft, crystals or a farm for sale,
-// key 'resale:<id>' for the wish and its decoded intents): its value is
+// A root that turns money into money (a craft, crystals or a farm for sale;
+// its object's kind, also under a group's member-prefixed key): its value is
 // adena at the hunt rate, so its price stays at the hunt rate too.
-const resale = row => String(row?.key).startsWith('resale:');
+const resale = row => row?.object?.kind === 'resale';
 // The hours a cash price costs a bot holding `held` adena (user 10-27, T53):
 // only the part the wallet lacks is earned at the hunt rate (`huntPrice`,
 // hours per adena). The held part is priced by its best other use, which
