@@ -231,15 +231,18 @@ function privateSession(name, id, selfId) {
             } finally { Market.bestOffer = originalBest; Market.hotOffers = originalHot; }
         });
         await check('worker NPC and board lookups use OfferQuery with immutable rows', () => {
-            const originalQuery = OfferQuery.bestSellOffer;
-            let queried = 0;
-            OfferQuery.bestSellOffer = (...args) => { queried++; return originalQuery(...args); };
+            // The NPC lookup asks bestSellOffer; the market lookup asks the one
+            // buyer's search, bestBuyerOffer (R3: the worker gear planner's offers).
+            const originalQuery = OfferQuery.bestSellOffer, originalBuyer = OfferQuery.bestBuyerOffer;
+            const queried = [];
+            OfferQuery.bestSellOffer = (...args) => { queried.push('sell'); return originalQuery(...args); };
+            OfferQuery.bestBuyerOffer = (...args) => { queried.push('buyer'); return originalBuyer(...args); };
             try {
                 const lookup = ColdCatalog.createLookup([{ sourceType: 'npc', selfId: 1, sourceId: 7001, town: 'Giran', price: 883 }]);
                 assert.strictEqual(lookup.bestOffer(1, buyer)?.price, 883);
                 assert.strictEqual(lookup.findMarketOffer(1, buyer)?.price, 883);
-                assert.strictEqual(queried, 2);
-            } finally { OfferQuery.bestSellOffer = originalQuery; }
+                assert.deepStrictEqual(queried, ['sell', 'buyer']);
+            } finally { OfferQuery.bestSellOffer = originalQuery; OfferQuery.bestBuyerOffer = originalBuyer; }
         });
     } finally { World.user = originalUser; AfkTrade._resetForTests(); }
     assert.strictEqual(failures.length, 0, `routing failures: ${failures.join(', ')}`);
