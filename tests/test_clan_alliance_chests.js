@@ -20,6 +20,7 @@ const mocks = {
     'GameServer/World/RaidBossMinionManager': {},
     'GameServer/World/World': world,
     'GameServer/Bot/AI/BotMobCompetition': { record() {} },
+    'GameServer/Npc/NpcHate': require('../src/GameServer/Npc/NpcHate'),
     'npc-generics': { die(session, actor, npc) { npc.state.setDead(true); kills.push(npc.fetchId()); } }
 };
 const moduleBox = { exports: {} };
