@@ -112,10 +112,14 @@ const pages = rows => [{ tables: [{ name: 'board', from: null, to: 0, full: true
     assert.deepEqual([...unknown], [guard.recipeItemId], 'an unknown recipe bids for no input');
     const learned = await guardBids([guard.recipeId]);
     assert(!learned.has(guard.recipeItemId), 'a known recipe bids for no scroll');
-    assert(learned.has(1959) && learned.has(1892), 'a known recipe bids for its inputs nobody sells');
+    // Each input comes by its item node's cheapest path (WishNetwork solve, R3,
+    // user 2026-10-24): the Blacksmith's Frames by a bid or by their own craft,
+    // whose unknown recipe bids for its scroll (2147) first.
+    const frame = bids => bids.has(1892) || bids.has(Recipes.resolveVariantsByProductId(1892)[0].recipeItemId);
+    assert(learned.has(1959) && frame(learned), 'a known recipe bids for its inputs nobody sells');
     const holding = await guardBids([], { [guard.recipeItemId]: { selfId: guard.recipeItemId, amount: 1 } });
     assert(!holding.has(guard.recipeItemId), 'a held scroll is not bid for');
-    assert(holding.has(1959) && holding.has(1892), 'an unknown recipe with its scroll held bids for its inputs');
+    assert(holding.has(1959) && frame(holding), 'an unknown recipe with its scroll held bids for its inputs');
     // The network's flow: a producer root whose recipe is still to learn has
     // one shopping leaf, its scroll; the input waits though a seller has it
     // (TradeIntent.scrollFirst). Each actor rolls its own choice of leaf.
