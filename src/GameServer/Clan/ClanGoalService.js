@@ -317,18 +317,13 @@ async function resolveClan(clan, options = {}) {
     try {
         const strategic = await require('./ClanStrategyService').review(clan, options);
         if (strategic.pending || strategic.ok === false) return strategic;
-        const strategy = require('./ClanStrategyPolicy').active(clan);
-        if (!strategy && clan?.state?.goal?.type === 'strategy') {
+        // A strategy never replaces the clan's goal (decision 10-26: it orders
+        // work, never pauses it); a waiting goal an older build saved is cleared.
+        if (clan?.state?.goal?.type === 'strategy') {
             const cleared = await Database.updateAutonomousClanGoal({ clanId: clan.id, goal: null,
                 expectedUpdatedAt: number(clan.state.updatedAt), eventType: null });
             if (!cleared.ok) return cleared;
             clan.state = cleared.state;
-        }
-        if (strategic.managed && ['treasury', 'recruit', 'clan_hall', 'maintain'].includes(strategy?.objective)) {
-            const goal = require('./ClanStrategyService').waitingGoal(strategy);
-            const saved = await Database.updateAutonomousClanGoal({ clanId: clan.id, goal,
-                expectedUpdatedAt: number(clan.state?.updatedAt), eventType: null });
-            return { ...saved, changed: false, goal, strategy };
         }
         const result = await resolveClanInternal(clan, options);
         if (result.goal && clan) ReviewEvents.track({ ...clan, state: { ...clan.state,
@@ -363,8 +358,7 @@ async function resolveClanInternal(clan, options = {}) {
     // own previous goal.
     const automaticPrevious = String(stateGoal?.controlledBy || '') === 'player' ? null : stateGoal;
     const strategy = require('./ClanStrategyPolicy').active(clan);
-    if (number(clan.level) === 3 && String(clan.state?.mode || '') === 'autonomous'
-        && (!strategy || strategy.objective === 'advance_clan' || stateGoal?.plan?.kind === 'alliance_trial')) {
+    if (number(clan.level) === 3 && String(clan.state?.mode || '') === 'autonomous') {
         const trial = await Database.resolveBotClanAlliance(clan.id);
         if (trial.advanced?.ok) {
             await ClanService.reload();
@@ -379,7 +373,9 @@ async function resolveClanInternal(clan, options = {}) {
             return { ...saved, clanId: clan.id, changed: true, goal };
         }
     }
-    if (number(clan.level) >= 3 || strategy && ['equip_roster', 'raid_preparation'].includes(strategy.objective)) {
+    // Below level 3 the level goal goes on; a gear strategy orders the
+    // production goal's equipment work (resolveProduction), beside it.
+    if (number(clan.level) >= 3) {
         const previous = automaticPrevious?.type === 'equipment' ? automaticPrevious : clan.state?.productionGoal || null;
         const candidateSnapshot = await ClanGoalCandidateService.snapshotFor(clan, previous, options);
         await ClanEquipmentService.validatePlanning(clan, candidateSnapshot.planning);
@@ -408,10 +404,12 @@ async function resolveClanInternal(clan, options = {}) {
             candidateIds: candidateSnapshot.candidates.map(candidate => candidate.id)
         });
         if (equipment.skipped && !equipment.completed) {
+            // A gear strategy with nothing to do is marked for review; the clan's
+            // own no-debt path goes on (a strategy never holds the clan in a retry).
             if (strategy && ['equip_roster', 'raid_preparation'].includes(strategy.objective)
                 && equipment.reason === 'no_equipment_debt') {
                 const blocked = await require('./ClanStrategyService').block(clan);
-                return { ...blocked, retryable: true, reason: 'clan_planning_deferred' };
+                if (blocked.ok === false) return blocked;
             }
             if (equipment.recruitmentScan) {
                 const section = equipment.ownerSection || 'goal';

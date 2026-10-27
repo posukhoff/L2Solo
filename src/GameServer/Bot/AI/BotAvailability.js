@@ -4,6 +4,7 @@ const BotServiceIdentity = invoke('GameServer/Bot/AI/BotServiceIdentity');
 const SpeckMath = invoke('GameServer/SpeckMath');
 const InteractionMemory = invoke('GameServer/Social/InteractionMemoryRuntime');
 const PlayerPartyRelationship = require('../../Social/PlayerPartyRelationship');
+const MemoryPolicy = require('../../Social/InteractionMemoryPolicy');
 
 const MAX_LEVEL_GAP = 12;
 
@@ -20,7 +21,43 @@ function distance(a, b) {
     return new SpeckMath.Point3D(a.locX, a.locY, a.locZ).distance(new SpeckMath.Point3D(b.locX, b.locY, b.locZ));
 }
 
-function reasonText(reason) {
+// The words for each act that harms the relation, said in a grudge refusal.
+const GRUDGE_TEXT = Object.freeze({
+    killed: 'you killed me', attacked: 'you attacked me', party_kicked: 'you kicked me from your party',
+    party_dismissed: 'you broke up our party', party_wiped: 'our party with you was wiped', insulted: 'you insulted me',
+    aided_opponent: 'you helped my opponent', mob_contested: 'you took my mobs', loot_taken: 'you took my loot',
+    ignored_loot_request: 'you ignored my loot request'
+});
+// How much an act feeds a grudge: the hostility it adds and the trust it
+// takes (InteractionMemoryPolicy.EVENTS, the one table of each act's effect).
+const TRUST = MemoryPolicy.FIELDS.indexOf('trust'), HOSTILITY = MemoryPolicy.FIELDS.indexOf('hostility');
+const harm = type => GRUDGE_TEXT[type] && MemoryPolicy.EVENTS[type]
+    ? Math.max(0, MemoryPolicy.EVENTS[type][HOSTILITY] - MemoryPolicy.EVENTS[type][TRUST]) : 0;
+// What the player did: the newest harmful act the relation keeps
+// (InteractionMemoryPolicy REASON_LIMIT, newest first), else the one that
+// fed the grudge most over the pair's lasting counts (later invites and chat
+// push the kept acts out).
+function grudgeCause(relation, counts = {}) {
+    if (relation?.immediateThreat) return 'you are attacking me';
+    if (relation?.diplomaticEnemy) return 'our clans are enemies';
+    const kept = (relation?.personal?.reasons || []).find(row => harm(row.type) > 0);
+    if (kept) return GRUDGE_TEXT[kept.type];
+    let best = null, most = 0;
+    for (const type of Object.keys(GRUDGE_TEXT)) {
+        const fed = harm(type) * Math.max(0, Number(counts[type]) || 0);
+        if (fed > most) { best = type; most = fed; }
+    }
+    return best ? GRUDGE_TEXT[best] : '';
+}
+
+// A refusal names its reason (user 10-27, R4): the level gap and the grudge
+// say their numbers and cause; facts: { levelGap, relation, counts }.
+function reasonText(reason, facts = {}) {
+    if (reason === 'level_gap_too_large' && facts.levelGap !== undefined) return `level gap ${facts.levelGap}, max ${MAX_LEVEL_GAP}`;
+    if (reason === 'relationship_hostile') {
+        const cause = grudgeCause(facts.relation, facts.counts);
+        if (cause) return `we still have a conflict to settle: ${cause}`;
+    }
     const text = {
         available: 'available',
         missing_actor: 'missing actor',
@@ -112,6 +149,17 @@ function socialRefusal(memory) {
     return null;
 }
 
+// The answer and its text, with the facts the refusal is about.
+function answer(result, reason, botLevel, player, subject) {
+    result.available = reason === 'available';
+    result.reason = reason;
+    // The lasting counts are read only for a grudge (main's InteractionMemory).
+    result.reasonText = reasonText(reason, { levelGap: Math.abs(botLevel - Number(player.fetchLevel())),
+        relation: result.sharedRelationship, counts: reason === 'relationship_hostile'
+            ? InteractionMemory.socialCounts(subjectId(subject), subjectId(player)) : undefined });
+    return result;
+}
+
 const BotAvailability = {
     socialRefusal,
 
@@ -133,10 +181,7 @@ const BotAvailability = {
         else if (result.relationshipReason) reason = result.relationshipReason;
         else if (socialRefusal(result.memory)) reason = 'relationship_hostile';
         else if (Math.abs(bot.fetchLevel() - player.fetchLevel()) > MAX_LEVEL_GAP) reason = 'level_gap_too_large';
-        result.available = reason === 'available';
-        result.reason = reason;
-        result.reasonText = reasonText(reason);
-        return result;
+        return answer(result, reason, Number(bot.fetchLevel()), player, bot);
     },
 
     evaluateState(playerSession, state, options = {}) {
@@ -161,10 +206,7 @@ const BotAvailability = {
         else if (result.relationshipReason) reason = result.relationshipReason;
         else if (socialRefusal(result.memory)) reason = 'relationship_hostile';
         else if (Math.abs(Number(state.level || 1) - player.fetchLevel()) > MAX_LEVEL_GAP) reason = 'level_gap_too_large';
-        result.available = reason === 'available';
-        result.reason = reason;
-        result.reasonText = reasonText(reason);
-        return result;
+        return answer(result, reason, Number(state.level || 1), player, state);
     },
 
     listForPlayer(playerSession, botSessions) {

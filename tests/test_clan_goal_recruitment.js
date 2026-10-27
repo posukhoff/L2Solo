@@ -162,6 +162,8 @@ async function boundedContinuation(clan) {
         const saved = await Database.updateAutonomousClanGoal({ clanId: clan.id, ownerSection: 'productionGoal', goal: null,
             recruitmentScan: first.recruitment.scan, eventType: null });
         assert(saved.ok); assert.equal(Events.recruitmentCount(), 1);
+        // The clan's projection (track) tells the watch the clan has a free slot.
+        Events.syncRecruitment({ ...clan, state: saved.state });
 
         await Events.drain();
         await query('BEGIN IMMEDIATE');
@@ -176,6 +178,31 @@ async function boundedContinuation(clan) {
         assert((await Events.drain()).some(event => event.clanId === clan.id), 'committed meeting release wakes finite request');
         await query('UPDATE board_trade_participants SET meetingId=NULL WHERE characterId=?', [base + 164]);
         assert.deepEqual(await Events.drain(), [], 'unchanged meeting replay is quiet');
+        // An own member of a class the watch does not want leaves the free pool:
+        // the nine may break, so the clan hears it as a recruitment input.
+        await query("UPDATE bot_life_state SET partyId='fixture-party' WHERE characterId=?", [base + 2]);
+        assert((await Events.drain()).some(event => event.clanId === clan.id && event.causes.includes('recruitment_input')),
+            'own member joining a party wakes recruitment');
+        await query("UPDATE bot_life_state SET partyId=NULL WHERE characterId=?", [base + 2]);
+        await Events.drain();
+        // Own outputs are not inputs: the clan's own party forming around its
+        // member does not reopen its finished sweep; a party of another clan does.
+        const joinParty = (partyId, objectiveClanId) => query(`UPDATE bot_life_state SET partyId=?,
+            statsJson=json_set(statsJson,'$.clanPartyObjective',json(?)) WHERE characterId=?`,
+        [partyId, JSON.stringify({ reason: 'clan_equipment', clanId: objectiveClanId }), base + 2]);
+        await joinParty('own-clan-party', clan.id);
+        assert(!(await Events.drain()).some(event => event.clanId === clan.id), 'own clan party forming is quiet');
+        await query("UPDATE bot_life_state SET partyId=NULL WHERE characterId=?", [base + 2]);
+        assert(!(await Events.drain()).some(event => event.clanId === clan.id), 'own clan party ending is quiet');
+        // A full clan admits nobody: a watch with no class wanted is kept only with a free slot.
+        assert.equal(Events.watchRecruitment(990001, { classIds: [] }, false), false, 'a full clan keeps no own-member watch');
+        assert.equal(Events.watchRecruitment(990001, { classIds: [] }, true), true);
+        Events.unwatchRecruitment(990001);
+        await joinParty('other-clan-party', clan.id + 1);
+        assert((await Events.drain()).some(event => event.clanId === clan.id && event.causes.includes('recruitment_input')),
+            'another clan party taking the member wakes recruitment');
+        await query("UPDATE bot_life_state SET partyId=NULL, statsJson=json_remove(statsJson,'$.clanPartyObjective') WHERE characterId=?", [base + 2]);
+        await Events.drain();
 
         const farming = structuredClone(clan);
         farming.members[0].activity = 'resting';
@@ -210,6 +237,14 @@ async function boundedContinuation(clan) {
         const stopped = await Equipment.planningForClan({ ...clan, state: exhausted }, null,
             { spots: [spot], occupancy: {}, planningDeadline: Date.now() + 30000 });
         assert(!stopped.recruitment.continuation); assert.equal(queries.length, count, 'exhausted unchanged logical scan performs no repeated first-page read');
+        // Events, not fingerprints: own farming, spot and buffs move no input of
+        // the finished sweep; only a recruitment_input event starts a new one.
+        const quiet = await Equipment.planningForClan({ ...farming, state: exhausted }, null,
+            { spots: [spot], occupancy: {}, planningDeadline: Date.now() + 30000 });
+        assert(!quiet.recruitment.continuation && quiet.recruitment.scan.done, 'own farming does not reopen a finished sweep');
+        const woken = await Equipment.planningForClan({ ...farming, state: exhausted }, null,
+            { spots: [spot], occupancy: {}, reviewCauses: ['recruitment_input'], planningDeadline: Date.now() + 30000 });
+        assert(woken.recruitment.continuation && !woken.recruitment.scan.done, 'a recruitment input starts a new sweep');
 
         // A candidate behind the cursor learns healing during the sweep. The
         // event must neither rewind this page nor lose that candidate forever.

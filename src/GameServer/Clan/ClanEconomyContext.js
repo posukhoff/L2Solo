@@ -108,12 +108,13 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
         - a.valueHours / Math.max(1, a.paths[0].price) || a.object.hallId - b.object.hallId);
     const chosenHall = strategy?.objective === 'clan_hall'
         ? hallNodes.find(node => Number(node.object.hallId) === Number(strategy.target.hallId)) : hallNodes[0];
-    const selected = nodes.filter(node => node.object.kind !== 'hall').sort((a, b) => held(b) - held(a) || b.valueHours / Math.max(1, b.paths[0].price)
-        - a.valueHours / Math.max(1, a.paths[0].price) || a.key.localeCompare(b.key)).slice(0, chosenHall ? 11 : 12);
-    if (chosenHall) selected.push(chosenHall);
-    const eligible = selected.filter(node => Strategy.spendingAllowed(clan, node.object.kind)
-        && (!strategy || strategy.objective !== 'clan_hall' || node.object.kind !== 'hall'
-            || Number(node.object.hallId) === Number(strategy.target.hallId)));
+    // The strategy's spending kinds come next (ClanStrategyPolicy.favors): it
+    // orders the cut, it removes nothing from the purse.
+    const favored = node => Number(Strategy.favors(clan, node.object.kind));
+    const eligible = nodes.filter(node => node.object.kind !== 'hall').sort((a, b) => held(b) - held(a) || favored(b) - favored(a)
+        || b.valueHours / Math.max(1, b.paths[0].price) - a.valueHours / Math.max(1, a.paths[0].price)
+        || a.key.localeCompare(b.key)).slice(0, chosenHall ? 11 : 12);
+    if (chosenHall) eligible.push(chosenHall);
     const inputKey = JSON.stringify([wallet, reserve, level, persona, eligible, strategy?.objective, strategy?.target,
         memberContexts.map(context => context.inputKey), clan.state?.goal?.economy?.focus]);
     const network = engine.build({ actorKey: `clan:${clan.id}`, inputKey, nodes: eligible, roots: eligible.map(node => node.key),
@@ -146,7 +147,7 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
     return { actorKey: `clan:${clan.id}`, inputKey, wallet, reserve, incomePerHour: income, network, proofOffer,
         focusObject: eligible.find(node => node.key === network.focus?.[0])?.object || null,
         moneyPrice: network.moneyPrice, hourAdena: network.hourAdena, persona, budgetFor, hallBid,
-        hall: chosenHall && Strategy.spendingAllowed(clan, 'hall') ? halls.find(hall => Number(hall.id) === chosenHall.object.hallId) : null,
+        hall: chosenHall ? halls.find(hall => Number(hall.id) === chosenHall.object.hallId) : null,
         statsPacket: { wishFocus: network.focus, dormantWishes: network.dormant } };
 }
 

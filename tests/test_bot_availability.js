@@ -45,6 +45,22 @@ try {
     assert(both().every(r => r.available), 'a dead player may invite companions');
     player.actor = actor(1);
     assert.equal(both()[0].distance, 100000, 'distance remains diagnostic');
+    // A refusal names its reason: the gap's numbers, the act behind a grudge.
+    assert(both({}, { ...hot, actor: actor(2, 73) }, { ...state, level: 73 }).every(r => r.reasonText === 'level gap 13, max 12'));
+    relation = { ready: true, personal: { trust: -3, hostility: 10, reasons: [{ type: 'party_kicked', at: 2 }, { type: 'chat', at: 1 }] } };
+    assert(both().every(r => r.reasonText === 'we still have a conflict to settle: you kicked me from your party'),
+        'a grudge refusal names what the player did');
+    relation = { ready: true, personal: { trust: 0, hostility: 10, reasons: [] } };
+    assert(both().every(r => r.reasonText === 'we still have a conflict to settle'), 'a grudge with no kept act keeps the plain text');
+    // Later invites push the kick out of the kept acts: the lasting counts still name it.
+    relation = { ready: true, personal: { trust: -3, hostility: 10, reasons: [{ type: 'party_refused', at: 3 }, { type: 'invite_attempt', at: 2 }] } };
+    const socialCounts = Memory.socialCounts;
+    Memory.socialCounts = () => ({ party_kicked: 1, invite_attempt: 4, mob_contested: 0 });
+    try {
+        assert(both().every(r => r.reasonText === 'we still have a conflict to settle: you kicked me from your party'),
+            'the lasting counts name a kick the kept acts lost');
+    } finally { Memory.socialCounts = socialCounts; }
+    relation = { ready: true, personal: null };
 
     for (const offset of [-13, -12, 12, 13]) {
         const results = both({}, { ...hot, actor: actor(2, 60 + offset) }, { ...state, level: 60 + offset });

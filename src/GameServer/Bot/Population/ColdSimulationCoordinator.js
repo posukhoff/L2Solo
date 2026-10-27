@@ -1539,7 +1539,8 @@ class ColdSimulationCoordinator {
         // refused (prepare_rejected) and the worker requeues it.
         const state = LifeState.cachedState(proposal.characterId);
         if (!state) return null;
-        if (Number(state.stats?.clanId) > 0) proposal[CLAN_BEFORE] = { level: state.level, sp: state.sp, inventory: state.inventory };
+        if (Number(state.stats?.clanId) > 0) proposal[CLAN_BEFORE] = { level: state.level, sp: state.sp, inventory: state.inventory,
+            backoffs: state.stats?.clanHuntBackoffs };
         const partyId = partyIdOf(state);
         if ((partyId && invoke('GameServer/Bot/Population/HotPartyLifecycle').pending.has(partyId))
             || this.visibleToRealPlayer(state)) return null;

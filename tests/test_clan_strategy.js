@@ -78,8 +78,9 @@ async function main() {
         assert.equal(clan.state.strategy.objective, 'treasury');
         assert.equal(clan.state.strategy.source, 'llm');
         assert.equal(clan.state.strategy.inference.promptTokens, 600);
-        assert(!Policy.spendingAllowed(clan, 'equipment'));
-        assert(!Policy.spendingAllowed(clan, 'hall'));
+        // A treasury objective favours no spending and pauses none (decision 10-26).
+        assert(!Policy.favors(clan, 'equipment'));
+        assert(!Policy.favors(clan, 'hall'));
         for (let i = 0; i < 100; i++) {
             clan.state.updatedAt++; clan.members[0].simulationRevision = i;
             input.warehouse[0].amount++;
@@ -109,8 +110,10 @@ async function main() {
         assert.equal(clan.state.strategy.objective, 'equip_roster');
         const selected = Policy.selection(clan, input.plans, { member: clan.members[2] });
         assert.equal(selected.member.characterId, clan.state.strategy.target.upgrades[0].memberId);
-        assert(Policy.spendingAllowed(clan, 'equipment'));
-        assert(!Policy.spendingAllowed(clan, 'level'));
+        assert(Policy.favors(clan, 'equipment'));
+        assert(!Policy.favors(clan, 'level'));
+        assert.deepEqual(Policy.selection(clan, new Map(), { member: clan.members[2] }), { member: clan.members[2] },
+            'with no strategic target planned the clan keeps its own pick, never a pause');
         const first = clan.state.strategy.target.upgrades[0];
         clan.members.find(member => member.characterId === first.memberId).inventory[first.itemId] = { selfId: first.itemId, equipped: true, slot: 7 };
         assert.equal(Policy.progress(clan.state.strategy, clan, input).progress, 1);

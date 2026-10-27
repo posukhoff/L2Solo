@@ -268,6 +268,12 @@ async function sourceCases(clan) {
     await coordinator.afterCommit({ proposal, nextState: after });
     assert((await Events.drain()).some(row => row.clanId === clan.id && row.causes.includes('recruitment_input')),
         'accepted useful-source backoff reaches existing native after-commit consumer');
+    // The pre-step copy carries the backoffs: the next step with the same backoff is quiet.
+    const again = { characterId: before.characterId, token: after.simulation || {}, nextState: after, result: {} };
+    await coordinator.prepareProposal(again);
+    await coordinator.afterCommit({ proposal: again, nextState: after });
+    assert(!(await Events.drain()).some(row => row.clanId === clan.id && row.causes.includes('recruitment_input')),
+        'an unchanged source backoff does not wake recruitment on every step');
     assert(await Life.upsertState(before, 'test_native_source_restored')); await Events.drain();
     Profiles.cache = oldProfiles;
     assert(!Demand.economicSourceCurrent(team.source), 'unavailable selected native source cannot keep demand current');
@@ -362,16 +368,27 @@ async function main() {
         assert(pages[0].classIds.includes(57) && pages[0].classIds.every(classId =>
             invoke('GameServer/Bot/Economy/CraftEligibility').canCraft({ classId, level: 80 }, recipe)), 'query uses native capable craft families before LIMIT');
         assert(first.recruitment.continuation && !first.selection?.plan?.economicTeam, 'first64 wrong learned skills create no demand or phantom readiness');
+        assert.deepEqual(calls.slice(0, 2), ['discovery', 'conditional'],
+            'unavailable recruits use the conditional planner native fallback without an earlier discarded base plan');
         assert.equal(first.recruitment.scan.economic.cursor.characterId, base + 163);
         assert((await DB.updateAutonomousClanGoal({ clanId, goal: null, ownerSection: 'productionGoal', recruitmentScan: first.recruitment.scan, eventType: null })).ok);
         clan = await projection();
+        const observedPlan = Runtime.plan;
+        try {
+            Runtime.plan = async () => { throw Error('economic discovery unavailable'); };
+            await assert.rejects(Equipment.planningForClan(clan, null, runOptions()),
+                error => error.code === 'clan_planning_deferred' && error.message === 'economic discovery unavailable');
+        } finally { Runtime.plan = observedPlan; }
+        await assert.rejects(Equipment.planningForClan(clan, null, { ...runOptions(), planningDeadline: Date.now() - 1 }),
+            error => error.code === 'clan_planning_deferred' && error.message === 'clan planning deadline');
         const beginCalls = calls.length, beginPages = pages.length;
         const next = await Equipment.planningForClan(clan, null, runOptions());
         assert.equal(pages.length, beginPages + 1); assert.equal(pages.at(-1).count, 3);
         assert.equal(next.selection?.plan?.strategy, 'craft', JSON.stringify(next.selection));
         const team = next.selection.plan.economicTeam;
         assert.deepEqual(team.prospectiveIds, [crafterId]); assert(!team.actualReady);
-        assert.deepEqual(calls.slice(beginCalls, beginCalls + 3), ['base', 'discovery', 'conditional'], 'real RPC native comparisons share the admitted job');
+        assert.deepEqual(calls.slice(beginCalls, beginCalls + 2), ['discovery', 'conditional'],
+            'the same native craft target and real recruit need no discarded base calculation');
         const goal = invoke('GameServer/Clan/ClanEquipmentPolicy').buildGoal(clan, next.selection); goal.assignedMemberIds = [];
         const demand = Demand.buildDemand(clan, goal, team, 'productionGoal');
         const revised = structuredClone(team); revised.rows.forEach(row => row[1]++);
@@ -411,8 +428,12 @@ async function main() {
         const accepted = await Equipment.resolveClan(current, current.state.productionGoal, { ownerSection: 'productionGoal', planning: refreshed });
         assert.equal(accepted.joined.accepted, secondCrafter, JSON.stringify(accepted));
         current = await projection(); assert(current.members.some(row => row.characterId === secondCrafter));
+        const ownBeginCalls = calls.length;
         const actualPlanning = await Equipment.planningForClan(current, current.state.productionGoal, runOptions());
         assert(!actualPlanning.selection.plan.economicTeam, 'actual membership returns to own native provider planning');
+        assert.deepEqual(calls.slice(ownBeginCalls, ownBeginCalls + 2), ['discovery', 'base'],
+            'discovery with no external requirements keeps ordinary native planning');
+        assert.equal(actualPlanning.selection.plan.target.selfId, recipe.productId, 'own-provider planning preserves the craft target');
         const actual = await Equipment.resolveClan(current, current.state.productionGoal, { ownerSection: 'productionGoal', planning: actualPlanning });
         assert(actual.ok && actual.assignment.ok); assert(!actual.goal.fullRoster, 'economic helper is not a required combat-nine marker');
         let customer = await Life.findByCharacterId(base);

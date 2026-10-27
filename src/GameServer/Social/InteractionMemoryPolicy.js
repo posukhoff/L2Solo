@@ -278,5 +278,5 @@ function assess(memory, source, target, context, now) {
         immediateThreat: context.attackingMe === true, reasons };
 }
 
-module.exports = { VERSION, LIMITS, PROTECTED_LIMIT, RECENT_LIMIT, REASON_LIMIT, ACCEPT_WINDOW_MS, MAX_BATCH, HUNT_COOLDOWN_MS, FIELDS,
+module.exports = { VERSION, EVENTS, LIMITS, PROTECTED_LIMIT, RECENT_LIMIT, REASON_LIMIT, ACCEPT_WINDOW_MS, MAX_BATCH, HUNT_COOLDOWN_MS, FIELDS,
     empty, event, apply, view, assess, id, validate, halfLife, trim, strength, protectedRelation };

@@ -142,7 +142,7 @@ async function hall() {
         await Hall.start();
         for (let pass = 0; pass < 8; pass++) await Hall.tick();
         assert(planned.includes(704), 'the treasury strategy already consumed its startup finance event');
-        assert.equal((await Database.fetchClanHallFinance(704)).bid, null);
+        assert.notEqual((await Database.fetchClanHallFinance(704)).bid, null, 'a treasury strategy pauses no hall bid (decision 10-26)');
         await Events.drain(); planned.length = 0;
         unsubscribe = Events.subscribe((clanId, cause) => published.push({ clanId, cause }));
         const owner = await Goals.clanProjectionById(704);

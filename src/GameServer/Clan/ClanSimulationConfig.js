@@ -1,3 +1,5 @@
+const Rules = require('./ClanRules');
+
 const DEFAULTS = {
     enabled: true,
     founderMinLevel: 20,
@@ -16,7 +18,8 @@ const DEFAULTS = {
     warehouseDepositBatchSize: 8,
     bloodMarkMaxPrice: 2500000,
     marketDemandTimeoutMs: 300000,
-    bloodMarkItemId: 1419,
+    // The level-2 proof is a game rule, not a setting: ClanRules owns its id.
+    bloodMarkItemId: Rules.LEVEL_REQUIREMENTS[2].itemId,
     bloodMarkSourceNpcId: 12079,
     operationMinMembers: 3,
     operationMaxMembers: 9,
@@ -61,7 +64,6 @@ const ENV_KEYS = {
     warehouseDepositBatchSize: 'CLAN_SIMULATION_WAREHOUSE_DEPOSIT_BATCH_SIZE',
     bloodMarkMaxPrice: 'CLAN_SIMULATION_BLOOD_MARK_MAX_PRICE',
     marketDemandTimeoutMs: 'CLAN_SIMULATION_MARKET_DEMAND_TIMEOUT_MS',
-    bloodMarkItemId: 'CLAN_SIMULATION_BLOOD_MARK_ITEM_ID',
     bloodMarkSourceNpcId: 'CLAN_SIMULATION_BLOOD_MARK_SOURCE_NPC_ID',
     operationMinMembers: 'CLAN_SIMULATION_OPERATION_MIN_MEMBERS',
     operationMaxMembers: 'CLAN_SIMULATION_OPERATION_MAX_MEMBERS',

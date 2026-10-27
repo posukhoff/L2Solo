@@ -190,13 +190,6 @@ async function review(clan, options = {}) {
     return { ...saved, managed: true, strategy, inputs };
 }
 
-function waitingGoal(strategy) {
-    return { type: 'strategy', status: strategy.status === 'completed' ? 'completed' : 'executing',
-        goalKey: `clan-strategy:${strategy.objective}:${strategy.selectedAt}`,
-        progress: strategy.progress, required: strategy.required, target: { name: strategy.label },
-        plan: { kind: 'strategy_wait', label: strategy.label, reasonCode: strategy.reason } };
-}
-
 async function block(clan, timestamp = Date.now()) {
     const current = Policy.active(clan);
     if (!current) return { ok: true };
@@ -207,5 +200,5 @@ async function block(clan, timestamp = Date.now()) {
     return save(clan, { ...current, executionBlockedAt: timestamp }, 'strategy_waiting');
 }
 
-module.exports = { review, block, inputsFor, configured, schema, waitingGoal, MAX_PROMPT_TOKENS, MAX_COMPLETION_TOKENS,
+module.exports = { review, block, inputsFor, configured, schema, MAX_PROMPT_TOKENS, MAX_COMPLETION_TOKENS,
     async waitFor(clanId) { return pending.get(Number(clanId))?.promise || null; }, reset() { pending.clear(); inFlight.clear(); } };

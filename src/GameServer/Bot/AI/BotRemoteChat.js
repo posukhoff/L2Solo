@@ -100,8 +100,9 @@ function fallbackReply(state, availability, text) {
     const lower = String(text || '').toLowerCase();
     const persona = personaForState(state);
 
+    // A grudge refusal names what the player did (BotAvailability.reasonText).
     if (availability?.reason === 'relationship_hostile') {
-        return `I hear you, but I don't trust you enough yet.`;
+        return `Not now: ${availability.reasonText || BotAvailability.reasonText(availability.reason)}.`;
     }
     if (availability?.reason === 'recently_abandoned') {
         return `Not now. Last party ended badly.`;

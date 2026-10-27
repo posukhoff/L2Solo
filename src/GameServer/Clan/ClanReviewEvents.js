@@ -67,13 +67,20 @@ function syncRecruitment(clan) {
     if (!(id > 0)) return;
     const demand = clan.state?.recruitmentDemand;
     const owner = clan.state?.[demand?.ownerSection || 'goal'];
+    // A full clan admits nobody (ClanRosterDemand pages only with a free
+    // slot): its own members' moves are no recruitment input. A state-only
+    // sync (Database, { id, state }) keeps the room the last projection read,
+    // none without a watch (the clan's next track() reads it).
+    const count = clan.physicalMemberCount ?? clan.members?.length;
+    const room = clan.level !== undefined && count !== undefined ? ClanRules.memberLimit(Number(clan.level)) > Number(count)
+        : recruitment.get(id)?.room ?? false;
     if (clan.state?.mode === 'autonomous' && demand && owner && owner.status !== 'completed'
-        && owner.controlledBy !== 'player' && (!demand.goalKey || demand.goalKey === owner.goalKey)) watchRecruitment(id, demand);
+        && owner.controlledBy !== 'player' && (!demand.goalKey || demand.goalKey === owner.goalKey)) watchRecruitment(id, demand, room);
     else {
         const scan = clan.state?.recruitmentScan;
         const scanOwner = clan.state?.[scan?.ownerSection || 'goal'];
         if (clan.state?.mode === 'autonomous' && scan && (scan.goalKey || null) === (scanOwner?.goalKey || null)
-            && scanOwner?.status !== 'completed' && scanOwner?.controlledBy !== 'player') watchRecruitment(id, scan);
+            && scanOwner?.status !== 'completed' && scanOwner?.controlledBy !== 'player') watchRecruitment(id, scan, room);
         else unwatchRecruitment(id);
     }
 }
@@ -140,19 +147,22 @@ function unwatchRecruitment(clanId) {
 
 // Finite request watch owned by the existing PLAN inputs. Keep only scalars;
 // the durable goal and native rows own people, reservations and wallets.
-function watchRecruitment(clanId, demand = {}) {
+// A watch with no class wanted still hears its own members (memberInput)
+// while the clan has a free slot: one of them leaving the nine is what opens
+// a new need. room: the clan has a free slot.
+function watchRecruitment(clanId, demand = {}, room = true) {
     const id = Number(clanId);
     if (!Number.isSafeInteger(id) || id <= 0) return false;
     const classIds = [...new Set((demand.classIds || []).map(Number).filter(value => Number.isSafeInteger(value) && value >= 0))];
     unwatchRecruitment(id);
-    if (!classIds.length || ['completed', 'fulfilled', 'cancelled'].includes(demand.status)
+    if (!classIds.length && !room || ['completed', 'fulfilled', 'cancelled'].includes(demand.status)
         || recruitment.size >= MAX_RECRUITMENT_CLANS) return false;
     const economicRequirements = Array.isArray(demand.requirements) ? demand.requirements : [];
     const request = { classIds, minLevel: Math.max(1, Number(demand.minLevel) || 1),
         maxLevel: Math.min(100, Number(demand.maxLevel) || 100), generation: demand.generation,
-        recipeIds: new Set([...(demand.source?.recipes || []), ...economicRequirements.filter(row => row.kind === 'craft').map(row => row.recipeId)]),
         sourceIds: new Set(economicRequirements.filter(row => row.kind === 'spoil').map(row => String(row.spotId))),
-        skillIds: demand.skillIds ? new Set(demand.skillIds.map(Number)) : null };
+        recipeIds: new Set([...(demand.source?.recipes || []), ...economicRequirements.filter(row => row.kind === 'craft').map(row => row.recipeId)]),
+        skillIds: demand.skillIds ? new Set(demand.skillIds.map(Number)) : null, room };
     recruitment.set(id, request);
     for (const classId of classIds) {
         const group = recruitmentClasses.get(classId) || new Set();
@@ -195,14 +205,27 @@ function watchedCandidate(classId, level, available, clanId) {
     return false;
 }
 
-function candidateInput(classId, level, available, clanId, skillId = null) {
+// sourceClanId: the clan whose own write moved the row (its reservation). A
+// clan's own outputs are not its inputs (Recompute): that clan is skipped.
+function candidateInput(classId, level, available, clanId, skillId = null, sourceClanId = 0) {
     if (!watchedCandidate(classId, level, available, clanId) || skillId !== null && !relevantSkill(skillId)) return;
     for (const id of recruitmentClasses.get(Number(classId)) || []) {
         const request = recruitment.get(id);
+        if (id === Number(sourceClanId)) continue;
         if (Number(clanId) !== 0 && Number(clanId) !== id || Number(level) < request.minLevel || Number(level) > request.maxLevel
             || skillId !== null && request.skillIds && !request.skillIds.has(Number(skillId))) continue;
         committedCandidates ||= new Set(); committedCandidates.add(id);
     }
+}
+
+// An own member of a watched clan moved what its raid nine reads: free or not
+// (cold, no party), equipped gear, a relevant skill, a reservation or a trade
+// meeting. Any class: a member leaving the nine opens a need the watch lacks.
+// The clan's own reservation of its member is its own output, not an input.
+function memberInput(clanId, skillId = null, sourceClanId = 0) {
+    const id = Number(clanId);
+    if (!recruitment.get(id)?.room || id === Number(sourceClanId) || skillId !== null && !relevantSkill(skillId)) return;
+    committedCandidates ||= new Set(); committedCandidates.add(id);
 }
 
 function recipeInput(classId, level, available, clanId, recipeId) {
@@ -235,16 +258,20 @@ function attach(connection) {
     connection.function('clan_candidate_recipe', (classId, level, available, clanId, recipeId) => {
         recipeInput(classId, level, available, clanId, recipeId); return null;
     });
-    connection.function('clan_candidate_input', (classId, level, available, clanId, skillId) => {
-        candidateInput(classId, level, available, clanId, skillId); return null;
+    connection.function('clan_candidate_input', (classId, level, available, clanId, skillId, sourceClanId) => {
+        candidateInput(classId, level, available, clanId, skillId, sourceClanId); return null;
     });
+    connection.function('clan_member_input', (clanId, skillId, sourceClanId) => { memberInput(clanId, skillId, sourceClanId); return null; });
     connection.function('clan_candidate_watched', (classId, level, available, clanId) => Number(watchedCandidate(classId, level, available, clanId)));
     connection.function('clan_candidate_saved_capability', (classId, level, available, clanId, before, after) => {
         savedCapabilitiesChanged(classId, level, available, clanId, before, after); return null;
     });
-    const call = prefix => `SELECT clan_candidate_input(${prefix}.classId,${prefix}.level,${prefix}.joinAvailability,${prefix}.clanId,NULL);`;
-    const byId = (id, skillId = 'NULL') => `SELECT clan_candidate_input(classId,level,joinAvailability,clanId,${skillId})
-        FROM bot_party_candidate_projection WHERE characterId = ${id};`;
+    const call = prefix => `SELECT clan_candidate_input(${prefix}.classId,${prefix}.level,${prefix}.joinAvailability,${prefix}.clanId,NULL,0);`;
+    // source: the clan whose own write this is (a reservation's clanId); it does not hear it.
+    const byId = (id, skillId = 'NULL', source = '0') => `SELECT clan_candidate_input(classId,level,joinAvailability,clanId,${skillId},${source})
+        FROM bot_party_candidate_projection WHERE characterId = ${id};
+        SELECT clan_member_input(clanId,${skillId},${source}) FROM bot_party_candidate_projection WHERE characterId = ${id} AND clanId > 0;`;
+    const free = life => `(${life}.phase IS 'cold' AND COALESCE(${life}.partyId, '') = '')`;
     const recipeById = prefix => `SELECT clan_candidate_recipe(classId,level,joinAvailability,clanId,${prefix}.recipeId)
         FROM bot_party_candidate_projection WHERE characterId=${prefix}.characterId;`;
     connection.exec(`
@@ -267,17 +294,24 @@ function attach(connection) {
         WHEN (OLD.equipped <> 0 OR NEW.equipped <> 0) AND (OLD.equipped IS NOT NEW.equipped OR OLD.enchant IS NOT NEW.enchant
             OR OLD.selfId IS NOT NEW.selfId OR OLD.characterId IS NOT NEW.characterId) BEGIN ${byId('OLD.characterId')} ${byId('NEW.characterId')} END;
         CREATE TEMP TRIGGER clan_candidate_reserve_added AFTER INSERT ON main.clan_operation_members
-        WHEN NEW.status = 'active' BEGIN ${byId('NEW.characterId')} END;
+        WHEN NEW.status = 'active' BEGIN ${byId('NEW.characterId', 'NULL', 'NEW.clanId')} END;
         CREATE TEMP TRIGGER clan_candidate_reserve_updated AFTER UPDATE OF status ON main.clan_operation_members
-        WHEN OLD.status IS NOT NEW.status BEGIN ${byId('NEW.characterId')} END;
+        WHEN OLD.status IS NOT NEW.status BEGIN ${byId('NEW.characterId', 'NULL', 'NEW.clanId')} END;
         CREATE TEMP TRIGGER clan_candidate_reserve_removed AFTER DELETE ON main.clan_operation_members
-        WHEN OLD.status = 'active' BEGIN ${byId('OLD.characterId')} END;
+        WHEN OLD.status = 'active' BEGIN ${byId('OLD.characterId', 'NULL', 'OLD.clanId')} END;
         CREATE TEMP TRIGGER clan_candidate_meeting_added AFTER INSERT ON main.board_trade_participants
         WHEN NEW.meetingId IS NOT NULL BEGIN ${byId('NEW.characterId')} END;
         CREATE TEMP TRIGGER clan_candidate_meeting_updated AFTER UPDATE OF meetingId ON main.board_trade_participants
         WHEN OLD.meetingId IS NOT NEW.meetingId BEGIN ${byId('NEW.characterId')} END;
         CREATE TEMP TRIGGER clan_candidate_meeting_removed AFTER DELETE ON main.board_trade_participants
         WHEN OLD.meetingId IS NOT NULL BEGIN ${byId('OLD.characterId')} END;
+        CREATE TEMP TRIGGER clan_member_free AFTER UPDATE OF phase,partyId ON main.bot_life_state
+        WHEN ${free('OLD')} IS NOT ${free('NEW')} BEGIN
+            SELECT clan_member_input(p.clanId,NULL,CASE WHEN COALESCE(OLD.partyId, '') IS COALESCE(NEW.partyId, '') THEN 0
+                ELSE json_extract(CASE WHEN COALESCE(NEW.partyId, '') <> '' THEN NEW.statsJson ELSE OLD.statsJson END,
+                    '$.clanPartyObjective.clanId') END)
+            FROM bot_party_candidate_projection p WHERE p.characterId=NEW.characterId AND p.clanId > 0;
+        END;
         CREATE TEMP TRIGGER clan_candidate_saved_skills AFTER UPDATE OF statsJson ON main.bot_life_state
         WHEN OLD.statsJson IS NOT NEW.statsJson AND EXISTS (
             SELECT 1 FROM bot_party_candidate_projection p WHERE p.characterId=NEW.characterId
@@ -294,13 +328,22 @@ function attach(connection) {
 function committedMember(previous = {}, state = {}) {
     const clanId = Number(state.stats?.clanId || 0);
     if (!(clanId > 0)) return;
+    // previous: the coordinator's pre-step copy (level, sp, inventory, backoffs).
+    // A hunt backoff on a spoil source the economic sweep reads is its input.
     const request = recruitment.get(clanId);
     if (request?.sourceIds.size) {
-        const relevant = value => (value.stats?.clanHuntBackoffs || []).filter(row => request.sourceIds.has(String(row.spotId)));
-        if (JSON.stringify(relevant(previous)) !== JSON.stringify(relevant(state))) changed(clanId, 'recruitment_input');
+        const relevant = rows => (rows || []).filter(row => request.sourceIds.has(String(row.spotId)));
+        if (JSON.stringify(relevant(previous.backoffs)) !== JSON.stringify(relevant(state.stats?.clanHuntBackoffs))) {
+            changed(clanId, 'recruitment_input');
+        }
     }
+    // A level moves the member's boss window.
+    const watched = !!request?.room;
     leaderSpChanged(state.characterId, previous.sp, state.sp);
-    if (Number(state.level) > Number(previous.level)) changed(clanId, 'member_level');
+    if (Number(state.level) > Number(previous.level)) {
+        changed(clanId, 'member_level');
+        if (watched) changed(clanId, 'recruitment_input');
+    }
     for (const itemId of trackedItems(clanId)) {
         if ((Number(previous.inventory?.[itemId]?.amount || 0) > 0) !== (Number(state.inventory?.[itemId]?.amount || 0) > 0)) {
             changed(clanId, 'member_item'); break;

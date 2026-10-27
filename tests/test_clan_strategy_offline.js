@@ -104,13 +104,14 @@ async function main() {
 
         await reset(projected.state.strategy);
         await q("UPDATE clan_simulation_clans SET stateJson=json_set(stateJson,'$.goal',json(?)) WHERE clanId=771",
-            [JSON.stringify(Strategy.waitingGoal(projected.state.strategy))]);
+            [JSON.stringify({ type: 'strategy', status: 'executing', goalKey: `clan-strategy:${projected.state.strategy.objective}:1`,
+                target: { name: projected.state.strategy.label }, plan: { kind: 'strategy_wait', label: projected.state.strategy.label } })]);
         Config.strategicManagementEnabled = false;
         const legacy = await Goals.resolveClan(await fresh());
         assert(legacy.ok && !legacy.pending && legacy.goal?.type === 'equipment',
             'disabling the strategic layer removes its waiting goal and restores native planning');
-        for (const kind of ['equipment', 'level', 'hall']) assert(Policy.spendingAllowed(await fresh(), kind),
-            'disabled strategic state cannot reserve native spending');
+        for (const kind of ['equipment', 'level', 'hall']) assert(!Policy.favors(await fresh(), kind),
+            'disabled strategic state orders no spending');
         assert.equal(calls, 0);
         Config.strategicManagementEnabled = true;
         console.log('PASS disabling an already-persisted strategic layer');

@@ -14,6 +14,7 @@ const StageMetrics = invoke('GameServer/Clan/ClanStageMetrics');
 const ReviewEvents = require('./ClanReviewEvents');
 const Diagnostics = require('../Bot/Economy/EconomyDiagnostics');
 const { randomUUID } = require('node:crypto');
+const StrategyPolicy = require('./ClanStrategyPolicy');
 
 const ACTION_TYPES = Object.freeze({
     PLAN: 'goal_plan',
@@ -189,7 +190,6 @@ function deferredRetryDelay(actionType, result = {}) {
 }
 
 async function scheduleProduction(clan) {
-    if (require('./ClanStrategyPolicy').active(clan)) return;
     if (number(clan.level) >= 3) return;
     if (clan.state?.goal?.controlledBy === 'player' && clan.state.goal.status !== 'completed') return;
     const [active] = await Database.execute([`SELECT id FROM clan_actions WHERE clanId = ?
@@ -201,8 +201,6 @@ async function scheduleProduction(clan) {
 }
 
 async function resolveProduction(clan, options = {}) {
-    const strategy = require('./ClanStrategyPolicy').active(clan);
-    if (strategy) return { ok: true, skipped: true, reason: 'strategy_focus' };
     if (clan.state?.goal?.controlledBy === 'player' && clan.state.goal.status !== 'completed') {
         return { ok: true, skipped: true, reason: 'player_order_active' };
     }
@@ -227,23 +225,44 @@ async function resolveProduction(clan, options = {}) {
 
 // A clan whose review met an action still leased by an earlier process: its
 // review waits for the lease end (`until`), the event that ends this wait,
-// instead of being raised again on every pass until the lease runs out.
+// instead of being raised again on every pass until the lease runs out. The
+// wait keeps the causes it held back and raises them again (no mark lost:
+// prepareRecruitment reads 'recruitment_input' among them).
 const leaseWaits = new Map();
 
+function raiseWaited(clanId, wait) {
+    for (const cause of wait.causes.size ? wait.causes : ['pending_review']) ReviewEvents.changed(clanId, cause);
+}
+
 function releaseLeaseWaits(at = Date.now()) {
-    for (const [clanId, until] of leaseWaits) {
-        if (until > at) continue;
+    for (const [clanId, wait] of leaseWaits) {
+        if (wait.until > at) continue;
         leaseWaits.delete(clanId);
-        ReviewEvents.changed(clanId, 'pending_review');
+        raiseWaited(clanId, wait);
     }
 }
 
 // The other end of the wait: this process resolved an action of the clan
 // before its lease ran out.
 function endLeaseWait(clanId) {
-    if (!leaseWaits.delete(number(clanId))) return;
+    const wait = leaseWaits.get(number(clanId));
+    if (!wait) return;
+    leaseWaits.delete(number(clanId));
     Diagnostics.count('clan_review', 'lease_wait', 'resolved');
-    ReviewEvents.changed(number(clanId), 'pending_review');
+    raiseWaited(number(clanId), wait);
+}
+
+// A pending action takes a later event's causes into its own reasons (it
+// reads its input when it runs). A row that left 'pending' or moved since the
+// read takes none: the causes are raised again.
+async function absorbCauses(clanId, row, causes) {
+    const payload = parseJson(row.payloadJson, {});
+    const reasons = [...new Set([...(payload.reasons || []), ...causes])];
+    if (reasons.length === (payload.reasons || []).length) return;
+    const written = await Database.execute([`UPDATE clan_actions SET payloadJson = ? WHERE id = ? AND status = 'pending'
+        AND payloadJson = ?`, [JSON.stringify({ ...payload, reasons }), row.id, row.payloadJson]], 'clan-review:absorb');
+    if (written.affectedRows) Diagnostics.count('clan_review', 'absorbed', 'pending', causes.length);
+    else for (const cause of causes) ReviewEvents.changed(clanId, cause);
 }
 
 // The open plan and supplies actions of the drained clans, one read per
@@ -251,7 +270,7 @@ function endLeaseWait(clanId) {
 // runs); otherwise a running one, with its lease end.
 async function openReviewActions(clanIds) {
     const types = [ACTION_TYPES.PLAN, ACTION_TYPES.SUPPLIES];
-    const rows = await Database.execute([`SELECT clanId, actionType, status, leaseUntil FROM clan_actions
+    const rows = await Database.execute([`SELECT id, clanId, actionType, status, leaseUntil, payloadJson FROM clan_actions
         WHERE clanId IN (${clanIds.map(() => '?').join(',')}) AND actionType IN (?, ?) AND status IN ('pending','running')`,
     [...clanIds, ...types]], 'clan-review:active');
     const open = new Map();
@@ -276,6 +295,8 @@ async function scheduleReviews() {
     }
     for (let index = 0; index < events.length; index++) {
         const event = events[index];
+        // What wakes clan reviews, by cause (R4: recruitment wakes on events).
+        for (const cause of event.causes) Diagnostics.count('clan_review', 'wake', cause);
         try {
             for (const actionType of [ACTION_TYPES.PLAN, ACTION_TYPES.SUPPLIES]) {
                 const active = open.get(`${event.clanId}:${actionType}`);
@@ -286,10 +307,13 @@ async function scheduleReviews() {
                     if (active.status === 'running') {
                         const until = number(active.leaseUntil);
                         if (until > at) {
-                            leaseWaits.set(event.clanId, Math.max(leaseWaits.get(event.clanId) || 0, until));
+                            const wait = leaseWaits.get(event.clanId) || { until: 0, causes: new Set() };
+                            wait.until = Math.max(wait.until, until);
+                            for (const cause of event.causes) wait.causes.add(cause);
+                            leaseWaits.set(event.clanId, wait);
                             Diagnostics.count('clan_review', 'lease_wait', 'parked');
-                        } else ReviewEvents.changed(event.clanId, 'pending_review');
-                    }
+                        } else for (const cause of event.causes) ReviewEvents.changed(event.clanId, cause);
+                    } else await absorbCauses(event.clanId, active, event.causes);
                     continue;
                 }
                 await Database.enqueueClanAction({ clanId: event.clanId, actionType, priority: actionType === ACTION_TYPES.PLAN ? 75 : 40,
@@ -628,7 +652,7 @@ async function resolveAction(action, options = {}) {
                 // Auxiliary actions do not alter the goal execution chain.
             } else if (clan && advanced) {
                 await schedulePlanAfterLevelUp(clan, action);
-            } else if (clan && require('./ClanStrategyPolicy').active(clan) && String(action.actionType) === ACTION_TYPES.PLAN) {
+            } else if (clan && StrategyPolicy.active(clan) && String(action.actionType) === ACTION_TYPES.PLAN) {
                 // This is a cheap progress/opportunity check, never a periodic
                 // LLM call. It also wakes stalled equipment and funding goals.
                 const reviewGoal = { type: 'strategy', status: 'executing', updatedAt: clan.state.strategy.lastDecisionAt };

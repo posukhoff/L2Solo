@@ -1,4 +1,5 @@
 const Crafting = require('./ClanCraftingPolicy');
+const Rules = require('./ClanRules');
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 const DataCache = invoke('GameServer/DataCache');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
@@ -15,8 +16,8 @@ function nameFor(item) {
     return String(item?.name || templateFor(item?.selfId)?.template?.name || `Item ${item?.selfId || 0}`);
 }
 
-function isBloodMark(item, config = {}) {
-    return Number(item?.selfId) === Number(config.bloodMarkItemId || 1419);
+function isBloodMark(item) {
+    return Number(item?.selfId) === Rules.LEVEL_REQUIREMENTS[2].itemId;
 }
 
 function isClanWarehouseCandidate(item, config = {}) {
@@ -26,7 +27,7 @@ function isClanWarehouseCandidate(item, config = {}) {
     if (!selfId || selfId === 57 || amount <= 0 || item?.equipped || item?.equippedCount > 0) return false;
     return Number(config.demand?.[selfId] || 0) > 0
         && (ItemDisposition.isRecipeItem(item) || Crafting.isResource(selfId)
-            || kind.startsWith('Other.Material') || isBloodMark(item, config)
+            || kind.startsWith('Other.Material') || isBloodMark(item)
             || kind.startsWith('Weapon.') || kind.startsWith('Armor.'));
 }
 
@@ -70,7 +71,7 @@ function depositCandidates(state = {}, items = [], warehouseItems = [], config =
             ...item,
             recipeLimit,
             amount,
-            reason: recipe ? 'recipe' : (isBloodMark(item, config) ? 'progression_item' : 'material')
+            reason: recipe ? 'recipe' : (isBloodMark(item) ? 'progression_item' : 'material')
         }];
     }).filter(item => item.amount > 0);
 }

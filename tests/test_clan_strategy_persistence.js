@@ -41,11 +41,12 @@ async function main() {
         const clan = { id: 77, level: 2, leaderId: 1, state: current, members: [] };
         const treasury = Economy.build(clan, { warehouse: [{ selfId: 57, amount: 5000000 }],
             halls: [{ ...require('../src/GameServer/ClanHall/Policy').catalog.halls[0], ownerId: 0 }], memberContexts: [] });
+        // A treasury strategy orders the clan's work and pauses none of it (decision 10-26):
+        // the hall stays in the purse, a member payment and the level work go on.
         assert.equal(treasury.budgetFor('equipment', 347), 0);
-        assert.equal(treasury.hall, null);
-        assert.equal(treasury.network.queue.length, 0);
-        assert.equal((await Database.payClanMember({ clanId: 77, characterId: 1, amount: 1, kind: 'clan_equipment' })).code, 'clan_strategy_reserve');
-        assert.equal((await require('../src/GameServer/Clan/ClanEconomyService').resolveClan(clan)).reason, 'strategy_focus');
+        assert.notEqual(treasury.hall, null);
+        assert.notEqual((await Database.payClanMember({ clanId: 77, characterId: 1, amount: 1, kind: 'clan_equipment' })).code, 'clan_strategy_reserve');
+        assert.equal((await require('../src/GameServer/Clan/ClanEconomyService').resolveClan(clan)).reason, 'level_two_contributions_deferred');
 
         const finished = { type: 'equipment', status: 'completed', goalKey: 'clan-equipment:77:1:383:11',
             target: { memberId: 1, itemId: 383, slot: 11 } };
@@ -67,13 +68,13 @@ async function main() {
         clan.state = saved.state;
         try {
             const goal = await Goals.resolveClan(clan, { inputs: input });
-            assert(goal.ok); assert.equal(goal.goal.type, 'strategy');
+            assert(goal.ok); assert.notEqual(goal.goal?.type, 'strategy', 'a strategy never replaces the clan goal');
             current = await read();
             const overview = Observer.compactClanOverview({ id: 77, level: 2, stateJson: JSON.stringify(current), simulationVersion: 1 });
             assert.equal(overview.strategy.percent, 1);
             assert.equal(overview.strategy.inference.promptTokens, 700);
             assert.equal(overview.strategy.achievements.upgrades, 1, 'Observer uses the durable restored counter');
-            assert.equal(overview.goal.plan.label, 'Build the treasury');
+            assert.equal(overview.strategy.label, 'Build the treasury');
         } finally { Service.inputsFor = originalInputs; Gateway.config = oldConfig; }
         current = await read();
         current.goal = { controlledBy: 'player', status: 'executing' };

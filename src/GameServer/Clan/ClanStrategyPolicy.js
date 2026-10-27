@@ -180,14 +180,14 @@ function fallback(snap) {
         || { id: 'maintain', objective: 'maintain', target: {}, label: LABELS.maintain };
 }
 
-function spendingAllowed(clan, kind) {
+// The clan's spending the active strategy puts first. A strategy only orders
+// the clan's work and never pauses any of it (decision 10-26): a treasury or
+// recruit objective favours no spending and blocks none.
+const FAVORED = Object.freeze({ clan_hall: ['hall', 'hall_upgrade'], equip_roster: ['equipment'],
+    raid_preparation: ['equipment'], advance_clan: ['level'] });
+function favors(clan, kind) {
     const strategy = active(clan);
-    if (!strategy || strategy.status !== 'active') return true;
-    if (strategy.objective === 'treasury') return false;
-    if (strategy.objective === 'clan_hall') return ['hall', 'hall_upgrade'].includes(kind);
-    if (['equip_roster', 'raid_preparation'].includes(strategy.objective)) return kind === 'equipment';
-    if (strategy.objective === 'advance_clan') return kind === 'level';
-    return false;
+    return strategy?.status === 'active' && (FAVORED[strategy.objective] || []).includes(kind);
 }
 
 function selection(clan, plans, original) {
@@ -199,8 +199,9 @@ function selection(clan, plans, original) {
             && (strategy.objective !== 'raid_preparation' || plan.next?.spotId === strategy.target.sourceId)
             && !equipped(member, target)) return { member, plan, selectedBy: 'clan_strategy' };
     }
-    return null;
+    // No strategic target has a plan yet: the clan's own pick goes on.
+    return original;
 }
 
-module.exports = { LABELS, REASONS, active, leader, summary, snapshot, progress, shouldReview, fallback, spendingAllowed, selection,
+module.exports = { LABELS, REASONS, active, leader, summary, snapshot, progress, shouldReview, fallback, favors, selection,
     trialReady, hash, targetKey, upgradeKey, equipped };
