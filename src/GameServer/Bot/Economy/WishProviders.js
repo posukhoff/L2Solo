@@ -101,7 +101,10 @@ function nominationBasis(state, committed = committedOf(state)) {
     const plan = state.stats?.equipmentPlan;
     return Object.freeze([plan?.status === 'deferred' ? 0 : Number(plan?.target?.selfId || 0), ...held]);
 }
-function gearCandidates(state, ctx = null, wornFor = wornReader(state), acquisitionAllowed = null, exchanges = null) {
+// quoteFor: the build's buy reader (purchaseFor); its executable quote nominates
+// the strongest piece the bot can really buy now (gd 10-24 "the strongest item
+// the bot can really get"), whatever its belief price ranks.
+function gearCandidates(state, ctx = null, wornFor = wornReader(state), acquisitionAllowed = null, exchanges = null, quoteFor = null) {
     const Data = invoke('GameServer/DataCache');
     const revision = Sources.revision();
     const role = Planner.roleFor(state);
@@ -125,7 +128,7 @@ function gearCandidates(state, ctx = null, wornFor = wornReader(state), acquisit
         const efficientByRank = new Map();
         // Every nominated target / committed item of the slot (two can share one).
         const retained = [];
-        let affordable = null, above = null, exchangeEfficient = null, exchangeStrong = null;
+        let affordable = null, above = null, exchangeEfficient = null, exchangeStrong = null, supplied = null;
         const cheaper = (a, b) => !b || a.price < b.price || a.price === b.price && a.item.selfId < b.item.selfId;
         const better = (a, b) => !b || a.ratio > b.ratio || a.ratio === b.ratio && cheaper(a, b);
         for (const at of allowed) {
@@ -149,13 +152,19 @@ function gearCandidates(state, ctx = null, wornFor = wornReader(state), acquisit
             }
             if (price <= budget && (!affordable || score > affordable.score
                 || score === affordable.score && cheaper(row, affordable))) affordable = row;
+            if (quoteFor && (!supplied || score >= supplied.score)) {
+                const quote = quoteFor(item.selfId);
+                const cost = quote && quote.availableUnits >= 1 ? Number(quote.price) + Number(quote.tripFees || 0) : Infinity;
+                if (cost < Infinity) ctx.budgetBoundary?.(cost + Number(ctx.survivalReserve || 0));
+                if (cost <= budget && (!supplied || score > supplied.score || cost < supplied.cost)) supplied = { row, cost, score };
+            }
             if (price > budget && cheaper(row, above)) above = row;
         }
         const selected = new Map();
         // A price-efficient representative of every usable rank keeps intermediate
         // purchases in the comparison, even when the wallet covers a higher one.
         // Rank nominates alternatives, never a required next purchase.
-        for (const row of [...retained, ...efficientByRank.values(), affordable, above, exchangeEfficient, exchangeStrong]) if (row) selected.set(Number(row.item.selfId), row);
+        for (const row of [...retained, ...efficientByRank.values(), affordable, above, exchangeEfficient, exchangeStrong, supplied?.row]) if (row) selected.set(Number(row.item.selfId), row);
         // E303: the finalists cap of 8, per slot per review, cut by value
         // (score gained per adena), never by nomination order.
         if (Diagnostics.active()) {
@@ -166,11 +175,11 @@ function gearCandidates(state, ctx = null, wornFor = wornReader(state), acquisit
             }
         }
         // The plan target and the committed gear goals (focus, preempted;
-        // at most 6), the strongest affordable and the strongest exchange
-        // row are pinned before it.
+        // at most 6), the strongest affordable, the strongest exchange and
+        // the strongest supplied row are pinned before it.
         let finalists = [...selected.values()];
         if (finalists.length > GEAR_FINALISTS_PER_SLOT) {
-            const pinned = new Set([...retained, affordable, exchangeStrong].filter(Boolean));
+            const pinned = new Set([...retained, affordable, exchangeStrong, supplied?.row].filter(Boolean));
             finalists = [...pinned, ...finalists.filter(row => !pinned.has(row))
                 .sort((a, b) => better(a, b) ? -1 : better(b, a) ? 1 : 0)];
         }
@@ -1364,7 +1373,7 @@ function buildProjection(state, ctx, deps) {
         }
         return Sources.hasNonRaidSource(id) || present(id) || !!purchaseFor(id);
     };
-    for (const [slot, items] of gearCandidates(planningState, ctx, wornFor, acquisitionAllowed, luxury)) for (const item of items) {
+    for (const [slot, items] of gearCandidates(planningState, ctx, wornFor, acquisitionAllowed, luxury, purchaseFor)) for (const item of items) {
         if (!Planner.considerable(item, planningState)) continue;
         const current = replacementWorn(wornFor, slot);
         if (Number(current?.selfId) === Number(item.selfId)) continue;
