@@ -44,7 +44,11 @@ const adapters = {
 // Liquidation funding reads the shared sale and kept-stock readers (f75b6525); this
 // fixture sells nothing, so no inventory row is a sale candidate.
 Object.assign(adapters, { 'GameServer/Bot/Economy/PersonalWarehouseIndex': { saleState: state => state },
-    'GameServer/Bot/Economy/ItemDisposition': { saleCandidates: () => [], reservedEquipmentAmounts: () => ({}) },
+    // knownRecipeIds: the fixture's own book (the deps list, else its state's recipes).
+    'GameServer/Bot/Economy/ItemDisposition': { saleCandidates: () => [], reservedEquipmentAmounts: () => ({}),
+        knownRecipeIds: (state, book) => (Array.isArray(book) ? book : state.stats?.recipes || [])
+            .map(row => Number(row?.recipeId ?? row)).filter(id => id > 0),
+        productionSetup: (...args) => require('../src/GameServer/Bot/Economy/ItemDisposition').productionSetup(...args) },
     'GameServer/Inventory/ShotStock': { keptAmounts: () => ({}), gradedShopShot: () => false },
     'GameServer/Bot/AI/HealingPotionStock': { keptAmounts: () => ({}) },
     'GameServer/Bot/Travel/ScrollStock': { keptAmounts: () => ({}) } });
@@ -81,6 +85,7 @@ const network = load('WishNetwork.js', name => {
     if (name === './PurchaseFunding') return require('../src/GameServer/Bot/Economy/PurchaseFunding');
     if (name === './TradeIntent') return require('../src/GameServer/Bot/Economy/TradeIntent');
     if (name === './CompactBytes') return require('../src/GameServer/Bot/Economy/CompactBytes');
+    if (name === './CommittedExits') return require('../src/GameServer/Bot/Economy/CommittedExits');
     if (name === './EconomicValuation') return valuation;
     if (name.endsWith('TendencyRoll')) return tendency;
     if (name.endsWith('Fnv1a')) return { fnv1a32: () => 1 };
@@ -111,7 +116,9 @@ const provider = load('WishProviders.js' , name => {
     if (name.endsWith('ItemAcquisitionCatalog')) return { revision: () => 1, hasSource: () => true,
         hasNonRaidSource: id => !sourceless.has(Number(id)), allowsRecipe: recipe => !!recipe };
     if (name === '../AI/PersonalGearProgression') return {
-        assess: () => ({ required: progressionRequired, gaps: new Map() }),
+        // assess carries the C kit milestone; acquisition is the author's kit read from it.
+        assess: () => ({ required: progressionRequired, gaps: new Map(), rank: 0, milestone: { required: false, gaps: new Map() } }),
+        acquisition: (_state, kit) => ({ required: kit.required, gaps: kit.gaps, rank: kit.rank }),
         isCGradeHelmet: require('../src/GameServer/Bot/AI/PersonalGearProgression').isCGradeHelmet,
         preparation: () => null, priority: () => gearPriority, personal: () => false, allowsCGradeAcquisition: () => false };
     if (name === './BotLuxuryExchange') return { recipes: () => new Map() };
@@ -119,6 +126,9 @@ const provider = load('WishProviders.js' , name => {
     if (name === '../../Item/ItemTemplateIndex') return require('../src/GameServer/Item/ItemTemplateIndex');
     if (name === './PriceDecision') return producerPrice;
     if (name === './CraftProfitPolicy') return require('../src/GameServer/Bot/Economy/CraftProfitPolicy');
+    // Shared readers the providers load at their top (the market facts of a recipe,
+    // craft eligibility, the grade table, rivals' committed exits, the trip).
+    if (['./RecipeProductionIndex', './CraftEligibility', '../AI/GearGradeRule', './CommittedExits', './EconomicTrip'].includes(name)) return require(path.resolve(root, name));
     if (name === './MarketDemand') return marketDemand;
     if (name === './EconomyDiagnostics') return { active: () => false, laps: () => null };
     if (name === './EconomicValuation') return valuation;
@@ -183,7 +193,9 @@ assert(rootWish, 'conditional public interest creates a finite producer goal bef
 assert.equal(rootWish.plan.kind, 'craft');
 assert.equal(rootWish.plan.batches, 1);
 assert.equal(rootWish.plan.executable, false);
-assert.deepEqual(prepared.watch.map(row => [row.itemId, row.amount, row.recipeId]), [[202, 10, 301]],
+// A short buy bids only the units its town lacks (docs/game-decisions.md: the
+// rest by the next path; 7e75a8996): 10 needed, the 4 asked are the shopping step.
+assert.deepEqual(prepared.watch.map(row => [row.itemId, row.amount, row.recipeId]), [[202, 6, 301]],
     'material demand is retained; finished product never becomes preparatory BUY');
 assert.equal(prepared.result.activity.activity, 'shopping');
 assert.equal(prepared.result.activity.amount, 4, 'only finite available material supply executes');
@@ -233,7 +245,9 @@ assert(!prepare().projection.roots.includes('resale:101'), 'actual accepted inco
 state.acceptedIncoming = { 202: 2 };
 state.inventory[202] = { selfId: 202, amount: 4, protectedAmount: 2 };
 prepared = prepare();
-assert.equal(prepared.watch[0].amount, 6, 'incoming/free materials are allocated once; protected stock is unavailable');
+// 10 needed less 2 incoming and 2 free (2 protected) = 6 missing; the 4 asked
+// are the step, the bid is the 2 the town lacks (7e75a8996).
+assert.equal(prepared.watch[0].amount, 2, 'incoming/free materials are allocated once; protected stock is unavailable');
 delete state.inventory[202]; delete state.acceptedIncoming;
 prepared = prepare({ wallet: 9, reserve: 5 });
 assert.equal(prepared.result.queue.find(row => row.key === 'resale:101').funded, false);
