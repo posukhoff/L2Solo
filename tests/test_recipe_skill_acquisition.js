@@ -18,9 +18,11 @@ const options = { ownStock: new Map(), existing: () => 0,
     prepareExits: function* () { yield 'quote'; return [{ type: 'afk', price: 1000, count: 1, town: 'Giran', trip: 0,
         offer: { recordId: 7, lineId: 70, ownerId: 2, revision: 1, price: 1000, count: 1, town: 'Giran' } }]; },
     preparePurchase: function* (owner, id, count) { yield 'quote'; return purchase(count); } };
-// recipeReady: the root's scrollSource verdict (WishProviders).
+// recipeReady: the root's scrollSource verdict (WishProviders); r: its
+// money-queue ratio, the cash its craft may spend (2c1810b46), here above the
+// money price (a funded root).
 const row = { key: `resale:${recipe.productId}`, amount: recipe.productCount,
-    recipeId: recipe.recipeId, exit: [7, 70, 1000, 1], recipeReady: true };
+    recipeId: recipe.recipeId, exit: [7, 70, 1000, 1], recipeReady: true, r: 1 };
 const step = (who, known, prepared = { context, options }, queue = [row]) => {
     const iterator = Decision.producerStep(who, queue, known, prepared);
     let next; do { next = iterator.next(); } while (!next.done);
