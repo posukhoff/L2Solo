@@ -28,7 +28,7 @@ function cInventory(classId) {
 }
 for (let classId = 0; classId <= 118; classId++) {
     const state = { characterId: 990000 + classId, level: 78, stats: { classId }, inventory: cInventory(classId) };
-    assert.equal(Progression.assess(state).required, false, `class ${classId} owns its full usable C kit`);
+    assert.equal(Progression.assess(state).milestone.required, false, `class ${classId} owns its full usable C kit`);
     for (const items of Wishes.gearCandidates(state).values()) for (const item of items) {
         assert(!forbidden.has(Number(item.selfId)), `class ${classId} nominated source-less ${item.selfId}`);
         nominated.add(Number(item.selfId));
@@ -93,7 +93,7 @@ function raidReview(supply) {
         botOwned: false, lines: [{ id: 1, selfId: raidId, count: 1, price: 1 }] });
     if (supply === 'owned') state.inventory = Planner.equipInventoryUpgrades(state, {
         ...state.inventory, [raidId]: { selfId: raidId, amount: 1, equipped: false, slot: 7 } });
-    assert.equal(Progression.assess(state).required, false, 'raid supply controls start after the usable C milestone');
+    assert.equal(Progression.assess(state).milestone.required, false, 'raid supply controls start after the usable C milestone');
     Economy.reset();
     return Economy.forState(state, { board: raidBoard, spots: [], timestamp: 1791335800000,
         npcOffersFor: () => [], routeRows: supply === 'quote_unknown' ? routes.map(() => [false, null, null]) : routes, knownRecipes: [],

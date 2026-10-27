@@ -152,7 +152,7 @@ async function parityAndIntegration() {
                     market: { town: 'Heine', price: 78600000, sourceType: 'afk_player_store' },
                     clanGoal: { clanId: 77, goalKey: 'clan-equipment:77:990003:79:7' }
                 } } };
-            assert.equal(invoke('GameServer/Bot/AI/PersonalGearProgression').assess(swordMember).required, false,
+            assert.equal(invoke('GameServer/Bot/AI/PersonalGearProgression').assess(swordMember).milestone.required, false,
                 'held B sword market controls start after the full usable C kit');
             const swordContext = await Runtime.context();
             assert(swordContext.npcOffers.some(row => Number(row.selfId) === 2132 && row.town === 'Giran'

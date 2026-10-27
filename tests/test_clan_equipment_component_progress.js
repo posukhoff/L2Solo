@@ -20,7 +20,7 @@ const plan = { status: 'active', strategy: 'market', grade: 'b', target: { selfI
 const member = { characterId: 1, name: 'Buyer', phase: 'cold', level: 56,
     inventory: { ...kitInventory, 72: { selfId: 72, amount: 1, equipped: false, slot: 7 } },
     stats: { classId: 34, equipmentPlan: plan } };
-assert.strictEqual(invoke('GameServer/Bot/AI/PersonalGearProgression').assess(member).required, false,
+assert.strictEqual(invoke('GameServer/Bot/AI/PersonalGearProgression').assess(member).milestone.required, false,
     'B dual component acquisition starts after the full usable C kit');
 (async () => {
     assert.strictEqual(Gear.clanGoalPlanLocked(member, plan), false, 'owned component must unlock the next acquisition step');
