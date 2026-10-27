@@ -12,7 +12,8 @@ const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const Karma = invoke('GameServer/Karma');
 const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const BotEconomyPricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
-const BuyStore = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
+// The one bid owner (BuyAdPolicy.bidFor); the cold store no longer re-exports it.
+const BuyAd = invoke('GameServer/Bot/Economy/BuyAdPolicy');
 const WealthCraft = invoke('GameServer/Bot/Economy/ColdWealthCraftService');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
 const { captureAndRead } = require('./helpers/nativeEconomyPolicyAssertions');
@@ -105,7 +106,7 @@ assert.strictEqual(BotMarketPricing.referencePrice(item), Math.floor(scaledBase 
 BotMarketPricing.useNpcOfferSnapshot([]);
 assert.strictEqual(BotMarketPricing.referencePrice(item), scaledBase, 'without NPC stock the scaled base price is the reference');
 assert.strictEqual(BotMarketPricing.listingFloor, undefined, 'no listing floor');
-const bid = (adena) => BuyStore.bidFor({ characterId: 9102, adena: 1000000000, inventory: {} },
+const bid = (adena) => BuyAd.bidFor({ characterId: 9102, adena: 1000000000, inventory: {} },
     { type: 'upgrade_gear', target: { itemId: BOW, adena }, plan: { priceSource: 'offer' } });
 const low = bid(1000);
 assert(!low || low.price <= 1000, 'a bid stays at or under what the item is worth to the buyer');

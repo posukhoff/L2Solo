@@ -90,7 +90,7 @@ try {
     for (const id of [990, genuineQuest.selfId]) for (const type of ['upgrade_gear', 'buy_craft_material']) {
         const goal = goalFor(id, type);
         assert.equal(Buy.bidFor(state, goal), null, 'positive quest price cannot admit a stale purchase goal');
-        assert.equal(ColdBuy.bidFor(state, goal), null, 'cold store shares canonical admission');
+        assert.equal(ColdBuy.bidFor, undefined, 'cold store shares canonical admission: BuyAdPolicy.bidFor is the one bid');
         assert.deepEqual(Buy.linesFor(state, goal, { watchList: [] }), []);
         assert.deepEqual(Buy.linesFor(state, null, { watchList: [{ itemId: id, amount: 2, worth: 100 }] }), [],
             'stale watch rows cannot bypass the canonical kind');

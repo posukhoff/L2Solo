@@ -18,6 +18,8 @@ const DataCache = invoke('GameServer/DataCache');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const BuyStoreService = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
+// The one bid owner (BuyAdPolicy.bidFor); the cold store no longer re-exports it.
+const BuyAd = invoke('GameServer/Bot/Economy/BuyAdPolicy');
 const MarketSnapshot = invoke('GameServer/Bot/Economy/MarketSnapshot');
 const World = invoke('GameServer/World/World');
 const MarketTownPolicy = invoke('GameServer/Bot/Economy/MarketTownPolicy');
@@ -72,7 +74,7 @@ async function run() {
     const buyerNative = await nativeChoice.capture(buyerOriginal, { now: 1791000000000 }, 'original_dynamic_buyer');
     const buyerSeed = buyerNative.state;
     assert.strictEqual(Funding.spendable(buyerSeed, 0, { itemId: 1864 }), 0);
-    assert.strictEqual(BuyStoreService.bidFor(buyerSeed, goal), null, 'the original unfunded Stem request cannot bid');
+    assert.strictEqual(BuyAd.bidFor(buyerSeed, goal), null, 'the original unfunded Stem request cannot bid');
     assert.strictEqual(await bagAmount(buyerSeed.characterId, 57), 2000);
     assert.deepStrictEqual(AfkTrade.ownerRecords(buyerSeed.characterId), []);
     assert.strictEqual(await bagAmount(buyerSeed.characterId, 1864), 0);
@@ -172,7 +174,7 @@ async function run() {
     // The unchanged1000/Stem20 remains a native unfunded negative.
     const poorOriginal = await makeBot('bot_poor_buyer', 'PoorBuyer', 2, [{ selfId: 57, name: 'Adena', amount: 1000 }]);
     const poorBuyer = (await nativeChoice.capture(poorOriginal, { now: 1791000000000 }, 'original_dynamic_poor_buyer')).state;
-    const poorBid = BuyStoreService.bidFor(poorBuyer,
+    const poorBid = BuyAd.bidFor(poorBuyer,
         { type: 'buy_craft_material', target: { itemId: 1864, itemName: 'Stem', amount: 20 }, plan: {} });
     assert.strictEqual(Funding.spendable(poorBuyer, 0, { itemId: 1864 }), 0);
     assert.strictEqual(poorBid, null, 'a short wallet without the genuine funded gain posts no partial ad');

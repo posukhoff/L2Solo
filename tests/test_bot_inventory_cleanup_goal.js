@@ -15,7 +15,8 @@ const NeedsEvaluator = invoke('GameServer/Bot/Goals/NeedsEvaluator');
 const GoalExecutor = invoke('GameServer/Bot/Goals/GoalExecutor');
 const PopulationService = invoke('GameServer/Bot/Population/PopulationService');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
-const BuyStoreService = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
+// The one bid owner (BuyAdPolicy.bidFor); the cold store no longer re-exports it.
+const BuyAd = invoke('GameServer/Bot/Economy/BuyAdPolicy');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 DataCache.init();
@@ -192,7 +193,7 @@ const stationArmor = { ...stagedArmor,
 assert.strictEqual(ItemDisposition.warehouseCandidates(stationArmor)
     .find((item) => item.selfId === 432)?.amount, 1,
     'a native infrastructure owner can warehouse only the duplicate staged tunic');
-assert.strictEqual(BuyStoreService.bidFor(stagedArmor, {
+assert.strictEqual(BuyAd.bidFor(stagedArmor, {
     type: 'upgrade_gear', target: { itemId: 432, itemName: 'Cursed Tunic', adena: 100000 }, plan: {}
 }), null, 'an owned piece must not receive another AFK buy order');
 assert.strictEqual(GearAcquisitionPlanner.staticNpcUpgradePlan(stagedArmor, {
