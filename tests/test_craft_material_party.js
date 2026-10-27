@@ -18,8 +18,9 @@ const state = { characterId: 990201, level: 65, classId: 8, phase: 'cold', activ
     party: { partyId: null, role: 'dps' }, clanId: 1, adena: 1000000,
     stats: { classId: 8, role: 'dps', equipmentPlan: plan, wishFocus: ['power:5726:12', 0, 1] },
     inventory: {}, simulation: { revision: 1 }, updatedAt: timestamp };
-// Camp i: 40 - i of NPC 626 among i + 1 of NPC 627, so 626's loot table
-// rolls (40 - i) / 41 of its kills (SpotRewardExpectation.killShare).
+// Camp i: 40 - i of NPC 626 among i + 1 of NPC 627. A material hunt aims at
+// 626 (R3 G24, d442ce140: SpotRewardExpectation.killShare targeted), so the
+// other monster's count does not thin its share: the camps tie.
 const spots = Array.from({ length: 40 }, (_, i) => ({ id: `camp:${i}`, raidBoss: false,
     npcEntries: [{ selfId: 626, count: 40 - i }, { selfId: 627, count: i + 1 }] }));
 const reward = require('../src/GameServer/Knowledge/SourceCatalog').rewardForNpc(626);
@@ -92,7 +93,9 @@ try {
     const aRecipe = c4.resolveByProductId(aCraftTarget.selfId), aMaterial = aRecipe.materials[1];
     const readyAPlan = { ...plan, recipeId: aRecipe.recipeId, target: { selfId: aCraftTarget.selfId, slot: 12 } };
     const readyA = { ...state, inventory: equippedB, stats: { ...state.stats, equipmentPlan: readyAPlan } };
-    assert.equal(invoke('GameServer/Bot/AI/PersonalGearProgression').assess(readyA).required, false);
+    // The acquisition kit (the author's acquisitionAssessment) gates A as
+    // buy-only (marketOnly); the level's own kit (assess) wants A from 61.
+    assert.equal(invoke('GameServer/Bot/AI/PersonalGearProgression').acquisition(readyA).required, false);
     const bIndex = index; index = new Map([[aMaterial.selfId, entries]]);
     const aRequest = Material.request(readyA, readyAPlan, { spots, economy: { ...economy,
         network: { ...economy.network, focus: [`power:${aCraftTarget.selfId}:12`] } }, timestamp });
@@ -196,8 +199,10 @@ try {
             'failed assembly still respects the native cooldown');
         retryAt += Math.max(Recovery.RETRY_MS, Material.REVIEW_MS) + 1;
     }
-    assert.deepEqual(visited, ['camp:0', 'camp:1', 'camp:2', 'camp:3', 'camp:0'],
+    assert.equal(visited[0], 'camp:0');
+    assert.equal(new Set(visited.slice(0, Material.MAX_CAMPS)).size, Material.MAX_CAMPS,
         'successive failed assemblies visit every retained camp before repeating');
+    assert.equal(visited[Material.MAX_CAMPS], visited[0], 'the rotation then starts over');
     const waiting = { ...retryState, stats: { ...retryState.stats, partyRequest: { ...retryState.stats.partyRequest,
         deferReason: null, materialReviewedAt: 0, deferredUntil: retryAt + 60000 } } };
     const deferred = Request.partyRequestForPlan(waiting, plan, retryAt, { spots, economy });
