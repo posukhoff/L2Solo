@@ -166,6 +166,15 @@ function purchaseWorth(intent, moneyPrice) {
         ? Math.min(Number(intent.valueHours) / Math.max(1, Number(intent.amount)) / moneyPrice, Number(intent.cap ?? Infinity))
         : Number(intent?.worth);
 }
+// The money price a buy row's worth is taken at, one rule for its bid
+// (rootRows) and its meeting consent: its root's (WishNetwork.rootMoneyPrice:
+// held money at the held price) while the bot's price belief caps the row;
+// a farmed material or a row with no belief, the money earned's.
+function bidPrice(network, root, row) {
+    return row.farm || !Number.isFinite(row.cap) ? Number(network?.moneyPrice)
+        // lazy: cycle WishNetwork requires TradeIntent at load.
+        : (Network ||= require('./WishNetwork')).rootMoneyPrice(network, root);
+}
 // A quantitative network already owns allocation and batch rounding. Readers
 // only project that result; they never subtract physical stock a second time.
 // A row's worth is one unit's share of its root in adena (its valueHours over
@@ -293,7 +302,8 @@ function rootRows(network, wish, onCut = null) {
         if (line) { row.worth = row.valueHours / row.amount; row.valueHours *= moneyPrice > 0 ? moneyPrice : 0; row.line = true; }
         else {
             if (Number.isFinite(row.capCash)) row.cap = row.capCash / row.amount;
-            row.worth = moneyPrice > 0 ? purchaseWorth(row, moneyPrice) : 0;
+            const price = bidPrice(network, wish, row);
+            row.worth = price > 0 ? purchaseWorth(row, price) : 0;
         }
         delete row.capCash;
     }
@@ -310,12 +320,8 @@ function rootRows(network, wish, onCut = null) {
 // it neither raises standing bids nor authorizes a different or larger buy.
 function meetingPurchase(network, intents, { selfId, count, price, town, enchant = 0 }, state = null) {
     if (!network?.quantityPrepared) return null;
-    // lazy: cycle WishNetwork requires TradeIntent at load.
-    Network ||= require('./WishNetwork');
-    // Consent at the money price the row's bid used (rootRows): its root's,
-    // a farmed material's the money earned.
-    const rowPrice = row => row.farm ? Number(network.moneyPrice)
-        : Network.rootMoneyPrice(network, network.queue?.find(wish => wish.key === row.key));
+    // Consent at the money price the row's bid used (rootRows, bidPrice).
+    const rowPrice = row => bidPrice(network, network.queue?.find(wish => wish.key === row.key), row);
     const ordinary = intents?.find(row => row.itemId === selfId && row.amount >= count
         && purchaseWorth(row, rowPrice(row)) >= price);
     const leaf = network.activity;

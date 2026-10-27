@@ -99,6 +99,14 @@ assert(spend(both, 3e6, 20000, 600) >= 2e6 && spend(both, 3e6, 20000, 500) >= 34
 const noSeller = build(2e5, 20000, [...helmet, gear(600, 100), wanted(600, 2e6)]);
 assert(noSeller.heldPrice > .69 / 34000, 'the unsold weapon keeps the held money dear');
 assert.equal(spend(noSeller, 2e5, 20000, 500), 0, 'the helmet does not take the money saved for the unsold weapon');
+// The wallet covers the unsold weapon: its cash is saved (a packet row), so
+// a cheaper piece below it neither takes it in the build nor on the main
+// thread (its root key, below the saved row).
+const covered = build(2.5e6, 20000, [gear(610, 9), shop(610, 6e5), gear(600, 100), wanted(600, 2e6)]);
+assert.equal(row(covered, 'power:600:6').earmarked, true, 'the unsold weapon keeps its cash');
+assert.equal(row(covered, 'power:610:6').funded, false, 'the piece does not take the saved cash');
+assert(Funding.spendable(stateOf(covered, 2.5e6, 20000), 0, { r: Funding.significant(9 / 6e5), key: 'power:610:6' }) < 6e5,
+    'main keeps the saved cash too');
 
 // A level-53 bot with 26M on a 1.5k/h field bids for a 5M C weapon no one
 // sells yet: 24 h of benefit would be worth only 36k at the hunt rate; its
