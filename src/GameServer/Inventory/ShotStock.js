@@ -47,7 +47,16 @@ const BEGINNER_SPIRITSHOT_IDS = [BeginnerShots.SPIRITSHOT];
 const SOULSHOT_IDS = Object.values(SOULSHOT_BY_RANK);
 const SPIRITSHOT_IDS = Object.values(SPIRITSHOT_BY_RANK);
 const BLESSED_SPIRITSHOT_IDS = Object.values(BLESSED_SPIRITSHOT_BY_RANK);
+// The 18 shop shots (soul, spirit, blessed spirit; none..s each), id -> rank:
+// the one list every "shop shot / graded shot / shot of a rank" reader asks.
+const SHOP_SHOT_RANK = new Map([SOULSHOT_BY_RANK, SPIRITSHOT_BY_RANK, BLESSED_SPIRITSHOT_BY_RANK]
+    .flatMap((byRank) => Object.entries(byRank).map(([rank, selfId]) => [selfId, rank])));
 const SHOT_IDS = [...SOULSHOT_IDS, ...SPIRITSHOT_IDS, ...BLESSED_SPIRITSHOT_IDS, ...BEGINNER_SOULSHOT_IDS, ...BEGINNER_SPIRITSHOT_IDS];
+
+// A D+ shop shot: crafters make it; shops sell only the no-grade ones.
+function gradedShopShot(selfId) {
+    return (SHOP_SHOT_RANK.get(Number(selfId)) || 'none') !== 'none';
+}
 
 function normalizeRank(rank) {
     const value = String(rank || 'none').toLowerCase();
@@ -164,7 +173,8 @@ function usePolicy(state, prepared = {}) {
     const rawUse = plan.perAction > 0 ? Math.max(0, Number(best?.shots) || 0) : 0;
     const benefit = Math.max(0, 1 - Math.max(0, Number(without?.exp) || 0) / Math.max(1, Number(best?.exp) || 0));
     const buyback = BeginnerShots.isRestricted(plan.selfId) ? 0
-        : invoke('GameServer/Items/NpcSellRules').npcBuyPrice(itemPrice(plan.selfId));
+        // lazy: cycle PriceDecision's chain loads this module
+        : invoke('GameServer/Bot/Economy/PriceDecision').buyback(plan.selfId);
     const affordableUse = cost => rawUse > 0 && Number(hour) > 0 && benefit >= rawUse * cost / hour ? rawUse : 0;
     const paidUsePerHour = affordableUse(buyback);
     const beginnerUsePerHour = affordableUse(0);
@@ -658,6 +668,8 @@ module.exports = {
     SPIRITSHOT_IDS,
     BLESSED_SPIRITSHOT_IDS,
     SHOT_IDS,
+    SHOP_SHOT_RANK,
+    gradedShopShot,
     planFor,
     planForKind,
     planForActor,

@@ -1,3 +1,4 @@
+const { partyIdOf } = require('../Bot/Population/PartyId');
 // Membership is authoritative; joining keeps unrelated personal acquisition.
 function reconcileState(state, clanId = Number(state?.stats?.clanId || 0)) {
     const current = state.stats || {};
@@ -67,7 +68,7 @@ function reconcileGoals(state, keys) {
     if (staleObjective) delete stats.clanPartyObjective;
     if (staleRequest) delete stats.partyRequest;
     if (!stats.equipmentPlan?.clanGoal && !stats.clanPartyObjective) delete stats.clanMaterialDemand;
-    if (activity === 'party_wait' && !stats.partyRequest && !state.partyId && !state.party?.partyId) activity = 'hunting';
+    if (activity === 'party_wait' && !stats.partyRequest && !partyIdOf(state)) activity = 'hunting';
     return { ...state, activity, stats };
 }
 

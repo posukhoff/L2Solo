@@ -6,7 +6,6 @@ const { SpotCatalogWriter } = require('./ClanSpotCatalog');
 const BotGear = invoke('GameServer/Bot/AI/BotGear');
 const DataCache = invoke('GameServer/DataCache');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
-const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const NpcShopBuyLists = invoke('GameServer/World/Generics/NpcShopBuyLists');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
@@ -260,13 +259,14 @@ class ClanPlanningCoordinator {
 
 let coordinator = null;
 let enabled = false;
-// One static market, for the current rate and published recipes: its NPC
-// offers cover the recipes' materials, so a new rate or recipe set (a
-// crafter level change) replaces it.
+// One static market, for the current rate and the clan crafters' recipe
+// catalogue (CraftShopService.crafterRecipes, the set clan crafting picks
+// from; no Giran station serves bots): its NPC offers cover those materials,
+// so a new rate or item catalogue replaces it.
 let staticMarket = null;
 // The planning context crosses to the worker once per revision. A new
 // revision only when one of its owners hands out a new value: the per-rate
-// NPC market, the configured stores' rows, the published recipes, the settings.
+// NPC market, the configured stores' rows, the settings.
 let planningContext = null;
 let planningContextRevision = 0;
 
@@ -286,15 +286,10 @@ async function buildStaticMarket(recipes) {
         if (i % 8 === 7) await yieldLoop();
     }
     const shopEntries = NpcShopBuyLists.allEntries().map(({ selfId }) => ({ selfId }));
-    const wearableIds = new Set(items.map(item => Number(item.selfId)));
-    const npcPriceRows = [];
     // FirstPrice also needs native NPC floors for crafting inputs and
     // consumables. Scalar quotes do not add sources to MarketOpportunity.
-    for (const selfId of new Set(shopEntries.map(entry => Number(entry.selfId)))) {
-        if (wearableIds.has(selfId)) continue;
-        const price = BotMarketPricing.npcPrice({ selfId });
-        if (Number.isFinite(price) && price > 0) npcPriceRows.push({ selfId, price });
-    }
+    const wearableIds = new Set(items.map(item => Number(item.selfId)));
+    const npcPriceRows = NpcShopBuyLists.townPriceRows().filter(row => !wearableIds.has(row.selfId));
     return { npcOffers, npcPriceRows, towns: MarketOpportunity.TOWN_NPC_SELLERS, shopEntries };
 }
 
@@ -311,12 +306,12 @@ function staticMarketFor(rate, recipes) {
 async function context() {
     // The rate or recipes may change during a build: a context is made only
     // from the current ones, so a newer revision never carries older recipes.
-    let recipes, rate, built;
+    let crafted, rate, built;
     do {
-        recipes = CraftShopService.publishedStationRecipes().recipes;
+        crafted = CraftShopService.crafterRecipes();
         rate = ProgressionRates.profile().multiplier;
-        built = await staticMarketFor(rate, recipes);
-    } while (recipes !== CraftShopService.publishedStationRecipes().recipes || rate !== ProgressionRates.profile().multiplier);
+        built = await staticMarketFor(rate, crafted);
+    } while (crafted !== CraftShopService.crafterRecipes() || rate !== ProgressionRates.profile().multiplier);
     // The board reaches the worker as its 'board' table. The configured
     // stores' rows are frozen per economy rate and store config
     // (FixedShotOffers.offers): the same array until one of them changes.
@@ -329,9 +324,9 @@ async function context() {
     const progressionRate = process.env.L2NODE_PROGRESSION_RATE;
     const settings = [...Object.values(general), progression.contentCap, progressionRate].join('|');
     const held = planningContext;
-    if (held?.staticMarket !== built || held.fixed !== fixed || held.recipes !== recipes || held.settings !== settings) {
-        planningContext = { staticMarket: built, fixed, recipes, settings, value: { revision: ++planningContextRevision, ...built,
-            fixedOffers: fixed.map(offerRow), recipes, general, progression, progressionRate } };
+    if (held?.staticMarket !== built || held.fixed !== fixed || held.settings !== settings) {
+        planningContext = { staticMarket: built, fixed, settings, value: { revision: ++planningContextRevision, ...built,
+            fixedOffers: fixed.map(offerRow), general, progression, progressionRate } };
     }
     return planningContext.value;
 }

@@ -1,4 +1,5 @@
 const ClanMembershipPolicy = require('../../Clan/ClanMembershipPolicy');
+const { partyIdOf } = require('./PartyId');
 const LifeStateCache = require('./LifeStateCache');
 const CharacterLocationRuntime = require('../../World/CharacterLocationRuntime');
 const RefreshPartyMemberships = require('../../World/PartyMembershipPublication');
@@ -17,6 +18,8 @@ const DecisionSections = require('../Economy/DecisionSections');
 const PartyRequestPlanner = invoke('GameServer/Bot/Population/PartyRequestPlanner');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+const WealthDecision = invoke('GameServer/Bot/Economy/WealthCraftDecision');
+const CraftWorkshopService = invoke('GameServer/Bot/Economy/CraftWorkshopService');
 const SpotService = invoke('GameServer/Bot/AI/SpotService');
 const BotEnemyMemory = invoke('GameServer/Bot/AI/BotEnemyMemory');
 const MerchantStoreConfigs = invoke('GameServer/Bot/MerchantStoreConfigs');
@@ -2629,7 +2632,7 @@ const BotLifeState = {
         const previousRisk = state.stats?.spotRisk;
         const previousDeaths = Number(state.stats?.deaths || 0);
         const nextDeaths = Number(result.patch?.deathCount ?? previousDeaths);
-        const spotRisk = state.party?.partyId || state.partyId ? previousRisk : SpotRiskPolicy.recordResolve(previousRisk, {
+        const spotRisk = partyIdOf(state) ? previousRisk : SpotRiskPolicy.recordResolve(previousRisk, {
             spotId: nextSpotId || null,
             timestamp,
             totalDeaths: previousDeaths,
@@ -2644,7 +2647,7 @@ const BotLifeState = {
                 - Number(result.debug?.wins || 0) - Math.max(0, nextDeaths - previousDeaths))
         });
         const soloRiskState = { ...state, spotId: nextSpotId, stats: { ...state.stats, spotRisk } };
-        const soloPressure = !(state.party?.partyId || state.partyId) && SpotRiskPolicy.deathPressure(soloRiskState);
+        const soloPressure = !partyIdOf(state) && SpotRiskPolicy.deathPressure(soloRiskState);
         const newlyFailedSpot = soloPressure && !SpotRiskPolicy.activeBackoffs(state, timestamp)
             .some(entry => entry.spotId === nextSpotId);
         const failedSpotState = newlyFailedSpot ? SpotRiskPolicy.withBackoff(soloRiskState,
@@ -2814,7 +2817,7 @@ const BotLifeState = {
                 // Save the failed ground before revival/physical movement can
                 // change the routing origin and lose its exclusion.
                 ...(failedSpotState ? { spotBackoffs: failedSpotState.stats.spotBackoffs } : {}),
-                ...(!(state.party?.partyId || state.partyId) ? {
+                ...(!partyIdOf(state) ? {
                     huntingRecovery: SpotRiskPolicy.recordRecovery(state, {
                         deaths: Math.max(0, nextDeaths - previousDeaths),
                         wins: Number(result.debug?.wins || 0), exp,
@@ -3523,14 +3526,16 @@ const BotLifeState = {
     applyNpcLiquidation(state, candidates = []) {
         if (!state || !Array.isArray(candidates) || !candidates.length) return Promise.resolve(state);
         const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
-        const reserved = Disposition.reservedEquipmentAmounts(state);
+        const reserved = Disposition.heldAmounts(state);
         const inventory = { ...(state.inventory || {}) };
         let payout = 0;
         const sold = [];
         candidates.forEach((candidate) => {
             const selfId = Number(candidate.selfId || 0);
             const existing = inventory[String(selfId)];
-            if (!existing || selfId === 57 || Disposition.isGradeCrystal(candidate)
+            // A grade crystal is no exception (user 10-25, pricefloor): it reaches
+            // this sale only when no bid pays above the NPC buy-back.
+            if (!existing || selfId === 57
                 || invoke('GameServer/Items/C4BeginnerShots').isRestricted(selfId)) return;
             const free = Disposition.saleFreeAmount(state, existing, reserved);
             const equippedCount = Math.max(0, Number(existing?.equippedCount ?? (existing?.equipped ? 1 : 0)));
@@ -3712,24 +3717,25 @@ const BotLifeState = {
         return next;
     },
 
-    learnCraftableRecipes(state, { recipeIds = null } = {}) {
-        if (!state?.characterId) return Promise.resolve(state || null);
-        if (!recipeIds) {
-            const leaf = invoke('GameServer/Bot/Population/ColdSimulationCoordinator').economyDecisions.decided(state)?.activity;
-            recipeIds = leaf?.activity === 'crafting' && Number(leaf.recipeId) > 0 ? [Number(leaf.recipeId)] : [];
-        }
-        if (!recipeIds.length) return Promise.resolve(state);
+    // Every held scroll the learner takes and the reserves leave free
+    // (WealthCraftDecision.heldScroll) whose recipe the bot does not know yet;
+    // no recipe-book read without one.
+    learnCraftableRecipes(state) {
+        if (!state?.characterId || CraftShopService.craftLevelFor(state) <= 0) return Promise.resolve(state || null);
+        let reserved = null;
+        const reserves = () => reserved ||= ItemDisposition.reservedEquipmentAmounts(state);
         const candidates = Object.values(state.inventory || {})
-            .filter((item) => ItemDisposition.canLearnRecipe(state, item))
+            .filter((item) => {
+                const recipe = ItemDisposition.recipeInfo(item)?.recipe;
+                return !!recipe && Number(item.amount || 0) > 0 && WealthDecision.heldScroll(state, recipe, item, reserves);
+            })
             .sort((left, right) => Number(left.selfId || 0) - Number(right.selfId || 0));
         if (!candidates.length) return Promise.resolve(state);
 
-        return Database.fetchCharacterRecipes(state.characterId).then(async rows => {
-            const known = new Set((rows || []).map(row => Number(row.recipeId)));
-            const recipes = candidates.filter(item => Number(item.amount || 0) > 0).flatMap(item => {
-                const decision = ItemDisposition.recipeDisposition(state, item, [...known]);
-                return decision?.action === 'learn' && recipeIds.includes(Number(decision.recipe.recipeId))
-                    ? [{ ...decision.recipe, name: item.name }] : [];
+        return CraftWorkshopService.knownFor(state.characterId).then(async known => {
+            const recipes = candidates.flatMap(item => {
+                const { recipe } = ItemDisposition.recipeInfo(item);
+                return known.includes(Number(recipe.recipeId)) ? [] : [{ ...recipe, name: item.name }];
             });
             if (!recipes.length) return state;
             let saved = state, changed = false;
@@ -3743,7 +3749,7 @@ const BotLifeState = {
                 if (learned.coldLifeRow) saved = EconomyCommit.acceptRow(learned.coldLifeRow);
                 if (saved.phase !== 'cold' || this.hotRow(saved.characterId)) break;
             }
-            if (changed) invoke('GameServer/Bot/Economy/CraftWorkshopService').recipesChanged(state.characterId);
+            if (changed) CraftWorkshopService.recipesChanged(state.characterId);
             notifyColdSnapshot(saved, 'recipe_book_learned', { critical: true });
             return saved;
         }).catch(error => {

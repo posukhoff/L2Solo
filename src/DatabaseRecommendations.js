@@ -106,7 +106,8 @@ function create({ one, all, write, enqueue, inTransaction, withCharacterFlushes,
         const life = one('SELECT statsJson FROM bot_life_state WHERE characterId=?', [source.id]);
         if (!life) return;
         const stats = JSON.parse(life.statsJson || '{}'), plan = stats.equipmentPlan;
-        const essential = ['active', 'component_ready', 'ready_to_craft'].includes(plan?.status)
+        // lazy: cycle the planner's chain loads Database, which loads this module
+        const essential = invoke('GameServer/Bot/AI/GearAcquisitionPlanner').planRunning(plan)
             && Number(plan.target?.selfId) === Number(trade.selfId);
         if (!essential && !(Number(trade.recommendationHours) >= 0.5)) return;
         const snapshot = require('./GameServer/Social/InteractionMemoryRows').load({ one, all }, source.id);

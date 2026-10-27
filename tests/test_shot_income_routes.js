@@ -12,7 +12,7 @@ const probe = require('./helpers/workerEconomyDecision');
 const originalBoard = Afk.boardIndex;
 const Market = invoke('GameServer/Bot/Economy/MarketCounters');
 Market.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure());
-const Demand = require('../src/GameServer/Bot/Economy/ShotTradeDemand');
+const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
 
 (async () => {
     for (const recipeId of [20, 21, 22, 23, 24]) {
@@ -110,7 +110,6 @@ const Demand = require('../src/GameServer/Bot/Economy/ShotTradeDemand');
         const native = atDecision(() => Shots.recheck(state, selected.recipeRoute));
         assert(native && native.profit > 0, `native executor accepts the storefront income for ${recipeId}`);
         assert.equal(native.exit.type, 'listing');
-        assert.equal(native.exit.repeatable, false, 'observed demand is a forecast, never perpetual funding');
         if (recipeId === 20) {
             // T43 table: buying D shots does not pay for this crafter, so its personal target is
             // the stock it holds; it holds some, and only the rest of the output is for sale.

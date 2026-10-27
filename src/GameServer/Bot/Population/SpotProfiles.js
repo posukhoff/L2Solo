@@ -3,6 +3,7 @@ const LevelingRoutes = invoke('GameServer/Bot/AI/LevelingRoutes');
 const SpotIndex = invoke('GameServer/Bot/AI/SpotIndex');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const EquipmentIncomeRoute = invoke('GameServer/Bot/Economy/EquipmentIncomeRoute');
+const PersonalGearProgression = invoke('GameServer/Bot/AI/PersonalGearProgression');
 const BotLifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const SpotRiskPolicy = invoke('GameServer/Bot/Population/SpotRiskPolicy');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
@@ -261,7 +262,7 @@ const SpotProfiles = {
         if (!protectedStarterCohort && !collectingGear) {
             const incomeRoute = EquipmentIncomeRoute.select(state, {
                 spots: profiles, timestamp, mode, list,
-                required: invoke('GameServer/Bot/AI/PersonalGearProgression').assess(state).required });
+                required: PersonalGearProgression.assess(state).milestone.required });
             // The route reads its own risk marks, not the caller's exclusions
             // (a market return's full saved spot, ROUTE-ROOM-4): an excluded
             // pick counts as absent, as on the list walk.

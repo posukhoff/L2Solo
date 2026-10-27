@@ -26,6 +26,7 @@ const InventorySummary = invoke('GameServer/Bot/Population/InventorySummary');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
 const BotMarket = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
+const MarketDemand = invoke('GameServer/Bot/Economy/MarketDemand');
 const PriceBelief = invoke('GameServer/Bot/Economy/PriceBelief');
 const MarketPricing = invoke('GameServer/Bot/Economy/MarketPricing');
 const PriceDecision = invoke('GameServer/Bot/Economy/PriceDecision');
@@ -73,6 +74,12 @@ async function sellAd(id, count = 10) {
 async function sellShop(id, count = 10) {
     return { ...(await sellAd(id, count)), kind: 'shop' };
 }
+
+// A hand-built pricing context reads forecast demand like traderContext's
+// demandFor: the board's deals in a town make a flow, so a store line of the
+// item is worthwhile (MarketPricing.quotable).
+const withDemand = ctx => ({ ...ctx, demandFor: (id, _enchant, town) => MarketDemand.forecast(id, town, ctx.timestamp,
+    { characterId: ctx.characterId, understanding: ctx.understanding, marketTrades: ctx.marketTrades, board: ctx.board }) });
 
 async function bag(id, selfId) {
     return (await Database.fetchItems(id)).filter(item => Number(item.selfId) === selfId)
@@ -359,16 +366,18 @@ async function run() {
                 assert.notStrictEqual(key, 'look', 'counter events replace attention rolls');
                 return roll(key, ...parts);
             };
-            await Database.recordMarketTrade({ eventKey: `audit-worker:${owner}`, selfId: 1864,
-                quantity: 1, unitPrice: 100, sourceType: 'afk_player_store', channel: 'player_wts',
+            // Two deals in Giran: a forecast flow keeps the repriced line worthwhile.
+            for (const index of [1, 2]) await Database.recordMarketTrade({ eventKey: `audit-worker:${owner}:${index}`,
+                selfId: 1864, quantity: 1, unitPrice: 100, sourceType: 'afk_player_store', channel: 'player_wts',
                 sellerCharacterId: 999, buyerCharacterId: 998, town: 'Giran' });
             MarketCounters.reset();
-            MarketCounters.load(await Database.fetchRecentBoardDeals());
-            proposal = MarketPricing.look({ stats: {}, activity: 'resting' }, AfkTrade.boardIndex().ownerLines(owner), {
+            MarketCounters.load(await Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS,
+            rangeMs: MarketCounters.DAY_MS }));
+            proposal = MarketPricing.look({ stats: {}, activity: 'resting' }, AfkTrade.boardIndex().ownerLines(owner), withDemand({
                 characterId: owner, timestamp: Date.now(), understanding: 0.5, hour: 1000, adena: 1000,
                 trader: {}, board: AfkTrade.boardIndex(), npcOffersFor: () => [], knowledgeEnabled: false,
                 marketTrades: {}
-            });
+            }));
         } finally { PriceDecision.chooseAsk = choose; TendencyRoll.roll = roll; }
         assert(proposal);
         assert.strictEqual(proposal.reprices.length, 1);
@@ -394,7 +403,8 @@ async function run() {
             buyerCharacterId: 998, town: 'Giran'
         });
         MarketCounters.reset();
-        MarketCounters.load(await Database.fetchRecentBoardDeals());
+        MarketCounters.load(await Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS,
+            rangeMs: MarketCounters.DAY_MS }));
         const line = AfkTrade.boardIndex().ownerLines(owner)[0];
         const board = new BoardIndex({ groupOf: MarketCounters.counterOf });
         board.put({ id: shop.id, ownerId: owner, storeType: AfkTrade.SELL, lines: [line] });
@@ -413,7 +423,8 @@ async function run() {
             unitPrice: 30, quantity: 100, sourceType: 'afk_player_store', channel: 'player_wts',
             sellerCharacterId: 999, buyerCharacterId: 998, town: 'Giran' });
         MarketCounters.reset();
-        MarketCounters.load(await Database.fetchRecentBoardDeals());
+        MarketCounters.load(await Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS,
+            rangeMs: MarketCounters.DAY_MS }));
         assert.deepStrictEqual(PriceBelief.lineObservations(consumed, PriceBelief.prior(1864, ctx), ctx), [],
             'another counter creates no passed buyer for this line');
         assert.strictEqual(MarketPricing.look({ stats: {}, activity: 'resting' }, [consumed], ctx), null);
@@ -443,10 +454,8 @@ async function run() {
                 ];
                 return { listings, decisions: listings.map(item => ({ action: 'list', item })) };
             };
-            const result = await BotMarket.reconcile(LifeState.cachedState(owner), {
-                type: 'sell_inventory', status: 'active', plan: { expectedBenefit: 'market_sale_inventory' }
-            });
-            assert(result.changed, 'native publication replaced the stock');
+            const result = await BotMarket.listOnBoard(LifeState.cachedState(owner));
+            assert(result.listed, 'native publication replaced the stock');
         } finally { ListingPolicy.evaluate = evaluate; }
         const after = (await Database.fetchAfkTradeShops(owner))[0];
         const stem = after.lines.find(line => Number(line.selfId) === 1864);
@@ -473,19 +482,20 @@ async function run() {
             buyerCharacterId: 998, town: 'Giran'
         });
         MarketCounters.reset();
-        MarketCounters.load(await Database.fetchRecentBoardDeals());
+        MarketCounters.load(await Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS,
+            rangeMs: MarketCounters.DAY_MS }));
         assert(!MarketCounters.itemDeals(1864).sellers.includes(owner), 'bounded tail no longer contains its own fill');
         const lines = AfkTrade.boardIndex().ownerLines(owner);
         assert.strictEqual(lines[0].fills, 1);
         assert.strictEqual(lines[0].pricing.seenFills, 0);
-        const ctx = { characterId: owner, understanding: 0.5, timestamp: Date.now(), knowledgeEnabled: false,
-            marketTrades: {}, trader: {}, hour: 1000, adena: 1000, board: AfkTrade.boardIndex(), npcOffersFor: () => [] };
+        const ctx = withDemand({ characterId: owner, understanding: 0.5, timestamp: Date.now(), knowledgeEnabled: false,
+            marketTrades: {}, trader: {}, hour: 1000, adena: 1000, board: AfkTrade.boardIndex(), npcOffersFor: () => [] });
         const observations = PriceBelief.lineObservations(lines[0], PriceBelief.prior(1864, ctx), ctx);
         assert.strictEqual(observations[0][1], 1, 'exact own fill remains positive evidence without a price tail');
         const choose = PriceDecision.chooseAsk;
         let proposal;
         try {
-            PriceDecision.chooseAsk = (_belief, _market, _trader, _key, current) => ({ price: current, npc: false });
+            PriceDecision.chooseAsk = (_belief, _market, _trader, _key, current) => ({ known: true, price: current, npc: false });
             proposal = MarketPricing.look({ stats: {}, activity: 'resting' }, lines, ctx);
         } finally { PriceDecision.chooseAsk = choose; }
         assert.strictEqual(proposal, null, 'C2b retained price creates no metadata-only native write');
@@ -504,11 +514,11 @@ async function run() {
         const restored = AfkTrade.boardIndex().ownerLines(owner);
         assert.strictEqual(restored[0].fills, 1);
         assert.deepStrictEqual(restored[0].pricing, after.lines[0].pricing);
-        const restoredContext = { ...ctx, board: AfkTrade.boardIndex(), timestamp: Date.now() };
+        const restoredContext = withDemand({ ...ctx, board: AfkTrade.boardIndex(), timestamp: Date.now() });
         assert.strictEqual(PriceBelief.lineObservations(restored[0], PriceBelief.prior(1864, restoredContext), restoredContext)[0][1], 1,
             'restart preserves the exact unconsumed fill even though its price did not change');
         try {
-            PriceDecision.chooseAsk = (_belief, _market, _trader, _key, current) => ({ price: current, npc: false });
+            PriceDecision.chooseAsk = (_belief, _market, _trader, _key, current) => ({ known: true, price: current, npc: false });
             assert.strictEqual(MarketPricing.look({ stats: {}, activity: 'resting' }, restored, restoredContext), null,
                 'reconsidering an unchanged price after restart still creates no metadata-only write');
         } finally { PriceDecision.chooseAsk = choose; }
@@ -531,7 +541,6 @@ async function run() {
 
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
     AfkTrade._resetForTests();
-    BotMarket._resetForTests();
     MarketCounters.reset();
     await Database.close();
     clean();

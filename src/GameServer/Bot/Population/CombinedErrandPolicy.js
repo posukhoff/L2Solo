@@ -57,8 +57,31 @@ function edge(previous, current, result = {}) {
     return null;
 }
 
+// The units of selfId the bot bought on its clan's errand and holds for the
+// deposit (stats.lastErrand, which ClanMarketService deposits): no learn
+// point and no sale takes them (WealthCraftDecision.freeAmount). A clan goal
+// item the member buys for its own use (ClanEquipmentService, tag.deposit
+// false) is no deposit; the deposit ends the hold (releaseClanHeld).
+function clanHeld(state, selfId, clanId = state?.stats?.clanId) {
+    const last = state?.stats?.lastErrand;
+    if (last?.purpose !== 'clan' || last.tag?.deposit === false || Number(last.selfId) !== Number(selfId)
+        || !(Number(clanId) > 0) || Number(last.tag?.clanId) !== Number(clanId)) return 0;
+    return Math.max(0, Math.floor(Number(last.units) || 0));
+}
+
+// The stats after amount units of selfId went to clanId's warehouse
+// (Database.transferInventoryToClanWarehouse, in its transaction): the clan
+// hold keeps only the units still owed, none = no lastErrand.
+function releaseClanHeld(stats, clanId, selfId, amount) {
+    const held = clanHeld({ stats }, selfId, clanId);
+    if (!held) return stats;
+    const { lastErrand, ...rest } = stats;
+    const units = held - Math.max(0, Math.floor(Number(amount) || 0));
+    return units > 0 ? { ...rest, lastErrand: { ...lastErrand, units } } : rest;
+}
+
 function visit(state, town, timestamp = Date.now(), reason = null) {
     return { ...state, stats: { ...(state.stats || {}), townVisit: { town, startedAt: timestamp, reason } } };
 }
 
-module.exports = { ERRAND_MS, key, pending, enqueue, complete, withPending, edge, visit };
+module.exports = { ERRAND_MS, key, pending, enqueue, complete, withPending, edge, visit, clanHeld, releaseClanHeld };

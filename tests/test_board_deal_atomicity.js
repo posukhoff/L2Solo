@@ -2,9 +2,8 @@
 // world-DB transaction, all or nothing; a seller without the item is not
 // paid; a failed deal leaves nothing behind. Checked through the public
 // paths a cold bot uses to sell (ColdMarketListingService.open), to buy
-// (MarketOpportunity.bestOffer + ColdMarketService.buyOffer), to ask for an
-// item (ColdMarketBuyStoreService.open) and to sell into an ask
-// (ColdMarketBuyStoreService.sellToBestBuyer). Failures are injected with
+// (MarketOpportunity.bestOffer + ColdMarketService.buyOffer) and to sell
+// into an ask (ColdMarketBuyStoreService.sellToBestBuyer). Failures are injected with
 // temporary SQLite triggers on one character's items.
 const assert = require('assert');
 const fs = require('fs');

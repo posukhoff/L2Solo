@@ -5,6 +5,7 @@ const BotManager = invoke('GameServer/Bot/BotManager');
 const BotAgentTools = invoke('GameServer/Bot/AI/BotAgentTools');
 const BotEquipmentUpgrade = invoke('GameServer/Bot/AI/BotEquipmentUpgrade');
 const Item = invoke('GameServer/Item/Item');
+const Data = invoke('GameServer/DataCache'); Data.init();
 
 // A weapon reserved as a luxury-exchange material is hidden from automatic
 // selection; the direct equip command (LLM tool) must refuse it the same way.
@@ -23,9 +24,15 @@ function wearable(id, data) {
 }
 
 const oldSword = wearable(901, { kind: 'Weapon.Sword', slot: 7, pAtk: 8, equipped: true });
-const material = wearable(902, { kind: 'Weapon.Sword', slot: 7, pAtk: 20 });
-const items = [oldSword, material];
+// The material's template is a gradeless sword (Short Sword, selfId 1): it
+// breaks into no crystals, so the plan holds it whatever the bot's skill.
+const material = wearable(902, { selfId: 1, kind: 'Weapon.Sword', slot: 7, pAtk: 20 });
+// A D sword (selfId 90) breaks into crystals: only a bot with the Crystallize
+// skill keeps it for the exchange; at level 10 it is out of grade.
+const dSword = wearable(903, { selfId: 90, kind: 'Weapon.Sword', slot: 7, pAtk: 30, rank: 'd' });
+const items = [oldSword, material, dSword];
 let equipCalls = 0;
+let level = 10;
 const backpack = {
     fetchItems: () => items,
     fetchEquippedWeapon: () => oldSword,
@@ -42,7 +49,7 @@ const bot = {
     actor: {
         fetchId: () => 731,
         fetchName: () => 'ReservedCompanion',
-        fetchLevel: () => 10,
+        fetchLevel: () => level,
         fetchClassId: () => 0,
         isDead: () => false,
         state: { fetchHits: () => false, fetchCasts: () => false, fetchTowards: () => false },
@@ -50,7 +57,8 @@ const bot = {
     }
 };
 BotManager.sessions = [bot];
-const plan = (strategy) => ({ stats: { equipmentPlan: { strategy, materials: [{ selfId: 902, amount: 1 }] } } });
+const plan = (strategy, selfId = 1, skills) => ({ stats: { equipmentPlan: { strategy, status: 'active',
+    materials: [{ selfId, amount: 1 }] }, ...(skills ? { coldCombat: { skills } } : {}) } });
 
 function decision(turnId, itemId) {
     return { action: 'equip_candidate', confidence: 0.99, reply: '', targetPlayerName: '', spotId: '',
@@ -86,6 +94,19 @@ try {
     bot.coldLifeState = plan('craft');
     assert.strictEqual(BotEquipmentUpgrade.findBestUpgrades(bot).length, 1);
     assert.strictEqual(BotEquipmentUpgrade.applyCandidate(bot, 902, { force: true }).applied, true);
+
+    // an old luxury plan of a bot without the Crystallize skill holds no D gear
+    // (the disposition view frees it): the D sword is an upgrade again
+    level = 20;
+    bot.coldLifeState = plan('luxury_exchange', 90);
+    assert(BotEquipmentUpgrade.findBestUpgrades(bot).some(({ item }) => item.fetchId() === 903), 'unskilled: D sword offered');
+    assert.strictEqual(BotEquipmentUpgrade.applyCandidate(bot, 903, { force: true }).applied, true, 'unskilled: D sword equips');
+
+    // the same plan of a bot with the skill still holds it for the exchange
+    bot.coldLifeState = plan('luxury_exchange', 90, [{ selfId: 248, level: 1 }]);
+    assert(!BotEquipmentUpgrade.findBestUpgrades(bot).some(({ item }) => item.fetchId() === 903), 'skilled: D sword hidden');
+    assert.deepStrictEqual(BotEquipmentUpgrade.applyCandidate(bot, 903, { force: true }),
+        { applied: false, reason: 'reserved_exchange_material' });
     console.log('Direct equip reserved material checks passed');
 } finally {
     BotManager.sessions = [];

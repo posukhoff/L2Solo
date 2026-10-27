@@ -33,12 +33,8 @@ state.inventory[13] = { selfId: 13, amount: 1, slot: 14, equipped: true, equippe
 assert(Planner.combatReadiness(state).hasWeapon, 'this is not the emergency unarmed bridge');
 const deps = { spots: [], board, tripCost: trip, knowledgeEnabled: false,
     npcOffersFor: id => Market.npcOffers(id, 'Dion'), timestamp: 1791464400000 };
-let context, original;
-for (let seq = 1; seq <= 50; seq++) {
-    original = { ...state, stats: { ...state.stats, decisionSeq: seq } };
-    context = Economy.forState(original, deps);
-    if (context.network.activity?.activity === 'shopping' && context.network.activity?.rootKey.startsWith('power:')) break;
-}
+const original = { ...state, stats: { ...state.stats, decisionSeq: 1 } };
+const context = Economy.forState(original, deps);
 assert.equal(context.network.activity?.activity, 'shopping');
 const activeWish = context.network.queue.find(row => row.key === context.network.activity.rootKey);
 assert(activeWish?.object?.slot, 'actual common network selected gear, not a supplied activity');
@@ -64,7 +60,6 @@ const tooHigh = Data.items.find(row => row.etc?.rank === 'b' && Planner.suitable
 assert(tooHigh && !Planner.considerable(tooHigh, original));
 const held = { ...original, stats: { ...original.stats, equipmentPlan: { target: { selfId: item.selfId } } } };
 assert([...Providers.gearCandidates(held, context).values()].some(rows => rows.some(row => row.selfId === item.selfId)));
-assert.equal(Economy.forState(original, deps).network, context.network, 'same event reuses the decision and held roll');
 // Multiple professions/level bands use the same shortlist owner; an
 // incompatible or over-level item cannot turn its proxy into a purchase.
 for (const classId of [9, 12, 5, 2, 55]) for (const level of [25, 45, 55]) {

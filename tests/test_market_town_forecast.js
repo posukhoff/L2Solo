@@ -29,8 +29,6 @@ assert.equal(Town.shopTown(state, [item], { context: { ...fresh, travelDetails: 
 for (let id = 1; id <= 21; id++) emptyBoard.put({ id, ownerId: 999, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
     lines: [{ lineId: id, selfId: 123, count: 1, price: item.price + 1 }] });
 assert.equal(Town.shopTown(state, [item], { context: fresh, tripCost: () => 0, timestamp: 1000 }), Town.targetTownForItems(state, [item]), 'a truncated rival tail cannot prove a town opportunity');
-const held = { ...state, stats: { shopTown: { town: 'Dion', at: 1 } } };
-assert.deepEqual(Town.openingTown(held, [item], 1000), { town: 'Dion', shopTown: null }, 'an accepted shop town does not reroll');
 const iterator = Town.chooseTown(state, [item], { context, tripCost: () => 0, timestamp: 1000 });
 let step, yields = 0; do { step = iterator.next(); if (!step.done) yields++; } while (!step.done);
 assert(yields > 0); assert.equal(step.value.town, Town.shopTown(state, [item], { context, tripCost: () => 0, timestamp: 1000 }), 'cooperative and direct consumers share the decision');

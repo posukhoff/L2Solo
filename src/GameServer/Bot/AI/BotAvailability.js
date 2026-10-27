@@ -1,4 +1,5 @@
 const BotSocialMemory = invoke('GameServer/Bot/AI/BotSocialMemory');
+const { partyIdOf } = require('../Population/PartyId');
 const BotServiceIdentity = invoke('GameServer/Bot/AI/BotServiceIdentity');
 const SpeckMath = invoke('GameServer/SpeckMath');
 const InteractionMemory = invoke('GameServer/Social/InteractionMemoryRuntime');
@@ -155,7 +156,7 @@ const BotAvailability = {
         let reason = 'available';
         if (staticService) reason = 'merchant_duty';
         else if (options.constParty === true) reason = 'available';
-        else if (state.party?.partyId || state.partyId || state.stats?.backgroundPartyId
+        else if (partyIdOf(state) || state.stats?.backgroundPartyId
             || state.stats?.playerPartyTakeover?.playerId) reason = 'already_grouped';
         else if (result.relationshipReason) reason = result.relationshipReason;
         else if (socialRefusal(result.memory)) reason = 'relationship_hostile';

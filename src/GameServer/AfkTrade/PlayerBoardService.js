@@ -4,7 +4,6 @@
 // canonical record; a displayed quote never becomes a remote purchase.
 const { SELL, BUY } = require('./BoardIndex');
 const SHOP_RANGE = 200;
-const WORKSHOP_RANGE = 1200;
 const TRADE_TYPES = Object.freeze(['all', 'meeting', 'shop']);
 const matchesType = (line, type = 'all') => type === 'all' || (type === 'meeting' ? line.custodyPolicy === 1
     : type === 'shop' && line.kind === 'shop' && line.custodyPolicy !== 1);
@@ -122,10 +121,10 @@ function create({ afk = () => invoke('GameServer/AfkTrade/AfkTradeService'),
             if (!quote || Number(quote.state.simulation?.revision || 0) !== Number(request.revision)
                 || Number(quote.price) !== Number(request.price)) return { ok: false, reason: 'record_changed' };
             if (request.locateOnly === true) return { ok: true, action: 'locate', ownerName: quote.state.name,
-                town: quote.state.currentRegion, loc: { ...quote.state.loc } };
-            if (distance(session.actor, quote.state.loc) > WORKSHOP_RANGE) {
+                town: quote.place.town, loc: { ...quote.place.loc } };
+            if (!workshops().inWorkshopRange(quote.place, location(session.actor))) {
                 return { ok: true, action: 'meet', ownerId, ownerName: quote.state.name, productId: quote.recipe?.productId,
-                    town: quote.state.currentRegion, loc: { ...quote.state.loc } };
+                    town: quote.place.town, loc: { ...quote.place.loc } };
             }
             if (request.confirmed !== true) return { ok: true, action: 'confirm', ownerId, recipeId,
                 ownerName: quote.state.name, price: quote.price, revision: Number(quote.state.simulation?.revision || 0),
@@ -175,20 +174,23 @@ function create({ afk = () => invoke('GameServer/AfkTrade/AfkTradeService'),
         if (!offer) return { ok: false, reason: 'record_changed' };
         // The canonical advertisement exposes its meeting point on the offer;
         // the store contains trade terms, without location coordinates.
-        const meetingLoc = line.custodyPolicy === 1 ? { locX: offer.locX, locY: offer.locY, locZ: offer.locZ } : null;
+        // Where the player meets the owner: the shop, or Floran for an owner with karma.
+        const meeting = line.custodyPolicy === 1 ? meetings().meetingPoint({ town: line.town, locX: offer.locX, locY: offer.locY,
+            locZ: offer.locZ }, [playerId, line.ownerId]) : null;
+        const meetingLoc = meeting ? { locX: meeting.locX, locY: meeting.locY, locZ: meeting.locZ } : null;
         if (meetingLoc && !Object.values(meetingLoc).every(Number.isFinite)) return { ok: false, reason: 'location_unavailable' };
         if (request.locateOnly === true) {
             const owner = life().cachedState(line.ownerId);
             const loc = line.custodyPolicy === 1 ? meetingLoc
                 : offer.projection?.actor ? location(offer.projection.actor) : owner?.loc;
             return loc ? { ok: true, action: 'locate', ownerName: offer.sourceName, conditional: line.custodyPolicy === 1,
-                town: line.custodyPolicy === 1 || offer.projection?.actor ? line.town : owner?.currentRegion || line.town, loc: { ...loc } }
+                town: meeting ? meeting.town : offer.projection?.actor ? line.town : owner?.currentRegion || line.town, loc: { ...loc } }
                 : { ok: false, reason: 'location_unavailable' };
         }
         if (line.custodyPolicy === 1) {
             const loc = meetingLoc;
             if (distance(session.actor, loc) > SHOP_RANGE) return { ok: true, action: 'meet', ownerId: line.ownerId,
-                ownerName: offer.sourceName, side: line.storeType, town: line.town, loc, conditional: true };
+                ownerName: offer.sourceName, side: line.storeType, town: meeting.town, loc, conditional: true };
             const amount = Number(request.amount ?? 1);
             if (!Number.isSafeInteger(amount) || amount <= 0 || amount > line.count) return { ok: false, reason: 'record_changed' };
             if (request.confirmed === true) {

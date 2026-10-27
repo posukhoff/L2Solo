@@ -5,7 +5,6 @@ const RUNTIME_STARTED_AT = Date.now();
 
 const counters = {
     listingsOpened: 0,
-    speculativeListings: 0,
     purchases: 0,
     itemsSold: 0,
     adenaTraded: 0,
@@ -22,11 +21,6 @@ const counters = {
     expired: 0,
     expiredItems: 0,
     demandClosed: 0,
-    demandPrunedItems: 0,
-    staticBuyerSales: 0,
-    staticBuyerItems: 0,
-    staticBuyerAdena: 0,
-    buyStoresOpened: 0,
     dynamicBuyerSales: 0,
     dynamicBuyerItems: 0,
     dynamicBuyerAdena: 0,
@@ -34,11 +28,9 @@ const counters = {
 };
 let previous = { ...counters };
 let tradeSequence = 0;
-let resetEpoch = 0;
 let lastJournalWarningAt = 0;
 const recentPeerTrades = [];
 const recentPlayerTrades = [];
-const recentStaticTrades = [];
 const recentNpcTrades = [];
 const itemTotals = new Map();
 const townTotals = new Map();
@@ -80,7 +72,7 @@ function recordTrade(details = {}) {
     const channel = details.channel || 'wts';
     const trade = {
         id: ++tradeSequence,
-        eventKey: `market:${process.pid}:${RUNTIME_STARTED_AT}:${resetEpoch}:${tradeSequence}`,
+        eventKey: `market:${process.pid}:${RUNTIME_STARTED_AT}:${tradeSequence}`,
         at: Math.max(1, Number(details.at) || Date.now()),
         channel,
         sourceType: details.sourceType || channel,
@@ -97,8 +89,7 @@ function recordTrade(details = {}) {
     if (channel === 'fixed_wts') require('./MarketCounters').supplyDeal(selfId, quantity, trade.town, trade.at, trade.enchant);
 
     if (Config.developerDiagnostics) {
-    if (channel === 'static_wtb') boundedPush(recentStaticTrades, trade);
-    else if (channel === 'npc_buy') boundedPush(recentNpcTrades, trade);
+    if (channel === 'npc_buy') boundedPush(recentNpcTrades, trade);
     else if (channel === 'player_wts' || channel === 'fixed_wts') boundedPush(recentPlayerTrades, trade);
     else boundedPush(recentPeerTrades, trade);
 
@@ -151,7 +142,6 @@ function transactions() {
     return {
         recentPeerTrades: recentPeerTrades.map((trade) => ({ ...trade })),
         recentPlayerTrades: recentPlayerTrades.map((trade) => ({ ...trade })),
-        recentStaticTrades: recentStaticTrades.map((trade) => ({ ...trade })),
         recentNpcTrades: recentNpcTrades.map((trade) => ({ ...trade })),
         byItem: byItem
             .sort((left, right) => right.adena - left.adena || right.items - left.items || left.selfId - right.selfId)
@@ -170,26 +160,9 @@ function transactions() {
     };
 }
 
-function reset() {
-    Object.keys(counters).forEach((key) => { counters[key] = 0; });
-    previous = { ...counters };
-    tradeSequence = 0;
-    resetEpoch += 1;
-    recentPeerTrades.length = 0;
-    recentPlayerTrades.length = 0;
-    recentStaticTrades.length = 0;
-    recentNpcTrades.length = 0;
-    itemTotals.clear();
-    townTotals.clear();
-}
-
 module.exports = {
     RECENT_TRADE_LIMIT,
-    listingOpened(details = {}) {
-        add('listingsOpened');
-        if (details.speculative) add('speculativeListings');
-    },
-    buyStoreOpened() { add('buyStoresOpened'); },
+    listingOpened() { add('listingsOpened'); },
     purchase(offer, quantity = 1, context = {}) {
         const count = Math.max(1, Number(quantity) || 1);
         const adena = Math.max(0, Number(offer?.price || 0)) * count;
@@ -238,32 +211,6 @@ module.exports = {
         if (reason === 'expired') { add('expired'); add('expiredItems', Math.max(0, Number(items) || 0)); }
         if (reason === 'no_actionable_demand') add('demandClosed');
     },
-    demandPruned(items = 0) { add('demandPrunedItems', Math.max(0, Number(items) || 0)); },
-    staticBuyerSale(items = 0, adena = 0, context = {}) {
-        const lines = Array.isArray(items) ? items : null;
-        const itemCount = lines
-            ? lines.reduce((sum, item) => sum + Math.max(0, Number(item.count || 0)), 0)
-            : Math.max(0, Number(items) || 0);
-        const totalAdena = lines
-            ? lines.reduce((sum, item) => sum + Math.max(0, Number(item.count || 0)) * Math.max(0, Number(item.npcPrice || 0)), 0)
-            : Math.max(0, Number(adena) || 0);
-        add('staticBuyerSales');
-        add('staticBuyerItems', itemCount);
-        add('staticBuyerAdena', totalAdena);
-        (lines || []).forEach((item) => recordTrade({
-            channel: 'static_wtb',
-            sourceType: 'static_buy_store',
-            selfId: item.selfId,
-            enchant: item.enchant,
-            itemName: item.name,
-            quantity: item.count,
-            unitPrice: item.npcPrice,
-            town: item.buyerTown || context.town,
-            sellerCharacterId: context.sellerCharacterId,
-            sellerName: context.sellerName,
-            buyerName: item.buyerName
-        }));
-    },
     dynamicBuyerSale(offer, quantity = 1, context = {}) {
         const count = Math.max(1, Number(quantity) || 1);
         const adena = Math.max(0, Number(offer?.price || 0)) * count;
@@ -287,7 +234,6 @@ module.exports = {
     },
     recordTrade,
     transactions,
-    reset,
     current() { return Config.developerDiagnostics ? { ...counters } : { enabled: false }; },
     snapshot() {
         if (!Config.developerDiagnostics) return { enabled: false };

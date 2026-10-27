@@ -170,16 +170,17 @@ assert.equal(require('../src/GameServer/AfkTrade/BoardIndex').offerFields(index.
 assert.equal(recordOf(row.slice(0,8)).custodyPolicy,0);
 
 // Public content is comparable across main/worker startup orders and epochs.
-const leftContent = new BoardIndex(), rightContent = new BoardIndex();
+const sameScope = { groupOf: () => 'scope' };
+const leftContent = new BoardIndex(sameScope), rightContent = new BoardIndex(sameScope);
 const rowsContent = [record(81, { revision: 2 }, [{ selfId: 1867, price: 30, count: 5 }]),
     record(82, { revision: 3 }, [{ selfId: 1867, price: 31, count: 6 }])];
 rowsContent.forEach(row => leftContent.put(row));
 rightContent.clear(); [...rowsContent].reverse().forEach(row => rightContent.put(recordOf(rowOf({ ...row, lines: row.lines.map(line => ({ ...line, id: line.lineId })) }))));
-assert.equal(leftContent.itemFingerprint(1867), rightContent.itemFingerprint(1867));
+assert.equal(leftContent.groupFingerprint('scope'), rightContent.groupFingerprint('scope'));
 rightContent.put({ ...rowsContent[0], revision: 4 });
-assert.notEqual(leftContent.itemFingerprint(1867), rightContent.itemFingerprint(1867));
+assert.notEqual(leftContent.groupFingerprint('scope'), rightContent.groupFingerprint('scope'));
 rightContent.remove(81); rightContent.remove(82);
-assert.equal(rightContent.itemFingerprint(1867), '0.0.0');
+assert.equal(rightContent.groupFingerprint('scope'), '0.0.0');
 
 rightContent.follower().put('w:1:2', ['w:1:2', 1, 2, 50, 1, 'Giran', 0, 0, 0, 2]);
 assert.equal(rightContent.size, 0, 'public workshop source is not an ordinary shop in other board followers');
@@ -238,4 +239,22 @@ try {
     for (let call = 0; call < 128; call++) Query.cheapestTown(deep, 77, { amount: 6, quoteDepth: 5, sampleWhole: true, accept: () => ++accepted > 0 });
     assert.equal(accepted, 128 * 5, 'no rerun over the whole list while diagnostics are off');
 } finally { Config.developerDiagnostics = diagnostics; }
+// A bid waits behind the other buy lines priced at or above it (sellers fill
+// the higher bid first, luxwait2), never behind cheaper ones; the owner's own
+// lines are no rivals and never its place: the price asked is (luxwait3).
+{
+    const board = new BoardIndex();
+    board.put(record(51, { storeType: BUY, town: 'Giran' }, [{ selfId: 9, price: 6000, count: 300 }]));
+    board.put(record(52, { storeType: BUY, ownerId: 525, town: 'Dion' }, [{ selfId: 9, price: 4000, count: 200 }]));
+    board.put(record(53, { storeType: BUY, town: 'Giran' }, [{ selfId: 9, price: 1500, count: 5000 }]));
+    assert.strictEqual(board.buyUnits(9, 0, 1500), 5500, 'the lowest bid waits behind every line, its tie too');
+    assert.strictEqual(board.buyUnits(9, 0, 4000), 500, 'a middle bid waits behind the lines at or above it only');
+    assert.strictEqual(board.buyUnits(9, 0, 6001), 0, 'a bid above all sees no one ahead');
+    assert.strictEqual(board.buyUnits(9, 530, 6001), 0, 'the owner\'s standing bid at 1500 is not its place');
+    assert.strictEqual(board.buyUnits(9, 530, 1500), 500, 'the owner\'s own line is no rival');
+    board.put(record(54, { storeType: BUY, ownerId: 520, town: 'Giran' }, [{ selfId: 9, price: 7000, count: 40 }]));
+    assert.strictEqual(board.buyUnits(9, 520, 4000), 500, 'an owner bidding above all still waits at the price asked');
+    board.remove(51);
+    assert.strictEqual(board.buyUnits(9, 0, 4000), 240, 'a removed line leaves the queue');
+}
 console.log('PASS test_board_index');

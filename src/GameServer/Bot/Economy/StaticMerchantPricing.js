@@ -3,11 +3,12 @@ const DataCache = invoke('GameServer/DataCache');
 const BotEconomyPricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
 // Authored shop rows are pure data and are shared with cold craft decisions.
 const NpcShopBuyLists = require('../../World/Generics/NpcShopBuyLists');
-const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
+const PriceDecision = require('./PriceDecision');
 const OfferQuery = require('./OfferQuery');
+const ProductionPolicy = require('./ProductionPolicy');
 const { SELL, BUY } = require('../../AfkTrade/BoardIndex');
 
-const BUYBACK_RATIO = 0.9;
 let npcOffers = new Map();
 let npcRate = null;
 function refreshNpcOffers() {
@@ -30,14 +31,6 @@ function configuredPrice(line) {
     if (line.price !== undefined) return Number(line.price);
     const base = basePrice(line.selfId);
     return BotEconomyPricing.scalePrice(base > 0 ? base * (line.priceRate ?? 1) : 1);
-}
-
-function botPriceFor(store, line) {
-    const price = configuredPrice(line);
-    if (Number(store.storeType) !== BUY) return price;
-    // Bound fixed-buyer payouts below repeatable NPC and fixed-store supply.
-    const ceiling = Math.floor(cheapestPurchase(line.selfId) * BUYBACK_RATIO);
-    return Math.min(price, ceiling);
 }
 
 // Configured supply is independent of the board: bots keep its original
@@ -73,10 +66,8 @@ function cheapestPurchase(selfId, { forBot = false } = {}) {
     refreshNpcOffers();
     refreshFixedOffers();
     const id = Number(selfId);
-    const production = require('./ProductionPolicy');
-    let minimum = forBot && production.shotsDisabled() && (production.GRADED_SHOTS.has(id) || production.NO_GRADE_SHOTS.has(id))
+    let minimum = forBot && ProductionPolicy.shotsDisabled() && ShotStock.SHOP_SHOT_RANK.has(id)
         ? Infinity : fixedMinimums.get(id) ?? Infinity;
-    if (forBot && !production.allowsNpcShot(id)) return minimum;
     for (const line of npcOffers.get(id) || []) {
         minimum = Math.min(minimum, Number(line.price ?? basePrice(id)));
     }
@@ -109,7 +100,7 @@ function buyOffers(selfId, { actor, viewerId = 0, enchant = 0 } = {}) {
 }
 
 function buyQuote(store, line, options = {}) {
-    const npcPrice = NpcSellRules.npcBuyPrice(basePrice(line.selfId));
+    const npcPrice = PriceDecision.buyback(line.selfId);
     const offers = buyOffers(line.selfId, options);
     const price = Math.max(npcPrice, ...offers.map(offer => Number(offer.price)));
     const count = price === npcPrice ? Number(line.count ?? 1)
@@ -130,7 +121,7 @@ function priceFor(store, line, { viewerId = 0, actor = null, enchant = 0 } = {})
             excludeOwner: Number(viewerId) || 0,
             accept: candidate => ['shop', 'buy_ad'].includes(candidate.kind) && validPrice(candidate)
         });
-        return bid ? bid.price : NpcSellRules.npcBuyPrice(basePrice(line.selfId));
+        return bid ? bid.price : PriceDecision.buyback(line.selfId);
     }
     const price = configuredPrice(line);
     if (Number(store.storeType) !== SELL) return price;
@@ -140,4 +131,4 @@ function priceFor(store, line, { viewerId = 0, actor = null, enchant = 0 } = {})
     return ask ? Math.max(price, Number(ask.price)) : price;
 }
 
-module.exports = { BUYBACK_RATIO, botPriceFor, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), priceFor, sellersOf };
+module.exports = { configuredPrice, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), priceFor, sellersOf };

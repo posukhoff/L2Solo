@@ -90,12 +90,14 @@ function marketMembers(clan, memberIds = null) {
 
 // What one member may buy for the clan: in its town (Giran without one),
 // never from its own records, within what it may spend
-// (PurchaseFunding.spendable) and `cap`.
+// (PurchaseFunding.spendable) and `cap`, on a clan errand (only lines that
+// settle at once, OfferQuery.settledOnlyFor).
 function memberOffer(state, itemId, cap = Infinity) {
     return MarketOpportunity.bestOffer(itemId, {
         town: state.currentRegion || 'Giran',
         budget: Math.min(PurchaseFunding.spendable(state, 0, { free: true }), cap),
-        buyerCharacterId: state.characterId
+        buyerCharacterId: state.characterId,
+        purpose: 'clan'
     });
 }
 

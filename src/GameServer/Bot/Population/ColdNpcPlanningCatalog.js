@@ -1,13 +1,14 @@
 const OfferOrder = require('../Economy/OfferOrder');
 const OfferQuery = require('../Economy/OfferQuery');
+const { offerAdmission } = require('./PartyAdmission');
+const BotGear = invoke('GameServer/Bot/AI/BotGear');
 
 const LOW_TIER_RANKS = new Set(['none', 'd']);
 const EMPTY_OFFERS = Object.freeze([]);
 
 function equipmentItemIds(items = []) {
-    return new Set((items || [])
+    return new Set(BotGear.currentWearableRows(items)
         .filter((item) => LOW_TIER_RANKS.has(String(item?.etc?.rank || 'none').toLowerCase()))
-        .filter((item) => Number(item?.etc?.slot || 0) > 0)
         .map((item) => Number(item.selfId || 0))
         .filter(Boolean));
 }
@@ -80,13 +81,16 @@ function createLookup(rows = [], board = () => null) {
     const offersFor = (target) => offersByItem.get(Number(target?.selfId ?? target)) || EMPTY_OFFERS;
     const bestOffer = (target, state, origin) => OfferQuery.bestSellOffer(null, Number(target?.selfId ?? target),
         { cost: OfferOrder.tripCost(state, { origin }), others: offersFor(target) });
-    // A board line at price 0 is no purchase (GearAcquisitionPlanner: usable).
-    const findMarketOffer = (target, state, origin) => OfferQuery.bestSellOffer(board(), Number(target?.selfId ?? target), {
-        excludeOwner: state?.characterId,
+    // The worker gear planner's offer search: the one buyer's search
+    // (OfferQuery.bestBuyerOffer) over the board and the NPC offers in every
+    // town, admitted as the worker's MarketOpportunity (party rule) and never
+    // a line whose meeting this bot was refused. A board line at price 0 is
+    // no purchase (GearAcquisitionPlanner: usable).
+    const findMarketOffer = (target, state, origin) => OfferQuery.bestBuyerOffer(board(), Number(target?.selfId ?? target), {
+        buyerCharacterId: state?.characterId,
         cost: OfferOrder.tripCost(state, { origin }),
-        accept: (offer) => Number(offer.price) > 0,
-        others: offersFor(target)
-    });
+        accept: (offer) => Number(offer.price) > 0
+    }, { buyerState: state, allowed: offerAdmission(state), others: () => offersFor(target) });
     const plannerOptions = Object.freeze({
         findNpcOffer: bestOffer,
         findMarketOffer

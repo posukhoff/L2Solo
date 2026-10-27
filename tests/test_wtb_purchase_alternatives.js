@@ -11,7 +11,7 @@ const Party = require('../src/GameServer/Bot/Population/PartyAdmission');
 const ITEM = 413, now = 1800000000000;
 const buyer = { characterId: 1, activity: 'hunting', stats: {} };
 const board = new BoardIndex();
-let npc = [], routes = { Dion: { known: true, hours: 0, fees: 0 } };
+let npc = [], routes = { Dion: { known: true, hours: 0, fees: 0 }, Oren: { known: true, hours: 0, fees: 0 } };
 const ctx = { state: buyer, characterId: 1, hour: 600000, adena: 1000000, board,
     travelDetails: town => routes[town] || { known: false, hours: NaN, fees: NaN },
     npcOffersFor: () => npc, timestamp: now, understanding: .5, knowledgeEnabled: false,
@@ -21,12 +21,15 @@ const shop = (id, price, count = 1, extra = {}) => board.put({ id, ownerId: id +
     storeType: SELL, town: 'Dion', ...extra, lines: [{ lineId: id, selfId: ITEM, enchant: extra.enchant || 0, count, price }] });
 Party.configureTradeAdmission(() => null);
 
+// The shop of another town than the bid's meeting (Dion), over an equal trip.
+const away = (id, price, count = 1, extra = {}) => shop(id, price, count, { town: 'Oren', ...extra });
+
 // The reported gear case: high subjective value cannot beat a real shop.
-shop(1, 74136);
+away(1, 74136);
 assert.equal(cap(), 74136);
-routes.Dion = { known: true, hours: 50 / 3600, fees: 7800 };
+routes.Dion = routes.Oren = { known: true, hours: 50 / 3600, fees: 7800 };
 assert.equal(cap(), 74136, 'identical nonzero trips cancel to the exact shop price');
-routes.Dion = { known: true, hours: 0, fees: 0 };
+routes.Dion = routes.Oren = { known: true, hours: 0, fees: 0 };
 const belief = { mu: Math.log(105000), K: 5.8 };
 const market = { units: 1, lot: 1, buyersPerHour: NaN, purchaseCap: cap() };
 for (let seed = 0; seed < 30; seed++) {
@@ -38,7 +41,7 @@ assert.equal(Decision.chooseBid(belief, { ...market, purchaseCap: 50000 }, ctx.t
 
 // Full quantity, one shared trip, affordable cash fees and travel time.
 assert.equal(cap(10), Infinity, 'one cheap unit cannot fill a ten-unit order');
-npc = [{ sourceType: 'npc', selfId: ITEM, price: 126636, town: 'Dion', available: true }];
+npc = [{ sourceType: 'npc', selfId: ITEM, price: 126636, town: 'Oren', available: true }];
 assert.equal(cap(2), Math.floor((74136 + 126636) / 2));
 board.clear();
 assert.equal(cap(), 126636);
@@ -58,13 +61,6 @@ assert.equal(cap(), Infinity);
 npc = [{ sourceType: 'npc', selfId: ITEM, price: 100, count: 1, town: 'Dion', available: true }];
 assert.equal(cap(2), Infinity);
 assert.equal(cap(1, 1000000, { enchant: 1 }), Infinity, 'ordinary NPC stock cannot replace enchanted gear');
-const Config = invoke('GameServer/Bot/Population/PopulationConfig');
-const disabled = Config.staticShotsDisabled;
-try {
-    Config.staticShotsDisabled = true;
-    assert.equal(Alternative.cap(1463, ctx, { units: 1, money: 1000000, town: 'Dion' }), Infinity,
-        'an NPC purchase forbidden by the production policy is not executable');
-} finally { Config.staticShotsDisabled = disabled; }
 npc = [];
 shop(1, 100, 1, { ownerId: 1 });
 shop(2, 100, 1, { enchant: 1 });
@@ -73,20 +69,20 @@ assert.equal(cap(), Infinity, 'own stock and different enchants do not provide t
 // Public conditional quantities are not reservations. The buyer's accepted
 // executable quote and party admission are required before using one.
 board.clear();
-shop(3, 100, 1, { custodyPolicy: 1, kind: 'sell_ad' });
+away(3, 100, 1, { custodyPolicy: 1, kind: 'sell_ad' });
 assert.equal(cap(), Infinity);
-ctx.economy.activity = { activity: 'shopping', kind: 'buy', sourceType: 'afk', quoted: true,
-    executable: true, itemId: ITEM, town: 'Dion', unitPrice: 100, amount: 1 };
+ctx.economy.network = { activity: { activity: 'shopping', kind: 'buy', sourceType: 'afk', quoted: true,
+    executable: true, itemId: ITEM, town: 'Oren', unitPrice: 100, amount: 1 } };
 assert.equal(cap(), 100);
 Party.configureTradeAdmission(() => ({ partyId: 'busy' }));
 assert.equal(cap(), Infinity, 'a party-bound seller cannot attend the meeting');
 Party.configureTradeAdmission(() => null);
-delete ctx.economy.activity;
+delete ctx.economy.network;
 
 // A small source change still retires an overpriced accepted bid, even when
 // personal noise would normally keep the previous quote untouched.
 board.clear();
-shop(1, 74000);
+away(1, 74000);
 Counters.reset();
 const line = { ownerId: 1, recordId: 2, lineId: 2, revision: 1, storeType: BUY, selfId: ITEM,
     town: 'Dion', custodyPolicy: 1, count: 1, price: 188565, enchant: 0, fills: 0,
@@ -127,7 +123,7 @@ assert.doesNotThrow(() => Alternative.assertMeetingPurchase([agreed(188565)], 1,
     'a seller does not prepare the counterparty purchase');
 const absentTrip = { ...ctx, travelDetails: () => ({ known: false, hours: NaN, fees: NaN }) };
 assert.throws(() => Alternative.assertMeetingPurchase([agreed(80000)], 0, 'Dion', absentTrip), /trade_meeting_route/);
-npc = []; shop(1, 74000);
+npc = []; away(1, 74000);
 const BuyAds = invoke('GameServer/Bot/Economy/BuyAdPolicy');
 const completeTrip = town => {
     const route = ctx.travelDetails(town); return route.known ? route.fees + route.hours * ctx.hour : Infinity;
@@ -142,11 +138,33 @@ const preparedBid = BuyAds.bidFor({ ...buyer, phase: 'cold', adena: 1000000,
     economy: { ...ctx.economy, trip: completeTrip, hourAdena: ctx.hour, moneyPrice: 1 / ctx.hour }, npcOffersFor: () => []
 });
 assert(preparedBid?.price <= 74000, 'a partial recipe route cannot hide the complete prepared WTB alternatives');
-assert.deepEqual(require('../src/GameServer/Bot/Population/ColdEconomyPlan').buyBatch([preparedBid]).buyCaps, [74000],
+assert.deepEqual(require('../src/GameServer/Bot/Population/ColdEconomyPlan').buyBatch([preparedBid], 'Dion').buyCaps, [74000],
     'native publication receives the prepared limit without rebuilding routes or pricing');
 assert.equal(Pricing.bid(ITEM, { ...ctx, travelDetails: partialTrip.details }, { units: 1,
     worth: 34454032, cap: 1000000, town: 'Dion', money: 1000000, rollKey: ['unknown-meeting'] }), null,
     'a new bid waits until its own meeting route is executable');
+// A buy intent's item bids at the intent's own worth (its share of the root),
+// even when the economy's own worth of the item is higher (another root's use).
+const intentWorth = 50000;
+const inputBid = BuyAds.bidFor({ ...buyer, phase: 'cold', adena: 1000000,
+    stats: { money: [600000, 1 / 600000, 0, 0, .01, 100000, ITEM] } },
+{ type: 'buy_craft_material', target: { itemId: ITEM, amount: 1 },
+    intent: { key: 'craft:1', itemId: ITEM, amount: 1, worth: intentWorth, valueHours: intentWorth / ctx.hour, valueRate: 1 } }, {
+    town: 'Dion', board, persona: { traits: {} }, findSpot: () => null, tripCost: completeTrip,
+    economy: { ...ctx.economy, worth: () => 200000, network: { demands: new Map([[`item:${ITEM}`, 200000 / ctx.hour]]) },
+        projection: { values: new Map() }, trip: completeTrip, hourAdena: ctx.hour, moneyPrice: 1 / ctx.hour }, npcOffersFor: () => []
+});
+assert(inputBid?.price > 0 && inputBid.price <= intentWorth,
+    'a buy intent never bids above its intent worth, even when its own worth is higher');
+// A near bot's look (the accepted card's trader context) prices an intent's
+// BUY line at the intent's worth, as the worker's look does.
+const cardState = { ...buyer, characterId: 77, phase: 'hot', updatedAt: 5, stats: { money: [600000, 1 / 600000, 0, 0] } };
+invoke('GameServer/Bot/Population/ColdSimulationCoordinator').economyDecisions.accept(77,
+    require('../src/GameServer/Bot/Population/ColdEconomyDecision').capture(
+        { watchList: [{ itemId: ITEM, amount: 1, worth: intentWorth, kind: 'material' }] }, cardState));
+assert.equal(require('../src/GameServer/Bot/Economy/BoardLook').buyWorth(
+    invoke('GameServer/Bot/Economy/MarketListingPolicy').cardTraderContext(cardState, { board }), ITEM), intentWorth,
+    'a near bot\'s look reads the card\'s intent worth');
 const tradeBoard = new BoardIndex();
 tradeBoard.put({ id: 10, ownerId: buyer.characterId, revision: 1, storeType: BUY, town: 'Dion',
     custodyPolicy: 1, kind: 'buy_ad', lines: [{ lineId: 10, selfId: ITEM, enchant: 0,
@@ -163,8 +181,10 @@ planEconomy, { now, board: tradeBoard, persona: { traits: {} }, tripCost: partia
 let plan;
 do { plan = iterator.next(); } while (!plan.done);
 assert.deepEqual(plan.value.take, [SELL, ITEM, 1, 11, 11, 1, 80000]);
-assert.deepEqual(plan.value.bidLimits, [[10, 10, 1, 1, 188565, 74000]],
-    'an immediately selected trade still corrects the owner\'s old bids using the complete routes');
+assert.deepEqual(require('../src/GameServer/Bot/Population/ColdEconomyPlan').bidLimits({ ...buyer, level: 30, phase: 'cold',
+    adena: 1000000, inventory: {}, vitals: { hp: 1000, mp: 1000 }, stats: { classId: 0 } }, planEconomy,
+{ now, board: tradeBoard, persona: { traits: {} }, tripCost: partialTrip, npcOffersFor: () => [] }).map(row => row.slice(0, 6)), [[10, 10, 1, 1, 188565, 0]],
+'a lifecycle command withdraws the owner\'s old bid as crossed: its own town sells the whole lot');
 const smallWallet = Pricing.bid(ITEM, { ...ctx, adena: 100000 }, { units: 2, worth: 34454032, cap: 100000,
     town: 'Dion', money: 100000, rollKey: ['short-wallet'] });
 assert.equal(smallWallet.count, 1);
@@ -178,6 +198,105 @@ const underfunded = Pricing.look(buyer, [line], { ...ctx, adena: 60000, prepared
     reviewReasons: new Map([[2, 4]]) });
 assert(underfunded?.reprices?.[0]?.price <= 59500, 'standing bids can fund the entire meeting');
 routes.Dion = { known: true, hours: 0, fees: 0 };
+
+// A standing bid never stays at its own town's whole ask (no matcher would
+// cross them): it withdraws; a new bid opens under that ask.
+// Another town's ask, a partial lot or an NPC-backed one keeps the ceiling.
+board.clear();
+npc = [];
+shop(1, 74000);
+const standing = { ...line, custodyPolicy: 0, count: 1, price: 74000 };
+assert.equal(Alternative.lineLimit(standing, ctx), 0, 'a bid at its own town\'s whole ask withdraws');
+assert.equal(Alternative.lineLimit({ ...standing, price: 90000 }, ctx), 0, 'a bid over it withdraws too');
+const opened = Pricing.bid(ITEM, ctx, { units: 1, worth: 34454032, cap: 1000000, town: 'Dion',
+    money: 1000000, rollKey: ['own-town'] });
+assert(opened?.price > 0 && opened.price <= 73999, 'a new bid opens under the own town\'s whole ask, not withdrawn');
+assert.equal(Alternative.lineLimit({ ...standing, price: 60000 }, ctx), null, 'and a standing bid under that ask stays: both sides agree');
+// An enchanted bid with no economy price has no price belief: the look still
+// withdraws it at its own town's whole ask (the cap needs no belief).
+board.clear();
+shop(1, 74000, 1, { enchant: 1 });
+assert.deepEqual(Pricing.look(buyer, [{ ...standing, enchant: 1 }], { ...ctx, reviewReasons: new Map([[2, 4]]) })
+    ?.withdrawals.map(move => move.lineId), [2],
+'a crossed bid with no price belief is withdrawn by the look');
+board.clear();
+shop(1, 74000);
+assert.doesNotThrow(() => Alternative.assertMeetingPurchase([agreed(74000)], 0, 'Dion', ctx),
+    'an agreed meeting buy at the shop price stays consented');
+board.clear();
+away(1, 74000, 2);
+assert.equal(Alternative.lineLimit({ ...standing, price: 90000 }, ctx), 74000, 'another town\'s ask lowers the bid');
+assert.equal(Alternative.lineLimit(standing, ctx), null, 'and a bid at it stands');
+shop(2, 70000);
+assert.equal(Alternative.lineLimit({ ...standing, count: 2, price: 90000 }, ctx), 74000,
+    'a partial own-town lot is no whole purchase: the other town\'s whole lot caps');
+board.clear();
+shop(1, 74000);
+away(2, 60000);
+assert.equal(Alternative.lineLimit({ ...standing, price: 70000 }, ctx), 60000,
+    'a cheaper whole lot elsewhere caps a bid under the own-town ask');
+board.clear();
+npc = [{ sourceType: 'npc', selfId: ITEM, price: 80000, town: 'Dion', available: true }];
+shop(1, 74000);
+assert.equal(Alternative.lineLimit({ ...standing, count: 2, price: 90000 }, ctx), 77000,
+    'one shop unit and one NPC unit cap the bid, not withdraw it');
+npc = [];
+
+// A meeting-only ad of the bid's own town crosses it like a shop's ask; a
+// dearer one or another town's keeps the bid.
+board.clear();
+shop(1, 74000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
+assert.equal(Alternative.lineLimit(standing, ctx), 0, 'a bid at its own town\'s meeting-only ask withdraws');
+assert.equal(Alternative.lineLimit({ ...standing, price: 90000 }, ctx), 0, 'a bid over it withdraws too');
+const underAd = Pricing.bid(ITEM, ctx, { units: 1, worth: 34454032, cap: 1000000, town: 'Dion',
+    money: 1000000, rollKey: ['own-ad'] });
+assert(underAd?.price > 0 && underAd.price <= 73999, 'a new bid opens under the own town\'s meeting-only ask');
+board.clear();
+shop(1, 100000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
+assert.equal(Alternative.lineLimit(standing, ctx), null, 'a dearer meeting-only ask keeps the bid');
+board.clear();
+away(1, 60000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
+assert.equal(Alternative.lineLimit({ ...standing, price: 90000 }, ctx), null,
+    'another town\'s meeting-only ask neither withdraws nor caps the bid');
+// The buy after a withdraw takes meeting-only ads ad by ad: two ads that
+// together cover the bid's units at a mean at or under its price cross it.
+board.clear();
+shop(1, 70000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
+shop(2, 76000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
+assert.equal(Alternative.lineLimit({ ...standing, count: 2, price: 73000 }, ctx), 0,
+    'two meeting-only ads that together cover the lot at a mean of 73000 withdraw a bid at it');
+assert.equal(Alternative.lineLimit({ ...standing, count: 2, price: 72999 }, ctx), null,
+    'and a bid under that mean stands');
+// The buy never takes an enchanted meeting-only ad, so one does not cross a bid.
+board.clear();
+shop(1, 70000, 1, { custodyPolicy: 1, kind: 'sell_ad', enchant: 1 });
+assert.equal(Alternative.lineLimit({ ...standing, enchant: 1, price: 75000 }, ctx), null,
+    'an enchanted meeting-only ad below an enchanted bid keeps the bid');
+// Cheaper lines of other towns do not hide the own town's ask.
+board.clear();
+for (let id = 100; id <= 120; id++) away(id, 70000);
+shop(1, 74000);
+assert.equal(Alternative.lineLimit(standing, ctx), 0, 'the own town\'s ask behind 21 cheaper lines still crosses');
+
+// Only a crossing bid leaves: one under its own town's whole ask stands, a
+// new one opens under it, and a reprice stays under it.
+board.clear();
+shop(1, 74000);
+assert.equal(Alternative.lineLimit({ ...standing, price: 70000 }, ctx), null, 'a bid under its own town\'s ask stands');
+const under = Pricing.bid(ITEM, ctx, { units: 1, worth: 60000, cap: 60000, town: 'Dion', money: 1000000,
+    rollKey: ['under-own'] });
+assert(under?.price > 0 && under.price <= 60000, 'a bid whose limit is under the ask opens');
+const repriced = Pricing.look(buyer, [{ ...standing, price: 60000, pricing: { ...standing.pricing, price: 60000 } }],
+    { ...ctx, preparedWorth: () => 34454032, reviewReasons: new Map([[2, 4]]) });
+assert(!repriced?.withdrawals?.length && (repriced?.reprices || []).every(move => move.price < 74000),
+    'a reprice of a standing bid never lands on its own town\'s ask');
+// The money a new bid may fund (its queue's share, here half the wallet)
+// cannot buy the lot; once it stands on the whole wallet it is not withdrawn.
+const funded = Pricing.bid(ITEM, { ...ctx, adena: 100000 }, { units: 1, worth: 34454032, cap: 50000,
+    town: 'Dion', money: 50000, rollKey: ['x'] });
+assert(funded?.price > 0 && funded.price <= 50000, 'a bid the queue funds under the ask opens');
+assert.equal(Alternative.lineLimit({ ...standing, price: funded.price }, { ...ctx, adena: 100000 - funded.price }), null,
+    'the plan rebuild keeps that standing bid');
 
 // A changed route invalidates the scalar attention cache without new deals
 // or a moved public quote. The native pricing cursor is applied between looks.
@@ -195,8 +314,12 @@ const cheaperRoute = Pricing.lookOwn(buyer, [line], naturalCtx, seen);
 assert(cheaperRoute?.reprices?.[0]?.price <= 80000, 'a cheaper route triggers a natural reprice without a new trade');
 
 const Town = invoke('GameServer/Bot/Economy/MarketTownPolicy');
-assert.equal(Town.buyAdTown(buyer, [{ selfId: ITEM }], [
-    { kind: 'buy_ad', storeType: BUY, selfId: ITEM, count: 1, recordId: 8, town: 'Gludio' },
-    { kind: 'buy_ad', storeType: BUY, selfId: ITEM, count: 1, recordId: 7, town: 'Dion' }
-]), 'Dion', 'worker preparation and native publication retain the same matching meeting town');
+// The twin keeps the town of its oldest escrow buy record; the worker's
+// bids are priced there and published there (buyAdTown reads the twin).
+const twin = require('../src/GameServer/Bot/Economy/TwinCluster').propose(buyer, { board: { ownerLines: () => [
+    { kind: 'buy_ad', storeType: BUY, custodyPolicy: 0, selfId: ITEM, count: 1, recordId: 8, town: 'Gludio' },
+    { kind: 'buy_ad', storeType: BUY, custodyPolicy: 0, selfId: ITEM, count: 1, recordId: 7, town: 'Dion' }
+] }, watchList: [], findSpot: () => null });
+assert.equal(Town.buyAdTown(buyer, [{ selfId: ITEM }], { twin }), 'Dion',
+    'worker preparation and native publication retain the oldest escrow buy record\'s town');
 console.log('WTB alternatives: publication, review, quantities, routes, funding and conditional execution passed');

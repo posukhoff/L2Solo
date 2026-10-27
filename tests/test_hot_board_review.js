@@ -78,9 +78,12 @@ async function turns() {
             kind: 'sell_ad', storeType: Afk.SELL, town: 'Giran', revision: 1,
             lines: [{ lineId: 200000 + i, selfId: 1864, count: 10, price: 200, pricing }] });
         board.ownersForCounter = () => { throw new Error('deal fan-out is forbidden'); };
+        // Two deals in Giran: a forecast flow makes Stem worthwhile for a store
+        // line (MarketPricing.quotable), so only the price review decides.
+        Counters.deal(1864, 200, 1, Date.now(), 1, 'Giran', 2);
         Counters.deal(1864, 200, 1, Date.now(), 1, 'Giran', 2);
         await turns();
-        assert.equal(jobs, 0, 'a deal with 300 owners queues nobody');
+        assert.equal(jobs, 0, 'deals with 300 owners queue nobody');
         assert.equal(Hot.events.ready.size, 0);
         assert.deepEqual((await DB.fetchAfkTradeShops(id))[0], original, 'deal makes no review write');
         Rolls.roll = () => 0;
@@ -98,7 +101,7 @@ async function turns() {
         await turns();
         const changed = (await DB.fetchAfkTradeShops(id))[0];
         assert.equal(changed.lines[0].price, 210);
-        assert.equal(changed.lines[0].pricing.seenCounter, 2);
+        assert.equal(changed.lines[0].pricing.seenCounter, 3, 'the review saw all three deals');
         assert(changed.lines[0].pricing.seenAt >= pricing.seenAt + 4 * 3600000);
         assert.equal(Life.hotRow(id).phase, 'hot');
         assert.equal(Hot.events.ready.size, 0, 'write acknowledgement cannot create a busy retry loop');

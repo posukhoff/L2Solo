@@ -8,19 +8,23 @@ const DB = invoke('Database'), Life = invoke('GameServer/Bot/Population/BotLifeS
 const Native = require('./helpers/nativeMarketFixture');
 const Gear = invoke('GameServer/Bot/AI/BotGear');
 const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const location = { locX: 83396, locY: 147904, locZ: -3400 };
-async function seed(id) {
+// skilled: the bot learned Crystallize (248), its only way to break gear.
+async function seed(id, skilled = true) {
     await Native.character(DB, id, `EarlyBuyer${id}`, `bot_early_buyer_${id}`, location);
     await DB.execute(['UPDATE characters SET level=33,classId=54,race=4,exp=? WHERE id=?', [Data.experience[32], id]]);
     await DB.setItem(id, { selfId: 57, name: 'Adena', amount: 30000000 });
     for (const row of Gear.planFor({ classId: 54, level: 20 }).items)
         await DB.setItem(id, { ...row, amount: 1, equipped: true, enchant: 0,
             name: Data.items.find(item => item.selfId === row.selfId).template.name });
-    return Life.upsertState({ characterId: id, accountName: `bot_early_buyer_${id}`, name: `EarlyBuyer${id}`,
+    if (skilled) await DB.setSkill({ selfId: 248, name: 'Crystallize', level: 1, passive: true }, id);
+    const state = { characterId: id, accountName: `bot_early_buyer_${id}`, name: `EarlyBuyer${id}`,
         phase: 'cold', activity: 'shopping', level: 33, exp: Data.experience[32], adena: 30000000, currentRegion: 'Giran', loc: location,
         inventory: Life.inventorySummaryFromItems(await DB.fetchItems(id)), timing: {},
-        vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 }, stats: { classId: 54, money: [0, 0, 0, 0] } },
-    'early_c_purchase_fixture');
+        vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 }, stats: { classId: 54, money: [0, 0, 0, 0] } };
+    state.stats.coldCombat = Profile.legacySnapshot(state, await DB.fetchSkills(id));
+    return Life.upsertState(state, 'early_c_purchase_fixture');
 }
 async function run() {
     try {
@@ -50,10 +54,12 @@ async function run() {
         assert(!Disposition.saleCandidates(state).some(row => row.selfId === 883));
         state = await seed(9633);
         await DB.setItem(state.characterId, { selfId: 1458, name: 'D crystal', amount: 6000 });
+        await DB.setItem(state.characterId, { selfId: 1459, name: 'C crystal', amount: 1100 });
         state = await Life.syncExternalInventory(state.characterId, 'luxury_fixture', state);
         const Luxury = invoke('GameServer/Bot/Economy/BotLuxuryExchange');
         const recipe = Luxury.recipes().get(162);
-        assert.deepEqual(recipe.materials, [{ selfId: 1458, amount: 5375 }], 'only D crystals are required for bots');
+        assert.deepEqual(recipe.materials, [{ selfId: 1459, amount: 1075 }, { selfId: 1458, amount: 5375 }],
+            'bots pay the player\'s price: C and D crystals');
         assert(!Luxury.recipes().has(294), 'a legacy mislabeled D item is not a C transition');
         assert.deepEqual(require('../src/GameServer/World/Generics/NpcExchangeShopLists').fetchForNpc(7097)[3].required
             .map(row => row.selfId), [1459, 1458], 'player costs retain both crystal grades');
@@ -79,15 +85,24 @@ async function run() {
         assert.equal(fresh.inventory[162].amount, 1);
         assert.equal(fresh.inventory[162].equipped, false, 'exchanged C awaits expertise');
         assert.equal(fresh.adena, state.adena, 'exchange price is crystals, with travel paid separately');
-        assert(!fresh.inventory[1459], 'no C crystal input or synthetic C crystal appears');
+        assert.equal(fresh.inventory[1459].amount, 25, 'the C crystals are consumed with the D ones');
         await assert.rejects(DB.applyBotImprovement(state.characterId, proposal, { coldState: state }), /economy_state_changed/);
         await assert.rejects(DB.applyBotImprovement(state.characterId, proposal, { coldState: fresh }), /already_owned/);
         assert.equal((await DB.fetchItems(state.characterId)).filter(row => row.selfId === 162).length, 1);
         state = await seed(9634);
         await assert.rejects(DB.applyBotImprovement(state.characterId, proposal, { coldState: state }), /improvement_missing_materials/);
         assert(!(await DB.fetchItems(state.characterId)).some(row => row.selfId === 162));
+        // D crystals alone do not pay: the C ones are missing.
+        state = await seed(9642);
+        await DB.setItem(state.characterId, { selfId: 1458, name: 'D crystal', amount: 6000 });
+        state = await Life.syncExternalInventory(state.characterId, 'luxury_fixture', state);
+        await DB.execute(['UPDATE characters SET locX=91058,locY=171959,locZ=-3760 WHERE id=?', [state.characterId]]);
+        const dOnlyBag = await DB.fetchItems(state.characterId);
+        await assert.rejects(DB.applyBotImprovement(state.characterId, proposal, { coldState: state }), /improvement_missing_materials/);
+        assert.deepEqual(await DB.fetchItems(state.characterId), dOnlyBag, 'a refused exchange keeps every D crystal');
         state = await seed(9637);
         await DB.setItem(state.characterId, { selfId: 1458, name: 'D crystal', amount: 6000 });
+        await DB.setItem(state.characterId, { selfId: 1459, name: 'C crystal', amount: 1100 });
         state = await Life.syncExternalInventory(state.characterId, 'luxury_fixture', state);
         state = await Life.upsertState({ ...state, inventory: { ...state.inventory,
             1458: { ...state.inventory[1458], protectedAmount: 1000 } } }, 'reserved_crystal_fixture');
@@ -104,6 +119,7 @@ async function run() {
         assert.equal(invoke('GameServer/Bot/AI/PersonalGearProgression').personal(state), false,
             'the native exchange fixture has actual clan warehouse access');
         await DB.setItem(state.characterId, { selfId: 1458, name: 'D crystal', amount: 6000 });
+        await DB.setItem(state.characterId, { selfId: 1459, name: 'C crystal', amount: 1100 });
         state = await Life.syncExternalInventory(state.characterId, 'luxury_fixture', state);
         const adult = await DB.applyBotImprovement(state.characterId, proposal, { coldState: state });
         assert(Life.acceptLifecycleRow(adult.coldLifeRow, 'luxury_fixture').inventory[162].equipped,
@@ -122,9 +138,8 @@ async function run() {
         assert.equal(state.inventory[spareIds[0]].amount, 2);
         assert.equal(state.inventory[spareIds[0]].equippedCount, 0, 'bought crystal inputs stay unequipped');
         assert(!Disposition.saleCandidates(state).some(row => spareIds.includes(row.selfId)), 'exchange inputs stay reserved');
-        const batch = { kind: 'crystallize', npcId: Crystals.npcId,
+        const batch = { kind: 'crystallize',
             items: [{ selfId: spareIds[0], amount: 2 }, { selfId: spareIds[1], amount: 1 }] };
-        await DB.execute(['UPDATE characters SET locX=91058,locY=171959,locZ=-3760 WHERE id=?', [state.characterId]]);
         const bagBefore = await DB.fetchItems(state.characterId);
         const kitBefore = bagBefore.filter(row => row.equipped);
         await DB.execute([`CREATE TEMP TRIGGER fail_crystal BEFORE INSERT ON items WHEN NEW.characterId=9636
@@ -136,7 +151,7 @@ async function run() {
         const shards = Life.acceptLifecycleRow(shattered.coldLifeRow, 'crystal_fixture');
         const output = 2 * Crystals.reward(Data.items.find(row => row.selfId === spareIds[0])).net
             + Crystals.reward(Data.items.find(row => row.selfId === spareIds[1])).net;
-        assert.equal(shards.inventory[1458].amount, output, 'fee rounds upward separately for each item');
+        assert.equal(shards.inventory[1458].amount, output, 'each item yields its own crystals, no fee');
         assert(!spareIds.some(id => shards.inventory[id]));
         assert.deepEqual((await DB.fetchItems(state.characterId)).filter(row => row.equipped), kitBefore, 'the D kit survives the batch');
         assert.equal(shards.adena, state.adena);
@@ -144,7 +159,7 @@ async function run() {
         await assert.rejects(DB.applyBotImprovement(state.characterId, batch, { coldState: shards }), /improvement_source_changed/);
         const worn = kitBefore.find(row => Crystals.reward(Data.items.find(item => item.selfId === row.selfId)));
         await assert.rejects(DB.applyBotImprovement(state.characterId,
-            { kind: 'crystallize', npcId: Crystals.npcId, sourceSelfId: worn.selfId }, { coldState: shards }), /improvement_source_changed/);
+            { kind: 'crystallize', sourceSelfId: worn.selfId }, { coldState: shards }), /improvement_source_changed/);
         state = await seed(9638);
         const wornId = Object.values(state.inventory).find(row => row.equippedCount === 1
             && Crystals.reward(Data.items.find(item => item.selfId === row.selfId))).selfId;
@@ -155,17 +170,19 @@ async function run() {
         assert.equal(state.inventory[wornId].amount, 3);
         assert.deepEqual(state.inventory[wornId].equippedSlots, wornSlots, 'buying spare copies preserves the worn copy');
         const spareCopies = await DB.applyBotImprovement(state.characterId,
-            { kind: 'crystallize', npcId: Crystals.npcId, sourceSelfId: wornId, amount: 2 }, { coldState: state });
+            { kind: 'crystallize', sourceSelfId: wornId, amount: 2 }, { coldState: state });
         const remaining = Life.acceptLifecycleRow(spareCopies.coldLifeRow, 'spare_copy_fixture');
         assert.equal(remaining.inventory[wornId].amount, 1);
         assert.deepEqual(remaining.inventory[wornId].equippedSlots, wornSlots, 'only the two spare copies are crystallized');
-        // Exercise the real lifecycle handoff: the prepared worker card must
-        // execute the town action before the market return can leave Giran.
+        // Exercise the real lifecycle handoff: the prepared worker card
+        // executes the improvement before the market return can leave Giran.
         state = await seed(9639);
         const silver = Luxury.recipes().get(161);
         state = await Life.upsertState({ ...state, stats: { ...state.stats, equipmentPlan: {
             strategy: 'luxury_exchange', status: 'active', target: { selfId: 161, slot: 7 }, exchange: silver,
             materials: [...silver.materials, { selfId: 90, amount: 2 }] } } }, 'town_chain_fixture');
+        await DB.setItem(state.characterId, { selfId: 1459, name: 'C crystal', amount: 573 });
+        state = await Life.syncExternalInventory(state.characterId, 'town_chain_crystals', state);
         state = await Life.applyMarketPurchase(state, { selfId: 90, price: 100, sourceType: 'fixture' }, 2);
         const Population = invoke('GameServer/Bot/Population/PopulationService');
         const Decision = invoke('GameServer/Bot/Population/ColdEconomyDecision');
@@ -178,7 +195,7 @@ async function run() {
                     nextResolveAt: Date.now() + 30000, debug: {} }
             });
         }
-        const townCrystals = await townStep(state, { kind: 'crystallize', npcId: Crystals.npcId, sourceSelfId: 90, amount: 2 });
+        const townCrystals = await townStep(state, { kind: 'crystallize', sourceSelfId: 90, amount: 2 });
         assert(townCrystals.ok);
         assert.equal(townCrystals.state.currentRegion, 'Giran');
         assert.equal(townCrystals.state.activity, 'shopping', 'crystallization finishes before departure');
@@ -189,33 +206,35 @@ async function run() {
         assert.equal(townEquipment.state.stats.lastImprovement.kind, 'luxury_exchange');
         assert.equal(townEquipment.state.activity, 'shopping', 'exchange also precedes market return');
         assert.equal(townEquipment.state.inventory[161].equipped, false);
-        state = await seed(9640);
+        // Without the skill no bot crystallizes, not even at Giran's station;
+        // the skill breaks the inputs where the bot stands.
+        state = await seed(9640, false);
         state = await Life.upsertState({ ...state, stats: { ...state.stats, equipmentPlan: {
             strategy: 'luxury_exchange', status: 'active', target: { selfId: 161, slot: 7 }, exchange: silver,
-            materials: [...silver.materials, { selfId: 90, amount: 2 }] } } }, 'return_to_station_fixture');
-        state = await Life.applyMarketPurchase(state, { selfId: 90, price: 100, sourceType: 'fixture' }, 2);
-        state = await Life.upsertState({ ...state, activity: 'hunting', currentRegion: 'Dion',
-            loc: { locX: 18748, locY: 145437, locZ: -3132 } }, 'outside_station_fixture');
-        const crystalCommand = { kind: 'crystallize', npcId: Crystals.npcId, sourceSelfId: 90, amount: 2 };
+            materials: [...silver.materials, { selfId: 90, amount: 2 }] } } }, 'unskilled_crystal_fixture');
+        assert.equal(await Life.applyMarketPurchase(state, { selfId: 90, price: 100, sourceType: 'fixture' }, 2), null,
+            'a bot without the skill buys no copies to crystallize');
+        const weapon = Data.items.find(row => row.selfId === 90).template.name;
+        for (let copy = 0; copy < 2; copy++) await DB.setItem(state.characterId, { selfId: 90, name: weapon, amount: 1 });
+        state = await Life.syncExternalInventory(state.characterId, 'unskilled_input_fixture', state);
+        const crystalCommand = { kind: 'crystallize', sourceSelfId: 90, amount: 2 };
+        const unskilledBag = await DB.fetchItems(state.characterId);
         await assert.rejects(DB.applyBotImprovement(state.characterId, crystalCommand, { coldState: state }),
-            /invalid_bot_crystallization/, 'an old character position in Giran cannot authorize an outside cold bot');
-        await assert.rejects(DB.applyBotImprovement(state.characterId, crystalCommand, {
-            coldState: { ...state, activity: 'shopping', currentRegion: 'Giran', loc: location }
-        }), /economy_state_changed/, 'a same-revision command cannot claim a different town');
-        const economy = invoke('GameServer/Bot/Economy/EconomyContext'), originalBuild = economy.forState;
-        economy.forState = () => { throw Error('town handoff must not rebuild the forecast on main'); };
-        let dispatched;
-        try {
-            dispatched = await Population.executeWorkerLifecycleCommand(state, { precomputedResult: {},
-                precomputedPlan: { economyDecision: Decision.capture({ riskWeight: 1, network: { activity: {
-                    activity: 'improving', kind: 'crystallize', improvement: {
-                        kind: 'crystallize', npcId: Crystals.npcId, sourceSelfId: 90, amount: 2 } } } }, state) } });
-        } finally { economy.forState = originalBuild; }
-        assert(dispatched.ok);
-        assert.equal(dispatched.state.stats.travel.townName, 'Giran');
-        assert.equal(dispatched.state.stats.travel.arrivalActivity, 'shopping');
-        assert(dispatched.state.adena < state.adena, 'native dispatch pays the existing travel cost');
-        assert.equal(dispatched.state.inventory[90].amount, 2, 'dispatch cannot consume inputs before arrival');
+            /invalid_bot_crystallization/, 'a bot without the skill cannot crystallize in Giran');
+        state = await Life.upsertState({ ...state, activity: 'hunting', currentRegion: 'Dion',
+            loc: { locX: 18748, locY: 145437, locZ: -3132 } }, 'unskilled_outside_fixture');
+        await assert.rejects(DB.applyBotImprovement(state.characterId, crystalCommand, { coldState: state }),
+            /invalid_bot_crystallization/, 'a bot without the skill cannot crystallize outside town');
+        assert.deepEqual(await DB.fetchItems(state.characterId), unskilledBag, 'a refused command keeps every input');
+        await DB.setSkill({ selfId: 248, name: 'Crystallize', level: 1, passive: true }, state.characterId);
+        state = await Life.upsertState({ ...state, stats: { ...state.stats,
+            coldCombat: Profile.legacySnapshot(state, await DB.fetchSkills(state.characterId)) } }, 'learned_crystallize_fixture');
+        const inPlace = Life.acceptLifecycleRow((await DB.applyBotImprovement(state.characterId, crystalCommand,
+            { coldState: state })).coldLifeRow, 'in_place_crystal_fixture');
+        assert(!inPlace.inventory[90]);
+        assert.equal(inPlace.inventory[1458].amount, 2 * Crystals.reward(Data.items.find(row => row.selfId === 90)).net);
+        assert.equal(inPlace.currentRegion, 'Dion', 'the learned skill crystallizes where the bot stands');
+        assert.equal(inPlace.adena, state.adena);
         state = await seed(9641);
         await DB.execute(['UPDATE characters SET level=47,exp=?,clanId=77 WHERE id=?', [Data.experience[46], state.characterId]]);
         state = await Life.upsertState({ ...state, level: 47, exp: Data.experience[46], clanId: 77,
@@ -224,6 +243,17 @@ async function run() {
                 exchange: silver, materials: [...silver.materials, { selfId: 90, amount: 2 }] } } }, 'clan_c_chain_fixture');
         state = await Life.applyMarketPurchase(state, { selfId: 90, price: 100, sourceType: 'fixture' }, 2);
         assert(state && Crystals.ready(state), 'a clan member admits its physically bought crystal inputs');
+        // The exchange is ready on every crystal it costs (the catalogue's,
+        // not a saved D-only copy): D crystals alone are not ready.
+        const crystalsOnly = (rows, exchange = silver) => ({ ...state, inventory: { ...state.inventory, ...rows },
+            stats: { ...state.stats, equipmentPlan: { ...state.stats.equipmentPlan, exchange, materials: [...exchange.materials] } } });
+        const dCrystals = { 1458: { selfId: 1458, amount: 2865 } }, cCrystals = { 1459: { selfId: 1459, amount: 573 } };
+        assert.equal(Crystals.ready(crystalsOnly(dCrystals)), false, 'D crystals alone do not make the exchange ready');
+        assert.equal(Crystals.ready(crystalsOnly(dCrystals, { ...silver, materials: [{ selfId: 1458, amount: 2865 }] })), false,
+            'a saved D-only copy of the exchange is read at the catalogue\'s price');
+        assert(Crystals.ready(crystalsOnly({ ...dCrystals, ...cCrystals })), 'both crystal grades make it ready');
+        await DB.setItem(state.characterId, { selfId: 1459, name: 'C crystal', amount: 573 });
+        state = await Life.syncExternalInventory(state.characterId, 'clan_chain_crystals', state);
         const clanKit = (await DB.fetchItems(state.characterId)).filter(row => row.equipped);
         const clanCrystals = await townStep(state, crystalCommand);
         assert(clanCrystals.ok);
@@ -237,7 +267,7 @@ async function run() {
         assert(clanEquipment.state.inventory[161].equipped, 'the real clan lifecycle chain equips the acquired C weapon');
         assert.equal(clanEquipment.state.adena, state.adena, 'a clan exchange consumes owned crystals without an extra cash charge');
         assert.equal((await DB.fetchClanWarehouseItems(77)).length, 0, 'personal C acquisition never spends the clan warehouse');
-        console.log('PASS native early C acquisition/Luxury: deferred wear, protected stash, D-only cost, player costs, rollback, missing inputs, authoritative cold location and stale/repeated command');
+        console.log('PASS native early C acquisition/Luxury: deferred wear, protected stash, C and D crystal cost, rollback, missing inputs, own-skill crystallization in place (refused without the skill) and stale/repeated command');
     } finally {
         await DB.close(); require('node:fs').rmSync(fixture.directory, { recursive: true, force: true });
     }

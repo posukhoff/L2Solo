@@ -19,16 +19,21 @@ const town = { locX: 83396, locY: 147904, locZ: -3400 };
 const field = { locX: 78088, locY: 124933, locZ: -2792 };
 const template = id => Data.items.find(row => row.selfId === id);
 const proposal = { kind: 'crystallize', sourceSelfId: 626, amount: 4 };
-async function seed(id, crafter, outdoors, inputId = 626, copies = 4) {
+// crafter: the dwarf crafter class; skilled: learned Crystallize (248).
+async function seed(id, crafter, outdoors, inputId = 626, copies = 4, skilled = crafter) {
     const classId = crafter ? 57 : 54, loc = outdoors ? field : town;
     await Native.character(DB, id, `CrystalBuyer${id}`, `bot_crystal_buyer_${id}`, loc);
     await DB.execute(['UPDATE characters SET level=49,classId=?,race=4,exp=? WHERE id=?', [classId, Data.experience[48], id]]);
     await DB.setItem(id, { selfId: 57, name: 'Adena', amount: 30000000 });
-    await DB.setItem(id, { selfId: 1463, name: 'Soulshot: D-grade', amount: 100000 });
+    // A stack under the survival floor's weight line: bought inputs need bag room.
+    await DB.setItem(id, { selfId: 1463, name: 'Soulshot: D-grade', amount: 10000 });
+    // The C crystals a luxury exchange costs besides the D ones: held, so the
+    // D chain under test is the only missing part.
+    await DB.setItem(id, { selfId: 1459, name: 'Crystal: C-Grade', amount: 1100 });
     for (const row of Gear.planFor({ classId, level: 20 }).items)
         await DB.setItem(id, { ...row, amount: 1, equipped: true, name: template(row.selfId).template.name });
     for (let i = 0; i < copies; i++) await DB.setItem(id, { selfId: inputId, name: template(inputId).template.name, amount: 1 });
-    if (crafter) await DB.setSkill({ selfId: 248, name: 'Crystallize', level: 1, passive: true }, id);
+    if (skilled) await DB.setSkill({ selfId: 248, name: 'Crystallize', level: 1, passive: true }, id);
     const state = { characterId: id, accountName: `bot_crystal_buyer_${id}`, name: `CrystalBuyer${id}`,
         level: 49, phase: 'cold', activity: 'hunting', currentRegion: outdoors ? 'Breka Orc Overlord fields' : 'Giran', loc,
         inventory: Life.inventorySummaryFromItems(await DB.fetchItems(id)), adena: 30000000,
@@ -44,11 +49,11 @@ async function run() {
     try {
         await DB.init(); await Life.init();
         let crafter = await seed(9751, true, true);
-        const own = Crystals.choices(crafter, () => null, { known: false });
+        const own = Crystals.choices(crafter, () => null);
         assert(own.length, 'a learned crafter can break physical spares without a market or Giran route');
-        assert.equal(own[0].net, Crystals.reward(template(626)).gross, 'self crystallization pays no service fee');
-        const leaf = { activity: 'improving', improvement: { ...proposal, mode: 'self' } };
-        assert.equal(Service.acquisitionTravel(crafter, leaf), null, 'own skill does not send the crafter to a service');
+        assert.equal(own[0].net, Crystals.reward(template(626)).gross, 'crystallization pays no fee');
+        const leaf = { activity: 'improving', improvement: proposal };
+        assert.equal(Service.acquisitionTravel(crafter, leaf), null, 'crystallization never sends the bot to a town');
         const worn = (await DB.fetchItems(crafter.characterId)).filter(row => row.equipped);
         const broken = await apply(crafter, leaf.improvement);
         assert(broken.changed, 'the native cold command crystallizes outside town');
@@ -69,28 +74,22 @@ async function run() {
 
         let ordinary = await seed(9752, false, true);
         const bag = await DB.fetchItems(ordinary.characterId);
-        await assert.rejects(DB.applyBotImprovement(ordinary.characterId, { ...proposal, mode: 'self' }, { coldState: ordinary }), /invalid_bot_crystallization/);
-        assert.deepEqual(await DB.fetchItems(ordinary.characterId), bag, 'an unlearned self skill cannot bypass the native service');
-        assert.equal((await apply(ordinary, { ...proposal, npcId: Crystals.npcId })).changed, false);
-        ordinary = await Life.upsertState({ ...ordinary, activity: 'shopping', currentRegion: 'Giran', loc: town }, 'service_arrival');
-        const serviced = await apply(ordinary, { ...proposal, npcId: Crystals.npcId });
-        assert(serviced.changed);
-        assert.equal(serviced.state.inventory[1458].amount, 4 * Crystals.reward(template(626)).net);
-        assert.equal(serviced.state.adena, ordinary.adena);
+        assert.deepEqual(Crystals.choices(ordinary, () => null), [], 'a bot without the skill has nothing to crystallize');
+        await assert.rejects(DB.applyBotImprovement(ordinary.characterId, proposal, { coldState: ordinary }), /invalid_bot_crystallization/);
+        const outside = await apply(ordinary, proposal);
+        assert.equal(outside.changed, false);
+        ordinary = await Life.upsertState({ ...outside.state, activity: 'shopping', currentRegion: 'Giran', loc: town }, 'giran_arrival');
+        assert.equal((await apply(ordinary, proposal)).changed, false, 'no NPC crystallizes for a bot without the skill, Giran included');
+        assert.deepEqual(await DB.fetchItems(ordinary.characterId), bag, 'a bot without the skill keeps every input');
 
         const board = new BoardIndex();
         board.put({ id: 1, ownerId: 9800, storeType: 1, kind: 'shop', town: 'Giran',
             lines: [{ lineId: 1, selfId: 1458, count: 0, enchant: 0, price: 1 },
                 { lineId: 2, selfId: 626, count: 16, enchant: 0, price: 1 }] });
-        const buyer = await seed(9753, false, false);
+        const buyer = await seed(9753, false, false, 626, 4, true);
         const inputBuyer = { ...buyer, inventory: { ...buyer.inventory } };
         delete inputBuyer.inventory[626];
         Economy.reset();
-        const context = Economy.forState(inputBuyer, { board, spots: [], rememberContext: false, npcOffersFor: () => [],
-            routeRows: require('../src/GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]),
-            workshop: { known: true, recipeId: 0, incomePerHour: 0 } });
-        assert.equal(context.network.activity.itemId, 626, 'sold-out crystals select a real dismantling input instead of waiting');
-        assert.equal(context.network.activity.activity, 'shopping');
         const retail = Economy.forState(inputBuyer, { board: new BoardIndex(), spots: [], rememberContext: false,
             npcOffersFor: id => id === 626 ? [{ selfId: 626, price: 1, count: 1, town: 'Giran', sourceType: 'npc' }] : [],
             routeRows: require('../src/GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]),
@@ -107,14 +106,12 @@ async function run() {
             workshop: { known: true, recipeId: 0, incomePerHour: 0 } });
         assert.equal(reliable.network.activity.sourceType, 'npc', 'a finite cheap crystal/input lot cannot displace the reliable NPC chain');
         assert.equal(reliable.network.activity.itemId, 626);
-        assert.equal(reliable.network.activity.town, 'Giran', 'buying, service and exchange share one town');
+        assert.equal(reliable.network.activity.town, 'Giran', 'buying and exchange share one town');
         const needs = invoke('GameServer/Bot/Goals/NeedsEvaluator').evaluate({ ...inputBuyer,
             inventory: { ...inputBuyer.inventory, 1463: { selfId: 1463, amount: 1000 } } }, { economy: reliable });
         assert.equal(needs[0].type, 'buy_craft_material', 'dismantling copies use the material basket, not a single equipped-gear purchase');
         assert(needs[0].target.amount > 1, 'the native goal buys the selected bounded batch together');
-        const crystalPath = context.projection.nodes.find(row => row.key === 'item:1458').paths.find(row => row.kind === 'crystallize');
-        assert.equal(crystalPath.improvement.npcId, Crystals.npcId);
-        const selectedPlan = invoke('GameServer/Bot/Economy/WishProviders').personalCraftPlan(inputBuyer, context);
+        const selectedPlan = invoke('GameServer/Bot/Economy/WishProviders').personalCraftPlan(inputBuyer, reliable);
         assert(selectedPlan?.materials.some(row => row.selfId === 626));
         const received = { ...buyer, stats: { ...buyer.stats, equipmentPlan: selectedPlan } };
         const afterReceipt = Economy.forState(received, { board, spots: [], rememberContext: false, npcOffersFor: () => [],
@@ -131,16 +128,11 @@ async function run() {
             'a stock detour resumes the received D inputs instead of listing them and buying a different type');
         assert.equal(invoke('GameServer/Bot/Economy/ItemDisposition').saleCandidates(pausedReceipt)
             .some(row => row.selfId === 626), false, 'paused inputs remain protected from sale');
-        const selfContext = Economy.forState({ ...buyer, stats: { ...buyer.stats, coldCombat: {
-            ...buyer.stats.coldCombat, skills: Profile.skillSnapshotsFromRecords([{ selfId: 248, level: 1 }]) } } },
-            { board, spots: [], rememberContext: false, npcOffersFor: () => [],
-                routeRows: require('../src/GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]),
-                workshop: { known: true, recipeId: 0, incomePerHour: 0 } });
-        assert.equal(selfContext.network.activity.kind, 'crystallize');
-        assert.equal(selfContext.network.activity.improvement.mode, 'self', 'the selected wish and compact command retain the own-skill method');
-        assert.equal(Decision.capture(selfContext, buyer).activity.improvement.mode, 'self');
-        for (const [id, ownSkill] of [[9754, true], [9755, false]]) {
-            let complete = await seed(id, ownSkill, false, 274, 5);
+        assert.equal(Decision.capture(afterReceipt, received).activity.improvement.kind, 'crystallize',
+            'the compact command carries the selected crystallization');
+        {
+            const id = 9754;
+            let complete = await seed(id, true, false, 274, 5);
             const review = state => Economy.forState(state, { board: new BoardIndex(), spots: [], rememberContext: false,
                 npcOffersFor: () => [], routeRows: require('../src/GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]),
                 workshop: { known: true, recipeId: 0, incomePerHour: 0 } });
@@ -176,7 +168,7 @@ async function run() {
         assert(nextTown, 'a completed shopping visit continues directly to the exchange town');
         assert.equal(nextTown.stats.travel.townName, 'Giran');
         assert.deepEqual(nextTown.stats.marketReturn, shopping.stats.marketReturn, 'continuation preserves the original hunting return');
-        let nativeBuyer = await seed(9756, false, false, 626, 0);
+        let nativeBuyer = await seed(9756, false, false, 626, 0, true);
         const sources = invoke('GameServer/Bot/Population/ColdOccupationSources'); sources.initialise();
         const nativeReview = state => Economy.forState(state, { board: scarce, spots: [], rememberContext: false,
             npcOffersFor: sources.npcOffersFor, tripCost: invoke('GameServer/Bot/Economy/EconomicTrip').reader(state,
@@ -219,8 +211,8 @@ async function run() {
         const equipped = await apply(crystals.state, exchangeCard.network.activity.improvement);
         assert(equipped.changed);
         assert((await DB.fetchItems(nativeBuyer.characterId)).some(row => row.selfId === paidPlan.target.selfId && row.equipped),
-            'the real NPC purchase -> service -> Luxury chain ends in physical C equipment');
-        console.log('PASS empty crystal market -> input purchase / own skill or Giran service -> native crystals -> equipped C gear');
+            'the real NPC purchase -> own crystallization -> Luxury chain ends in physical C equipment');
+        console.log('PASS empty crystal market -> input purchase / own skill only -> native crystals -> equipped C gear');
     } finally { await DB.close(); fs.rmSync(fixture.directory, { recursive: true, force: true }); }
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

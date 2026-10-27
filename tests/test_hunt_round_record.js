@@ -114,10 +114,8 @@ const ownSolo = earner(13, false, 1200);
 assert.strictEqual(Efficiency.hourValue(ownSolo, later).perHour, 72000);
 const packet = { ...ownSolo, stats: { ...ownSolo.stats, money: [90000, .001, 100] } };
 assert.strictEqual(Efficiency.hourValue(packet, later).perHour, 90000);
-assert.strictEqual(Efficiency.hourValue(packet, later, 'solo').perHour, 72000);
 const ownParty = earner(22, true, 300);
-assert.strictEqual(Efficiency.hourValue(ownParty, later, 'party').perHour, 18000);
-assert.strictEqual(Efficiency.hourValue({ ...ownParty, stats: { ...ownParty.stats, money: [90000] } }, later, 'party').perHour, 18000);
+assert.strictEqual(Efficiency.hourValue(ownParty, later).perHour, 18000);
 
 // A party member records its own share of the party's round through the
 // lifecycle (prepareResolve), in the party situation; the solo death
@@ -142,7 +140,7 @@ async function run() {
     assert.deepStrictEqual([row.adena, row.loot, row.kills, row.cycleMs, row.samples], [250, 50, 3, 50000, 3],
         'the member\'s own split, the party\'s kills, the time until its next round');
     assert.strictEqual(next.stats.huntingRecovery, undefined, 'the death recovery record stays solo');
-    assert.strictEqual(Efficiency.hourValue(next, start + 3 * MIN).source, 'own', 'a party member has an hour of its own');
+    assert.strictEqual(Efficiency.huntIncome(next, start + 3 * MIN).source, 'own', 'a party member has an hour of its own');
     console.log('Hunt round record: time until the next round, on-spot share by uptime, party shares and bands by situation passed');
 }
 run().catch((error) => { console.error(error); process.exitCode = 1; });

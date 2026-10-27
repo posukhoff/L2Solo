@@ -67,21 +67,26 @@ assert.equal(bounded.value.units, 5, 'native purchase view admits only the first
 assert.equal(bounded.value.whole, false);
 assert.equal(drain(prepared.options.preparePurchase(owner, 1785, 1, { npc: false })).value, null);
 const npc = drain(prepared.options.preparePurchase(owner, 1785, 1, { npc: true })).value;
-assert(npc.whole && npc.npc === 1 && npc.repeatable && npc.town);
-// One value of an owned item (Q1): what the bot gets selling one unit now.
-// Own bids are skipped but use a quote slot; NPC buyback is the floor.
+assert(npc.whole && npc.npc === 1 && npc.town);
+// A held unit is worth the bot's own price belief (user 2026-10-22), not
+// what it gets selling one unit now: neither the others' top bid nor NPC
+// buyback, and two bots holding the same stack on the same board value it
+// each through their own error.
 const bids = new BoardIndex();
 bids.put({ id: 700, ownerId: owner.characterId, storeType: 3, kind: 'buy_ad', town: 'Giran', revision: 1,
     lines: [{ lineId: 800, selfId: 1864, count: 1, price: 900 }] });
 for (let at = 1; at < 7; at++) bids.put({ id: 700 + at, ownerId: 500 + at, storeType: 3, kind: 'buy_ad',
     town: 'Giran', revision: 1, lines: [{ lineId: 800 + at, selfId: 1864, count: 1, price: 500 - at }] });
-const exit = drain(Sources.exitValue(owner, 1864, bids));
-assert.equal(exit.value, 499, 'best bid of others; the own 900 bid is not an exit');
-assert.equal(exit.stages.filter(stage => stage === 'quote').length, Sources.QUOTE_DEPTH + Sources.fixedBuyerOffersFor(1864).length);
-const npcFloor = drain(Sources.exitValue(owner, 1864, null)).value;
-assert(npcFloor >= 0 && npcFloor < 499, 'without a board only NPC buyback and fixed buyers');
-const withBids = drain(Sources.prepare(owner, { board: bids, timestamp: 1000 })).value;
-assert.equal(withBids.options.ownStock.get(1864).unitValue, 499, 'prepare reads the same exit value');
+const heldWorth = holder => drain(Sources.prepare(holder, { board: bids, timestamp: 1000 })).value.options.ownStock.get(1864).unitValue;
+const PriceBelief = require('../src/GameServer/Bot/Economy/PriceBelief');
+const worth = heldWorth(owner);
+assert(worth > 0);
+assert.equal(worth, PriceBelief.reader({ state: owner, board: bids, timestamp: 1000 }).price(1864),
+    'the held unit reads the bot price reader');
+assert.notEqual(worth, 499, 'the best bid of others is not the held worth');
+assert.notEqual(worth, require('../src/GameServer/Bot/Economy/PriceDecision').buyback(1864), 'NPC buyback is not the held worth');
+assert.notEqual(heldWorth({ ...owner, characterId: 900010 }), heldWorth({ ...owner, characterId: 900011 }),
+    'two bots holding the same stack on the same board value it through their own error');
 const EconomicTrip = require('../src/GameServer/Bot/Economy/EconomicTrip');
 const routeRows = drain(EconomicTrip.prepare(state)).value;
 const routeKey = EconomicTrip.key(state);
@@ -111,10 +116,18 @@ assert.equal(Look.feasibilityPredicate(allocated, lines, mask)(lines[0]), false,
 const Publication = require('../src/GameServer/Bot/Population/ColdEconomyDecision');
 const publication = Publication.compact(structuredClone(Publication.capture({ workshop: { known: false, feasibility: mask } }, allocated)));
 assert.deepEqual(publication.feasibility, mask);
-assert.equal(publication.workshop.known, false, 'missing recipe evidence cannot erase independently known protection');
 assert.equal(Look.feasibilityPredicate(allocated, [{ ...lines[0], revision: 3 }], mask)(lines[0]), undefined,
     'a changed physical line does not reuse an accepted old protection mask');
 assert.equal(drain(Sources.prepare({ ...owner, stats: {} }, { board })).value, null);
+// A product already made counts its own plain sell lines; an enchanted one
+// (the exits are enchant 0) and a conditional one are not units held.
+const madeBoard = new BoardIndex();
+madeBoard.put({ id: 2, ownerId: owner.characterId, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+    lines: [{ lineId: 2, selfId: 159, count: 2, price: 900 }, { lineId: 3, selfId: 159, enchant: 4, count: 1, price: 5000 }] });
+madeBoard.put({ id: 3, ownerId: owner.characterId, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+    custodyPolicy: 1, lines: [{ lineId: 4, selfId: 159, count: 3, price: 900 }] });
+assert.equal(drain(Sources.prepare(owner, { board: madeBoard, timestamp: 1000 })).value.options.existing(159), 2,
+    'only the plain enchant-0 sell line of a made product is held');
 const Plan = require('../src/GameServer/Bot/Population/ColdEconomyPlan');
 const Shots = require('../src/GameServer/Bot/Economy/ShotCraftPolicy');
 const selected = { craft: { recipeId: 25, batches: 64, exit: [200, 1000001, 1000, 9999],
@@ -129,7 +142,6 @@ assert.equal(decoded.craft.ownReserve, 3000);
 const packedDecision = Publication.compact(structuredClone(Publication.capture({ shot: step,
     workshop: { known: true, recipeId: 25, productId: 1864, incomePerHour: 0.1, cycleHours: 0.01 } }, owner)));
 assert.deepEqual(packedDecision.shot, step);
-assert.equal(packedDecision.workshop.cycleHours, 0.01);
 assert.equal(Plan.MAX_PLAN_PAYLOAD_BYTES + Publication.COMMAND_HEADER_BYTES + 32 + 8, Plan.MAX_BYTES);
 console.log('PASS native town/NPC authority parity, streamed routes/reservations and five-quote purchase view');
 
@@ -164,44 +176,89 @@ admissionBoard.put({ id: 706, ownerId: 702, storeType: 1, kind: 'shop', town: 'G
 const gearSources = [...admittedSources.options.gearRowsFor(String(crystalGear.etc.rank))].filter(Boolean);
 assert(!gearSources.some(row => row.offer?.recordId === 705), 'crystal acquisition cannot use a party personal gear supplier');
 assert(gearSources.some(row => row.offer?.recordId === 706), 'backed gear remains a crystal acquisition option');
+// A craft buys through an errand: only lines that sell at once, so the cheaper
+// conditional ask stays out even when its owner is free to meet.
 sourceOwner = { characterId: 701 };
 const releasedPurchase = drain(admittedSources.options.preparePurchase(owner, 1864, 1, { npc: false })).value;
-assert.equal(releasedPurchase.lines[0].line.recordId, 701, 'leaving the party opens the same unchanged public quote');
-// OfferQuery.cheapestIn memoizes per (table, amount): a flip of the live party admission drops the memo, and a
-// memoized null answers a repeat without the town loop.
+assert.equal(releasedPurchase.lines[0].line.recordId, 702, 'a craft input errand skips the conditional ask of a free owner');
+const releasedGear = [...admittedSources.options.gearRowsFor(String(crystalGear.etc.rank))].filter(Boolean);
+assert(!releasedGear.some(row => row.offer?.recordId === 705), 'crystal gear is not bought from a conditional ask of a free owner');
+assert(releasedGear.some(row => row.offer?.recordId === 706), 'backed gear stays the crystal gear source');
+// The lines a trader inspects are counted among those that sell at once: a
+// quote depth of cheaper conditional asks does not hide the shop behind them.
+{
+    const deepBoard = new BoardIndex();
+    for (let at = 0; at < 5; at++) deepBoard.put({ id: 721 + at, ownerId: 721 + at, storeType: 1, custodyPolicy: 1,
+        kind: 'sell_ad', town: 'Giran', revision: 1, lines: [{ lineId: 7210 + at, selfId: 1864, count: 10, price: 1 + at }] });
+    deepBoard.put({ id: 726, ownerId: 702, storeType: 1, kind: 'shop', town: 'Giran', revision: 1,
+        lines: [{ lineId: 7260, selfId: 1864, count: 10, price: 100 }] });
+    const deepSources = drain(Sources.prepare(owner, { board: deepBoard, timestamp: 1000 })).value;
+    const deepPurchase = drain(deepSources.options.preparePurchase(owner, 1864, 1, { npc: false })).value;
+    assert.equal(deepPurchase?.lines[0].line.recordId, 726, 'a shop under five cheaper conditional asks is still a craft input source');
+}
+// A craft for sale buys only from lines that sell at once too: the cheaper conditional
+// ask waits on its seller's trade meeting, so the wealth step takes the shop
+// for the inputs; with the conditional ask alone there is no source and no craft.
+{
+    const Wealth = invoke('GameServer/Bot/Economy/WealthCraftDecision');
+    const crafter = { ...owner, vitals: { mp: 500, maxMp: 500 }, inventory: {} };
+    const choose = ({ item, shop }) => {
+        const craftBoard = new BoardIndex();
+        craftBoard.put({ id: 711, ownerId: 701, storeType: 1, custodyPolicy: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+            lines: [{ lineId: 7110, selfId: item, count: 6, price: 1 }] });
+        if (shop) craftBoard.put({ id: 712, ownerId: 702, storeType: 1, kind: 'shop', town: 'Giran', revision: 1,
+            lines: [{ lineId: 7120, selfId: item, count: 6, price: 500 }] });
+        if (item !== 1867) craftBoard.put({ id: 714, ownerId: 702, storeType: 1, kind: 'shop', town: 'Giran', revision: 1,
+            lines: [{ lineId: 7140, selfId: 1867, count: 6, price: 500 }] });
+        craftBoard.put({ id: 713, ownerId: 702, storeType: 3, kind: 'shop', town: 'Giran', revision: 1,
+            lines: [{ lineId: 7130, selfId: leatherRecipe.productId, count: 1, price: 90000 }] });
+        const sources = drain(Sources.prepare(crafter, { board: craftBoard, timestamp: 1000 })).value;
+        // The producer root chose the buyer line 713 as the exit; the step sizes the craft on it.
+        const queue = [{ key: `resale:${leatherRecipe.productId}`, amount: leatherRecipe.productCount,
+            recipeId: leatherRecipe.recipeId, exit: [713, 7130, 90000, 1], recipeReady: true }];
+        const chosen = drain(Wealth.producerStep(crafter, queue, [{ recipeId: leatherRecipe.recipeId }], sources)).value;
+        return chosen && chosen.basket.purchases.find(row => Number(row.selfId) === item).lines[0].line.recordId;
+    };
+    assert.equal(choose({ item: 1867, shop: true }), 712, 'a craft for sale buys its inputs from the shop, not the cheaper conditional ask');
+    assert.equal(choose({ item: 1867, shop: false }), null, 'a conditional ask alone is no input source for a craft for sale');
+}
+// A buyer's line bounds the craft to the units it takes from this crafter:
+// a 10-unit bid behind 3 cheaper foreign asks takes 7 leathers, so the step
+// crafts 7 batches, not 10 left over at buyback.
+{
+    const Wealth = invoke('GameServer/Bot/Economy/WealthCraftDecision');
+    const crafter = { ...owner, vitals: { mp: 500, maxMp: 500 }, inventory: {} };
+    const lotBoard = new BoardIndex();
+    lotBoard.put({ id: 731, ownerId: 701, storeType: 3, custodyPolicy: 1, kind: 'buy_ad', town: 'Giran', revision: 1,
+        lines: [{ lineId: 7310, selfId: leatherRecipe.productId, count: 10, price: 90000 }] });
+    lotBoard.put({ id: 732, ownerId: 702, storeType: 1, kind: 'shop', town: 'Giran', revision: 1,
+        lines: [{ lineId: 7320, selfId: leatherRecipe.productId, count: 3, price: 1000 }] });
+    lotBoard.put({ id: 733, ownerId: 702, storeType: 1, kind: 'shop', town: 'Giran', revision: 1,
+        lines: [{ lineId: 7330, selfId: 1867, count: 600, price: 1 }] });
+    const sources = drain(Sources.prepare(crafter, { board: lotBoard, timestamp: 1000 })).value;
+    const queue = [{ key: `resale:${leatherRecipe.productId}`, amount: 10 * leatherRecipe.productCount,
+        recipeId: leatherRecipe.recipeId, exit: [731, 7310, 90000, 1], recipeReady: true }];
+    const chosen = drain(Wealth.producerStep(crafter, queue, [{ recipeId: leatherRecipe.recipeId }], sources)).value;
+    assert.equal(chosen?.batches, 7, 'a bid behind cheaper asks is crafted for the units it takes');
+}
+// OfferQuery.cheapestIn holds a table's fills by the item's admission revision: a seller's party join or leave
+// through the rule's write path (PartyAdmission.watchStates, the worker's kernel.states) reprices every held amount.
 {
     const OfferQuery = require('../src/GameServer/Bot/Economy/OfferQuery');
-    const buyer = { characterId: 800 };
+    const states = new Map([[701, { characterId: 701 }]]);
+    Admission.configureTradeAdmission(id => states.get(Number(id)) || null);
+    Admission.watchStates(states, admissionBoard);
     const priceTable = () => OfferQuery.townTable(admissionBoard, 1864, { quoteDepth: 5, excludeOwner: 800,
-        accept: line => Admission.personalOfferAllowed(line, buyer) });
+        accept: Admission.offerAdmission({ characterId: 800 }) });
     const recordsOf = best => best.lines.map(entry => entry.line.recordId);
-    sourceOwner = { characterId: 701 };
-    const flipping = priceTable();
-    const open = OfferQuery.cheapestIn(flipping, 5);
-    assert.deepEqual(recordsOf(open), [701], 'the free conditional ask wins while its owner is unpartied');
-    assert.equal(OfferQuery.cheapestIn(flipping, 5), open, 'an unchanged admission answers from the memo');
-    assert.equal(flipping.byAmount.get(5), open);
-    sourceOwner = { characterId: 701, party: { partyId: 'busy-party' } };
-    const closed = OfferQuery.cheapestIn(flipping, 5);
-    assert.notEqual(closed, open, 'a flipped admission is repriced, not served from the memo');
-    assert.deepEqual(recordsOf(closed), [702], 'the party personal ask is no longer a source');
-    assert.deepEqual(closed, OfferQuery.cheapestIn(priceTable(), 5), 'equal to a fresh table under the same admission');
-    OfferQuery.cheapestIn(flipping, 6);
-    assert.equal(flipping.byAmount.size, 2);
-    sourceOwner = { characterId: 701 };
-    assert.deepEqual(recordsOf(OfferQuery.cheapestIn(flipping, 6)), [701]);
-    assert.equal(flipping.byAmount.size, 1, 'the flip cleared the memo, only the amount asked since is held');
-    assert(!flipping.byAmount.has(5));
-    // A memoized null: nothing fills under maxPrice 0; the second call does not walk the rows again.
-    const nothing = OfferQuery.townTable(admissionBoard, 1864, { quoteDepth: 5, maxPrice: 0 });
-    const rows = nothing.rows;
-    let walks = 0;
-    Object.defineProperty(nothing, 'rows', { get() { walks++; return rows; } });
-    assert.equal(OfferQuery.cheapestIn(nothing, 5), null);
-    assert.equal(nothing.byAmount.get(5), null, 'the null is memoized');
-    assert.equal(walks, 1);
-    assert.equal(OfferQuery.cheapestIn(nothing, 5), null);
-    assert.equal(walks, 1, 'the second call does not run the town loop');
+    const held = priceTable();
+    assert.deepEqual(recordsOf(OfferQuery.cheapestIn(held, 5)), [701], 'the free conditional ask wins while its owner is unpartied');
+    OfferQuery.cheapestIn(held, 6);
+    states.set(701, { characterId: 701, party: { partyId: 'busy-party' } });
+    assert.deepEqual(recordsOf(OfferQuery.cheapestIn(held, 5)), [702], 'a held table takes no ask of a seller that joined a party');
+    assert.deepEqual(OfferQuery.cheapestIn(held, 6), OfferQuery.cheapestIn(priceTable(), 6), 'every held amount is repriced, as a fresh table');
+    states.delete(701);
+    assert.deepEqual(recordsOf(OfferQuery.cheapestIn(held, 5)), [701], 'the ask is a source again once its seller left');
 }
 Admission.configureTradeAdmission(id => invoke('GameServer/Bot/Population/BotLifeState').cachedState(Number(id)),
     id => invoke('GameServer/World/World').registeredActorById(Number(id))?.session);

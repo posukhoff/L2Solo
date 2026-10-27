@@ -89,7 +89,7 @@ async function run() {
     assert.strictEqual(profile.town, 'Giran');
     assert(profile.entries.length > 0 && profile.entries.length <= CraftShopService.MAX_PUBLIC_RECIPES, 'a service crafter must publish a compact recipe portfolio');
     assert(profile.entries.every((entry) => Number.isSafeInteger(entry.recipeId) && entry.price >= 0), 'published entries must be valid C4 manufacture offers');
-    assert.deepStrictEqual(profile.loc, CraftShopService.locationFor(artisan.characterId), 'the Giran stall must remain stable across activation');
+    assert.deepStrictEqual(profile.loc, { ...CraftShopService.stationForSlot(artisan.characterId).loc }, 'the Giran stall must remain stable across activation');
 
     const learned = [];
     Database.setCharacterRecipe = (characterId, recipeId, type) => {

@@ -7,13 +7,44 @@ const Recipes = invoke('GameServer/Items/C4RecipeItems');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
 const Market = invoke('GameServer/Bot/Economy/MarketCounters');
-const Demand = require('../src/GameServer/Bot/Economy/ShotTradeDemand');
+const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
 const Shots = require('../src/GameServer/Bot/Economy/ColdShotEconomyService');
 const Policy = require('../src/GameServer/Bot/Economy/ShotCraftPolicy');
 const Codec = require('../src/GameServer/Bot/Economy/RecipeBookCodec');
+const Basket = require('../src/GameServer/Bot/Economy/WealthCraftPolicy');
 const probe = require('./helpers/workerEconomyDecision');
 const originalBoard = Afk.boardIndex;
 Market.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure());
+
+// A crafter's own use of its shots is worth at most buying them at their
+// market price (TradeIntent.inputValue, PriceBelief soldPrice): a huge stock
+// benefit (1000 hours a shot) with shots traded at 140 values a shot of own
+// use at 140 / hourAdena hours; a benefit below that price keeps its own
+// value, and so does any benefit of an untraded shot (sold price 0).
+{
+    const recipe = Recipes.resolveByRecipeId(20), hourAdena = 1000;
+    const state = { characterId: 910802, phase: 'cold', currentRegion: 'Giran', level: 40, adena: 10000000,
+        vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 }, stats: { money: [hourAdena, 1 / hourAdena, 0, 0] },
+        inventory: Object.fromEntries(recipe.materials.map(row => [row.selfId,
+            { selfId: row.selfId, amount: row.amount * 64, stackable: true }])) };
+    const trip = () => 0;
+    trip.details = () => ({ known: true, hours: 0, fees: 0 });
+    const ownStock = new Map(recipe.materials.map(row => [Number(row.selfId), { count: row.amount * 64, unitValue: 0 }]));
+    const ownUse = (benefitHours, sold = 140) => Basket.drain(Policy.recipeShotSearch(state, recipe,
+        { hourAdena, moneyPrice: 1 / hourAdena, mpPerHour: 1000, trip, price: () => 0,
+            soldPrice: id => id === recipe.productId ? sold : 0 }, { ownStock,
+            stock: { itemId: recipe.productId, missing: 1000, survivalMissing: 0, target: 1000, benefitHours, unitPrice: 140 },
+            prepareExits: function* () { yield 'exit'; return []; },
+            preparePurchase: function* () { yield 'quote'; return null; } }));
+    const capped = ownUse(1000 * 1000);
+    assert.equal(capped?.exit?.type, 'use', 'the crafter makes shots for its own use');
+    assert(capped.exit.ownUseUnitHours <= 140 / hourAdena + 1e-12, 'a shot of own use is worth at most its price');
+    assert(capped.valueHours <= capped.exit.ownUseUnits * 140 / hourAdena + 1e-9,
+        'the batch is worth at most buying the missing shots');
+    assert.equal(ownUse(10).exit.ownUseUnitHours, 10 / 1000, 'a benefit below the price keeps its own value');
+    assert.equal(ownUse(1000 * 1000, 0).exit.ownUseUnitHours, 1000, 'an untraded shot keeps its own use value');
+    console.log('PASS own shot use is worth at most its price');
+}
 
 (async () => {
     for (const recipeId of [20, 21, 317]) {

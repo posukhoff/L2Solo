@@ -22,7 +22,6 @@ const ColdMarketService = invoke('GameServer/Bot/Economy/ColdMarketService');
 const BotLifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const MarketTelemetry = invoke('GameServer/Bot/Economy/MarketTelemetry');
-const BuyStoreService = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const BotGear = invoke('GameServer/Bot/AI/BotGear');
 // On arrival a cold bot buys only what its held card orders (Task 4, question
@@ -57,8 +56,7 @@ const originals = {
     user: World.user,
     bestOffer: MarketOpportunity.bestOffer,
     npcOffers: MarketOpportunity.npcOffers,
-    reserve: MarketOpportunity.reserve,
-    openBuyStore: BuyStoreService.open
+    reserve: MarketOpportunity.reserve
 };
 
 const calls = [];
@@ -82,7 +80,6 @@ async function run() {
     Database.updateCharacterLocation = async () => {};
     Database.updateCharacterExperience = async () => {};
     Database.updateCharacterVitals = async () => {};
-    MarketTelemetry.reset();
     Economy.forState = function (value, ...args) {
         if (value?.phase === 'cold') throw new Error('fixture forbids main cold wish builds');
         return originalFullEconomy.call(this, value, ...args);
@@ -302,7 +299,7 @@ async function run() {
         type: 'upgrade_gear',
         status: 'active',
         target: { itemId: 2, itemName: 'Long Sword', itemSlot: 7, requiredRank: 'none', adena: 900 },
-        plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' }
+        plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran' }
     });
     assert.strictEqual(lowTierPlayerPurchase.purchased, false);
     assert.strictEqual(lowTierBudget, Funding.spendable(lowTierNative.state, 0, { itemId: 2 }));
@@ -326,12 +323,7 @@ async function run() {
     assert.strictEqual(cheaperPublic.result.offer.sourceType, 'afk_player_store');
     assert.strictEqual(cheaperPublic.result.state.adena, 100);
 
-    let lowTierBuyStoreCalls = 0;
     MarketOpportunity.bestOffer = () => null;
-    BuyStoreService.open = () => {
-        lowTierBuyStoreCalls += 1;
-        return Promise.resolve({ opened: true });
-    };
     const missingLowTierNpcGear = await purchaseOnCard(await declaredState({
         ...state,
         characterId: 87,
@@ -350,17 +342,15 @@ async function run() {
         plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran' }
     });
     assert.strictEqual(missingLowTierNpcGear.reason, 'low_tier_offer_missing');
-    assert.strictEqual(lowTierBuyStoreCalls, 0, 'missing NG/D gear must replan instead of opening a WTB store');
     assert.strictEqual(missingLowTierNpcGear.state.activity, 'traveling');
     MarketOpportunity.npcOffers = originals.npcOffers;
     MarketOpportunity.bestOffer = originals.bestOffer;
     MarketOpportunity.reserve = originals.reserve;
-    BuyStoreService.open = originals.openBuyStore;
 
     const completedGoal = await purchaseOnCard(state, {
         ...goal,
         status: 'completed',
-        plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' }
+        plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran' }
     });
     assert.strictEqual(completedGoal.reason, 'no_purchase_goal', 'a completed market goal must not buy its item again during a batch visit');
     // Town trips are paid (N2, user 2026-10-04): the bot shopping in Giran walks
@@ -377,24 +367,24 @@ async function run() {
     const otherTownGoal = await purchaseOnCard(await declaredState(fundedInGiran, 'giran_to_dion'), {
         ...goal,
         status: 'active',
-        plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Dion' }
+        plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Dion' }
     });
     assert.strictEqual(otherTownGoal.reason, 'market_destination_corrected', 'a stale journey must continue to the requested town');
     assert.strictEqual(otherTownGoal.state.stats.travel.townName, 'Dion');
     assert.strictEqual(otherTownGoal.state.adena, 100000 - 8100, 'the corrected journey pays the Giran to Dion gatekeeper');
     const shortOfFee = await purchaseOnCard(await declaredState({ ...fundedInGiran, adena: 1000, inventory: state.inventory }, 'short_gatekeeper'), {
-        ...goal, status: 'active', plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Dion' }
+        ...goal, status: 'active', plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Dion' }
     });
     assert.strictEqual(shortOfFee.reason, 'different_market_town', 'a buyer short of the gatekeeper fee stays (N2)');
     const returnPoint = { loc: { locX: 100, locY: 200, locZ: 0 }, regionName: 'Field' };
     const corrected = await purchaseOnCard(await declaredState({
         ...fundedInGiran, stats: { ...state.stats, marketReturn: returnPoint }
-    }, 'corrected_goddard'), { ...goal, plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Goddard' } });
+    }, 'corrected_goddard'), { ...goal, plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Goddard' } });
     assert.strictEqual(corrected.state.stats.travel.townName, 'Goddard');
     assert.deepStrictEqual(corrected.state.stats.marketReturn, returnPoint,
         'correcting a persisted wrong-town journey must keep the original hunting return');
     const unknownTown = await purchaseOnCard(await declaredState(legacyJourneyState, 'unknown_town'), {
-        ...goal, plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Unknown town' }
+        ...goal, plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Unknown town' }
     });
     assert.strictEqual(unknownTown.reason, 'different_market_town');
     assert(unknownTown.state.stats.marketRetryAfter > Date.now(),
@@ -452,7 +442,6 @@ async function run() {
     assert(noOffer.state.stats.marketRetryAfter > Date.now(), 'a buyer with no offer must wait before retrying the same market trip');
 
     MarketOpportunity.bestOffer = () => null;
-    BuyStoreService.open = () => Promise.reject(new Error('forced buy-store persistence failure'));
     const failedBuyStore = await purchaseOnCard(await declaredState({
         ...state,
         characterId: 82,
@@ -460,7 +449,6 @@ async function run() {
     }, 'failed_buy_store'), { type: 'buy_craft_material', target: { itemId: 999999, itemName: 'Missing Material', amount: 1, adena: 100 } });
     assert.strictEqual(failedBuyStore.reason, 'no_affordable_offer', 'a miss on arrival enters the normal market retry path; no WTB opens from main');
     assert(failedBuyStore.state.stats.marketRetryAfter > Date.now());
-    BuyStoreService.open = originals.openBuyStore;
 
     MarketOpportunity.bestOffer = () => ({ selfId: 2, price: 1000, sourceType: 'cold_store', storeItem: { count: 1, price: 1000 } });
     MarketOpportunity.reserve = () => false;
@@ -794,8 +782,6 @@ run().catch((err) => {
     World.user = originals.user;
     MarketOpportunity.bestOffer = originals.bestOffer;
     MarketOpportunity.reserve = originals.reserve;
-    BuyStoreService.open = originals.openBuyStore;
     Economy.forState = originalFullEconomy;
-    MarketTelemetry.reset();
     try { await Afk._resetForTests(); } finally { await Database.close(); }
 });

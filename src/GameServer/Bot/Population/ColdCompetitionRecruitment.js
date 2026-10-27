@@ -1,11 +1,12 @@
+const { partyIdOf } = require('./PartyId');
 // Bounded admission into the party participating in this encounter. No global
 // party search, no new party slots, and no transfer between existing parties.
 async function recruit({ participants, event, parties, life, memory, composition, limitsFor,
     clanReserved, commit, participantAllowed = () => true, timestamp = Date.now() }) {
-    const grouped = participants.filter(s => s.party?.partyId || s.partyId);
+    const grouped = participants.filter(s => partyIdOf(s));
     if (grouped.length !== 1) return { rejected: 'party_merge_unsupported' };
     const representative = grouped[0], solo = participants.find(s => s !== representative);
-    const partyId = representative.party?.partyId || representative.partyId;
+    const partyId = partyIdOf(representative);
     const forecast = [event.actor, event.peer].find(p => p.id === representative.characterId);
     const party = parties.find(partyId);
     if (!party || party.status !== 'active' || party.spotId !== event.spotId

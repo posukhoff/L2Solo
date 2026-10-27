@@ -102,7 +102,7 @@ const ad = (ownerId, selfId, price, custodyPolicy) => {
             'a party bot keeps its existing ad');
         // Retain these requests as meeting adverts: a backed AFK purchase shop
         // settles without a meeting and does not require the party trade guard.
-        await Market.executePlan(state(), { buyAds: [[1867, 2, 100], [ORE, 2, 237]], buyShop: Afk.SELL });
+        await Market.executePlan(state(), { buyAds: [[1867, 2, 100], [ORE, 2, 237]], buyTown: 'Giran' });
         const fillable = () => Opportunity.findBuyOffers(ORE, { town: 'Giran', sellerCharacterId: plainSeller }).filter(offer => offer.sourceId === buyer || Number(offer.ownerId) === buyer);
         const published = (await Database.fetchAfkTradeShops(buyer)).find(row => row.lines.some(line => line.selfId === ORE));
         assert(published, 'the party buyer publishes the requested meeting advert');

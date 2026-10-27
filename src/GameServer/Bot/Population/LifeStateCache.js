@@ -58,7 +58,8 @@ class LifeStateCache extends Map {
         }
     }
 
-    subscribePublications(listener, { replay = false } = {}) {
+    // onReplayed: called once when a replay has offered every entry.
+    subscribePublications(listener, { replay = false, onReplayed = null } = {}) {
         if (typeof listener !== 'function') throw new TypeError('invalid_life_publication_listener');
         const subscription = { listener, active: true, handle: null };
         this.publicationListeners.add(subscription);
@@ -77,6 +78,10 @@ class LifeStateCache extends Map {
                     catch (error) { global.utils?.infoWarn?.('BotLife', 'publication replay failed: %s', error?.message || error); }
                 }
                 if (subscription.active && remaining > 0) subscription.handle = setImmediate(page);
+                else if (subscription.active) {
+                    try { onReplayed?.(); }
+                    catch (error) { global.utils?.infoWarn?.('BotLife', 'publication replay end failed: %s', error?.message || error); }
+                }
             };
             subscription.handle = setImmediate(page);
         }

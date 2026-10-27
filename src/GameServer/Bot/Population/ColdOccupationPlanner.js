@@ -5,6 +5,14 @@ const Diagnostics = require('../Economy/EconomyDiagnostics');
 const { performance } = require('node:perf_hooks');
 const { unknownWorkshop } = require('./ColdEconomyDecision');
 const MAX_CONTEXTS = 64, MAX_OWNERS = 8, OWNER_UNITS = 4, MAX_UNITS = 32, SLICE_MS = 4;
+// A refresh (a far bot's economy plan) or a near bot's decision finishes on a
+// read source that moved under it and publishes (its execution re-checks the
+// lines it fills, withdraws and bids: a meeting's quote revision, the own
+// line revision); the move makes the slot dirty after publish, so its next
+// request builds once, many moves coalesced, never an immediate re-begin
+// (design-rules Recompute: by events). Every other work begins again: a
+// meeting's proof is its read tokens, a step awaits an action's workshop.
+const finishesOnMove = input => input.mode === 'refresh' || input.mode === 'near';
 
 // Incomplete contexts stay in slots through yield. Only completed derived
 // entries are evictable. Waiting owners carry references to their existing
@@ -17,14 +25,13 @@ class ColdOccupationPlanner {
         Object.assign(this, { capture, create, step, result, ownCurrent, sameInput, sourceToken, sourceScope, sourceScopeToken, onSlots, onWorking, publish, onPublishError, now, schedule });
         this.slots = new Map(); this.waiting = new Map(); this.ready = new Set(); this.dependencies = new Map();
         this.workingContexts = 0;
-        this.scopes = new Map();
         this.scopeDependencies = new Map();
         // Meeting readers share one representative item per category: their
         // token is the category fingerprint, not one item's revision.
         this.representatives = new Map();
         this.scheduled = false; this.stopped = false;
         this.stats = { portions: 0, units: 0, yields: 0, capacityDeferrals: 0, invalidations: 0,
-            staleOwners: 0, unchanged: 0, maxUnitMs: 0, overBudgetUnits: 0, maxPortionUnits: 0 };
+            staleOwners: 0, replaced: 0, restarts: 0, unchanged: 0, maxUnitMs: 0, overBudgetUnits: 0, maxPortionUnits: 0 };
     }
 
     request(id, input, { awaitResult = true } = {}) {
@@ -35,7 +42,7 @@ class ColdOccupationPlanner {
             if (existing.done) { existing.input = input; DiagnosticConfig.developerDiagnostics && (this.stats.unchanged++); return Promise.resolve(existing.value); }
             return awaitResult ? existing.promise : null;
         }
-        if (existing && !existing.done) this.cancel(id, 'owner_replaced');
+        if (existing && !existing.done) { DiagnosticConfig.developerDiagnostics && (this.stats.replaced++); this.cancel(id, 'owner_replaced'); }
         else if (existing) this.release(id);
         let resolve;
         const promise = new Promise(done => { resolve = done; });
@@ -57,8 +64,6 @@ class ColdOccupationPlanner {
             owners?.delete(entry.id);
             if (!owners?.size) {
                 this.dependencies.delete(id);
-                const scope = this.sourceScope(id), items = this.scopes.get(scope);
-                items?.delete(id); if (!items?.size) this.scopes.delete(scope);
             }
         }
         entry.reads?.clear();
@@ -78,11 +83,6 @@ class ColdOccupationPlanner {
         let owners = this.dependencies.get(id);
         if (!owners) this.dependencies.set(id, owners = new Set());
         owners.add(entry.id);
-        const scope = this.sourceScope(id);
-        if (scope !== null) {
-            let items = this.scopes.get(scope); if (!items) this.scopes.set(scope, items = new Set());
-            items.add(id);
-        }
     }
 
     readGroup(entry, id) {
@@ -109,12 +109,22 @@ class ColdOccupationPlanner {
             if (entry.reads.get(id) === token) continue;
             // Coalesce by the exact used item revision. Updating this token is
             // safe only together with dirty: the obsolete work is never applied.
-            entry.reads.set(id, token); entry.dirty = true;
-            entry.cursor[14] = 1; DiagnosticConfig.developerDiagnostics && (this.stats.invalidations++);
+            entry.reads.set(id, token);
+            if (this.keepsOn(entry)) continue;
+            entry.dirty = true;
+            entry.cursor[14] = 1; this.stats.invalidations++;
             if (!entry.done) this.ready.add(owner);
             else this.publish(entry.id, entry.input, unknownWorkshop(), { stale: true });
         }
         this.kick();
+    }
+    // A read source or the admission scope moved under an unfinished refresh
+    // or near work (finishesOnMove): it keeps on, marked once; false = the
+    // caller's path (a done slot, any other work: dirty, begin again).
+    keepsOn(entry) {
+        if (entry.done || !finishesOnMove(entry.input)) return false;
+        if (!entry.moved) { entry.moved = true; this.stats.invalidations++; }
+        return true;
     }
     readScope(entry, scope) {
         if (scope == null || entry.admissionScope === scope) return;
@@ -127,22 +137,23 @@ class ColdOccupationPlanner {
         owners.add(entry.id);
     }
     scopeChanged(scope) {
-        for (const id of this.scopes.get(scope) || []) this.sourceChanged(id);
         const token = this.sourceScopeToken(scope);
         for (const owner of this.scopeDependencies.get(scope) || []) {
             const entry = this.slots.get(owner);
             if (!entry || entry.admissionToken === token) continue;
             entry.admissionToken = token;
+            if (this.keepsOn(entry)) continue;
             const wasDirty = entry.dirty;
             entry.dirty = true; entry.cursor[14] = 1;
-            if (!wasDirty) DiagnosticConfig.developerDiagnostics && (this.stats.invalidations++);
+            if (!wasDirty) this.stats.invalidations++;
             if (!entry.done) this.ready.add(owner);
             else if (!wasDirty) this.publish(entry.id, entry.input, unknownWorkshop(), { stale: true });
         }
         this.kick();
     }
     markReset(entry) {
-        entry.dirty = true; entry.cursor[14] = 2; DiagnosticConfig.developerDiagnostics && (this.stats.invalidations++);
+        if (this.keepsOn(entry)) return;
+        entry.dirty = true; entry.cursor[14] = 2; this.stats.invalidations++;
         if (entry.done) this.publish(entry.id, entry.input, unknownWorkshop(), { stale: true });
     }
     // After a whole source table was replaced and its full copy applied: only
@@ -152,7 +163,7 @@ class ColdOccupationPlanner {
     recheckSources() {
         let moved = 0, kept = 0;
         for (const entry of this.slots.values()) {
-            if (entry.input.mode === 'wish' || entry.dirty || !entry.reads) continue;
+            if (entry.input.mode === 'wish' || entry.dirty || entry.moved || !entry.reads) continue;
             let changed = entry.admissionScope != null && entry.admissionToken !== this.sourceScopeToken(entry.admissionScope);
             if (!changed) {
                 for (const [id, token] of entry.reads) {
@@ -183,7 +194,7 @@ class ColdOccupationPlanner {
 
     initialise(entry) {
         this.removeDependencies(entry);
-        entry.reads = new Map(); entry.dirty = false; entry.cursor.fill(0);
+        entry.reads = new Map(); entry.dirty = false; entry.moved = false; entry.cursor.fill(0);
         const read = entry.input.mode === 'meeting' ? id => this.readGroup(entry, id) : id => this.read(entry, id);
         entry.captured = this.capture(entry.id, entry.input, read, scope => this.readScope(entry, scope));
         entry.work = this.create(entry.captured);
@@ -193,6 +204,7 @@ class ColdOccupationPlanner {
     finish(entry, value) {
         if (entry.done || this.slots.get(entry.id) !== entry) return;
         entry.done = true; entry.value = value ?? (entry.input.mode === 'action' ? null : unknownWorkshop());
+        const moved = entry.moved === true;
         entry.work = null; entry.captured = null; entry.validation = null;
         // A completed route/workshop keeps compact evidence, no scratch graph.
         // Release its graph allowance while retaining the bounded scalar card.
@@ -205,22 +217,26 @@ class ColdOccupationPlanner {
             entry.error = String(error?.message || error);
             this.onPublishError(error, entry.id, entry.input);
         }
+        // Published from moved sources: the mark survives as dirty, so the
+        // slot's next request builds once (finishesOnMove).
+        if (moved) { entry.moved = false; entry.dirty = true; }
     }
 
     unit(entry) {
         if (!this.ownCurrent(entry.id, entry.input)) {
             DiagnosticConfig.developerDiagnostics && (this.stats.staleOwners++); this.cancel(entry.id, 'owner_stale'); return;
         }
-        if (!entry.work || entry.dirty) { this.initialise(entry); return; }
+        if (!entry.work || entry.dirty) { if (entry.work) DiagnosticConfig.developerDiagnostics && (this.stats.restarts++); this.initialise(entry); return; }
         if (entry.validation) {
             const next = entry.validation.next();
             if (!next.done) {
                 const [id, token, scope] = next.value;
                 entry.cursor[3]++;
-                if ((scope ? this.sourceScopeToken(id) : this.sourceToken(id, entry.input)) !== token) {
-                    entry.dirty = true; entry.cursor[14] = 1; DiagnosticConfig.developerDiagnostics && (this.stats.invalidations++);
+                if ((scope ? this.sourceScopeToken(id) : this.sourceToken(id, entry.input)) !== token && !this.keepsOn(entry)) {
+                    entry.dirty = true; entry.cursor[14] = 1; this.stats.invalidations++;
                 }
-                return;
+                // A marked work has no more to check: it finishes.
+                if (!entry.moved) return;
             }
             this.finish(entry, this.result(entry.work)); return;
         }
@@ -251,7 +267,8 @@ class ColdOccupationPlanner {
                 const unitStarted = clock;
                 try { this.unit(entry); }
                 catch (error) { entry.error = String(error?.message || error); this.finish(entry, entry.input.mode === 'meeting'
-                    ? { refused: true, reason: entry.error } : unknownWorkshop()); }
+                    ? { refused: true, reason: entry.error, ...(typeof error?.cause === 'string' ? { cause: error.cause } : {}) }
+                    : unknownWorkshop()); }
                 clock = this.now();
                 const duration = clock - unitStarted;
                 DiagnosticConfig.developerDiagnostics && (this.stats.maxUnitMs = Math.max(this.stats.maxUnitMs, duration));
@@ -291,7 +308,7 @@ class ColdOccupationPlanner {
     stop() {
         this.stopped = true;
         for (const id of [...this.slots.keys(), ...this.waiting.keys()]) this.cancel(id);
-        this.ready.clear(); this.dependencies.clear(); this.scopes.clear(); this.scopeDependencies.clear(); this.representatives.clear();
+        this.ready.clear(); this.dependencies.clear(); this.scopeDependencies.clear(); this.representatives.clear();
     }
     snapshot() { if (!DiagnosticConfig.developerDiagnostics) return { enabled: false }; return { ...this.stats, contexts: this.slots.size, working: this.workingContexts, pending: this.waiting.size,
         active: this.ready.size, dependencies: this.dependencies.size, cursorBytes: (this.slots.size + this.waiting.size) * 128 }; }

@@ -31,7 +31,7 @@ const state = {
     stats: {},
     vitals: { hp: 100, maxHp: 100, mp: 50, maxMp: 50 }
 };
-const goal = { type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_weapon' } };
+const goal = { type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_gear' } };
 const started = GoalExecutor.beginMarketTravel(state, goal, Date.now());
 assert.strictEqual(started.activity, 'traveling');
 assert.strictEqual(started.stats.travel.townName, 'Giran');

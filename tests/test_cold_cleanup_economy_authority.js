@@ -40,7 +40,6 @@ function stub(object, key, value) { const original = object[key]; restores.push(
         stub(Town, 'saleTown', () => ({ town: 'Oren' }));
         stub(Life, 'enqueueEquipmentGoalAdvanceForState', () => {});
         stub(Life, 'reviewTrainingAfterCommit', async value => value);
-        stub(Market, 'reviewPurchaseLimits', async value => ({ state: value, changed: false }));
         stub(invoke('GameServer/Bot/Population/BotGlobalChat'), 'maybeAnnounce', () => {});
         const warnings = [];
         stub(utils, 'infoWarn', (...args) => warnings.push(require('node:util').format(...args.slice(1))));
@@ -48,7 +47,7 @@ function stub(object, key, value) { const original = object[key]; restores.push(
             nextState: state, result: { events: [] },
             cleanupNeed: { reason: 'market_surplus_inventory', slots: 40, npcOnlySlots: 0 },
             economyPlan: { sell: [], withdraw: [], travel: null,
-                buyAds: [[1458, 10, 1500, 1, 76, 7, 0, 1, .001]] } };
+                buyAds: [[1458, 10, 1500, 1, 76, 7, 0, 1, .001]], buyTown: 'Dion' } };
         const prepared = await coordinator.prepareProposal(proposal);
         assert.equal(proposal.inventoryCleanupForced, true);
         assert.equal(prepared.stats.travel.paid.fee, 11000, 'the real Giran-to-Oren route charges its fare');
@@ -68,7 +67,7 @@ function stub(object, key, value) { const original = object[key]; restores.push(
         await assert.rejects(Market.executePlan(Life.cachedState(id), proposal.economyPlan, { reviewGoal: false }),
             /economy_plan_bid_unfunded/, 'ordinary publication still enforces the actual native funding limit');
         await Market.executePlan(Life.cachedState(id), { sell: [], withdraw: [], travel: null,
-            buyAds: [[1458, 6, 1500, 1, 76, 7, 0, 1, .001]] }, { reviewGoal: false });
+            buyAds: [[1458, 6, 1500, 1, 76, 7, 0, 1, .001]], buyTown: 'Dion' }, { reviewGoal: false });
         const refreshed = Afk.ownerRecords(id).find(row => row.kind === 'buy_ad');
         assert.equal(refreshed.id, standing.id); assert.equal(refreshed.lines[0].count, 6,
             'fresh preparation can resize the same native ad using the post-fare wallet');

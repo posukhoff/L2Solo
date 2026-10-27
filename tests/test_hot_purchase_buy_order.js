@@ -16,7 +16,7 @@ const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 
 // A cold bot that wants gear may hold an AFK buy order for it. When the bot
 // is hot and buys the item in town, that order must be withdrawn: an owned
-// target must not keep a persistent buy order (BotAfkMarketService review),
+// target must not keep a persistent buy order (the worker plan withdraws it),
 // and a hot bot gets no review, so the order could fill with a second copy.
 const SHORT_SWORD = 1;
 const BOT_ID = 950001;

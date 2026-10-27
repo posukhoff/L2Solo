@@ -105,30 +105,25 @@ try {
         assert.strictEqual(errorCalls.length, calls, 'disabled knowledge does not request a personal learning curve');
     });
 
-    contract('prepared owner craft value keeps its sixth-source weight; unsupported speculation is unknown', () => {
-        C4RecipeItems.loadRecipeItems = () => { throw Error('prior must not scan the recipe catalogue'); };
-        PriceBelief.resetCaches();
-        assert.strictEqual(PriceBelief.demandValue(ITEM, now), null, 'legacy owner-blind cache is unavailable');
-        const prepared = ctx({ knowledgeEnabled: false,
-            derivedDemandValue: { known: true, value: 2000, ownerId: 43 } });
-        const crafted = PriceBelief.prior(ITEM, prepared);
-        near(PriceBelief.demandValue(ITEM, prepared), 2000, 'completed finite owner route supplies its scalar');
-        near(crafted.K, 8.1, 'prepared craft adds weight 0.3');
-        const unbiased = (5 * Math.log(2000) + Math.log(2200) + Math.log(1800)
-            + 0.5 * Math.log(600) + 0.3 * Math.log(500) + 0.3 * Math.log(2000)) / 8.1;
-        near(crafted.mu, unbiased, 'supported prepared source retains weighted log centre');
-        assert.strictEqual(PriceBelief.demandValue(ITEM, ctx({ derivedDemandValue: 2000 })), null,
-            'a bare unqualified value is not a supported owner calculation');
-        assert.strictEqual(PriceBelief.demandValue(ITEM, ctx({ derivedDemandValue: { known: true, value: 2000, ownerId: 44 } })), null);
-        const unknown = PriceBelief.prior(ITEM, ctx({ knowledgeEnabled: false,
-            derivedDemandValue: { known: false, value: 2000 } }));
-        near(unknown.K, 7.8, 'unknown preparation contributes no speculative willingness');
+    contract('a market price is known only from deals', () => {
+        const sold = () => PriceBelief.reader({ state: { characterId: 43 }, persona: { understanding: 0.5 },
+            board: ctx().board, timestamp: now, knowledgeEnabled: false });
+        recent = [800, 1000, 1200]; ask = 1100; bid = 900;
+        const traded = sold();
+        assert(traded.soldPrice(ITEM) > 0, 'a traded item has a market price');
+        near(traded.soldPrice(ITEM), traded.price(ITEM), 'the market price is the bot\'s own price');
+        recent = []; ask = 1100; bid = 0;
+        assert.strictEqual(sold().soldPrice(ITEM), 0, 'an ask alone is no market price');
+        ask = 0; bid = 900;
+        assert.strictEqual(sold().soldPrice(ITEM), 0, 'a bid alone is no market price');
+        bid = 0;
+        assert.strictEqual(sold().soldPrice(ITEM), 0, 'a first price alone is no market price');
+        assert(sold().price(ITEM) > 0, 'though the bot still believes a price');
     });
 }
 finally {
     for (const key of ['itemPriceEvidence', 'counter', 'counterOf', 'firstPrice']) MarketCounters[key] = original[key];
     C4RecipeItems.loadRecipeItems = original.recipes;
-    PriceBelief.resetCaches();
 }
 if (failures.length) {
     console.error(`N79 prior contracts: ${failures.length} failed (${failures.join('; ')})`);

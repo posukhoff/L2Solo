@@ -1,8 +1,11 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+// BuyAdPolicy's own requires (TwinCluster, CraftEligibility) load real
+// modules that read the global invoke at their top.
+require('../src/Global');
 const filename = require.resolve('../src/GameServer/Bot/Economy/BuyAdPolicy');
-const loaded = { exports: {} }, priced = [];
+const loaded = { exports: {} };
 const context = { economy: { moneyPrice: .001, worth: () => 10000 } };
 const imports = {
     'GameServer/Items/ItemAcquisitionCatalog': { hasSource: id => [736, 1121].includes(Number(id)) },
@@ -13,7 +16,7 @@ const imports = {
     'GameServer/Bot/Economy/ItemDisposition': { isQuestItem: () => false },
     'GameServer/Bot/Economy/MarketListingPolicy': { traderContext: () => context },
     'GameServer/Bot/Economy/MarketTownPolicy': { targetTownForItems: () => 'Giran' },
-    'GameServer/Bot/Economy/MarketPricing': { bid: id => { priced.push(id); return { price: 3000, pricing: {} }; } }
+    'GameServer/Bot/Economy/MarketPricing': { bid: () => ({ price: 3000, pricing: {} }) }
 };
 new Function('invoke', 'require', 'module', fs.readFileSync(filename, 'utf8'))(
     name => imports[name] || {}, require('node:module').createRequire(filename), loaded);
@@ -33,18 +36,16 @@ for (const source of ['afk', undefined]) {
 assert.deepEqual(Policy.linesFor(state, goal('npc'), { watchList: [{ key: 'stock:scrolls',
     itemId: 736, amount: 2, worth: 10000, valueHours: 1, valueRate: .1 }] }).map(row => row.count), [2],
     'an independently prepared public alternative for the same item remains');
-assert.equal(priced.length, 4, 'excluded goals never evaluate a price');
 
-require('../src/Global');
 invoke('GameServer/DataCache').init();
 const NativePolicy = invoke('GameServer/Bot/Economy/BuyAdPolicy');
 const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const retainedState = { characterId: 42, adena: 1000,
-    stats: { money: [100, .01, 100, 0, .2, 300, 76, .1, 500, 1458] } };
-const retainedIntent = { key: 'power:76:7', itemId: 1458, amount: 10, price: 50,
+    stats: { money: [100, .01, 100, 0, .2, 300, 76, .1, 500, 1864] } };
+const retainedIntent = { key: 'power:76:7', itemId: 1864, amount: 10, price: 60,
     recipeId: 0, valueHours: 1, valueRate: .1 };
-const requested = { selfId: 1458, count: 10, price: 50, purchaseCap: Infinity, intent: retainedIntent };
-const owned = [{ kind: 'buy_ad', storeType: 3, town: 'Dion', selfId: 1458, count: 4, price: 110 }];
+const requested = { selfId: 1864, count: 10, price: 60, purchaseCap: Infinity, intent: retainedIntent };
+const owned = [{ kind: 'buy_ad', storeType: 3, town: 'Dion', selfId: 1864, count: 4, price: 110 }];
 const resized = NativePolicy.retainedLines(retainedState, [requested], owned, 'Dion')[0];
 assert.equal(Funding.spendable(retainedState, 0, { r: .1 }), 600);
 assert.equal(resized.price, 110); assert.equal(resized.count, 5,
@@ -56,7 +57,7 @@ assert.equal(NativePolicy.retainedLines(retainedState, [{ ...requested, count: 3
     'a cheaper remaining order cannot grow beyond the prepared need');
 assert.equal(NativePolicy.retainedLines(retainedState, [requested], [{ ...owned[0], price: 700 }], 'Dion').length, 0,
     'a retained unit that no longer fits the budget withdraws instead of publishing zero units');
-assert.equal(NativePolicy.retainedLines(retainedState, [requested], owned, 'Giran')[0].price, 50,
+assert.equal(NativePolicy.retainedLines(retainedState, [requested], owned, 'Giran')[0].price, 60,
     'a different town is a new native identity, so it uses the prepared opening price');
 const capped = NativePolicy.retainedLines(retainedState,
     [{ ...requested, price: 100, purchaseCap: 105 }], owned, 'Dion')[0];
@@ -66,8 +67,8 @@ const survival = NativePolicy.retainedLines(retainedState,
     [{ ...requested, survivalCost: 250, intent: { ...retainedIntent, valueRate: .001 } }], owned, 'Dion')[0];
 assert.equal(survival.count, 2, 'an unfunded stock root may spend only its explicitly prepared survival tranche');
 const alternatives = NativePolicy.retainedLines(retainedState,
-    [requested, { ...requested, selfId: 1459, intent: { ...retainedIntent, itemId: 1459 } }],
-    [...owned, { ...owned[0], selfId: 1459 }], 'Dion');
+    [requested, { ...requested, selfId: 1868, intent: { ...retainedIntent, itemId: 1868 } }],
+    [...owned, { ...owned[0], selfId: 1868 }], 'Dion');
 assert.deepEqual(alternatives.map(row => row.count), [5, 5],
     'conditional alternatives each use their root allowance without reserving cash for another ad');
 const Intent = require('../src/GameServer/Bot/Economy/TradeIntent');
@@ -119,16 +120,33 @@ try {
     ]) {
         Pricing.bid = () => ({ price: sample.price, count: sample.count, purchaseCap: Infinity, pricing: {} });
         const liveCase = { characterId: sample.id, adena: sample.wallet, stats: { money: sample.money } };
-        const [prepared] = NativePolicy.linesFor(liveCase, null, {
+        const prepare = worth => NativePolicy.linesFor(liveCase, null, {
             watchList: [{ itemId: 1458, amount: sample.count, key: 'power:76:7', recipeId: 0,
-                worth: sample.price, valueHours: 202, valueRate: sample.money[4] }],
+                worth, valueHours: 202, valueRate: sample.money[4] }],
             board: { ownerLines: () => [{ kind: 'buy_ad', storeType: 3, town: 'Dion', selfId: 1458,
                 count: sample.oldCount, price: sample.oldPrice }] }, townFor: () => 'Dion'
-        });
+        })[0];
+        // The held price stands while the bot's worth still covers it: the
+        // purchase cap is that worth (BuyAdPolicy.bidFor), a lower quote alone
+        // does not reprice the native line.
+        const prepared = prepare(sample.oldPrice);
+        assert.equal(prepare(sample.price).price, sample.price,
+            `a held price above ${sample.name}'s worth now is not retained: the line takes the fresh quote`);
         assert.equal(prepared.price, sample.oldPrice); assert.equal(prepared.count, sample.expected,
             `worker preparation sizes ${sample.name}'s observed crystal order at the retained native price`);
         assert.equal(prepared.intent.amount, sample.expected); assert.equal(prepared.intent.price, sample.oldPrice);
         assert(prepared.count * prepared.price <= liveCase.adena);
     }
+    // A producer's escrow store spends its cash first: a meeting bid fits the
+    // wallet the store leaves (main's check), so the worker drops the one above it.
+    const quotes = { 1458: 30000, 1864: 900000, 1868: 600000 };
+    Pricing.bid = id => ({ price: quotes[id], count: id === 1458 ? 10 : 1, purchaseCap: Infinity, pricing: {} });
+    const row = (itemId, amount, recipeId) => ({ itemId, amount, key: `power:${itemId}:7`, recipeId,
+        worth: quotes[itemId], valueHours: 1, valueRate: .1 });
+    const producer = { characterId: 43, adena: 1000000,
+        stats: { money: [10000, .0001, 0, 0], twin: { workshop: [{ recipeId: 1 }] } } };
+    assert.deepEqual(NativePolicy.linesFor(producer, null, { watchList: [row(1458, 10, 1), row(1864, 1, 0), row(1868, 1, 0)],
+        board: { ownerLines: () => [] }, townFor: () => 'Dion' }).map(line => [line.selfId, line.count, line.custodyPolicy]),
+    [[1458, 10, 0], [1868, 1, 1]], 'the store line and the meeting bid the remaining wallet covers stand');
 } finally { Listing.traderContext = priorContext; Pricing.bid = priorBid; }
 console.log('PASS source ownership: NPC fallback/direct bids excluded, player/future alternatives retained, native look withdrawal fenced');

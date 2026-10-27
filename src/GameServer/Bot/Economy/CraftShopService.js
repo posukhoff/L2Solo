@@ -3,10 +3,11 @@ const C4RecipeItems = invoke('GameServer/Items/C4RecipeItems');
 const DataCache = invoke('GameServer/DataCache');
 const Database = invoke('Database');
 const BotEconomyPricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
-const { isServiceCrafter, craftLevelFor, canCraft } = require('./CraftEligibility');
+const { isServiceCrafter, marketProducer, craftLevelFor, canCraft } = require('./CraftEligibility');
 const ProgressionCap = invoke('GameServer/Progression/ProgressionCap');
 
 const ShopPlaces = invoke('GameServer/Bot/Economy/ShopPlaces');
+const PriceBelief = invoke('GameServer/Bot/Economy/PriceBelief');
 const GameDataCatalogue = require('../../Knowledge/GameDataCatalogue');
 
 const MAX_PUBLIC_RECIPES = 16;
@@ -148,13 +149,12 @@ function portfolioStationFor(state = {}) {
     return CraftStations.find((station) => station.grade === grade && station.category === 'heavy') || CraftStations[0];
 }
 
-function locationFor(characterId) {
-    return { ...stationForSlot(characterId).loc };
-}
+const marketPrice = id => PriceBelief.marketPrice(id);
 
+// The station's fee: a share of the product's market price (PriceBelief.marketPrice,
+// the shared centre of its public sources), not of its template price.
 function productPrice(recipe) {
-    const product = ItemTemplateIndex.find(DataCache.items, recipe.productId);
-    const value = Number(product?.template?.price || 0) * Math.max(1, Number(recipe.productCount || 1));
+    const value = marketPrice(recipe.productId) * Math.max(1, Number(recipe.productCount || 1));
     // A manufacture fee must remain a fee, not silently turn a player-supplied
     // recipe into an NPC shop. The cap also keeps malformed item prices from
     // producing unusable C4 dialogs.
@@ -169,8 +169,8 @@ function stationCrafter() {
 }
 
 // Recipes and items are datapack data: the dwarven recipe lists are built once
-// per item catalogue, what the Giran stations publish once per item catalogue
-// and station crafter level.
+// per item catalogue. The Giran stations are the player's shops only: no
+// station serves bots (a bot's crafter is in its plan's craftProviders).
 let catalog = null;
 
 function recipeCatalog() {
@@ -179,9 +179,9 @@ function recipeCatalog() {
     C4RecipeItems.loadRecipeItems();
     const dwarven = GameDataCatalogue.native().dwarvenRecipesForItems() || EMPTY_RECIPES;
     if (catalog?.dwarven === dwarven) return catalog;
-    // Eligibility and station publication remain this policy's owned views;
-    // the static recipe/product relation belongs to RecipeCatalog.
-    catalog = { dwarven, byCraftLevel: new Map(), published: null, publishedLevel: null };
+    // Eligibility remains this policy's owned view; the static recipe/product
+    // relation belongs to RecipeCatalog.
+    catalog = { dwarven, byCraftLevel: new Map() };
     return catalog;
 }
 
@@ -195,6 +195,13 @@ function availableRecipes(state) {
         ));
     }
     return current.byCraftLevel.get(craftLevel);
+}
+
+// Every recipe a clan's service crafter can reach (the station crafter's
+// set): the catalogue clan crafting picks from and the clan worker's NPC
+// material supply covers. The same frozen array per item catalogue.
+function crafterRecipes() {
+    return availableRecipes(STATION_CRAFTER);
 }
 
 function compareScores(left, right) {
@@ -211,7 +218,7 @@ function topWeaponRecipes(grade, allowedRecipes) {
         const kind = product?.template?.kind || '';
         if (String(product?.etc?.rank || '').toLowerCase() !== grade || !kind.startsWith('Weapon.')) return;
         const current = bestByKind.get(kind);
-        const score = [Number(recipe.level || 0), Number(product?.template?.price || 0), Number(recipe.successRate || 0), Number(recipe.recipeId || 0)];
+        const score = [Number(recipe.level || 0), marketPrice(recipe.productId), Number(recipe.successRate || 0), Number(recipe.recipeId || 0)];
         const currentScore = current?.score || [];
         if (!current || compareScores(score, currentScore) > 0) {
             bestByKind.set(kind, { recipe, score });
@@ -228,32 +235,6 @@ function stationRecipes(station, allowedRecipes) {
         return station.recipeIds.map((recipeId) => allowedById.get(Number(recipeId))).filter(Boolean);
     }
     return station.category === 'weapons' ? topWeaponRecipes(station.grade, allowedRecipes) : [];
-}
-
-// What the Giran stations publish for a top station crafter: each recipe once,
-// with the first station (in station order) that publishes it.
-function publishedStationRecipes() {
-    const current = recipeCatalog();
-    const crafter = stationCrafter();
-    if (current.published && current.publishedLevel === crafter.level) return current.published;
-    const allowed = availableRecipes(crafter);
-    const stationByRecipeId = new Map();
-    const recipes = [];
-    for (const station of CraftStations) {
-        for (const recipe of stationRecipes(station, allowed)) {
-            const recipeId = Number(recipe.recipeId);
-            if (stationByRecipeId.has(recipeId)) continue;
-            stationByRecipeId.set(recipeId, station);
-            recipes.push(recipe);
-        }
-    }
-    current.publishedLevel = crafter.level;
-    current.published = Object.freeze({
-        recipes: Object.freeze(recipes),
-        ids: new Set(stationByRecipeId.keys()),
-        stationByRecipeId
-    });
-    return current.published;
 }
 
 function generatedEntries(state) {
@@ -282,12 +263,6 @@ function normalizeEntries(entries, state) {
 // ordinary generated bot's index is a timestamp, far above the slot range.
 function isStationService(state = {}) {
     return Boolean(state.stats?.craftStationId) || serviceStationSlot(state) !== null;
-}
-
-// The caller may add its learned clan recipes. Keys use the current raw rows,
-// numeric LAST and Map insertion order, just as the former consumer copy did.
-function publishedRecipeIndex() {
-    return new Map(publishedStationRecipes().recipes.map(recipe => [Number(recipe.recipeId), recipe]));
 }
 
 function profileFor(state = {}) {
@@ -327,16 +302,15 @@ module.exports = {
     STATION_CRAFTER,
     stationCrafter,
     isServiceCrafter,
+    marketProducer,
     isStationService,
     craftLevelFor,
     canCraft,
     stationForSlot,
     stationFor,
-    locationFor,
     availableRecipes,
+    crafterRecipes,
     stationRecipes,
-    publishedStationRecipes,
-    publishedRecipeIndex,
     profileFor,
     ensureRecipes
 };

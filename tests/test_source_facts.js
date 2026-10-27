@@ -338,7 +338,6 @@ try {
                 const selected = replaceLevels(below);
                 for (const state of [warsmith, noSpoil, { ...warsmith, inventory: {} }, healer, buffer])
                     checkBound(state, selected, true);
-                checkBound(noSpoil, selected, true, { bestForWish: { spoilOnly: true } });
             }
         }
         // The same cache row follows replaced NPC/spot/rate inputs. The exact

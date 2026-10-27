@@ -149,7 +149,7 @@ function walkHours(state, spot) {
 
 // One bounded forecast for a complete roster. Static point lookups are
 // cached by role/level/rates in SpotValueTable. No wish graph or combat roll.
-function prepare(members, { objective, party, spots, memberContexts, timestamp = Date.now() } = {}) {
+function prepare(members, { objective, party, spots, timestamp = Date.now() } = {}) {
     spots ||= invoke('GameServer/Bot/Population/SpotProfiles').ensure();
     const spotId = objective?.spotId || party?.spotId || members[0]?.spotId;
     const spot = invoke('GameServer/Bot/AI/SpotIndex').spotById(spots, spotId);
@@ -212,8 +212,7 @@ function prepare(members, { objective, party, spots, memberContexts, timestamp =
         rows.set(member.characterId, { income: income * Hunt.onSpotShare(member), kills, spotId,
             source: 'table_party', travelHours: walkHours(member, spot) });
     }
-    return { rows, spots, timestamp, spot, roster: key,
-        workshops: new Map((memberContexts || []).map(context => [context.state.characterId, context.workshop])) };
+    return { rows, spots, timestamp, spot, roster: key };
 }
 
 function itemHours(state, spot, kills, goal, members, agreement) {
@@ -228,15 +227,21 @@ function itemHours(state, spot, kills, goal, members, agreement) {
     const owners = agreement?.materialNeeds ? Material.needs(members, { spotId: spot.id }, agreement)
         .filter(row => Number(row.itemId) === itemId) : [];
     const ownNeed = owners.find(row => row.characterId === Number(state.characterId));
+    // The spoil lands by the party's spoiler (the native resolver's first one).
+    const spoiler = spoil ? Material.partySpoiler(members) : null;
+    if (spoil && !spoiler) return null;
     // A material contract forwards the helper's actual spoil to its owner.
     // Ordinary/solo loot still requires the recipient to be the spoiler.
     if (spoil && !invoke('GameServer/Bot/AI/BotRoles').isSpoiler(state)
         && !(agreement?.spoil === 'need' && ownNeed?.sourceKind === 'spoil'
-            && Number(ownNeed.npcId) === npcId && Material.partySpoiler(members))) return null;
+            && Number(ownNeed.npcId) === npcId)) return null;
     const killerLevel = Math.max(...members.map(member => Number(member.level)));
-    const expected = Planner.itemDropYield(reward, itemId, spoil ? 'spoil' : 'drop',
-        { npcLevel: Number(npc.template?.level || spot.avgLevel), killerLevel }).expectedYield;
-    const { count, totalCount: total } = Catalogue.spotNpcWeights(spot, npcId);
+    const kind = spoil ? 'spoil' : 'drop', npcLevel = Number(npc.template?.level || spot.avgLevel);
+    const expected = Planner.itemDropYield(reward, itemId, kind, { npcLevel, killerLevel }).expectedYield;
+    // Targeted: the party aims at the goal's NPC (PartyHuntingTarget, a
+    // material party's target), a solo route at its active plan's next hunt
+    // (PartyHuntingTarget.planTargetNpcId: a gear drop or a craft material).
+    const perKill = Planner.sourcePerKill({ spot, reward, kind, npcLevel }, expected, spoiler, true);
     // Only a funded escrow promises a personal item. Before funding, even
     // required requests and a proposed 'need' agreement get the random share.
     const reserved = agreement?.help?.status === 'funded' && Number(agreement.help.payerId) === Number(state.characterId)
@@ -244,7 +249,7 @@ function itemHours(state, spot, kills, goal, members, agreement) {
     // Forecast completing the shared need, with no helper loot dilution.
     const totalNeed = owners.reduce((sum, row) => sum + row.amount, 0);
     const ownerShare = ownNeed && totalNeed > 0 ? ownNeed.amount / totalNeed : spoil || reserved ? 1 : 1 / members.length;
-    const perHour = kills * expected * (total > 0 ? count / total : 0) * ownerShare;
+    const perHour = kills * perKill * ownerShare;
     const amount = goal.amount || (Number(next?.itemId) === itemId ? next.amount : 1);
     return perHour > 0 ? Math.max(1, positive(amount)) / perHour : null;
 }
@@ -270,15 +275,7 @@ function compare(state, peers, options = {}) {
     if (!state.spotId || !Number.isFinite(Number(state.stats?.classId ?? state.classId))) return null;
     const members = [state, ...peers];
     const prepared = options.prepared || prepare(members, options);
-    let solo = soloRoute(state, prepared.spots, prepared.timestamp, peers);
-    // A guarded existing production quote can beat hunting. This is a read
-    // of an already prepared native result, never a market/recipe scan here.
-    const workshop = prepared.workshops?.get(state.characterId)
-        || invoke('GameServer/Bot/Economy/EconomyContext').craftIncome(state);
-    if (workshop?.known !== false && workshop?.incomePerHour > positive(solo?.income)
-        && workshop.cycleHours > 0 && Number.isFinite(workshop.incomePerHour)) {
-        solo = { income: workshop.incomePerHour, travelHours: 0, source: 'native_craft' };
-    }
+    const solo = soloRoute(state, prepared.spots, prepared.timestamp, peers);
     const party = prepared.rows.get(state.characterId) || null;
     const focus = state.stats?.wishFocus;
     const materialParty = Material.isObjective(options.objective);

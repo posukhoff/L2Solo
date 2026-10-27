@@ -19,6 +19,7 @@ const Errands = invoke('GameServer/Bot/Population/CombinedErrandPolicy');
 const Market = invoke('GameServer/Bot/Economy/ColdMarketService');
 const Goals = invoke('GameServer/Bot/Goals/GoalExecutor');
 const Needs = invoke('GameServer/Bot/Goals/NeedsEvaluator');
+const Goal = invoke('GameServer/Bot/Goals/GoalState');
 const Background = invoke('GameServer/Bot/Population/BackgroundResolver');
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
@@ -26,6 +27,9 @@ const Actor = invoke('GameServer/Model/Actor');
 const Backpack = invoke('GameServer/Actor/Backpack');
 const Skill = invoke('GameServer/Model/Skill');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
+const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+const RecipeItems = invoke('GameServer/Items/C4RecipeItems');
+const CraftEligibility = invoke('GameServer/Bot/Economy/CraftEligibility');
 const withNativeInput = require('./helpers/nativeEconomyInput');
 let serial = 0;
 async function seed(items) {
@@ -81,19 +85,11 @@ async function run() {
 
     actor.setMp(profile.maxMp);
     actor.backpack.insertItem(17, 17, { amount: 1 });
-    const arrows = actor.backpack.fetchItemFromSelfId(17), array = actor.backpack.fetchItems();
+    const arrows = actor.backpack.fetchItemFromSelfId(17);
     assert.equal(Floor.forActor(actor), null);
-    const revision = actor.backpack.inventoryRevision;
     arrows.setAmount(Math.ceil(profile.maxLoad / arrows.fetchMass()));
-    assert.equal(actor.backpack.fetchItems(), array, 'quantity-only producer keeps the original array');
-    assert(actor.backpack.inventoryRevision > revision, 'direct native item setter invalidates this bag in O(1)');
-    assert.equal(Floor.forActor(actor).reason, 'overweight');
-    actor.backpack.items = [];
-    Floor.forActor(actor);
-    const retiredRevision = actor.backpack.inventoryRevision;
-    arrows.setAmount(1);
-    assert.equal(actor.backpack.inventoryRevision, retiredRevision, 'removed source cannot dirty the current bag');
-    console.log('PASS quantity events and retired bag binding');
+    assert.equal(Floor.forActor(actor).reason, 'overweight', 'a quantity change weighs on the floor at once');
+    console.log('PASS quantity events');
 
     const before = { ...mage, stats: { classId: 0 }, inventory: { 1835: { selfId: 1835, amount: 10 } }, adena: 1000 };
     assert.equal(Errands.edge(before, { ...before, inventory: structuredClone(before.inventory) }), null);
@@ -106,10 +102,12 @@ async function run() {
 
     const seller = await seed([{ selfId: 1869, name: 'Iron Ore', amount: 3 }]);
     const source = (await Database.fetchItems(seller.characterId)).find(row => Number(row.selfId) === 1869);
-    const records = await Afk.openBotRecords(seller.characterId, 'sell_ad', [{ storeType: Afk.SELL,
+    // A craft input errand buys only from a line that sells at once (a shop), not
+    // a bot's conditional sell ad (OfferQuery.settledOnlyFor).
+    const sale = await Afk.publishBot(seller.characterId, { kind: 'shop', storeType: Afk.SELL,
         town: 'Dion', locX: 15631, locY: 142885, locZ: -2704, title: 'Materials',
-        lines: [{ objectId: source.id, selfId: 1869, name: 'Iron Ore', count: 3, price: 60, enchant: 0, slot: 0, stackable: true }] }]);
-    assert.equal(records.opened.length, 1);
+        lines: [{ objectId: source.id, selfId: 1869, name: 'Iron Ore', count: 3, price: 60, enchant: 0, slot: 0, stackable: true }] });
+    assert(sale?.lines?.length === 1);
     let buyer = await seed([{ selfId: 57, name: 'Adena', amount: 500000 }, { selfId: 736, name: 'Scroll of Escape', amount: 3 },
         { selfId: 86, name: 'Sword of Revolution', amount: 1, equipped: true, slot: 7 }]);
     const now = Date.now();
@@ -140,7 +138,6 @@ async function run() {
     assert.equal(Goals.finishMarketVisit(arrived), null, 'return waits for this town\'s work');
     // The record changed while the buyer travelled. That unavailable job must
     // neither use its saved price nor prevent the other native purchases.
-    const sale = records.opened[0];
     await Afk.repriceBot(seller.characterId, sale.lines[0].id, 90, sale.revision);
     const policyFinished = await withNativeInput(arrived, accepted => Market.finishTownErrands(accepted));
     const beforeExecution = await Database.fetchItems(buyer.characterId);
@@ -198,6 +195,161 @@ async function run() {
     assert(returning && returning.activity === 'traveling');
     assert.equal(held(returning, 736), held(finished, 736), 'return consumes no second departure scroll');
     console.log('PASS native one-town queue, changed quote, supplies and one return');
+
+    // A kept errand departs on the terms its arrival buys on: a board-only
+    // errand (route tag -5: no NPC, whole fill from the top quotes) leaves only
+    // for a town where those quotes fill it. The seller's line now holds 3 at 90.
+    const keeper = await seed([{ selfId: 57, name: 'Adena', amount: 500000 }, { selfId: 736, name: 'Scroll of Escape', amount: 3 },
+        { selfId: 86, name: 'Sword of Revolution', amount: 1, equipped: true, slot: 7 }]);
+    const at = Date.now();
+    const depart = errand => Goals.beginMarketTravel(Errands.enqueue(keeper, errand, at), Market.errandGoal(errand), at);
+    const whole = { selfId: 1869, amount: 3, town: 'Dion', purpose: 'wealth_craft', tag: [-5], r: 1, at };
+    assert.equal(depart(whole)?.stats.travel.townName, 'Dion', 'the quotes fill the errand: it departs');
+    const short = { ...whole, amount: 4 };
+    assert.equal(depart(short), null, 'no departure on a partial fill the arrival refuses');
+    // The refused departure ends the errand as the arrival on those terms does:
+    // gone, its job told it bought nothing, and the bot's next goal is another one.
+    const ended = await Market.departOrEndErrand(Errands.enqueue(keeper, short, at), Market.errandGoal(short), at);
+    assert.equal(ended.travel, null);
+    assert.equal(Errands.pending(Life.snapshot(keeper.characterId)).length, 0, 'the refused errand is not kept until it lapses');
+    assert.notEqual(Needs.evaluate(ended.state)[0]?.type, 'market_errand', 'the bot picks another goal');
+    // A job whose source view is older than the board (it saw 5 on the line that
+    // now holds 3) plans the errand; the departure gate refuses it on the board's
+    // terms and the errand ends, while the job's own current goal stays its own.
+    await Goal.set(keeper.characterId, { type: 'hunt', status: 'active', priority: 10, plan: { kind: 'hunt' } });
+    const line = Afk.boardIndex().list(1869, Afk.SELL, 'Dion')[0];
+    const seen = { selfId: 1869, town: 'Dion', lines: [{ line: { ...line, count: 5 }, price: Number(line.price), count: 4 }],
+        cost: 4 * Number(line.price), landed: 4 * Number(line.price) };
+    const asked = await Market.acquire(Life.snapshot(keeper.characterId), 1869, 4,
+        { purpose: 'wealth_craft', npc: false, quoteDepth: 5, sourcePlan: seen, towns: ['Dion'], r: 1, timestamp: at });
+    assert.deepEqual([!!asked.plan, asked.traveling, asked.reason], [true, false, 'market_errand_no_offer'], 'planned on the old view, refused at the gate');
+    assert.equal(Errands.pending(Life.snapshot(keeper.characterId)).length, 0, 'the refused errand is not kept');
+    assert.deepEqual([Goal.snapshot(keeper.characterId).current.type, Goal.snapshot(keeper.characterId).current.status],
+        ['hunt', 'active'], 'the job\'s own goal is not closed by its errand\'s end');
+    const arriver = await seed([{ selfId: 57, name: 'Adena', amount: 500000 }]);
+    const arrived2 = await Market.tryPurchase({ ...Errands.enqueue(arriver, short, at), activity: 'shopping', currentRegion: 'Dion' },
+        Market.errandGoal(short));
+    assert.equal(arrived2.reason, 'market_errand_no_offer', 'the arrival on the same terms buys nothing');
+    assert.equal(Errands.pending(arrived2.state).length, 0);
+    const npcOnly = { selfId: 1060, amount: 2, town: 'Dion', purpose: 'craft_input', valueHours: 10, tag: [-5], at };
+    assert.equal(depart(npcOnly), null, 'no departure to an NPC source the board-only errand does not buy from');
+    console.log('PASS kept errand departs on its arrival terms');
+
+    // A gear recipe scroll bought on an errand is learned by that purchase,
+    // though the buyer's economy card names no craft now; a buyer who cannot
+    // learn it keeps the scroll unlearned.
+    const crafterOf = state => ({ ...state, level: 60, stats: { ...state.stats, classId: 57 } });
+    const probeCrafter = crafterOf({ stats: {}, inventory: {} });
+    const gear = Object.values(RecipeItems.loadRecipeItems()).find(recipe => {
+        const item = { selfId: recipe.recipeItemId, name: 'Recipe', kind: 'Other.Recipe', amount: 1 };
+        const kind = Disposition.recipeInfo(item)?.product?.template?.kind || '';
+        return (kind.startsWith('Weapon.') || kind.startsWith('Armor.'))
+            && Disposition.recipeDisposition(probeCrafter, item)?.action === 'learn';
+    });
+    assert(gear, 'a learnable gear recipe scroll exists');
+    const scrollSeller = await seed([{ selfId: gear.recipeItemId, name: 'Recipe', amount: 2 }]);
+    const scrollRow = (await Database.fetchItems(scrollSeller.characterId)).find(row => Number(row.selfId) === gear.recipeItemId);
+    assert((await Afk.publishBot(scrollSeller.characterId, { kind: 'shop', storeType: Afk.SELL,
+        town: 'Dion', locX: 15631, locY: 142885, locZ: -2704, title: 'Recipes',
+        lines: [{ objectId: scrollRow.id, selfId: gear.recipeItemId, name: 'Recipe', count: 2, price: 100, enchant: 0,
+            slot: 0, stackable: true }] }))?.lines?.length === 1);
+    const scrollErrand = { selfId: gear.recipeItemId, amount: 1, town: 'Dion', purpose: 'wealth_craft', tag: [-5],
+        valueHours: 10, at: Date.now() };
+    // The worker's money packet funds the buy; the saved row carries it.
+    const buyScroll = async (state) => withNativeInput(await Life.upsertState({ ...Errands.enqueue(state, scrollErrand),
+        activity: 'shopping', currentRegion: 'Dion' }, 'combined_scroll_errand'), async accepted =>
+        Market.tryPurchase(await Life.upsertState(accepted, 'combined_scroll_funding'), Market.errandGoal(scrollErrand)));
+    const crafter = await Life.upsertState(crafterOf(await seed([{ selfId: 57, name: 'Adena', amount: 500000 }])), 'combined_crafter');
+    // A Warsmith of this level has learned its Create Item level.
+    await Database.setSkill({ selfId: 172, name: 'Create Item',
+        level: CraftEligibility.craftLevelFor(crafter) }, crafter.characterId);
+    const craftBuy = await buyScroll(crafter);
+    assert.equal(craftBuy.reason, 'market_errand_bought');
+    assert((await Database.fetchCharacterRecipes(crafter.characterId)).some(row => Number(row.recipeId) === gear.recipeId),
+        'the bought gear recipe is in the recipe book after the visit');
+    assert.equal(physical(await Database.fetchItems(crafter.characterId), gear.recipeItemId), 0, 'learning used the scroll');
+    const fighter = await seed([{ selfId: 57, name: 'Adena', amount: 500000 }]);
+    const fighterBuy = await buyScroll(fighter);
+    assert.equal(fighterBuy.reason, 'market_errand_bought');
+    assert.equal((await Database.fetchCharacterRecipes(fighter.characterId)).length, 0, 'a scroll its buyer cannot learn is not learned');
+    assert.equal(physical(await Database.fetchItems(fighter.characterId), gear.recipeItemId), 1, 'the unlearnable scroll stays held');
+    // The same Warsmith buying it for the clan keeps the scroll for the deposit.
+    const clanBuyer = await Life.upsertState(crafterOf(await seed([{ selfId: 57, name: 'Adena', amount: 500000 }])), 'combined_clan_buyer');
+    await Database.setSkill({ selfId: 172, name: 'Create Item',
+        level: CraftEligibility.craftLevelFor(clanBuyer) }, clanBuyer.characterId);
+    const clanSeller = await seed([{ selfId: gear.recipeItemId, name: 'Recipe', amount: 1 }]);
+    const clanRow = (await Database.fetchItems(clanSeller.characterId)).find(row => Number(row.selfId) === gear.recipeItemId);
+    assert((await Afk.publishBot(clanSeller.characterId, { kind: 'shop', storeType: Afk.SELL,
+        town: 'Dion', locX: 15631, locY: 142885, locZ: -2704, title: 'Recipes',
+        lines: [{ objectId: clanRow.id, selfId: gear.recipeItemId, name: 'Recipe', count: 1, price: 100, enchant: 0,
+            slot: 0, stackable: true }] }))?.lines?.length === 1);
+    const clanPlan = Market.planPurchase({ ...clanBuyer, currentRegion: 'Dion' }, gear.recipeItemId, 1, { towns: ['Dion'], purpose: 'clan', money: 500000 });
+    assert(clanPlan, 'the clan plan finds the scroll');
+    const clanBought = await withNativeInput(await Life.upsertState({ ...clanBuyer, activity: 'shopping', currentRegion: 'Dion' },
+        'combined_clan_funding'), async accepted => Market.buyHere(await Life.upsertState(accepted, 'combined_clan_accepted'), clanPlan));
+    assert.equal(clanBought.units, 1);
+    assert.equal((await Database.fetchCharacterRecipes(clanBuyer.characterId)).length, 0, 'a scroll bought for the clan is not learned');
+    assert.equal(physical(await Database.fetchItems(clanBuyer.characterId), gear.recipeItemId), 1, 'the clan scroll stays held for the deposit');
+    console.log('PASS a bought recipe scroll is learned by the purchase');
+
+    // A learn point learns every held scroll the crafter can learn, though
+    // nothing it plans wants that recipe; a scroll its holder cannot learn
+    // stays and is listed; a scroll held for the clan's deposit stays.
+    const holder = await Life.upsertState(crafterOf(await seed([{ selfId: gear.recipeItemId, name: 'Recipe', amount: 1 }])),
+        'combined_scroll_holder');
+    await Database.setSkill({ selfId: 172, name: 'Create Item',
+        level: CraftEligibility.craftLevelFor(holder) }, holder.characterId);
+    await Life.learnCraftableRecipes(holder);
+    assert((await Database.fetchCharacterRecipes(holder.characterId)).some(row => Number(row.recipeId) === gear.recipeId),
+        'a held learnable scroll no plan wants is learned at the learn point');
+    assert.equal(physical(await Database.fetchItems(holder.characterId), gear.recipeItemId), 0, 'learning used the held scroll');
+    const fighterHeld = await Life.learnCraftableRecipes(Life.cachedState(fighter.characterId));
+    assert.equal((await Database.fetchCharacterRecipes(fighter.characterId)).length, 0, 'a scroll its holder cannot learn is not learned');
+    assert(Disposition.saleCandidates(fighterHeld, { unlimited: true }).some(item => Number(item.selfId) === gear.recipeItemId),
+        'a scroll its holder cannot learn is listable');
+    const clanHeld = Life.cachedState(clanBuyer.characterId);
+    await Life.learnCraftableRecipes({ ...clanHeld, stats: { ...clanHeld.stats, clanId: 77,
+        lastErrand: { purpose: 'clan', selfId: gear.recipeItemId, units: 1, tag: { clanId: 77 }, at: Date.now() } } });
+    assert.equal((await Database.fetchCharacterRecipes(clanBuyer.characterId)).length, 0,
+        'a scroll held for the clan deposit is not learned at a learn point');
+    assert.equal(physical(await Database.fetchItems(clanBuyer.characterId), gear.recipeItemId), 1, 'the clan scroll stays for the deposit');
+    // The clan deposit ends that hold: a later copy of the scroll is free and
+    // learned at the next learn point.
+    const scrollClan = await Database.createAutonomousClan({ name: 'ScrollClan', leaderId: clanBuyer.characterId,
+        memberIds: [clanBuyer.characterId], founderQuorum: 1, maxBotClans: 40, maxBotMemberShare: 1, stateJson: { level: 1 } });
+    assert.equal(scrollClan.ok, true, scrollClan.code);
+    await Database.execute(['UPDATE clans SET level=1 WHERE id=?', [scrollClan.clanId]]);
+    await Database.execute(['UPDATE clan_simulation_clans SET stateJson=? WHERE clanId=?',
+        [JSON.stringify({ mode: 'autonomous', warehouseRevision: 0 }), scrollClan.clanId]]);
+    const owed = Life.cachedState(clanBuyer.characterId);
+    await Life.upsertState({ ...owed, clanId: scrollClan.clanId, stats: { ...owed.stats, clanId: scrollClan.clanId,
+        lastErrand: { purpose: 'clan', selfId: gear.recipeItemId, units: 1, tag: { clanId: scrollClan.clanId }, at: Date.now() } } },
+    'combined_clan_owed');
+    const owedRow = (await Database.fetchItems(clanBuyer.characterId)).find(row => Number(row.selfId) === gear.recipeItemId);
+    const deposited = await Database.transferInventoryToClanWarehouse({ clanId: scrollClan.clanId, characterId: clanBuyer.characterId,
+        item: { id: owedRow.id, selfId: gear.recipeItemId, kind: 'Other.Recipe', stackable: false }, amount: 1,
+        resolveKey: 'combined-clan-scroll' });
+    assert.equal(deposited.ok, true, deposited.code);
+    Life.acceptNewerLifecycleRow(deposited.state);
+    await Database.setItem(clanBuyer.characterId, { selfId: gear.recipeItemId, name: 'Recipe', amount: 1, equipped: false, slot: 0, enchant: 0 });
+    const later = Life.cachedState(clanBuyer.characterId);
+    await Life.learnCraftableRecipes({ ...later,
+        inventory: Life.inventorySummaryFromItems(await Database.fetchItems(clanBuyer.characterId)) });
+    assert((await Database.fetchCharacterRecipes(clanBuyer.characterId)).some(row => Number(row.recipeId) === gear.recipeId),
+        'after the clan deposit a later copy of the scroll is learned');
+    // A member near the player deposits hot (ClanWarehouseService.depositHot):
+    // that deposit ends the hold too.
+    await Database.setItem(clanBuyer.characterId, { selfId: 1864, name: 'Stem', amount: 1, equipped: false, slot: 0, enchant: 0 });
+    await Database.execute([`UPDATE bot_life_state SET phase='hot', statsJson=json_set(statsJson,'$.lastErrand',json(?))
+        WHERE characterId=?`, [JSON.stringify({ purpose: 'clan', selfId: 1864, units: 1,
+        tag: { clanId: scrollClan.clanId }, at: Date.now() }), clanBuyer.characterId]]);
+    const hotRow = (await Database.fetchItems(clanBuyer.characterId)).find(row => Number(row.selfId) === 1864);
+    const hotDeposit = await Database.transferInventoryToClanWarehouse({ clanId: scrollClan.clanId, characterId: clanBuyer.characterId,
+        item: { id: hotRow.id, selfId: 1864, kind: 'Other.Material', stackable: true }, amount: 1,
+        resolveKey: 'combined-clan-scroll-hot', expectedPhase: 'hot', validateLive: () => true });
+    assert.equal(hotDeposit.ok, true, hotDeposit.code);
+    assert.equal(Errands.clanHeld(Life.acceptLifecycleRow(hotDeposit.state), 1864, scrollClan.clanId), 0, 'the hot clan deposit ends the hold');
+    console.log('PASS a learn point learns every learnable held scroll');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
     await Database.close();

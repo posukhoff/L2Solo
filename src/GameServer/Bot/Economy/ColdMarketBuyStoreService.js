@@ -3,21 +3,8 @@ const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const MarketTelemetry = invoke('GameServer/Bot/Economy/MarketTelemetry');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const { BUY } = require('../../AfkTrade/BoardIndex');
+const Ready = require('./ReadyTradeChoice');
 
-const { bidFor } = require('./BuyAdPolicy');
-
-// A bot visiting its market opens a budget-backed AFK purchase shop for its
-// primary needs. Requests beyond the available shop/city places remain
-// conditional meeting adverts. The bot can then return to its hunt.
-function open(state, goal) {
-    if (!state || state.phase === 'hot' || state.activity !== 'shopping') {
-        return Promise.resolve({ state, opened: false, reason: 'not_shopping' });
-    }
-    return invoke('GameServer/Bot/Economy/BotAfkMarketService').openBuyAd(state, goal).then((result) => {
-        if (result.opened) MarketTelemetry.buyStoreOpened?.();
-        return result;
-    });
-}
 
 // A hot store with nothing left closes, as after a player's sale to it (Sell.js).
 function closeSoldOutStore(actor, store) {
@@ -90,7 +77,7 @@ async function sellToBestBuyer(state, town = state?.currentRegion, options = {})
     const sales = [];
     const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
     for (const answer of options.answers || answers(state, options)) {
-        if (answer.line.town !== town) continue;
+        if (answer.line.town !== town || Ready.meetingRefused(answer.line, seller)) continue;
         const offer = AfkTrade.offerOf(answer.line, town);
         if (!offer) continue;
         const result = await settleLine(seller, answer.item, town, { offer, maxQty: answer.count });
@@ -132,7 +119,5 @@ function bestTownFor(state, options = {}) {
 module.exports = {
     closeSoldOutStore,
     bestTownFor,
-    bidFor,
-    open,
     sellToBestBuyer
 };

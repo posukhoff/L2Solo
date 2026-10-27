@@ -128,9 +128,6 @@ function sourcesByItem(spots = []) {
     const selectedRewards = new Set();
     const spotByNpc = new Map();
     const spotByName = new Map();
-    // Source weights and raid decorations belong to this current selection.
-    // Physical topology belongs to SpotIndex, not to planner source weights.
-    const spotCounts = new Map();
     const appendSpot = (index, key, spot) => {
         if (!key || !spot) return;
         const existing = index.get(key) || new Map();
@@ -138,8 +135,6 @@ function sourcesByItem(spots = []) {
         index.set(key, existing);
     };
     (spots || []).forEach((spot) => {
-        let total = 0;
-        const byNpc = new Map();
         for (const entry of spot.npcEntries || []) {
             if (entry.selfId) {
                 const npcId = Number(entry.selfId);
@@ -155,13 +150,7 @@ function sourcesByItem(spots = []) {
                 }
                 appendSpot(spotByName, name, spot);
             }
-            const count = Math.max(1, Number(entry.count || 1));
-            const npcId = Number(entry.selfId);
-            total += count;
-            // Number(NaN) never matched the previous equality-based scan.
-            if (!Number.isNaN(npcId)) byNpc.set(npcId, (byNpc.has(npcId) ? byNpc.get(npcId) : 0) + count);
         }
-        spotCounts.set(spot, { total, byNpc });
     });
 
     const byItemId = new Map();
@@ -203,9 +192,8 @@ function sourcesByItem(spots = []) {
             itemKinds.forEach(({ id, kind }) => {
                 let entry = records.get(kind);
                 if (!entry) {
-                    const counts = spotCounts.get(spot);
-                    const record = { reward, spot, kind, npcLevel, totalCount: counts.total,
-                        sourceCount: counts.byNpc.get(Number(reward.selfId)) ?? 0 };
+                    // The record's share of the spot's kills is SpotRewardExpectation.killShare.
+                    const record = { reward, spot, kind, npcLevel };
                     entry = { record, itemIds: new Set() };
                     records.set(kind, entry);
                 }

@@ -47,25 +47,8 @@ module.exports.shotProbe = async () => {
     // New loot (an edge) runs the round's action plan.
     const result = await kernel.projectResolve(state, { patch: {}, materialize: { exp: 0, sp: 0, adena: 0, items: [{ selfId: 1864, amount: 1 }] },
         debug: {}, events: [], nextResolveAt: timestamp + 60000 }, timestamp);
-    const index = require('../Economy/ShotMarketIndex').native(), market = index.marketSnapshot(timestamp);
     const economy = invoke('GameServer/Bot/Economy/EconomyContext').forState(result.state, { timestamp });
-    const regen = invoke('GameServer/Bot/Population/BackgroundResolver').coldRestRegenPerTick(result.state);
-    const recipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(20);
-    const candidate = require('../Economy/ShotCraftPolicy').craftCandidate(result.state, recipe, { ...market, offersFor: (...args) => index.offersFor(...args), context: { ...economy, mpPerHour: regen.mp * 1200 } });
-    const crafted = { ...state, stats: { ...state.stats, shotCraft: { recipeId: 20 } },
-        inventory: { ...state.inventory, 1463: { selfId: 1463, amount: 1000000 } } };
-    kernel.upsert({ state: crafted });
-    const before = index.marketSnapshot(timestamp, crafted).unlistedSupply.get(1463);
-    const proposed = { ...crafted, inventory: { ...crafted.inventory, 1463: { selfId: 1463, amount: 1000100 } } };
-    const overlay = index.marketSnapshot(timestamp, proposed).unlistedSupply.get(1463);
-    const held = index.marketSnapshot(timestamp).unlistedSupply.get(1463);
-    kernel.upsert({ state: proposed });
-    const committed = index.marketSnapshot(timestamp).unlistedSupply.get(1463);
-    kernel.upsert({ state: proposed });
-    const duplicate = index.marketSnapshot(timestamp).unlistedSupply.get(1463);
-    kernel.remove(state.characterId);
-    const removed = index.marketSnapshot(timestamp).unlistedSupply.get(1463);
-    return { indexHooks: { before, overlay, held, committed, duplicate, removed }, candidate, hour: economy.hourAdena, regen, demand: [...market.shotDemand.get(1463)], orePrice: market.npcPrice.get(1785), fixed: require('../Economy/StaticMerchantPricing').botPurchasePrice(1463), recipe, plan: result.economyPlan, edges: result.economyEdges, state: result.state,
+    return { hour: economy.hourAdena, plan: result.economyPlan, edges: result.economyEdges, state: result.state,
         forbiddenLoaded: Object.keys(require.cache).filter(key => /\/(?:Database|Network)\/|\/World\/World\.js$/.test(key)) };
 };`;
 const wrapper = String.raw`
@@ -154,11 +137,6 @@ parentPort.on('message', message => {
         assert(result.edges & 1); assert(selectedStep?.recipeTarget > 0, 'native worker with no known recipe selects a profitable executable recipe');
         assert(messages.some(message => message.type === 'economy_diagnostics'), 'worker emits sampled decision telemetry on the separate developer bridge');
         assert.deepEqual(result.forbiddenLoaded, [], 'pure craft decision loads no World actor, Network or database implementation');
-        assert.equal(result.indexHooks.overlay, result.indexHooks.before + 100, 'projected own stock has a transient overlay');
-        assert.equal(result.indexHooks.held, undefined, 'foreign stock is never exposed by a global snapshot');
-        assert.equal(result.indexHooks.committed, undefined, 'canonical publishing does not expose private bags');
-        assert.equal(result.indexHooks.duplicate, undefined);
-        assert.equal(result.indexHooks.removed, undefined);
 
         for (const step of [{ craft: { recipeId: 327, batches: 64 } }, { recipeTarget: 327 }, { wealth: { recipeId: 612, batches: 1 } }]) {
             const packed = Policy.packStep(step);
@@ -191,7 +169,7 @@ parentPort.on('message', message => {
         Goals.review = async () => null;
         const wallet = state.adena;
         try {
-            const execution = await Market.executePlan(state, { shot: result.plan.shot, sell: [], withdraw: [], buyAds: [], travel: null },
+            const execution = await Market.executePlan(state, { shot: result.plan.shot, sell: [], withdraw: [], buyAds: [], buyTown: 'Giran', travel: null },
                 { beforeWrite: () => {}, step: work => coordinator.step('economyPlan', id, work) });
             assert((await Database.fetchCharacterRecipes(id)).some(row => Number(row.recipeId) === recipe.recipeId),
                 'main executes the worker recipe target from a genuine physical scroll');
@@ -209,9 +187,6 @@ parentPort.on('message', message => {
         state = await Life.syncExternalInventory(id, 'natural_recipe_fixture', Life.cachedState(id));
         state = await Life.upsertState({ ...state, stats: { ...state.stats,
             shotRecipeDemand: { itemId: ownedRecipe.recipeItemId, amount: 1, maxSpend: 1, at: Date.now() } } }, 'owned_recipe_demand_fixture');
-        const noDemand = { ...await Shots.marketSnapshot(), shotDemand: new Map(), offersFor: () => [] };
-        const ownedStep = Policy.decide(state, noDemand, [20]);
-        assert.equal(ownedStep, null, 'an unsupported own book stays available for a later useful opportunity');
         const beforeLearn = state.adena;
         const heldBook = await Shots.execute(state, { recipeTarget: 317 });
         assert(!(await Database.fetchCharacterRecipes(id)).some(row => Number(row.recipeId) === 317));

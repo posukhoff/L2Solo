@@ -94,17 +94,15 @@ async function run() {
         assert.equal(rowsAfterPurchase.find(row => row.selfId === 57).amount, 10000000 - purchase.cost);
         const after = Economy.stateForActor(actor), afterStock = Economy.basics(after).stock('shots');
         const coldSales = ItemDisposition.saleCandidates(after, { unlimited: true }).filter(row => row.selfId === SHOT);
-        const liquidation = ItemDisposition.npcLiquidationCandidates(after).filter(row => row.selfId === SHOT);
         Response.speak = Response.itemsList = Response.userInfo = () => Buffer.alloc(0);
         await SellJunk(session, ['sell-junk']);
         await new Promise(resolve => setImmediate(resolve));
         const rowsAfterHotSale = await Database.fetchItems(id);
-        // The normal hot market can retain surplus for the board. Forced
-        // cold NPC cleanup uses its native liquidation set and real writer.
+        // The normal hot market can retain surplus for the board; the cold
+        // sale set (coldSales, the NPC cleanup set reads it) holds none of it.
         const saved = await Life.upsertState({ ...after, accountName: 'bot_stock_refill', name: 'StockRefill',
             inventory: Life.inventorySummaryFromItems(rowsAfterHotSale), physicalInventory: undefined }, 'stock_refill_preservation');
-        assert(saved, 'native inventory summaries must persist before the cold liquidation');
-        if (liquidation.length) await Life.applyNpcLiquidation(saved, liquidation);
+        assert(saved, 'native inventory summaries must persist');
         const rowsAfterSale = await Database.fetchItems(id);
         const physicalSold = before.target - Number(rowsAfterSale.find(row => row.selfId === SHOT)?.amount || 0);
         const payout = rowsAfterSale.find(row => row.selfId === 57).amount - rowsAfterPurchase.find(row => row.selfId === 57).amount;
@@ -114,7 +112,6 @@ async function run() {
         assert.equal(afterStock.targetHours, before.targetHours);
         assert.equal(afterStock.target, before.target, 'creating the physical stack cannot shorten its planned interval');
         assert.deepEqual(coldSales, []);
-        assert.deepEqual(liquidation, []);
         assert.deepEqual(rowsAfterSale, rowsAfterPurchase, 'the real hot junk-sale handler sells none of the purchased stock');
         console.log(`PASS native empty stack -> paid SQLite refill ${purchase.delta} shots/${purchase.cost} adena -> hot/cold sale0; T=${before.targetHours}`);
     } finally {

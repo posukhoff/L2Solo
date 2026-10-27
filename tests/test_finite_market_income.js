@@ -18,7 +18,7 @@ async function run() {
             activity: 'shopping', level: 35, adena: 100, currentRegion: 'Giran',
             loc: { locX: 83396, locY: 147904, locZ: -3400 },
             inventory: Life.inventorySummaryFromItems(await Database.fetchItems(id)),
-            stats: { classId: 1, shopTown: { town: 'Giran', at: 1 } }, timing: {},
+            stats: { classId: 1, twin: { town: 'Giran' } }, timing: {},
             vitals: { hp: 100, maxHp: 100, mp: 50, maxMp: 50 } }, 'finite_income_test');
         const trip = () => 0; trip.details = () => ({ known: true, hours: .25, fees: 1 });
         const deps = { board: new (invoke('GameServer/AfkTrade/BoardIndex').BoardIndex)(), spots: [],
@@ -27,7 +27,7 @@ async function run() {
         const sale = context.projection.moneyPaths.find(row => row.kind === 'liquidate');
         assert(sale, 'real reachable spare materials offer a finite sale');
         assert.equal(sale.repeatable, false);
-        assert.equal(sale.capacityCash, context.buyback(1867) * 10);
+        assert.deepEqual(sale.sale, [[1867, 10, 10, context.buyback(1867)]]);
         assert.equal(sale.actionHours, .25);
         assert.equal(sale.cashFees, 1);
         assert.equal(sale.town, 'Giran', 'a stored shop town is read as its town name');
@@ -39,14 +39,14 @@ async function run() {
                     || name === 'GameServer/Bot/Economy/TownNpcCatalog') throw Error('worker boundary: ' + name);
                 return originalInvoke(name);
             };
-            const farm = { ...state, characterId: id + 1, spotId: 'prepared-farm', stats: { ...state.stats, shopTown: null } };
+            const farm = { ...state, characterId: id + 1, spotId: 'prepared-farm', stats: { ...state.stats, twin: null } };
             const spot = { id: 'prepared-farm', center: { locX: 45851, locY: 49919, locZ: -3056 } };
             Economy.reset();
             const prepared = Economy.forState(farm, { ...deps, spots: [spot], hunt: { perHour: 1, bestSpotId: spot.id } });
             const finite = prepared.projection.moneyPaths.find(row => row.kind === 'liquidate');
             assert(finite, 'worker-native sale planning uses prepared inputs without a live World');
             assert.equal(finite.town, 'Elven Village', 'sale town follows prepared farming origin, not the current Giran position');
-            assert.equal(finite.capacityCash, sale.capacityCash);
+            assert.deepEqual(finite.sale, sale.sale);
             const Sources = require('../src/GameServer/Bot/Population/ColdOccupationSources');
             assert.equal(Sources.hasNpcSellerInTown('unknown-town'), false, 'no imagined NPC seller');
         } finally { global.invoke = originalInvoke; Economy.reset(); }

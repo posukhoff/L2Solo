@@ -91,7 +91,7 @@ const bot = (reason, stats = {}) => ({ characterId: 731410, name: 'E314Buyer', l
 
         // A goal purchase keeps the author's no-cooldown pending (ColdMarketService :149).
         record(731402, WEAPON, 10, 1);
-        const goal = { type: 'upgrade_gear', status: 'active', plan: { expectedBenefit: 'market_search_for_weapon' },
+        const goal = { type: 'upgrade_gear', status: 'active', plan: { expectedBenefit: 'market_search_for_gear' },
             target: { itemId: WEAPON, amount: 1, adena: 1000, itemSlot: 0 } };
         const offer = Market.bestOffer(WEAPON, { town: 'Giran', buyerCharacterId: 731410 });
         assert(offer && offer.sourceType !== 'npc', 'the goal finds the board offer');

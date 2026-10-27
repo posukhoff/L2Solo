@@ -6,21 +6,21 @@ function encode(input) {
     const row = canonical(input);
     return [1, row.token, row.actorA, row.actorB, row.seqA, row.seqB, row.town,
         [row.point.locX, row.point.locY, row.point.locZ],
-        row.parties.map(p => [p.revision, p.sequence, p.phase, p.hotAt, p.needRevision,
+        row.parties.map(p => [p.revision, p.sequence, p.phase, p.hotAt,
             [p.route.fee, p.route.scroll, p.route.method, p.route.durationMs], p.survivalCost]),
         row.lines.map(l => [l.payer, l.itemId, l.selfId, l.enchant, l.count, l.price,
-            l.adId, l.adRevision, l.needAdId, l.needAdRevision, l.certificate])];
+            l.adId, l.adRevision, l.certificate, l.intentRevision])];
 }
 function decode(wire) {
     if (!shape(wire, 10) || wire[0] !== 1 || !shape(wire[7], 3) || !shape(wire[8], 2)
-        || !wire[8].every(p => shape(p, 7) && shape(p[5], 4)) || !Array.isArray(wire[9])
-        || !wire[9].every(l => shape(l, 11))) throw Error('trade_meeting_wire');
+        || !wire[8].every(p => shape(p, 6) && shape(p[4], 4)) || !Array.isArray(wire[9])
+        || !wire[9].every(l => shape(l, 10))) throw Error('trade_meeting_wire');
     return canonical({ token: wire[1], actorA: wire[2], actorB: wire[3], seqA: wire[4], seqB: wire[5], town: wire[6],
         point: { locX: wire[7][0], locY: wire[7][1], locZ: wire[7][2] },
-        parties: wire[8].map(p => ({ revision: p[0], sequence: p[1], phase: p[2], hotAt: p[3], needRevision: p[4],
-            route: { fee: p[5][0], scroll: p[5][1], method: p[5][2], durationMs: p[5][3] }, survivalCost: p[6] })),
+        parties: wire[8].map(p => ({ revision: p[0], sequence: p[1], phase: p[2], hotAt: p[3],
+            route: { fee: p[4][0], scroll: p[4][1], method: p[4][2], durationMs: p[4][3] }, survivalCost: p[5] })),
         lines: wire[9].map(l => ({ payer: l[0], itemId: l[1], selfId: l[2], enchant: l[3], count: l[4], price: l[5],
-            adId: l[6], adRevision: l[7], needAdId: l[8], needAdRevision: l[9], certificate: l[10] })) });
+            adId: l[6], adRevision: l[7], certificate: l[8], intentRevision: l[9] })) });
 }
 const PAGE_BYTES = 768, MAX_PAGES = 4, MAX_RAW_BYTES = 8192;
 function pages(input) {
@@ -41,10 +41,19 @@ function pages(input) {
 // Transport pages budget the real existing command envelope, including its
 // epoch/message identity and collection field. Compression is bounded to one
 // canonical basket; no dictionary, extra queue or retained expanded graph.
+// A meeting dependency's token: what the worker's build read of a counter
+// group, the board group's fingerprint and the group's public workshop digest.
+// The worker builds it, main rebuilds it from its own copies to check the
+// proof. Not the group's deal count: a market read is never part of a
+// validity check (design-rules Recompute).
+function dependencyToken(groupFingerprint, workshopDigest) {
+    return `${groupFingerprint}|${workshopDigest}`;
+}
+// A meeting proof's dependencies: [item id, dependencyToken] per read group.
 function dependenciesOf(rows) {
     if (!Array.isArray(rows) || rows.length > 40 || new Set(rows.map(row => row?.[0])).size !== rows.length
-        || !rows.every(row => shape(row, 4) && Number.isSafeInteger(row[0]) && row[0] > 0
-            && row.slice(1).every(value => typeof value === 'string' && Buffer.byteLength(value) <= 64))) throw Error('trade_meeting_dependencies');
+        || !rows.every(row => shape(row, 2) && Number.isSafeInteger(row[0]) && row[0] > 0
+            && typeof row[1] === 'string' && Buffer.byteLength(row[1]) <= 64)) throw Error('trade_meeting_dependencies');
     return rows;
 }
 function incomingOf(rows) {
@@ -106,4 +115,4 @@ function fromPages(frames) {
     if (decoded.token !== ref) throw Error('trade_meeting_consent_changed');
     return decoded;
 }
-module.exports = { encode, decode, pages, commandPages, fromPages, PAGE_BYTES, MAX_PAGES, MAX_RAW_BYTES };
+module.exports = { encode, decode, pages, commandPages, fromPages, dependencyToken, PAGE_BYTES, MAX_PAGES, MAX_RAW_BYTES };

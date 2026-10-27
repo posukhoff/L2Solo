@@ -4,8 +4,8 @@ const PartyTarget = require('./PartyHuntingTarget');
 const { StableOwnerMap } = require('./StableOwnerSet');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 const metaKey = Symbol('coldCompetitionCandidate');
-const partyOf = state => state?.party?.partyId || state?.partyId || null;
-const unitOf = state => partyOf(state) || `solo:${state?.characterId}`;
+const { partyIdOf } = require('./PartyId');
+const unitOf = state => partyIdOf(state) || `solo:${state?.characterId}`;
 function add(map, key, value) {
     if (!map.has(key)) map.set(key, new Set());
     map.get(key).add(value);
@@ -119,7 +119,7 @@ class ColdCompetitionCandidates {
         this.detach(previousRecord || record, old);
         const state = packet.state;
         const meta = { id, sequence, hunter: !!hunterSpot(state, this.spotOf), spot: state.spotId,
-            party: partyOf(state), ledParty: this.leaderParty(id)?.partyId ?? null, unit: unitOf(state),
+            party: partyIdOf(state) || null, ledParty: this.leaderParty(id)?.partyId ?? null, unit: unitOf(state),
             clan: this.memory.clanSocial?.identity({ id, clanId: Number(state.stats?.clanId || 0) }).clanId
                 ?? Number(state.stats?.clanId || 0), targets: [], deadlineKey: {}, deadlineToken: null };
         record[metaKey] = meta;

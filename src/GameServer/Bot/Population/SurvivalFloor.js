@@ -7,10 +7,15 @@ const actorBags = new WeakMap();
 // These are C4 limits, not a desired stock or a reason to recover at low HP.
 const inventoryLimit = InventoryLimits.capacity;
 
+// C4 weight penalty steps: the load share each penalty level starts at.
+const WEIGHT_STEPS = Object.freeze([0.5, 2 / 3, 0.8, 1]);
+
 function weightPenalty(load, maximum) {
     if (!(maximum > 0)) return 0;
     const share = load / maximum;
-    return share >= 1 ? 4 : share >= 0.8 ? 3 : share >= 2 / 3 ? 2 : share >= 0.5 ? 1 : 0;
+    let penalty = 0;
+    while (penalty < WEIGHT_STEPS.length && share >= WEIGHT_STEPS[penalty]) penalty++;
+    return penalty;
 }
 
 function evaluate({ dead = false, hp, mp, manaRequired = false, castCosts = [], slots = 0,
@@ -25,6 +30,15 @@ function evaluate({ dead = false, hp, mp, manaRequired = false, castCosts = [], 
     return null;
 }
 
+// The inverse of evaluate's two bag comparisons: how many pieces of `mass`,
+// one slot each, the bag takes before no_slot (slots >= slotLimit) or
+// overweight (the first weight step) rises. maxLoad or mass 0: no weight bound.
+function bagRoom({ slots = 0, slotLimit = 80, load = 0, maxLoad = 0 } = {}, mass = 0) {
+    const bySlots = Math.max(0, slotLimit - 1 - slots);
+    if (!(maxLoad > 0) || !(mass > 0)) return bySlots;
+    return Math.min(bySlots, Math.max(0, Math.ceil((WEIGHT_STEPS[0] * maxLoad - load) / mass) - 1));
+}
+
 function stateInventory(state, items = []) {
     let slots = 0;
     let load = 0;
@@ -37,6 +51,15 @@ function stateInventory(state, items = []) {
         load += amount * Math.max(0, Number(template?.template?.mass ?? item.mass ?? 0));
     }
     return { slots, load };
+}
+
+// The floor's bag: what evaluate's no_slot and overweight read, from the kit
+// profile (slot limit, max load) the caller holds. items: the item templates
+// (DataCache's by default).
+function bagOf(state, profile, items = null) {
+    // lazy: worker as forState (a test without invoke passes its items).
+    items ||= invoke('GameServer/DataCache').items;
+    return { ...stateInventory(state, items), slotLimit: InventoryLimits.forState(state, profile), maxLoad: profile.maxLoad };
 }
 
 function stateCastCosts(state, profile, timestamp) {
@@ -71,16 +94,15 @@ function forState(state, timestamp = Date.now(), inputs = null) {
     if (!state) return null;
     if (state.activity === 'dead' || Number(state.vitals?.hp) <= 0) return { reason: 'dead', action: 'revive' };
     if (inputs || typeof invoke !== 'function') {
-        return saleRetryWaits(evaluate({ hp: state.vitals?.hp, mp: state.vitals?.mp, ...stateInventory(state, inputs?.items),
-            slotLimit: InventoryLimits.forState(state, inputs || {}), ...inputs }), state, timestamp);
+        return saleRetryWaits(evaluate({ hp: state.vitals?.hp, mp: state.vitals?.mp,
+            ...bagOf(state, inputs || {}, inputs?.items || []), ...inputs }), state, timestamp);
     }
     const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
     const Roles = invoke('GameServer/Bot/AI/BotRoles');
     const profile = Profile.profileFor(state, timestamp);
     return saleRetryWaits(evaluate({ hp: state.vitals?.hp, mp: state.vitals?.mp ?? profile.maxMp,
         manaRequired: Roles.shouldRestForMana(state), castCosts: stateCastCosts(state, profile, timestamp),
-        ...stateInventory(state, invoke('GameServer/DataCache').items),
-        slotLimit: InventoryLimits.forState(state, profile), maxLoad: profile.maxLoad }), state, timestamp);
+        ...bagOf(state, profile) }), state, timestamp);
 }
 
 // The bag part of the floor alone (no slot, overweight; dead first, as in
@@ -89,10 +111,8 @@ function forState(state, timestamp = Date.now(), inputs = null) {
 function bagFor(state, timestamp = Date.now()) {
     if (!state) return null;
     const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile'); // lazy: worker as forState.
-    const items = invoke('GameServer/DataCache').items; // lazy: worker as forState.
-    const profile = Profile.profileFor(state, timestamp);
-    const floor = evaluate({ dead: state.activity === 'dead', hp: state.vitals?.hp, ...stateInventory(state, items),
-        slotLimit: InventoryLimits.forState(state, profile), maxLoad: profile.maxLoad });
+    const floor = evaluate({ dead: state.activity === 'dead', hp: state.vitals?.hp,
+        ...bagOf(state, Profile.profileFor(state, timestamp)) });
     return saleRetryWaits(floor, state, timestamp);
 }
 
@@ -138,4 +158,4 @@ function forActor(actor, state = null, timestamp = Date.now()) {
     state, timestamp);
 }
 
-module.exports = { evaluate, forState, bagFor, forActor, bagMarks, stateInventory, inventoryLimit, weightPenalty };
+module.exports = { evaluate, bagRoom, bagOf, forState, bagFor, forActor, bagMarks, stateInventory, inventoryLimit, weightPenalty };

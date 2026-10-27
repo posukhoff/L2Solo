@@ -1,7 +1,6 @@
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
 const Negotiation = invoke('GameServer/Bot/Economy/BotNegotiationService');
-const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const DataCache = invoke('GameServer/DataCache');
 
 const BUY_NEGOTIATION_MS = 90 * 1000;
@@ -139,12 +138,11 @@ function intentForAction(state, playerSession, action, data = {}) {
     return { ...shop, action: ownActive ? 'counter' : 'quote', itemId, quantity, totalPrice };
 }
 
-function buyPriceLimit(line) {
-    const template = ItemTemplateIndex.findRequired(DataCache.items, line.selfId);
-    const reference = BotMarketPricing.referencePrice({
-        selfId: line.selfId, basePrice: Number(template?.template?.price || line.price),
-        enchant: line.enchant
-    });
+// How high a bot's buy store goes for a player's counter-offer: under its
+// own worth of the item (BotNegotiationService.ownPrice; its bid when it
+// knows none), at most 12 % over its bid.
+function buyPriceLimit(intent, line) {
+    const reference = Negotiation.ownPrice(intent.session, intent.store.ownerId, line.selfId) || Number(line.price);
     return Math.max(Number(line.price), Math.min(
         Math.floor(reference * 0.95), Math.floor(Number(line.price) * 1.12)
     ));
@@ -190,7 +188,7 @@ async function handleBuy(playerSession, intent) {
         reply: 'Tell me: sell Item Name x1 for 500 Adena. Use a whole price per item.'
     };
     const proposed = intent.totalPrice / intent.quantity;
-    const limit = buyPriceLimit(line);
+    const limit = buyPriceLimit(intent, line);
     const unitPrice = Math.min(proposed, limit);
     const offer = { shopId: shop.shopId, revision: shop.revision,
         lineId: line.afkTradeLineId, quantity: intent.quantity, unitPrice,

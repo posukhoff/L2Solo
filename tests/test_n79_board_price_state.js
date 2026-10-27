@@ -158,6 +158,22 @@ async function run() {
         assert.strictEqual((await Database.fetchItems(owner)).find(item => Number(item.selfId) === STEM).amount, 10);
     });
 
+    await check('a partial withdraw leaves a title naming only the stock still on the shop', async () => {
+        const goods = [[STEM, 'Stem'], [1865, 'Varnish'], [1866, 'Suede']];
+        const owner = await makeBot(goods.map(([selfId, name]) => ({ selfId, name, amount: 1 })));
+        const items = await Database.fetchItems(owner);
+        const lines = goods.map(([selfId, name]) => ({ selfId, name, count: 1, price: 100, stackable: true,
+            objectId: items.find(item => Number(item.selfId) === selfId).id, pricing: pricing(100) }));
+        const shop = (await Database.createAfkTradeShop(owner, { kind: 'shop', storeType: 1, town: 'Giran',
+            title: 'Stem, Varnish, Suede', lines })).shop;
+        assert.match(shop.title, /Suede/);
+        const withdrawn = shop.lines.find(line => Number(line.selfId) === 1866);
+        assert.strictEqual((await Database.repriceBoardLines(owner, [], { withdrawals: [move(shop, withdrawn)] })).changed, 1);
+        const after = await getShop(owner);
+        assert.strictEqual(after.lines.length, 2);
+        assert.doesNotMatch(after.title, /Suede/, 'the title still names a withdrawn line');
+    });
+
     await check('an agreed quote starts a fresh checkpoint while a worker keeps its authored pricing', async () => {
         const owner = await makeBot([stem(10)]);
         const buyer = await makeBot([adena(2000)]);

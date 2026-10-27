@@ -18,12 +18,18 @@ function routeDestination(state = {}, route = {}) {
 // Starts one bot's trip along a route: the bot's own (BotRoute), or one
 // main builds from a spot (PopulationService.beginHuntingTravel). A party
 // trip arrives `grouped` and leaves the party's backoff out of the member's
-// own record; a solo trip records its backoff on the bot.
+// own record; a solo trip records its backoff on the bot. A material leaf's
+// full spot (route.fullSpotId, BotRoute.trip) gets its "was full" mark
+// (SpotRiskPolicy.withCapacityBackoff), with or without a trip: returned
+// marked when no trip starts.
 function beginHuntingTrip(state = {}, route = null, timestamp = Date.now()) {
-    if (!state || !route?.needed || state.activity === 'traveling') return null;
+    if (!state || !route || state.activity === 'traveling') return null;
+    const marked = route.fullSpotId != null ? SpotRiskPolicy.withCapacityBackoff(state, route.fullSpotId) : null;
+    if (!route.needed) return marked;
     const destination = routeDestination(state, route);
     const from = { ...(state.loc || {}) };
-    if (!destination || !hasFiniteCoordinate(from.locX) || !hasFiniteCoordinate(from.locY)) return null;
+    if (!destination || !hasFiniteCoordinate(from.locX) || !hasFiniteCoordinate(from.locY)) return marked;
+    state = marked || state;
     const isPartyRoute = route.mode === 'party';
     const routedState = route.spotBackoff && !isPartyRoute
         ? SpotRiskPolicy.withBackoff(state, route.spotBackoff, timestamp)

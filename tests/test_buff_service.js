@@ -8,6 +8,7 @@ const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const Policy = invoke('GameServer/Bot/Economy/BuffServicePolicy');
 const Cold = invoke('GameServer/Bot/Economy/ColdBuffService');
+const Offer = invoke('GameServer/Bot/Economy/ColdBuffOffer');
 const Hot = invoke('GameServer/Bot/Economy/BuffService');
 const Chat = invoke('GameServer/Bot/Economy/BuffServiceChat');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
@@ -57,10 +58,13 @@ async function persistState(current) {
     assert(Policy.serviceClass(provider));
     assert(!Policy.serviceClass(state(999, 51)), 'orc party buffs are not sold');
     assert(!Policy.serviceClass(state(998, 21)), 'songs are not sold');
-    assert(!Cold.coldOffer(provider, { ...buyer, spotId: 'another-spot' }), 'cold sale must stay on one spot');
-    assert(!Cold.coldOffer(provider, { ...buyer, stats: { ...buyer.stats, pvpEncounter: {} } }),
+    assert(!Offer.select(provider, { ...buyer, spotId: 'another-spot' }), 'cold sale must stay on one spot');
+    assert(!Offer.select(provider, { ...buyer, stats: { ...buyer.stats, pvpEncounter: {} } }),
         'cold bots do not buy during PvP');
-    const offer = Cold.coldOffer(provider, buyer);
+    // The sale the worker proposes (ColdBuffOffer.project) at the neutral price.
+    const offerAt = Date.now(), choice = Offer.select(provider, buyer, offerAt);
+    const offer = choice && { mpCost: choice.mpCost, effects: Offer.effectsFor(choice.selected, offerAt), timestamp: offerAt,
+        price: Policy.priceFor({ provider, recipient: buyer, mp: choice.mpCost, count: choice.selected.length, town: false }) };
     assert(offer && offer.effects.length > 0 && offer.mpCost > 0 && offer.price > 0);
     const pricedSkills = offer.effects.map(effect => ({
         fetchConsumedMp: () => Cold.skillAdapter({ selfId: effect.id, level: effect.level }).fetchConsumedMp()

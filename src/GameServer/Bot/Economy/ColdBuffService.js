@@ -17,13 +17,6 @@ function priceOffer(provider, recipient, mpCost, count, timestamp) {
     const benefitCeiling = Policy.incomeForTenMinutes(recipient) * 0.8;
     return price > wallet * 0.25 || price > benefitCeiling ? null : price;
 }
-function coldOffer(provider, recipient, timestamp = Date.now()) {
-    const choice = Offer.select(provider, recipient, timestamp);
-    if (!choice) return null;
-    const price = priceOffer(provider, recipient, choice.mpCost, choice.selected.length, timestamp);
-    return price === null ? null : { provider, recipient, spotId: provider.spotId,
-        price, mpCost: choice.mpCost, effects: Offer.effectsFor(choice.selected, timestamp), timestamp };
-}
 
 async function purchase(offer) {
     const { provider, recipient, spotId, price, mpCost, effects, timestamp } = offer;
@@ -87,4 +80,4 @@ async function applyOffer(packet, { beforeWrite = () => {}, timestamp = Date.now
 }
 function summary() { if (!DiagnosticConfig.developerDiagnostics) return { enabled: false }; return { ...counters }; }
 
-module.exports = { available, coldOffer, purchase, applyOffer, summary, skillAdapter };
+module.exports = { available, purchase, applyOffer, summary, skillAdapter };

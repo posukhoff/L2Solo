@@ -64,7 +64,7 @@
         "locY": 140000,
         "locZ": -3000
       },
-      "reason": "market_search_for_weapon",
+      "reason": "market_search_for_gear",
       "to": {
         "locX": 83396,
         "locY": 147904,

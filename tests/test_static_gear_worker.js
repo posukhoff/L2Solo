@@ -12,6 +12,7 @@ const BotGear = invoke('GameServer/Bot/AI/BotGear');
 const BotLifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const SpotProfiles = invoke('GameServer/Bot/Population/SpotProfiles');
 const NeedsEvaluator = invoke('GameServer/Bot/Goals/NeedsEvaluator');
+const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const palusStarterInventory = BotLifeState.inventorySummaryFromItems(BotGear.planFor({ classId: 31, level: 1 }).items);
 const inventory = { ...palusStarterInventory, 57: { selfId: 57, amount: 300000 } };
 const affordableArmorState = { level: 25, adena: 300000,
@@ -22,12 +23,17 @@ const nativeArmorState = { ...affordableArmorState, characterId: 71001, phase: '
     vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
     stats: { ...affordableArmorState.stats, exp: DataCache.experience[24] + 1, equipmentPlan: affordableArmorPlan } };
 const mage = { level: 40, stats: { classId: 10, role: 'mage' }, inventory: {} };
-const target = GearAcquisitionPlanner.preferredTarget(mage);
+// Grade recipes serve bots only through a crafter's workshop (craftProviders).
+const stationDwarf = { level: 70, stats: { classId: 57 } };
+const workshopRecipes = { craftRecipes: CraftShopService.CraftStations.flatMap(station =>
+    CraftShopService.stationRecipes(station, CraftShopService.availableRecipes(stationDwarf))) };
+const target = GearAcquisitionPlanner.preferredTarget(mage, workshopRecipes);
 const nativeMaterialState = { ...structuredClone(mage), characterId: 71002, adena: 100000,
     inventory: { 57: { selfId: 57, amount: 100000 } }, phase: 'cold', activity: 'hunting', updatedAt: 1000,
     vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
     stats: { ...mage.stats, exp: DataCache.experience[39] + 1, equipmentPlan: {
         status: 'active', strategy: 'craft', marketFallback: true, recipeId: target.recipe.recipeId,
+        craftProviders: { [target.recipe.recipeId]: { workshop: true, characterId: 71900 } },
         next: { itemId: 1869 }, materials: [{ selfId: 1869, missing: 4 }]
     } } };
 const nativeGoalStates = [nativeArmorState, nativeMaterialState];

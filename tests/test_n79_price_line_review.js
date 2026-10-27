@@ -39,7 +39,8 @@ MarketCounters.itemDeals = () => ({ deals: counterDeals, prices: [], sellers: []
 MarketCounters.firstPrice = () => 1000;
 PriceDecision.chooseAsk = (belief, market, trader, rollKey, current) => {
     seenBeliefs.push({ ...belief });
-    return { price: current || 1000, npc: false };
+    // A known decision that keeps the standing ask: no stock re-quote follows.
+    return { price: current || 1000, npc: false, known: true };
 };
 PriceDecision.chooseBid = (belief, market, trader, options, rollKey, current) => {
     seenBeliefs.push({ ...belief, worth: options.worth });
@@ -63,8 +64,12 @@ function fixture(side = SELL, rows = [{ fills: 0 }]) {
     }));
     for (const line of lines) board.put({ id: line.recordId, ownerId: 43, storeType: side, town: 'Giran',
         lines: [{ ...line, lineId: line.lineId }] });
+    // ITEM is the owner's own product, so its store line is worthwhile
+    // (MarketPricing.quotable) and only the price review decides.
     const ctx = { characterId: 43, understanding: 0.5, timestamp: now, hour: 60000, adena: 100000,
+        ownProducts: () => new Set([ITEM]),
         knowledgeEnabled: false, marketTrades: {}, board, npcOffersFor: () => [], travel: () => 0, tripCost: null,
+        preparedWorth: () => 5000.375,
         trader: { wait: 0.03, assertiveness: 0.5, caution: 0.5, understanding: 0.5 } };
     const stats = {};
     Object.defineProperty(stats, 'priceBeliefs', { get: () => { throw new Error('removed personal price book was read'); } });
@@ -134,7 +139,7 @@ try {
         assert(seenBeliefs.every((belief) => belief.worth === 5000.375));
         assert(lines.every(line => line.pricing.worth === 5000.375));
     });
-    contract('unknown SELL forecast retains its standing quote despite passed buyers', () => {
+    contract('unknown SELL forecast re-quotes below its standing ask from passed buyers', () => {
         const stubAsk = PriceDecision.chooseAsk;
         PriceDecision.chooseAsk = original.chooseAsk;
         try {
@@ -144,8 +149,11 @@ try {
             assert.strictEqual(fresh.market.known, false, 'kind deals do not supply finite demand/exposure');
             assert.strictEqual(fresh.ask.known, false);
             counterDeals += 20;
-            assert.strictEqual(MarketPricing.look(state, lines, ctx), null);
-            assert.deepStrictEqual(lines[0], before, 'unknown review cannot replace the accepted commitment');
+            const reviewed = MarketPricing.look(state, lines, ctx);
+            assert.strictEqual(reviewed.reprices.length, 1);
+            assert(reviewed.reprices[0].price < 1000
+                && reviewed.reprices[0].price > PriceDecision.marketFor(ITEM).buyback, 'lower, above the buyback');
+            assert.deepStrictEqual(lines[0], before, 'review never mutates the caller line');
         }
         finally { PriceDecision.chooseAsk = stubAsk; }
     });
@@ -220,7 +228,6 @@ finally {
     PriceDecision.chooseAsk = original.chooseAsk;
     PriceDecision.chooseBid = original.chooseBid;
     TendencyRoll.roll = original.roll;
-    PriceBelief.resetCaches();
 }
 if (failures.length) {
     console.error(`N79 line review contracts: ${failures.length} failed (${failures.join('; ')})`);

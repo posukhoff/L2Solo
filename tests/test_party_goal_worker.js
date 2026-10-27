@@ -10,8 +10,8 @@ const timestamp = Date.now();
 const epoch = 'party-goal-native';
 const members = [701, 702].map(characterId => ({ characterId, phase: 'cold', updatedAt: timestamp,
     level: 20, activity: 'resting', adena: 10000, inventory: {},
-    // Crafters (a learned Create Item level): their goal query asks the
-    // occupation planner with the query's own recipe knowledge.
+    // Crafters (a learned Create Item level): their goal reads the held
+    // workshop or the empty one; it asks no occupation search (C8b).
     spotId: 'execution-ground', stats: { classId: 0, dwarvenCraftLevel: 1 }, timing: { nextResolveAt: timestamp + 3600000 },
     simulation: { revision: 2 },
     vitals: { hp: 100, maxHp: 100, mp: 100, maxMp: 100 } }));
@@ -37,8 +37,7 @@ parentPort.on('message',message=>{
         kernel.commanding.delete(701);kernel.commandStartedAt.delete(701);
     }
     parentPort.postMessage({probe:message.queryProbe,slots:[...occupationPlanner.slots.values()].map(entry=>({
-        id:entry.id,recipeBook:entry.input.recipeBook,knownShotRecipes:entry.input.knownShotRecipes,
-        canonical:entry.input.state===kernel.states.get(entry.id)?.state}))});
+        id:entry.id,canonical:entry.input.state===kernel.states.get(entry.id)?.state}))});
 });`;
 const wrapper = String.raw`
 const fs=require('node:fs'),path=require('node:path'),Module=require('node:module');
@@ -66,13 +65,10 @@ function post(type, payload, id) { worker.postMessage(Protocol.envelope(type, ep
     post('init', { config: { pvpAggression: 0 } }, 'init');
     await wait(message => message.type === 'ready' && message.payload.phase === 'running');
     post('pause', {}, 'pause');
-    // An older 'recipes' row the query's own knowledge must replace.
-    post('table_page', { tables: [{ name: 'recipes', from: null, to: 0, full: true, removed: [], last: true,
-        rows: members.map(state => [state.characterId, { characterId: state.characterId, recipeBook: null, knownShotRecipes: [999] }]) }] });
     post('snapshot_page', { rows: members.map(state => ({ state })),
         initial: true, done: true, ack: true }, 'snapshot');
     await wait(message => message.msgId === 'snapshot');
-    const request = { party, members, escrows: [0, 0], recipeKnowledge: members.map(() => ({ recipeBook: null, knownShotRecipes: [] })),
+    const request = { party, members, escrows: [0, 0],
         timestamp, replyBy: Date.now() + 5000 };
     post('party_goal_request', request, 'goals');
     const response = await wait(message => message.type === 'party_goal_result' && message.msgId === 'goals');
@@ -108,11 +104,6 @@ function post(type, payload, id) { worker.postMessage(Protocol.envelope(type, ep
     const admission = await verdict('material-admission');
     assert.deepEqual(admission.formingAccepted, [], 'a missing camp forecast refuses unsafe formation in the worker');
     assert.equal(admission.incomeReviews.length, 2);
-    worker.postMessage({ queryProbe: 'canonical' });
-    const prepared = await wait(message => message.probe === 'canonical');
-    assert.equal(prepared.slots.filter(row => row.id > 0).length, 2);
-    assert(prepared.slots.filter(row => row.id > 0).every(row => row.knownShotRecipes.length === 0),
-        'current query knowledge replaces the worker\'s recipes row');
     // A crafter at its station that requires the party joins without weighing income.
     const required = { status: 'open', priority: 'required', spotId: 'execution-ground', requestedAt: timestamp };
     const stationed = (member, at) => ({ ...member, updatedAt: timestamp + at,

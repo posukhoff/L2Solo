@@ -48,26 +48,16 @@ assert.strictEqual(stems.prices[20], stem * 3);
 assert.strictEqual(stems.units, 5, 'units a deal takes');
 assert.deepStrictEqual([stems.sellers[0], stems.sellers.length], [0, 21], 'who sold at each kept price');
 assert.strictEqual(MarketCounters.moveOf('gear s'), counter.move, 'a counter with no move takes the measured ones');
-// Its buyers per town (the shop town, б7): Giran took two of three deals of the last hour.
-const byTown = new Map(MarketCounters.townDemand('material none', end).map((entry) => [entry.town, entry.perHour]));
-assert.deepStrictEqual([...byTown.keys()].sort(), ['Dion', 'Giran']);
-assert(Math.abs(byTown.get('Giran') + byTown.get('Dion') - counter.perHour) < 0.01, 'the towns share the counter\'s rate');
-assert(byTown.get('Giran') > 1.6 * byTown.get('Dion'), `Giran ${byTown.get('Giran')} vs Dion ${byTown.get('Dion')}`);
-assert.deepStrictEqual(MarketCounters.townDemand('gear s', end), []);
 
 // The worker reads the same numbers from its table.
 channel.flush();
-const worker = { counter: MarketCounters.counter('material none', end), item: MarketCounters.itemDeals(1864),
-    towns: MarketCounters.townDemand('material none', end) };
+const worker = { counter: MarketCounters.counter('material none', end), item: MarketCounters.itemDeals(1864) };
 MarketCounters.useTable(() => mirror.rows('market'));
 const mirrored = MarketCounters.counter('material none', end);
 assert.strictEqual(mirrored.deals, worker.counter.deals);
 assert(Math.abs(mirrored.perHour - worker.counter.perHour) < 0.01);
 assert(Math.abs(mirrored.index - worker.counter.index) < 0.001);
 assert.deepStrictEqual(MarketCounters.itemDeals(1864), worker.item);
-const mirroredTowns = MarketCounters.townDemand('material none', end);
-assert.deepStrictEqual(mirroredTowns.map((entry) => entry.town), worker.towns.map((entry) => entry.town));
-mirroredTowns.forEach((entry, at) => assert(Math.abs(entry.perHour - worker.towns[at].perHour) < 0.01));
 assert.deepStrictEqual(MarketCounters.itemDeals(1), { deals: 0, units: 1, prices: [], sellers: [], buyers: [] });
 
 // The journal replayed at start gives the same counters.
@@ -77,5 +67,4 @@ MarketCounters.load([{ selfId: 1864, unitPrice: 100, quantity: 1, occurredAt: t0
 assert.deepStrictEqual(MarketCounters.itemDeals(1864).sellers, [5]);
 assert.strictEqual(MarketCounters.counter('material none', t0 + 1).deals, 1);
 assert.strictEqual(MarketCounters.counter('gear d', t0 + 1).deals, 1);
-assert.deepStrictEqual(MarketCounters.townDemand('material none', t0).map((entry) => entry.town), ['Gludio']);
 console.log('Market counters: per sub-kind and grade, rates, index, move, prices and the worker table passed');

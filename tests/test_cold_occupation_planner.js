@@ -135,20 +135,16 @@ grouped.stop(); assert.equal(grouped.representatives.size, 0);
 
 const state = { characterId: 7, updatedAt: 1000, level: 30, activity: 'hunting',
     adena: 100, vitals: { mp: 50 }, inventory: {}, stats: { classId: 1 } };
-for (const workshop of [{ known: false }, { known: true, recipeId: 0, productId: 0, incomePerHour: 0, cycleHours: 0 },
-    { known: true, recipeId: 25, productId: 1864, incomePerHour: 150.125, cycleHours: .25 }]) {
-    const decision = compact(structuredClone(capture({ workshop }, state)));
-    if (workshop.known === false) assert(Number.isNaN(decision.workshop.incomePerHour));
-    else { assert.equal(decision.workshop.incomePerHour, workshop.incomePerHour); assert.equal(decision.workshop.cycleHours, workshop.cycleHours); }
-    const decisions = new ColdEconomyDecisions(); decisions.accept(7, decision);
-    assert.equal(decisions.workshopFor(state).known, workshop.known);
-    // The card belongs to its decision: a later publication, a raised
-    // section (a wallet move raises money) or another decision drops it.
-    assert.equal(decisions.workshopFor({ ...state, updatedAt: state.updatedAt + 1 }).known, false, 'a later publication invalidates captured occupation');
-    assert.equal(decisions.workshopFor({ ...state, adena: 0, stats: { ...state.stats, wishDirty: Sections.sectionMask(['money']) } }).known, false,
-        'a raised money section invalidates captured occupation');
-    assert.equal(decisions.workshopFor({ ...state, stats: { ...state.stats, decisionSeq: 1 } }).known, false, 'another decision invalidates captured occupation');
-    decisions.staleWorkshop(7, { echo: stateEcho(state), updatedAt: state.updatedAt });
-    assert.equal(decisions.workshopFor(state).known, false, 'used-source retirement preserves explicit unknown');
-}
-console.log('PASS pinned FIFO contexts, exact resumable progress, used-source restarts, 32-unit portions and binary workshop NaN');
+// The owner's line feasibility mask rides with its card and belongs to its decision.
+const mask = [0x12345678, 5, 3];
+const decision = compact(structuredClone(capture({ workshop: { known: true, feasibility: mask } }, state)));
+const decisions = new ColdEconomyDecisions(); decisions.accept(7, decision);
+assert.deepEqual(decisions.feasibilityFor(state), mask);
+// A later publication, a raised section (a wallet move raises money) or another decision drops it.
+assert.equal(decisions.feasibilityFor({ ...state, updatedAt: state.updatedAt + 1 }), null, 'a later publication invalidates the mask');
+assert.equal(decisions.feasibilityFor({ ...state, adena: 0, stats: { ...state.stats, wishDirty: Sections.sectionMask(['money']) } }), null,
+    'a raised money section invalidates the mask');
+assert.equal(decisions.feasibilityFor({ ...state, stats: { ...state.stats, decisionSeq: 1 } }), null, 'another decision invalidates the mask');
+decisions.staleWorkshop(7, { echo: stateEcho(state), updatedAt: state.updatedAt });
+assert.equal(decisions.feasibilityFor(state), null, 'used-source retirement drops the mask');
+console.log('PASS pinned FIFO contexts, exact resumable progress, used-source restarts, 32-unit portions and the card feasibility mask');

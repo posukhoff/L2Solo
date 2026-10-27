@@ -1,5 +1,6 @@
 'use strict';
 const { createHash } = require('node:crypto');
+const { partyIdOf } = require('../Bot/Population/PartyId');
 const Raid = require('./ClanRaidPolicy');
 const Capabilities = require('./ClanCandidateCapabilities');
 const Rules = require('./ClanRules');
@@ -14,7 +15,7 @@ function memberFingerprint(member = {}) {
     const combat = member.stats?.coldCombat || {};
     const objective = member.stats?.clanPartyObjective;
     return hash([id(member), Number(member.classId ?? member.stats?.classId ?? 0), Number(member.level), Number(member.clanId ?? member.stats?.clanId ?? 0),
-        member.phase, member.partyId || member.party?.partyId || null,
+        member.phase, partyIdOf(member) || null,
         member.activity, member.spotId, !!(member.recruitmentReserved || member.stats?.tradeMeeting),
         !!member.stats?.playerPartyTakeover, member.stats?.clanHuntBackoffs || [],
         objective ? [objective.reason, objective.sourceKind, objective.raidBoss, objective.controlledBy, objective.clanId] : null,

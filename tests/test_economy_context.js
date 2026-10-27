@@ -25,6 +25,7 @@ async function run() {
     const Valuation = invoke('GameServer/Bot/Economy/EconomicValuation');
     const Config = invoke('GameServer/Bot/Population/PopulationConfig');
     Economy = invoke('GameServer/Bot/Economy/EconomyContext');
+    const Network = invoke('GameServer/Bot/Economy/WishNetwork');
     // A build holds only by its event proof, which needs the warehouse rows
     // and a recompute generation.
     invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').useRowSource(() => null, () => true);
@@ -106,8 +107,6 @@ async function run() {
             const context = Economy.forState(crafter, deps);
             assert.equal(peerReads, 0, 'a crafting review reads zero other crafters');
             assert(!context.projection.nodes.some(node => node.key === 'status:producer'));
-            assert(context.projection.moneyPaths.some(row => row.kind === 'production' && row.incomePerHour > 0),
-                'profitable crafting remains a repeatable money path');
             peers.get(902).stats.production.revenue = 900;
             assert.equal(Economy.forState(crafter, deps).plan, context.plan, 'another producer sale cannot rebuild this bot');
             assert.equal(peerReads, 0);
@@ -134,6 +133,25 @@ async function run() {
     warrior.stats.persona = { ...warrior.stats.persona, understanding: .5 };
     const kitDeps = { knowledgeEnabled: true };
     const warriorContext = Economy.forState(warrior, kitDeps);
+    {
+        // The rebuild table stays bounded whatever the callers name: a per-ask
+        // token (a meeting's UUID) never names an entry, a known trigger does,
+        // and 10k distinct callers fold into a fixed number of rows.
+        const builds = entry => Economy.rebuildStats().filter(row => row[0] === entry).reduce((sum, row) => sum + row[2], 0);
+        for (let i = 0; i < 10000; i++) Economy.forState(warrior, { ...kitDeps, caller: 'meeting_prepare', trigger: `token-${i}` });
+        assert.equal(builds('meeting_prepare'), 10000, 'every meeting build counts under its caller alone');
+        assert(!Economy.rebuildStats().some(row => row[0].startsWith('meeting_prepare<')), 'a token never names an entry');
+        Economy.forState(warrior, { ...kitDeps, caller: 'economy_near', trigger: 'warehouse' });
+        assert.equal(builds('economy_near<warehouse'), 1, 'a known trigger names its entry');
+        const total = () => Economy.rebuildStats().reduce((sum, row) => sum + row[2], 0), before = total();
+        for (let i = 0; i < 10000; i++) Economy.forState(warrior, { ...kitDeps, caller: `caller_${i}`, trigger: 'state_copy' });
+        const rows = Economy.rebuildStats();
+        assert(rows.length <= Economy.REBUILD_ROWS_MAX, `${rows.length} rows within the bound`);
+        assert(rows.every(row => row[0].length <= Economy.REBUILD_NAME_MAX && row[1].length <= Economy.REBUILD_NAME_MAX));
+        assert.equal(total() - before, 10000, 'the folded builds are still counted');
+        assert(builds('other') > 0, 'entries past the bound share one row');
+        console.log('PASS rebuild table: tokens never name an entry / known triggers do / rows bounded');
+    }
     const reserve = warriorContext.survivalReserve, warriorStock = warriorContext.stock('shots');
     assert(reserve >= warriorStock.usePerHour * warriorStock.unitPrice,
         'the protected wallet covers one hunting hour at the bot’s current price estimate');
@@ -149,7 +167,6 @@ async function run() {
     assert(warriorContext.purchaseBudget(1) <= warrior.adena - reserve);
     assert(warriorContext.statsPacket.money.length >= 4 && warriorContext.statsPacket.money.length <= 28);
     assert(warriorContext.statsPacket.money.every(Number.isFinite) && warriorContext.statsPacket.money[2] > 0);
-    const Profit = invoke('GameServer/Bot/Economy/CraftProfitPolicy');
     for (const wallet of [0, 20000, 200000, 1000000, 50000000]) {
         const state = { ...warrior, adena: wallet };
         const context = Economy.forState(state, kitDeps);
@@ -158,8 +175,6 @@ async function run() {
         assert(Math.abs(context.hourAdena - Hunt.netIncome(row, Hunt.consumablePrices(state))) < 1,
             'the hunting hour deducts paid shots and healing');
         assert(context.moneyPrice >= 1 / context.hourAdena);
-        assert(Profit.margin({ productCount: 100, successRate: 100, mpCost: 5 }, 10, 500,
-            { ...context, mpPerHour: 1000 }));
     }
     const gladiator = Economy.forState(equippedFixture(1202, 2, 50, 1000000), kitDeps);
     const gladiatorHunt = Hunt.huntIncome(gladiator.state, gladiator.timestamp);
@@ -183,12 +198,6 @@ async function run() {
         Craft.opportunities = () => [{ recipe: { recipeId: 1, productId: 1463 }, margin: { hours: 0, profit: 1000, labour: 0 } }];
         assert.equal(Economy.forState(crafter).hourAdena, warriorContext.hourAdena,
             'main cannot turn an unsupported zero-clock opportunity into occupation income');
-        Economy.forget(crafter.characterId);
-        Craft.opportunities = () => [{ recipe: { recipeId: 1, productId: 1463 }, margin: { hours: .5, profit: 100000, labour: 38398.5 } }];
-        const context = Economy.forState(crafter, { workshop: { recipeId: 1, productId: 1463,
-            incomePerHour: 276797, cycleHours: .5 } });
-        assert.equal(context.hourAdena, 276797);
-        assert.equal(context.projection.moneyPaths.find(row => row.kind === 'production').incomePerHour, context.hourAdena);
     } finally { Craft.opportunities = originalOpportunities; }
     console.log('PASS repeatable wallet-independent income / survival reserve / craft hour / floor');
     const context = Economy.forState(base);
@@ -199,14 +208,32 @@ async function run() {
     assert.equal(typeof context.statsPacket.decisionSeq, 'number');
     assert.equal(typeof context.statsPacket.activityLeaf, 'number');
     assert(context.statsPacket.activityLeaf !== 0);
-    // A hit needs the build's own output published (its decision echo).
+    // A hit needs the state at the build's input or output.
     const published = { ...base, stats: { ...base.stats, ...context.statsPacket } };
     assert.equal(Economy.forState(published).plan, context.plan, 'unchanged own inputs reuse the complete context');
+    // The build's own input state, its money packet not written back (a later
+    // build of the same step): the decision's own packet is no money refusal.
+    assert.equal(Economy.forState({ ...base }).plan, context.plan, 'the build input state keeps the decision');
     assert.equal(Economy.forState(published, { rememberContext: false }).plan, context.plan,
         'an unkept caller can read an existing valid decision');
     const temporary = Economy.forState({ ...published, level: base.level + 1 }, { rememberContext: false });
     assert.notEqual(temporary.plan, context.plan);
     assert.equal(Economy.forState(published).plan, context.plan, 'an unkept build never replaces the held decision');
+    {
+        // Starter loot is not free stock, but a shot stock root owns all its
+        // shots: the root cut's solves and the network build read one count,
+        // so a cut review keeps its quantity proof (what a held build needs).
+        const shot = context.stock('shots').itemId;
+        const looted = { ...base, characterId: 990031, adena: 5000,
+            inventory: { ...base.inventory, [shot]: { selfId: shot, amount: 30, starterMobLootAmount: 20 } } };
+        const cheapRoots = Array.from({ length: Network.MAX_ROOTS + 1 }, (_, index) => ({ key: `cheap-root-${index}`,
+            need: 'power', valueHours: .02, paths: [{ kind: 'buy', activity: 'shopping', itemId: 990010 + index,
+                price: context.hourAdena / 2, executable: true }] }));
+        const cut = Economy.forState(looted, { nodes: cheapRoots });
+        assert(cut.projection.roots.includes('stock:shots') && cheapRoots.some(row => !cut.projection.roots.includes(row.key)),
+            'fixture: the review cuts roots and keeps the shot stock root');
+        assert(cut.plan.quantityInputs, 'a cut review with starter-loot shots keeps its quantity proof');
+    }
     {
         const T = Date.now(), native = { ...base, characterId: 990021 };
         const held = Economy.forState(native, { timestamp: T });
@@ -229,9 +256,9 @@ async function run() {
         // (its party goal query serves them): the gate reads the string party
         // id. This fixture loads EconomyContext on the main thread, which
         // keeps every entry's nodes, so the gate is asserted directly.
-        const Sections = invoke('GameServer/Bot/Economy/DecisionSections');
-        assert.equal(Sections.partyIdOf(native), 'bgp_x_17', 'a party member keeps its graph nodes off the main thread');
-        assert.equal(Sections.partyIdOf(base), '', 'a solo bot keeps the plan only off the main thread');
+        const { partyIdOf } = invoke('GameServer/Bot/Population/PartyId');
+        assert.equal(partyIdOf(native), 'bgp_x_17', 'a party member keeps its graph nodes off the main thread');
+        assert.equal(partyIdOf(base), '', 'a solo bot keeps the plan only off the main thread');
         const published = { ...native, stats: { ...native.stats, ...held.statsPacket } };
         const with_ = stats => ({ ...published, stats: { ...published.stats, ...stats } });
         const verdict = (state, deps = {}) => Economy.forState(state, { timestamp: T, rememberContext: false, ...deps }).plan;
@@ -282,7 +309,7 @@ async function run() {
         const restored = Economy.restoreEventProof(bytes, accepted);
         assert.equal(Economy.eventProofHolds(published, restored, deps(), options), true,
             'the restored prefix holds the saved decision');
-        const older = Uint8Array.from(bytes); older[0] = 6;
+        const older = Uint8Array.from(bytes); older[0] = 7;
         assert.equal(Economy.restoreEventProof(older, accepted), null, 'a prefix of the former format is refused');
         const kept = Generation.metadata();
         try {
@@ -292,10 +319,117 @@ async function run() {
         assert(Economy.restoreEventProof(bytes, accepted), 'fixture: the generation is back');
         Economy.forget(native.characterId);
     }
+    // A held build keeps a moved bag count while it stays on the same side of
+    // every threshold its decision compared it with and the drift stays within
+    // the bot's error on an hour's income; a crossing, a drift past that
+    // budget or a moved incoming count refuses it, and a saved decision
+    // restored after a restart keeps the same bands. The budget is one per
+    // verdict: a count an old band keeps (shots-like, up to its count) and a
+    // count its thresholds keep share it; one item's drift charges it once.
+    {
+        const T = Date.now(), potion = 728, quick = 1540, healing = 1061, bone = 1872;
+        const counts = { [potion]: 20, [quick]: 10, [healing]: 5, [bone]: 10 };
+        const stacks = amounts => Object.fromEntries(Object.entries(amounts)
+            .map(([id, amount]) => [id, { selfId: Number(id), amount, stackable: true }]));
+        const native = { ...base, characterId: 990029, inventory: { ...base.inventory, ...stacks(counts) } };
+        const deps = () => ({ timestamp: T, memoryIdentity: 'fixture-memory', sourceReady: true });
+        const errorsBefore = Config.knowledgeErrorsEnabled;
+        Config.knowledgeErrorsEnabled = true;
+        try {
+            const held = Economy.forState(native, deps());
+            const packet = held.statsPacket, published = { ...native, stats: { ...native.stats, ...packet } };
+            const plan = held.plan, builtRoots = plan.stockRoots, builtBands = plan.quantityBands || [];
+            // A proof of the held plan over the rows `note` records.
+            const proofOf = (note, roots = builtRoots, bands = builtBands) => {
+                const quantities = Network.createQuantityInputs();
+                note(quantities);
+                plan.quantityInputs = quantities.finish(); plan.quantityThresholds = quantities.thresholds();
+                plan.stockRoots = roots; plan.quantityBands = bands;
+                return Economy.captureEventProof(published, deps(), { plan });
+            };
+            // The decision compared its 20 mana potions with 10 and read no incoming.
+            const proof = plan.eventProof = proofOf(rows => {
+                rows.physical(potion, 20); rows.atLeast('physical', potion, 10); rows.incoming(potion, 0);
+            });
+            const options = { baseline: packet.wishSections, leaf: held.network.activity, timestamp: T };
+            const budget = proof.hourAdena * options.baseline.incomeError;
+            // The price the verdict charges a drift at: the context's own NPC buyback.
+            const sell = held.buyback;
+            assert(budget > 11 * sell(potion) && budget < 40 * sell(potion) && budget < 10 * sell(quick),
+                'fixture: the drift budget lies between 11 and 40 mana potions and below 10 quick healing potions');
+            const bag = (amounts = {}, incoming = 0) => ({ ...published, acceptedIncoming: incoming ? { [potion]: incoming } : {},
+                inventory: { ...published.inventory, ...stacks(amounts) } });
+            const reason = (state, value = proof) => Economy.heldBuildVerdict(state, value,
+                { ...deps(), gearThreatMask: held.gearThreatMask }, options).reason || 'valid';
+            assert.equal(reason(bag()), 'valid', 'fixture: the published decision holds');
+            assert.equal(reason(bag({ [potion]: 18 })), 'valid', 'a drift inside the thresholds and the budget holds');
+            assert.equal(reason(bag({ [potion]: 9 })), 'quantity', 'a count crossing a threshold the decision compared refuses');
+            assert.equal(reason(bag({ [potion]: 60 })), 'quantity', 'a drift past the budget refuses');
+            assert.equal(reason(bag({}, 3)), 'quantity', 'a moved incoming count refuses');
+            const touched = Economy.heldBuildVerdict(bag({ [potion]: 9 }), proof,
+                { ...deps(), gearThreatMask: held.gearThreatMask }, options).touchedSections;
+            assert.equal(touched, invoke('GameServer/Bot/Economy/DecisionSections').sectionBit('money'), 'a bag-count refusal names money only');
+            const accepted = { card: { activity: held.network.activity }, characterId: native.characterId,
+                decisionSeq: packet.decisionSeq, activityLeaf: packet.activityLeaf, focus: packet.wishFocus?.[0] ?? null,
+                baseline: packet.wishSections };
+            const restore = value => Economy.restoreEventProof(Economy.restartEventProof(value, accepted), accepted);
+            const restored = restore(proof);
+            assert(restored, 'fixture: the decision saves and restores its prefix');
+            assert.equal(reason(bag({ [potion]: 18 }), restored), 'valid', 'a restored decision holds a drift inside its bands');
+            assert.equal(reason(bag({ [potion]: 9 }), restored), 'quantity', 'a restored decision refuses a crossing');
+            // Its quick healing potions are a stock the decision kept from 0 up
+            // to its 10 (an old band); each drift alone fits the budget, both do not.
+            assert(!builtBands.some(row => row[0] === quick), 'fixture: the build has no band of its own on quick potions');
+            const shared = proofOf(rows => {
+                rows.physical(potion, 20); rows.atLeast('physical', potion, 10); rows.incoming(potion, 0);
+                rows.stock(quick, 'stock:fixture', { owned: 10, incoming: 0 });
+            }, new Map([...builtRoots, ['stock:fixture', quick]]), [...builtBands, [quick, 0, 10, 10]]);
+            const used = Math.floor(.6 * budget / sell(quick)), bought = Math.floor((budget - used * sell(quick)) / sell(potion)) + 1;
+            assert(used >= 1 && bought * sell(potion) <= budget, 'fixture: each drift alone fits the budget');
+            assert.equal(reason(bag(), shared), 'valid', 'fixture: the published decision with its stock holds');
+            assert.equal(reason(bag({ [quick]: 10 - used }), shared), 'valid', 'a stock drift inside its band and the budget holds');
+            assert.equal(reason(bag({ [potion]: 20 + bought }), shared), 'valid', 'a count drift inside its thresholds and the budget holds');
+            assert.equal(reason(bag({ [quick]: 10 - used, [potion]: 20 + bought }), shared), 'quantity',
+                'two drifts that each fit the budget refuse together');
+            // Three noted rows: the healing potions between the two moved ones
+            // stay put; each moved row is judged by its own thresholds.
+            const three = proofOf(rows => {
+                rows.physical(potion, 20); rows.atLeast('physical', potion, 10);
+                rows.physical(healing, 5); rows.atLeast('physical', healing, 3);
+                rows.physical(quick, 10); rows.atLeast('physical', quick, 10);
+            });
+            for (const [value, label] of [[three, ''], [restore(three), 'restored: ']]) {
+                assert(value, `fixture: ${label}the three-row decision`);
+                assert.equal(reason(bag({ [potion]: 18, [quick]: 11 }), value), 'valid',
+                    `${label}moved rows on their own sides around an unmoved one hold`);
+                assert.equal(reason(bag({ [potion]: 18, [quick]: 9 }), value), 'quantity',
+                    `${label}the last row crossing its own threshold refuses`);
+            }
+            // Its animal bones are unused loot (a finite band, a sale row) the
+            // decision also compared with their own count: a gain whose one
+            // charge fits the budget holds, though two charges would not.
+            const loot = builtBands.find(row => row[0] === bone);
+            const gain = Math.floor(budget / sell(bone));
+            assert(loot && loot[2] !== null && plan.liquidationInputs.rows.some(row => row[0] === bone),
+                'fixture: the bones are a loot band and a sale row');
+            assert(gain >= 1 && 10 + gain <= loot[2] && 2 * gain * sell(bone) > budget,
+                'fixture: the gain fits the band and one charge, not two');
+            const noted = proofOf(rows => {
+                rows.physical(potion, 20); rows.atLeast('physical', potion, 10); rows.incoming(potion, 0);
+                rows.physical(bone, 10); rows.atLeast('physical', bone, 10);
+            });
+            assert.equal(reason(bag({ [bone]: 10 + gain }), noted), 'valid',
+                'a noted loot row and its sale row charge one drift once');
+            console.log('PASS quantity bands: drift holds / crossing, budget, incoming refuse / one shared budget / one charge per item / rows by index / restored bands');
+        } finally {
+            Config.knowledgeErrorsEnabled = errorsBefore;
+            Economy.forget(native.characterId);
+        }
+    }
     // The sections mask decides which held piece a rebuild reuses: a source
-    // raise keeps the foundation (hunt, kit) and rebuilds the source walk; a
-    // build raise rebuilds both. A rebuild's money bounds are its own weighing's,
-    // never the last decision's. A build without a held entry re-weighs no event.
+    // raise keeps the foundation (hunt, kit); a build raise rebuilds it. A
+    // rebuild's money bounds are its own weighing's, never the last
+    // decision's. A build without a held entry re-weighs no event.
     {
         const Sections = invoke('GameServer/Bot/Economy/DecisionSections');
         const diagnosticsBefore = Config.developerDiagnostics;
@@ -320,7 +454,6 @@ async function run() {
             assert.notEqual(sources.plan, held.plan, 'a raised source section rebuilds');
             assert.equal(sources.plan.hunt, held.plan.hunt, 'a source raise keeps the foundation hunt');
             assert.equal(sources.plan.kit, held.plan.kit, 'a source raise keeps the foundation kit');
-            assert.equal(delta(before, 'source_memo:miss:sections'), 1, 'a source raise rebuilds the source walk');
             assert.equal(delta(before, 'source_route:ground:reuse'), 1, 'a source raise keeps the ground verdict');
             assert.equal(delta(before, 'context:foundation:kept'), 1, 'the kept foundation is counted');
             assert.notDeepEqual(sources.statsPacket.wishSections.cashBounds, stale.cashBounds,
@@ -337,7 +470,6 @@ async function run() {
             before = counts();
             const build = Economy.forState(raised(again, 'build'), { timestamp: T });
             assert.notEqual(build.plan.hunt, again.plan.hunt, 'a build raise rebuilds the foundation');
-            assert.equal(delta(before, 'source_memo:miss:sections'), 1, 'a build raise rebuilds the source walk');
             assert.equal(delta(before, 'source_route:ground:build'), 1, 'a build raise rebuilds the ground verdict');
             assert.equal(delta(before, 'context:foundation:built'), 1, 'the rebuilt foundation is counted');
             // No held entry (a deploy, an eviction) and nothing raised: every
@@ -354,6 +486,45 @@ async function run() {
         } finally {
             Config.developerDiagnostics = diagnosticsBefore;
             Economy.forget(990027);
+        }
+    }
+    // A refresh's build is held with the raise it consumed (its packet is not
+    // written back: the state keeps its bits): the next build on the same
+    // sequence and bits is served it; a new raise (the sequence moved) rebuilds.
+    // Every build reads one known workshop (the worker's kept one).
+    {
+        const Sections = invoke('GameServer/Bot/Economy/DecisionSections');
+        const T = Date.now(), native = { ...base, characterId: 990035 };
+        const workshop = { known: true, recipeId: 0, productId: 0, incomePerHour: 0, cycleHours: 0 };
+        try {
+            const step = Economy.forState(native, { timestamp: T, workshop });
+            const raised = { ...native, stats: { ...native.stats, ...step.statsPacket,
+                decisionSeq: step.statsPacket.decisionSeq + 1, wishDirty: Sections.sectionBit('money') } };
+            const refresh = Economy.forState(raised, { timestamp: T, workshop, caller: 'economy_refresh' });
+            assert.notEqual(refresh.plan, step.plan, 'fixture: the refresh rebuilds on the raise');
+            const next = Economy.forState({ ...raised }, { timestamp: T, workshop });
+            assert.equal(next.plan, refresh.plan, 'the next build on the bits the refresh consumed is served its build');
+            const bumped = { ...raised, stats: { ...raised.stats, decisionSeq: raised.stats.decisionSeq + 1 } };
+            assert.notEqual(Economy.forState(bumped, { timestamp: T, workshop }).plan, refresh.plan, 'a new raise rebuilds');
+            // The accepted decision (the state's packet) is older than the
+            // raise the refresh consumed: a later rebuild (the wallet refuses
+            // the kept build) samples the raised occupation afresh, never
+            // carries the accepted decision's sample.
+            Economy.forget(990035);
+            const rich = { ...native, adena: 1000000 };
+            const accepted = Economy.forState(rich, { timestamp: T, workshop });
+            const stale = Sections.packSample([[7, 1, 2]]);
+            const occupation = { ...rich, stats: { ...rich.stats, ...accepted.statsPacket,
+                decisionSeq: accepted.statsPacket.decisionSeq + 1, wishDirty: Sections.sectionBit('occupation'),
+                wishSections: { ...accepted.statsPacket.wishSections, sample: stale } } };
+            const kept = Economy.forState(occupation, { timestamp: T, workshop, caller: 'economy_refresh' });
+            assert.notDeepEqual(kept.statsPacket.wishSections.sample, stale, 'fixture: the refresh samples afresh');
+            const broke = Economy.forState({ ...occupation, adena: 0 }, { timestamp: T, workshop });
+            assert.notEqual(broke.plan, kept.plan, 'fixture: the wallet refuses the kept build');
+            assert.notDeepEqual(broke.statsPacket.wishSections.sample, stale, 'a rebuild after the refresh samples the raised occupation afresh');
+            console.log('PASS refresh keep: served on the consumed raise / a new raise rebuilds / raised baseline fresh');
+        } finally {
+            Economy.forget(990035);
         }
     }
     // A card refused right before the build of the same step on the same
@@ -436,78 +607,37 @@ async function run() {
         }
         console.log('PASS card verdict handed to the build of its step');
     }
-    // The crafter's workshop is kept with its held build: on the same route,
-    // known, with a finite income and no workshop section moved (the
-    // foundation's or money); otherwise it is asked again. The step judges
-    // its held build before the build (heldWorkshop): a valid verdict keeps
-    // the workshop, a refusal keeps it under its sections. A build with a
-    // productive workshop watches its product's buyers and its materials'
-    // sellers.
+    // The crafter's workshop is kept with its held build: known, with a
+    // finite income and no kit event, whatever the route rows, the hour or
+    // the wallet (its feasibility mask reads none of them); otherwise it is
+    // asked again. A near build's empty workshop is no ask: the build after
+    // it asks. The step judges its held build before the build
+    // (heldWorkshop): a valid verdict or a refusal keeps the workshop.
     {
         const Sections = invoke('GameServer/Bot/Economy/DecisionSections');
         const Trip = invoke('GameServer/Bot/Economy/EconomicTrip');
         const workshop = { known: true, recipeId: 2, productId: 3, incomePerHour: 1200, cycleHours: 2 };
-        const state = { ...base, characterId: 990031 };
-        const heldOf = (value, routeKey = Trip.key(state)) => ({ plan: { workshop: value, routeKey } });
-        assert.equal(Economy.heldWorkshopOf(heldOf(workshop), 0, state), workshop, 'a held workshop on its route is kept');
-        assert.equal(Economy.heldWorkshopOf(heldOf({ ...workshop, incomePerHour: 0 }), 0, state)?.incomePerHour, 0,
-            'a known zero income is kept');
-        for (const name of ['build', 'combat', 'supply', 'occupation', 'relations', 'money'])
-            assert.equal(Economy.heldWorkshopOf(heldOf(workshop), Sections.sectionBit(name), state), null, `a moved ${name} section asks again`);
-        for (const name of ['benefits', 'sources'])
-            assert.equal(Economy.heldWorkshopOf(heldOf(workshop), Sections.sectionBit(name), state), workshop, `a moved ${name} section keeps it`);
-        assert.equal(Economy.heldWorkshopOf(heldOf(workshop, 'elsewhere'), 0, state), null, 'another route asks again');
-        assert.equal(Economy.heldWorkshopOf(heldOf({ ...workshop, known: false }), 0, state), null, 'an unknown workshop asks again');
-        assert.equal(Economy.heldWorkshopOf(heldOf({ ...workshop, incomePerHour: NaN }), 0, state), null, 'no income asks again');
-        assert.equal(Economy.heldWorkshopOf(null, 0, state), null, 'no held build asks');
-        const diagnosticsBefore = Config.developerDiagnostics;
-        Config.developerDiagnostics = true;
-        try {
-            const counts = () => invoke('GameServer/Bot/Economy/EconomyDiagnostics').metrics().counts || {};
-            const unknown = () => counts()['occupation:workshop:unknown'] || 0;
-            let before = unknown();
-            assert.equal(Economy.keptWorkshop(null, 0, state).known, false, 'nothing kept is an unknown workshop');
-            assert.equal(unknown(), before, 'a bot without workshop entries is not counted');
-            const crafter = { ...state, stats: { ...state.stats, workshop: { entries: [{ recipeId: 2 }] } } };
-            before = unknown();
-            Economy.keptWorkshop(heldOf(workshop), Sections.sectionBit('build'), crafter);
-            assert.equal(unknown(), before + 1, 'a crafter without a kept workshop is counted');
-        } finally { Config.developerDiagnostics = diagnosticsBefore; }
-        const routeRows = Trip.prepared(state);
-        const built = Economy.forState(state, { routeRows, workshop });
-        assert.equal(built.plan.workshop, workshop, 'fixture: the build holds its workshop');
-        const recipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(workshop.recipeId);
-        const watched = built.statsPacket.wishSections.marketWatch || [];
-        const watches = (id, storeType) => watched.some(row => row[0] === id && row[1] === storeType);
-        assert(watches(recipe.productId, 3), 'the product\'s buyers are watched');
-        assert(watched.length < Sections.MARKET_WATCH, 'fixture: a short queue, every row fits under the cap');
-        assert(recipe.materials.every(row => watches(row.selfId, 1)), 'the materials\' sellers are watched');
-        Economy.forget(state.characterId);
         // The step on a crafter's held build: its verdict is judged once,
         // before the workshop ask, and served to the build that follows. A
         // valid verdict keeps the workshop (no ask) and the build serves the
-        // held decision, unless the held workshop is unknown or of another
-        // route (asked); a refusal by its MP alone (sources) keeps it, with
-        // or without the card refused before; a wallet below the decision's
-        // bounds (money) asks.
+        // held decision, unless the held workshop is unknown (asked); a
+        // refusal by its MP alone (sources) keeps it, with or without the
+        // card refused before.
         const Card = invoke('GameServer/Bot/Population/ColdEconomyDecision');
         const T = Date.now(), crafter = { ...base, characterId: 990032, craftLevel: 1, adena: 1000000 };
         const deps = { timestamp: T, routeRows: Trip.prepared(crafter) };
-        const counts = () => invoke('GameServer/Bot/Economy/EconomyDiagnostics').metrics().counts || {};
-        const delta = (before, key) => (counts()[key] || 0) - (before[key] || 0);
         // The worker's step: the workshop, then the build on the same deps.
-        const stepOf = (state, eventVerdict = {}, before = counts()) => {
+        const stepOf = (state, eventVerdict = {}) => {
             const step = { ...deps };
             const kept = Economy.heldWorkshop(state, step, eventVerdict);
             const built = Economy.forState(state, { ...step, workshop: kept, eventVerdict });
-            return { kept, built, verdicts: [delta(before, 'context:held_verdict:computed'), delta(before, 'context:held_verdict:reused')] };
+            return { kept, built };
         };
-        Config.developerDiagnostics = true;
         try {
             // A refused step rebuilds the held entry: each case starts on a fresh one.
-            const fresh = () => {
+            const fresh = (heldWorkshop = workshop, heldDeps = {}) => {
                 Economy.forget(crafter.characterId);
-                const held = Economy.forState(crafter, { ...deps, workshop });
+                const held = Economy.forState(crafter, { ...deps, ...heldDeps, workshop: heldWorkshop });
                 const published = { ...crafter, stats: { ...crafter.stats, ...held.statsPacket } };
                 return { held, published, tired: { ...published, vitals: { ...published.vitals, mp: published.vitals.mp - 1 } } };
             };
@@ -515,32 +645,57 @@ async function run() {
             const valid = stepOf(published);
             assert.equal(valid.kept, workshop, 'a valid held build keeps its workshop');
             assert.deepEqual(valid.built.statsPacket, held.statsPacket, 'the build that follows serves the held decision');
-            assert.deepEqual(valid.verdicts, [1, 1], 'one verdict for the step\'s workshop and its build');
-            const plan = held.plan, routeKey = plan.routeKey;
-            plan.routeKey = 'elsewhere';
-            try { assert.equal(stepOf(published).kept, null, 'a held workshop of another route asks'); }
-            finally { plan.routeKey = routeKey; }
+            // One town's hours moved keeps it: the mask reads no route row.
+            const plan = held.plan, heldRows = plan.routeRows;
+            const town = heldRows.findIndex(row => row[0] === true && row[1] > 0);
+            assert(town >= 0, 'fixture: a known town with a trip');
+            plan.routeRows = heldRows.map((row, index) => index === town ? [true, row[1] + 1, row[2]] : row);
+            try {
+                assert.equal(stepOf(published).kept, workshop, 'a held workshop asked on other route rows is kept');
+            } finally { plan.routeRows = heldRows; }
             const refused = stepOf(tired);
             assert.equal(refused.kept, workshop, 'a refusal by the MP alone keeps it');
-            assert.deepEqual(refused.verdicts, [1, 1], 'one verdict for a refused step');
             ({ held, published, tired } = fresh());
             const accepted = Card.advisory(held, published, published.activity, deps);
-            const before = counts(), prepared = {};
+            const prepared = {};
             assert.equal(Card.refreshAdvisory(tired, accepted, deps, { prepared, collect: true }), null, 'fixture: the MP refuses the card');
             assert(!(prepared.eventVerdict.collected.verdict.touchedSections & Sections.COMPUTED.workshop),
                 'fixture: the refusal names no workshop section');
-            const afterCard = stepOf(tired, prepared.eventVerdict, before);
+            const afterCard = stepOf(tired, prepared.eventVerdict);
             assert.equal(afterCard.kept, workshop, 'a refusal by the MP alone keeps it after the card refused');
-            assert.deepEqual(afterCard.verdicts, [1, 1], 'one verdict for the card, the step\'s workshop and its build');
-            ({ published } = fresh());
-            assert.equal(stepOf({ ...published, adena: 0 }).kept, null, 'a moved wallet asks');
+            // The worker's order: the held workshop, else the planner's
+            // answer (here a stub at the edge with another income). A raised
+            // section other than the kit (a spot event, a quantity refusal's
+            // sources and money, the hour value) keeps the workshop; a kit
+            // event takes the planner's answer.
+            const answer = { known: true, recipeId: 2, productId: 3, incomePerHour: 3000, cycleHours: 2 };
+            const incomeAfter = (dirty, edit = state => state, heldWorkshop = workshop, heldDeps = {}) => {
+                ({ published } = fresh(heldWorkshop, heldDeps));
+                const step = { ...deps }, eventVerdict = {};
+                const moved = edit({ ...published, stats: { ...published.stats, wishDirty: dirty } });
+                const kept = Economy.heldWorkshop(moved, step, eventVerdict) || answer;
+                if (!(dirty & Sections.COMPUTED.workshop)) assert(!(eventVerdict.collected.verdict.touchedSections & Sections.COMPUTED.workshop),
+                    'fixture: the refusal names no workshop section');
+                return Economy.forState(moved, { ...step, workshop: kept, eventVerdict }).workshop.incomePerHour;
+            };
+            const bit = Sections.sectionBit, refusal = bit('sources');
+            const money = (state, edit) => ({ ...state, stats: { ...state.stats, money: edit(state.stats.money.slice()) } });
+            assert.equal(incomeAfter(bit('occupation')), 1200, 'a spot event keeps the workshop');
+            assert.equal(incomeAfter(bit('sources') | bit('money')), 1200, 'a quantity refusal keeps the workshop');
+            assert.equal(incomeAfter(bit('supply')), 1200, 'a supply event keeps the workshop');
+            assert.equal(incomeAfter(bit('build')), 3000, 'a kit event asks again');
+            assert.equal(incomeAfter(refusal, state => money(state, packet => { packet[0] *= 2; return packet; })), 1200,
+                'a refusal after the hour value moved keeps the workshop');
+            // A near build's empty workshop (the worker's near forState) is no ask.
+            const nearEmpty = { known: true, recipeId: 0, productId: 0, incomePerHour: 0, cycleHours: 0 };
+            assert.equal(incomeAfter(refusal, state => state, nearEmpty, { workshopAsked: null }), 3000,
+                'a refusal after a near build asks');
             const unknownCrafter = { ...crafter, characterId: 990033 };
             const unknownHeld = Economy.forState(unknownCrafter, { ...deps, workshop: { ...workshop, known: false } });
             const unknown = stepOf({ ...unknownCrafter, stats: { ...unknownCrafter.stats, ...unknownHeld.statsPacket } });
             assert.equal(unknown.kept, null, 'a held unknown workshop asks');
             assert.deepEqual(unknown.built.statsPacket, unknownHeld.statsPacket, 'fixture: the verdict holds, the held decision is served');
         } finally {
-            Config.developerDiagnostics = diagnosticsBefore;
             Economy.forget(990033);
             Economy.forget(crafter.characterId);
         }
@@ -573,8 +728,6 @@ async function run() {
         const craft = check(base, { activity: 'crafting', recipeId: 999999 });
         assert.equal(craft.reason, 'check:craft', 'an unknown recipe refuses the craft');
         assert(craft.sections.includes('supply'), 'a failed craft re-weighs supply');
-        assert.equal(check(base, { activity: 'pvp', targetId: 5, rootKey: 'care:5' }).reason, 'check:target',
-            'a pvp leaf whose root is not its target refuses');
         assert.equal(check(base, { activity: 'dancing' }).reason, 'check:unsupported', 'an unknown kind refuses');
         assert.equal(check(base, { activity: 'resting' }), '', 'resting has no check');
     }
@@ -597,8 +750,8 @@ async function run() {
         assert(sources.has(990001) && !sources.has(990002), 'only the kept scope subscribes its sources');
     } finally { ScopedProviders.build = build; }
     console.log('PASS candidate read scopes');
-    // The build's memos (inventory row keys, the kit fact, the bag tokens)
-    // end with it: a row changed after the build reads fresh.
+    // The build's memos (inventory row keys, the kit fact) end with it: a
+    // row changed after the build reads fresh.
     // A nested build of another bot leaves the outer build's keys exact.
     {
         const T = Date.now(), deps = { timestamp: T }, Sections = invoke('GameServer/Bot/Economy/DecisionSections');
@@ -606,29 +759,25 @@ async function run() {
         const worn = Object.keys(fixture.inventory).find(id => fixture.inventory[id].equipped);
         const state = { ...fixture, inventory: { ...fixture.inventory, [worn]: { ...fixture.inventory[worn] } } };
         const kitBefore = Sections.kit(state);
-        const bagRead = ctx => { const local = ctx.nodeInputs.begin(); ctx.nodeInputs.bag(worn); ctx.nodeInputs.end();
-            return local.bag.get(Number(worn)); };
-        let outer = null, nested = null, bagDuring = null;
+        let outer = null, nested = null;
         try {
             ScopedProviders.build = (subject, ctx, buildDeps) => {
                 if (subject === state && outer === null) {
-                    outer = ctx; bagDuring = bagRead(ctx);
+                    outer = ctx;
                     Economy.forState(equippedFixture(1311, 1, 32, 30000), deps);
-                    nested = [Sections.kit(state), bagRead(ctx)];
+                    nested = Sections.kit(state);
                 }
                 return build(subject, ctx, buildDeps);
             };
             Economy.forState(state, deps);
         } finally { ScopedProviders.build = build; }
         assert(outer, 'the build reached its providers');
-        assert.deepEqual(nested, [kitBefore, bagDuring],
+        assert.equal(nested, kitBefore,
             'a nested build of another bot leaves the outer build\'s keys');
         state.inventory[worn].enchant = 3;
         const fresh = structuredClone(state);
         assert.equal(Sections.kit(state), Sections.kit(fresh), 'the kit reads the changed row');
         assert.notEqual(Sections.kit(state), kitBefore);
-        assert.equal(bagRead(outer), JSON.stringify([state.inventory[worn], 0]), 'a late bag read reads the changed row');
-        assert.notEqual(bagRead(outer), bagDuring);
         Economy.forget(state.characterId);
     }
     console.log('PASS build memos end with the build / nested build');
@@ -727,7 +876,7 @@ async function run() {
         .find(row => row.type === 'dwarven' && Number(row.mpCost) > 0);
     const shopOwner = { ...base, characterId: 1801, simulation: { revision: 1 },
         vitals: { ...base.vitals, mp: shopRecipe.mpCost * 5 },
-        stats: { ...base.stats, workshop: { entries: [{ recipeId: shopRecipe.recipeId, price: 100 }] } } };
+        stats: { ...base.stats, twin: { town: 'Giran', workshop: [{ recipeId: shopRecipe.recipeId, price: 100 }] } } };
     const shopSaved = changes => Workshop.register({ ...shopOwner, ...changes,
         simulation: { ...shopOwner.simulation, revision: shopOwner.simulation.revision + 1 } });
     try {
@@ -752,7 +901,7 @@ async function run() {
     assert.equal(physical.gearThreatMask, 1);
     assert.equal(threatBot.stats.activityLeaf, 88, 'preparing threat never changes the saved activity');
     assert.equal(threatBot.stats.decisionSeq, 7, 'preparing threat never starts a decision event');
-    // A hit needs the build's own output published (its decision echo).
+    // A hit needs the state at the build's input or output.
     Object.assign(threatBot.stats, physical.statsPacket);
     assert.equal(Economy.forState(threatBot, threatDeps).plan, physical.plan);
     threatBot.stats.targetCombat.lastDefeatedNpcIds = [130, 130];
@@ -866,6 +1015,30 @@ async function run() {
         stockFor: id => id === 990002 ? { owned: 4 } : {}, remembered: false });
     assert.equal(closureNetwork.plans.get(ownedCraftRoot.key).requirements.length, 0,
         'physical owned ingredients remain executable after native provider pruning');
+    // The root cut ranks by the solved network worth (value per effort hour):
+    // a capital-heavy craft worth 500 h over 50 h of inputs outranks a full
+    // cut of cheap roots worth 0.02 h each over half an hour of buying.
+    const capitalInput = { key: 'item:990003', price: 50 * context.hourAdena,
+        paths: [{ kind: 'buy', activity: 'shopping', itemId: 990003, price: 50 * context.hourAdena, executable: true }] };
+    const capitalCraft = { key: 'capital-craft', need: 'power', valueHours: 500, price: 50 * context.hourAdena,
+        paths: [{ kind: 'craft', activity: 'crafting', itemId: 990004, recipeId: 2, productCount: 1,
+            requirements: [{ key: capitalInput.key, amount: 1 }] }] };
+    const cheapRoots = Array.from({ length: Network.MAX_ROOTS }, (_, index) => ({ key: `cheap-root-${index}`, need: 'power',
+        valueHours: .02, paths: [{ kind: 'buy', activity: 'shopping', itemId: 990010 + index,
+            price: context.hourAdena / 2, executable: true }] }));
+    const ranked = Providers.build(base, { ...context, wallet: 1e12 }, { spots, nodes: [...cheapRoots, capitalCraft, capitalInput] });
+    assert(ranked.roots.includes(capitalCraft.key) && cheapRoots.some(row => !ranked.roots.includes(row.key)),
+        'the root cut keeps the high-worth capital craft over cheap low-worth roots');
+    // Past the root cap the next-level root keeps its slot before roots of
+    // its priority that score higher (levelling does not compete by score).
+    const worthyRoots = Array.from({ length: Network.MAX_ROOTS }, (_, index) => ({ key: `worthy-root-${index}`, need: 'power',
+        valueHours: 100, paths: [{ kind: 'buy', activity: 'shopping', itemId: 990030 + index,
+            price: context.hourAdena / 2, executable: true }] }));
+    // A station crafter owes no working kit, so its review holds the level root.
+    const levelled = Providers.build({ ...base, stats: { ...base.stats, craftStationId: 1 } }, { ...context, wallet: 1e12 },
+        { spots, nodes: worthyRoots });
+    assert(levelled.roots.some(key => key.startsWith('level:')) && worthyRoots.some(row => !levelled.roots.includes(row.key)),
+        'the level root keeps its slot over higher-scoring roots past the root cap');
     // Clan membership does not introduce a book requirement for free skills.
     Supply.useRowSource(id => id === 1 ? [1, 1, [], 1] : undefined);
     const mage = { ...base, characterId: 903, level: 40, sp: 100000,

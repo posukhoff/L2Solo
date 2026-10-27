@@ -1,5 +1,6 @@
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 const { DiagnosticMetricMap } = require('../Bot/Population/DiagnosticMetricMap');
+const { partyIdOf } = require('../Bot/Population/PartyId');
 const DiagnosticConfig = require('../Bot/Population/PopulationConfig');
 const Crafting = require('./ClanCraftingPolicy');
 const CraftShops = invoke('GameServer/Bot/Economy/CraftShopService');
@@ -18,6 +19,7 @@ const ClanRaidPolicy = require('./ClanRaidPolicy');
 const ClanRaidFailurePolicy = require('./ClanRaidFailurePolicy');
 const BackgroundPartyState = invoke('GameServer/Bot/Population/BackgroundPartyState');
 const DataCache = invoke('GameServer/DataCache');
+const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
 const { planForMember } = require('./ClanEquipmentPlanner');
 const PlanningWorker = require('./ClanPlanningCoordinator');
 const RosterDemand = require('./ClanRosterDemand');
@@ -438,7 +440,7 @@ function goalPurchaseFailed(code, result = {}) {
 // already on its errand for this item; others wait for the next review.
 async function buyGoalCopy(memberId, plan, clan, amount = 1) {
     let state = await LifeState.findByCharacterId(memberId);
-    if (!state || state.phase !== 'cold' || state.partyId || state.party?.partyId
+    if (!state || state.phase !== 'cold' || partyIdOf(state)
         || !['hunting', 'resting'].includes(state.activity)) return { ok: false, code: 'member_busy' };
     const selfId = number(plan.target?.selfId);
     if (ClanCredit.hasClanErrand(state, clan.id, selfId)) {
@@ -448,7 +450,8 @@ async function buyGoalCopy(memberId, plan, clan, amount = 1) {
     // The offer the plan was priced on: the planner's own search over every
     // town (a hunting member's region is its hunting ground, not a town), at
     // no more than the planned price.
-    const offer = GearAcquisitionPlanner.marketOfferForTarget(plan.target, state, { maxMarketPrice: number(plan.market?.price) });
+    const offer = GearAcquisitionPlanner.marketOfferForTarget(plan.target, state,
+        { maxMarketPrice: number(plan.market?.price), purpose: 'clan' });
     if (!offer) return goalPurchaseFailed('market_no_offer');
     const blocker = LifeState.marketPurchaseBlocker(state,
         { ...offer, buyerCharacterId: memberId, equipSlot: number(plan.target?.slot) || undefined }, amount);
@@ -461,7 +464,9 @@ async function buyGoalCopy(memberId, plan, clan, amount = 1) {
     const placed = { price: number(offer.price), sourceType: offer.sourceType, sourceId: offer.sourceId, town: offer.town };
     const purchase = await invoke('GameServer/Bot/Economy/ColdMarketService').acquire(state, selfId, amount, {
         towns: offer.town ? [offer.town] : null, maxPrice: number(offer.price), npc: offer.sourceType === 'npc',
-        purpose: 'clan', money: price, free: true, clanPart, tag: { clanId: number(clan.id), offer: placed, clanPart }
+        purpose: 'clan', money: price, free: true, clanPart,
+        // The member's own goal item: no clan deposit holds it (CombinedErrandPolicy.clanHeld).
+        tag: { clanId: number(clan.id), offer: placed, clanPart, deposit: false }
     });
     // A kept errand (waiting for its party or town visit) carries the credit.
     const { code: settled } = await ClanCredit.settle(clan.id, memberId, clanPart, purchase, 'clan_goal_purchase_refund');
@@ -496,7 +501,7 @@ async function assignPartyObjective(member, clan, goal, plan, priority = 'prefer
     await LifeState.init();
     let current = await LifeState.findByCharacterId(id);
     if (!current) return { ok: false, code: 'member_state_missing', memberId: id };
-    const currentPartyId = current.partyId || current.party?.partyId || null;
+    const currentPartyId = partyIdOf(current);
     if (objective && currentPartyId) {
         const sameGoal = String(current.stats?.clanPartyObjective?.clanGoalKey || '') === String(goal?.goalKey || '');
         const party = BackgroundPartyState.find(currentPartyId);
@@ -505,7 +510,7 @@ async function assignPartyObjective(member, clan, goal, plan, priority = 'prefer
         }
         await releaseConflictingRosterParties(goal.assignedMemberIds || [id], goal, objective, { partyIds: [currentPartyId] });
         current = await LifeState.findByCharacterId(id);
-        if (current.partyId || current.party?.partyId) return { ok: false, code: 'member_party_conflict', memberId: id };
+        if (partyIdOf(current)) return { ok: false, code: 'member_party_conflict', memberId: id };
     }
     if (!objective) {
         const old = current.stats?.clanPartyObjective;
@@ -552,8 +557,8 @@ async function assignPlan(member, plan, clan, goal) {
     if (samePlanTarget(currentPlan, plan) && currentPlan?.crystalPreparation
         && number(currentPlan.clanGoal?.clanId) === number(clan.id)
         && String(currentPlan.clanGoal?.goalKey) === String(goal.goalKey)
-        && number(currentState.inventory?.[1459]?.amount)
-            < number(plan.materials?.find(row => Number(row.selfId) === 1459)?.amount)) {
+        && number(currentState.inventory?.[CRYSTAL_IDS.C]?.amount)
+            < number(plan.materials?.find(row => Number(row.selfId) === CRYSTAL_IDS.C)?.amount)) {
         plan = { ...plan, crystalPreparation: currentPlan.crystalPreparation };
     }
     if (currentPlan?.clanGoal?.clanId
@@ -593,16 +598,19 @@ async function assignPlan(member, plan, clan, goal) {
     return { ok: true, changed: true, memberId: id, handoff, purchase };
 }
 
+// What the clan's own crafters make for its members: each recipe one of them
+// can craft, with its crafter (known first, else the first eligible, who
+// learns it). No Giran station serves bots.
 async function craftingOptions(clan) {
-    const all = CraftShops.availableRecipes(CraftShops.STATION_CRAFTER);
-    const published = CraftShops.publishedRecipeIndex();
+    const all = CraftShops.crafterRecipes();
+    const crafted = new Map();
     const providers = {};
     const crafters = (clan.members || []).filter(member => member.phase === 'cold'
         && !member.recruitmentReserved && !member.stats?.tradeMeeting && !member.stats?.playerPartyTakeover
         && (!member.partyId || Number(member.stats?.clanPartyObjective?.clanId) === Number(clan.id))
         && !['dead', 'respawning'].includes(member.activity)
         && CraftShops.isServiceCrafter(member));
-    if (!crafters.length) return { craftRecipes: [...published.values()], allowedRecipeIds: [...published.keys()], craftProviders: providers };
+    if (!crafters.length) return { craftRecipes: [], allowedRecipeIds: [], craftProviders: providers };
     const rows = await Database.execute([`SELECT recipes.characterId, recipes.recipeId FROM character_recipes recipes
         JOIN characters members ON members.id = recipes.characterId WHERE members.clanId = ?`, [clan.id]], 'clan-craft:recipes');
     const knownByMember = new Map();
@@ -616,13 +624,11 @@ async function craftingOptions(clan) {
         const crafter = eligible.find(member => knownByMember.get(memberId(member))?.has(Number(recipe.recipeId))) || eligible[0];
         if (!crafter) continue;
         const known = knownByMember.get(memberId(crafter))?.has(Number(recipe.recipeId)) || false;
-        // Prefer a public service over teaching an unknown recipe unnecessarily.
-        if (!known && published.has(Number(recipe.recipeId))) continue;
         providers[recipe.recipeId] = { characterId: memberId(crafter), known,
             recipeItemId: Number(recipe.recipeItemId), loc: crafter.loc || { locX: 83400, locY: 148600, locZ: -3400 } };
-        published.set(Number(recipe.recipeId), recipe);
+        crafted.set(Number(recipe.recipeId), recipe);
     }
-    return { craftRecipes: [...published.values()], allowedRecipeIds: [...published.keys()], craftProviders: providers };
+    return { craftRecipes: [...crafted.values()], allowedRecipeIds: [...crafted.keys()], craftProviders: providers };
 }
 
 async function prepareRecruitment(clan, profiles, previousGoal, options) {
@@ -1036,7 +1042,7 @@ function raidAssemblyCommitted(clan, goal) {
     const beneficiary = members.find(member => memberId(member) === number(goal.target?.memberId));
     if (!beneficiary || Policy.targetFulfilled(beneficiary, goal, GearAcquisitionPlanner.equippedSlotsFor,
         selfId => ItemTemplateIndex.findFinite(DataCache.items, selfId) || null)) return false;
-    if (members.every(member => !member.partyId && !member.party?.partyId)) {
+    if (members.every(member => !partyIdOf(member))) {
         const Formation = require('../Bot/Population/RequiredPartyFormation');
         const available = (clan.members || []).filter(Formation.eligible);
         if (available.length >= 9 && members.some(member => !Formation.eligible(member))
@@ -1046,7 +1052,7 @@ function raidAssemblyCommitted(clan, goal) {
     if (members.some(member => {
         if (!Roster.same(member.stats?.clanPartyObjective?.fullRoster, marker)
             || require('../Bot/Population/PartyAssemblyRecovery').coolingDown(member)) return true;
-        const partyId = member.partyId || member.party?.partyId;
+        const partyId = partyIdOf(member);
         if (!partyId) return member.stats?.partyRequest?.status !== 'open';
         const party = BackgroundPartyState.find(partyId);
         return !party || party.status !== 'active' || !Roster.same(Roster.markerFor(party), marker)
@@ -1135,7 +1141,8 @@ async function resolveClan(clan, previousGoal = null, options = {}) {
     if (planning.workerFingerprint && selection.plan?.strategy === 'market') {
         const currentOffer = invoke('GameServer/Bot/Economy/MarketOpportunity').bestOffer(selection.plan.target.selfId, {
             town: selection.plan.market?.town,
-            buyerCharacterId: memberId(selection.member)
+            buyerCharacterId: memberId(selection.member),
+            purpose: 'clan'
         });
         if (!currentOffer || Number(currentOffer.price) !== Number(selection.plan.market?.price)
             || currentOffer.sourceType !== selection.plan.market?.sourceType) {

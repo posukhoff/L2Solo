@@ -24,7 +24,7 @@ function storeItemPrice(store, item, actor = null) {
     const source = item[staticPriceSource];
     if (!source) return Number(item.price);
     const pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
-    return isBotActor(actor) ? pricing.botPriceFor(source.store, source.line)
+    return isBotActor(actor) ? pricing.configuredPrice(source.line)
         : pricing.priceFor(source.store, source.line, { viewerId: actor?.fetchId?.() || 0, actor,
             enchant: Number((actor && Number(store.storeType) === 3
                 ? sellableCopy(actor, item.selfId) : null)?.fetchEnchantLevel?.() || 0) });
@@ -55,16 +55,12 @@ function nativeStoreItems(store) {
     return (store?.items || []).filter(item => WireD.isRepresentable(item.price));
 }
 
-// The retained static-buyer route until 3.6 is only for bot materials.
-// Preview and queued execution share this gate so neither buyer selection
-// nor a direct/stale arrival can liquidate gear through a static buyer.
-function acceptsSellerItem(actor, storeItem, inventoryItem) {
+// Bots never sell to a static buyer merchant; the player keeps that route.
+// Preview and queued execution share this gate so neither a buyer selection
+// nor a direct/stale arrival can sell a bot's item to a static buyer.
+function acceptsSellerItem(actor, storeItem) {
     if (BeginnerShots.isRestricted(storeItem.selfId)) return false;
-    if (storeItem[staticPriceSource] && isBotActor(actor)
-        && require('./Economy/ProductionPolicy').buyersDisabled()) return false;
-    return !storeItem[staticPriceSource] || !isBotActor(actor)
-        || String(inventoryItem?.fetchKind?.() || itemTemplate(storeItem.selfId)?.template?.kind || '')
-            .startsWith('Other.Material');
+    return !storeItem[staticPriceSource] || !isBotActor(actor);
 }
 
 async function withTradeQueues(store, selfId, actors, operation) {
@@ -122,20 +118,6 @@ function ratedPrice(selfId, rate, fallback = 1) {
     const base = itemBasePrice(selfId);
     const price = base > 0 ? base * rate : fallback;
     return BotEconomyPricing.scalePrice(price);
-}
-
-function storeLoc(actor) {
-    return {
-        locX: actor.fetchLocX(),
-        locY: actor.fetchLocY(),
-        locZ: actor.fetchLocZ()
-    };
-}
-
-function distance2d(a, b) {
-    const dx = a.locX - b.locX;
-    const dy = a.locY - b.locY;
-    return Math.sqrt(dx * dx + dy * dy);
 }
 
 function fetchAdena(actor) {
@@ -340,7 +322,7 @@ function previewSaleToStore(actor, store, options = {}) {
             const storeItem = store.items.find((item) => item.selfId === inventoryItem.fetchSelfId() && item.count > 0);
             if (!storeItem) return;
             if (store.kind === 'player' && Number(inventoryItem.fetchEnchantLevel?.() || 0) !== Number(storeItem.enchant || 0)) return;
-            if (!acceptsSellerItem(actor, storeItem, inventoryItem)) return;
+            if (!acceptsSellerItem(actor, storeItem)) return;
 
             const price = storeItemPrice(store, storeItem, actor);
             const already = lines.filter(line => line.selfId === inventoryItem.fetchSelfId()).reduce((sum, line) => sum + line.qty, 0);
@@ -482,7 +464,7 @@ async function sellToStore(actor, store, selfId, qty, options = {}) {
             if (!Number.isSafeInteger(requestedQty) || requestedQty <= 0) {
                 throw new Error("Invalid quantity.");
             }
-            if (!acceptsSellerItem(actor, storeItem, actorItem)) {
+            if (!acceptsSellerItem(actor, storeItem)) {
                 throw new Error('Static buyer item is unavailable to bots.');
             }
             const actorCount = actorItem ? actorItem.fetchAmount() : 0;
@@ -615,44 +597,11 @@ async function sellInventoryToStore(actor, store, options = {}) {
     };
 }
 
-function findBestBuyerForActor(actor, merchantSessions, options = {}) {
-    const town = options.town || null;
-    const maxTownDistance = options.maxTownDistance ?? 6500;
-    const actorLoc = storeLoc(actor);
-
-    let best = null;
-    merchantSessions.forEach((session) => {
-        const merchant = session.actor;
-        if (!merchant) return;
-        if (!String(session.accountId || '').startsWith('bot_') || session.plan !== 'merchant') return;
-
-        const store = merchant.fetchPrivateStore && merchant.fetchPrivateStore();
-        if (!store || store.storeType !== 3 || !store.items.length) return;
-
-        const merchantLoc = storeLoc(merchant);
-        if (town && distance2d(merchantLoc, { locX: town.x, locY: town.y, locZ: town.z }) > maxTownDistance) {
-            return;
-        }
-
-        const preview = previewSaleToStore(actor, store, options);
-        if (preview.totalAdena <= 0) return;
-
-        const distance = distance2d(actorLoc, merchantLoc);
-        const score = preview.totalAdena - Math.floor(distance / 10);
-        if (!best || score > best.score) {
-            best = { session, actor: merchant, store, preview, distance, score };
-        }
-    });
-
-    return best;
-}
-
 module.exports = {
     nativeStoreItems,
     buyFromStore,
     describeStoreItems,
     findAfkBuyerForActor,
-    findBestBuyerForActor,
     itemBasePrice,
     isSellableInventoryItem,
     itemName,

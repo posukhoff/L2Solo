@@ -4,6 +4,7 @@ const { createWorld, Database } = require('./helpers/c4QuestHarness');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
 const Owner = invoke('GameServer/Bot/Population/ColdSimulationOwner');
 const Service = require('../src/GameServer/AfkTrade/TradeMeetingService');
+const Counters = require('../src/GameServer/Bot/Economy/MarketCounters');
 const ids = [730301, 730302], point = { locX: 83396, locY: 147904, locZ: -3400 };
 const flush = async () => { for (let n = 0; n < 30; n++) await new Promise(resolve => setImmediate(resolve)); };
 (async () => {
@@ -23,6 +24,11 @@ const flush = async () => { for (let n = 0; n < 30; n++) await new Promise(resol
                 loc: point, currentRegion: 'Giran', vitals: { hp: 100, maxHp: 100, mp: 100, maxMp: 100 },
                 stats: { money: [100, 0, 1000, 0] }, timing: {} }, 'arrival_fixture');
         }
+        // The market counters as a boot leaves them: the board journal replayed.
+        const boot = async () => { Counters.reset(); Counters.load(await Database.fetchRecentBoardDeals({ perItem: Counters.REPLAY_DEALS,
+            rangeMs: Counters.DAY_MS })); };
+        await boot();
+        const dealsBefore = Counters.itemDeals(1867).deals;
         const prepare = async token => {
             Service.reset();
             // A committed traveling participant is unavailable even near the destination.
@@ -40,7 +46,7 @@ const flush = async () => { for (let n = 0; n < 30; n++) await new Promise(resol
             const request = { token, actorA: ids[0], actorB: ids[1], seqA: parties[0].sequence, seqB: parties[1].sequence,
                 town: 'Giran', point,
                 lines: [{ payer: 0, itemId: source.id, selfId: 1867, count: 6, price: 10,
-                    needAdId: ad.id, needAdRevision: ad.revision, certificate: JSON.parse(ad.lines[0].intentJson) }],
+                    certificate: JSON.parse(ad.lines[0].intentJson) }],
                 parties: parties.map(p => ({ ...p, route: { fee: 0, scroll: false, method: 'walk', durationMs: 1000 } })) };
             const accepted = await Database.acceptTradeMeeting(request);
             Object.values(accepted.coldLifeRows).forEach(row => Life.acceptLifecycleRow(row));
@@ -79,6 +85,14 @@ const flush = async () => { for (let n = 0; n < 30; n++) await new Promise(resol
         assert.equal(await world.amount(ids[1], 1867), 14);
         assert.equal(await world.amount(ids[0], 57), 119940, 'death returns only the second reservation');
         assert.equal(await world.amount(ids[1], 57), 120060);
-        console.log('PASS native cold arrival event settles once; unchanged/nonparticipants, recovery, death and asset conservation');
+        // The completed meeting is a board deal now, once; the cancelled one is none,
+        // and a boot replay of the journal reads the same deals as the live counters.
+        const live = JSON.parse(JSON.stringify(Counters.itemDeals(1867)));
+        assert.equal(live.deals, dealsBefore + 1, 'a completed meeting moves the live board counters like a store deal');
+        assert.deepEqual(live.prices.slice(-1), [10]);
+        assert.deepEqual([live.sellers.at(-1), live.buyers.at(-1)], [ids[1], ids[0]]);
+        await boot();
+        assert.deepEqual(Counters.itemDeals(1867), live, 'live counters agree with the boot replay of the same deals');
+        console.log('PASS native cold arrival event settles once; unchanged/nonparticipants, recovery, death, asset conservation, live board counters');
     } finally { Service.reset(); Database.arriveTradeMeeting = originalArrive; await world.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

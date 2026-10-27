@@ -40,7 +40,6 @@ try {
         assert.equal(c.rewardForNpc(1), null);
         assert.equal(c.dwarvenRecipesForItems(), null);
         assert.equal(c.npcTownOffers(), null);
-        assert.equal(c.spotNpcWeights(null, 1), null);
         assert.equal(recipeReads, 0);
     } finally { fs.readFileSync = readFile; }
 

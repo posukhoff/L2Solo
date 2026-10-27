@@ -33,7 +33,7 @@ async function run() {
             inventory: Life.inventorySummaryFromItems(physical), stats: { classId, generatedCold: true } };
         for (const phase of ['cold', 'hot']) assert.equal(Disposition.inventoryCleanupNeed({ ...created, phase }), null,
             `class ${classId}: a fresh ${phase} bot must not leave hunting to sell its spare starter gear`);
-        if (classId === 53) assert.equal(Disposition.npcLiquidationCandidates(created)
+        if (classId === 53) assert.equal(Disposition.saleCandidates(created, { unlimited: true })
             .find(item => item.selfId === 2369)?.count, 1,
         'the spare starter sword remains sellable during a necessary town visit');
         await Seeder.awardBaseGear(id, classId);

@@ -10,7 +10,6 @@ const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const Manager = invoke('GameServer/Bot/BotManager');
 const DataCache = invoke('GameServer/DataCache');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
-const BuyerActivity = invoke('GameServer/Bot/Economy/MarketBuyerActivity');
 const saved = { user: World.user, speak: Response.speak, cached: LifeState.cachedState,
     upsert: LifeState.upsertState, find: Manager.findSessionById, activeShops: AfkTrade.activeShops,
     subscribe: AfkTrade.subscribeBoardChanges, now: Date.now, config: { ...Config } };
@@ -43,7 +42,6 @@ function reset() {
     Chat.reset(); Voice.reset(); packets.length = 0; leaked.length = 0; states.clear(); hot.clear(); now += 1000000;
     Config.marketTradeChatEnabled = true;
     AfkTrade.activeShops = () => [];
-    BuyerActivity._resetForTests();
     World.user = { sessions: [player(packets), player(leaked, 'bot_test'), player(leaked, 'offline', false)] };
 }
 function afkShop(id, selfId = 1, type = 1, price = 72863) {

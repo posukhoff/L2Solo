@@ -33,7 +33,7 @@ function stage() {
     const token = `hot-shopping-${++serial}`;
     Meetings.stage({ token, actorA: bot.fetchId(), actorB: 920052, seqA: 1, seqB: 1, town: 'Giran', point,
         lines: [{ payer: 0, itemId: 123, selfId: 1, count: 1, price: 500 }],
-        parties: [0, 1].map(() => ({ revision: 0, sequence: 1, needRevision: 0, phase: 'hot',
+        parties: [0, 1].map(() => ({ revision: 0, sequence: 1, phase: 'hot',
             ownerId: 'legacy_main', leaseId: null, hotAt: 1,
             route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } })) });
     return token;

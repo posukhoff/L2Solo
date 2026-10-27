@@ -102,11 +102,12 @@ async function run() {
     // the native check publish the bid the worker decided.
     const lines = BuyAdPolicy.linesFor(poor, goal, { economy, board: null, watchList: [], money });
     assert.deepEqual(lines.map(line => [line.selfId, line.count, line.price, line.survivalCost]), [[SHOT, bid.count, bid.price, 1000]]);
-    const batch = invoke('GameServer/Bot/Population/ColdEconomyPlan').buyBatch(lines);
-    assert.deepEqual(batch, { buyAds: [[SHOT, bid.count, bid.price]], buyKit: [1000] });
+    const town = invoke('GameServer/Bot/Economy/MarketTownPolicy').buyAdTown(poor, lines);
+    const batch = invoke('GameServer/Bot/Population/ColdEconomyPlan').buyBatch(lines, town);
+    assert.deepEqual(batch, { buyAds: [[SHOT, bid.count, bid.price]], buyTown: town, buyKit: [1000] });
     await Market.executePlan(Life.cachedState(owner), batch);
     ads = await records();
-    assert.deepEqual(ads.map(ad => [ad.lines[0].selfId, ad.lines[0].count, ad.lines[0].price]), [[SHOT, bid.count, bid.price]]);
+    assert.deepEqual(ads.map(ad => [ad.lines[0].selfId, ad.lines[0].count, ad.lines[0].price, ad.town]), [[SHOT, bid.count, bid.price, town]]);
     assert.equal(await wallet(), 10000);
 
     console.log('Survival tranche: native bid check, executePlan and worker bid fund a shot ad by its kit cost');

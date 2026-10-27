@@ -41,7 +41,7 @@ assert.equal(result.activity.itemId, 626);
 assert.equal(result.activity.amount, 3, 'the next purchase respects the finite native batch');
 assert.equal(result.activity.price, 3 * price, 'command cost remains the real cost of the three ordered shields');
 assert.equal(result.activity.valueHours, 100 * 99 / crystals);
-const advert = Intent.project({}, result, {}, () => price).find(row => row.itemId === 626);
+const advert = Intent.project({}, result, {}).find(row => row.itemId === 626);
 assert.equal(advert.amount, 3, 'public input demand cannot order the entire future 163-shield supply');
 assert.equal(advert.valueHours, result.activity.valueHours);
 

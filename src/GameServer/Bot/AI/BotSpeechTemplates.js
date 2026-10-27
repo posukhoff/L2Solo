@@ -28,12 +28,6 @@ const catalog = {
         "{merchant} is buying, so I'll sell there.",
         "Found a player buyer in {town}: {merchant}."
     ],
-    "town.buyer-selected.player": [
-        "Taking this loot to {merchant} in {town}.",
-        "{merchant} is buying, so I'll sell there.",
-        "Found a buyer in {town}: {merchant}.",
-        "I'll see what {merchant} offers for this haul."
-    ],
     "town.npc-seller-unavailable": [
         "Can't find anyone to sell this lot to. I'll try again later.",
         "No luck with the shops. Guess I'm carrying this a little longer."

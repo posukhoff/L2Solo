@@ -1,4 +1,5 @@
 const SurvivalFloor = require('./SurvivalFloor');
+const { partyIdOf } = require('./PartyId');
 const BotErrands = require('./BotErrands');
 // The bag's need to go sell, one rule for the clan break, the solo forced
 // cleanup and the cold worker's step: the native slot/weight floor first
@@ -16,7 +17,7 @@ const CLEANUP_BUSY_ACTIVITIES = ['traveling', 'shopping', 'merchant', 'crafting'
 // A solo cold bot with no trip or errand under way goes to sell when its bag
 // needs it: the worker attaches this need to the step's proposal, main starts the trip.
 function forcedCleanupNeed(state, now) {
-    if (!state || state.phase !== 'cold' || state.party?.partyId || state.partyId
+    if (!state || state.phase !== 'cold' || partyIdOf(state)
         || state.stats?.travel || BotErrands.busyWith(state, CLEANUP_BUSY_FLAGS)
         || CLEANUP_BUSY_ACTIVITIES.includes(state.activity)) return null;
     return cleanupNeed(state, now);
@@ -46,10 +47,10 @@ function sessionReady(party, member, goal, now, config) {
         const cost = Number(goal.plan.estimatedCost), Funding = require('../Economy/PurchaseFunding');
         if (cost > 0 && Funding.spendable(member, 0, Funding.goalTerms(goal)) >= cost) {
             const Progression = invoke('GameServer/Bot/AI/PersonalGearProgression');
-            const assessment = Progression.assess(member);
+            const assessment = Progression.assess(member).milestone;
             const item = invoke('GameServer/Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, goal.target?.itemId);
             const slot = Number(String(goal.plan.wishKey || '').match(/^power:\d+:(\d+)$/)?.[1] || goal.target?.itemSlot);
-            if (item && assessment.required && Progression.priority(item, slot, assessment)) return true;
+            if (item && assessment.required && Progression.priority(slot, assessment, item)) return true;
         }
     }
     return now - Number(party.stats?.formedAt || party.startedAt || now) >= config.partyMarketBreakMinSessionMs
@@ -96,7 +97,7 @@ function stats(party, departed) {
     return token ? { marketAbsences: { ...party.stats?.marketAbsences, [departed.characterId]: token } } : {};
 }
 function ready(state) {
-    return !!state?.stats?.partyMarketReturn && !state.party?.partyId && !state.partyId
+    return !!state?.stats?.partyMarketReturn && !partyIdOf(state)
         && !state.stats?.travel && !state.stats?.marketReturn
         && ['hunting', 'party_wait', 'grouped'].includes(state.activity);
 }

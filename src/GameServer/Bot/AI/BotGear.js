@@ -4,6 +4,7 @@ const GearSkillHints = invoke('GameServer/Bot/AI/GearSkillHints');
 const BotEquipmentCompatibility = invoke('GameServer/Bot/AI/BotEquipmentCompatibility');
 const BotWeaponCompatibility = invoke('GameServer/Bot/AI/BotWeaponCompatibility');
 const ArmorPolicy = invoke('GameServer/Bot/AI/BotArmorPolicy');
+const { GRADES: RANK_ORDER, gradeBand } = invoke('GameServer/Bot/AI/GearGradeRule');
 
 const ARMOR_SLOTS = {
     earringRight: 1,
@@ -22,27 +23,12 @@ const ARMOR_SLOTS = {
     fullArmor: 15
 };
 
-const GRADE_BANDS = [
-    { rank: 'none', min: 1, max: 19 },
-    { rank: 'd', min: 20, max: 39 },
-    { rank: 'c', min: 40, max: 51 },
-    { rank: 'b', min: 52, max: 60 },
-    { rank: 'a', min: 61, max: 75 },
-    { rank: 's', min: 76, max: 99 }
-];
-
-const RANK_ORDER = ['none', 'd', 'c', 'b', 'a', 's'];
 const NO_GRADE_PRICE_CAPS = [
     { maxLevel: 5, price: 1000 },
     { maxLevel: 10, price: 12500 },
     { maxLevel: 15, price: 33600 },
     { maxLevel: 19, price: 66600 }
 ];
-
-function gradeForLevel(level) {
-    const value = Number(level || 1);
-    return GRADE_BANDS.find((band) => value >= band.min && value <= band.max) || GRADE_BANDS[0];
-}
 
 function progression(level, band) {
     const value = Number(level || 1);
@@ -183,7 +169,7 @@ function choose(rank, level, predicate, score) {
     const candidates = candidatesFor(rank, predicate);
     if (candidates.length === 0) return null;
 
-    const band = gradeForLevel(level);
+    const band = gradeBand(level);
     const pct = rank === band.rank ? progression(level, band) : 0.55;
     const levelPriceCap = priceCapFor(rank, level);
     const priced = candidates.filter((item) => item.price > 0);
@@ -373,7 +359,7 @@ function planFor(character) {
 
 function buildPlan(classId, level) {
     const role = BotRoles.inferRole(classId);
-    const band = gradeForLevel(level);
+    const band = gradeBand(level);
     const rank = band.rank;
     const style = BotEquipmentCompatibility.armorStyleFor(role, classId);
     const weapon = chooseWeapon(rank, level, role, classId);

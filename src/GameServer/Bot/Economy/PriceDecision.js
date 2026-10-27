@@ -20,6 +20,7 @@ const DataCache = invoke('GameServer/DataCache');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
 const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const PriceBelief = invoke('GameServer/Bot/Economy/PriceBelief');
+const CommittedExits = require('./CommittedExits');
 
 // 19 prices from 2 widths under the centre to 2.5 over it.
 const GRID = Object.freeze(Array.from({ length: 19 }, (_, at) => -2 + at * 0.25));
@@ -62,6 +63,24 @@ function buyback(selfId) {
     return NpcSellRules.npcBuyPrice(Number(item?.template?.price || 0));
 }
 
+// The one NPC floor of the board: an ask or a bid counts only above the
+// item's NPC buy-back (at or below it the NPC pays as much, so no ask goes
+// there and a bid there never fills). `floor`: the buy-back; none bounds nothing.
+function aboveBuyback(price, floor) {
+    return Number(price) > (Number(floor) || 0);
+}
+
+// What a held bid becomes under a ceiling (an outside purchase, the cash):
+// null = it stands, 0 = withdraw, else the lower price. A bid that cannot
+// fill (aboveBuyback) is withdrawn; a ceiling never lowers it to the buy-back.
+function heldBid(selfId, price, ceiling) {
+    const floor = buyback(selfId);
+    if (!aboveBuyback(price, floor)) return 0;
+    const limit = Math.floor(ceiling);
+    if (!Number.isSafeInteger(limit) || limit < 0 || limit >= price) return null;
+    return aboveBuyback(limit, floor) ? limit : 0;
+}
+
 function saleOutcome({ units, applicableUnits, willingUnits, cheaperUnits, price,
     residualUnitValue = 0, delayHours = 0, discountRate = 0 } = {}) {
     if (!Number.isSafeInteger(units) || units < 0 || !Number.isSafeInteger(cheaperUnits) || cheaperUnits < 0
@@ -78,7 +97,7 @@ function saleOutcome({ units, applicableUnits, willingUnits, cheaperUnits, price
         : { known: false, sold: NaN, residual: NaN, receipts: NaN, residualValue: NaN };
 }
 
-// The same finite willingness model serves an ask and a first production trial.
+// The finite willingness of an ask's buyers (a bid states its own count: prospectiveExit).
 function willingUnitsAt(belief, trader, { price, applicableUnits, landed = price, npcLanded = Infinity }) {
     const width = PriceBelief.sigma(belief);
     const centre = belief.mu + (trader.assertiveness - 0.5) * width;
@@ -87,9 +106,13 @@ function willingUnitsAt(belief, trader, { price, applicableUnits, landed = price
     return applicableUnits * wants * chosen;
 }
 
-// A public bid describes interest, never reserved money. Re-read its exact
-// native record so a withdrawn/edited bid cannot support a stale trial.
-function prospectiveExit(state, exit, { board, persona, timestamp = Date.now(), belief = null } = {}) {
+// An unbacked bid is interest, not money: sell into it only if that sells
+// more than what is already held. Re-read its exact native record
+// so a withdrawn or edited bid cannot support a stale exit. The line states
+// its price and count, so it takes its count at its price (G2, user
+// 2026-10-23): the seller's own belief of the item does not discount it.
+// The one owner of how many units a buyer's bid takes from a seller.
+function prospectiveExit(state, exit, { board, timestamp = Date.now() } = {}) {
     const unsupported = () => {
         const rest = { ...exit };
         delete rest.prospective;
@@ -109,21 +132,20 @@ function prospectiveExit(state, exit, { board, persona, timestamp = Date.now(), 
     if (!line || line.storeType !== BUY || line.custodyPolicy !== 1 || line.ownerId !== ownerId
         || line.selfId !== id || Number(line.enchant || 0) || line.price !== Number(offer.price)
         || line.count !== Number(offer.count) || line.revision !== revision) return unsupported();
-    persona ||= invoke('GameServer/Bot/AI/BotPersona').of(state);
-    if (!persona) return unsupported();
-    // The caller's own belief of this item, when it already holds one.
-    belief ||= PriceBelief.prior(id, { board, characterId: Number(state.characterId), timestamp,
-        understanding: Number(persona.understanding ?? 0.3), marketTrades: state.marketTrades || {} });
-    if (!belief || !Number.isFinite(belief.mu) || !(PriceBelief.sigma(belief) > 0)) return unsupported();
-    const willingUnits = willingUnitsAt(belief, traderOf(persona), { price: line.price, applicableUnits: line.count });
-    if (!Number.isFinite(willingUnits) || willingUnits < 0) return unsupported();
-    return { ...exit, trial: true, repeatable: false, residualUnitValue: buyback(id), prospective: {
+    return { ...exit, trial: true, residualUnitValue: buyback(id), prospective: {
         known: true, origin: 'public_bid', authority: { recordId: line.recordId, lineId: line.lineId, revision: line.revision },
-        applicableUnits: line.count, willingUnits, observedAt: timestamp } };
+        applicableUnits: line.count, willingUnits: line.count, observedAt: timestamp } };
 }
 
 // The asks of one board list a trader inspects.
 const QUOTE_DEPTH = 5;
+
+// The one owner of "the first ask not inspected bounds the rest of the
+// book": the asks are sorted by price (BoardIndex SELL ascending), so every
+// ask from index `inspected` on costs at least this; Infinity when none is left.
+function uninspectedFrom(asks, inspected) {
+    return inspected < asks.length ? Number(asks[inspected].price) : Infinity;
+}
 
 // The cheaper competition a seller meets at a bid price: of the first
 // QUOTE_DEPTH asks of the whole board list (the seller's own included, as
@@ -137,7 +159,7 @@ function cheaperAsks(asks, { ownerId, price, enchant = 0 }) {
         if (Number(line.ownerId ?? line.sourceId) !== Number(ownerId) && Number(line.enchant || 0) === Number(enchant)
             && line.price < price) cheaperUnits += Number(line.count);
     }
-    return { cheaperUnits, tail: asks.length > QUOTE_DEPTH && asks[QUOTE_DEPTH].price < price };
+    return { cheaperUnits, tail: uninspectedFrom(asks, QUOTE_DEPTH) < price };
 }
 
 // The competition of one exit of `count` units, one reader for the planner,
@@ -148,21 +170,32 @@ function exitCompetition(asks, { ownerId, price, enchant = 0, count }) {
     return { cheaperUnits, limit: tail && cheaperUnits < count };
 }
 
-// One finite sale of `units` more goods into one bid (MVP-5). A backed bid
-// buys its count; a conditional one only what its buyer is willing to pay
-// for, read from the seller's price belief (prospectiveExit). Cheaper
+// One finite sale of `units` more goods into one bid (MVP-5). A bid buys
+// its count at its price (prospectiveExit for a conditional one). Cheaper
 // foreign asks serve the buyer first and the seller's own unsold goods
 // (`oldUnits`) are counted once, so `gross` is only the gain of the new
-// units. `limit`: an uninspected cheaper tail may cover the bid.
-function bidSale(state, offer, { board, persona, timestamp = Date.now(), asks = [], oldUnits = 0, units,
-    residualUnitValue, fixed = false, belief = null } = {}) {
+// units. `producer` (the id of a bot sizing goods it would make or farm,
+// never a holder selling goods in hand): the units its rivals' plans in
+// flight already commit to the line (CommittedExits) are theirs, its demand
+// is what they leave. `limit`: an uninspected cheaper tail may cover the bid.
+// `floor`: a bid at or under the item's NPC buy-back is no buyer, the
+// seller's NPC exit beats it (aboveBuyback, user 10-27); the units past a
+// buyer's demand still count at `residualUnitValue`.
+function bidSale(state, offer, { board, timestamp = Date.now(), asks = [], oldUnits = 0, units,
+    residualUnitValue, producer = 0 } = {}) {
+    if (!aboveBuyback(offer.price, buyback(offer.selfId))) return { status: 'floor' };
     let exit = { conditional: offer.custodyPolicy === 1, price: offer.price, count: offer.count, offer };
-    if (!fixed) exit = prospectiveExit(state, exit, { board, persona, timestamp, belief });
-    const forecast = exit.prospective
+    exit = prospectiveExit(state, exit, { board, timestamp });
+    let forecast = exit.prospective
         || (!exit.conditional ? { known: true, applicableUnits: offer.count, willingUnits: offer.count } : null);
     if (!forecast?.known) return { status: 'unknown', exit };
-    const { cheaperUnits, limit } = fixed ? { cheaperUnits: 0, limit: false }
-        : exitCompetition(asks, { ownerId: state?.characterId, price: offer.price, enchant: Number(offer.enchant || 0),
+    const rivals = producer > 0 ? CommittedExits.rivalLineUnits(offer.recordId, offer.lineId, producer) : 0;
+    if (rivals > 0) {
+        const open = Math.max(0, forecast.applicableUnits - rivals);
+        if (!open && forecast.applicableUnits > 0) CommittedExits.refused();
+        forecast = { ...forecast, applicableUnits: open, willingUnits: Math.min(forecast.willingUnits, open) };
+    }
+    const { cheaperUnits, limit } = exitCompetition(asks, { ownerId: state?.characterId, price: offer.price, enchant: Number(offer.enchant || 0),
             count: forecast.applicableUnits });
     if (limit) return { status: 'limit', exit, forecast, cheaperUnits };
     const input = { applicableUnits: forecast.applicableUnits, willingUnits: forecast.willingUnits, cheaperUnits, price: offer.price,
@@ -174,6 +207,36 @@ function bidSale(state, offer, { board, persona, timestamp = Date.now(), asks = 
         gross: after.receipts + after.residualValue - before.receipts - before.residualValue };
 }
 
+// The one owner of "how many lots a buyer's line takes from me" (decision
+// (b), 2026-10-24: an unbacked bid is a real buyer sized at what it takes).
+// Units: the line's demand past the cheaper foreign asks (saleOutcome) less
+// the seller's `oldUnits` held, incoming or listed, which bidSale sells into
+// it first; offering the whole count reads that as after.sold - before.sold.
+// Lots: those units plus the `reserve` a batch fills first for the seller's
+// own stock (ShotSalePolicy.exit counts it the same) in whole lots of
+// `perLot`, at least one, at most `cap`; 0 when the line takes nothing from
+// this seller or its demand is unknown. `producer` as bidSale's.
+function bidLots(state, offer, { board, timestamp = Date.now(), asks = [], oldUnits = 0, reserve = 0, perLot = 1,
+    cap = Infinity, producer = 0 } = {}) {
+    const sale = bidSale(state, offer, { board, timestamp, asks, oldUnits, units: Number(offer?.count), producer });
+    const units = sale.status === 'ready' ? sale.after.sold - sale.before.sold : 0;
+    return units > 0 && perLot > 0 ? Math.max(1, Math.min(cap, Math.floor((units + reserve) / perLot))) : 0;
+}
+
+// The one owner of "units of an item the seller already has to sell": the
+// `oldUnits` bidSale and bidLots sell into first and ShotSalePolicy's
+// `existing`. The free units the caller's context counts (its reservations),
+// the accepted incoming and the units on its own plain sell lines
+// (plainSale) of that item.
+function heldUnits(free, incoming, ownSales = []) {
+    let units = Number(free || 0) + Number(incoming || 0);
+    for (const line of ownSales) units += Number(line.count);
+    return units;
+}
+// A seller's own sell line whose units count as held for sale: on sale now
+// (not a conditional custody-1 line) and of enchant 0, as the exits are.
+const plainSale = line => line.storeType === SELL && line.custodyPolicy !== 1 && !Number(line.enchant || 0);
+
 // What the seller of `units` of an item in `town` competes with: { buyback,
 // buyersPerHour, lot, rivals [{ landed, units }], npcLanded, ownTrip }.
 // tripCost(town): a buyer's trip there in Adena (OfferOrder.tripCost of the
@@ -182,22 +245,30 @@ function marketFor(selfId, { board = null, ownerId = 0, town = null, units = 1, 
     npcOffers = [], timestamp = Date.now(), enchant = 0, demand = null, ownUnits = null,
     jointKnown = true } = {}) {
     const id = Number(selfId);
-    const trip = (where) => (tripCost ? Math.min(Number(tripCost(where)) || 0, Number.MAX_SAFE_INTEGER) : 0);
+    const bounded = cost => Math.min(Number(cost) || 0, Number.MAX_SAFE_INTEGER);
+    const trip = (where) => (tripCost ? bounded(tripCost(where)) : 0);
     const rivals = [];
-    let truncated = false;
-    // Bound attention as well as retained rivals. Uninspected mixed enchants
-    // or own rows make the forecast unknown, never invented free liquidity.
+    // Bound attention as well as retained rivals: 2 * RIVALS_SEEN asks
+    // inspected, RIVALS_SEEN foreign ones of the enchant retained. Every ask
+    // past them costs at least the first one not inspected or not retained
+    // (uninspectedFrom) and lands at least the cheapest trip to any town over
+    // that (EconomicTrip least): `seenTo`, the landed price up to which the
+    // competition is known; above it unknown, never invented free liquidity
+    // (PriceDecision.chooseAsk).
     const source = board ? board.list(id, SELL) : [];
-    const observed = source.slice(0, 2 * RIVALS_SEEN);
-    truncated = source.length > observed.length;
-    for (const line of observed) {
+    let inspected = 0;
+    for (; inspected < source.length && inspected < 2 * RIVALS_SEEN; inspected++) {
+        const line = source[inspected];
         if (line.ownerId === Number(ownerId) || Number(line.enchant || 0) !== Number(enchant)) continue;
-        if (rivals.length < RIVALS_SEEN) rivals.push({ landed: line.price + trip(line.town), units: line.count,
+        if (rivals.length === RIVALS_SEEN) break;
+        rivals.push({ landed: line.price + trip(line.town), units: line.count,
             origin: 'public_ask', authority: { recordId: line.recordId, lineId: line.lineId, revision: line.revision },
             selfId: id, enchant: Number(enchant), observedAt: timestamp, scope: 'board',
             availability: { from: timestamp, until: timestamp } });
-        else truncated = true;
     }
+    const unseen = uninspectedFrom(source, inspected);
+    // A trip reader without a town table (a plain cost) bounds nothing: 0.
+    const seenTo = unseen < Infinity ? unseen + (tripCost?.least ? bounded(tripCost.least()) : 0) : Infinity;
     let npcLanded = Infinity;
     for (const offer of enchant > 0 ? [] : npcOffers || []) {
         if (offer?.price > 0) npcLanded = Math.min(npcLanded, Number(offer.price) + trip(offer.town));
@@ -214,7 +285,7 @@ function marketFor(selfId, { board = null, ownerId = 0, town = null, units = 1, 
         && demand.availability.from <= timestamp && demand.availability.until >= timestamp);
     return {
         buyback: buyback(id),
-        known: supported && !truncated,
+        known: supported,
         applicableUnits: supported ? demand.applicableUnits : NaN,
         delayHours: supported ? Number(demand.delayHours ?? 0) : NaN,
         buyersPerHour: supported && Number.isFinite(demand.arrivalsPerHour) ? demand.arrivalsPerHour : NaN,
@@ -225,7 +296,8 @@ function marketFor(selfId, { board = null, ownerId = 0, town = null, units = 1, 
         ownTrip: trip(town),
         sourceRevision: board?.itemRevision(id) ?? null,
         demand: supported ? demand : null,
-        truncated
+        truncated: seenTo < Infinity,
+        seenTo
     };
 }
 
@@ -246,23 +318,39 @@ function nearBest(candidates, rollKey) {
     return near[near.length - 1];
 }
 
-// The ask: { price, value, money, npc } with npc true when the NPC buy-back
-// now is worth more than any ask (price is then the buy-back). value is the
-// bot's utility per unit, money the Adena per unit discounted by the wait.
-// `current`: the line's ask now; it stands while it is still among the
-// near-best ones (the roll is for a new ask, not for a jitter of the old).
+// The ask: { price, value, money, npc, known }, and with it the one
+// board-or-NPC answer of a sale (user rule R2, 2026-10-24): npc true when no
+// ask pays more than the NPC buy-back now (price is then the buy-back).
+// money: the Adena a unit brings (the chance to sell from the demand
+// evidence, unsold units at the buy-back, receipts discounted by the bot's
+// wait over the demand's delay); value: the bot's utility per unit (traits).
+// Known demand: among the grid asks that pay more than the NPC, one roll
+// among the near-best by utility; `current` (the line's ask now) stands while
+// it is still among them (the roll is for a new ask, not a jitter). Unknown
+// demand (known false, value and money NaN: no receipts are invented): the
+// standing ask over the buy-back, else for a whole book the belief's centre
+// exp(mu) over the buy-back (one ask rule for a listing and its review),
+// else NPC. A book cut short before any seen price has no ask at or below
+// the cheapest unseen one (seenTo): the standing ask, else NPC.
 function chooseAsk(belief, market, trader, rollKey, current = 0) {
     const width = PriceBelief.sigma(belief);
     const reference = Math.exp(belief.mu);
     const known = market.known !== false && Number.isFinite(market.applicableUnits)
         && Number.isSafeInteger(market.units) && market.units >= 0 && Number.isFinite(market.delayHours)
-        && market.delayHours >= 0 && !market.truncated;
+        && market.delayHours >= 0;
     const npcValue = saleUtility(market.buyback, reference, trader.caution);
-    if (!known) {
-        // An unavailable forecast does not invalidate an already accepted line.
-        return current > market.buyback ? { price: current, value: NaN, money: NaN, npc: false, npcValue, known: false }
-            : { price: market.buyback, value: npcValue, money: market.buyback, npc: true, npcValue, known: false };
-    }
+    const npc = (evidence) => ({ price: market.buyback, value: npcValue, money: market.buyback, npc: true, npcValue,
+        known: evidence });
+    const unknown = () => {
+        const price = aboveBuyback(current, market.buyback) ? current
+            : market.truncated ? 0 : Math.round(reference);
+        return Number.isSafeInteger(price) && aboveBuyback(price, market.buyback)
+            ? { price, value: NaN, money: NaN, npc: false, npcValue, known: false } : npc(false);
+    };
+    if (!known) return unknown();
+    // A truncated book: only an ask landing at or below the cheapest landing
+    // of an unseen ask has a known competition (PriceDecision.marketFor seenTo).
+    const seen = (price) => price + market.ownTrip <= (market.seenTo ?? Infinity);
     const valueAt = (price) => {
         const landed = price + market.ownTrip;
         let ahead = 0;
@@ -280,20 +368,24 @@ function chooseAsk(belief, market, trader, rollKey, current = 0) {
         money: market.units > 0 ? (outcome.receipts + outcome.residualValue) / market.units : 0,
         sold: outcome.sold, residual: outcome.residual, known: true };
     };
+    const pays = (candidate) => candidate && candidate.money > market.buyback;
+    let seenAny = false, last = 0;
     const candidates = [];
+    // The grid rises, so a rounded price repeats only right after itself.
     for (const z of GRID) {
         const price = Math.max(1, Math.round(Math.exp(belief.mu + z * width)));
-        if (price <= market.buyback || candidates.some((candidate) => candidate.price === price)) continue;
+        if (price === last || !aboveBuyback(price, market.buyback) || !seen(price)) continue;
+        last = price;
         const candidate = valueAt(price);
-        if (candidate) candidates.push(candidate);
+        seenAny ||= candidate !== null;
+        if (pays(candidate)) candidates.push(candidate);
     }
+    if (!seenAny && market.truncated) return unknown();
+    if (!candidates.length) return npc(true);
     let bestValue = -Infinity;
     for (const candidate of candidates) bestValue = Math.max(bestValue, candidate.value);
-    if (!candidates.length || bestValue <= npcValue) {
-        return { price: market.buyback, value: npcValue, money: market.buyback, npc: true, npcValue, known: true };
-    }
-    const standing = current > market.buyback ? valueAt(current) : null;
-    if (standing && standing.value >= bestValue - NEAR_BEST * Math.abs(bestValue)) return { ...standing, npc: false, npcValue };
+    const standing = aboveBuyback(current, market.buyback) && seen(current) ? valueAt(current) : null;
+    if (pays(standing) && standing.value >= bestValue - NEAR_BEST * Math.abs(bestValue)) return { ...standing, npc: false, npcValue };
     const best = nearBest(candidates, rollKey);
     return { ...best, npc: false, npcValue };
 }
@@ -304,11 +396,13 @@ function chooseAsk(belief, market, trader, rollKey, current = 0) {
 // takes q with the chance the belief gives that he asks no more. Before the
 // board shows any seller of the kind, the wait is unknown: a bid is worth its
 // gain by that chance alone. `current`: the ad's bid now; it stands while
-// it is still among the near-best ones, as an ask does.
+// it is still among the near-best ones, as an ask does. Every price passes
+// aboveBuyback.
 function chooseBid(belief, market, trader, { worth, cap }, rollKey, current = 0) {
     // The buyer can buy the whole quantity now for this landed cost. A bid
     // includes its own meeting trip, so it cannot pay more for the same goods.
     cap = Math.min(cap, market.purchaseCap ?? Infinity);
+    const least = market.buyback;
     const width = PriceBelief.sigma(belief);
     const reference = Math.exp(belief.mu);
     const centre = belief.mu - (trader.assertiveness - 0.5) * width;
@@ -323,42 +417,33 @@ function chooseBid(belief, market, trader, { worth, cap }, rollKey, current = 0)
     const candidates = [];
     for (const z of GRID) {
         const price = Math.max(1, Math.round(Math.exp(belief.mu + z * width)));
-        if (price > cap || candidates.some((candidate) => candidate.price === price)) continue;
+        if (!aboveBuyback(price, least) || price > cap || candidates.some((candidate) => candidate.price === price)) continue;
         const candidate = valueAt(price);
         if (candidate) candidates.push(candidate);
     }
     // The exact outside price need not lie on the belief's coarse grid.
-    if (Number.isFinite(market.purchaseCap) && cap >= 1
+    if (Number.isFinite(market.purchaseCap) && aboveBuyback(Math.floor(cap), least)
         && !candidates.some(candidate => candidate.price === Math.floor(cap))) {
         const candidate = valueAt(Math.floor(cap));
+        if (candidate) candidates.push(candidate);
+    }
+    // One adena over the NPC buy-back is the bid only when no grid or
+    // exact-cap price with a gain fits under the cap, and only for an item the
+    // NPC buys back. Beside such a price it is no bid: a seller gains nothing
+    // over the NPC there, so his every answer would be a coin flip. A bid
+    // standing there stands only while it is still the sole candidate.
+    const lowest = Number(least) > 0 ? Math.floor(Number(least)) + 1 : null;
+    if (!candidates.length && lowest !== null && lowest <= cap) {
+        const candidate = valueAt(lowest);
         if (candidate) candidates.push(candidate);
     }
     if (!candidates.length) return null;
     let bestValue = -Infinity;
     for (const candidate of candidates) bestValue = Math.max(bestValue, candidate.value);
-    const standing = current > 0 && current <= cap ? valueAt(current) : null;
+    const standing = aboveBuyback(current, least) && current <= cap
+        && (current !== lowest || candidates.some(candidate => candidate.price === lowest)) ? valueAt(current) : null;
     if (standing && standing.value >= bestValue - NEAR_BEST * Math.abs(bestValue)) return standing;
     return nearBest(candidates, rollKey);
-}
-
-// One roll among options [{ action, value }]: the near-best ones by how far
-// above the 2% line they are; every other one keeps a small chance of its
-// own (TendencyRoll.MIN of the near-best weight), never none.
-function chooseByValue(options, rollKey) {
-    const valid = options.filter((option) => Number.isFinite(option.value));
-    if (!valid.length) return null;
-    let best = -Infinity;
-    for (const option of valid) best = Math.max(best, option.value);
-    const floor = best - NEAR_BEST * Math.abs(best);
-    let near = 0;
-    for (const option of valid) if (option.value >= floor) near += option.value - floor + 1e-9;
-    const weights = valid.map((option) => (option.value >= floor ? option.value - floor + 1e-9 : TendencyRoll.MIN * near));
-    let left = TendencyRoll.roll(...rollKey) * weights.reduce((sum, weight) => sum + weight, 0);
-    for (let at = 0; at < valid.length; at++) {
-        left -= weights[at];
-        if (left <= 0) return valid[at];
-    }
-    return valid[valid.length - 1];
 }
 
 // One roll among options [{ action, value }] in proportion to their values
@@ -388,28 +473,5 @@ function chooseByWeight(options, rollKey) {
     return valid[valid.length - 1];
 }
 
-// Which candidates take `slots` board slots: existing income gain, or an
-// explicit attention weight for a free conditional quote. Quote attention
-// is not forecast income. One draw sequence without repeated candidates.
-function chooseSlots(candidates, slots, seed) {
-    const weight = candidate => candidate.slotWeight ?? candidate.gain;
-    const pool = candidates.filter((candidate) => weight(candidate) > 0);
-    const chosen = [];
-    const random = TendencyRoll.seeded(String(seed));
-    while (chosen.length < slots && pool.length) {
-        let total = 0;
-        for (const candidate of pool) total += weight(candidate);
-        let left = random() * total;
-        let at = 0;
-        for (; at < pool.length - 1; at++) {
-            left -= weight(pool[at]);
-            if (left <= 0) break;
-        }
-        chosen.push(pool[at]);
-        pool.splice(at, 1);
-    }
-    return chosen;
-}
-
-module.exports = { GRID, NEAR_BEST, PERCEPTION, waitRate, traderOf, phi, saleUtility, purchaseCost, marketFor, saleOutcome, willingUnitsAt, prospectiveExit, QUOTE_DEPTH, cheaperAsks, exitCompetition, bidSale,
-    chooseAsk, chooseBid, chooseByValue, chooseByWeight, chooseSlots };
+module.exports = { GRID, NEAR_BEST, PERCEPTION, waitRate, traderOf, phi, saleUtility, purchaseCost, marketFor, saleOutcome, willingUnitsAt, prospectiveExit, QUOTE_DEPTH, cheaperAsks, exitCompetition, bidSale, bidLots, heldUnits, plainSale,
+    buyback, chooseAsk, chooseBid, aboveBuyback, heldBid, chooseByWeight };

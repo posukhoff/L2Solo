@@ -28,7 +28,8 @@ function trade(at, fields) {
         seller: { characterId: 10, name: 'Seller' }, buyer: { characterId: 11, name: 'Buyer' }, ...fields
     });
 }
-const replay = () => Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS });
+const replay = () => Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS,
+    rangeMs: MarketCounters.DAY_MS });
 
 (async () => {
     clean();
@@ -100,7 +101,7 @@ const replay = () => Database.fetchRecentBoardDeals({ perItem: MarketCounters.RE
     const fixed = await Database.fetchRecentFixedStoreDeals();
     assert.strictEqual(fixed.length, 2, 'public supply replay includes fixed purchases and excludes private NPC receipts');
     MarketCounters.reset(); MarketCounters.load(await replay(), fixed);
-    assert(require('../src/GameServer/Bot/Economy/ShotTradeDemand').forecast(1464, 'Giran', now));
+    assert(require('../src/GameServer/Bot/Economy/MarketDemand').forecast(1464, 'Giran', now));
     assert.strictEqual(MarketCounters.itemDeals(1464).deals, 0, 'supply replay leaves board counters alone');
     MarketCounters.reset();
     await Database.close();

@@ -1,4 +1,5 @@
 const { decide } = require('./ColdCompetitionPolicy');
+const { partyIdOf } = require('./PartyId');
 const Visible = require('../../Social/VisibleStrength');
 const BotErrands = require('./BotErrands');
 const PartyHuntingTarget = require('./PartyHuntingTarget');
@@ -82,7 +83,7 @@ class ColdCompetitionMonitor {
             const spot = hunterSpot(state, this.spotOf);
             if (!spot) continue;
             active++;
-            const partyId = state.party?.partyId || state.partyId || null;
+            const partyId = partyIdOf(state) || null;
             if (partyId && !partyTargets.has(partyId)) {
                 const party = parties.get(partyId);
                 partyTargets.set(partyId, targetForParty ? targetForParty(partyId) : party ? PartyHuntingTarget.competitionNpcId(
@@ -124,7 +125,7 @@ class ColdCompetitionMonitor {
                         || party.stats?.travel || party.stats?.coldCompetition?.wait
                         || members.some(s => !s || s.phase !== 'cold' || !(s.vitals?.hp > 0)
                             || !['hunting', 'grouped', 'resting'].includes(s.activity) || s.spotId !== group.spotId
-                            || (s.party?.partyId || s.partyId) !== unit.partyId || s.stats?.travel || s.stats?.coldCompetition?.wait
+                            || partyIdOf(s) !== unit.partyId || s.stats?.travel || s.stats?.coldCompetition?.wait
                             || BotErrands.busyWith(s, PARTY_MEMBER_BUSY_FLAGS))) {
                         group.units.delete(unit.unitKey); this.report.skipped.incompleteParty++; continue;
                     }

@@ -19,7 +19,6 @@ const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const BuyStoreService = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
 const MarketSnapshot = invoke('GameServer/Bot/Economy/MarketSnapshot');
-const MarketTelemetry = invoke('GameServer/Bot/Economy/MarketTelemetry');
 const World = invoke('GameServer/World/World');
 const MarketTownPolicy = invoke('GameServer/Bot/Economy/MarketTownPolicy');
 
@@ -65,7 +64,6 @@ async function run() {
     World.user = { sessions: [], revision: 0 };
     await LifeState.init();
     await AfkTrade.init();
-    MarketTelemetry.reset();
 
     // ARCH-NOTE: E1 removed the flat500/level/10% reserve. E3 requires
     // an actual funded gain; the original2000/level2/Stem5 has none.
@@ -75,8 +73,6 @@ async function run() {
     const buyerSeed = buyerNative.state;
     assert.strictEqual(Funding.spendable(buyerSeed, 0, { itemId: 1864 }), 0);
     assert.strictEqual(BuyStoreService.bidFor(buyerSeed, goal), null, 'the original unfunded Stem request cannot bid');
-    const deferred = await BuyStoreService.open(buyerSeed, goal);
-    assert.strictEqual(deferred.opened, false);
     assert.strictEqual(await bagAmount(buyerSeed.characterId, 57), 2000);
     assert.deepStrictEqual(AfkTrade.ownerRecords(buyerSeed.characterId), []);
     assert.strictEqual(await bagAmount(buyerSeed.characterId, 1864), 0);
@@ -110,7 +106,7 @@ async function run() {
     assert.strictEqual(await bagAmount(stemBuyer, 57), 2000 - escrow, 'the escrow left the wallet');
     assert.strictEqual(await bagAmount(buyerSeed.characterId, 57), 2000, 'the unfunded bot keeps its wallet');
     assert(AfkTrade.findOwnerProjection(stemBuyer), 'a player shop stands in the world');
-    assert.deepStrictEqual(MarketOpportunity.activeBuyDemandSelfIds(), [1864],
+    assert.deepStrictEqual(AfkTrade.activeDemandSelfIds(), [1864],
         'a funded buy ad is demand the warehouse circulation can see');
     const marketSnapshot = MarketSnapshot.snapshot();
     assert.strictEqual(marketSnapshot.dynamic.wtb, 0, 'the snapshot counts only bot-owned stores as dynamic; a player shop is not one');
@@ -172,21 +168,6 @@ async function run() {
     const bookSale = await BuyStoreService.sellToBestBuyer(bookSeller, town);
     assert.strictEqual(bookSale.sold, false, 'Amulet: Chant of Revenge must wait for NPC liquidation');
 
-    MarketTelemetry.staticBuyerSale([{
-        selfId: 1864,
-        name: 'Stem',
-        count: 3,
-        npcPrice: 50,
-        buyerName: 'Material Broker',
-        buyerTown: 'Giran'
-    }], 150, { sellerCharacterId: seller.characterId, sellerName: seller.name, town: 'Giran' });
-    const staticTrade = MarketTelemetry.transactions().recentStaticTrades[0];
-    assert.strictEqual(staticTrade.channel, 'static_wtb');
-    assert.strictEqual(staticTrade.quantity, 3);
-    assert.strictEqual(staticTrade.adena, 150);
-    const combinedTrades = MarketTelemetry.transactions();
-    assert.strictEqual(combinedTrades.byItem[0].adena, 2 * executionQuote.price + 150, 'all-channel totals should retain both peer and static turnover');
-    assert.strictEqual(combinedTrades.byPeerItem[0].adena, 2 * executionQuote.price, 'peer item totals must exclude static-buyer turnover');
 
     // The unchanged1000/Stem20 remains a native unfunded negative.
     const poorOriginal = await makeBot('bot_poor_buyer', 'PoorBuyer', 2, [{ selfId: 57, name: 'Adena', amount: 1000 }]);
@@ -225,6 +206,4 @@ run().catch(async (error) => {
     try { await Database.close(); } catch (_) { /* cleanup only */ }
     clean();
     process.exitCode = 1;
-}).finally(() => {
-    MarketTelemetry.reset();
 });

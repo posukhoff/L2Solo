@@ -57,7 +57,7 @@ check('only own recent matched hunt observations permit physical defence', () =>
     assert.equal(Threat.maskFor(state([264, 130], 'mixed'), deps), 3);
     assert.equal(Threat.maskFor(state([264, ...Array(8).fill(130)], 'mixed'), deps), 1);
     assert.equal(Threat.maskFor(state([130], 'magic', { marketReturn: { spotId: 'physical' } }), deps), 1);
-    for (const stats of [{ pvpEncounter: {} }, { wishFocus: ['scores:77'] },
+    for (const stats of [{ pvpEncounter: {} },
         { relations: [{ targetId: 77, hostility: 1 }] }, { relations: [{ anger: 1 }] }])
         assert.equal(Threat.maskFor(state([130], 'physical', stats), deps), 3);
     assert.equal(Threat.maskFor(state(), { spots, memory: { relations: [{ hostility: 1 }] } }), 3);

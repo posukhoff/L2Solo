@@ -52,9 +52,6 @@ try {
     const armed = { ...state, inventory: { [dWeapon.selfId]: { selfId: dWeapon.selfId, amount: 1, equipped: true, slot: 7 } } };
     assert(!Gear.replanContextFor(armed, paused, at + 101).excludedTargetIds.includes(target.selfId));
     assert(!Gear.replanContextFor({ ...state, party: { partyId: 'new-party' } }, paused, at + 101).excludedTargetIds.includes(target.selfId));
-    const market = { ...state, stats: { ...state.stats, equipmentPlan: { ...paused, strategy: 'market' } } };
-    assert(Gear.abandonAcquisition(market, target.selfId, at + 102).stats.equipmentPlan.recoveryTargets
-        .some(row => row.reason === 'combat_unviable' && row.targetId === target.selfId && Array.isArray(row.wake)));
     const four = Array.from({ length: 4 }, (_, n) => ({ targetId: 9900 + n, npcId: 200 + n,
         reason: 'combat_unviable', failedAt: at - 4 + n, wake: [10, -1, 0] }));
     const fifth = Gear.replanContextFor(state, { ...plan, recoveryTargets: four }, at + 103).recoveryTargets;

@@ -1,6 +1,9 @@
 const assert = require('node:assert/strict');
 const { createWorld, Database } = require('./helpers/c4QuestHarness');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
+const Intent = require('../src/GameServer/Bot/Economy/TradeIntent');
+const Meetings = require('../src/GameServer/AfkTrade/TradeMeetingService');
+const Coordinator = invoke('GameServer/Bot/Population/ColdSimulationCoordinator');
 const ids = [730201, 730202];
 const point = { locX: 83396, locY: 147904, locZ: -3400 };
 (async () => {
@@ -21,7 +24,7 @@ const point = { locX: 83396, locY: 147904, locZ: -3400 };
                 await Database.replaceBoardRecords(ids[side], 'buy_ad', configs, { expected: Object.fromEntries(previous.map(ad => [ad.id, ad.revision])) });
                 const ads = await Database.fetchAfkTradeShops(ids[side]);
                 for (const line of bought) { const ad = ads.find(row => row.kind === 'buy_ad' && row.lines[0].selfId === line.selfId);
-                    line.needAdId = ad.id; line.needAdRevision = ad.revision; line.certificate = JSON.parse(ad.lines[0].intentJson); line.certificate[1] = line.count; line.certificate[2] = line.price; }
+                    line.certificate = JSON.parse(ad.lines[0].intentJson); line.certificate[1] = line.count; line.certificate[2] = line.price; }
             }
             return lines;
         };
@@ -233,27 +236,58 @@ const point = { locX: 83396, locY: 147904, locZ: -3400 };
         assert.deepEqual(difference(await flows(), journal), difference(await held(), holdings), 'every meeting move and travel sink is journalled exactly once');
         const retained = await Database.execute(['SELECT (SELECT count(*) FROM board_trade_participants) participants,(SELECT count(*) FROM board_trade_meetings) meetings,(SELECT count(*) FROM board_trade_meeting_lines) lines']);
         assert.deepEqual(retained[0], { participants: 2, meetings: 0, lines: 0 });
-        const oldStock = (await Database.fetchItems(ids[0])).find(item => item.selfId === 1867);
-        const oldSell = (await Database.createAfkTradeShop(ids[0], { storeType: 1, town: 'Giran', ...point,
-            lines: [{ objectId: oldStock.id, selfId: 1867, name: 'Animal Skin', count: 2, price: 50, stackable: true }] })).shop;
-        await Database.execute(["UPDATE afk_trade_shops SET kind='sell_ad' WHERE id=?", [oldSell.id]]);
-        const oldBuy = (await Database.createAfkTradeShop(ids[0], { storeType: 3, town: 'Giran', ...point,
-            lines: [{ selfId: 1864, name: 'Stem', count: 2, price: 100, stackable: true }] })).shop;
-        await Database.execute(["UPDATE afk_trade_shops SET kind='buy_ad' WHERE id=?", [oldBuy.id]]);
-        await Database.execute(['UPDATE afk_trade_lines SET count=5,fills=7 WHERE shopId=?', [oldBuy.id]]);
-        assert.equal((await bag(ids[0]))[57], 119280);
-        assert.equal((await bag(ids[0]))[1867], 23);
-        assert.equal((await Database.migrateConditionalTradeAds(ids[0])).migrated, 2);
-        await Database.settleBoardOwner(ids[0]);
-        assert.equal((await Database.migrateConditionalTradeAds(ids[0])).migrated, 0);
-        assert.equal((await bag(ids[0]))[57], 119480, 'migration returns actual held money, not count times price');
-        assert.equal((await bag(ids[0]))[1867], 25);
-        const migrated = await Database.fetchAfkTradeShop(oldBuy.id);
-        assert.equal(migrated.custodyPolicy, 1); assert.equal(migrated.escrowAdena, 0);
-        assert.equal(migrated.lines[0].id, oldBuy.lines[0].id); assert.equal(migrated.lines[0].fills, 7);
-        assert.equal(migrated.lines[0].count, 5); assert.equal(migrated.lines[0].price, 100);
-        assert.equal(migrated.lines[0].intentRevision, -1); assert.equal(migrated.lines[0].intentJson, null);
-        assert.deepEqual(difference(await flows(), journal), difference(await held(), holdings), 'legacy custody migration is journal-neutral');
-        console.log('native meeting reserve/replay/route/refund/completion/mutual/cleanup/migration conservation pass');
+
+        // The owner's look reprices its bid: the published certificate
+        // follows the new price, and a seller's fill carries it to the owner.
+        const skinBid = async () => (await Database.fetchAfkTradeShops(ids[0])).find(ad => ad.kind === 'buy_ad' && ad.lines[0].selfId === 1867);
+        await certify([{ payer: 0, selfId: 1867, count: 3, price: 40 }]);
+        let bid = await skinBid();
+        await Database.repriceAfkTradeShop(ids[0], bid.lines[0].id, 30, bid.revision);
+        bid = await skinBid();
+        assert.equal(bid.lines[0].price, 30);
+        assert.equal(Intent.decode(JSON.parse(bid.lines[0].intentJson)).price, 30, 'a repriced bid keeps its certificate at the new price');
+        // The owners' workers are the edge: record what each is asked to prepare.
+        const prepareMeeting = Coordinator.requestMeetingPreparation, asked = [];
+        Coordinator.requestMeetingPreparation = (id, request) => { asked.push(request); return Promise.reject(Error('trade_meeting_worker_unavailable')); };
+        const settle = () => new Promise(resolve => setImmediate(resolve));
+        // The seller decides on its saved row: the meetings above moved it in
+        // the DB past this test's cached copy.
+        const seller = await Database.prepareTradeParticipant(ids[1]);
+        const decided = { economyCommand: { authority: { phase: seller.phase, revision: seller.revision, hotAt: seller.hotAt } } };
+        try {
+            await Meetings.prepareTrade(ids[1], { shopId: bid.id }, 1867, 3, decided);
+            await settle();
+            assert(asked.length > 0 && asked.at(-1).lines.every(line => Intent.decode(line.certificate).price === 30),
+                'a fill of the repriced bid carries the owner\'s certificate');
+            // A certificate that no longer covers the line (an older price)
+            // goes nowhere: the fill stages without it and the owner's worker
+            // rebuilds its consent.
+            const stale = JSON.stringify(Intent.atPrice(JSON.parse(bid.lines[0].intentJson), 40));
+            await Database.execute(['UPDATE afk_trade_lines SET intentJson=? WHERE id=?', [stale, bid.lines[0].id]]);
+            asked.length = 0;
+            await Meetings.prepareTrade(ids[1], { shopId: bid.id }, 1867, 3, decided);
+            await settle();
+            assert(asked.length > 0 && asked.at(-1).lines.every(line => line.certificate === null),
+                'a fill with a certificate that does not cover it stages for a rebuilt consent');
+            // A refusal sends the cold owner back to plan its ad only when the
+            // owner refused (its need or money moved), not on a seller's own
+            // funding, even when the seller's refusal comes first.
+            const later = settleWith => new Promise((resolve, reject) => setImmediate(() => settleWith(resolve, reject)));
+            const replanned = [], refresh = Coordinator.requestEconomyRefresh;
+            Coordinator.requestEconomyRefresh = id => { replanned.push(Number(id)); };
+            try {
+                Coordinator.requestMeetingPreparation = id => id === ids[1] ? Promise.reject(Error('trade_meeting_funding'))
+                    : later(resolve => resolve({ characterId: id }));
+                await Meetings.prepareTrade(ids[1], { shopId: bid.id }, 1867, 3, decided);
+                await settle(); await settle();
+                assert.deepEqual(replanned, [], 'a seller short of money leaves the owner\'s ad as it is');
+                Coordinator.requestMeetingPreparation = id => id === ids[1] ? Promise.reject(Error('trade_meeting_funding'))
+                    : later((_, reject) => reject(Error('trade_meeting_need_changed')));
+                await Meetings.prepareTrade(ids[1], { shopId: bid.id }, 1867, 3, decided);
+                await settle(); await settle();
+                assert.deepEqual(replanned, [ids[0]], 'the owner\'s refusal sends it to plan its ad again');
+            } finally { Coordinator.requestEconomyRefresh = refresh; }
+        } finally { Coordinator.requestMeetingPreparation = prepareMeeting; Meetings.reset(); }
+        console.log('native meeting reserve/replay/route/refund/completion/mutual/cleanup/migration/certificate conservation pass');
     } finally { await world.close(); }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });

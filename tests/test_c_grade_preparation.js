@@ -71,16 +71,6 @@ for (const classId of [0, 10, 18, 25, 38, 46, 49, 50, 53, 54, 56]) {
         assert.deepEqual([...Progression.assess(member).gaps], [...Progression.assess(adult).gaps],
             'warehouse access does not change personal C equipment gaps');
         assert(Progression.allowsCGradeAcquisition(member));
-        assert.equal(Progression.priority(Data.items.find(item => item.selfId === 850), 2,
-            Progression.assess(member)), 0, 'a D earring cannot satisfy the C milestone');
-    }
-    for (const level of [52, 60, 61, 78]) {
-        const completeC = { ...bot(classId, level), inventory: kit(classId, 40) };
-        assert.equal(Progression.assess(completeC).required, false, `complete C closes class ${classId} at ${level}`);
-        assert.equal(Progression.acquisitionRankFor(completeC), Planner.gradeForLevel(level),
-            'complete C permits the expertise grade');
-        assert.equal(Progression.acquisitionRankFor({ ...bot(classId, level), clanId: 1 }), 'c',
-            'missing C caps acquisition without changing expertise');
     }
 }
 assert.equal(Progression.allowsCGradeAcquisition({ ...source, clanId: 1 }), false,
@@ -95,9 +85,8 @@ for (const level of [52, 61]) {
     const assessment = Progression.assess(missingHelmet);
     assert(assessment.gaps.has(6), 'a missing helmet remains an equipment opportunity');
     assert.equal(assessment.required, false, 'a C helmet cannot hold higher-grade progression');
-    assert.equal(Progression.acquisitionRankFor(missingHelmet), Planner.gradeForLevel(level));
     const candidate = Data.items.find(item => item.selfId === 500);
-    assert.equal(Progression.priority(candidate, 6, assessment), 0, 'helmet shopping stays optional');
+    assert.equal(Progression.priority(6, assessment), 0, 'helmet shopping stays optional');
     assert.equal(Planner.marketPlanForTarget(missingHelmet, candidate.selfId,
         { findMarketOffer: () => ({ price: 100, town: 'Giran', count: 1 }) })?.target.selfId,
     candidate.selfId, 'an available C helmet remains a valid purchase above level 52');
@@ -134,7 +123,6 @@ for (const level of [52, 60, 61, 78]) {
     assert.deepEqual([...Progression.assess(missingC).gaps.keys()], [2]);
     assert.equal(Planner.gradeForLevel(level), level >= 76 ? 's' : level >= 61 ? 'a' : 'b',
         'expertise stays at the physical level');
-    assert.equal(Progression.acquisitionRankFor(missingC), 'c');
     const offerForC = item => item.selfId === ear.selfId ? { price: 100, town: 'Giran', count: 1 } : null;
     const nativeC = Planner.planFor(missingC, { findMarketOffer: offerForC, craftRecipes: [], spots: [] });
     assert.equal(nativeC.target?.selfId, ear.selfId, 'native planning also fills a second identical C piece');
@@ -189,7 +177,7 @@ for (const level of [52, 60, 61, 78]) {
     assert.equal(Progression.assess(finished).required, false);
     assert(Planner.considerable(higherEar, finished));
     const next = review(finished, offers);
-    assert.equal(Progression.acquisitionAssessment(finished).rank, 3);
+    assert.equal(Progression.assess(finished).rank, 3);
     assert(next.projection.roots.some(key => key.startsWith('power:')
         && Index.find(Data.items, Number(key.split(':')[1]))?.etc.rank === 'b'),
         'delivery of the last C piece opens B progression without another level-up');
@@ -231,7 +219,10 @@ const exchangePath = ctx.projection.nodes.find(row => row.key === 'item:162')?.p
 assert(exchangePath, 'native C choices include the authored Luxury route');
 assert.deepEqual(exchangePath.grossRequirements, [{ key: 'item:1458', amount: 5375 }]);
 assert(!ctx.projection.nodes.some(row => row.key === 'item:1459'), 'the bot Luxury path never acquires C crystals');
-const stocked = { ...source, level: 40, inventory: { ...source.inventory, 1463: { selfId: 1463, amount: 100000 } } };
+// From here the bot has its own Crystallize (248), the only way a bot breaks gear.
+const stocked = { ...source, level: 40, inventory: { ...source.inventory, 1463: { selfId: 1463, amount: 20000 } },
+    stats: { ...source.stats, coldCombat: { ...source.stats.coldCombat, skills: [...source.stats.coldCombat.skills,
+        ...Profile.skillSnapshotsFromRecords([{ selfId: 248, level: 1 }])] } } };
 const dStock = { ...stocked, inventory: { ...stocked.inventory, 1458: { selfId: 1458, amount: 10000 } } };
 const readyExchange = review(dStock);
 assert.equal(readyExchange.network.activity?.kind, 'luxury_exchange', 'a prepared native Luxury leaf is executable');
@@ -257,16 +248,26 @@ assert.equal(waitingExchange.network.activity.activity, 'shopping');
 assert(!review(source).network.leaves?.some(row => row.kind === 'luxury_exchange'), 'missing inputs cannot execute the exchange');
 const Crystals = invoke('GameServer/Bot/Economy/BotCrystallization');
 const spareId = Crystals.catalog().find(id => !stocked.inventory[id]);
-const gearBoard = new BoardIndex();
+const gearBoard = new BoardIndex(), gearUnits = 16;
 gearBoard.put({ id: 93, ownerId: 990335, storeType: 1, kind: 'shop', town: 'Giran',
-    lines: [{ lineId: 3, selfId: spareId, count: 16, enchant: 0, price: 1 }] });
+    lines: [{ lineId: 3, selfId: spareId, count: gearUnits, enchant: 0, price: 1 }] });
 const gearInput = review(stocked, gearBoard);
 assert.equal(gearInput.network.activity.itemId, spareId, 'a cheap D market item can fund Luxury crystals');
 assert.equal(gearInput.network.activity.activity, 'shopping');
+assert.notEqual(review({ ...stocked, stats: source.stats }, gearBoard).network.activity?.itemId, spareId,
+    'without Crystallize a D market item is no crystal source');
 const fromGear = invoke('GameServer/Bot/Economy/WishProviders').personalCraftPlan(stocked, gearInput);
-assert(fromGear.materials.some(row => row.selfId === spareId && row.amount >= 1 && row.amount <= Crystals.BATCH_LIMIT),
-    'the native plan reserves a bounded purchase batch');
-const readyBag = { ...stocked, inventory: { ...stocked.inventory, [spareId]: { selfId: spareId, amount: 16, equipped: false } } };
+assert(fromGear.materials.some(row => row.selfId === spareId && row.amount >= 1 && row.amount <= gearUnits),
+    'the native plan reserves no more than the market offers');
+const unlimited = id => id === spareId
+    ? { price: 1, tripFees: 0, tripHours: 0, sourceType: 'market', availableUnits: Infinity } : null;
+const roomRow = Crystals.choices(stocked, unlimited, 0, 'd', null,
+    () => Profile.profileFor(stocked, Date.now())).find(row => row.selfId === spareId);
+const filledBag = { ...stocked, inventory: { ...stocked.inventory,
+    [spareId]: { selfId: spareId, amount: roomRow.batchLimit, equipped: false } } };
+assert.equal(invoke('GameServer/Bot/Population/SurvivalFloor').bagFor(filledBag), null,
+    'a whole-input buy leaves the bag under the full-bag and overweight floors');
+const readyBag = { ...stocked, inventory: { ...stocked.inventory, [spareId]: { selfId: spareId, amount: gearUnits, equipped: false } } };
 const readyCrystals = review(readyBag, gearBoard);
 assert.equal(readyCrystals.network.activity.kind, 'crystallize');
 assert(readyCrystals.network.activity.improvement.amount >= 1);
@@ -287,7 +288,7 @@ const smallCard = invoke('GameServer/Bot/Population/ColdEconomyDecision').captur
 assert.equal(smallCard.activity.improvement.amount, 2, 'the compact worker card keeps the physical command quantity');
 assert(smallCard.data.byteLength <= 800);
 const smallWatch = invoke('GameServer/Bot/Economy/TradeIntent').project(smallBag, smallBatch.network,
-    smallBatch.projection, () => 1);
+    smallBatch.projection);
 assert(!smallWatch.some(row => row.itemId === spareId), 'the retained command does not advertise inputs already held');
 assert(smallWatch.every(row => Number.isFinite(row.valueHours)), 'retaining a command preserves its output share');
 const card = invoke('GameServer/Bot/Population/ColdEconomyDecision').capture(readyCrystals, readyBag);
@@ -296,20 +297,20 @@ assert(card.data.byteLength <= 800, 'the worker/native decision keeps its byte b
 const mixedIds = Crystals.catalog().filter(id => !stocked.inventory[id]).slice(0, 4);
 const mixedBag = { ...stocked, inventory: { ...stocked.inventory,
     ...Object.fromEntries(mixedIds.map(id => [id, { selfId: id, amount: 2, equipped: false }])) } };
-const mixed = Crystals.choices(mixedBag, () => null, { known: true, hours: 0, fees: 0 })[0];
-assert.equal(mixed.inputs.length, 4, 'one bounded batch can combine distinct spare types');
-assert(mixed.inputs.reduce((count, row) => count + row.amount, 0) <= Crystals.BATCH_LIMIT);
+const mixed = Crystals.choices(mixedBag, () => null)[0];
+assert.equal(mixed.inputs.length, 4, 'one command can combine distinct spare types');
+assert.equal(mixed.inputs.reduce((count, row) => count + row.amount, 0), 8, 'one command breaks every free spare');
 assert.equal(mixed.net, mixed.inputs.reduce((count, row) => count
     + row.amount * Crystals.reward(Data.items.find(item => item.selfId === row.selfId)).net, 0));
 const mixedActivity = { ...readyCrystals.network.activity, improvement: {
-    kind: 'crystallize', npcId: Crystals.npcId, items: mixed.inputs, amount: 1 } };
+    kind: 'crystallize', items: mixed.inputs, amount: 1 } };
 const mixedCard = invoke('GameServer/Bot/Population/ColdEconomyDecision').capture({ ...readyCrystals,
     network: { ...readyCrystals.network, activity: mixedActivity } }, mixedBag);
 assert.deepEqual(mixedCard.activity.improvement.items, mixed.inputs);
 assert(mixedCard.data.byteLength <= 800, 'mixed batch transport keeps the same byte bound');
 const townPlan = invoke('GameServer/Bot/Economy/WishProviders').personalCraftPlan(readyBag, readyCrystals);
 const townReady = { ...readyBag, stats: { ...readyBag.stats, equipmentPlan: townPlan } };
-assert(Crystals.ready(townReady), 'owned inputs admit the finite town command');
+assert(Crystals.ready(townReady), 'owned inputs admit the finite crystallize command');
 assert.equal(invoke('GameServer/Bot/Population/ColdSimulationKernel').lifecycleKind(townReady), 'command');
 assert(!Crystals.ready({ ...townReady, inventory: { ...townReady.inventory,
     [spareId]: { ...townReady.inventory[spareId], amount: 0 } } }));
@@ -318,17 +319,11 @@ assert.equal(invoke('GameServer/Bot/Population/ColdSimulationKernel').lifecycleK
 const Improvement = invoke('GameServer/Bot/Economy/BotImprovementService');
 const outside = { ...townReady, activity: 'hunting', currentRegion: 'Dion',
     loc: { locX: 18748, locY: 145437, locZ: -3132 } };
-const townTrip = Improvement.acquisitionTravel(outside, readyCrystals.network.activity, timestamp);
-assert.equal(townTrip.activity, 'traveling');
-assert.equal(townTrip.stats.travel.townName, 'Giran', 'the selected NPC operation owns the destination');
-assert(townTrip.adena < outside.adena, 'the real gatekeeper trip debits its fee');
+assert.equal(Improvement.acquisitionTravel(outside, readyCrystals.network.activity, timestamp), null,
+    'own Crystallize breaks the inputs where the bot stands: no trip to a service NPC');
 assert.equal(Improvement.acquisitionTravel(townReady, readyCrystals.network.activity, timestamp), null);
-const clanTrip = Improvement.acquisitionTravel({ ...outside, clanId: 1 }, readyCrystals.network.activity, timestamp);
-assert.equal(clanTrip.stats.travel.townName, 'Giran', 'the clan member can reach its own C exchange station');
-assert(clanTrip.adena < outside.adena);
-assert.equal(Improvement.acquisitionTravel({ ...outside, level: 33, clanId: 1 }, readyCrystals.network.activity, timestamp), null);
 assert.equal(require('../src/GameServer/Bot/Population/BotRoute').route(outside, null, null, [], { spots: [], timestamp }), null,
-    'a ready NPC operation suppresses the competing hunting route');
+    'a ready crystallize command suppresses the competing hunting route');
 const npcInput = review(stocked, new BoardIndex(), { npcOffersFor: id => id === spareId
     ? [{ selfId: id, price: 1, sourceType: 'npc', town: 'Giran', available: true }] : [] });
 assert.equal(npcInput.network.activity.itemId, spareId, 'native shop equipment is also a crystal source');

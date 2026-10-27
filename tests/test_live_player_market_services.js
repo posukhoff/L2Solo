@@ -12,6 +12,7 @@ const Market = invoke('GameServer/Bot/Economy/MarketOpportunity'), PrivateStore 
 const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
 const Manufacture = invoke('GameServer/Crafting/ManufactureShop'), Shopping = invoke('GameServer/Bot/AI/States/ShoppingState');
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const Commit = invoke('GameServer/Bot/Economy/EconomyCommit');
 const Response = invoke('GameServer/Network/Response');
 const { POINT, character, stock, sqlAmount, memoryAmount } = require('./helpers/liveMarketActors');
@@ -164,11 +165,11 @@ let crafter;
     assert.equal(await sqlAmount(customer, 57), wallet - 300);
     assert.equal(crafter.actor.fetchMp(), mp - recipe.mpCost * 3);
     for (const row of recipe.materials) assert.equal(await sqlAmount(customer, row.selfId), row.amount);
-    const digest = Workshops.publicRecipeDigest(recipe.productId);
+    const digest = Workshops.publicScopeDigest(MarketCounters.counterOf(recipe.productId));
     Manufacture.shop(crafter.actor).entries[0].price = 101;
     assert.equal([...Workshops.publicForRecipe(recipe.recipeId, customer.coldLifeState)].find(entry => entry.playerWorkshop)?.price, 101,
         'a hot customer reads the repriced player workshop');
-    assert.equal(Workshops.publicRecipeDigest(recipe.productId), digest,
+    assert.equal(Workshops.publicScopeDigest(MarketCounters.counterOf(recipe.productId)), digest,
         'a player workshop stays out of the bot digest the worker mirrors (meeting proofs stay current)');
     await assert.rejects(Workshops.craft(crafter.actor.fetchId(), recipe.recipeId, customer.actor.fetchId(),
         { expectedPrice: 100, funding: { r: 4e-5 } }), /workshop price changed/);
@@ -190,7 +191,8 @@ let crafter;
     });
     assert.deepEqual([await amounts(customer, recipe.productId), await amounts(crafter, recipe.productId), crafter.actor.mp], frozenCraft);
     crafter.actor.storeType = 0;
-    assert(!Workshops.find(recipe.recipeId, customer.coldLifeState), 'closing manufacture removes the public recipe');
+    assert(![...Workshops.publicForRecipe(recipe.recipeId, customer.coldLifeState)].some(entry => entry.playerWorkshop),
+        'closing manufacture removes the public recipe');
 
     // Replay the most recent completed native identity even after the owner
     // closed shop. A replay must consume neither another fee nor materials.

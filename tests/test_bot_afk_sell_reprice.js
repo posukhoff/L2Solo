@@ -32,12 +32,6 @@ function policy(price) {
     });
 }
 
-async function review(ownerId) {
-    // Review memory is per process; drop it so the call is a full review.
-    BotAfkMarket._resetForTests();
-    return BotAfkMarket.reconcile(LifeState.snapshot(ownerId), sellGoal);
-}
-
 const linePrice = (ownerId) => Number(AfkTrade.findOwnerProjection(ownerId).shop.lines[0].price);
 
 async function run() {
@@ -68,17 +62,11 @@ async function run() {
     policy(100);
     assert.strictEqual(BotAfkMarket.canTradeRemotely(hunting, sellGoal), false, 'no shop is opened from afar');
     await BotAfkMarket.listOnBoard({ ...hunting, activity: 'shopping',
-        stats: { ...hunting.stats, shopTown: { town: 'Talking Island', at: 1 } } });
+        stats: { ...hunting.stats, twin: { town: 'Talking Island' } } });
     assert.strictEqual(AfkTrade.findOwnerProjection(ownerId).shop.lines[0].price, 100);
     assert.strictEqual(AfkTrade.findOwnerProjection(ownerId).shop.town, 'Talking Island');
 
-    policy(100);
-    assert.strictEqual((await review(ownerId)).changed, false, 'an unchanged shop is not republished');
-
     const lineId = Number(AfkTrade.findOwnerProjection(ownerId).shop.lines[0].id);
-    policy(88);
-    assert.strictEqual((await review(ownerId)).changed, false, 'the main review does not reprice a kept line');
-    assert.strictEqual(linePrice(ownerId), 100, 'no fixed markdown: the kept line keeps its ask');
 
     const savedBefore = LifeState.snapshot(ownerId).updatedAt;
     const observedMove = (price) => {
@@ -110,7 +98,6 @@ async function run() {
     assert.strictEqual(bag.filter((row) => Number(row.selfId) === VARNISH).reduce((sum, row) => sum + Number(row.amount), 0), 30);
 
     await AfkTrade._resetForTests();
-    BotAfkMarket._resetForTests();
     console.log('Bot AFK sell reprice: kept asks, the bot\'s own look applied, withdrawal to the bag passed');
 }
 

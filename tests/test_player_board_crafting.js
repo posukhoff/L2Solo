@@ -46,10 +46,10 @@ const waitFor = async (predicate, label) => {
         await Database.setItem(customer, { selfId: success.productId, name: 'Wooden Arrow', amount: 1000 });
         await Life.init(); Workshop.init();
         await Life.upsertState({ characterId: crafter, name: 'BoardCrafter', phase: 'cold', activity: 'shopping',
-            level: 70, loc: point, currentRegion: 'Giran', adena: 10000000,
+            level: 70, loc: { ...point, locX: point.locX - 30000 }, currentRegion: 'Dion', adena: 10000000,
             inventory: Life.inventorySummaryFromItems(await Database.fetchItems(crafter)),
             vitals: { hp: 1000, maxHp: 1000, mp: 100000, maxMp: 100000 },
-            stats: { classId: 57, workshop: { title: 'Board workshop', entries: [success, failure]
+            stats: { classId: 57, twin: { town: 'Giran', workshop: [success, failure]
                 .map(recipe => ({ recipeId: recipe.recipeId, price: fee })) } }, timing: {} }, 'board_craft_fixture');
         const [row] = await Database.execute(['SELECT * FROM characters WHERE id=?', [customer]]);
         const session = { accountId: 'quests', packets: [], socket: { write() {} },

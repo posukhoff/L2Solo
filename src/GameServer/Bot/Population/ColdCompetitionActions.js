@@ -1,4 +1,5 @@
 const DiagnosticConfig = require('./PopulationConfig');
+const { partyIdOf } = require('./PartyId');
 const Episode = require('./ColdCompetitionEpisode');
 const RelationshipContext = require('../../Social/RelationshipContext');
 const InventorySummary = require('./InventorySummary');
@@ -17,7 +18,7 @@ const count = (map, key) => { if (!DiagnosticConfig.developerDiagnostics) return
 const priority = e => e.action === 'revenge' || e.pvpIntent ? 3 : e.action === 'offer_party' ? 2 : e.action === 'contest' ? 1 : 0;
 
 function eligible(state, event, participant, now) {
-    const partyId = state?.party?.partyId || state?.partyId || null;
+    const partyId = partyIdOf(state);
     const recruiting = event.action === 'offer_party' && event.accepted && participant.partyId;
     return state?.phase === 'cold' && (recruiting ? ['grouped', 'hunting'].includes(state.activity) : state.activity === 'hunting') && state.vitals?.hp > 0
         && (recruiting ? partyId === participant.partyId : !partyId) && !state.stats?.travel
@@ -162,14 +163,14 @@ class ColdCompetitionActions {
         let queued = false;
         if (event.action === 'offer_party' && event.accepted) {
             if (Math.abs(states[0].level - states[1].level) > 4) return { ok: false, reason: 'level_mismatch' };
-            if (!states.some(s => s.party?.partyId || s.partyId)
+            if (!states.some(s => partyIdOf(s))
                 && require('../../Actor/PartyRewardMath').validMemberIndexes(states.map(s => s.level || 1)).length !== states.length) {
                 return { ok: false, reason: 'party_experience_mismatch' };
             }
             const party = await this.formParty(next, event, { participantAllowed: this.participantAllowed });
             if (party?.partyId) (party.memberIds || states.map(s => s.characterId)).forEach(id => this.onState(id));
             if (party?.partyId) return { ok: true, partyId: party.partyId, ...(party.recruited ? { recruited: party.recruited } : {}) };
-            if (party?.rejected !== 'party_capacity' || states.some(s => s.party?.partyId || s.partyId)) {
+            if (party?.rejected !== 'party_capacity' || states.some(s => partyIdOf(s))) {
                 return { ok: false, reason: party?.rejected || 'party_commit_rejected' };
             }
             // A willing hunter can keep looking for a group while farming.

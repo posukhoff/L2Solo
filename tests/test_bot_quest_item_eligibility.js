@@ -41,7 +41,6 @@ for (let id = 990; id <= 1000; id++) {
 state.inventory = structuredClone(originalInventory);
 const saleOptions = { unlimited: true, keptAmounts: {}, preparedReservations: {} };
 assert.deepEqual(Disposition.saleCandidates(state, saleOptions), []);
-assert.deepEqual(Disposition.npcLiquidationCandidates(state, saleOptions), []);
 assert.deepEqual(Listing.evaluate(state, saleOptions).listings, []);
 assert.deepEqual(state.inventory, originalInventory, 'exclusion preserves real inventory');
 const gloves = Data.items.find(row => row.template.kind === 'Armor.Wear' && row.etc.slot === 9

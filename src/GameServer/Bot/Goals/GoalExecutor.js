@@ -25,14 +25,16 @@ function marketTown(name = 'Giran') {
 
 // A bot with karma travels only to Floran: ColdTrip.townPlan refuses the
 // other towns. economy: the caller's economy of this same state, if it has one.
-function beginMarketTravel(state, goal, timestamp = Date.now(), { economy = null } = {}) {
+// onErrandRefused(errand): told when a kept errand's own terms refuse its town
+// (the one departure gate; ColdMarketService.departOrEndErrand ends it).
+function beginMarketTravel(state, goal, timestamp = Date.now(), { economy = null, onErrandRefused = null } = {}) {
     if (!state || !goal || ['traveling', 'shopping', 'merchant', 'crafting'].includes(state.activity)) return null;
     const ticket = state.stats?.partyMarketReturn;
     if (Number(ticket?.until) > 0 && Number(ticket.until) <= timestamp)
         state = { ...state, stats: { ...state.stats, partyMarketReturn: null } };
     if (BotErrands.busyWith(state, MARKET_TRIP_BUSY_FLAGS)) return null;
     const buyingGear = goal.type === 'upgrade_gear'
-        && ['market_search_for_weapon', 'market_search_for_gear'].includes(goal.plan?.expectedBenefit);
+        && goal.plan?.expectedBenefit === 'market_search_for_gear';
     const buyingMaterial = goal.type === 'buy_craft_material' && goal.plan?.expectedBenefit === 'market_buy_craft_material';
     // An errand: a purchase another job planned in its town (ColdMarketService.acquire).
     const buyingErrand = goal.type === 'market_errand' && !!goal.plan?.marketTown;
@@ -46,27 +48,33 @@ function beginMarketTravel(state, goal, timestamp = Date.now(), { economy = null
     if (sellingInventory && !forcedInventoryCleanup && Number(state.stats?.marketSellRetryAfter || 0) > timestamp) return null;
 
     if (buyingGear || buyingMaterial || buyingErrand) {
-        const selfId = Number(goal.target?.itemId);
-        const errand = buyingErrand ? CombinedErrands.pending(state, timestamp)
-            .find(row => Number(row.selfId) === selfId && row.town === goal.plan.marketTown) : null;
-        const request = { ...(errand || {}), selfId, amount: Number(goal.target?.amount || 1),
-            town: goal.plan.marketTown, purpose: errand?.purpose || goal.plan?.purpose };
-        for (const field of ['valueHours', 'survivalCost']) {
-            if (goal.plan?.[field] !== undefined) request[field] = goal.plan[field];
+        const Market = invoke('GameServer/Bot/Economy/ColdMarketService'); // lazy: cycle ColdMarketService links GoalExecutor at its top
+        const gate = economy ? { timestamp, economy } : { timestamp };
+        // A kept errand departs on the terms its arrival buys on (ColdMarketService.errandTerms).
+        const errand = buyingErrand ? Market.goalErrand(state, goal, timestamp) : null;
+        if (errand && !Market.errandDeparts(state, errand, gate)) {
+            onErrandRefused?.(errand);
+            return null;
         }
-        if (goal.plan?.valueRate !== undefined) request.r = goal.plan.valueRate;
-        if (!invoke('GameServer/Bot/Economy/ColdMarketService').canTravelForPurchase(state, request,
-            economy ? { timestamp, economy } : { timestamp })) return null;
+        if (!errand) {
+            const request = { selfId: Number(goal.target?.itemId), amount: Number(goal.target?.amount || 1),
+                town: goal.plan.marketTown, purpose: goal.plan?.purpose };
+            for (const field of ['valueHours', 'survivalCost']) {
+                if (goal.plan?.[field] !== undefined) request[field] = goal.plan[field];
+            }
+            if (goal.plan?.valueRate !== undefined) request.r = goal.plan.valueRate;
+            if (!Market.canTravelForPurchase(state, request, gate)) return null;
+        }
     }
 
     // A sale goes where its goal says (the town the shop opens in), else to
-    // the sale town; a new decision of the shop town travels with the bot.
-    const sale = sellingInventory && !goal.plan?.marketTown ? MarketTownPolicy.saleTown(state, timestamp) : null;
+    // the sale town.
+    const sale = sellingInventory && !goal.plan?.marketTown ? MarketTownPolicy.saleTown(state) : null;
     const town = marketTown(sale?.town || goal.plan?.marketTown || 'Giran');
     if (!town) return null;
     const from = { ...state.loc };
     const nearestTown = TownRespawn.getClosestTown(from.locX, from.locY, from.locZ);
-    const trip = (destination, shopTown = null) => ColdTrip.toTown(CombinedErrands.visit(state, destination.name, timestamp, goal.type), {
+    const trip = destination => ColdTrip.toTown(CombinedErrands.visit(state, destination.name, timestamp, goal.type), {
         reason: buyingGear || buyingMaterial || buyingErrand || improving ? goal.plan.expectedBenefit : 'market_sale_inventory',
         from,
         to: { ...destination.center },
@@ -75,10 +83,9 @@ function beginMarketTravel(state, goal, timestamp = Date.now(), { economy = null
         arrivalActivity: 'shopping',
         arrivalEvent: 'arrived_town'
     }, timestamp, {
-        marketReturn: { loc: from, regionName: state.currentRegion || null, spotId: state.spotId || null },
-        ...(shopTown ? { shopTown } : {})
+        marketReturn: { loc: from, regionName: state.currentRegion || null, spotId: state.spotId || null }
     });
-    const travel = trip(town, sale?.shopTown);
+    const travel = trip(town);
     if (travel || !sellingInventory) return travel;
     // A bot that cannot pay the gatekeeper to its sale town sells in the town
     // its Scroll of Escape reaches, as a player short of Adena would.
@@ -87,7 +94,7 @@ function beginMarketTravel(state, goal, timestamp = Date.now(), { economy = null
 }
 
 // A finished visit is the bot's look at the market: the board reviews its
-// buy ads on it through the shared hot/cold BoardLook. `n` counts visits;
+// lines on it through the shared hot/cold BoardLook. `n` counts visits;
 // the existing bounded look owner consumes each new observation once.
 function finishMarketVisit(state, timestamp = Date.now(), options = {}) {
     const next = finishVisit(state, timestamp, options);
@@ -175,7 +182,7 @@ function finishVisit(state, timestamp, options) {
         arrivalEvent: spotBackoff ? 'arrived_hunting_ground' : 'returned_to_spot',
         ...(spotBackoff ? { cause: 'death_pressure' } : {}),
         clearMarketReturn: true
-    }, timestamp, { extraStats: clanReturn ? { shopTown: null } : { partyMarketReturn: null, shopTown: null } });
+    }, timestamp, clanReturn ? {} : { extraStats: { partyMarketReturn: null } });
 }
 
 module.exports = { MARKET_TRAVEL_MS, GATEKEEPER_SPOT_TRAVEL_MS, beginMarketTravel, finishMarketVisit, marketTownForSale: MarketTownPolicy.targetTownForSale };

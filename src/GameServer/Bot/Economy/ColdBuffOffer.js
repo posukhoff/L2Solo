@@ -1,5 +1,6 @@
 'use strict';
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
+const { partyIdOf } = require('../Population/PartyId');
 const Rules = invoke('GameServer/Skills/C4SkillRules');
 const Loadout = invoke('GameServer/Bot/AI/PartyBuffLoadout');
 const Policy = invoke('GameServer/Bot/Economy/BuffServicePolicy');
@@ -8,7 +9,7 @@ const MAX_RECIPIENTS = 16, MAX_OFFER_BYTES = 512;
 
 function available(state) {
     return state?.phase === 'cold' && ['hunting', 'resting'].includes(state.activity)
-        && !!state.spotId && !state.party?.partyId && !state.partyId
+        && !!state.spotId && !partyIdOf(state)
         && !state.stats?.backgroundPartyId && !state.stats?.pveEncounter && !state.stats?.pvpEncounter
         && Number(state.vitals?.hp || 0) > 0;
 }

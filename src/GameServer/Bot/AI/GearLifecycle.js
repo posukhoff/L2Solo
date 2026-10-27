@@ -1,5 +1,5 @@
+const { levelForGrade } = invoke('GameServer/Bot/AI/GearGradeRule');
 const GEAR_FOCUS_LEVEL = 5;
-const D_GRADE_LEVEL = 20;
 
 function levelOf(state = {}) {
     return Math.max(1, Number(state.level || 1));
@@ -8,7 +8,7 @@ function levelOf(state = {}) {
 function phaseFor(state = {}) {
     const level = levelOf(state);
     if (level < GEAR_FOCUS_LEVEL) return 'starter';
-    if (level < D_GRADE_LEVEL) return 'no_grade_focus';
+    if (level < levelForGrade('d')) return 'no_grade_focus';
     return 'grade_progression';
 }
 
@@ -17,7 +17,7 @@ function isGearFocusActive(state = {}) {
 }
 
 function allowsCrafting(state = {}) {
-    return levelOf(state) >= D_GRADE_LEVEL;
+    return levelOf(state) >= levelForGrade('d');
 }
 
 function slotPriority(slot) {
@@ -28,4 +28,4 @@ function slotPriority(slot) {
     return 0;
 }
 
-module.exports = { GEAR_FOCUS_LEVEL, D_GRADE_LEVEL, phaseFor, isGearFocusActive, allowsCrafting, slotPriority };
+module.exports = { GEAR_FOCUS_LEVEL, phaseFor, isGearFocusActive, allowsCrafting, slotPriority };

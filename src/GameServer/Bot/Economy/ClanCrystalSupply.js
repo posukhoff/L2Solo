@@ -1,4 +1,5 @@
 'use strict';
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 // The accepted clan equipment owner asks the shared economy for its next
 // crystal ingredient. Purchases, travel, exchanges and crystallization still
@@ -15,13 +16,13 @@ function requirement(state) {
     const plan = state.stats?.equipmentPlan;
     if (!plan?.clanGoal?.clanId || Number(plan.clanGoal.beneficiaryId) !== Number(state.characterId)
         || Number(state.clanId ?? state.stats?.clanId) !== Number(plan.clanGoal.clanId)
-        || !['active', 'component_ready', 'ready_to_craft'].includes(plan.status)
+        || !GearAcquisitionPlanner.planRunning(plan)
         || !['craft', 'luxury_exchange'].includes(plan.strategy)
         || !plan.target?.selfId || !plan.target?.slot
         || Number(state.inventory?.[plan.target.selfId]?.amount || 0) > 0
-        || !invoke('GameServer/Bot/AI/GearAcquisitionPlanner').combatReadiness(state).hasWeapon
-        || !invoke('GameServer/Bot/AI/GearAcquisitionPlanner').acquisitionTargetAllowed(state, plan)
-        || invoke('GameServer/Bot/AI/GearAcquisitionPlanner').equipmentTargetFulfilled(state, plan)) return null;
+        || !GearAcquisitionPlanner.combatReadiness(state).hasWeapon
+        || !GearAcquisitionPlanner.acquisitionTargetAllowed(state, plan)
+        || GearAcquisitionPlanner.equipmentTargetFulfilled(state, plan)) return null;
     const material = (plan.materials || []).find(row => [1458, 1459].includes(Number(row.selfId))
         && Number(row.amount) > Number(state.inventory?.[row.selfId]?.amount || 0));
     const delivery = !material && plan.strategy === 'luxury_exchange' && plan.exchange?.materials?.length
@@ -47,11 +48,11 @@ function freesSpace(state, leaf) {
     const inputs = leaf.improvement.items || [{ selfId: leaf.improvement.sourceSelfId,
         amount: Number(leaf.improvement.amount || leaf.batches || 1) }];
     let crystalId = null, received = 0;
-    const seen = new Set();
+    const seen = new Set(), free = Crystals.freeReader(state);
     for (const input of inputs) {
         const item = inventory[input.selfId], amount = Number(input.amount);
-        const reward = Crystals.reward(Index.find(Data.items, input.selfId), 0, leaf.improvement.mode === 'self');
-        if (seen.has(input.selfId) || !reward || !Number.isSafeInteger(amount) || amount <= 0 || Crystals.free(state, input.selfId) < amount
+        const reward = Crystals.reward(Index.find(Data.items, input.selfId));
+        if (seen.has(input.selfId) || !reward || !Number.isSafeInteger(amount) || amount <= 0 || free(input.selfId) < amount
             || crystalId && crystalId !== reward.crystalId) return false;
         seen.add(input.selfId);
         crystalId = reward.crystalId; received += reward.net * amount;

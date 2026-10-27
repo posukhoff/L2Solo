@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 require('../src/Global');
 const Data = invoke('GameServer/DataCache'); Data.init();
 const Policy = require('../src/GameServer/Bot/Economy/WealthCraftPolicy');
+// The search WealthCraftDecision runs, for one dwarven recipe.
+const opportunityFor = (state, recipe, planFor, exits, ownedFor, context) =>
+    Policy.chooseQuantity({ state, recipe, planFor, exits, ownedFor, context });
 const Decision = require('../src/GameServer/Bot/Economy/WealthCraftDecision');
 const Shots = require('../src/GameServer/Bot/Economy/ShotCraftPolicy');
 const Funding = require('../src/GameServer/Bot/Economy/PurchaseFunding');
@@ -18,14 +21,12 @@ const recipe = { type: 'dwarven', recipeId: 20, recipeItemId: 1804, level: 1,
     materials: [{ selfId: 1458, amount: 1 }] };
 const purchase = (id, amount) => ({ town: 'Giran', cost: amount * 2, landed: amount * 2, units: amount, whole: true });
 const exit = { price: 10, count: 10, trip: 0 };
-const finite = Policy.opportunityFor(state, recipe, purchase, [exit], undefined, context);
+const finite = opportunityFor(state, recipe, purchase, [exit], undefined, context);
 assert(finite);
 assert.equal(finite.batches, 1, 'finite marginal output stops after the first saturating batch');
 assert.equal(finite.expectedSold, 6, 'cap success output before mixing the 60% physical outcome');
 assert.equal(finite.expectedProfit, 57);
-assert.equal(finite.repeatable, false);
-assert(Number.isNaN(finite.incomePerHour), 'a finite buyer supplies no occupation clock');
-const stock = Policy.opportunityFor(state, recipe, purchase, [exit], id => id === 1463
+const stock = opportunityFor(state, recipe, purchase, [exit], id => id === 1463
     ? { count: 10, unitValue: 10 } : null, context);
 assert.equal(stock, null, 'old goods satisfy the same bid in the without-case');
 const duplicate = { ...recipe, productCount: 1, successRate: 100,
@@ -34,9 +35,12 @@ const basket = Policy.basketFor(duplicate, purchase, () => ({ count: 6, unitValu
 assert.deepEqual(basket.owned, [{ selfId: 1458, count: 6, unitValue: 2 }]);
 assert.deepEqual(basket.purchases.map(row => row.count), [4], 'aggregate requirements before allocating one physical stock');
 const withTrips = Policy.basketFor({ ...duplicate, materials: [{ selfId: 1458, amount: 1 }, { selfId: 1785, amount: 1 }] },
-    (id, amount) => ({ ...purchase(id, amount), landed: 12, tripDetails: { hours: .25, fees: 3 } }), undefined, 1, context);
+    (id, amount) => ({ ...purchase(id, amount), landed: 12, tripDetails: { known: true, hours: .25, fees: 3 } }), undefined, 1, context);
 assert.equal(withTrips.travelHours, .25);
 assert.equal(withTrips.actualCashFees, 3, 'one town route is charged once');
+const unknownRow = Policy.basketFor({ ...duplicate, materials: [{ selfId: 1458, amount: 1 }] },
+    (id, amount) => ({ ...purchase(id, amount), landed: 12, tripDetails: { hours: .25, fees: 3 } }), undefined, 1, context);
+assert.equal(unknownRow.actualCashFees, 0, 'its fees are not taken as cash');
 const deterministic = { ...recipe, productCount: 1, successRate: 100, mpCost: 10 };
 const capacity = Policy.chooseQuantity({ state, recipe: deterministic, planFor: purchase,
     exits: [{ price: 20, count: 1000 }], context: { ...context, destinationCapacity: 3 } });
@@ -50,33 +54,17 @@ const nativeLimit = Policy.chooseQuantity({ state: { ...state, vitals: { mp: 1e9
 assert.equal(nativeLimit.batches, 64);
 const trial = Policy.chooseQuantity({ state, recipe: deterministic, planFor: purchase,
     exits: [{ price: 20, count: 1000, trial: true }], context });
-assert.equal(trial.batches, 1);
+assert(trial.batches > 1, 'an unbacked bid line takes the lots its count takes');
 const unknownClock = Policy.chooseQuantity({ state, recipe: deterministic, planFor: purchase,
     exits: [{ price: 20, count: 1000 }], context: { hourAdena: 1000 } });
 assert.equal(unknownClock, null);
-const zeroClock = Policy.chooseQuantity({ state, recipe: { ...deterministic, mpCost: 0 },
-    planFor: (id, n) => ({ ...purchase(id, n), npc: n }), exits: [{ price: 20, count: 1000, repeatable: true }], context,
-    mode: 'occupation' });
-assert.equal(zeroClock, null, 'zero MP alone is no repeatable full-cycle clock');
-const recurring = Policy.chooseQuantity({ state, recipe: deterministic,
-    planFor: (id, n) => ({ ...purchase(id, n), npc: n }), exits: [{ price: 20, count: 1000, repeatable: true }],
-    context, mode: 'occupation' });
-assert(recurring?.incomePerHour > 0);
-assert(Funding.forOpportunity(state, finite.valuation) > 0);
-const purseBefore = structuredClone(state);
-assert.equal(Funding.forOpportunity(state, finite.valuation),
-    Funding.spendable(state, 0, { r: finite.valueHours / finite.basket.cashCost }),
-    'craft funding uses the physical purse without adding or subtracting held escrow');
-assert.deepEqual(state, purseBefore, 'valuation does not release accepted buy pledges or change holdings');
 const poor = { ...state, adena: 1 };
-assert.equal(Policy.opportunityFor(poor, recipe, purchase, [exit], undefined, context), null);
-assert(Funding.forOpportunity(poor, finite.valuation) < finite.basket.cashCost,
-    'a stale profitable candidate cannot fund inputs from an insufficient current purse');
+assert.equal(opportunityFor(poor, recipe, purchase, [exit], undefined, context), null);
 const recipeOwner = { ...state, inventory: { 1804: { selfId: 1804, amount: 1 } } };
 const learning = Decision.recipePaths(recipeOwner, recipe, { route: finite, sale: { price: 10 }, context });
 assert.equal(learning.best.kind, 'learn');
 const noDeal = Decision.recipePaths(recipeOwner, recipe, { route: { ...finite, valueHours: .005 }, sale: { price: 10 }, context });
-assert.equal(noDeal.best.kind, 'sale', 'a valuable scroll stays saleable when one action cannot repay it');
+assert(!noDeal.rows.some(row => row.kind === 'sale'), 'a learnable scroll gets no sale row: it is learned, one learn-or-sell answer');
 const unavailable = Decision.recipePaths(state, recipe, { route: finite, acquisition: { available: false, price: 1 }, context });
 assert.equal(unavailable.best.kind, 'hold');
 const affordableScroll = Decision.recipePaths(state, recipe, {

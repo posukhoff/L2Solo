@@ -5,18 +5,23 @@ const Roles = require('../AI/BotRoles');
 const Knowledge = require('../AI/KnowledgeLearning');
 const Crystallization = require('./BotCrystallization');
 const Floor = require('../Population/SurvivalFloor');
+const { partyIdOf } = require('../Population/PartyId');
 
 const GearThreat = require('./GearThreat');
 
 const ItemIndex = require('../../Item/ItemTemplateIndex');
 const Valuation = require('./EconomicValuation');
 const Providers = require('./WishProviders');
+const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+const WealthDecision = invoke('GameServer/Bot/Economy/WealthCraftDecision');
+const ClanCrystalSupply = require('./ClanCrystalSupply');
 const Sections = require('./DecisionSections');
 const Funding = require('./PurchaseFunding');
 const SpotRiskPolicy = require('../Population/SpotRiskPolicy');
 const ColdEconomyDecision = require('../Population/ColdEconomyDecision');
 const Network = require('./WishNetwork');
 const PurchaseEvidence = require('./WishPurchaseEvidence');
+const { buyback } = require('./PriceDecision');
 const OccupationSources = invoke('GameServer/Bot/Population/ColdOccupationSources');
 const { WishNetwork, remember, admitRoots, remainingQuantity, moneyQueue, cashCharge,
     createQuantityInputs, quantityInputsHold, eachQuantityRow } = Network;
@@ -32,6 +37,10 @@ const { SELL, BUY } = require('../../AfkTrade/BoardIndex');
 const BoardRules = require('../../AfkTrade/BoardRules');
 const Diagnostics = require('./EconomyDiagnostics');
 const PriceBelief = require('./PriceBelief');
+const MarketDemand = require('./MarketDemand');
+const TwinCluster = require('./TwinCluster');
+const CraftEligibility = invoke('GameServer/Bot/Economy/CraftEligibility');
+const HealingPotionStock = invoke('GameServer/Bot/AI/HealingPotionStock');
 const { fnv1a32 } = require('../Fnv1a');
 const engine = new WishNetwork();
 const Trip = require('./EconomicTrip');
@@ -53,12 +62,116 @@ const PROOF_RAW_BYTES = 65536;
 // member's with its graph nodes; the main thread keeps the graph nodes too and stays at 64.
 const RETAIN_LIMIT = isMainThread ? 64 : 2048;
 let routeAnchors = new WeakMap();
+// The rebuild table, always on (rebuildStats; the worker's heartbeat, summary
+// line rebuilds=): per entry (the build's caller and trigger) and per reason a
+// held build was not served, the builds, their ms and, of those with a held
+// build, how many chose what it had chosen (sameDecision); 'served' counts the
+// held builds served. Since start; bounded by REBUILD_ROWS_MAX whatever the
+// callers pass: an entry names a trigger only from REBUILD_TRIGGERS (a per-ask
+// token never names a row), at most REBUILD_ENTRIES_MAX entries (the rest share
+// 'other'), REBUILD_REASONS_MAX reasons per entry and REBUILD_NAMED_MAX
+// named rows (the rest join their entry's 'other'); names are cut to
+// REBUILD_NAME_MAX on the heartbeat (the worker's frameSizing reserves the max).
+// Only with diagnostics on a held refusal names its cause (refused:<reason>:<cause>, forState
+// refusalCause: unproved, wish_dirty, sections): an entry's
+// first REBUILD_CAUSES_MAX causes of one reason get a row, the rest share
+// its refused:<reason>:other, so a reason takes at most 4 of the entry's
+// reasons (the caps carry those +3 per caused reason beside the plain row
+// they replace: 4 reasons, +12 per entry; NAMED_MAX +6 per caused reason).
+const REBUILD_TRIGGERS = new Set(['state_copy', 'own_commit', 'own_review', 'main_refresh', 'main_look',
+    'warehouse', 'clan_supply', 'native_own_action', 'ask']);
+const REBUILD_ENTRIES_MAX = 32, REBUILD_REASONS_MAX = 21, REBUILD_NAMED_MAX = 114, REBUILD_NAME_MAX = 48;
+const REBUILD_REFUSED = 'refused:', REBUILD_CAUSES_MAX = 3;
+// A cause naming sections or facts lists at most 3 (the longest fits
+// REBUILD_NAME_MAX with its row prefix), more read 'many'.
+function causeNames(names) {
+    return names.length > 3 ? 'many' : names.join('+') || 'none';
+}
+// A row's kind on the heartbeat (rebuildStats): 0 a build, 1 a served held
+// build. The summary line's builds/s counts kind 0 (PopulationStatus.rebuildText).
+const REBUILD_KINDS = new Map([['served', 1]]);
+const REBUILD_ROWS_MAX = REBUILD_NAMED_MAX + REBUILD_ENTRIES_MAX + 1;
+const rebuildRows = new Map();
+// entry -> its named reason rows; rebuildNamed: all named rows.
+const rebuildEntries = new Map();
+let rebuildNamed = 0;
+// entry|refused:<reason> -> its named causes (REBUILD_CAUSES_MAX).
+const rebuildCauses = new Map();
+function rebuildEntry(caller, trigger) {
+    const entry = caller || 'economy_context';
+    return REBUILD_TRIGGERS.has(trigger) ? `${entry}<${trigger}` : entry;
+}
+function countRebuild(entry, reason, ms = 0, same = null) {
+    let name = `${entry}|${reason}`, row = rebuildRows.get(name);
+    if (!row) {
+        let reasons = rebuildEntries.get(entry);
+        if (reasons === undefined && rebuildEntries.size < REBUILD_ENTRIES_MAX) rebuildEntries.set(entry, reasons = 0);
+        const at = reasons !== undefined && reason.startsWith(REBUILD_REFUSED) ? reason.indexOf(':', REBUILD_REFUSED.length) : -1;
+        if (at > 0) {
+            const base = `${entry}|${reason.slice(0, at)}`, causes = rebuildCauses.get(base) || 0;
+            if (causes < REBUILD_CAUSES_MAX) rebuildCauses.set(base, causes + 1);
+            else row = rebuildRows.get(name = `${base}:other`);
+        }
+        if (!row) {
+            if (reasons === undefined) name = 'other|other';
+            else if (reasons >= REBUILD_REASONS_MAX || rebuildNamed >= REBUILD_NAMED_MAX) name = `${entry}|other`;
+            else { rebuildEntries.set(entry, reasons + 1); rebuildNamed++; }
+            row = rebuildRows.get(name);
+            if (!row) rebuildRows.set(name, row = { n: 0, ms: 0, same: 0, compared: 0 });
+        }
+    }
+    row.n++; row.ms += ms;
+    if (same !== null) { row.compared++; if (same) row.same++; }
+}
+// A build chose what the held build had chosen: the focus, the leaf and the
+// first wishes of the queue in order (the decision's outputs, no projection).
+function sameDecision(held, fresh) {
+    if (!held || !fresh || held.focus?.[0] !== fresh.focus?.[0] || held.activity?.key !== fresh.activity?.key) return false;
+    const a = held.queue || [], b = fresh.queue || [];
+    for (let i = 0; i < 4; i++) if (a[i]?.key !== b[i]?.key) return false;
+    return true;
+}
+// [entry, reason, builds, ms, same, compared, kind] rows since start.
+function rebuildStats() {
+    return [...rebuildRows].map(([name, row]) => {
+        const at = name.lastIndexOf('|');
+        const reason = name.slice(at + 1);
+        return [name.slice(0, Math.min(at, REBUILD_NAME_MAX)), reason.slice(0, REBUILD_NAME_MAX), row.n, Math.round(row.ms), row.same, row.compared, REBUILD_KINDS.get(reason) || 0];
+    });
+}
 let runtime = {};
-const extensions = new Map();
 function configure(providers = {}) { runtime = providers; reset(); }
-function registerProvider(key, provider) {
-    if (typeof provider !== 'function') throw new TypeError('invalid_economy_provider');
-    extensions.set(key, provider); reset();
+// The market board a reader looks at: the given one (a board or its
+// getter), else the configured runtime's, else main's live board; null in
+// a worker not configured yet. The one board resolution of every reader.
+// Main's live board gets its recipe index at the first resolution (the one
+// builder, ColdOccupationSources.recipeIndex), so main's recipe market
+// facts (scroll value in spot income and scroll demand) are held and
+// follow its board and deals (RecipeProductionIndex.forBoard), as the worker's.
+let indexedBoard = null;
+function marketBoard(board = runtime.board) {
+    if (typeof board === 'function') board = board();
+    if (board || !isMainThread) return board || null;
+    // lazy: worker the board's owner lives on main; the worker passes its board.
+    const live = invoke('GameServer/AfkTrade/AfkTradeService').boardIndex();
+    if (live && live !== indexedBoard) {
+        OccupationSources.recipeIndex(live);
+        indexedBoard = live;
+    }
+    return live;
+}
+// The recipes a bot knows, as its thread holds them: the worker's book
+// (the configured runtime's knownRecipes: the book main sent), main's
+// workshop cache once loaded (CraftWorkshopService); undefined while the
+// thread holds no book. The one source of every reader of known recipes
+// (resolved, ItemDisposition.knownRecipeIds).
+function knownRecipesOf(state) {
+    const id = Number(state?.characterId);
+    if (typeof runtime.knownRecipes === 'function') return runtime.knownRecipes(id) ?? undefined;
+    if (!isMainThread) return undefined;
+    // lazy: worker the workshop cache lives on main only.
+    const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
+    return Workshops.bookFor(id) !== null ? Workshops.cachedRecipes(id) : undefined;
 }
 // actorKey -> { key, readIds, plan, stateRef, gearThreat } of bots: bounded
 // (WishNetwork.remember). The plan is data (planOf); a reader gets view().
@@ -144,11 +257,11 @@ function fieldActivity(state, activity, leaf = null) {
     return state.activity === 'traveling' && Sections.occupationPlanned(state, leaf)
         ? { ...state, activity, stats: { ...state.stats, travel: null } } : { ...state, activity };
 }
-// The decided facts of a request over resolved deps: the bot's memory and
-// the recipe book the build reads (main: the database book; worker: the
+// The decided facts of a request over resolved deps: the recipe book the
+// build reads (main: the database book; worker: the
 // book main sent), so a build and its verdict read the same sources.
 function requestFacts(state, deps) {
-    return Sections.semanticFacts(state, deps.memory ?? null, Providers.recipeIds(state, deps));
+    return Sections.semanticFacts(state, ItemDisposition.knownRecipeIds(state, deps.knownRecipes));
 }
 // The build's input name (the weighing memo, the card's inputHash, the group
 // key): its facts without the occupation, which the verdict reads against
@@ -179,7 +292,8 @@ function bandsHold(state, bands = [], leaf = null) {
 // (below the lower bound or a moved funding mark). Soft money, income and
 // the market are the soft point's (DecisionSections.softEvents, the end of
 // the step), never here.
-// held: { baseline, mp, nativeCraftContinuation } of the last actual decision.
+// held: { baseline, mp, nativeCraftContinuation, money } of the last actual
+// decision; money: the packet it priced with (heldMoney), the state's without.
 // Every failing check names itself in `why` (an array or null), in order.
 const miss = (why, reason) => { why?.push(reason); return false; };
 function heldEventsQuiet(state, held, deps = {}, why = null) {
@@ -187,13 +301,14 @@ function heldEventsQuiet(state, held, deps = {}, why = null) {
     let quiet = true;
     if (!held.nativeCraftContinuation && Number(state.craftLevel ?? stats.dwarvenCraftLevel) > 0
         && Number(state.vitals?.mp) !== Number(held.mp)) quiet = miss(why, 'crafter_mp');
-    if (Sections.moneyChanged(state, held.baseline, deps.buyOrderEscrow, false)) quiet = miss(why, 'money');
+    if (Sections.moneyChanged(state, held.baseline, deps.buyOrderEscrow, false, held.money ?? state.stats?.money)) quiet = miss(why, 'money');
     return quiet;
 }
 // A quantity proof row (WishNetwork createQuantityInputs layout) of the
 // leaf's own progress: a stock row of its own root on its item, or a
-// scalar row of its item. Another root's stock row on that item is that
-// root's input (a wished material reaching its count).
+// scalar row of its item (WishNetwork finish keeps that stock row apart).
+// Other roots' stock row on that item (shared, root '') is their input (a
+// wished material reaching its count).
 const ownQuantityRow = (row, rootKey, own) => row[0] === 'stock' || row[0] === 'stockPhysical'
     ? row[1] === rootKey && row[2] === own : row[1] === own;
 // The first input a completed build lacks for an event proof, '' if none.
@@ -201,7 +316,6 @@ function eventProofMissing(state, deps, plan) {
     if (!plan || plan.pending) return 'pending';
     if (!plan.quantityInputs) return 'quantity_inputs';
     if (!plan.liquidationInputs) return 'liquidation_inputs';
-    if (extensions.size) return 'extensions';
     if (deps.nodes?.length) return 'nodes';
     if (state.incomingPending) return 'incoming_pending';
     if (!plan.statsPacket?.wishSections) return 'sections';
@@ -230,13 +344,68 @@ function captureEventProof(state, deps = {}, options = {}) {
         activity: activityIdentity(leaf),
         quantities: plan.quantityInputs, liquidation: plan.liquidationInputs,
         stockRoots: Object.freeze([...plan.stockRoots]),
-        bands: plan.quantityBands || [], hourAdena: plan.hourAdena,
+        thresholds: plan.quantityThresholds || Network.NO_THRESHOLDS, bands: plan.quantityBands || [], hourAdena: plan.hourAdena,
         // A restored prefix currently excludes process-local owner versions.
         // Unsupported owners abstain; an empty numeric revision is not proof.
         restartable: !!RecomputeGeneration.current() && typeof deps.memoryIdentity === 'string'
             && deps.sourceReady === true });
 }
 
+// A row kept exact whatever its drift: incoming, presence and a physical
+// stock row (no threshold is noted on it).
+const EXACT_QUANTITY_ROWS = new Set(['incoming', 'present', 'freePresent', 'stockPhysical']);
+// The quantity bands of a held build (open item 'hold:economy decision_seq
+// and quantity'), the tolerate walker of quantityInputsHold for one verdict:
+// a moved count row holds while it stays on the same side of every
+// threshold the build compared it with (proof.thresholds, WishNetwork
+// createQuantityInputs) and the drift of the rows so held (|delta| x
+// buyback, an item's largest drift once) stays within the verdict's one drift budget (charge, shared
+// with the old bands: heldBuildVerdict). A row kept exact or never noted
+// (untracked), a stock row whose incoming moved, a crossing or a drift past
+// the budget refuses, and so does a malformed list.
+function quantityBand(proof, charge) {
+    const list = proof.thresholds;
+    let cursor = 0;
+    return (row, index, value, incoming) => {
+        // Rows come in ascending index: the cursor only moves on.
+        let count = thresholdCount(list, cursor);
+        while (count >= 0 && list[cursor] < index) count = thresholdCount(list, cursor += 2 + count);
+        if (count < 0 || list[cursor] !== index || EXACT_QUANTITY_ROWS.has(row[0])
+            || row[0] === 'stock' && incoming !== row[4]) return false;
+        const original = row[0] === 'stock' ? row[3] : row[2];
+        for (let at = cursor + 2; at < cursor + 2 + count; at++) {
+            const side = list[at];
+            if (!(side > 0) || (value >= side) !== (original >= side)) return false;
+        }
+        return charge(row[0] === 'stock' ? row[2] : row[1], value - original);
+    };
+}
+// The threshold count of the entry at `at` of a proof's flat thresholds
+// list (WishNetwork createQuantityInputs: row index, count, thresholds),
+// -1 past the end or when malformed.
+function thresholdCount(list, at) {
+    const count = list[at + 1];
+    return Number.isSafeInteger(count) && count >= 0 && at + 2 + count <= list.length ? count : -1;
+}
+
+// The state's decision (sequence, leaf, focus) against the held build's
+// (design-rules Recompute: own outputs are not inputs): '' while the state
+// carries the build's output (decision: the proof's, its packet applied) or
+// still the decision the build read (input: the held entry's, forState; its
+// packet not yet written back: a refresh, a near post sent before it came
+// back). Else the refusal against the input when the sequence is still the
+// input's, against the output otherwise. The input seen again means it did
+// not move: a raise bumps the sequence (DecisionEvents applyRaise,
+// raiseSections) and a packet is a build's output over the state it read;
+// every other fact the build read has its own check below. anySeq: the
+// sequence moved with a raise its bits name, only leaf and focus compared.
+function decisionMove(state, decision, input, anySeq) {
+    const seq = Number(state.stats?.decisionSeq || 0);
+    const output = Sections.decisionRefusal(state, anySeq ? seq : decision[0], decision[1], decision[2]);
+    if (!output || !input) return output;
+    const own = Sections.decisionRefusal(state, anySeq ? seq : input[0], input[1], input[2]);
+    return !own ? '' : !anySeq && seq === input[0] ? own : output;
+}
 // options.collect (the decision point, forState): a refusal that names
 // sections ORs them into touchedSections and the checks go on; one that
 // names none stops with every section. Otherwise (every other caller) the
@@ -246,14 +415,18 @@ function captureEventProof(state, deps = {}, options = {}) {
 function heldBuildVerdict(state, proof, deps = {}, options = {}) {
     // Diagnostics: verdicts computed (every caller), against the ones a build
     // served from the card's verdict of its step (forState, handedVerdict).
-    if (Diagnostics.active()) Diagnostics.count('context', 'held_verdict', 'computed');
+    const diagnostic = Diagnostics.active();
+    if (diagnostic) Diagnostics.count('context', 'held_verdict', 'computed');
     const collect = options.collect === true;
     // touchedSections: the pieces to rebuild; movedSections: only the
     // sections refusals named (a refusal naming none adds nothing to it);
     // firstSections: the sections the first refusal named, what a run that
     // stops there answers (eventProofHolds); leaf: the identity of the leaf
-    // it judged, unset when it stopped before.
-    const out = { valid: false, reason: '', touchedSections: 0, movedSections: 0, firstSections: 0, leaf: undefined };
+    // it judged, unset when it stopped before; cause: the cause of the first
+    // refusal, read by the rebuild table (forState refusalCause): unproved
+    // (missing: no proof, malformed, leaf_shape, decode), sections (the moved
+    // facts, diagnostics on).
+    const out = { valid: false, reason: '', touchedSections: 0, movedSections: 0, firstSections: 0, leaf: undefined, cause: '' };
     const refuse = (reason, names) => {
         const first = !out.reason;
         out.reason ||= reason;
@@ -266,19 +439,25 @@ function heldBuildVerdict(state, proof, deps = {}, options = {}) {
         if (first) out.firstSections = bits;
         return out;
     };
-    if (!proof || proof.version !== 2 || proof.owner !== Number(state.characterId)
+    const unproved = cause => {
+        if (!out.reason) out.cause = cause;
+        return refuse('unproved');
+    };
+    if (!proof) return unproved('missing');
+    if (proof.version !== 2 || proof.owner !== Number(state.characterId)
         || !Array.isArray(proof.decision) || proof.decision.length !== 3
         || !proof.decision.slice(0, 2).every(value => Number.isSafeInteger(value) && value >= 0)
         || proof.decision[2] !== null && typeof proof.decision[2] !== 'string'
         || !Array.isArray(proof.stockRoots) || proof.stockRoots.length > 40
         || !proof.stockRoots.every(row => Array.isArray(row) && row.length === 2
             && typeof row[0] === 'string' && Number.isSafeInteger(row[1]) && row[1] > 0)
-        || !(proof.activity === null ? options.leaf === null && proof.decision[1] === 0
-            : typeof proof.activity === 'string' && !!options.leaf?.activity)
-        || !Array.isArray(proof.bands) || !Array.isArray(proof.liquidation?.rows)
+        || !Array.isArray(proof.bands) || !Array.isArray(proof.thresholds) || !Array.isArray(proof.liquidation?.rows)
         || proof.liquidation.rows.length > 8 || !proof.liquidation.rows.every(row => Array.isArray(row)
             && row.length === 2 && Number.isSafeInteger(row[0]) && row[0] > 0 && Number.isFinite(row[1]) && row[1] > 0)
-        || !Number.isFinite(proof.hourAdena) || proof.hourAdena < 0) return refuse('unproved');
+        || !Number.isFinite(proof.hourAdena) || proof.hourAdena < 0) return unproved('malformed');
+    // The judged leaf has the proof's shape: none for a leafless proof.
+    if (!(proof.activity === null ? options.leaf === null && proof.decision[1] === 0
+        : typeof proof.activity === 'string' && !!options.leaf?.activity)) return unproved('leaf_shape');
     const baseline = options.baseline;
     if (!Sections.observationBaselineValid(baseline) || !Number.isFinite(proof.at)) return refuse('baseline');
     // The baseline belongs to this proof (identity of `at`, not an order of
@@ -289,25 +468,29 @@ function heldBuildVerdict(state, proof, deps = {}, options = {}) {
     out.leaf = activityIdentity(options.leaf);
     if (out.leaf !== proof.activity && refuse('activity', ['sources']) && !collect) return out;
     // A raised event (reconcile bumps the sequence with it) is named by its
-    // sections before the echo.
-    const dirty = Number(state.stats?.wishDirty) || 0;
+    // sections before the echo: the held build's own verdict reads the bits
+    // raised since that build (options.dirty, raisedSince), a card all of them.
+    const dirty = options.dirty ?? (Number(state.stats?.wishDirty) || 0);
     if (dirty && refuse('wish_dirty', dirty) && !collect) return out;
-    const echo = Sections.decisionRefusal(state, ...proof.decision);
+    const echo = decisionMove(state, proof.decision, options.input, false);
     // Collecting past raised bits: every raise (DecisionEvents markSections,
     // raiseSections) bumps decisionSeq with its bits, so a moved sequence is
     // that raise, already named by its bits; read as sources it would rebuild
     // the source walk on every event. The leaf and the focus are still
     // compared: a moved one lights sources, as the echo does.
     if (echo && collect && dirty) {
-        const leafOrFocus = Sections.decisionRefusal(state, Number(state.stats?.decisionSeq || 0), proof.decision[1], proof.decision[2]);
+        const leafOrFocus = decisionMove(state, proof.decision, options.input, true);
         if (leafOrFocus) refuse(leafOrFocus, ['sources']);
     } else if (echo && refuse(echo, ['sources']) && !collect) return out;
     deps = resolved(state, deps);
     if (!Warehouse.contentIdentity(state) || !ClanSupply.contentIdentity(state)) return refuse('unready');
     const current = fieldActivity(state, options.activity, options.leaf);
     // An occupation move the held leaf ordered (its trip, its arrival) is its own output.
-    const changed = Sections.factEvents(name => baseline[name], options.facts || requestFacts(current, deps), false, null,
+    // A first refusal here names the moved facts (diagnostics only).
+    const movedFacts = diagnostic && !out.reason ? [] : null;
+    const changed = Sections.factEvents(name => baseline[name], options.facts || requestFacts(current, deps), false, movedFacts,
         Sections.occupationPlanned(state, options.leaf));
+    if (changed.length && movedFacts) out.cause = causeNames(movedFacts);
     if (changed.length && refuse('sections', changed) && !collect) return out;
     // The gear-threat mask the decision weighed: only its flip between
     // "physical only" and "both" changes a decision. A baseline kept before
@@ -315,9 +498,10 @@ function heldBuildVerdict(state, proof, deps = {}, options = {}) {
     if (baseline.threat !== undefined && baseline.threat !== (deps.gearThreatMask ?? GearThreat.maskFor(current, deps))
         && refuse('observation', ['occupation', 'benefits', 'sources']) && !collect) return out;
     const why = [];
-    if (!heldEventsQuiet(state, { baseline, mp: options.mp, nativeCraftContinuation: deps.nativeCraftContinuation === true }, deps, why))
+    if (!heldEventsQuiet(state, { baseline, mp: options.mp, nativeCraftContinuation: deps.nativeCraftContinuation === true,
+        money: options.money }, deps, why))
         for (const name of why) if (refuse(name, name === 'money' ? ['money'] : ['sources']) && !collect) return out;
-    if (!bandsHold(state, proof.bands, options.leaf) && refuse('bands', ['supply', 'sources']) && !collect) return out;
+    if (!bandsHold(state, proof.bands, options.leaf) && refuse('bands', ['supply']) && !collect) return out;
     const roots = new Map(proof.stockRoots);
     const leaf = options.leaf;
     // A held build passes its entry's fields; a card carries them on its leaf.
@@ -331,29 +515,50 @@ function heldBuildVerdict(state, proof, deps = {}, options = {}) {
     // A loss below what the decision reserved stays a quantity event.
     const reserved = leaf?.activity === 'crafting' && Array.isArray(craftReservations) ? craftReservations : null;
     const isReserved = id => reserved?.some(row => row[0] === id) === true;
+    // The verdict's one drift budget, the bot's error on an hour's income:
+    // every count a finite band (shots, unused loot) or a quantity band
+    // keeps charges its drift (|delta| x buyback) to it, so together they
+    // never tolerate more. A band without an upper bound (stock at or above
+    // its target) is sale capacity, not noise: it charges nothing.
+    // An item charges its largest drift once per verdict: its stock,
+    // physical and sale rows read one bag count (one drift, one charge),
+    // a free row reads the bag minus its reserves and may move further.
+    const budget = positive(proof.hourAdena) * positive(baseline.incomeError);
+    let spent = 0, charged = null;
+    const charge = (id, delta) => {
+        const units = Math.abs(delta || 0), prior = charged?.get(id) || 0;
+        if (units > prior) {
+            (charged ||= new Map()).set(id, units);
+            spent += (units - prior) * positive(buyback(id));
+        }
+        return spent <= budget;
+    };
     const stockAmount = (kind, key, id, currentOwned, originalOwned) => {
         if (kind === 'stockPhysical' && isReserved(id) && currentOwned >= originalOwned) return originalOwned;
         if (roots.get(key) !== id) return currentOwned;
         const band = proof.bands?.find(row => row[0] === id);
         return band && originalOwned === band[3] && currentOwned >= band[1]
-            && (band[2] === null || currentOwned <= band[2]) ? originalOwned : currentOwned;
+            && (band[2] === null || currentOwned <= band[2] && charge(id, currentOwned - originalOwned)) ? originalOwned : currentOwned;
     };
     // Own outputs are not inputs: the leaf's own item moves with its progress.
     // It holds while the bot keeps what it held at the decision; the order's
     // completion is the activity check below, a loss is a quantity event.
     const own = ColdEconomyDecision.ownItem(leaf) !== null && Number.isFinite(heldUnits) ? leaf.itemId : null;
-    if (own !== null && ColdEconomyDecision.heldFor(state, own) < heldUnits && refuse('quantity', ['sources', 'money']) && !collect) return out;
+    if (own !== null && ColdEconomyDecision.heldFor(state, own) < heldUnits && refuse('quantity', ['money']) && !collect) return out;
     // The proof is held packed and read as a stream: no rows array.
     const ownRow = own === null ? null : row => ownQuantityRow(row, leaf.rootKey, own);
     const stock = stockReader(state, key => roots.get(key));
     // A reserved input's stock row holds while its owned+incoming does not fall.
     const stockFor = !reserved ? stock : (id, rootKey, row) => {
         const current = stock(id, rootKey);
-        return isReserved(id) && current.owned + current.incoming >= row[3] + row[4] ? { owned: row[3], incoming: row[4] } : current;
+        if (!isReserved(id) || current.owned + current.incoming < row[3] + row[4]) return current;
+        return { owned: row[3], incoming: row[4] };
     };
+    // A moved count row inside its thresholds and the drift budget holds (quantityBand).
     const moved = [];
-    if (!quantityInputsHold(proof.quantities, { ...Providers.quantityReaders(state), stockFor }, stockAmount, ownRow, moved)
-        && (moved.length ? refuse('quantity', ['sources', 'money']) && !collect : refuse('unproved'))) return out;
+    if (!quantityInputsHold(proof.quantities, { ...Providers.quantityReaders(state), stockFor }, stockAmount, ownRow, moved,
+        quantityBand(proof, charge))
+        && (moved.length ? refuse('quantity', ['money']) && !collect : unproved('decode'))) return out;
     const liquidation = Providers.liquidationInputs(state, proof.liquidation?.basis);
     // The leaf's own item and a craft's reserved inputs are not sales: their
     // count moves with the leaf's progress, held above by the quantity check.
@@ -372,10 +577,10 @@ function heldBuildVerdict(state, proof, deps = {}, options = {}) {
             // Only the existing finite unused-loot error band. Unlimited
             // surplus stock is sale capacity, not economic noise.
             return band && band[2] !== null && /^Other\.(Material|Arrow)/.test(String(item?.template?.kind || ''))
-                && count - original[1] === positive(state.inventory?.[id]?.amount) - band[3];
+                && count - original[1] === positive(state.inventory?.[id]?.amount) - band[3] && charge(id, count - original[1]);
         });
     if ((!sameSales || changedLoot && !choiceBagValueHolds(state, proof.bands, baseline, proof.hourAdena))
-        && refuse('liquidation', ['sources', 'money']) && !collect) return out;
+        && refuse('liquidation', ['money']) && !collect) return out;
     // The leaf's own check (LEAF_CHECKS): a check:<name> refusal names its sections.
     const failed = leafCheck(state, leaf, deps, { heldUnits, current: null, prepared: { liquidation: liquidation.candidates } });
     if (failed && refuse(failed.reason, failed.sections) && !collect) return out;
@@ -447,7 +652,7 @@ function handedVerdict(handed, state, held, deps) {
 function restartEventProof(proof, accepted) {
     if (proof?.version !== 2 || proof.restartable !== true || !accepted?.card
         || Object.keys(proof).some(key => !['version', 'owner', 'at', 'generation', 'decision', 'activity',
-            'quantities', 'liquidation', 'stockRoots', 'bands', 'hourAdena', 'restartable'].includes(key))
+            'quantities', 'liquidation', 'stockRoots', 'thresholds', 'bands', 'hourAdena', 'restartable'].includes(key))
         || !RecomputeGeneration.current() || proof.generation !== RecomputeGeneration.current()
         || !/^[a-f0-9]{64}$/.test(proof.generation)
         || proof.owner !== accepted.characterId || proof.at !== accepted.baseline?.at
@@ -459,10 +664,11 @@ function restartEventProof(proof, accepted) {
     if (!(quantities instanceof Uint8Array)) return null;
     try {
         // Version, the recompute generation (a restore under another one is
-        // refused), the soft facts in the shared exact byte form, then the
-        // quantity owner's opaque bytes to the end.
+        // refused), the soft facts in the shared exact byte form, the
+        // quantity rows' thresholds, then the quantity owner's opaque bytes
+        // to the end.
         const write = Bytes.writer();
-        write.byte(7); write.raw(Buffer.from(proof.generation, 'hex'));
+        write.byte(8); write.raw(Buffer.from(proof.generation, 'hex'));
         if (!Providers.packLiquidationInputs(proof.liquidation, write)) return null;
         write.list(proof.stockRoots, row => {
             if (!Array.isArray(row) || row.length !== 2) throw Error('restart stock root');
@@ -473,6 +679,16 @@ function restartEventProof(proof, accepted) {
             write.uint(row[0]); write.number(row[1]); write.number(row[2], true); write.number(row[3]);
         });
         write.number(proof.hourAdena);
+        // The thresholds' length, then per noted row its index, its count and its thresholds.
+        const thresholds = proof.thresholds;
+        if (!Array.isArray(thresholds)) return null;
+        write.uint(thresholds.length);
+        for (let at = 0, count; at < thresholds.length; at += 2 + count) {
+            count = thresholdCount(thresholds, at);
+            if (count < 0) return null;
+            write.uint(thresholds[at]); write.uint(count);
+            for (let side = at + 2; side < at + 2 + count; side++) write.number(thresholds[side]);
+        }
         write.raw(quantities);
         const bytes = write.finish();
         return bytes.byteLength <= PROOF_RAW_BYTES ? bytes : null;
@@ -485,22 +701,34 @@ function restoreEventProof(prefix, accepted) {
         || prefix.byteLength > PROOF_RAW_BYTES || !accepted?.card) return null;
     try {
         const read = Bytes.reader(prefix);
-        // A prefix of format 6 (it carried the deleted recipe producers' scope) is refused once.
-        if (read.byte() !== 7 || read.raw(32).toString('hex') !== generation) return null;
+        // A prefix of format 7 (it carried no quantity thresholds) is refused once.
+        if (read.byte() !== 8 || read.raw(32).toString('hex') !== generation) return null;
         const liquidation = Providers.unpackLiquidationInputs(read);
         const stockRoots = Object.freeze(read.list(() => Object.freeze([read.text(), read.uint()])));
         const bands = Object.freeze(read.list(() => Object.freeze([read.uint(), read.number(), read.number(true), read.number()])));
         const hourAdena = read.number();
+        // The thresholds (each entry takes a byte at least: a longer list is malformed).
+        const length = read.uint();
+        if (length > prefix.byteLength) return null;
+        const list = [];
+        while (list.length < length) {
+            const index = read.uint(), count = read.uint();
+            if (list.length + 2 + count > length) return null;
+            list.push(index, count);
+            for (let side = 0; side < count; side++) list.push(read.number());
+        }
         // The packed quantity proof stays packed; a prefix it cannot read is refused here.
         const packed = Uint8Array.from(read.rest());
-        const quantities = eachQuantityRow(packed, () => true) ? packed : null;
-        if (!quantities || !Number.isSafeInteger(accepted.characterId)
+        let rows = 0;
+        const quantities = eachQuantityRow(packed, () => { rows++; }) ? packed : null;
+        const thresholds = quantities && checkedThresholds(list, rows) && (length ? Object.freeze(list) : Network.NO_THRESHOLDS);
+        if (!thresholds || !Number.isSafeInteger(accepted.characterId)
             || accepted.card.activity === null && accepted.activityLeaf !== 0
             || !Number.isFinite(accepted.baseline?.at)) return null;
         return Object.freeze({ version: 2, restartable: true, owner: accepted.characterId, at: accepted.baseline.at,
             decision: Object.freeze([accepted.decisionSeq, accepted.activityLeaf, accepted.focus]),
             activity: activityIdentity(accepted.card.activity), generation,
-            quantities, liquidation, stockRoots, bands, hourAdena });
+            quantities, liquidation, stockRoots, thresholds, bands, hourAdena });
     } catch (_) { return null; }
 }
 function wireEventProof(proof) {
@@ -519,7 +747,30 @@ function wireEventProof(proof) {
 function receiveEventProof(proof) {
     const value = proof?.quantities, cap = Network.QUANTITY_INPUT_BYTES;
     const quantities = value instanceof Uint8Array ? value.byteLength <= cap ? value : null : Bytes.fromBase64(value, cap);
-    return quantities ? { ...proof, quantities } : null;
+    if (!quantities) return null;
+    // A built list is frozen (WishNetwork createQuantityInputs); one from
+    // the wire is checked against its rows and frozen.
+    const list = proof.thresholds;
+    if (Array.isArray(list) && Object.isFrozen(list)) return { ...proof, quantities };
+    let rows = 0;
+    const thresholds = Array.isArray(list) && eachQuantityRow(quantities, () => { rows++; })
+        && checkedThresholds(list, rows) && (list.length ? Object.freeze(list.slice()) : Network.NO_THRESHOLDS);
+    return thresholds ? { ...proof, quantities, thresholds } : null;
+}
+// A proof's thresholds list (WishNetwork createQuantityInputs) when it fits
+// its `rows` packed rows: rows by ascending index below `rows`, each with
+// at most QUANTITY_THRESHOLDS ascending finite thresholds > 0; else null.
+function checkedThresholds(list, rows) {
+    for (let at = 0, last = -1, count; at < list.length; at += 2 + count) {
+        count = thresholdCount(list, at);
+        const index = list[at];
+        if (count < 0 || count > Network.QUANTITY_THRESHOLDS || !Number.isSafeInteger(index)
+            || index <= last || index >= rows) return null;
+        last = index;
+        for (let side = at + 2; side < at + 2 + count; side++)
+            if (!(list[side] > 0) || list[side] === Infinity || side > at + 2 && list[side] <= list[side - 1]) return null;
+    }
+    return list;
 }
 function quantityBands(state, context, projection) {
     const bands = [], stock = new Map();
@@ -528,7 +779,7 @@ function quantityBands(state, context, projection) {
         if (row?.itemId && row.target > 0) stock.set(Number(row.itemId), [Math.max(1, Math.ceil(row.target - positive(row.beginnerCurrent))),
             kind === 'shots' ? row : null]);
     }
-    const reserved = invoke('GameServer/Bot/Economy/ItemDisposition').reservedEquipmentAmounts(state);
+    const reserved = ItemDisposition.reservedEquipmentAmounts(state);
     const used = new Set((projection?.nodes || []).filter(node => node.key.startsWith('item:')).map(node => Number(node.key.slice(5))));
     const error = Sections.incomeError(state, context.persona);
     for (const [id, row] of Object.entries(state.inventory || {})) {
@@ -586,7 +837,7 @@ function choiceBagValueHolds(state, bands, baseline, hourAdena, value = choiceBa
 const failure = (name, ...sections) => Object.freeze({ reason: `check:${name}`, sections: Object.freeze(sections) });
 const EXCLUDED = failure('excluded', 'occupation', 'sources'), MATERIAL_DONE = failure('material_done', 'sources');
 const OFFER = failure('offer', 'sources', 'money'), SALE = failure('sale', 'sources', 'supply');
-const CRAFT = failure('craft', 'sources', 'supply'), TARGET = failure('target', 'relations');
+const CRAFT = failure('craft', 'sources', 'supply');
 const IMPROVEMENT = failure('improvement', 'sources'), UNSUPPORTED = failure('unsupported', 'sources');
 const withHeldUnits = (leaf, heldUnits) => ColdEconomyDecision.ownItem(leaf) !== null && Number.isFinite(heldUnits)
     ? { ...leaf, heldAtDecision: heldUnits } : leaf;
@@ -613,11 +864,13 @@ const LEAF_CHECKS = Object.freeze({
         const held = withHeldUnits(leaf, input.heldUnits);
         const remaining = ColdEconomyDecision.remainingToOrder(held, state);
         if (!(remaining > 0)) return OFFER;
-        const offer = PurchaseEvidence.reader(state, { board: deps.board, trip: trade.trip }, deps)(leaf.itemId);
+        // The same buy, priced for what is left: another town (cheaper with
+        // its trip), a dearer ask or too few units plans again.
+        const offer = PurchaseEvidence.reader(state, { board: deps.board, trip: trade.trip }, deps)(leaf.itemId, remaining);
         if (!offer || offer.sourceType !== leaf.sourceType || offer.town !== leaf.town
-            || offer.unitPrice !== leaf.unitPrice || offer.availableUnits < remaining) return OFFER;
+            || offer.unitPrice > leaf.unitPrice || offer.availableUnits < remaining) return OFFER;
         return Funding.spendable(state, deps.buyOrderEscrow, Funding.nativeTerms(held, leaf.itemId))
-            >= remaining * offer.unitPrice + trade.route.fees ? '' : OFFER;
+            >= remaining * offer.price + trade.route.fees ? '' : OFFER;
     },
     selling: (state, leaf, deps, input) => {
         deps = resolved(state, deps, false);
@@ -630,10 +883,6 @@ const LEAF_CHECKS = Object.freeze({
     // prepares its actual batch and checks MP, materials and payment.
     crafting: (state, leaf) => Number.isSafeInteger(leaf.recipeId) && leaf.recipeId > 0
         && Recipes.resolveByRecipeId(leaf.recipeId) ? '' : CRAFT,
-    pvp: (state, leaf) => Number.isSafeInteger(leaf.targetId) && leaf.targetId > 0
-        && leaf.rootKey === `scores:${leaf.targetId}` ? '' : TARGET,
-    helping: (state, leaf) => Number.isSafeInteger(leaf.targetId) && leaf.targetId > 0
-        && leaf.rootKey === `care:${leaf.targetId}` ? '' : TARGET,
     improving: (state, leaf) => {
         const improvement = leaf.improvement;
         if (!improvement || typeof improvement !== 'object' || Array.isArray(improvement)) return IMPROVEMENT;
@@ -666,44 +915,112 @@ function watchedBoard(board, watch) {
     return Object.assign(Object.create(board), {
         first: (selfId, ...rest) => { watch(selfId); return board.first(selfId, ...rest); },
         list: (selfId, ...rest) => { watch(selfId); return board.list(selfId, ...rest); },
+        towns: (selfId, ...rest) => { watch(selfId); return board.towns(selfId, ...rest); },
+        ...(board.buyUnits ? { buyUnits: (selfId, ...rest) => { watch(selfId); return board.buyUnits(selfId, ...rest); } } : {}),
         ...(board.heads ? { heads: (selfId, ...rest) => { watch(selfId); return board.heads(selfId, ...rest); } } : {})
     });
 }
+// One watch row (marketWatchRows): the reference price is the better of the
+// build's price and the board head (head: the caller's read of it), the
+// error the bot's own.
+function watchRow(board, exclude, id, storeType, value, errorOf, head = board?.first(id, storeType, exclude)?.price) {
+    if (!(id > 0) || !(value > 0)) return null;
+    const reference = !(head > 0) ? value : storeType === SELL ? Math.min(value, head) : Math.max(value, head);
+    // Rounded: the baseline is saved with the bot (a few bytes per row).
+    return [id, storeType, Math.round(reference), Math.round(errorOf(id) * 1000) / 1000];
+}
+// A product's census row (one the census can count, MarketDemand
+// .hasCensusSource): the rate per hour the build read (MarketDemand.censusOf),
+// to 3 decimals (a gear rate below .5/h still crosses), the bot's error on the item; 0 when none is counted or no census
+// was published yet (it crosses on the first unit).
+function censusWatchRow(id, errorOf) {
+    if (!MarketDemand.hasCensusSource(id)) return null;
+    return [id, Sections.CENSUS, Math.round((MarketDemand.censusOf(id) || 0) * 1000) / 1000, Math.round(errorOf(id) * 1000) / 1000];
+}
+// A crafter's one wake row (Sections.DEMANDED): the products its craft level
+// makes that the census counts (MarketDemand.demandedCount), so a crafter
+// built before a product had buyers rebuilds when one comes.
+function censusWakeRows(state) {
+    const level = CraftEligibility.craftLevelFor(state);
+    return level > 0 ? [[level, Sections.DEMANDED, MarketDemand.demandedCount(level), 0]] : [];
+}
 // The decision's watch list, read by the soft point (DecisionSections
 // .softEvents): the wish roots it would buy (their sell lines, storeType 1)
-// and its sale rows (their buy lines, 3), each [itemId, storeType, reference
-// price, error], at most Sections.MARKET_WATCH. buyValue/sellValue: the
+// and its sale rows (their buy lines, 3; a gear row whose crystal sale the bot may root also its crystal's buy lines),
+// each [itemId, storeType, reference price, error], at most
+// Sections.MARKET_WATCH. buyValue/sellValue: the
 // build's price of an item on that side; errorOf: the bot's error on it.
 // The reference is the better of that price and the board head the build
 // saw (excluding the bot's own line): the head is one input of the price
 // belief, so a far cheaper ask stays below the believed price after the
 // rebuild and would cross at every step; the decision already weighed it.
-// Only a newer, clearly better line crosses. recipe: the build's productive
-// workshop recipe (a crafter's); its product's buy lines and its materials'
-// sell lines are watched too, after the wishes and sales, so a crossing
-// raises money and the kept workshop is asked again (Sections.COMPUTED.workshop).
-function marketWatchRows(queue, sales, board, ownerId, buyValue, sellValue, errorOf, recipe = null) {
+// Only a newer, clearly better line crosses. wakeRows: the crafter's census
+// wake row (censusWakeRows), after the wishes, sales and resale censuses,
+// before the crystal rows. soldLines: the items whose buy line a farm_sale
+// root the bot works for sells to (soldLinesOf); each row's reference is
+// that line's head and it carries Sections.SOLD, so the line's close wakes
+// the farmer (Sections.marketCrossed); first, so the cap keeps them.
+// planOf: the build's plan of an item node (network.plans); a wish whose
+// item buy waits for rival takers (its path's takers, WishProviders buyWait)
+// adds its TAKERS row [itemId, Sections.TAKERS, free units, town code] right
+// after its sell row, the waiter's one wake (Sections.softEvents).
+function marketWatchRows(queue, sales, board, ownerId, buyValue, sellValue, errorOf, wakeRows = [], crystalOf = () => 0, soldLines = [],
+    planOf = () => null) {
     const rows = [], exclude = { excludeOwner: ownerId };
+    const fits = (id, storeType) => rows.length < Sections.MARKET_WATCH && !rows.some(row => row[0] === id && row[1] === storeType);
     const add = (id, storeType, value) => {
-        if (rows.length >= Sections.MARKET_WATCH || !(id > 0) || !(value > 0)
-            || rows.some(row => row[0] === id && row[1] === storeType)) return;
-        const head = board?.first(id, storeType, exclude)?.price;
-        const reference = !(head > 0) ? value : storeType === SELL ? Math.min(value, head) : Math.max(value, head);
-        // Rounded: the baseline is saved with the bot (a few bytes per row).
-        rows.push([id, storeType, Math.round(reference), Math.round(errorOf(id) * 1000) / 1000]);
+        if (!fits(id, storeType)) return;
+        const row = watchRow(board, exclude, id, storeType, value, errorOf);
+        if (row) rows.push(row);
     };
-    for (const wish of queue) { const id = Number(wish.object?.itemId); if (id > 0) add(id, SELL, buyValue(id)); }
+    // First, so the cap never drops them: a sold line's close is the
+    // farmer's one wake (no other row stands for it).
+    for (const id of soldLines) {
+        // The line sold to (Providers.farmLine) as value and head.
+        const price = fits(id, BUY) && Providers.farmLine(board, id, ownerId)?.price;
+        const row = price && watchRow(board, exclude, id, BUY, price, errorOf, price);
+        if (row) rows.push([...row, Sections.SOLD]);
+    }
+    for (const wish of queue) {
+        const id = Number(wish.object?.itemId);
+        if (!(id > 0)) continue;
+        add(id, SELL, buyValue(id));
+        const takers = planOf(id)?.kind === 'buy' && planOf(id).takers;
+        if (Array.isArray(takers) && takers[0] > 0 && takers[1] > 0 && fits(id, Sections.TAKERS))
+            rows.push([id, Sections.TAKERS, takers[1], takers[0]]);
+    }
     for (const [id] of sales) add(Number(id), BUY, sellValue(id));
-    // Last: the workshop's rows never push a wish or a sale out of the cap.
-    if (recipe) {
-        add(Number(recipe.productId), BUY, sellValue(Number(recipe.productId)));
-        for (const row of recipe.materials || []) add(Number(row.selfId), SELL, buyValue(Number(row.selfId)));
+    // A producer root sized by the census (a resale) watches it.
+    for (const wish of queue) {
+        const id = Number(wish.object?.itemId);
+        if (wish.object?.kind !== 'resale' || !fits(id, Sections.CENSUS)) continue;
+        const row = censusWatchRow(id, errorOf);
+        if (row) rows.push(row);
+    }
+    for (const row of wakeRows) if (fits(row[0], row[1])) rows.push(row);
+    // Last, so the cap drops them first: spare gear whose crystal sale this
+    // bot may root (crystalOf, BotCrystallization.saleCrystal): a buy ad on
+    // the crystal (new or higher) can make that root (WishProviders); a
+    // crystal has no census (MarketDemand.hasCensusSource).
+    for (const [id] of sales) {
+        const crystal = crystalOf(Number(id));
+        if (crystal) add(crystal, BUY, sellValue(crystal));
     }
     return rows;
 }
+// The items whose buy line the bot's farm_sale root sells to: the root of
+// its activity and its focus (WishProviders writes the item on the path).
+function soldLinesOf(network) {
+    const lines = [];
+    for (const key of [network.activity?.rootKey, network.focus?.[0]]) {
+        const plan = key && network.plans?.get?.(key);
+        if (plan?.kind === 'farm_sale' && plan.itemId > 0 && !lines.includes(plan.itemId)) lines.push(plan.itemId);
+    }
+    return lines;
+}
 function defaultProducerSource(state, board) {
-    const index = invoke('GameServer/Bot/Population/ColdOccupationSources').recipeIndex(board);
-    const level = invoke('GameServer/Bot/Economy/CraftEligibility').craftLevelFor(state), scope = index.scopeFor(level);
+    const index = OccupationSources.recipeIndex(board);
+    const level = CraftEligibility.craftLevelFor(state), scope = index.scopeFor(level);
     return { recipes: index.rowsFor(level), scope, revision: index.revision(scope) };
 }
 // The deps a full resolve made, with the state it was made for: a check
@@ -711,14 +1028,18 @@ function defaultProducerSource(state, board) {
 // the build's own deps and does not resolve them again (a second producer
 // source read and onSourceScope call). An entry dies with its deps object.
 const resolvedFor = new WeakMap();
+// The shop owner's NPC lists on main: one reader for the process.
+const mainNpcOffersFor = id => {
+    const Sources = invoke('GameServer/Bot/Population/ColdOccupationSources'); // lazy: optional main-only shop reader
+    Sources.initialise(); return Sources.npcOffersFor(id);
+};
 function resolved(state, deps, production = true) {
     if (state && resolvedFor.get(deps) === state) {
         if (Diagnostics.active()) Diagnostics.count('context', 'resolved', 'reused');
         return deps;
     }
     deps = { ...runtime, ...deps };
-    if (typeof deps.board === 'function') deps.board = deps.board();
-    if (!deps.board && isMainThread) deps.board = invoke('GameServer/AfkTrade/AfkTradeService').boardIndex();
+    deps.board = marketBoard(deps.board);
     if (typeof deps.spots === 'function') deps.spots = deps.spots();
     if (typeof deps.memory === 'function') deps.memory = deps.memory(state.characterId);
     if (typeof deps.memoryIdentity === 'function') deps.memoryIdentity = deps.memoryIdentity(state.characterId);
@@ -727,7 +1048,6 @@ function resolved(state, deps, production = true) {
     // Production sources and recipe books belong to the full wish review.
     if (production) {
         if (typeof deps.knownRecipes === 'function') deps.knownRecipes = deps.knownRecipes(state.characterId);
-        if (!deps.fixedProductionOffersFor) deps.fixedProductionOffersFor = invoke('GameServer/Bot/Population/ColdOccupationSources').fixedBuyerOffersFor;
         if (!deps.producerSource && deps.board) deps.producerSource = defaultProducerSource;
         if (typeof deps.producerSource === 'function') {
             const source = deps.producerSource(state, deps.board);
@@ -735,17 +1055,16 @@ function resolved(state, deps, production = true) {
             deps.producerRevision = source?.revision;
             if (source?.scope != null) deps.onSourceScope?.(source.scope);
         }
-        if (isMainThread && !Object.hasOwn(deps, 'workshop')) deps.workshop = craftIncome(state);
         if (isMainThread && !Object.hasOwn(deps, 'workshops')) {
             const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
             deps.workshops = Workshops.publicForRecipe;
         }
         if (isMainThread && !Object.hasOwn(deps, 'knownRecipes')) {
-            const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
-            if (Workshops.bookFor(state.characterId) !== null) deps.knownRecipes = Workshops.cachedRecipes(state.characterId);
+            const known = knownRecipesOf(state);
+            if (known) deps.knownRecipes = known;
         }
         if (isMainThread && !Object.hasOwn(deps, 'memory')) {
-            // The bot's memory rows for its relations fact, bond and threat, the
+            // The bot's memory rows for its gear threat, the
             // rows the worker's snapshot carries, read without the snapshot's copy.
             // lazy: worker the main memory owner; the worker passes its own reader.
             deps.memory = invoke('GameServer/Social/InteractionMemoryRuntime').relationRows(Number(state.characterId));
@@ -757,33 +1076,18 @@ function resolved(state, deps, production = true) {
         if (typeof deps.buyOrderEscrow === 'function') deps.buyOrderEscrow = deps.buyOrderEscrow(state.characterId);
     }
     if (!deps.spots && isMainThread) deps.spots = invoke('GameServer/Bot/Population/SpotProfiles').ensure();
-    if (!deps.npcOffersFor && isMainThread) deps.npcOffersFor = id => {
-        const Sources = invoke('GameServer/Bot/Population/ColdOccupationSources');
-        Sources.initialise(); return Sources.npcOffersFor(id);
-    };
+    if (!deps.npcOffersFor && isMainThread) deps.npcOffersFor = mainNpcOffersFor;
     if (production) resolvedFor.set(deps, state);
     return deps;
 }
 function personaOf(state, deps) {
     return deps.persona || invoke('GameServer/Bot/AI/BotPersona').of(state) || { traits: {}, understanding: 0.3 };
 }
+// The build's price reader is the bot's one reader (PriceBelief.reader); the
+// build adds its knowledge switch and its read hook.
 function pricing(state, persona, board, timestamp, deps, read = () => {}, prices = new Map()) {
     const knowledgeEnabled = deps.knowledgeEnabled ?? Knowledge.knowledgeEnabled();
-    const priceCtx = { characterId: state.characterId, understanding: persona.understanding ?? 0.3,
-        marketTrades: state.marketTrades, knowledgeEnabled, board, timestamp };
-    const beliefs = new Map();
-    const beliefFor = id => {
-        if (!beliefs.has(Number(id))) beliefs.set(Number(id), PriceBelief.prior(id, priceCtx) || null);
-        return beliefs.get(Number(id));
-    };
-    return { knowledgeEnabled, prices, beliefs, beliefFor, price: id => {
-        read(id);
-        if (!prices.has(Number(id))) {
-            const belief = beliefFor(id);
-            prices.set(Number(id), belief ? Math.exp(belief.mu) : 0);
-        }
-        return prices.get(Number(id));
-    } };
+    return { knowledgeEnabled, ...PriceBelief.reader({ state, persona, board, timestamp, knowledgeEnabled, read }, prices) };
 }
 // Price future carried scroll uses only if a review needs extra stock.
 // Resolve the known hunt through the existing catalogue index; a merchant
@@ -840,7 +1144,7 @@ function kitReader(data, price, scrollUseHours) {
         const missing = Math.max(0, target - Math.max(current, survivalTarget));
         const benefitPerUnit = use > 0 ? row.benefit / use : 0;
         const benefitHours = missing * benefitPerUnit;
-        return { itemId: Number(itemId), usePerHour: use, ...(shots ? { ownedUsePerHour: row.ownedUsePerHour, beginnerCurrent: row.beginnerCurrent,
+        return { itemId: Number(itemId), usePerHour: use, ...(shots ? { canRestock: row.canRestock, ownedUsePerHour: row.ownedUsePerHour, beginnerCurrent: row.beginnerCurrent,
                 beginnerUsePerHour: row.beginnerUsePerHour, paidUsePerHour: row.paidUsePerHour } : {}),
             current, hours: use > 0 ? current / use : Infinity,
             targetHours: data.targetHours, target, survivalTarget, missing, survivalMissing, unitPrice: price(itemId), benefitPerUnit, benefitHours,
@@ -860,45 +1164,6 @@ function kitReader(data, price, scrollUseHours) {
                 * (quoted ? unitPrice : row.unitPrice), 0);
     };
     return { stock, kitCost, kit, escapeCost };
-}
-// The bot's hour, death and karma prices and its stock of shots and potions:
-// the part of a review that needs no wish network. forState builds on it and
-// basics() returns it alone, so a reader that wants only these never builds
-// the network, and both give the same numbers.
-// ARCH-NOTE: PERF (L120): the income route search (EquipmentIncomeRoute.select)
-// is most of a foundation. A cold step often builds basics() and then
-// forState() for the same projected state; the second build takes the
-// first one's route through deps.preparedIncomeRoute instead of searching
-// again. Key: the same state object, timestamp and spots objects,
-// mode, maxChecks and required gear flag. Select also reads module state
-// (SpotRiskPolicy exclusions, SpotValueTable tables,
-// LevelingRoutes, the ColdCombatProfile kit store), so the reuse is exact only because
-// nothing yields or writes between the basics and the build of one step: a
-// record must never cross an await or a write to the bot's spot marks.
-// The record keeps each price(id) select made, in order, with
-// its value: the build replays them through its own price first, so its
-// read set, price and belief maps and board watch fill exactly as a fresh
-// search would, and a price that came out different searches afresh. The
-// record travels only by deps (the cold worker passes its basics' record);
-// select returns plain data (no closure over price).
-function incomeRouteFor(state, deps, timestamp, price, keep) {
-    const required = GearProgression.assess(state).required;
-    const prepared = deps.preparedIncomeRoute;
-    if (prepared && prepared.state === state && prepared.timestamp === timestamp && prepared.spots === deps.spots
-        && prepared.mode === deps.mode
-        && prepared.maxChecks === deps.maxChecks && prepared.required === required) {
-        let same = true;
-        for (let i = 0; i < prepared.reads.length; i += 2) {
-            if (!Object.is(price(prepared.reads[i]), prepared.reads[i + 1])) same = false;
-        }
-        if (same) { keep?.(prepared); return prepared.route; }
-    }
-    const reads = keep ? [] : null;
-    const route = IncomeRoute.select(state, { ...deps, timestamp, required,
-        price: keep ? id => { const value = price(id); reads.push(id, value); return value; } : price });
-    keep?.({ state, timestamp, spots: deps.spots, mode: deps.mode,
-        maxChecks: deps.maxChecks, required, reads, route });
-    return route;
 }
 // The bot's own fit for the spot of its hunting leaf (docs/architecture.md §2
 // route): the route's one test, BotRoute.leafFitReader, as a yes or no per
@@ -927,16 +1192,26 @@ function leafFit(state, deps, timestamp) {
     leafFits.set(state, { spots: deps.spots, timestamp, fits });
     return fits;
 }
-function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
+// The bot's hour, death and karma prices and its stock of shots and potions:
+// the part of a review that needs no wish network. forState builds on it and
+// basics() returns it alone, so a reader that wants only these never builds
+// the network, and both give the same numbers.
+// keepRoute receives the income route search's result (forState reads its
+// matchup profiles).
+// market: the build's watched board and input hook ({ board, read }), so the
+// income route's recipe scroll values are build reads; basics read the
+// resolved board with no hook.
+function foundation(state, deps, persona, timestamp, price, keepRoute = null, market = {}) {
     const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
     const tableRole = Roles.tableRoleFor(state);
-    const incomeRoute = incomeRouteFor(state, deps, timestamp, price, keepRoute);
+    const incomeRoute = IncomeRoute.select(state, { ...deps, ...market, timestamp, required: GearProgression.assess(state).milestone.required, price });
+    keepRoute?.(incomeRoute);
     let hunt;
     if (incomeRoute) {
         // select already passed this spot through the same ground and matchup reader.
         const row = incomeRoute.row;
-        hunt = { perHour: row.income * Hunt.onSpotShare(state), perKill: row.kills > 0 ? row.income / row.kills : 0,
+        hunt = { perHour: row.income * Hunt.onSpotShare(state),
             expPerHour: row.exp * Hunt.onSpotShare(state), source: 'route', spotId: incomeRoute.spot.id,
             progressSpotId: incomeRoute.spot.id, useShots: row.useShots };
     } else hunt = Hunt.huntIncome(state, timestamp, deps.mode, leafFit(state, deps, timestamp));
@@ -949,7 +1224,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     const ShotStock = invoke('GameServer/Inventory/ShotStock');
     const shotPlan = ShotStock.planForState(state);
     const shotItemId = shotPlan.selfId;
-    const potionItemId = invoke('GameServer/Bot/AI/HealingPotionStock').purchasePotionFor(state).selfId;
+    const potionItemId = HealingPotionStock.purchasePotionFor(state).selfId;
     const withoutShots = bestSpotId ? Table.value(bestSpotId, tableRole, state.level, false) : null;
     const shotPolicy = ShotStock.usePolicy(state, { plan: shotPlan, bestTable, withoutShots,
         hourAdena: Hunt.huntHour(hunt, state), unitPrice: price(shotItemId) });
@@ -971,15 +1246,17 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         const plannedSlots = Number(shotUse > 0 && !positive(state.inventory?.[shotItemId]?.amount) && !beginnerCurrent)
             + Number(potionUse > 0 && !positive(state.inventory?.[potionItemId]?.amount));
         let slotLimit = Floor.inventoryLimit(race);
-        const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
-        const saleLimit = Disposition.soloSaleSlotLimit(state, timestamp);
+        const saleLimit = ItemDisposition.soloSaleSlotLimit(state, timestamp);
         if (saleLimit !== null) {
             // Stock cannot be its own reason for an earlier town visit. Keep
             // the entire usable kit while checking known free saleable loot.
             const keptAmounts = { [shotItemId]: positive(state.inventory?.[shotItemId]?.amount),
-                ...invoke('GameServer/Bot/AI/HealingPotionStock').keptAmounts(state, { targetAmount: Infinity }),
+                ...HealingPotionStock.keptAmounts(state, { targetAmount: Infinity }),
                 736: positive(state.inventory?.[736]?.amount) };
-            if (Disposition.saleCandidates(state, { keptAmounts, preparedReservations: deps.saleReservations,
+            // A sale's reserves (keptTargets), else the focus part: inside a
+            // build the network splits held stock itself (heldAmounts).
+            if (ItemDisposition.saleCandidates(state, { keptAmounts,
+                preparedReservations: deps.saleReservations || ItemDisposition.reservedEquipmentAmounts(state),
                 presenceOnly: true })) slotLimit = Math.min(slotLimit, saleLimit);
         }
         const free = Math.max(0, slotLimit - Floor.stateInventory(state, Data.items).slots - plannedSlots);
@@ -1017,30 +1294,100 @@ function foundationFromPlan(state, plan, deps, price) {
         deathHours: plan.deathHours, riskWeight: plan.riskWeight,
         expectedDeathHours: plan.expectedDeathHours, karmaHours: plan.karmaHours };
 }
-function basics(state = {}, deps = {}) {
+// What basics and heldBasics read alike: the deps of the hunt foundation, the
+// step clock, the persona and a price reader over prices (a held build's own,
+// else none yet).
+function basicsInputs(state, deps, prices) {
     deps = resolved(state, deps, false);
     const timestamp = Number(deps.timestamp || Date.now());
     const persona = personaOf(state, deps);
-    const board = deps.board || (isMainThread ? invoke('GameServer/AfkTrade/AfkTradeService').boardIndex() : null);
-    const { price } = pricing(state, persona, board, timestamp, deps);
-    let route = null;
-    // The main thread records only on request (deps.keepIncomeRoute): its builds never read a record.
-    const keep = !isMainThread || deps.keepIncomeRoute ? record => { route = record; } : null;
-    const base = { persona, price, timestamp, ...foundation(state, deps, persona, timestamp, price, keep) };
-    // Not enumerable: a view spread over these basics does not carry it (L120).
-    Object.defineProperty(base, 'preparedIncomeRoute', { value: route });
-    return base;
+    const { price } = pricing(state, persona, deps.board || null, timestamp, deps, undefined, prices);
+    return { deps, timestamp, persona, price };
+}
+function basics(state = {}, deps = {}) {
+    const { deps: own, timestamp, persona, price } = basicsInputs(state, deps, new Map());
+    return { persona, price, timestamp, ...foundation(state, own, persona, timestamp, price) };
+}
+// A served card's basics: the foundation of the held build the card was made
+// from (the same event proof object, so every value it holds is guarded as the
+// card is: refusal ''), at the step clock; null when the held build is another
+// (evicted, rebuilt, restored) and the caller builds them.
+function heldBasics(state = {}, deps = {}, proof = null) {
+    const held = proof ? cache.get(actorKeyOf(state, deps)) : null;
+    if (!held || held.plan.eventProof !== proof) return null;
+    const { deps: own, timestamp, persona, price } = basicsInputs(state, deps, new Map(held.plan.prices));
+    return { persona, price, timestamp, ...foundationFromPlan(state, held.plan, own, price) };
 }
 function stockFor(state, kind, deps = {}) { return basics(state, deps).stock(kind); }
-// A route table with a row for every town (EconomicTrip.prepare).
-const fullRoute = rows => Array.isArray(rows) && rows.length === Trip.towns.length;
 // The bot's held build's key (cache) and its group's.
 const actorKeyOf = (state, deps) => deps.actorKey || `character:${Number(state.characterId || 0)}`;
+// What the bot's held build wants of an item now: its watch row (the rows
+// its buy ads publish, TradeIntent.project), null when the build no longer
+// lists the item, undefined when there is no held build to read (evicted,
+// restarted, intents pending) or it is older than the certificate it would
+// judge (built on a revision before since: a later build published the
+// ad). A read of the entry: no verdict, no build.
+// A later step that serves the held build and republishes the ad stamps a
+// newer revision than the build's, so the build is skipped too: the safe
+// side, as the certificate it skips is that same build's row.
+function heldWatch(state, selfId, since = 0) {
+    const plan = heldPlanSince(state, since);
+    if (!plan || plan.intentPending || !Array.isArray(plan.watchList)) return undefined;
+    return plan.watchList.find(row => Number(row.itemId) === Number(selfId)) || null;
+}
+// The survival kit cost of an item at a quoted unit price as the same held
+// build counts it (its kit, kitReader), undefined when heldWatch would not
+// read the build: the caller then builds the basics. A quoted kitCost reads
+// no price, so the reader's price is never asked.
+function heldKitCost(state, selfId, unitPrice, since = 0) {
+    const plan = heldPlanSince(state, since);
+    if (!plan?.kit || !(unitPrice > 0)) return undefined;
+    return kitReader(plan.kit, () => 0, () => 0).kitCost(selfId, unitPrice);
+}
+function heldPlanSince(state, since) {
+    const held = cache.get(actorKeyOf(state, {})), plan = held?.plan;
+    return plan && !plan.pending && held.revision >= since ? plan : null;
+}
 // What the verdict on the held build compares against its own entry.
-function heldOptionsOf(held) {
+function heldOptionsOf(held, state) {
     return { baseline: held?.plan.statsPacket.wishSections, activity: held?.activity,
         leaf: held?.plan.network?.activity, heldUnits: held?.heldUnits, craftReservations: held?.craftReservations,
-        mp: held?.mp };
+        mp: held?.mp, input: held?.input, dirty: raisedSince(state, held), money: heldMoney(state, held) };
+}
+// The money packet the held build priced with, read by its funding mark
+// (heldEventsQuiet; design-rules Recompute: own outputs are not inputs): its
+// own while the state still carries the packet the build read (not written
+// back: a later build of the same step, a refresh), else the state's
+// (written back, or moved since: a purchase, another build's). The first
+// state off the read packet drops it (MONEY_MOVED: the old packet is not kept
+// alive until the next build); a later return to it reads the state's, the
+// safe side (a refusal asks a build).
+const MONEY_MOVED = Symbol('moneyMoved');
+function heldMoney(state, held) {
+    const packet = state.stats?.money, read = held?.inputMoney;
+    if (!held || read === MONEY_MOVED) return packet;
+    if (packet !== read && !(Array.isArray(packet) && Array.isArray(read) && packet.length === read.length
+        && packet.every((value, at) => value === read[at]))) {
+        held.inputMoney = MONEY_MOVED;
+        return packet;
+    }
+    return held.plan.statsPacket.money;
+}
+// The raised bits (wishDirty) the held build has not consumed. A build whose
+// packet is not written back (a refresh: its plan goes to main, the state
+// keeps its bits) is kept with the raise it consumed (held.input[0], the
+// sequence, and held.raised, the bits it was built on); while the sequence holds (every
+// raise bumps it) those bits are its own input, not news. A held build with
+// an unknown workshop or no ask record (a near build: its seq may meet one
+// main raised on its own copy) forgives none: the next build asks. A written
+// build's packet cleared the bits, so its record is inert. Only the verdict
+// and the rebuild mask read it; a reader that compares with the accepted
+// decision (the reconsider mask, the carried baseline, the kept route) reads
+// every raised bit: that decision is older than the raise.
+function raisedSince(state, held) {
+    const dirty = Number(state.stats?.wishDirty) || 0;
+    return held?.input && held.input[0] === Number(state.stats?.decisionSeq || 0) && held.plan.workshopAsked
+        && held.plan.workshop?.known !== false ? dirty & ~held.raised : dirty;
 }
 // What a build and its verdict read beside the held entry: the gear threat,
 // the facts, read once (the held leaf's own trip is read as the field
@@ -1072,7 +1419,7 @@ function heldVerdictFor(state, deps) {
     // gear step) gets it here, in the same call. Main builds with an unknown
     // route instead (Die, GearPlanSelection, HealingPotionStock, ScrollStock,
     // ShotStock: no route request from main).
-    if (!isMainThread && !deps.tripCost && !fullRoute(deps.routeRows)) {
+    if (!isMainThread && !deps.tripCost && !Trip.fullRows(deps.routeRows)) {
         deps.routeRows = Trip.prepared(state);
         // Read live: a high share against context builds says the 64-request
         // cap refuses too often.
@@ -1083,14 +1430,29 @@ function heldVerdictFor(state, deps) {
     const reads = handed && collected.reads || heldReadsOf(state, deps, held);
     deps.gearThreatMask = reads.gearThreat.mask;
     const verdict = handed || heldBuildVerdict(state, held?.plan.eventProof, deps,
-        { ...heldOptionsOf(held), facts: reads.facts, collect: true });
+        { ...heldOptionsOf(held, state), facts: reads.facts, collect: true });
     return { held, reads, verdict, handed };
 }
-// The sections a build rebuilds (forState's mask): the raised bits, the
-// prepared card's verdict (cardVerdict, its first refusal) and the held
-// build's own verdict (heldVerdict, collected).
-function verdictMask(state, cardVerdict, heldVerdict) {
-    return (Number(state.stats?.wishDirty) || 0) | (Number(cardVerdict?.touchedSections) || 0)
+// The cause of a held build's first refusal (the rebuild table's
+// refused:<reason>:<cause>; forState asks it with diagnostics on), '' for a
+// reason with none. unproved: what the verdict could not read (missing: no proof);
+// wish_dirty: the sections raised since the held build (its first refusal's
+// bits); sections: the facts that moved (heldBuildVerdict). decision_seq has
+// none: the held build's own bump is no refusal (decisionMove), so a moved
+// sequence is always another build's written packet or a raise with no bits.
+function refusalCause(verdict) {
+    switch (verdict.reason) {
+        case 'unproved': return verdict.cause || 'other';
+        case 'wish_dirty': return causeNames(Sections.sectionNames(verdict.firstSections));
+        case 'sections': return verdict.cause || 'other';
+        default: return '';
+    }
+}
+// The sections a build rebuilds (forState's mask): the bits raised since the
+// held build (raisedSince), the prepared card's verdict (cardVerdict, its
+// first refusal) and the held build's own verdict (heldVerdict, collected).
+function verdictMask(state, cardVerdict, heldVerdict, held) {
+    return raisedSince(state, held) | (Number(cardVerdict?.touchedSections) || 0)
         | (Number(heldVerdict?.touchedSections) || 0);
 }
 function forState(state = {}, deps = {}) {
@@ -1100,8 +1462,7 @@ function forState(state = {}, deps = {}) {
     deps = resolved(state, deps);
     const timestamp = Number(deps.timestamp || Date.now());
     const actorKey = actorKeyOf(state, deps);
-    // lazy: worker the board's owner lives on main; the worker passes its board.
-    const sourceBoard = deps.board || (isMainThread ? invoke('GameServer/AfkTrade/AfkTradeService').boardIndex() : null);
+    const sourceBoard = marketBoard(deps.board);
     const { held, reads, verdict: eventVerdict, handed } = heldVerdictFor(state, deps);
     const { gearThreat, current, facts, key } = reads;
     // Read once: the hand-off ends here, served or not.
@@ -1110,7 +1471,14 @@ function forState(state = {}, deps = {}) {
     // A valid held build is served. A caller that needs the member's graph
     // nodes (a worker group solve) builds unless the held entry kept them
     // (the main thread keeps them, the worker a party member's).
-    if (eventVerdict.valid && !(deps.withNodes && !held.projection)) {
+    const served = eventVerdict.valid && !(deps.withNodes && !held.projection);
+    // A refresh's kept build read by the next build: served, or why not.
+    if (diagnostic && held?.caller === 'economy_refresh') {
+        Diagnostics.count('context', 'kept_refresh', served ? 'hit' : eventVerdict.reason || 'nodes');
+    }
+    const buildEntry = rebuildEntry(deps.caller, deps.trigger);
+    if (served) {
+        countRebuild(buildEntry, 'served');
         if (deps.onSourceRead) for (const id of held.readIds) deps.onSourceRead(id);
         if (diagnostic) {
             Diagnostics.count('context', 'hit', held.key === key ? 'same_inputs' : 'own_result');
@@ -1123,6 +1491,8 @@ function forState(state = {}, deps = {}) {
         if (deps.rememberContext !== false) {
             held.gearThreat = gearThreat;
             held.stateRef = new WeakRef(state);
+            // Its last keeper: kept_refresh counts only a refresh's own build.
+            held.caller = deps.caller || 'economy_context';
             remember(cache, actorKey, held, RETAIN_LIMIT);
         }
         // A late price read of a held plan is reported as in its build.
@@ -1133,31 +1503,34 @@ function forState(state = {}, deps = {}) {
     // bits, the prepared card's verdict, this verdict's refusals). A computed
     // piece (Sections.COMPUTED) is rebuilt when one of its sections is in it,
     // else reused from the held build.
-    const mask = verdictMask(state, deps.eventVerdict, eventVerdict);
+    const mask = verdictMask(state, deps.eventVerdict, eventVerdict, held);
     // The foundation is reused with the prices and the horizon it was priced with.
     // Reads no section names, reused with it: the persona and the town-visit
-    // rhythm. The walk's unnamed reads, reused with its memo until a source
-    // section is raised:
-    // hunt efficiency and clock, spot risk and the active spot exclusions
-    // (they expire by time), exp, persona, market trades, craft station,
-    // the equipment plan and the crafter's MP.
+    // rhythm. The source walk is walked anew on every build.
     const keptBase = held && !(mask & Sections.COMPUTED.foundation) ? held.plan : null;
-    const keptSources = held?.sourceSections && !(mask & Sections.COMPUTED.sources) ? held : null;
-    // The source walk's per-spot ground verdict, outside the memo's size cap:
-    // its own section rule (GearAcquisitionPlanner.sourceGround).
+    // The source walk's per-spot ground verdict: its own section rule
+    // (GearAcquisitionPlanner.sourceGround).
     const keptGround = !(mask & Sections.COMPUTED.sourceGround) ? held?.sourceGround || null : null;
-    const started = diagnostic ? performance.now() : 0;
+    const started = performance.now();
     // The build's cause, one of a few names (its duration layer). An
     // input-name mismatch is named as a dependency change; it does not claim
     // which historical event caused it.
-    const diagnosticReason = !diagnostic ? null : !held ? deps.rememberContext === false ? 'unkept_caller' : 'not_retained'
+    const missReason = !held ? deps.rememberContext === false ? 'unkept_caller' : 'not_retained'
         : held.key !== key ? 'input_dependency_changed'
         : !eventVerdict.valid ? 'held_refused' : 'nodes_needed';
+    const diagnosticReason = diagnostic ? missReason : null;
+    // The rebuild table's row: a refusal by its first reason and, with
+    // diagnostics on, its cause (refusalCause).
+    const cause = diagnosticReason === 'held_refused' ? refusalCause(eventVerdict) : '';
+    const refusal = cause ? `${eventVerdict.reason}:${cause}` : eventVerdict.reason || 'none';
+    const rebuildReason = missReason === 'held_refused' ? `refused:${refusal}` : missReason;
     if (diagnostic) Diagnostics.count('context', 'miss', diagnosticReason);
     // A held refusal split by the verdict's first reason and by whether the
-    // caller keeps the build: it picks which refusal to make cheaper.
+    // caller keeps the build: it picks which refusal to make cheaper. Only
+    // the unproved cause splits it (a bounded set; the key table is shared).
     if (diagnosticReason === 'held_refused') {
-        Diagnostics.count('context', deps.rememberContext === false ? 'held_refusal_unkept' : 'held_refusal', eventVerdict.reason || 'none');
+        Diagnostics.count('context', deps.rememberContext === false ? 'held_refusal_unkept' : 'held_refusal',
+            eventVerdict.reason === 'unproved' ? refusal : eventVerdict.reason || 'none');
     }
     let elapsed = 0;
     // The items the review read, each reported once (deps.onSourceRead, the
@@ -1172,27 +1545,6 @@ function forState(state = {}, deps = {}) {
     // inputs of the review.
     let scope = null;
     const nodeScopes = [];
-    const bagToken = id => JSON.stringify([state.inventory?.[id] || null, state.acceptedIncoming?.[id] || 0]);
-    const bagIds = () => Object.keys(state.inventory || {}).filter(id => Number(id) !== 57);
-    // ARCH-NOTE: PERF: the build is one synchronous call (its generators are
-    // drained inside it). The bag (state.inventory rows, state.acceptedIncoming)
-    // is not mutated during the build: an item's bag token and the bag's id
-    // list are built once per build. A late read through the view (after
-    // either return below) builds it fresh, as its inputs may have moved
-    // since. Dies at return.
-    let tokensLive = true, liveBagIds = null, liveBagKeys = null;
-    const bagTokens = new Map();
-    const endTokens = () => { tokensLive = false; bagTokens.clear(); liveBagIds = liveBagKeys = null; };
-    const bagTokenOf = id => {
-        if (!tokensLive) return bagToken(id);
-        const at = String(id); // the property key bagToken reads
-        let token = bagTokens.get(at);
-        if (token === undefined) bagTokens.set(at, token = bagToken(id));
-        return token;
-    };
-    const wholeBagIds = () => tokensLive ? liveBagIds ??= bagIds() : bagIds();
-    const wholeBagKeys = () => tokensLive ? liveBagKeys ??= JSON.stringify(wholeBagIds().slice().sort())
-        : JSON.stringify(bagIds().sort());
     const read = id => { id = Number(id);
         if (!(id > 0)) return;
         // Every open node scope notes the id once (an id the innermost holds,
@@ -1212,61 +1564,53 @@ function forState(state = {}, deps = {}) {
     const board = watchedBoard(sourceBoard, watch);
     // A price is remembered, so every price read counts, also a late one
     // through context.price: its item joins the review's inputs.
-    const { price, prices, beliefs, beliefFor, knowledgeEnabled } = pricing(state, persona, board, timestamp, deps, read,
+    const { price, fromShared, soldPrice, prices, beliefs, beliefFor, knowledgeEnabled } = pricing(state, persona, board, timestamp, deps, read,
         keptBase ? new Map(keptBase.prices) : new Map());
-    // The income route record of this build (its own search or the basics'
-    // one): its solo matchup profiles serve the providers' source route reader.
-    let incomeRecord = null;
+    // The income route of this build's own search: its solo matchup profiles
+    // serve the providers' source route reader.
+    let incomeRoute = null;
     const base = keptBase ? foundationFromPlan(state, keptBase, deps, price)
-        : foundation(state, deps, persona, timestamp, price, record => { incomeRecord = record; });
+        : foundation(state, deps, persona, timestamp, price, route => { incomeRoute = route; }, { board, read });
     // These facts still belong to the reused foundation: its items stay read.
     if (keptBase) for (const id of held.readIds) read(id);
     const quantityInputs = createQuantityInputs();
-    const context = { inputKey: key, actorKey, state, timestamp, gearThreatMask: gearThreat.mask, persona, board, hunt: base.hunt, price, buyback,
+    const committedKeys = Providers.committedOf(state);
+    const context = { inputKey: key, actorKey, state, timestamp, gearThreatMask: gearThreat.mask, persona, board, hunt: base.hunt, price, fromShared, soldPrice, buyback,
         quantityInputs,
-        // The gear nomination's basis (the equipment plan's target, the power
-        // focus) is a source walk input no section names: a focus moves only
-        // with a build or the echo, so it is reused with the walk.
-        nominationBasis: keptSources?.plan.nominationBasis || Providers.nominationBasis(state),
+        // The committed goals (focus, preempted rows; WishProviders.committedOf)
+        // every goal source keeps past its cap, and the gear nomination's
+        // basis (the equipment plan's target, the committed gear items),
+        // read once per build.
+        committedKeys, nominationBasis: Providers.nominationBasis(state, committedKeys),
         ...(keptBase ? { horizonHours: keptBase.horizonHours } : {}),
         riskWeight: base.riskWeight, bestSpotId: base.bestSpotId, deathHours: base.deathHours, lostGearHours: base.lostGearHours,
         karmaHours: base.karmaHours, expectedDeathHours: base.expectedDeathHours, stock: base.stock,
         survivalReserve: base.survivalReserve, kitCost: base.kitCost, hourAdena: base.hourAdena,
         walletBoundary: cash.watch,
         budgetBoundary: budget.watch,
-        // The per-node source memo: its inputs are the bag only (prices and
-        // spots are none; a raised section of the walk voids the memo, the
-        // mask). The item ids a node read are kept without a token, only so
-        // that a reused node reports them again (deps.onSourceRead).
-        nodeInputs: { begin: () => { const local = { items: new Set(), bag: new Map() }; nodeScopes.push(local); return local; },
+        // The item ids a source node read in this build, so that a node
+        // reused within the build reports them again (deps.onSourceRead).
+        nodeInputs: { begin: () => { const local = { items: new Set() }; nodeScopes.push(local); return local; },
             end: () => nodeScopes.pop(),
-            bag: id => { if (!(Number(id) > 0) || !nodeScopes.length) return;
-                const token = bagTokenOf(id);
-                const top = nodeScopes[nodeScopes.length - 1];
-                if (token === undefined || top.bag.get(Number(id)) !== token) for (const local of nodeScopes) local.bag.set(Number(id), token); },
-            wholeBag: () => { if (!nodeScopes.length) return;
-                for (const id of wholeBagIds()) context.nodeInputs.bag(id);
-                const token = wholeBagKeys();
-                const top = nodeScopes[nodeScopes.length - 1];
-                if (token === undefined || top.bag.get(-1) !== token) for (const local of nodeScopes) local.bag.set(-1, token); },
-            holds: input => (input.bag || []).every(([id, token]) => (id === -1 ? wholeBagKeys() : bagTokenOf(id)) === token),
-            keep: input => { for (const id of input.items || []) read(id);
-                for (const [id] of input.bag || []) if (id === -1) context.nodeInputs.wholeBag(); else context.nodeInputs.bag(id); } },
+            keep: input => { input.items?.forEach(read); } },
         readScope: { open: () => (scope = new Set()), close: () => { scope = null; },
-            keep: kept => { for (const id of kept) read(id); } } };
+            keep: kept => { kept.forEach(read); } },
+        // The board's watch, for a reader that serves an answer of a board
+        // read again within the build (WishPurchaseEvidence): its item is
+        // read again, as by the board.
+        watch };
     // A worker build given no workshop keeps the held build's (keptWorkshop).
-    const workshop = Object.hasOwn(deps, 'workshop') ? deps.workshop : isMainThread
-        ? craftIncome(state, { hourAdena: base.hourAdena, worth: price, timestamp }) : keptWorkshop(held, mask, state);
+    const workshop = Object.hasOwn(deps, 'workshop') ? deps.workshop : isMainThread ? null
+        : keptWorkshop(held, mask, state);
+    // The held build's own workshop (heldWorkshop, keptWorkshop) carries the
+    // record of its ask; any other is a fresh answer, recorded below.
+    const keptAsk = workshop && workshop === held?.plan.workshop ? held.plan.workshopAsked || null : null;
     context.workshop = workshop || { recipeId: 0, productId: 0, incomePerHour: NaN, cycleHours: NaN };
-    const productive = workshop?.known !== false && workshop?.incomePerHour > 0 && Number.isFinite(workshop.incomePerHour)
-        && workshop.cycleHours > 0 && Number.isFinite(workshop.cycleHours);
-    if (productive) { watch(workshop.productId); context.hourAdena = Math.max(context.hourAdena, workshop.incomePerHour); }
-    context.routeKey = Trip.key(state); context.routeRows = fullRoute(deps.routeRows) ? deps.routeRows : null;
+    context.routeKey = Trip.key(state); context.routeRows = Trip.fullRows(deps.routeRows) ? deps.routeRows : null;
     const tripHour = context.hourAdena;
     context.trip = deps.tripCost || Trip.preparedReader(context.routeRows || [], { hourAdena: tripHour });
-    const readSpot = SpotEconomics.create(state, { ...deps, timestamp, persona, price, deathHours: context.deathHours,
+    context.spotValue = SpotEconomics.create(state, { ...deps, board, read, timestamp, persona, price, deathHours: context.deathHours,
         hunt: buildHunt(base.hunt) });
-    context.spotValue = readSpot;
     if (state.incomingPending) {
         // ARCH-NOTE: an oversized incoming projection waits on the existing
         // settlement/preparation owner. Never replace unknown stock with zero
@@ -1281,43 +1625,61 @@ function forState(state = {}, deps = {}) {
         context.statsPacket = { wishFocus: context.network.focus, dormantWishes: context.network.dormant,
             decisionSeq: context.network.decisionSeq, activityLeaf: context.network.activityLeaf,
             money: state.stats?.money || [0, 0, base.survivalReserve, 0], stockTargets: state.stats?.stockTargets || stockTargets(base) };
-        endTokens(); readIds = null;
-        return view(state, planOf(context, base, { key, tripHour, prices }), deps, { price, kit: base, board, read, spotValue: context.spotValue, trip: context.trip });
+        readIds = null;
+        countRebuild(buildEntry, 'incoming_pending', performance.now() - started);
+        return view(state, planOf(context, base, { key, tripHour, prices }), deps, { price, soldPrice, kit: base, board, read, spotValue: context.spotValue, trip: context.trip });
     }
-    // One stock reader for the provider's gear witnesses and the network
-    // build; the projection is read lazily once it exists (stock roots).
+    // One stock reader for the provider's gear witnesses, the root cut's
+    // solves and the network build: a stock root's item comes from its owner
+    // (the kit's stock(kind), the item the provider roots), so every phase,
+    // before the projection exists too, reads one owned count.
     context.wallet = Funding.budget(state, deps.buyOrderEscrow);
-    const nativeStock = stockReader(state, rootKey => context.projection?.nodes.find(node => node.key === rootKey)?.object?.itemId);
-    context.stockFor = (id, rootKey) => quantityInputs.stock(id, rootKey, nativeStock(id, rootKey));
+    const stockRootItem = rootKey => context.stock(rootKey.slice('stock:'.length))?.itemId;
+    const nativeStock = stockReader(state, stockRootItem);
+    // prior, requested (the allocation's reading, WishNetwork solve): where
+    // its answer flips on the owned count o, the incoming i exact: free stock
+    // (o >= prior + 1), all owned (o >= prior + requested), nothing to order
+    // (o >= prior + requested - i) and, with incoming, the incoming kept
+    // (o >= prior - i + 1) and its shrinking (o >= prior). Any other read
+    // (a crystallize batch, a gear witness) notes none: untracked.
+    // A read whose answer is the same for every root is one proof row of
+    // the item (fact '', WishNetwork createQuantityInputs).
+    context.stockFor = (id, rootKey, prior, requested) => {
+        const stock = quantityInputs.stock(id, rootKey, nativeStock(id, rootKey), nativeStock.rootFact(id, rootKey));
+        if (requested === undefined) { quantityInputs.untracked('stock', id, rootKey); return stock; }
+        const incoming = positive(stock?.incoming);
+        quantityInputs.atLeast('stock', id, prior + 1, rootKey); quantityInputs.atLeast('stock', id, prior + requested, rootKey);
+        if (incoming > 0) {
+            quantityInputs.atLeast('stock', id, prior + requested - incoming, rootKey);
+            quantityInputs.atLeast('stock', id, prior - incoming + 1, rootKey); quantityInputs.atLeast('stock', id, prior, rootKey);
+        }
+        return stock;
+    };
     context.completionKey = Crystallization.completionKey(state, quantityInputs);
-    const extra = [...extensions.values()].flatMap(provider => provider(state, context) || []);
-    const sourceSections = keptSources ? held.sourceSections : null;
     if (diagnostic) {
-        // The mask first: no_memo is a build whose sections kept the walk.
-        Diagnostics.count('source_memo', sourceSections ? 'hit' : 'miss', sourceSections ? 'held'
-            : !held ? 'no_held' : mask & Sections.COMPUTED.sources ? 'sections' : 'no_memo');
         Diagnostics.count('context', 'caller', deps.caller || 'economy_context');
         Diagnostics.count('context', 'foundation', keptBase ? 'kept' : 'built');
     }
-    const projection = Providers.build(state, context, { ...deps, sourceSections, sourceGround: keptGround, nodes: [...(deps.nodes || []), ...extra],
-        soloProfiles: incomeRecord?.route?.matchupProfiles });
+    const projection = Providers.build(state, context, { ...deps, sourceGround: keptGround,
+        soloProfiles: incomeRoute?.matchupProfiles });
     context.projection = projection;
-    if (productive) projection.moneyPaths.push({ activity: 'crafting', kind: 'production', recipeId: workshop.recipeId,
-        object: workshop.productId, incomePerHour: workshop.incomePerHour,
-        cycleHours: workshop.cycleHours, repeatable: true });
     const networkKey = key;
     const choiceBands = quantityBands(state, context, projection);
+    // The readers below compare with the accepted decision (the state's
+    // packet), older than every raised bit, also one a kept refresh build
+    // consumed (raisedSince forgives it to the verdict and the mask only).
+    const raised = Number(state.stats?.wishDirty) || 0;
     // Unused free loot is compared with the last decision's own value/error:
     // with no section moved the accepted bag value stays.
     const bagValue = choiceBagValue(state, choiceBands, context.buyback);
     const acceptedSections = state.stats?.wishSections;
-    context.choiceBagValue = mask === 0 && choiceBagValueHolds(state, choiceBands, acceptedSections, context.hourAdena, bagValue)
+    context.choiceBagValue = (mask | raised) === 0 && choiceBagValueHolds(state, choiceBands, acceptedSections, context.hourAdena, bagValue)
         ? acceptedSections.bagValue : bagValue;
     // An event re-weighs the held focus and step (WishNetwork reconsider): a
     // section that moved (raised, or named by a refusal). A first build or an
     // unproved held build (no section named, mask = every piece) keeps them.
     // By intent not verdictMask: an unproved verdict's sections rebuild, never re-weigh.
-    const moved = (Number(state.stats?.wishDirty) || 0) | (Number(deps.eventVerdict?.touchedSections) || 0)
+    const moved = raised | (Number(deps.eventVerdict?.touchedSections) || 0)
         | (held ? eventVerdict.movedSections : 0);
     const reconsider = moved !== 0;
     const network = engine.build({ actorKey, inputKey: networkKey, ...projection,
@@ -1344,13 +1706,28 @@ function forState(state = {}, deps = {}) {
         : urgent.key === 'stock:potions' ? base.stock('potions').targetHours : projection.horizon;
     Object.assign(context, valueReaders(state, network, projection.values, persona, knowledgeEnabled,
         base.kitCost, () => context.statsPacket.money));
-    context.watchList = TradeIntent.project(state, network, projection, id => context.worth(id) ?? price(id),
+    context.watchList = TradeIntent.project(state, network, projection,
         BoardRules.BOT_SHOP_LINES + BoardRules.BOT_RECORDS.buy_ad);
     context.intentPending = context.watchList === null;
     context.watchList ||= [];
     context.statsPacket = { wishFocus: network.focus, dormantWishes: network.dormant,
         decisionSeq: network.decisionSeq, activityLeaf: network.activityLeaf,
-        money: Funding.packetFor(network, context.hourAdena, base.survivalReserve), stockTargets: stockTargets(base), wishDirty: 0 };
+        money: Funding.packetFor(network, context.hourAdena, base.survivalReserve), stockTargets: stockTargets(base), wishDirty: 0,
+        // The decision's held claims (every row of an item in the bag): what
+        // every bag consumer keeps for its goals (ItemDisposition.heldAmounts).
+        heldClaims: CraftInputReservations.heldCraftRows(state, network.heldClaims, Infinity) };
+    // The bot's twin (TwinCluster): a worker build proposes its town on its
+    // board, and a crafter's workshop offer at this build's hour when handed
+    // its recipe book; none = the held twin stands (the packet's merge keeps
+    // the mind's twin).
+    const twin = !isMainThread || Array.isArray(deps.recipeBook) ? TwinCluster.propose(state, { book: deps.recipeBook,
+        hourAdena: context.hourAdena, mpPerHour: OccupationSources.mpPerHour(state), error: Sections.incomeError(state, persona),
+        board: isMainThread ? null : sourceBoard, watchList: context.watchList,
+        // The spot lookup of every build (a worker build cannot reach
+        // SpotService's World index): the build's own spot catalog.
+        findSpot: id => SpotIndex.spotById(deps.spots, id),
+        keepTown: !!held && !(mask & Sections.COMPUTED.town) }) : null;
+    if (twin) context.statsPacket.twin = twin;
     let cumulative = base.survivalReserve;
     for (const wish of network.queue) { cumulative += cashCharge(wish); budget.watch(cumulative); }
     const watchedWish = network.gap || network.queue.find(wish => wish.key === network.focus?.[0]);
@@ -1364,22 +1741,28 @@ function forState(state = {}, deps = {}) {
         const known = knowledgeEnabled && (beliefs.get(id) || beliefFor(id));
         return known ? Math.expm1(PriceBelief.sigma(known)) : 0;
     };
+    // ||: a zero-usefulness item's worth is 0, yet its sale is watched at
+    // its price.
+    const sellValue = id => context.worth(id) || price(id);
     const watchRows = marketWatchRows(network.queue, context.liquidationInputs?.rows || [], sourceBoard,
-        // || (TradeIntent.project above keeps ??): a zero-usefulness item's
-        // worth is 0, yet its sale is watched at its price.
-        Number(state.characterId), price, id => context.worth(id) || price(id), priceError,
-        productive ? Recipes.resolveByRecipeId(workshop.recipeId) : null);
+        Number(state.characterId), price, sellValue, priceError, censusWakeRows(state),
+        id => Crystallization.saleCrystal(state, id), soldLinesOf(network), id => network.plans?.get?.(`item:${id}`));
+    // That the workshop was asked, beside it (never on the workshop object):
+    // a kept workshop carries the mark over; a build handed no ask (deps
+    // workshopAsked: a near build's empty workshop) records none, so the next
+    // build after it asks.
+    context.workshopAsked = keptAsk || (Object.hasOwn(deps, 'workshopAsked') ? deps.workshopAsked : true);
     // The build's facts for its baseline: the request's when they were read
     // over this state itself (no held leaf's field activity in between).
     context.statsPacket.wishSections = Sections.snapshot(state, context, cash.result, moneyError, deps.mode,
         { buyOrderEscrow: deps.buyOrderEscrow, budgetBounds: budget.result }, current === state ? facts : requestFacts(state, deps),
-        Providers.relationBond(state, deps), watchRows);
+        watchRows);
     // The baseline fields of a section not in the mask stay those of the
     // accepted decision (carrySectionBaseline); every moved one is fresh.
     // The money fields are always fresh: the weighing that just ran priced
     // its queue against the current wallet (bagValue: choiceBagValue above).
-    Sections.carrySectionBaseline(acceptedSections, context.statsPacket.wishSections, mask | Sections.sectionBit('money'));
-    building = false; endTokens();
+    Sections.carrySectionBaseline(acceptedSections, context.statsPacket.wishSections, mask | raised | Sections.sectionBit('money'));
+    building = false;
 
     if (diagnostic) {
         Diagnostics.count('context', 'build', diagnosticReason);
@@ -1406,12 +1789,14 @@ function forState(state = {}, deps = {}) {
         heldLeaf: held?.plan.network.activity?.key, freshLeaf: network.activity?.key });
     const plan = planOf(context, base, { key, tripHour, projection, knowledgeEnabled, prices });
     plan.quantityBands = choiceBands;
-    // Source memo and ground verdict belong only to the held build entry
-    // (bounded by RETAIN_LIMIT, each memo by WishProviders' cap, each ground
-    // by 2 bits per planning spot). A planning view or a group closure must
-    // never retain a second copy.
-    const retainedSourceMemo = projection.sourceSections, retainedGround = projection.sourceGround;
-    projection.sourceSections = projection.sourceGround = null;
+    // The ground verdict belongs only to the held build entry (bounded by
+    // RETAIN_LIMIT, each ground by 2 bits per planning spot). A planning view
+    // or a group closure must never retain a second copy.
+    const retainedGround = projection.sourceGround;
+    projection.sourceGround = null;
+    // The build's solves are over: its sized buys end (Network.endSizedBuys),
+    // so a kept projection holds no build reader.
+    Network.endSizedBuys(projection.nodes);
     if (deps.rememberContext !== false) {
         if (diagnostic && !cache.has(actorKey) && cache.size >= RETAIN_LIMIT) Diagnostics.count('context', 'eviction', 'capacity');
         // The main thread keeps the graph nodes as before (its group solve
@@ -1423,36 +1808,55 @@ function forState(state = {}, deps = {}) {
         plan.eventProof = captureEventProof(state, deps, { plan });
         // What the card stamps on its leaf, read once for the held verdict: the
         // own item's bag+incoming at the decision (heldAtDecision) and a
-        // craft's reserved inputs (craftReservations).
+        // craft's reserved inputs: every live goal's held claims (craftReservations).
         const leaf = plan.network?.activity, own = ColdEconomyDecision.ownItem(leaf);
-        remember(cache, actorKey, { key,
+        remember(cache, actorKey, { key, revision: Number(state.simulation?.revision || 0),
             heldUnits: own === null ? undefined : ColdEconomyDecision.heldFor(state, own),
-            craftReservations: leaf?.activity === 'crafting' ? CraftInputReservations.heldCraftRows(state, plan.network.craftNeeds) : undefined,
+            craftReservations: leaf?.activity === 'crafting' ? CraftInputReservations.heldCraftRows(state, plan.network.heldClaims) : undefined,
             readIds: Int32Array.from(readIds), plan, stateRef: new WeakRef(state), gearThreat,
-            activity: state.activity,
-            sourceSections: retainedSourceMemo, sourceGround: retainedGround, mp: Number(state.vitals?.mp),
-            projection: (isMainThread || Sections.partyIdOf(state)) ? projection : null }, RETAIN_LIMIT);
+            activity: state.activity, caller: deps.caller || 'economy_context',
+            // The decision this build read (decisionMove: the state still
+            // carrying it is no refusal) and the raised bits it consumed
+            // (raisedSince, while the sequence is still input[0]).
+            input: Object.freeze([inputSequence, Number(state.stats?.activityLeaf || 0), state.stats?.wishFocus?.[0] ?? null]),
+            raised: Number(state.stats?.wishDirty) || 0,
+            // The money packet this build read (heldMoney: the state still
+            // carrying it has not received this build's own packet; dropped
+            // once the state moves off it).
+            inputMoney: state.stats?.money,
+            sourceGround: retainedGround, mp: Number(state.vitals?.mp),
+            projection: (isMainThread || partyIdOf(state)) ? projection : null }, RETAIN_LIMIT);
     }
     readIds = null;
-    const built = view(state, plan, deps, { price, kit: base, board, read, spotValue: context.spotValue, trip: context.trip, projection });
+    const built = view(state, plan, deps, { price, soldPrice, kit: base, board, read, spotValue: context.spotValue, trip: context.trip, projection });
     // The sections this build saw moved (worker-local, never posted): the
     // worker drops the kept route when they hit COMPUTED.route. A served held
     // build and a card view carry none: they hold only with nothing moved.
     built.mask = mask;
+    countRebuild(buildEntry, rebuildReason, performance.now() - started, held ? sameDecision(held.plan.network, network) : null);
     return built;
 }
 // Plan as data (perf C1). A built context's closures hold the wish network,
-// the projection and the whole build scope (~60 KB per bot); what its readers
-// act on is a few KB of results. The cache keeps this plan, and every reader,
+// the projection and the whole build scope (~0.6 MB per party bot, measured
+// in the worker heap 10-25 while sized buys kept it alive); what its readers
+// act on is a few KB of results. A kept projection (main, a worker party
+// member) holds its nodes only, no build scope (Network.endSizedBuys):
+// estimated ~20-40 KB (EC cache entries average 35 KB, same snapshot). The cache keeps this plan, and every reader,
 // the building caller included, gets view(state, plan, deps): the same fields
 // and functions, answered from the plan, the state it is given and the kit
 // data, without a second wish build.
 // Plan nodes keep only what post-build readers walk: the materials of the
 // decision card (ColdEconomyDecision.capture), TradeIntent.project and
-// npcOwnsPurchase, WishProviders.personalCraftPlan. Shared nodes stay shared.
+// npcOwnsPurchase, WishProviders.personalCraftPlan (basePrice, and bidFloor
+// for an input no seller offers: the cash weights of TradeIntent.inputSplit
+// and lineCash; inputCap: the solve's input ceiling, TradeIntent.inputValue).
+// Shared nodes stay shared.
 // A requirement row without its plan is looked up by key in network.plans
 // (personalCraftPlan); `unresolved` collects those keys for the kept map.
-const NODE_FIELDS = ['kind', 'sourceType', 'quoted', 'executable', 'recipeId', 'missingAmount', 'improvement', 'unseal', 'batches',
+// No `activity` on purpose: with it, a meeting-prep row would match the chosen
+// step, get cut, and TradeIntent's guard would then refuse the chosen step's own meeting.
+// unitPrice, town, availableUnits: a quoted afk buy's meeting consent (TradeIntent.wishRows).
+const NODE_FIELDS = ['kind', 'sourceType', 'quoted', 'executable', 'recipeId', 'missingAmount', 'improvement', 'unseal', 'batches', 'basePrice', 'bidFloor', 'inputCap',
     'unitPrice', 'town', 'availableUnits'];
 const NO_REQUIREMENTS = Object.freeze([]);
 function planTrimmer(unresolved = new Set()) {
@@ -1469,7 +1873,6 @@ function planTrimmer(unresolved = new Set()) {
         seen.set(plan, out);
         if (plan.grossRequirements) out.grossRequirements = plan.grossRequirements.map(row => ({ key: row.key,
             amount: row.amount, ...(row.once ? { once: true } : {}) }));
-        if (plan.intentionPath !== undefined) out.intentionPath = trim(plan.intentionPath);
         if (plan.execution) out.execution = { ...trim(plan.execution), availableUnits: plan.execution.availableUnits };
         if (plan.requirements) out.requirements = !plan.requirements.length ? NO_REQUIREMENTS : plan.requirements.map(row => {
             if (!row.plan) unresolved.add(row.key);
@@ -1484,30 +1887,27 @@ function planTrimmer(unresolved = new Set()) {
 // keeps the item plans (TradeIntent.npcOwnsPurchase asks by `item:<id>`) and
 // the plans of requirement rows that have none. A selected crystal operation
 // also keeps its one root: owned inputs can remove it from the money queue.
-// craftNeeds: the selected craft's inputs, walked once on the full network
-// for the card and the held verdict (absent when the root is no craft).
 function compactNetwork(network) {
     const unresolved = new Set(), trim = planTrimmer(unresolved);
     const row = wish => ({ key: wish.key, need: wish.need, object: wish.object, price: wish.price, reserved: wish.reserved,
         valueHours: wish.valueHours, ratio: wish.ratio, funded: wish.funded,
         supported: wish.supported, resolved: wish.resolved, progressionPriority: wish.progressionPriority,
-        plan: trim(wish.plan) });
+        ...(wish.scrollCash !== undefined ? { scrollCash: wish.scrollCash } : {}),
+        ...(wish.ownValueHours !== undefined ? { ownValueHours: wish.ownValueHours } : {}),
+        ...(wish.bidsInputs > 0 ? { bidsInputs: wish.bidsInputs } : {}), plan: trim(wish.plan) });
     const queue = (network.queue || []).map(row);
     const at = network.gap ? (network.queue || []).indexOf(network.gap) : -1;
     const leaf = network.activity;
     const activity = !leaf ? leaf : { ...leaf,
-        ...(leaf.requirements ? { requirements: leaf.requirements.map(item => ({ ...item, plan: trim(item.plan) })) } : {}),
-        ...(leaf.intentionPath ? { intentionPath: trim(leaf.intentionPath) } : {}) };
+        ...(leaf.requirements ? { requirements: leaf.requirements.map(item => ({ ...item, plan: trim(item.plan) })) } : {}) };
     const all = network.plans || new Map(), plans = new Map();
     for (const [key, plan] of all) if (key.startsWith('item:')) plans.set(key, trim(plan));
-    if (leaf?.rootKey?.startsWith('power:') && ['crystallize', 'luxury_exchange', 'mammon_unseal'].includes(leaf.kind)
+    if (leaf?.rootKey && ['crystallize', 'luxury_exchange', 'mammon_unseal'].includes(leaf.kind)
         && all.has(leaf.rootKey)) plans.set(leaf.rootKey, trim(all.get(leaf.rootKey)));
     for (const key of unresolved) if (!plans.has(key) && all.has(key)) plans.set(key, trim(all.get(key)));
-    const craftNeeds = CraftInputReservations.selectedCraftNeeds(network);
     // The network's input key is the plan's key with its market (~2 KB of
     // text per bot, L104): view() gives it back from them, in its place.
-    return { ...network, inputKey: undefined, queue, gap: !network.gap ? network.gap : at >= 0 ? queue[at] : row(network.gap), activity, plans,
-        ...(craftNeeds.length ? { craftNeeds } : {}) };
+    return { ...network, inputKey: undefined, queue, gap: !network.gap ? network.gap : at >= 0 ? queue[at] : row(network.gap), activity, plans };
 }
 // The build's prices of what the plan's own numbers were made from (the
 // kit, the queue, the watch list): a later view starts from them, so its
@@ -1520,6 +1920,12 @@ function planPrices(prices, kit, context) {
     for (const id of ids) if (prices.has(Number(id))) kept.set(Number(id), prices.get(Number(id)));
     return kept;
 }
+// The leaf's read of its own item (ColdEconomyDecision.ownItem, the
+// verdict's ownQuantityRow): its proof row stays apart (WishNetwork finish).
+function ownStock(leaf) {
+    const itemId = ColdEconomyDecision.ownItem(leaf);
+    return itemId !== null && typeof leaf.rootKey === 'string' ? { rootKey: leaf.rootKey, itemId: Number(itemId) } : null;
+}
 function planOf(context, base, { key, tripHour, projection = null, knowledgeEnabled, prices }) {
     const stockRoots = new Map();
     for (const node of projection?.nodes || [])
@@ -1529,28 +1935,49 @@ function planOf(context, base, { key, tripHour, projection = null, knowledgeEnab
         riskWeight: context.riskWeight, bestSpotId: context.bestSpotId, deathHours: context.deathHours,
         lostGearHours: context.lostGearHours, karmaHours: context.karmaHours, expectedDeathHours: context.expectedDeathHours,
         survivalReserve: context.survivalReserve, kit: base.kit, hourAdena: context.hourAdena, workshop: context.workshop,
-        routeKey: context.routeKey, routeRows: context.routeRows, tripHour,
+        workshopAsked: context.workshopAsked, routeKey: context.routeKey, routeRows: context.routeRows, tripHour,
         network: compactNetwork(context.network), moneyPrice: context.moneyPrice, gapHorizonHours: context.gapHorizonHours,
         watchList: context.watchList, intentPending: context.intentPending, statsPacket: context.statsPacket,
         wallet: context.wallet, horizonHours: context.horizonHours, values: projection?.values, stockRoots, knowledgeEnabled,
-        quantityInputs: projection ? context.quantityInputs?.finish() : null, nominationBasis: context.nominationBasis,
+        quantityInputs: projection ? context.quantityInputs?.finish(ownStock(context.network?.activity)) : null,
+        // The thresholds of those rows, set by finish() above.
+        quantityThresholds: projection ? context.quantityInputs?.thresholds() : null,
         liquidationInputs: context.liquidationInputs,
         prices: planPrices(prices, base.kit, context), gearPlanMemo: undefined };
+}
+// Whether a stock read depends on its root: a stock root's own item counts
+// the whole bag, every other read the free amount (stockReader; a clan
+// crystal root's reads too: the reader's clanKey).
+function ownStockRow(rootKey, id, rootItem) {
+    return rootKey.startsWith('stock:') && rootItem(rootKey) === id;
 }
 // What a review's stock reader, usefulness, worth and purchase budget read:
 // one copy for the build and every later view of its plan.
 function stockReader(state, rootItem) {
     const reserved = invoke('GameServer/Bot/AI/PersonalGearProgression').preparedAmounts(state);
-    // Production actions cannot consume the collected personal gear kit.
-    // Their purchase graph must see that same free stock, or an input trip
-    // reaches the seller with no surviving need for its own reserved goods.
+    // A clan equipment owner's crystal root reads the stock its own clan
+    // demand releases (ClanCrystalSupply.stock); clanKey: that root's key.
+    const supply = state.stats?.equipmentPlan?.clanGoal?.clanId && ClanCrystalSupply.requirement(state);
+    // A producer's root (resale:) cannot consume the collected personal gear
+    // kit (ItemDisposition.reservedEquipmentAmounts, the gear plan's held
+    // inputs among it): its purchase graph sees that same free stock, or an
+    // input trip reaches the seller with no surviving need for its own
+    // reserved goods. Read once per reader, at the first producer read.
     let productionReserved;
-    const supply = state.stats?.equipmentPlan?.clanGoal?.clanId && require('./ClanCrystalSupply').requirement(state);
-    return (id, rootKey) => ({ owned: supply?.key === rootKey ? require('./ClanCrystalSupply').stock(state, id)
-        : rootKey.startsWith('stock:') && rootItem(rootKey) === id
-        ? positive(state.inventory?.[id]?.amount) : invoke('GameServer/Bot/Economy/WealthCraftDecision').freeAmount(state, state.inventory?.[id] || {},
-            rootKey.startsWith('resale:') ? productionReserved ||= invoke('GameServer/Bot/Economy/ItemDisposition').reservedEquipmentAmounts(state) : reserved),
+    const reservedFor = rootKey => rootKey.startsWith('resale:')
+        ? productionReserved ||= ItemDisposition.reservedEquipmentAmounts(state) : reserved;
+    const read = (id, rootKey) => ({ owned: supply?.key === rootKey ? ClanCrystalSupply.stock(state, id)
+        : ownStockRow(rootKey, id, rootItem)
+        ? positive(state.inventory?.[id]?.amount) : WealthDecision.freeAmount(state, state.inventory?.[id] || {}, reservedFor(rootKey)),
     incoming: positive(state.acceptedIncoming?.[id]) });
+    read.clanKey = supply ? supply.key : null;
+    // The fact a read of `id` by `rootKey` is (WishNetwork createQuantityInputs):
+    // the root's own when its answer depends on the root (its own stock row,
+    // the clan crystal root, a producer root whose reservation of `id` is not
+    // the others'), else '' (one row of the item for every root).
+    read.rootFact = (id, rootKey) => ownStockRow(rootKey, id, rootItem) || rootKey === read.clanKey
+        || rootKey.startsWith('resale:') && Number(reservedFor(rootKey)[id] || 0) !== Number(reserved[id] || 0) ? rootKey : '';
+    return read;
 }
 function valueReaders(state, network, values, persona, knowledgeEnabled, kitCost, money) {
     const itemUsefulness = id => invoke('GameServer/Bot/Population/ColdEconomyDecision').personalUsefulness(
@@ -1571,21 +1998,21 @@ function buildHunt(hunt) {
     return hunt?.source === 'route' ? undefined : hunt;
 }
 // Spot values are read inside a build (providers); a later view makes its
-// reader only when asked.
-function lazySpotValue(state, plan, deps) {
+// reader only when asked, over the view's board and read hook.
+function lazySpotValue(state, plan, deps, built = {}) {
     let reader;
     return (...args) => (reader ||= SpotEconomics.create(state,
-        { ...deps, timestamp: plan.timestamp, persona: plan.persona, deathHours: plan.deathHours, hunt: buildHunt(plan.hunt) }))(...args);
+        { ...deps, ...(built.board ? { board: built.board } : {}), read: built.read, timestamp: plan.timestamp,
+            persona: plan.persona, deathHours: plan.deathHours, hunt: buildHunt(plan.hunt) }))(...args);
 }
-const buyback = id => invoke('GameServer/Items/NpcSellRules')
-    .npcBuyPrice(Number(ItemIndex.find(DataCache.items, id)?.template?.price || 0));
 // One reader's context over a plan. `built` carries the building call's own
 // readers (prices with their memo, kit, spot value, trip, the projection);
 // a later view makes its own from the plan. The state is the caller's, held
 // only by this view. Functions read the plan, never a build scope.
 function view(state, plan, deps, built = {}) {
     // A later view starts from the build's prices of the plan's own items.
-    const price = built.price || pricing(state, plan.persona, built.board, plan.timestamp, deps, built.read, new Map(plan.prices)).price;
+    const { price, soldPrice } = built.price ? built
+        : pricing(state, plan.persona, built.board, plan.timestamp, deps, built.read, new Map(plan.prices));
     const { stock, kitCost } = built.kit || kitReader(plan.kit, price,
         () => plan.kit.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
     // Reprice funding against this physical wallet. Reuse of benefit/source
@@ -1598,12 +2025,12 @@ function view(state, plan, deps, built = {}) {
         money: Funding.packetFor(network, plan.hourAdena, plan.survivalReserve) };
     const context = { inputKey, actorKey: plan.actorKey, state,
         timestamp: plan.timestamp, gearThreatMask: plan.gearThreatMask, persona: plan.persona, board: built.board, hunt: plan.hunt,
-        price, buyback, riskWeight: plan.riskWeight, bestSpotId: plan.bestSpotId,
+        price, soldPrice, buyback, riskWeight: plan.riskWeight, bestSpotId: plan.bestSpotId,
         deathHours: plan.deathHours, lostGearHours: plan.lostGearHours, karmaHours: plan.karmaHours,
         expectedDeathHours: plan.expectedDeathHours, stock, survivalReserve: plan.survivalReserve, kitCost,
         hourAdena: plan.hourAdena, workshop: plan.workshop, routeKey: plan.routeKey, routeRows: plan.routeRows,
         trip: built.trip || deps.tripCost || Trip.preparedReader(plan.routeRows || [], { hourAdena: plan.tripHour }),
-        spotValue: built.spotValue || lazySpotValue(state, plan, deps),
+        spotValue: built.spotValue || lazySpotValue(state, plan, deps, built),
         network, moneyPrice: network.moneyPrice, gapHorizonHours: plan.gapHorizonHours, watchList: plan.watchList,
         intentPending: plan.intentPending, statsPacket };
     // The plan is the identity of one decision for memos kept beside it
@@ -1632,39 +2059,20 @@ function view(state, plan, deps, built = {}) {
 // (level, weapon) has no published target yet and reads the foundation; so
 // do shots risen since the build: without restock their target is capped by
 // the stock owned then (the sale list keeps at most what is owned, so a
-// fall needs no fresh read).
+// fall needs no fresh read). The shots' survival target and unit price
+// close the row: a buyer below that floor waits for a shot seller
+// (MarketDemandIndex), spending at most its missing shots' price.
 function stockTargets(base) {
     const potions = base.stock('potions'), shots = base.stock('shots');
-    return [potions.itemId, potions.target, shots.itemId, shots.target, shots.current];
-}
-// The bot's missing shot stack as crafters see it (stats.shotDemand, read by
-// MarketDemandIndex and CraftWorkshopService): null when the stock rule wants
-// none or has no shot row (a bot without shots), the previous row (its age
-// kept) while item, amount and cap hold. The far step's output (ColdSimulationWorker planLifecycle), over the step's own
-// economy and its money packet. Escrow 0 and worth ?? price, as the
-// main-thread review read them: a worth of 0 (an item off the bot's wish
-// card) caps the spend at 0, only no worth falls back to the price.
-// Only the activities the main-thread review posted for; any other step
-// keeps the previous row as it is.
-const SHOT_DEMAND_ACTIVITIES = ['hunting', 'resting', 'shopping', 'grouped'];
-function shotDemand(economy, state, timestamp, previous = null) {
-    if (!SHOT_DEMAND_ACTIVITIES.includes(state.activity)) return previous;
-    const stock = economy.stock('shots');
-    if (!stock?.needed) return null;
-    const missing = stock.survivalMissing + stock.missing;
-    if (!missing) return null;
-    const price = stock.unitPrice;
-    if (!(price > 0)) return previous;
-    const funded = { ...state, stats: { ...state.stats, money: economy.statsPacket.money } };
-    const maxSpend = Math.min(Funding.spendable(funded, 0, { itemId: stock.itemId, survivalCost: economy.kitCost(stock.itemId) }),
-        missing * (economy.worth(stock.itemId) ?? price));
-    if (previous && previous.itemId === stock.itemId && previous.amount === missing && previous.maxSpend === maxSpend) return previous;
-    return { itemId: stock.itemId, amount: missing, maxSpend, at: timestamp };
+    return [potions.itemId, potions.target, shots.itemId, shots.target, shots.current,
+        // No buy floor when buying does not pay: the build kept only what it holds.
+        shots.canRestock ? shots.survivalTarget : 0,
+        Math.round(positive(shots.unitPrice) * 100) / 100];
 }
 function keptTargets(state = {}, deps = {}) {
     const row = state.stats?.stockTargets, ShotStock = invoke('GameServer/Inventory/ShotStock'), plan = ShotStock.planForState(state);
     const beginnerCurrent = ShotStock.beginnerAmount(state, plan);
-    if (Array.isArray(row) && row.length === 5 && row[0] === invoke('GameServer/Bot/AI/HealingPotionStock').purchasePotionFor(state).selfId
+    if (Array.isArray(row) && (row.length === 5 || row.length === 7) && row[0] === HealingPotionStock.purchasePotionFor(state).selfId
         && row[2] === plan.selfId && positive(state.inventory?.[plan.selfId]?.amount) + beginnerCurrent <= row[4])
         return { potions: row[1], shots: { itemId: row[2], target: row[3], beginnerCurrent } };
     const base = basics(state, deps);
@@ -1672,16 +2080,6 @@ function keptTargets(state = {}, deps = {}) {
 }
 function survivalReserve(state = {}) {
     return Array.isArray(state.stats?.money) ? positive(state.stats.money[2]) : basics(state).survivalReserve;
-}
-function craftIncome(state) {
-    // The guarded worker publication is the only production income reader on
-    // main. A missing result leaves the independently supported hunt baseline.
-    if (isMainThread) {
-        const coordinator = invoke('GameServer/Bot/Population/ColdSimulationCoordinator');
-        return coordinator.economyDecisions?.workshopFor?.(state)
-            || { recipeId: 0, productId: 0, incomePerHour: NaN, cycleHours: NaN };
-    }
-    return { recipeId: 0, productId: 0, incomePerHour: NaN, cycleHours: NaN };
 }
 function forGroup(group, members, deps = {}) {
     const diagnostic = Diagnostics.active();
@@ -1729,7 +2127,7 @@ function forGroup(group, members, deps = {}) {
         const prefix = `${i}:`;
         // The group solve has no stock reader: a member's path with gross
         // inputs only (Task 2 readers) orders what the member does not hold
-        // for one batch, and pays its held units at their exit value.
+        // for one batch, and pays its held units at its own price (node.price).
         const held = new Map(source.nodes.map(node => [node.key, node]));
         const missing = path => {
             const requirements = [];
@@ -1740,7 +2138,7 @@ function forGroup(group, members, deps = {}) {
                 const { toOrder: order, toExecute } = remainingQuantity({ required: row.amount,
                     freePhysical: positive(stock.owned), acceptedIncoming: positive(stock.incoming) });
                 const node = held.get(row.key);
-                ownValue += (row.amount - toExecute) * positive(Number.isFinite(node?.exitValue) ? node.exitValue : node?.price);
+                ownValue += (row.amount - toExecute) * positive(node?.price);
                 if (order > 0) requirements.push({ ...row, amount: order });
             }
             return { requirements, ownInputOpportunityValue: positive(path.ownInputOpportunityValue) + ownValue };
@@ -1784,25 +2182,39 @@ function forGroup(group, members, deps = {}) {
     }
     return context;
 }
-// The held build's workshop (the occupation planner's answer it was built
-// with) while none of its sections moved (mask, Sections.COMPUTED.workshop),
-// on the same route and known; else null: the caller asks again.
-function heldWorkshopOf(held, mask, state) {
+// Why the held build's workshop (the occupation planner's answer it was
+// built with: the owner's line feasibility mask) is not kept, null when it
+// is: kept while its section did not move (mask, Sections.COMPUTED.workshop:
+// the kit) and known. The mask reads no route row, hour or wallet.
+function heldWorkshopRefusal(held, mask) {
     const workshop = held?.plan.workshop;
-    return workshop && !(Number(mask) & Sections.COMPUTED.workshop) && held.plan.routeKey === Trip.key(state)
-        && workshop.known !== false && Number.isFinite(workshop.incomePerHour) ? workshop : null;
+    if (!workshop) return 'unknown';
+    if (Number(mask) & Sections.COMPUTED.workshop) return 'mask';
+    return workshop.known !== false && Number.isFinite(workshop.incomePerHour) ? null : 'unknown';
+}
+// Why a build does not keep the held workshop, null when it does: the held
+// refusal, or a held build without the ask's mark (a near build: 'no_ask').
+// Judged only where a build follows: a served held build keeps its workshop
+// as it is (a re-ask there would renew the card only, not the plan, and
+// repeat every step).
+function buildWorkshopRefusal(held, mask) {
+    return heldWorkshopRefusal(held, mask) || (held.plan.workshopAsked ? null : 'no_ask');
 }
 // A crafter's build that keeps no known workshop. Counts crafters only: a
 // bot without workshop entries has no workshop to know.
 function countUnknownWorkshop(state) {
-    if (Diagnostics.active() && state.stats?.workshop?.entries?.length) Diagnostics.count('occupation', 'workshop', 'unknown');
+    if (Diagnostics.active() && TwinCluster.entriesOf(state)?.length) Diagnostics.count('occupation', 'workshop', 'unknown');
+}
+// Why the step asks the occupation planner (heldWorkshop's refusal), for
+// service crafters only: a bot that cannot craft has no workshop to keep.
+function countWorkshopAsk(state, reason) {
+    if (Diagnostics.active() && CraftEligibility.isServiceCrafter(state)) Diagnostics.count('workshop', 'ask', reason);
 }
 // A worker build given no workshop (forState: a reader that builds without
-// the step's workshop, e.g. a stock check): the held one, else an unknown
+// the step's workshop, e.g. a stock check or a refresh): the held one, else an unknown
 // one, which the step's next build does not keep (heldWorkshop: it asks).
 function keptWorkshop(held, mask, state) {
-    const workshop = heldWorkshopOf(held, mask, state);
-    if (workshop) return workshop;
+    if (!buildWorkshopRefusal(held, mask)) return held.plan.workshop;
     countUnknownWorkshop(state);
     return ColdEconomyDecision.unknownWorkshop();
 }
@@ -1810,26 +2222,35 @@ function keptWorkshop(held, mask, state) {
 // state: the verdict on the held build is computed here (heldVerdictFor) and
 // handed to that build (eventVerdict, the step's: `collected`, handedVerdict);
 // the route rows it judged are written back on the step's deps, which the
-// build spreads. The held workshop (heldWorkshopOf) under the mask the build
-// will take (none for a valid verdict, which serves the held build), or null:
-// ask the occupation planner. A valid verdict is handed to the build either
+// build spreads. The held workshop (heldWorkshopRefusal) under the mask the
+// build will take (none for a valid verdict, which serves the held build; a
+// refusal also asks a held build without the ask's mark), or null: ask the
+// occupation planner. A valid verdict is handed to the build either
 // way: the ask only renews the card's workshop. No held proof: null,
 // nothing judged.
 function heldWorkshop(state, deps, eventVerdict) {
     const held = cache.get(actorKeyOf(state, deps));
-    if (!held?.plan.eventProof) return null;
+    if (!held?.plan.eventProof) {
+        countWorkshopAsk(state, 'no_proof');
+        return null;
+    }
     const own = resolved(state, { ...deps, eventVerdict });
     const { reads, verdict } = heldVerdictFor(state, own);
     deps.routeRows = own.routeRows;
-    eventVerdict.collected = collectedOf(verdict, state, held.plan.eventProof, heldOptionsOf(held), own, reads);
-    const kept = heldWorkshopOf(held, verdict.valid ? 0 : verdictMask(state, eventVerdict, verdict), state);
+    eventVerdict.collected = collectedOf(verdict, state, held.plan.eventProof, heldOptionsOf(held, state), own, reads);
+    const refusal = verdict.valid ? heldWorkshopRefusal(held, 0)
+        : buildWorkshopRefusal(held, verdictMask(state, eventVerdict, verdict, held));
+    const kept = refusal ? null : held.plan.workshop;
     // The ask awaits the planner, and memory or recipe rows may land before
     // the build: its reads (the build key among them) are taken fresh then.
     if (!kept) eventVerdict.collected.reads = null;
     if (Diagnostics.active()) {
         if (kept) Diagnostics.count('workshop', 'kept', verdict.valid ? 'held_valid' : 'lifecycle');
-        // The served held build keeps an unknown or another route's workshop.
-        else if (verdict.valid) countUnknownWorkshop(state);
+        else {
+            countWorkshopAsk(state, refusal);
+            // The served held build keeps an unknown workshop.
+            if (verdict.valid) countUnknownWorkshop(state);
+        }
     }
     return kept;
 }
@@ -1868,5 +2289,4 @@ function reset() {
 }
 function size() { return { context: cache.size, engine: engine.cache.size, groups: groups.size }; }
 
-module.exports = { FIELD_ACTIVITIES, captureEventProof, heldBuildVerdict, eventProofHolds, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, stockFor, keptTargets, shotDemand, stateForActor, preparedRouteRows, heldWorkshop, heldWorkshopOf, keptWorkshop, RETAIN_LIMIT, leafCheck, survivalReserve, forgetContext, forget, reset, configure, registerProvider,
-    craftIncome };
+module.exports = { FIELD_ACTIVITIES, rebuildStats, REBUILD_ROWS_MAX, REBUILD_NAME_MAX, captureEventProof, heldBuildVerdict, eventProofHolds, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, heldBasics, stockFor, keptTargets, stateForActor, preparedRouteRows, heldWorkshop, heldWatch, heldKitCost, RETAIN_LIMIT, leafCheck, survivalReserve, forgetContext, forget, reset, configure, compactNetwork, marketBoard, knownRecipesOf };

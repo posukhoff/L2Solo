@@ -1,11 +1,12 @@
 'use strict';
 const ItemSources = require('../Items/ItemAcquisitionCatalog');
 
-const { WishNetwork, fundable: fundableWish } = require('../Bot/Economy/WishNetwork');
+const { WishNetwork, fundable: fundableWish, cashCharge, committedKeys, activePriority, pinned } = require('../Bot/Economy/WishNetwork');
 const HallPolicy = require('../ClanHall/Policy');
 const Rules = require('./ClanRules');
 const Contributions = invoke('GameServer/Clan/ClanContributionPolicy');
 const WishProviders = require('../Bot/Economy/WishProviders');
+const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const engine = new WishNetwork();
 const positive = value => Math.max(0, Number(value) || 0);
 const trait = (persona, name) => Math.max(0, Math.min(1, Number(persona?.traits?.[name] ?? 0.5)));
@@ -17,7 +18,9 @@ function treasury(rows = []) {
 
 // Each member supplies its own visible wishes and hour, evaluated by the same
 // economy as its individual purchases. Only the clan's purse pays this queue.
-function build(clan, { warehouse = [], memberContexts = [], equipment = [], halls = [], proofOffer = null } = {}) {
+// findProofOffer: the market search for the level-2 proof, asked only while
+// the treasury does not hold one; its answer is the economy's proofOffer.
+function build(clan, { warehouse = [], memberContexts = [], equipment = [], halls = [], findProofOffer = null } = {}) {
     halls = halls.map(hall => ({ ...HallPolicy.definition(hall.id), ...hall }));
     const members = clan.members || [];
     const Strategy = require('./ClanStrategyPolicy');
@@ -37,10 +40,12 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
     const nodes = [];
     const level = Number(clan.level) || 0;
     const requirement = Rules.LEVEL_REQUIREMENTS[level];
+    let proofOffer = null;
     if (requirement && level <= 2) {
-        const price = level <= 1 ? Contributions.scaledAdenaRequirement(level) : positive(proofOffer?.price);
         const held = requirement.itemId && warehouse.some(row => Number(row.selfId) === requirement.itemId
             && positive(row.amount) > positive(row.reservedAmount));
+        if (level === 2 && !held) proofOffer = findProofOffer?.(requirement.itemId) || null;
+        const price = level <= 1 ? Contributions.scaledAdenaRequirement(level) : positive(proofOffer?.price);
         if (!held) nodes.push({ key: `clan-level:${level + 1}`, need: 'status', object: { kind: 'level', level: level + 1, itemId: requirement.itemId || 0 },
             valueHours: horizon * Math.max(1, Rules.memberLimit(level + 1) - Rules.memberLimit(level)) * trait(persona, 'ambition'),
             paths: [{ kind: 'market', activity: 'clan_level', price,
@@ -92,13 +97,18 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
         nodes.push({ key: `clan-hall:${hall.id}`, need: 'status', object: { kind: 'hall', hallId: Number(hall.id) },
             valueHours: value, paths: [{ kind: 'auction', activity: 'clan_hall', price: positive(hall.minimumBid) + maintenance }] });
     }
+    // The clan's committed goal (WishNetwork.committedKeys) goes first in both
+    // cuts below (WishNetwork.pinned): no cut decides the clan's hold.
+    const previous = clan.state?.goal?.economy || { focus: clan.state?.wishFocus, dormant: clan.state?.dormantWishes };
+    const committed = new Set(committedKeys(previous)), active = activePriority(nodes);
+    const held = node => Number(pinned(node, committed, active));
     // One hall alternative enters the purse; competing lots are not separate
     // promises to buy several residences. The native bid still checks funds.
-    const hallNodes = nodes.filter(node => node.object.kind === 'hall').sort((a, b) => b.valueHours / Math.max(1, b.paths[0].price)
+    const hallNodes = nodes.filter(node => node.object.kind === 'hall').sort((a, b) => held(b) - held(a) || b.valueHours / Math.max(1, b.paths[0].price)
         - a.valueHours / Math.max(1, a.paths[0].price) || a.object.hallId - b.object.hallId);
     const chosenHall = strategy?.objective === 'clan_hall'
         ? hallNodes.find(node => Number(node.object.hallId) === Number(strategy.target.hallId)) : hallNodes[0];
-    const selected = nodes.filter(node => node.object.kind !== 'hall').sort((a, b) => b.valueHours / Math.max(1, b.paths[0].price)
+    const selected = nodes.filter(node => node.object.kind !== 'hall').sort((a, b) => held(b) - held(a) || b.valueHours / Math.max(1, b.paths[0].price)
         - a.valueHours / Math.max(1, a.paths[0].price) || a.key.localeCompare(b.key)).slice(0, chosenHall ? 11 : 12);
     if (chosenHall) selected.push(chosenHall);
     const eligible = selected.filter(node => Strategy.spendingAllowed(clan, node.object.kind)
@@ -109,7 +119,7 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
     const network = engine.build({ actorKey: `clan:${clan.id}`, inputKey, nodes: eligible, roots: eligible.map(node => node.key),
         wallet, survivalReserve: reserve, persona, hourAdena: income,
         playedHours: mean(members.map(member => member.stats?.playedHours)),
-        previous: clan.state?.goal?.economy || { focus: clan.state?.wishFocus, dormant: clan.state?.dormantWishes },
+        previous,
         moneyPaths: income > 0 ? [{ kind: 'dues', activity: 'clan_dues', incomePerHour: income }] : [] });
     function budgetFor(kind, id, memberId) {
         let left = Math.max(0, wallet - reserve);
@@ -120,7 +130,7 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
                 && (memberId === undefined || Number(wish.object.memberId) === Number(memberId))) return fundable ? left : 0;
             if (!fundable) continue;
             if (!wish.funded) return 0;
-            left -= wish.price;
+            left -= cashCharge(wish);
         }
         return 0;
     }
@@ -133,7 +143,7 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
         const worth = network.moneyPrice > 0 ? wish.valueHours / network.moneyPrice : purse;
         return Math.max(0, Math.floor(Math.min(purse, worth)));
     }
-    return { actorKey: `clan:${clan.id}`, inputKey, wallet, reserve, incomePerHour: income, network,
+    return { actorKey: `clan:${clan.id}`, inputKey, wallet, reserve, incomePerHour: income, network, proofOffer,
         focusObject: eligible.find(node => node.key === network.focus?.[0])?.object || null,
         moneyPrice: network.moneyPrice, hourAdena: network.hourAdena, persona, budgetFor, hallBid,
         hall: chosenHall && Strategy.spendingAllowed(clan, 'hall') ? halls.find(hall => Number(hall.id) === chosenHall.object.hallId) : null,
@@ -170,8 +180,8 @@ function forClan(clan, inputs = {}) {
     });
     const equipment = inputs.equipment || (clan.members || []).flatMap(member => member.stats?.equipmentPlan
         ? [{ memberId: member.characterId ?? member.id, plan: member.stats.equipmentPlan }] : []);
-    const proofOffer = Object.hasOwn(inputs, 'proofOffer') ? inputs.proofOffer : Number(clan.level) === 2
-        ? invoke('GameServer/Bot/Economy/MarketOpportunity').bestOffer(Rules.LEVEL_REQUIREMENTS[2].itemId, { budget: Infinity }) : null;
-    return build(clan, { ...inputs, proofOffer, equipment, memberContexts });
+    // The clan's one proof offer: settled lines only (purpose 'clan'), any town, no budget cut.
+    const findProofOffer = itemId => MarketOpportunity.bestOffer(itemId, { budget: Infinity, purpose: 'clan' });
+    return build(clan, { ...inputs, findProofOffer, equipment, memberContexts });
 }
 module.exports = { build, forClan, treasury, reset: () => engine.clear() };

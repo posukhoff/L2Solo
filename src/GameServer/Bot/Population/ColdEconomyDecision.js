@@ -16,6 +16,7 @@ const CraftInputReservations = require('../Economy/CraftInputReservations');
 const Sections = require('../Economy/DecisionSections');
 const PurchaseFunding = require('../Economy/PurchaseFunding');
 const EconomicValuation = require('../Economy/EconomicValuation');
+const CommittedExits = require('../Economy/CommittedExits');
 const kinds = [undefined, 'improvement', 'book', 'resale', 'shots', 'potions'];
 function kindCode(kind) { const code = kinds.indexOf(kind); return code < 0 ? 255 : code; }
 function kindFor(code) { return kinds[code]; }
@@ -42,13 +43,19 @@ class CompactActivity {
         if (leaf.items) this.items = leaf.items.slice(0, 8).map(Number);
         if (leaf.craftReservations?.length) this.craftReservations = leaf.craftReservations;
         if (leaf.activity === 'improving' && leaf.improvement) this.improvement = { ...leaf.improvement };
+        // A producer root's exit identity (its packed exit's first two
+        // numbers, ShotCraftPolicy.exitTuple), so a restart restores the
+        // bot's commitment (heldProducers -> CommittedExits).
+        if (Array.isArray(leaf.exitKey) && leaf.exitKey.length === 2 && leaf.exitKey.every(Number.isFinite)) this.exitKey = leaf.exitKey;
     }
 }
 // ARCH-NOTE: tuple arrays plus their JS headers exceed the 0.8 KB budget.
 // One binary record keeps exact watch/material numbers, leaf fields and Float32 usefulness;
 // the public tuple fields are decoded on demand and are never retained twice.
 const encoder = new TextEncoder(), decoder = new TextDecoder();
-const WORKSHOP = 16384;
+// Header bit 16384 marked a 32-byte workshop section before C8c; a saved card
+// that still has it is cut down at restore (withoutOldWorkshop).
+const OLD_WORKSHOP = 16384;
 const SHOT = 32768;
 const FEASIBILITY = 65536;
 // Keep the original two watch-count bits and use two spare header bits for
@@ -60,21 +67,17 @@ const COMMAND_HEADER_BYTES = Buffer.byteLength(JSON.stringify(['00000000-0000-00
 const MAX_SHOT_PAYLOAD_BYTES = MAX_SHOT_BYTES - COMMAND_HEADER_BYTES;
 // The echo and the object/ArrayBuffer wire tags share the card's cap with the payload.
 const cardWireRoom = echo => MAX_BYTES - 48 - encoder.encode(JSON.stringify(echo ?? null)).length;
-function shotOffset(counts) {
+// Where the feasibility mask starts: after usefulness, watch, materials, wish and clan.
+function feasibilityOffset(counts) {
     return 28 + (counts & 63) * 8 + watchCount(counts) * 21 + ((counts >>> 8) & 15) * 12
-        + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0) + (counts & WORKSHOP ? 32 : 0) + (counts & FEASIBILITY ? 8 : 0);
+        + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0);
+}
+function shotOffset(counts) {
+    return feasibilityOffset(counts) + (counts & FEASIBILITY ? 8 : 0);
 }
 function encodeShot(value) {
     const encoded = value ? encoder.encode(JSON.stringify(value)) : null;
     return encoded?.length > MAX_SHOT_PAYLOAD_BYTES ? encoder.encode(JSON.stringify({ unknown: true })) : encoded;
-}
-function workshopValues(value) {
-    if (!value || value.known === false) return [0, 0, NaN, NaN];
-    const recipeId = Number(value.recipeId || 0), productId = Number(value.productId || 0);
-    if (!recipeId && !productId && value.known === true) return [0, 0, 0, 0];
-    const income = Number(value.incomePerHour), cycle = Number(value.cycleHours);
-    return recipeId > 0 && productId > 0 && income > 0 && cycle > 0
-        && Number.isFinite(income) && Number.isFinite(cycle) ? [recipeId, productId, income, cycle] : [0, 0, NaN, NaN];
 }
 function unknownWorkshop() { return { known: false, recipeId: 0, productId: 0, incomePerHour: NaN, cycleHours: NaN }; }
 class CompactDecision {
@@ -92,7 +95,7 @@ class CompactDecision {
         if (at === this.data.byteLength) return null;
         const row = JSON.parse(decoder.decode(new Uint8Array(this.data, at)));
         return new CompactActivity({ activity: row[0], spotId: row[1], npcId: row[2], kind: row[3], rootKey: row[4],
-            itemId: row[5], amount: row[6], price: row[7], recipeId: row[8], targetId: row[9], funding: row[10], items: row[11], improvement: row[12], heldAtDecision: row[13], town: row[14], sourceType: row[15], unitPrice: row[16], r: row[17], craftReservations: row[18] });
+            itemId: row[5], amount: row[6], price: row[7], recipeId: row[8], targetId: row[9], funding: row[10], items: row[11], improvement: row[12], heldAtDecision: row[13], town: row[14], sourceType: row[15], unitPrice: row[16], r: row[17], craftReservations: row[18], exitKey: row[19] });
     }
     get updatedAt() { return new DataView(this.data).getFloat64(8, true); }
     get riskWeight() { return new DataView(this.data).getFloat64(16, true); }
@@ -140,16 +143,6 @@ class CompactDecision {
         return { horizonHours: view.getFloat64(at, true), huntPerHour: view.getFloat64(at + 8, true),
             plan: itemId ? { itemId, valueHours: view.getFloat64(at + 24, true) } : null };
     }
-    get workshop() {
-        const counts = this.counts;
-        if (!(counts & WORKSHOP) || this.workshopStale) return unknownWorkshop();
-        const at = 28 + (counts & 63) * 8 + watchCount(counts) * 21 + ((counts >>> 8) & 15) * 12
-            + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0);
-        const view = new DataView(this.data);
-        const incomePerHour = view.getFloat64(at + 16, true), cycleHours = view.getFloat64(at + 24, true);
-        return { known: Number.isFinite(incomePerHour) && Number.isFinite(cycleHours),
-            recipeId: view.getFloat64(at, true), productId: view.getFloat64(at + 8, true), incomePerHour, cycleHours };
-    }
     get shot() {
         const counts = this.counts;
         if (!(counts & SHOT) || this.workshopStale || this.stale || this.held) return null;
@@ -160,8 +153,7 @@ class CompactDecision {
     get feasibility() {
         const counts = this.counts;
         if (!(counts & FEASIBILITY) || this.workshopStale || this.stale) return null;
-        const at = 28 + (counts & 63) * 8 + watchCount(counts) * 21 + ((counts >>> 8) & 15) * 12
-            + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0) + (counts & WORKSHOP ? 32 : 0);
+        const at = feasibilityOffset(counts);
         const view = new DataView(this.data);
         return [view.getUint32(at, true), view.getUint16(at + 4, true), view.getUint16(at + 6, true)];
     }
@@ -179,22 +171,23 @@ function compact(record) {
     const leaf = record.activity;
     const activity = leaf ? encoder.encode(JSON.stringify([leaf.activity, leaf.spotId, leaf.npcId, leaf.kind, leaf.rootKey,
         leaf.itemId, leaf.amount, leaf.price, leaf.recipeId, leaf.targetId, leaf.funding, leaf.items, leaf.improvement,
-        ...(leaf.craftReservations?.length ? [leaf.heldAtDecision ?? null, leaf.town || null, leaf.sourceType || null,
+        ...(leaf.exitKey ? [leaf.heldAtDecision ?? null, leaf.town || null, leaf.sourceType || null, leaf.unitPrice ?? null,
+            leaf.r ?? null, leaf.craftReservations?.length ? leaf.craftReservations : null, leaf.exitKey]
+            : leaf.craftReservations?.length ? [leaf.heldAtDecision ?? null, leaf.town || null, leaf.sourceType || null,
             leaf.unitPrice ?? null, leaf.r ?? null, leaf.craftReservations]
             : leaf.town || leaf.sourceType || leaf.unitPrice !== undefined || leaf.r !== undefined
             ? [leaf.heldAtDecision ?? null, leaf.town || null, leaf.sourceType || null, leaf.unitPrice ?? null,
                 ...(leaf.r !== undefined ? [leaf.r] : [])]
             : leaf.heldAtDecision !== undefined ? [leaf.heldAtDecision] : [])])) : [];
     const clan = record.clan;
-    const workshop = Object.hasOwn(record, 'workshop') ? workshopValues(record.workshop) : null;
     const feasibility = Array.isArray(record.feasibility) && record.feasibility[2] <= 14 ? record.feasibility : null;
     const shot = encodeShot(record.shot);
-    const fixed = 28 + w * 21 + m * 12 + (wish ? 17 : 0) + (clan ? 32 : 0) + (workshop ? 32 : 0)
+    const fixed = 28 + w * 21 + m * 12 + (wish ? 17 : 0) + (clan ? 32 : 0)
         + (feasibility ? 8 : 0) + (shot ? shot.length + 2 : 0) + activity.length;
     const wireRoom = cardWireRoom(record.echo);
     const n = Math.min(40, Math.floor(pairs.length / 2), Math.max(0, Math.floor((wireRoom - fixed) / 8)));
     const data = new ArrayBuffer(fixed + n * 8), view = new DataView(data);
-    view.setUint32(0, n | ((w & 3) << 6) | ((w >>> 2) << 17) | (m << 8) | (wish ? 4096 : 0) | (clan ? 8192 : 0) | (workshop ? WORKSHOP : 0) | (shot ? SHOT : 0) | (feasibility ? FEASIBILITY : 0), true);
+    view.setUint32(0, n | ((w & 3) << 6) | ((w >>> 2) << 17) | (m << 8) | (wish ? 4096 : 0) | (clan ? 8192 : 0) | (shot ? SHOT : 0) | (feasibility ? FEASIBILITY : 0), true);
     view.setUint32(4, record.inputHash >>> 0, true);
     new Float32Array(data, 28, n * 2).set(pairs.subarray ? pairs.subarray(0, n * 2) : pairs.slice(0, n * 2));
     let at = 28 + n * 8;
@@ -204,7 +197,6 @@ function compact(record) {
     if (wish) { view.setUint8(at, wish[0]); view.setFloat64(at + 1, wish[1], true); view.setFloat64(at + 9, wish[2], true); at += 17; }
     if (clan) { view.setFloat64(at, clan.horizonHours, true); view.setFloat64(at + 8, clan.huntPerHour, true);
         view.setFloat64(at + 16, clan.plan?.itemId || 0, true); view.setFloat64(at + 24, clan.plan?.valueHours || 0, true); at += 32; }
-    if (workshop) { for (const value of workshop) { view.setFloat64(at, value, true); at += 8; } }
     if (feasibility) { view.setUint32(at, feasibility[0], true); view.setUint16(at + 4, feasibility[1], true);
         view.setUint16(at + 6, feasibility[2], true); at += 8; }
     if (shot) { view.setUint16(at, shot.length, true); new Uint8Array(data, at + 2, shot.length).set(shot); at += shot.length + 2; }
@@ -232,13 +224,6 @@ function cardWithShot(before, shot) {
     bytes.set(source.subarray(previousEnd), next);
     return compact({ echo: before.echo, data });
 }
-function refreshPreparedCraft(refreshed, shot, mp) {
-    const decision = cardWithShot(refreshed.decision, shot);
-    if (!decision) return null;
-    refreshed.economy.shot = shot;
-    return { ...refreshed, decision, advisory: { ...refreshed.advisory, card: decision, preparedMp: mp } };
-}
-
 // What a decision depends on beyond updatedAt: its echo, [decisionSeq,
 // activityLeaf, focus]. A card belongs to the decision whose echo it carries;
 // a moved fact raises a section (wishDirty) with a new sequence, so a card
@@ -318,8 +303,11 @@ function capture(economy, state, seen = state) {
     };
     if (economy?.network?.quantityPrepared) for (const row of queue) visit(row.plan);
     const activity = leaf ? new CompactActivity(leaf) : null;
+    // The leaf's producer root keeps its exit identity on the card (restart).
+    const producer = activity?.rootKey ? economy?.network?.producers?.find(row => row.key === activity.rootKey) : null;
+    if (producer && Array.isArray(producer.exit)) activity.exitKey = [Number(producer.exit[0]), Number(producer.exit[1])];
     if (activity) {
-        const rows = CraftInputReservations.heldCraftRows(seen, economy?.network?.craftNeeds);
+        const rows = CraftInputReservations.heldCraftRows(seen, economy?.network?.heldClaims);
         if (rows.length) activity.craftReservations = rows;
     }
     const own = ownItem(activity);
@@ -362,7 +350,7 @@ function capture(economy, state, seen = state) {
             Number(wish.object?.amount || 0), Number(wish.price || 0)] : urgency ? [URGENCY_ONLY | (urgency << 6), 0, 0] : null,
         watch: (economy?.watchList || []).slice(0, 8).map(row => [Number(row.itemId), Number(row.amount), Number(row.worth), kindCode(row.kind)]),
         materials: [...missing].slice(0, 8), usefulness, inputHash: fnv1a32(economy?.inputKey || ''), clan,
-        workshop: economy?.workshop || unknownWorkshop(), shot: economy?.shot || null,
+        shot: economy?.shot || null,
         feasibility: economy?.workshop?.feasibility || economy?.feasibility || null
     });
     if (Diagnostics.active()) Diagnostics.count('ready_card', 'build', 'decision_pack');
@@ -392,6 +380,13 @@ function preparedCardWorth(decision, id, state, moneyPrice, understanding, enabl
         return personalUsefulness(pairs[n + 1], state, understanding, enabled, id) / moneyPrice;
     }
     return NaN;
+}
+
+// The card's buy intents (the worker's TradeIntent.project rows, at most 8,
+// without their root key): what the view and a card trader context
+// (MarketListingPolicy.cardTraderContext) read as economy.watchList.
+function watchList(decision) {
+    return (decision?.watch || []).map(row => ({ itemId: row[0], amount: row[1], worth: row[2], kind: kindFor(row[3]) }));
 }
 
 // The basics' enumerable keys, learned from the first build: basics() always
@@ -437,10 +432,8 @@ function view(state, decision, deps = {}, preparedBase = null) {
             : EconomicValuation.stageHours(state, basics().hunt.expPerHour, basics().persona);
     const own = { state, hourAdena, moneyPrice, survivalReserve: valid ? Number(packet[2]) : base.survivalReserve,
         board, network: { activity }, activity, wish,
-        craftReservations: Object.fromEntries(activity?.craftReservations || []),
-        watchList: (decision?.watch || []).map(row => ({ itemId: row[0], amount: row[1], worth: row[2], kind: kindFor(row[3]) })),
+        watchList: watchList(decision),
         materials: decision?.materials || [], inputHash: decision?.inputHash || 0, decided: !!decision,
-        workshop: decision?.workshop || unknownWorkshop(),
         itemUsefulness, worth: id => known(id) !== null && moneyPrice > 0 ? itemUsefulness(id) / moneyPrice : basics().price(id) };
     if (base) return { ...base, ...own, gapHorizonHours: gapHorizonHours() };
     // Own enumerable getters: a spread or a key walk of the view sees the
@@ -508,7 +501,7 @@ function advisory(economy, state, activity = state.activity, deps = {}) {
     const accepted = { card, eventProof, characterId: Number(state.characterId), decisionSeq: packet ? Number(packet.decisionSeq || 0) : undefined,
         activityLeaf: packet ? Number(packet.activityLeaf || 0) : undefined,
         focus: packet ? packet.wishFocus?.[0] ?? null : undefined, baseline: packet?.wishSections,
-        activity, mp: Number(state.vitals?.mp), preparedMp: Number(state.vitals?.mp),
+        activity, mp: Number(state.vitals?.mp),
         // The goal revision the build saw (main's context), the baseline of
         // the goal refusal (refusal); not saved: a restored card refuses once.
         ...(Number.isFinite(deps.goalRevision) ? { goalRevision: deps.goalRevision } : {}) };
@@ -543,7 +536,22 @@ function restoreAdvisory(state, timestamp = Date.now()) {
     }
     if (card.activity === null && (accepted.activityLeaf !== 0 || eventProof.activity !== null)) return null;
     if (Diagnostics.active()) Diagnostics.count('card', 'restart', 'candidate');
-    return { ...accepted, eventProof, card, preparedMp: accepted.mp };
+    return { ...accepted, eventProof, card };
+}
+// The rows a held card restores at a bot's first load, for CommittedExits,
+// through the build's rules: its leaf's producer root (key, its wish amount,
+// the exit identity) through CommittedExits.exitRows (none when the leaf is
+// no producer's or earns its root's money) and the leaf's taker row
+// (CommittedExits.takerRow). The card keeps no other producer row and no
+// readiness, so the other ready rows a build commits wait for the bot's
+// first build.
+function heldProducers(card) {
+    const leaf = card?.activity, wish = card?.wish;
+    const rows = leaf?.exitKey && String(leaf.rootKey || '').startsWith('resale:') && kindFor(wish?.[0]) === 'resale'
+        ? CommittedExits.exitRows([{ key: leaf.rootKey, amount: wish[1], exit: leaf.exitKey }], leaf) : [];
+    const taker = CommittedExits.takerRow(leaf);
+    if (taker) rows.push(taker);
+    return rows;
 }
 function publishedPacket(state, packet) {
     if (!packet?.wishSections || state.stats?.wishSections !== packet.wishSections) return false;
@@ -553,16 +561,31 @@ function publishedPacket(state, packet) {
 function readAdvisoryCard(record) {
     try {
         if (!validEcho(record?.echo)) return null;
-        const data = record.data instanceof ArrayBuffer ? record.data : RestartDecision.cardData(record.data, MAX_BYTES);
-        if (!data || data.byteLength < 28 || data.byteLength > MAX_BYTES) return null;
+        const saved = record.data instanceof ArrayBuffer ? record.data : RestartDecision.cardData(record.data, MAX_BYTES);
+        if (!saved || saved.byteLength < 28 || saved.byteLength > MAX_BYTES) return null;
+        const data = withoutOldWorkshop(saved);
+        if (!data) return null;
         const card = compact({ echo: record.echo.slice(), data });
         const activity = card.activity;
-        if (card.counts & ~131071 || (card.counts & 63) > 40 || ((card.counts >>> 8) & 15) > 8
+        // Bits 0-18: compact() keeps the watch count's high bits at 17-18.
+        if (card.counts & ~0x7ffff || (card.counts & 63) > 40 || ((card.counts >>> 8) & 15) > 8 || watchCount(card.counts) > 8
             || card.flags || activity !== null && !activity?.activity) return null;
         // Validate all binary ranges before this becomes retained native data.
-        void card.usefulness; void card.watch; void card.materials; void card.workshop; void card.feasibility; void card.shot;
+        void card.usefulness; void card.watch; void card.materials; void card.feasibility; void card.shot;
         return card;
     } catch (_) { return null; }
+}
+// A card saved before C8c: its 32-byte workshop section (bit OLD_WORKSHOP,
+// right after the clan) is cut out, so the restart reuses it, not rebuilds it.
+function withoutOldWorkshop(data) {
+    const counts = new DataView(data).getUint32(0, true);
+    if (!(counts & OLD_WORKSHOP)) return data;
+    const at = feasibilityOffset(counts);
+    if (at + 32 > data.byteLength) return null;
+    const out = new Uint8Array(data.byteLength - 32);
+    out.set(new Uint8Array(data, 0, at)); out.set(new Uint8Array(data, at + 32), at);
+    new DataView(out.buffer).setUint32(0, counts & ~OLD_WORKSHOP, true);
+    return out.buffer;
 }
 function advisoryMatches(state, accepted) {
     if (!accepted || accepted.characterId !== Number(state?.characterId)) return false;
@@ -623,15 +646,16 @@ function canReuse(state, accepted, deps = {}, options = {}) {
     return !refusal(state, accepted, deps, options);
 }
 // options.why: an array that receives the refusal's name; options.prepared:
-// an object that receives the basics a reuse built (L120), so the caller does
-// not build them or their income route again for the same state and deps,
-// and the card's verdict; options.collect: the caller builds on this state
-// and deps when the card is refused (its verdict serves the build's).
+// an object that receives the card's verdict; options.collect: the caller
+// builds on this state and deps when the card is refused (its verdict serves
+// the build's). A served card's basics are its held build's foundation (the
+// same event proof), else the view builds them on first read.
 function refreshAdvisory(state, accepted, deps = {}, options = {}) {
     const refused = refusal(state, accepted, deps, options);
     if (refused) { options.why?.push(refused); return null; }
-    const base = invoke('GameServer/Bot/Economy/EconomyContext').basics(state, deps); // lazy: cycle EconomyContext constructs and validates these cards
-    if (options.prepared) options.prepared.basics = base;
+    const base = invoke('GameServer/Bot/Economy/EconomyContext').heldBasics(state, deps, accepted.eventProof); // lazy: cycle EconomyContext constructs and validates these cards
+    // Read live: a high built share says the held build is often another than the card's.
+    if (Diagnostics.active()) Diagnostics.count('card', 'basics', base ? 'held' : 'built');
     // This new result is fenced to the actual publication and the accepted
     // decision's echo; never relax ColdEconomyDecisions.matches or any
     // native write guard.
@@ -658,9 +682,7 @@ function sameEconomicOutput(before, after) {
     if (before.data.byteLength > MAX_BYTES || after.data.byteLength > MAX_BYTES) return null;
     if (before.data.byteLength !== after.data.byteLength || before.counts !== after.counts) return false;
     const counts = before.counts;
-    const fingerprint = counts & FEASIBILITY ? 28 + (counts & 63) * 8 + watchCount(counts) * 21
-        + ((counts >>> 8) & 15) * 12 + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0)
-        + (counts & WORKSHOP ? 32 : 0) : -1;
+    const fingerprint = counts & FEASIBILITY ? feasibilityOffset(counts) : -1;
     const left = new Uint8Array(before.data), right = new Uint8Array(after.data);
     for (let at = 16; at < left.length; at++) {
         if (at >= 24 && at < 28 || at >= fingerprint && at < fingerprint + 4) continue;
@@ -669,8 +691,8 @@ function sameEconomicOutput(before, after) {
     return true;
 }
 
-// A published card made on exactly this state: the one check of decided(),
-// workshopFor() and feasibilityFor(). A hot bot's card is current by its post
+// A published card made on exactly this state: the one check of decided()
+// and feasibilityFor(). A hot bot's card is current by its post
 // number (nearSeq, checked on arrival), not by updatedAt: the body's row moves
 // on between posts.
 function current(state, entry) {
@@ -765,12 +787,6 @@ class ColdEconomyDecisions {
         const entry = this.byId.get(Number(id)), clan = entry?.clan;
         return clan ? { ...clan, updatedAt: entry.updatedAt } : null;
     }
-    workshopFor(state) {
-        // A held strategic decision may survive a physical command. Its earning
-        // estimate cannot: the accepted publication must still match this bag.
-        const entry = this.byId.get(Number(state?.characterId));
-        return current(state, entry) ? entry.workshop : unknownWorkshop();
-    }
     feasibilityFor(state) {
         const entry = this.byId.get(Number(state?.characterId));
         return current(state, entry) ? entry.feasibility : null;
@@ -785,5 +801,5 @@ class ColdEconomyDecisions {
     }
 }
 
-module.exports = { personalUsefulness, preparedCardWorth, capture, heldFor, remainingToOrder, materialHunt, ownItem, stateEcho, echoHolds, CompactActivity, ColdEconomyDecisions, economyFor, view, nearView, advisory, restoreAdvisory, advisoryPublicationHolds, sameEconomicOutput, current, canReuse, refusal, refreshAdvisory, refreshPreparedCraft, cardWithShot, kindCode, kindFor, compact, workshopValues,
+module.exports = { personalUsefulness, heldProducers, preparedCardWorth, watchList, capture, heldFor, remainingToOrder, materialHunt, ownItem, stateEcho, echoHolds, CompactActivity, ColdEconomyDecisions, economyFor, view, nearView, advisory, restoreAdvisory, advisoryPublicationHolds, sameEconomicOutput, current, canReuse, refusal, refreshAdvisory, cardWithShot, kindCode, kindFor, compact,
     unknownWorkshop, MAX_BYTES, MAX_SHOT_BYTES, COMMAND_HEADER_BYTES, MAX_SHOT_PAYLOAD_BYTES };

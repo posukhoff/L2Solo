@@ -102,7 +102,8 @@ async function run() {
     let result;
     try {
         result = await Wealth.execute(state, { recipe: uncertain, batches: 1, template: product(), r: 1, expectedProfit: 1,
-            exit: { type: 'static', town: 'Giran', price: 1, count: 1, buyerName: 'Fixture' },
+            exit: { type: 'afk', town: 'Dion', price: 1, count: 1, trip: 0,
+                offer: { recordId: 1, lineId: 1, expectedRevision: 0, town: 'Dion' } },
             basket: { cost: 0, purchases: [], owned: uncertain.materials.map(m => ({ selfId: m.selfId, count: m.amount })) } },
         { stillPrepared: () => true });
     } finally { Database.craftInventoryItems = nativeCraft; }

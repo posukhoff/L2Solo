@@ -1,6 +1,7 @@
 // A marked equipment roster is a committed owner identity, not a head count.
 // Combat math and composition remain owned by ClanRaidPolicy.
 const Demand = require('./ClanRosterDemand');
+const { partyIdOf } = require('../Bot/Population/PartyId');
 const ReviewEvents = require('./ClanReviewEvents');
 // Invocation authority, never persisted or cached per actor/party.
 const nativeImpact = Symbol('native-raid-offensive-impact');
@@ -68,7 +69,7 @@ function assessmentMembers(members) {
     // The native planner accepts cold states. Execution callers have already
     // proved their actual hot or party state separately.
     return members.map(member => ({ ...member, classId: Number(member.classId ?? member.stats?.classId ?? 0),
-        phase: 'cold', partyId: member.partyId || member.party?.partyId }));
+        phase: 'cold', partyId: partyIdOf(member) || null }));
 }
 function selectMembers(members, objective, options = {}) {
     const marker = objective?.fullRoster;
@@ -101,7 +102,7 @@ function admission(party, members, spot, options = {}) {
         const current = owner.members.find(row => row[0] === id(member));
         return current[1] !== Number(member.classId ?? member.stats?.classId ?? 0)
             || current[3] !== Number(member.level) || current[4]
-            || String(member.partyId || member.party?.partyId || '') !== String(party.partyId)
+            || partyIdOf(member) !== String(party.partyId)
             || member.phase !== (options.phase || 'cold')
             || !(Number(member.vitals?.hp ?? member.hp) > 0) || member.stats?.travel || member.stats?.tradeMeeting
             || member.stats?.playerPartyTakeover;

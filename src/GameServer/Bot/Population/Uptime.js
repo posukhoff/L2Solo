@@ -1,15 +1,14 @@
-// The uptime clock: the start of the server process, the same in its worker
-// threads. Time before it was downtime.
+// The start of the server process, the same in its worker threads (the
+// boot's downtime measures end at it: BotLifeState.bootPause, MarketCounters.load).
 const SERVER_STARTED_AT = Date.now() - process.uptime() * 1000;
 
-// The uptime between two moments: a span that crosses the start counts only
-// from the start; a span wholly before it (a journal replayed at boot) counts
-// as it was.
-function between(from, to, startedAt = SERVER_STARTED_AT) {
+// The running time between two moments of the market's clock (its rows'
+// deal times): the boot replay moves the journal's deals by the downtime
+// (MarketCounters.load), so a span is plain time, the previous run's included.
+function between(from, to) {
     const start = Number(from);
     const end = Number(to);
-    if (!(end > start)) return 0;
-    return start < startedAt && end >= startedAt ? end - startedAt : end - start;
+    return end > start ? end - start : 0;
 }
 
 module.exports = { SERVER_STARTED_AT, between };

@@ -66,11 +66,11 @@ for (const classId of [7, 8, 9, 22, 24, 37, 10, 12, 16, 5, 2, 3, 21, 34, 46, 47,
         const dWeapon = Gear.planFor({ classId, level: 20 }).items.find(row => Compatibility.isWeaponSlot(row.slot));
         assert(dWeapon);
         const template = byId(dWeapon.selfId);
-        assert.equal(Progression.priority(template, dWeapon.slot, assessment), 3);
+        assert.equal(Progression.priority(dWeapon.slot, assessment), 3);
         for (const item of Data.items) if (['d', 'c'].includes(item.etc?.rank)
             && Compatibility.isWeaponSlot(item.etc.slot)
             && Planner.suitable(item, state, Planner.roleFor(state), item.etc.rank))
-            assert.equal(Progression.priority(item, item.etc.slot, assessment), 3,
+            assert.equal(Progression.priority(item.etc.slot, assessment), 3,
                 'compatible one- and two-handed weapons close the same weapon slot debt');
         kinds.add(template.template.kind);
         const ready = { ...state, inventory: { [dWeapon.selfId]: { ...dWeapon, amount: 1,

@@ -12,6 +12,7 @@ const Population = invoke('GameServer/Bot/Population/PopulationService');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Town = invoke('GameServer/Bot/Economy/MarketTownPolicy');
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const botId = 730411;
 // Great Axe (B) through recipe 457; its C crystals come from a paid D input.
 const RECIPE = 457, D_INPUT = 396;
@@ -29,12 +30,15 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 50));
                 - Math.hypot(b.center.locX - place.locX, b.center.locY - place.locY))[0];
         await Database.setItem(botId, { selfId: 57, amount: 1000, slot: 0 });
         await Database.setItem(botId, { selfId: D_INPUT, amount: 1, slot: 0 });
+        // The bot breaks its input with its own Crystallize (level 2 = C).
+        await Database.setSkill({ selfId: 248, name: 'Crystallize', level: 2, passive: true }, botId);
         const recipe = Recipes.resolveByRecipeId(RECIPE);
         await Life.upsertState({ characterId: botId, accountName: 'bot_exchange_wait', name: 'ExchangeWaiter', level: 40,
             phase: 'cold', activity: 'shopping', currentRegion: 'Giran', spotId: null, adena: 1000, loc: place,
             vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
             inventory: Life.inventorySummaryFromItems(await Database.fetchItems(botId)),
             stats: { classId: 0, generatedCold: true, money: [100, 0, 1000, 0],
+                coldCombat: Profile.legacySnapshot({ stats: { classId: 0 } }, await Database.fetchSkills(botId)),
                 marketReturn: { spotId: String(spot.id), regionName: spot.name, loc: spot.center },
                 equipmentPlan: { strategy: 'craft', status: 'active', target: { selfId: recipe.productId, slot: 7 },
                     recipeId: RECIPE, materials: recipe.materials.map(row => ({ ...row })),

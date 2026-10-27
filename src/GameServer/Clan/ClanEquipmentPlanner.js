@@ -85,6 +85,9 @@ function calculateRoute(member, spots = [], warehouseRows = [], options = {}) {
         spots,
         ...(options.strategicTarget ? { wishTargetId: Number(options.strategicTarget.itemId),
             wishSlot: Number(options.strategicTarget.slot) } : {}),
+        // A market plan is bought on a clan errand (ClanEquipmentService
+        // buyGoalCopy): only lines that settle at once (OfferQuery.settledOnlyFor).
+        purpose: 'clan',
         clanCrafting: true,
         craftRecipes: options.craftRecipes,
         craftProviders: options.craftProviders,
@@ -118,11 +121,6 @@ function calculateRoute(member, spots = [], warehouseRows = [], options = {}) {
                 ...state,
                 stats: { ...state.stats, equipmentPlan: undefined }
             }, plannerOptions);
-        }
-        if (existing?.strategy === 'direct_drop' && ['b', 'a', 's'].includes(existing.grade)) {
-            const crafted = GearAcquisitionPlanner.planFor(state, { ...plannerOptions,
-                wishTargetId: number(existing.target?.selfId), wishSlot: number(existing.target?.slot) });
-            if (crafted?.strategy === 'craft' && Policy.isAcquisitionPlan(crafted)) return crafted;
         }
         const rateProfileCurrent = !existing
             || Number(existing.rateModelVersion || 0) >= GearAcquisitionPlanner.RATE_MODEL_VERSION

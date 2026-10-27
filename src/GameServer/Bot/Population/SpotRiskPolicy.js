@@ -1,3 +1,4 @@
+const { partyIdOf } = require('./PartyId');
 const MIN_DEATHS_AT_SPOT = 2;
 const MIN_DEATH_RATE = 0.2;
 const RISK_WINDOW_VERSION = 2;
@@ -120,7 +121,7 @@ function deathPressure(state = {}, spotId = state.spotId) {
 }
 
 function recoveryFor(state = {}) {
-    if (state.party?.partyId || state.partyId) return null;
+    if (partyIdOf(state)) return null;
     if (state.stats?.huntingRecovery) return state.stats.huntingRecovery;
     // Adopt a persisted failed visit on the first routing pass after upgrade.
     const deaths = Number(state.stats?.spotRisk?.unrecoveredDeaths ?? state.stats?.spotRisk?.windowDeaths ?? 0);

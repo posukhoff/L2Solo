@@ -76,7 +76,7 @@ assert.strictEqual(dionShop.adena, 50000);
 
 // A bot that cannot pay the fee does not leave.
 assert.strictEqual(toGiran(cold({ adena: 8000 })), null, 'no trip without the fee');
-const buyGoal = { type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' } };
+const buyGoal = { type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran' } };
 assert.strictEqual(GoalExecutor.beginMarketTravel(cold({ adena: 8000 }), buyGoal, T), null, 'a buyer short of the fee stays');
 // A seller short of the fee sells in the town its scroll reaches.
 const sellGoal = { type: 'sell_inventory', plan: { expectedBenefit: 'market_sale_inventory', cleanupReason: 'inventory_full' } };

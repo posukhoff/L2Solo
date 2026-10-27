@@ -17,6 +17,7 @@ const Market = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
 const Efficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
+const PriceDecision = invoke('GameServer/Bot/Economy/PriceDecision');
 const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const PriceBelief = invoke('GameServer/Bot/Economy/PriceBelief');
 const Counters = invoke('GameServer/Bot/Economy/MarketCounters');
@@ -160,7 +161,9 @@ function purchaseFor(buyer) {
         gearQuoteIds.add(recordId);
         board.put({ id: recordId, kind: 'shop', storeType: AfkTrade.SELL,
             ownerId: 2004012, town: 'Giran', botOwned: true, revision: 1,
-            lines: [{ lineId: recordId, selfId: id, count: 1, price: Math.ceil(forecast.price(id)), enchant: 0 }] });
+            lines: [{ lineId: recordId, selfId: id, count: 1, enchant: 0,
+                // A bot asks only above the NPC buy-back (PriceDecision.chooseAsk).
+                price: Math.max(Math.ceil(forecast.price(id)), PriceDecision.buyback(id) + 1) }] });
     }
     const economy = Economy.forState(buyer, deps);
     const goals = Needs.evaluate(buyer, { spot: { id: 'field' }, now: 1000, economy });

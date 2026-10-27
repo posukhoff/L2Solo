@@ -3,22 +3,27 @@ const assert = require('node:assert/strict');
 require('./helpers/databaseIsolation');
 const fixture = require('./helpers/isolatedSocialDatabase')('paid-craft-receipts');
 require('../src/Global');
+const { publishTwinOffer } = require('./helpers/twinOffer');
 const Database = invoke('Database');
 const Data = invoke('GameServer/DataCache');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
 const Workshop = require('../src/GameServer/Bot/Economy/CraftWorkshopService');
 const Commit = require('../src/GameServer/Bot/Economy/EconomyCommit');
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const Profit = require('../src/GameServer/Bot/Economy/CraftProfitPolicy');
 Data.init(); fixture.assertConfigured(options.default);
 let serial = 0;
 const loc = { locX: 83396, locY: 147904, locZ: -3400 };
+// A crafter hunts in the fields; its workshop stands at its twin's place in
+// Giran (no shop: the town centre), where the customers stand.
+const fields = { locX: 120000, locY: 110000, locZ: -3000 };
 async function seed(recipe, crafter = false, copies = 3) {
     const account = `bot_paid_receipt_${++serial}`;
     await Database.createAccount(account, 'fixture');
     const id = Number((await Database.createCharacter(account, { name: `PaidReceipt${serial}`, race: 4,
         classId: crafter ? 57 : 0, sex: 0, face: 0, hair: 0, hairColor: 0,
-        maxHp: 1000, maxMp: 1000000, ...loc })).insertId);
+        maxHp: 1000, maxMp: 1000000, ...(crafter ? fields : loc) })).insertId);
     await Database.execute(['UPDATE characters SET level=70,hp=1000,mp=1000000 WHERE id=?', [id]]);
     await Database.setItem(id, { selfId: 57, name: 'Adena', amount: 100000000, equipped: false });
     if (crafter) await Database.setCharacterRecipe(id, recipe.recipeId, recipe.type);
@@ -26,11 +31,13 @@ async function seed(recipe, crafter = false, copies = 3) {
         await Database.setItem(id, { selfId, name: 'Material', amount: amount * copies, equipped: false });
     }
     let state = await Life.upsertState({ characterId: id, accountName: account, name: `PaidReceipt${serial}`,
-        level: 70, phase: 'cold', activity: 'shopping', loc, currentRegion: 'Giran', adena: 100000000,
+        level: 70, phase: 'cold', activity: crafter ? 'hunting' : 'shopping', loc: crafter ? fields : loc,
+        currentRegion: crafter ? 'Dragon Valley' : 'Giran', adena: 100000000,
         inventory: Life.inventorySummaryFromItems(await Database.fetchItems(id)),
         vitals: { hp: 1000, maxHp: 1000, mp: 1000000, maxMp: 1000000 },
-        stats: { classId: crafter ? 57 : 0, generatedCold: true, money: [36000, 0, 0, 0] }, timing: {} }, 'receipt_fixture');
-    if (crafter) state = await Workshop.review(state);
+        stats: { classId: crafter ? 57 : 0, generatedCold: true, money: [36000, 0, 0, 0],
+            ...(crafter ? { twin: { town: 'Giran' } } : {}) }, timing: {} }, 'receipt_fixture');
+    if (crafter) state = await publishTwinOffer(state);
     return state;
 }
 async function image(ids) {
@@ -43,17 +50,20 @@ async function run() {
     await Database.init(); await Life.init(); Workshop.init();
     const successRecipe = Recipes.resolveByRecipeId(1);
     const owner = await seed(successRecipe, true), buyer = await seed(successRecipe);
+    const scope = MarketCounters.counterOf(successRecipe.productId);
     const assertPublicDigest = () => {
         let xor = 0, sum = 0, count = 0;
         for (const prefixed of Workshop.publicRows()) {
             const row = prefixed.slice(1);
-            if (Recipes.resolveByRecipeId(row[1])?.productId !== successRecipe.productId) continue;
+            if (MarketCounters.counterOf(Recipes.resolveByRecipeId(row[1])?.productId) !== scope) continue;
             const hash = require('../src/GameServer/Bot/Fnv1a').fnv1a32(JSON.stringify(row));
             xor = (xor ^ hash) >>> 0; sum = (sum + hash) >>> 0; count++;
         }
-        assert.equal(Workshop.publicRecipeDigest(successRecipe.productId), `${xor}:${sum}:${count}`);
+        assert.equal(Workshop.publicScopeDigest(scope), `${xor}:${sum}:${count}`);
     };
     assertPublicDigest();
+    const [placed] = Workshop.publicRecipeRows(owner.characterId);
+    assert.deepEqual(placed?.slice(3, 6), ['Giran', loc.locX, loc.locY], 'a hunting crafter publishes at its twin place');
     // A life state is replaced, not mutated (a cold state registered again
     // as the same object is skipped). Removal must hash the previous
     // published scalar, not the new state.
@@ -94,7 +104,7 @@ async function run() {
     // before the no-longer-valid quote/material/MP checks.
     await Database.close(); await Database.init(); await Life.init();
     const ownerState = await Life.findByCharacterId(owner.characterId);
-    await Life.upsertState({ ...ownerState, stats: { ...ownerState.stats, workshop: null } }, 'quote_removed');
+    await Life.upsertState({ ...ownerState, stats: { ...ownerState.stats, twin: null } }, 'quote_removed');
     const frozen = await image([owner.characterId, buyer.characterId]);
     const recovered = await Workshop.craft(owner.characterId, successRecipe.recipeId, buyer.characterId,
         { original: command, expectedPrice: 1, random: () => { throw Error('replay_roll'); } });
@@ -116,7 +126,7 @@ async function run() {
             recipeId: successRecipe.recipeId, amount: successRecipe.productCount, valueRate: 1,
             target: { selfId: successRecipe.productId }, craftProviders: { [successRecipe.recipeId]: {
                 workshop: true, characterId: aiOwner.characterId, revision: aiOwner.simulation.revision,
-                price: aiOwner.stats.workshop.entries.find(row => row.recipeId === successRecipe.recipeId).price } } } }
+                price: aiOwner.stats.twin.workshop.find(row => row.recipeId === successRecipe.recipeId).price } } } }
     }, 'hot_adapter_customer');
     const wrap = row => ({ ...row, fetchId() { return this.id; }, fetchSelfId() { return this.selfId; },
         fetchAmount() { return this.amount; }, setAmount(value) { this.amount = value; } });
@@ -182,6 +192,26 @@ async function run() {
     assert(sameFailure.replayed && sameFailure.success === false);
     assert.equal(rolls, 1); assert.deepEqual(await image([failingOwner.characterId, failingBuyer.characterId]), failedAfter);
     console.log('PASS paid attempt lost reply/restart/removed quote and single native failure roll/payment');
+    // A crafter whose sell shop stands in its twin town: its workshop stands
+    // at the shop. A sale or a reprice that leaves the shop in place keeps the
+    // held offer (the same published rows), it does not build them again.
+    const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
+    await AfkTrade.init();
+    const shopLoc = { locX: loc.locX + 300, locY: loc.locY + 200, locZ: loc.locZ };
+    const ware = { id: Number((await Database.setItem(failingOwner.characterId,
+        { selfId: 1864, name: 'Stem', amount: 5, equipped: false })).insertId), selfId: 1864 };
+    await AfkTrade.publishBot(failingOwner.characterId, { town: 'Giran', ...shopLoc, storeType: AfkTrade.SELL, title: 'wares',
+        appearance: { model: { name: failingOwner.name, race: 4, classId: 57, sex: 0, face: 0, hair: 0, hairColor: 0,
+            maxHp: 1000, maxMp: 1000, title: '' } },
+        lines: [{ objectId: Number(ware.id), selfId: Number(ware.selfId), name: 'Material', count: 1, price: 100, stackable: true }] });
+    const atShop = Workshop.publicRecipeRows(failingOwner.characterId);
+    assert.deepEqual(atShop[0]?.slice(3, 7), ['Giran', shopLoc.locX, shopLoc.locY, shopLoc.locZ],
+        'the workshop stands at the twin\'s sell shop in its town');
+    const shop = AfkTrade.findOwnerProjection(failingOwner.characterId).shop;
+    await AfkTrade.repriceBot(failingOwner.characterId, shop.lines[0].id, 90);
+    assert.strictEqual(Workshop.publicRecipeRows(failingOwner.characterId), atShop,
+        'a board refresh that leaves the shop in place keeps the held workshop offer');
+    console.log('PASS workshop stands at the twin shop and survives a reprice');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
     await Database.close(); require('node:fs').rmSync(fixture.directory, { recursive: true, force: true });

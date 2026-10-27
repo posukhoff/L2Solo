@@ -12,12 +12,16 @@ const Offers = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const ColdMarket = invoke('GameServer/Bot/Economy/ColdMarketService');
 const owner = 730181, buyer = 730182;
 const partsOwner = 730183, partsBuyer = 730184;
+// Gain over the NPC buy-back (PriceDecision.buyback) times units, which
+// ranks the board slots: 1835 (10 - 3) x 100000 = 700000; 79 (6700000 -
+// 6550000) x 2 = 300000; 1786 (50000 - 125) x 2 = 99750; 1101 (80000 -
+// 10150) x 1 = 69850; 1869 (100 - 100) x 10000 = 0.
 const listings = [
     { selfId: 1835, count: 100000, price: 10, kind: 'Other.Shot' },
     { selfId: 1869, count: 10000, price: 100 },
     { selfId: 1786, count: 2, price: 50000 },
     { selfId: 1101, count: 1, price: 80000 },
-    { selfId: 79, count: 2, price: 900000 }
+    { selfId: 79, count: 2, price: 6700000 }
 ];
 
 async function groupedReplacement() {
@@ -143,7 +147,7 @@ async function groupedReplacement() {
             inventory: Life.inventorySummaryFromItems(await Database.fetchItems(owner)),
             loc: { locX: 83396, locY: 147904, locZ: -3400 }, currentRegion: 'Giran',
             vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
-            stats: { classId: 0, generatedCold: true, money: [1000, .001, 0, 0], shopTown: { town: 'Giran', at: 1 } }
+            stats: { classId: 0, generatedCold: true, money: [1000, .001, 0, 0], twin: { town: 'Giran' } }
         }, 'showcase_fixture');
         // Fix only the already selected sale prices. The worker plan, native
         // writers, index, projections, custody and purchase remain real.
@@ -161,8 +165,12 @@ async function groupedReplacement() {
         state = await Life.upsertState({ ...Life.cachedState(owner), activity: 'shopping' }, 'showcase_visit');
         const visit = prepare();
         assert.equal(visit.shop, 'Giran');
-        assert.deepEqual(visit.sell.slice(0, 3).map(row => row[0]), [79, 1101, 1786],
-            'unit value beats the much larger material and shot stack totals');
+        // Slots by gain over the NPC buy-back times units (user 2026-10-23):
+        // the shot stack (700000) beats the sword lot (300000) despite the
+        // sword's far higher unit price; 1101 has the highest unit price
+        // after the sword but the smallest positive gain (69850).
+        assert.deepEqual(visit.sell.slice(0, 3).map(row => row[0]), [1835, 79, 1786],
+            'the largest gain over the NPC price takes the first slot');
         assert(Buffer.byteLength(JSON.stringify(visit)) <= Plan.MAX_PLAN_PAYLOAD_BYTES);
         const adsBefore = await Database.fetchAfkTradeShops(owner);
         const ad = adsBefore.find(row => row.lines.some(line => line.selfId === 79));
@@ -185,9 +193,9 @@ async function groupedReplacement() {
         await Market.executePlan(state, visit);
         const shop = Afk.findOwnerProjection(owner)?.shop;
         assert(shop);
-        assert.deepEqual(shop.lines.map(row => row.selfId), [79, 1101, 1786]);
+        assert.deepEqual(shop.lines.map(row => row.selfId), [1835, 79, 1786], 'the shop opens with the top-gain lines');
         assert.deepEqual(Afk.ownerRecords(owner).filter(row => row.kind === 'sell_ad')
-            .flatMap(row => row.lines.map(line => line.selfId)).sort((a, b) => a - b), [1835, 1869]);
+            .flatMap(row => row.lines.map(line => line.selfId)).sort((a, b) => a - b), [1101, 1869]);
         assert.equal(Afk.boardIndex().ownerLines(owner).filter(line => line.selfId === 79).length, 1,
             'promoted stock is indexed once, without its old conditional quote');
         state = Life.cachedState(owner);
@@ -198,18 +206,20 @@ async function groupedReplacement() {
         state = await Life.syncExternalInventory(owner, 'showcase_new_loot', state);
         state = await Life.upsertState({ ...state, activity: 'hunting', currentRegion: 'field',
             loc: { locX: 100000, locY: 200000, locZ: -3400 } }, 'showcase_remote_review');
-        listings.push({ selfId: 78, count: 1, price: 950000 });
+        // 78: (5500000 - 4340000) x 1 = 1160000, above every line in the
+        // shop; 1786 (99750) has the smallest gain there and is displaced.
+        listings.push({ selfId: 78, count: 1, price: 5500000 });
         const replacement = prepare();
         assert.equal(replacement.shop, 'Giran', 'an existing shop can receive more valuable loot from afar');
         await Market.executePlan(state, replacement);
-        assert.deepEqual(Afk.findOwnerProjection(owner).shop.lines.map(row => row.selfId), [78, 79, 1101]);
+        assert.deepEqual(Afk.findOwnerProjection(owner).shop.lines.map(row => row.selfId), [78, 1835, 79]);
         assert.equal(Afk.findOwnerProjection(owner).shop.lines.find(row => row.selfId === 79).count, 2,
             'the real worker plan retains a grouped nonstackable lot through replacement');
         assert.equal(Afk.ownerRecords(owner).find(row => row.kind === 'sell_ad'
             && row.lines.some(line => line.selfId === 1786)).lines[0].count, 2,
             'displaced showcase stock returns to the bag and becomes an ad in the same review');
         const remainingBag = await Database.fetchItems(owner);
-        assert(!remainingBag.some(row => [78, 79, 1101].includes(row.selfId)), 'showcase custody is physical');
+        assert(!remainingBag.some(row => [78, 79, 1835].includes(row.selfId)), 'showcase custody is physical');
         assert.equal(remainingBag.find(row => row.selfId === 1786).amount, 2, 'the displaced conditional ad keeps physical stock');
         const offer = Offers.bestOffer(79, { town: 'Giran', buyerCharacterId: buyer, budget: 10000000 });
         assert.equal(offer.recordKind, 'shop', 'ordinary bot browsing discovers the seated shop');
@@ -224,14 +234,14 @@ async function groupedReplacement() {
         const bought = await ColdMarket.buyOffer(buyerState, offer);
         assert.equal(bought.purchased, true, bought.reason);
         assert.equal(bought.units, 1);
-        assert.equal(bought.spent, 900000);
-        assert.equal(Life.cachedState(buyer).adena, 9100000, 'the real cold bot pays the shop ask');
+        assert.equal(bought.spent, 6700000);
+        assert.equal(Life.cachedState(buyer).adena, 3300000, 'the real cold bot pays the shop ask');
         assert.equal((await Database.fetchItems(buyer)).find(row => row.selfId === 79).amount, 1,
             'native AFK purchase delivers the promoted item');
         Afk._resetForTests();
         await Afk.init();
         assert(Afk.findOwnerProjection(owner), 'the remaining showcase restores after restart');
-        assert.equal(Afk.offers(1101, 1).find(row => row.sourceId === owner).recordKind, 'shop');
+        assert.equal(Afk.offers(1835, 1).find(row => row.sourceId === owner).recordKind, 'shop');
         for (const enchant of [0, 1, 2]) await Database.setItem(owner, {
             selfId: 626, amount: 1, enchant, equipped: enchant === 2 ? 1 : 0, slot: enchant === 2 ? 8 : 0
         });

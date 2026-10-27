@@ -1017,6 +1017,51 @@ function spotSpawns(spot = {}, npcId) {
         : (spot.npcSelfIds || []).some(selfId => Number(selfId) === id);
 }
 
+// The one owner of "which monster of a spot a kill takes": the cold roll
+// (npcForSpot) draws from it and the planners' expectation
+// (SpotRewardExpectation.killShare) reads its chances. entries: the kill's
+// candidates (huntable, after the hunters' matchup filter: entry.match);
+// encounterEntries: the huntable ones before that filter. An untargeted
+// kill draws from entries by killWeight. A targeted kill
+// (options.preferredNpcId among entries: an active plan's next hunt,
+// PartyHuntingTarget.planTargetNpcId, or a material party) takes its
+// target, unless an aggressive other monster of the encounter engages first (interruption, 0.25 by default): a direct-drop
+// plan travels to the intended monster, but it is still a real hunting
+// ground, so the bot is not immune to the rest of the encounter table; an
+// interrupted kill draws from those aggressive others by killWeight.
+function killDraw(entries, encounterEntries, options = {}) {
+    const preferredNpcId = number(options.preferredNpcId);
+    const preferred = preferredNpcId > 0
+        ? entries.find((entry) => number(entry.selfId) === preferredNpcId) || null
+        : null;
+    const interrupters = preferred
+        ? encounterEntries.filter((entry) => number(entry.selfId) !== preferredNpcId
+            && ItemTemplateIndex.find(DataCache.npcs, entry.selfId)?.template?.hostile === true)
+        : [];
+    const interruption = Math.max(0, Math.min(1, number(options.aggressiveInterruptionChance, 0.25)));
+    return { preferred, interrupters, interruption, pool: interrupters.length ? interrupters : entries };
+}
+
+// An entry's weight in a kill draw: its spawn count, times its squared
+// matchup efficiency for the hunters (1 without a matchup).
+function killWeight(entry) {
+    return Math.max(1, number(entry.count, 1)) * Math.min(1, entry.match?.efficiency ?? 1) ** 2;
+}
+
+// Each entry's chance to be the kill of a draw (killDraw), as the roll
+// gives it: [{ entry, chance }], the chances sum to 1 (none for an empty
+// draw).
+function killChances(draw) {
+    const preferredChance = !draw.preferred ? 0
+        : draw.interrupters.length ? 1 - draw.interruption : 1;
+    const rest = 1 - preferredChance;
+    const total = draw.pool.reduce((sum, entry) => sum + killWeight(entry), 0);
+    // All weights 0: the roll takes the pool's first entry.
+    const chances = draw.pool.map((entry, index) => ({ entry,
+        chance: total > 0 ? rest * killWeight(entry) / total : index === 0 ? rest : 0 }));
+    return draw.preferred ? [{ entry: draw.preferred, chance: preferredChance }, ...chances] : chances;
+}
+
 function npcForSpot(spot = {}, rng = Math.random, options = {}) {
     const rawEntries = Array.isArray(spot.npcEntries) && spot.npcEntries.length ? spot.npcEntries : (spot.npcSelfIds || []).map((selfId) => ({ selfId, count: 1 }));
     let entries = rawEntries.filter((entry) => {
@@ -1049,29 +1094,18 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
                 : resisted === encounterEntries.length ? 'target_resistance' : 'no_safe_solo_target' };
     }
     const pickEntry = (candidates) => {
-        const weight = entry => Math.max(1, number(entry.count, 1)) * Math.min(1, entry.match?.efficiency ?? 1) ** 2;
-        const total = candidates.reduce((sum, entry) => sum + weight(entry), 0);
+        const total = candidates.reduce((sum, entry) => sum + killWeight(entry), 0);
         let needle = rng() * total;
         return candidates.find((entry) => {
-            needle -= weight(entry);
+            needle -= killWeight(entry);
             return needle <= 0;
         }) || candidates[0];
     };
-    const preferredNpcId = number(options.preferredNpcId);
-    const preferred = preferredNpcId > 0
-        ? entries.find((entry) => number(entry.selfId) === preferredNpcId)
-        : null;
-    // A direct-drop plan travels to the intended monster, but it is still a
-    // real hunting ground. Nearby aggressive mobs can engage first instead of
-    // making the bot immune to the rest of the encounter table.
-    const aggressive = preferred
-        ? encounterEntries.filter((entry) => number(entry.selfId) !== preferredNpcId
-            && ItemTemplateIndex.find(DataCache.npcs, entry.selfId)?.template?.hostile === true)
-        : [];
-    const interruptionChance = Math.max(0, Math.min(1, number(options.aggressiveInterruptionChance, 0.25)));
-    const selected = preferred && (!aggressive.length || rng() >= interruptionChance)
+    const draw = killDraw(entries, encounterEntries, options);
+    const { preferred } = draw;
+    const selected = preferred && (!draw.interrupters.length || rng() >= draw.interruption)
         ? preferred
-        : pickEntry(aggressive.length ? aggressive : entries);
+        : pickEntry(draw.pool);
     const npc = ItemTemplateIndex.find(DataCache.npcs, selected?.selfId);
     if (!npc) return null;
     const combat = npcCombatStats(npc);
@@ -1164,6 +1198,6 @@ module.exports = {
     PROFILE_VERSION, capture, legacySnapshot, treeSnapshot, needsDatabaseBackfill, profileFor, buildCount, buildMs, withBuildSite,
     fightProfile, currentCp, seedSnapshot, oldSeedRepair, candidateProfiles, fightSources, combatView, kitHash, skillsFor, forgetBuild, kitStoreSize,
     isAttackSkill, offensiveSkills, summonDetails, summonSkills, corpseSummonSkills, activeMusicEffects, partyMusicSkills, partyMusicMpCost, partyMusicEffect,
-    spotSpawns, npcForSpot, npcCombatStats, skillSnapshotsFromRecords, skillRecordsFromTree, treeSkillLevel,
+    spotSpawns, npcForSpot, killDraw, killChances, npcCombatStats, skillSnapshotsFromRecords, skillRecordsFromTree, treeSkillLevel,
     statMultiplier: multiplier, statAdd: add
 };

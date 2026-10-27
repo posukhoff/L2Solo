@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const { BoardIndex, SELL, BUY } = require('../src/GameServer/AfkTrade/BoardIndex');
 const { create } = require('../src/GameServer/AfkTrade/PlayerBoardService');
 global.utils = { infoWarn() {} };
+require('../src/Global');
+const { inWorkshopRange } = invoke('GameServer/Bot/Economy/CraftWorkshopService');
 
 async function main() {
     const board = new BoardIndex();
@@ -41,7 +43,7 @@ async function main() {
     life: () => ({ cachedState: (id) => ({ characterId: id, loc: { locX: 7000, locY: 0, locZ: 0 }, currentRegion: 'Dion' }) }),
     workshops: () => ({ boardRecords: () => [{ id: 'workshop_55', kind: 'workshop', ownerId: 55, ownerName: 'Maker',
         town: 'Dion', loc: shop.loc, revision: 2, entries: [{ recipeId: 17, price: 150 }] }],
-    lookup: () => ({ state: shop, recipe: { productId: 1835 }, price: 150 }), craft: async (owner, recipe, customer, options) => {
+    inWorkshopRange, lookup: () => ({ state: shop, place: { town: 'Dion', loc: shop.loc }, recipe: { productId: 1835 }, price: 150 }), craft: async (owner, recipe, customer, options) => {
         assert.deepEqual([owner, recipe, customer, options.expectedPrice], [55, 17, 8, 150]); crafts++;
         assert.equal(options.expectedRevision, 2);
         return { product: { id: 91, amount: 1 } };
@@ -134,7 +136,7 @@ async function main() {
     // character transaction must never replace the new character's backpack.
     let finishCraft;
     const originalActor = player.actor;
-    const switched = create({ workshops: () => ({ lookup: () => ({ state: shop, recipe: { productId: 1835 }, price: 150 }),
+    const switched = create({ workshops: () => ({ inWorkshopRange, lookup: () => ({ state: shop, place: { town: 'Dion', loc: shop.loc }, recipe: { productId: 1835 }, price: 150 }),
         craft: () => new Promise(resolve => { finishCraft = resolve; }) }),
         database: () => ({ fetchItems: async () => [{ id: 99, selfId: 1835, amount: 1 }] }),
         response: () => ({ itemsList: () => { throw Error('old craft cannot redraw new inventory'); } }) });

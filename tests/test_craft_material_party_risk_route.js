@@ -42,15 +42,18 @@ assert(Risk.excludedSpotIds(party, at).has('danger'), 'native risk evidence excl
 const options = { timestamp: at, excludedSpotIds: Risk.excludedSpotIds(party, at) };
 const saved = [], replace = (object, key, value) => { saved.push(() => { object[key] = value; }); object[key] = value; };
 let checks = 0, spoiler = true, physicalSpotId = 'danger';
-const source = (id, npcId, kind = 'drop') => ({ spot: byId.get(id), kind, npcLevel: 60,
-    reward: { selfId: npcId }, sourceCount: 1, totalCount: 1 });
+// Each camp holds one 626 and one 627; a record carries the native reward
+// row its kill rolls (SpotRewardExpectation.killShare).
+const rewardFor = require('../src/GameServer/Knowledge/SourceCatalog').rewardForNpc;
+const source = (id, npcId, kind = 'drop') => ({ spot: byId.get(id), kind, npcLevel: 60, reward: rewardFor(npcId) });
 let sourceIndex = new Map([
     [4108, ['danger', 'only-one-input', 'unsafe-source', 'common-source'].map(id => source(id, 626))],
     [4104, ['danger', 'unsafe-source', 'common-source'].map(id => source(id, 627, 'spoil'))]
 ]);
 replace(Planner, 'sourceIndexFor', () => sourceIndex);
 replace(Planner, 'itemDropYield', () => { checks++; return { expectedYield: 1 }; });
-replace(Rewards, 'spoilerFor', state => spoiler && state.characterId === 2 ? state : null);
+replace(Rewards, 'spoilerFor', state => spoiler && state.characterId === 2 ? { level: Number(state.level),
+    skillLevel: invoke('GameServer/Bot/AI/SpotValueTable').roleSpoilLevel('spoiler', Number(state.level)) } : null);
 replace(Matchup, 'stateProfiles', () => []);
 replace(Routes, 'isSpotAllowedForState', spot => spot.id !== 'unsafe-source');
 replace(Routes, 'bestSpot', candidates => candidates.length ? { spot: candidates[0] } : null);

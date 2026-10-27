@@ -569,7 +569,13 @@ assert.strictEqual(GearAcquisitionPlanner.isCraftService(serviceCrafter), true, 
 assert.strictEqual(GearAcquisitionPlanner.planFor(serviceCrafter, { spots: [stoneGolemSpot] }).status, 'service', 'public craft stations must never receive a gear-acquisition plan');
 
 const mage = { level: 40, stats: { classId: 10, role: 'mage' }, inventory: {} };
-const target = GearAcquisitionPlanner.preferredTarget(mage);
+// A grade station crafts for no bot: the gear recipes reach a bot through a
+// dwarf's workshop or a clan crafter (craftRecipes), the list the Giran
+// stations still show the player.
+const stationDwarf = { level: 70, stats: { classId: 57 } };
+const workshopRecipes = { craftRecipes: CraftShopService.CraftStations.flatMap(station =>
+    CraftShopService.stationRecipes(station, CraftShopService.availableRecipes(stationDwarf))) };
+const target = GearAcquisitionPlanner.preferredTarget(mage, workshopRecipes);
 assert(target, 'a C-grade mage without gear must receive a craftable target');
 assert(['Weapon.Etc', 'Weapon.Sword', 'Weapon.Blunt'].includes(target.item.template.kind), 'mage target must use a caster weapon family');
 assert.strictEqual(BotWeaponCompatibility.isCasterWeapon(
@@ -578,7 +584,7 @@ assert.strictEqual(BotWeaponCompatibility.isCasterWeapon(
     target.item.stats?.pAtk,
     target.item.stats?.mAtk
 ), true, 'a mage acquisition target must be an actual caster weapon, not merely a compatible sword or blunt');
-const bGradeMageTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, level: 52 });
+const bGradeMageTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, level: 52 }, workshopRecipes);
 assert(bGradeMageTarget, 'a level-52 mage without gear must receive a C completion target');
 assert.strictEqual(bGradeMageTarget.item.etc.rank, 'c', 'B expertise cannot skip the C kit');
 assert.strictEqual(BotWeaponCompatibility.isCasterWeapon(
@@ -595,7 +601,7 @@ assert.strictEqual(GearAcquisitionPlanner.suitable(demonFangs, { level: 33, stat
 assert.strictEqual(GearAcquisitionPlanner.suitable(demonFangs, { level: 33, stats: { classId: 34, role: 'buffer' } }, 'buffer'), false,
     'Bladedancer acquisition must reject caster-only Weapon.Etc gear');
 let targetOfferChecks = 0;
-const scoredOnceTarget = GearAcquisitionPlanner.preferredTarget(mage, {
+const scoredOnceTarget = GearAcquisitionPlanner.preferredTarget(mage, { ...workshopRecipes,
     findMarketOffer: (item) => {
         targetOfferChecks += 1;
         return { selfId: item.selfId, price: Number(item.template?.price || 1), town: 'Giran', sourceType: 'npc' };
@@ -874,10 +880,8 @@ assert.strictEqual(GearAcquisitionPlanner.isRealCatalogItem(malformedCatalogWeap
 assert.strictEqual(GearAcquisitionPlanner.suitable(malformedCatalogWeapon, { level: 20, stats: { classId: 0, role: 'dps' } }, 'dps'), false, 'an anonymous catalog row must never enter bot equipment selection');
 assert.notStrictEqual(Number(entryDTarget.item.selfId), 749, 'a bot must not set an anonymous catalog row as its D-grade goal');
 const entryDArcherTarget = GearAcquisitionPlanner.preferredTarget({ level: 20, stats: { classId: 9, role: 'archer' }, inventory: {} });
-assert(entryDArcherTarget, 'an archer must retain a D-grade target when every entry bow is above the early cap');
-assert.strictEqual(entryDArcherTarget.item.template.kind, 'Weapon.Bow', 'an archer must keep weapon-first progression even when its entry bow exceeds the cap');
-assert(Number.isFinite(GearAcquisitionPlanner.progressionPriceCap('d', 39)), 'D-grade planning must retain an adequate-kit ceiling through the whole grade band');
-assert(Number.isFinite(GearAcquisitionPlanner.progressionPriceCap('c', 51)), 'C-grade planning must retain an adequate-kit ceiling through the whole grade band');
+assert(entryDArcherTarget, 'an archer must receive a D-grade target');
+assert.strictEqual(entryDArcherTarget.item.template.kind, 'Weapon.Bow', 'an archer must keep weapon-first progression: a bow first');
 const fullLeather = DataCache.items.find((item) => item.etc?.rank === 'd' && item.template?.kind === 'Armor.Leather' && Number(item.etc?.slot) === 15);
 const leatherChest = DataCache.items.find((item) => item.etc?.rank === 'd' && item.template?.kind === 'Armor.Leather' && Number(item.etc?.slot) === 10);
 const leatherLegs = DataCache.items.find((item) => item.etc?.rank === 'd' && item.template?.kind === 'Armor.Leather' && Number(item.etc?.slot) === 11);
@@ -906,17 +910,15 @@ assert.strictEqual(GearAcquisitionPlanner.soloSafeForSource({ level: 20, stats: 
 assert.strictEqual(GearAcquisitionPlanner.soloSafeForSource({ level: 20, stats: { role: 'healer' }, inventory: {} }, lowDSource), false, 'an unprepared support must wait for party help at the same route');
 assert.strictEqual(GearAcquisitionPlanner.partyNeedReasonForSource({ level: 20, stats: { role: 'healer' }, inventory: {} }, lowDSource), 'missing_weapon', 'missing equipment must be visible as the party requirement reason');
 assert(Number(target.item.template.price) <= 2290000, 'a new C-grade bot must begin with an entry-tier weapon target');
-const station = ColdCraftingService.stationForRecipe(target.recipe.recipeId);
-assert(station, 'a selected equipment recipe must be published by a Giran crafting station');
 const entryWeaponOnly = {
     [target.item.selfId]: { selfId: target.item.selfId, amount: 1 }
 };
-const afterEntryWeapon = GearAcquisitionPlanner.preferredTarget({ ...mage, inventory: entryWeaponOnly });
+const afterEntryWeapon = GearAcquisitionPlanner.preferredTarget({ ...mage, inventory: entryWeaponOnly }, workshopRecipes);
 assert(!['Weapon.Etc', 'Weapon.Sword', 'Weapon.Blunt'].includes(afterEntryWeapon.item.template.kind), 'a C-grade mage must gear another slot after its entry weapon instead of crafting alternate weapons');
 let entryBandInventory = {};
 for (let acquired = 0; ; acquired++) {
     assert(acquired < 32, 'entry C acquisition must finish a bounded physical kit');
-    const entryBandTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, inventory: entryBandInventory });
+    const entryBandTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, inventory: entryBandInventory }, workshopRecipes);
     if (!entryBandTarget) break;
     assert(Number(entryBandTarget.item.template.price) <= 2290000, 'level-40 bots must stop after their entry C band instead of falling through to top C gear');
     entryBandInventory = GearAcquisitionPlanner.equipInventoryUpgrades(mage, {
@@ -925,12 +927,12 @@ for (let acquired = 0; ; acquired++) {
             amount: Number(entryBandInventory[entryBandTarget.item.selfId]?.amount || 0) + 1 }
     });
 }
-const midCMageTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, level: 44 });
+const midCMageTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, level: 44 }, workshopRecipes);
 assert(Number(midCMageTarget.item.template.price) <= 2870000, 'mid-C bots must not skip straight to the expensive endgame C weapons');
-const lateCMageTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, level: 48 });
+const lateCMageTarget = GearAcquisitionPlanner.preferredTarget({ ...mage, level: 48 }, workshopRecipes);
 assert(Number(lateCMageTarget.item.template.price) <= 4300000, 'late-C bots must receive a progression target below top C gear');
 for (const recipeId of [191, 192, 198, 199, 201, 205, 208, 209, 213, 214, 216, 217, 312, 220, 222, 223, 228, 230, 234, 237, 238, 240]) {
-    assert(ColdCraftingService.stationForRecipe(recipeId), `C progression recipe ${recipeId} must be available from a Giran craft station`);
+    assert.strictEqual(ColdCraftingService.stationForRecipe(recipeId), null, `C progression recipe ${recipeId} has no crafter without a provider`);
 }
 
 const missing = GearAcquisitionPlanner.missingMaterials(target.recipe, {
@@ -943,27 +945,41 @@ const readyInventory = target.recipe.materials.reduce((inventory, material) => (
     ...inventory,
     [material.selfId]: { selfId: material.selfId, amount: material.amount }
 }), {});
+// A craft trip goes to the plan's provider (here a clan crafter in Giran);
+// no Giran station crafts for a bot.
+const steelRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(30);
+const giranCrafter = { characterId: 7, known: true,
+    loc: { ...CraftShopService.CraftStations.find((entry) => entry.id === 'resource_core').loc } };
+const clanCraft = (plan, recipeIds) => ({ ...plan, clanGoal: { clanId: 1 },
+    craftProviders: Object.fromEntries(recipeIds.map(id => [id, giranCrafter])) });
+assert.strictEqual(ColdCraftingService.stationForRecipe(steelRecipe.recipeId), null, 'no Giran station crafts Steel for a bot');
+const station = ColdCraftingService.stationForRecipe(steelRecipe.recipeId,
+    { stats: { equipmentPlan: clanCraft({}, [steelRecipe.recipeId]) } });
+assert(station?.clan, 'the clan crafter crafts Steel');
 const travel = ColdCraftingService.beginTravel({
     level: mage.level,
     activity: 'hunting',
     loc: { locX: 0, locY: 0, locZ: 0 },
     // The trip is paid (N2): a Scroll of Escape and the gatekeeper fee.
     adena: 1000000,
-    inventory: { ...readyInventory, 57: { selfId: 57, amount: 1000000 }, 736: { selfId: 736, amount: 1 } },
-    stats: { equipmentPlan: { status: 'active', strategy: 'craft', recipeId: target.recipe.recipeId } }
+    inventory: { ...Object.fromEntries(steelRecipe.materials.map(row => [row.selfId, { selfId: row.selfId, amount: row.amount }])),
+        57: { selfId: 57, amount: 1000000 }, 736: { selfId: 736, amount: 1 } },
+    stats: { equipmentPlan: clanCraft({ status: 'active', strategy: 'craft', recipeId: steelRecipe.recipeId }, [steelRecipe.recipeId]) }
 }, 1000);
-assert.strictEqual(travel.stats.travel.stationId, station.id, 'ready materials must route the bot to the station that publishes its recipe');
+assert.strictEqual(travel.stats.travel.stationId, station.id, 'ready materials must route the bot to the crafter of its recipe');
 assert.strictEqual(travel.stats.travel.arrivalActivity, 'crafting', 'arrival must enter the cold manufacture state');
 assert.strictEqual(travel.stats.travel.method, 'soe_gatekeeper', 'a remote craft station visit must use SoE and the Giran gatekeeper rather than map-walking');
 assert.strictEqual(travel.stats.travel.arrivalAt - travel.stats.travel.startedAt, ColdCraftingService.NATIVE_TRAVEL_MS, 'craft station transit must remain a short native-travel sequence');
 assert.strictEqual(travel.stats.craftReturn.spotId, null, 'craft travel must preserve the previous hunting destination for the return trip');
-const readyPlan = GearAcquisitionPlanner.planFor({ ...mage, inventory: readyInventory }, { spots: [] });
+const readyPlan = GearAcquisitionPlanner.planFor({ ...mage, inventory: readyInventory },
+    { spots: [], ...workshopRecipes, allowedRecipeIds: new Set([target.recipe.recipeId]) });
 assert.strictEqual(readyPlan.status, 'ready_to_craft', 'a complete material list must become a station visit, not a blocked farming plan');
 
 const oriharkonRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(27);
 const syntheticCokesRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(36);
+// Cokes (1879) is Atuba Mace's crafted component; a clan crafter makes it for the bot.
+const cokesRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByProductId(1879);
 const atubaMaceRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(189);
-const steelRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(30);
 const crystalSupplement = invoke('GameServer/Bot/Economy/CraftSupplementMaterials');
 const atubaWithCokesIngredients = atubaMaceRecipe.materials.reduce((inventory, material) => {
     if (Number(material.selfId) === 1879 || crystalSupplement.isSupplementalMaterial(material.selfId)) return inventory;
@@ -977,7 +993,8 @@ const componentPlan = GearAcquisitionPlanner.planFor({
     level: 20,
     stats: { classId: 10, role: 'mage' },
     inventory: atubaWithCokesIngredients
-}, { spots: [], recipeId: atubaMaceRecipe.recipeId });
+}, { spots: [], recipeId: atubaMaceRecipe.recipeId, ...workshopRecipes,
+    allowedRecipeIds: new Set([atubaMaceRecipe.recipeId, cokesRecipe.recipeId]) });
 assert.strictEqual(componentPlan.status, 'component_ready', 'a ready Cokes batch must be distinguished from final Atuba Mace readiness');
 assert.strictEqual(componentPlan.requiresParty, false, 'a ready component must go to its station instead of waiting for a party for a later farming source');
 assert(ColdCraftingService.beginTravel({
@@ -985,8 +1002,8 @@ assert(ColdCraftingService.beginTravel({
     activity: 'hunting',
     adena: 1000000,
     inventory: { ...atubaWithCokesIngredients, 57: { selfId: 57, amount: 1000000 } },
-    stats: { equipmentPlan: componentPlan }
-}, 1000), 'a component-ready plan must still travel to its crafting station');
+    stats: { equipmentPlan: clanCraft(componentPlan, [atubaMaceRecipe.recipeId, cokesRecipe.recipeId]) }
+}, 1000), 'a component-ready plan must still travel to its crafter');
 const resourceStationRecipeIds = new Set(CraftShopService.stationRecipes(
     CraftShopService.CraftStations.find((entry) => entry.id === 'resource_core'),
     CraftShopService.availableRecipes({ level: 70, stats: { classId: 57 } })
@@ -1041,15 +1058,13 @@ for (const row of boundedCases) {
     assert.deepStrictEqual(items, before, `${row.label}: readiness cannot mutate ingredients`);
 }
 assert.strictEqual(
-    ColdCraftingService.readyRecipeFor(resourceState, oriharkonRecipe).recipeId,
+    ColdCraftingService.readyRecipeFor({ ...resourceState, stats: { equipmentPlan: clanCraft({},
+        [oriharkonRecipe.recipeId, syntheticCokesRecipe.recipeId]) } }, oriharkonRecipe).recipeId,
     syntheticCokesRecipe.recipeId,
     'a ready crafted component must be manufactured before its parent equipment resource'
 );
-assert.strictEqual(
-    ColdCraftingService.stationForRecipe(syntheticCokesRecipe.recipeId).id,
-    'resource_core',
-    'crafted resources must route bots to the dedicated Giran resource station'
-);
+assert.strictEqual(ColdCraftingService.readyRecipeFor(resourceState, oriharkonRecipe), null,
+    'a component no provider crafts is not crafted: the bag must hold it');
 assert.strictEqual(
     ColdCraftingService.requiredCraftCount(atubaMaceRecipe, steelRecipe, { inventory: {} }),
     220,
@@ -1088,19 +1103,10 @@ assert.deepStrictEqual(NeedsEvaluator.evaluate(nativeMaterialState, { now: 1000 
     'a material hint without an accepted worker decision must defer');
 nativeGoalStates.push(nativeMaterialState);
 
-const materialPlan = GearAcquisitionPlanner.planFor(mage, { spots: [stoneGolemSpot] });
+const materialPlan = GearAcquisitionPlanner.planFor(mage, { spots: [stoneGolemSpot], ...workshopRecipes });
 if (materialPlan.strategy === 'craft' && materialPlan.next) {
     assert(Number.isFinite(materialPlan.next.itemId), 'a craft route must persist the next farmable material for market fallback');
 }
-
-assert.strictEqual(GearAcquisitionPlanner.shouldFinishPreviousPlan(
-    { grade: 'd', strategy: 'craft' },
-    { grade: 'c', strategy: 'craft', status: 'active', materials: [{ amount: 10, missing: 1 }] }
-), true, 'a nearly complete previous-grade recipe should finish before a grade switch');
-assert.strictEqual(GearAcquisitionPlanner.shouldFinishPreviousPlan(
-    { grade: 'd', strategy: 'craft' },
-    { grade: 'c', strategy: 'craft', status: 'active', materials: [{ amount: 10, missing: 5 }, { amount: 10, missing: 5 }] }
-), false, 'a largely incomplete previous-grade recipe should yield to the new grade');
 
 assert.strictEqual(GearAcquisitionPlanner.sameObjective(
     { target: { selfId: 100 }, next: { spotId: 'a' } },

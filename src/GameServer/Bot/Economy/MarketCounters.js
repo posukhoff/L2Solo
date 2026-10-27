@@ -2,27 +2,32 @@
 // counters of board purchases, one per sub-kind and grade (gear, shot,
 // recipe, material x none..s: 24 numbers per world, +1 per deal), and the
 // last deal prices of each item. The main thread counts every board deal
-// (AfkTradeService) and replays the journal at start; the cold worker reads
-// the same numbers from the 'market' table (ColdTableChannel). Static code
-// otherwise: the counter of an item is a lookup built once.
+// (AfkTradeService, a store's and a meeting's) and replays
+// the journal at start; the cold worker reads the same numbers from the
+// 'market' table (ColdTableChannel). Static code otherwise: the counter of
+// an item is a lookup built once.
 //
 // A counter holds: deals (all of them), the buyers per hour (an exponential
 // rate over the last hour of uptime), the market index (the mean log of the
 // deal price over the item's first price, the last ~32 deals), and its
-// hourly move (how much the index changes in an hour of uptime). Each counter
-// also keeps its buyers per hour in each town where it had deals (б7: the
-// shop town, MarketTownPolicy.shopTown).
+// hourly move (how much the index changes in an hour of uptime). The demand
+// per item and town is MarketDemand's.
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Uptime = require('../Population/Uptime');
+const { GRADES } = require('../AI/GearGradeRule');
 const DataCache = invoke('GameServer/DataCache');
 const C4RecipeItems = invoke('GameServer/Items/C4RecipeItems');
-const TradeDemand = require('./MarketTradeDemand');
+const MarketDemand = require('./MarketDemand');
 const Diagnostics = require('./EconomyDiagnostics');
 
 const HOUR_MS = 60 * 60 * 1000;
+// The board's day: the deals of the day of running time before the board's
+// last deal (the boot replay drops the downtime, load). The boot replay loads
+// it (AfkTradeService).
+const DAY_MS = 24 * HOUR_MS;
 const PRICES_KEPT = 21;
 const INDEX_DEALS = 32;
-// The deals of each item replayed at start (load), however long the stop:
+// The deals of each item replayed at start (load), whatever their age:
 // as many as an item keeps prices and a counter's index weighs (a counter's
 // last deals are each among their item's last ones); with them, the day of
 // deals before the last one, which the buyers per hour and the move need.
@@ -32,7 +37,7 @@ const GRADE_IN_NAME = /(?:^|[\s:])(D|C|B|A|S)(?:[- ]?Grade|\b)/i;
 // hourly move over the counters of the group E journal (e17, 44 h).
 const STARTING_MOVE = 0.05;
 const COUNTER_KEYS = Object.freeze(['gear', 'shot', 'recipe', 'material']
-    .flatMap((kind) => ['none', 'd', 'c', 'b', 'a', 's'].map((grade) => `${kind} ${grade}`)));
+    .flatMap((kind) => GRADES.map((grade) => `${kind} ${grade}`)));
 
 // The table row key of each counter, built once (a fresh string is hashed on every read).
 const COUNTER_ROW_KEYS = Object.freeze(COUNTER_KEYS.map((key) => `c:${key}`));
@@ -41,9 +46,6 @@ let spotsSource = () => [];
 const counterCache = new Map();
 const counters = new Map();
 const items = new Map();
-// counter key -> town -> { rate, at }: the buyers per hour of the counter in
-// each town (б7, the shop town), the same exponential rate as the counter's.
-const towns = new Map();
 let mirror = null;
 // Public deal evidence is shared across price readers, never across owners'
 // current offers, knowledge or payment. Weak keys follow the native row's life.
@@ -51,16 +53,8 @@ let priceEvidenceCache = new WeakMap();
 let channel = null;
 const changeListeners = new Set();
 let loading = false;
-const flowCounts = new Map();
-const flowRow = key => [`f:${key}`, flowCounts.get(key) || 0];
-function publishFlow(id, row) {
-    if (!row) return;
-    const key = counterOf(id);
-    flowCounts.set(key, (flowCounts.get(key) || 0) + 1);
-    channel?.changed('market', row);
-    channel?.changed('market', flowRow(key));
-}
-// Missing quality is harmless only for items that cannot be enchanted.
+// A deal's enchant as the demand flow reads it (MarketDemand.deal counts only
+// plain items): a missing quality is 0 only for an item that cannot be enchanted.
 function flowEnchant(id, enchant) {
     if (Number.isSafeInteger(enchant) && enchant >= 0) return enchant;
     const item = template(id);
@@ -166,26 +160,8 @@ function itemRow(selfId, item) {
     return [`i:${selfId}`, item.deals, Math.round(item.units * 100) / 100, ...item.prices, ...item.sellers, ...item.buyers];
 }
 
-// [key, town, rate, at, town, rate, at, ...]: the counter's buyers per town.
-function townRow(key, byTown) {
-    const row = [`t:${key}`];
-    for (const [town, value] of byTown) row.push(town, Math.round(value.rate * 1000) / 1000, value.at);
-    return row;
-}
-
-function countTown(key, town, timestamp) {
-    let byTown = towns.get(key);
-    if (!byTown) {
-        byTown = new Map();
-        towns.set(key, byTown);
-    }
-    const kept = byTown.get(town) || { rate: 0, at: timestamp };
-    byTown.set(town, { rate: kept.rate * Math.exp(-Uptime.between(kept.at, timestamp) / HOUR_MS) + 1, at: timestamp });
-    return byTown;
-}
-
-// One board deal: +1 on its counter (and on its town, where the deal was
-// made) and the item's price list.
+// One board deal: +1 on its counter, the item's price list and the item's
+// demand in the deal's town (MarketDemand).
 function deal(selfId, unitPrice, quantity, timestamp = Date.now(), sellerId = 0, town = null, buyerId = 0, enchant = null) {
     const id = Number(selfId);
     const price = Number(unitPrice);
@@ -231,50 +207,52 @@ function deal(selfId, unitPrice, quantity, timestamp = Date.now(), sellerId = 0,
         item.sellers.shift();
         item.buyers.shift();
     }
-    const byTown = town ? countTown(key, String(town), timestamp) : null;
-    const demand = !loading && TradeDemand.deal(id, Number(quantity), town, timestamp, flowEnchant(id, enchant));
+    const demand = MarketDemand.deal(id, Number(quantity), town, timestamp, flowEnchant(id, enchant));
     if (channel) {
         channel.changed('market', counterRow(key, counter));
         channel.changed('market', itemRow(id, item));
-        if (byTown) channel.changed('market', townRow(key, byTown));
+        if (demand) channel.changed('market', demand);
     }
-    publishFlow(id, demand);
     notifyChanged({ key, deals: counter.deals });
 }
 
-// The journal of the last day at start (oldest first): the same deals again.
+// One board deal as its market_trades row (the journal's shape): the boot
+// replay and a live meeting deal count through it, a store deal through deal.
+function boardTrade(row) {
+    deal(row.selfId, row.unitPrice, row.quantity, Number(row.occurredAt), row.sellerCharacterId, row.town || null,
+        row.buyerCharacterId, row.enchant);
+}
+
+// A completed fixed-store purchase (MarketTelemetry 'fixed_wts') is item
+// demand only: no counter, price list or board-trading experience.
+function supplyDeal(selfId, quantity, town, timestamp = Date.now(), enchant = null) {
+    const demand = MarketDemand.deal(Number(selfId), Number(quantity), town, timestamp, flowEnchant(selfId, enchant));
+    if (demand && channel) channel.changed('market', demand);
+}
+
+// The journal of the last day at start (oldest first): the same deals again,
+// each moved by the downtime (the start - the journal's last deal), so it keeps
+// the age it had in the previous run and a stopped server ages none. The one
+// shift of the market's clock: the counters and demand all
+// take the moved time (deal), and every span is plain time (Uptime.between).
+// supplyRows: the fixed-store receipts of the same day, demand only (supplyDeal).
 function load(rows = [], supplyRows = []) {
     loading = true;
-    try {
-        const result = loadRows(rows);
-        // Price learning retains an old per-item tail. Flow must not revive
-        // an obsolete item's purchases on every reboot. Anchor the window
-        // to the last public receipt so real downtime still freezes rates.
-        const receipts = [...rows, ...supplyRows];
-        const latest = receipts.reduce((at, row) => Math.max(at, Number(row.occurredAt) || 0), 0);
-        TradeDemand.reset();
-        TradeDemand.load(receipts.filter(row => row.occurredAt >= latest - 24 * HOUR_MS)
-            .map(row => ({ ...row, enchant: flowEnchant(row.selfId, row.enchant) }))
-            .sort((a, b) => a.occurredAt - b.occurredAt));
-        flowCounts.clear();
-        for (const row of TradeDemand.rows()) {
-            const key = counterOf(Number(row[0].slice(2)));
-            flowCounts.set(key, (flowCounts.get(key) || 0) + row[1]);
-            channel?.changed('market', row);
-        }
-        for (const key of COUNTER_KEYS) channel?.changed('market', flowRow(key));
-        return result;
-    }
+    try { return loadRows(rows, supplyRows); }
     finally {
         loading = false;
         for (const [key, value] of counters) notifyChanged({ key, deals: value.deals });
     }
 }
 
-function loadRows(rows) {
-    for (const row of rows) {
-        deal(row.selfId, row.unitPrice, row.quantity, Number(row.occurredAt), row.sellerCharacterId, row.town || null,
-            row.buyerCharacterId, row.enchant);
+function loadRows(rows, supplyRows = []) {
+    let last = 0;
+    for (const row of rows) last = Math.max(last, Number(row.occurredAt) || 0);
+    for (const row of supplyRows) last = Math.max(last, Number(row.occurredAt) || 0);
+    const downtime = last > 0 ? Math.max(0, Math.floor(Uptime.SERVER_STARTED_AT - last)) : 0;
+    for (const row of rows) boardTrade(downtime ? { ...row, occurredAt: Number(row.occurredAt) + downtime } : row);
+    for (const row of supplyRows) {
+        supplyDeal(row.selfId, Number(row.quantity), row.town || null, Number(row.occurredAt) + downtime, row.enchant);
     }
     // Prices and rates replay a bounded tail. Observation cursors use the
     // world's durable totals, including items whose history was pruned.
@@ -379,35 +357,20 @@ function movesChanged() {
     movesWatched = true;
 }
 
-// The buyers per hour of a counter in each town at `timestamp`: [{ town,
-// perHour }], the towns where it has had deals.
-function townDemand(key, timestamp = Date.now()) {
-    const result = [];
-    if (mirror) {
-        const row = mirror().get(`t:${key}`);
-        for (let at = 1; row && at + 2 < row.length; at += 3) {
-            result.push({ town: row[at], perHour: row[at + 1] * Math.exp(-Uptime.between(row[at + 2], timestamp) / HOUR_MS) });
-        }
-        return result;
-    }
-    for (const [town, value] of towns.get(key) || []) {
-        result.push({ town, perHour: value.rate * Math.exp(-Uptime.between(value.at, timestamp) / HOUR_MS) });
-    }
-    return result;
-}
-
 // The item's deals so far, the units a deal takes on average and its last
 // prices with their sellers and buyers, oldest first.
 const NO_DEALS = Object.freeze({ deals: 0, units: 1, prices: Object.freeze([]), sellers: Object.freeze([]),
     buyers: Object.freeze([]) });
+// The number of last prices an item row keeps (itemRow: 3 lists of it).
+const keptOf = row => Math.max(0, Math.floor((row.length - 3) / 3));
 function itemDeals(selfId) {
     const id = Number(selfId);
     if (mirror) {
         const row = mirror().get(`i:${id}`);
         if (!row) return NO_DEALS;
-        const kept = (row.length - 3) / 3;
+        const kept = keptOf(row);
         return { deals: row[1], units: row[2], prices: row.slice(3, 3 + kept), sellers: row.slice(3 + kept, 3 + 2 * kept),
-            buyers: row.slice(3 + 2 * kept) };
+            buyers: row.slice(3 + 2 * kept, 3 + 3 * kept) };
     }
     const item = items.get(id);
     return item ? { deals: item.deals, units: item.units, prices: item.prices, sellers: item.sellers, buyers: item.buyers }
@@ -420,7 +383,7 @@ function itemPriceEvidence(selfId) {
     const source = mirror ? mirror().get(`i:${id}`) : items.get(id);
     if (!source) return NO_PRICE_EVIDENCE;
     const deals = mirror ? source[1] : source.deals;
-    const kept = mirror ? (source.length - 3) / 3 : source.prices.length;
+    const kept = mirror ? keptOf(source) : source.prices.length;
     const held = priceEvidenceCache.get(source);
     if (held?.deals === deals && held.kept === kept) return held.evidence;
     // Native deals advance the count; mirror updates replace the table row.
@@ -445,20 +408,17 @@ function publish(tableChannel) {
         allRows: () => [
             ...[...counters].map(([key, value]) => counterRow(key, value)),
             ...[...items].map(([id, value]) => itemRow(id, value)),
-            ...[...towns].map(([key, value]) => townRow(key, value)),
-            ...TradeDemand.rows(),
-            ...COUNTER_KEYS.map(flowRow)
+            ...MarketDemand.rows()
         ]
     });
 }
 
 // Worker: the rows of its 'market' table (a Map), read when asked.
 function useTable(rows) {
-    resets++;
     meanMove = null;
     priceEvidenceCache = new WeakMap();
     mirror = rows;
-    TradeDemand.useTable(rows);
+    MarketDemand.useTable(rows);
 }
 
 // Where the spots for first prices come from in this thread.
@@ -466,39 +426,15 @@ function useSpots(source) {
     spotsSource = source || (() => []);
 }
 
-// A token that changes with every deal of the counter (and on a reset): a
-// reader that priced an item knows whether its counter moved since.
-let resets = 0;
-function revisionOf(key) {
-    const row = mirror ? mirror().get(`c:${key}`) : null;
-    return `${resets}.${row ? row[1] : counters.get(key)?.deals || 0}`;
-}
-
-// Meetings read category representatives. Keep public item flow in their
-// shared revision without counting configured purchases as peer experience.
-function meetingRevisionOf(key) {
-    const flow = mirror ? mirror().get(`f:${key}`)?.[1] || 0 : flowCounts.get(key) || 0;
-    return `${revisionOf(key).split('.').slice(1).join('.')}:${flow}`;
-}
-
 function reset() {
-    resets++;
     meanMove = null;
     priceEvidenceCache = new WeakMap();
     counters.clear();
     items.clear();
-    towns.clear();
-    flowCounts.clear();
-    TradeDemand.reset();
+    MarketDemand.reset();
     mirror = null;
     notifyChanged({ reset: true });
 }
 
-// A completed configured-store purchase is public item flow. It is not a
-// peer price index, board fill or personal board-trading experience.
-function supplyDeal(selfId, quantity, town, timestamp = Date.now(), enchant = null) {
-    publishFlow(selfId, TradeDemand.deal(selfId, quantity, town, timestamp, flowEnchant(selfId, enchant)));
-}
-
-module.exports = { STARTING_MOVE, COUNTER_KEYS, REPLAY_DEALS, counterOf, gradeOf, deal, supplyDeal, load, counter, indexOf, revisionOf, meetingRevisionOf, moveOf, movesChanged, itemDeals, itemPriceEvidence, townDemand, firstPrice,
+module.exports = { STARTING_MOVE, COUNTER_KEYS, REPLAY_DEALS, DAY_MS, counterOf, gradeOf, deal, boardTrade, supplyDeal, load, counter, indexOf, moveOf, movesChanged, itemDeals, itemPriceEvidence, firstPrice,
     publish, useTable, useSpots, reset, subscribeChanges };

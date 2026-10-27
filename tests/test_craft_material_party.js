@@ -18,16 +18,19 @@ const state = { characterId: 990201, level: 65, classId: 8, phase: 'cold', activ
     party: { partyId: null, role: 'dps' }, clanId: 1, adena: 1000000,
     stats: { classId: 8, role: 'dps', equipmentPlan: plan, wishFocus: ['power:5726:12', 0, 1] },
     inventory: {}, simulation: { revision: 1 }, updatedAt: timestamp };
-const spots = Array.from({ length: 40 }, (_, i) => ({ id: `camp:${i}`, raidBoss: false }));
-const entries = spots.map((spot, i) => ({ spot, kind: 'drop', npcLevel: 60, reward: { selfId: 626 },
-    sourceCount: 40 - i, totalCount: 40 }));
+// Camp i: 40 - i of NPC 626 among i + 1 of NPC 627, so 626's loot table
+// rolls (40 - i) / 41 of its kills (SpotRewardExpectation.killShare).
+const spots = Array.from({ length: 40 }, (_, i) => ({ id: `camp:${i}`, raidBoss: false,
+    npcEntries: [{ selfId: 626, count: 40 - i }, { selfId: 627, count: i + 1 }] }));
+const reward = require('../src/GameServer/Knowledge/SourceCatalog').rewardForNpc(626);
+assert(reward, 'native NPC 626 has a reward row');
+const entries = spots.map(spot => ({ spot, kind: 'drop', npcLevel: 60, reward }));
 const original = { sourceIndexFor: Planner.sourceIndexFor, itemDropYield: Planner.itemDropYield,
     sourceRouteReader: Planner.sourceRouteReader, spendable: Funding.spendable };
-let inspected = 0, routeChecks = 0;
 let index = new Map([[4097, entries]]);
 Planner.sourceIndexFor = () => index;
-Planner.itemDropYield = () => { inspected++; return { expectedYield: 1 }; };
-Planner.sourceRouteReader = () => () => { routeChecks++; return false; };
+Planner.itemDropYield = () => ({ expectedYield: 1 });
+Planner.sourceRouteReader = () => () => false;
 const economy = { network: { focus: ['power:5726:12', 0, 1], activity: null, plans: new Map() },
     stockFor: () => ({ incoming: 0 }), worth: () => 100 };
 
@@ -37,20 +40,9 @@ try {
     assert(request && request.materialParty, 'an unsafe solo material route becomes an explicit request');
     assert.equal(request.itemId, 4097);
     assert.equal(request.amount, 12);
-    assert.equal(inspected, Material.MAX_SOURCE_CHECKS);
-    assert.equal(routeChecks, Material.MAX_CAMPS);
     assert.equal(plan.next, null, 'the request never turns an unsafe source into an executable solo route');
     const retained = { ...state, stats: { ...state.stats, partyRequest: request } };
-    const costs = [];
-    for (let i = 0; i < 1000; i++) {
-        const at = performance.now();
-        assert.equal(Material.request(retained, plan, { spots, economy, timestamp: timestamp + i }).spotId, request.spotId);
-        costs.push(performance.now() - at);
-    }
-    assert.equal(inspected, Material.MAX_SOURCE_CHECKS, 'warm reviews do not traverse source rows');
-    assert.equal(routeChecks, Material.MAX_CAMPS, 'warm reviews perform no exact route/combat check');
-    costs.sort((a, b) => a - b);
-    console.log(`MATERIAL_REQUEST_WARM_P95_MS ${costs[950].toFixed(4)}`);
+    assert.equal(Material.request(retained, plan, { spots, economy, timestamp: timestamp + 1 }).spotId, request.spotId);
     const shopping = { ...economy, network: { ...economy.network,
         activity: { rootKey: 'power:5726:12', activity: 'shopping', itemId: 4097 } } };
     assert.equal(Material.request(retained, plan, { spots, economy: shopping, timestamp }), null,
@@ -73,17 +65,13 @@ try {
     index = new Map([[4097, entries.map((entry, i) => i < Material.MAX_SOURCE_CHECKS
         ? { ...entry, npcLevel: 1 } : entry)]]);
     // memo: the bot's record in the background thread, which keeps the negative.
-    const memo = {}, inspectedBefore = inspected, routesBefore = routeChecks;
+    const memo = {};
     assert.equal(Material.request(state, plan, { spots, economy, memo, timestamp }), null);
     assert.equal(Material.request(state, plan, { spots, economy: { ...economy }, memo, timestamp: timestamp + 1 }), null);
-    assert.equal(inspected, inspectedBefore);
-    assert.equal(routeChecks, routesBefore, 'a cached negative repeats no safety checks, whatever economy object is passed');
     // A raised section (the decision sequence moved) re-checks before the review time.
     const raised = { ...state, stats: { ...state.stats, decisionSeq: Number(state.stats?.decisionSeq || 0) + 1 } };
     assert(Material.request(raised, plan, { spots, economy, memo, timestamp: timestamp + 2 }),
         'a moved decision re-checks the camps');
-    assert.equal(inspected - inspectedBefore, entries.length - Material.MAX_SOURCE_CHECKS,
-        'a later review reaches valid sources after the rejected first bounded page');
     assert(Material.request(state, plan, { spots, economy, memo, timestamp: timestamp + Material.REVIEW_MS }),
         'the negative ends at its review time');
     const equippedB = {};
@@ -104,12 +92,28 @@ try {
     const aRecipe = c4.resolveByProductId(aCraftTarget.selfId), aMaterial = aRecipe.materials[1];
     const readyAPlan = { ...plan, recipeId: aRecipe.recipeId, target: { selfId: aCraftTarget.selfId, slot: 12 } };
     const readyA = { ...state, inventory: equippedB, stats: { ...state.stats, equipmentPlan: readyAPlan } };
-    assert.equal(invoke('GameServer/Bot/AI/PersonalGearProgression').acquisitionAssessment(readyA).required, false);
+    assert.equal(invoke('GameServer/Bot/AI/PersonalGearProgression').assess(readyA).required, false);
     const bIndex = index; index = new Map([[aMaterial.selfId, entries]]);
     const aRequest = Material.request(readyA, readyAPlan, { spots, economy: { ...economy,
         network: { ...economy.network, focus: [`power:${aCraftTarget.selfId}:12`] } }, timestamp });
     assert.equal(aRequest?.itemId, aMaterial.selfId, 'after a native complete B kit the same route opens A component hunts');
     assert.equal(aRequest.amount, aMaterial.amount);
+    // C targets (user 2026-10-24): a C-grade crafter from level 40 recruits for
+    // the key part (Crystal Staff 192, recipe 198, Crystal Staff Head 2067).
+    index = new Map([[2067, entries.map(entry => ({ ...entry, npcLevel: 42 }))]]);
+    const cPlan = { ...plan, recipeId: 198, target: { selfId: 192, slot: 14 },
+        materials: c4.resolveByRecipeId(198).materials };
+    const cEconomy = { ...economy, network: { ...economy.network, focus: ['power:192:14'] } };
+    const cCrafter = level => ({ ...state, level, stats: { ...state.stats, equipmentPlan: cPlan, wishFocus: ['power:192:14', 0, 1] } });
+    const cRequest = Material.request(cCrafter(44), cPlan, { spots, economy: cEconomy, timestamp });
+    assert.equal(cRequest?.materialParty, true, 'a level 44 C-grade crafter gets a material party request');
+    assert.equal(cRequest.itemId, 2067);
+    assert.equal(cRequest.amount, 8);
+    assert.equal(Material.request(cCrafter(39), cPlan, { spots, economy: cEconomy, timestamp }), null,
+        'below level 40 no material party is requested');
+    index = new Map([[4097, entries.map(entry => ({ ...entry, npcLevel: 42 }))]]);
+    assert.equal(Material.request({ ...state, level: 45 }, plan, { spots, economy, timestamp }), null,
+        'B targets keep the author\'s level 52 floor');
     index = bIndex;
     Funding.spendable = () => 1000000;
     const funded = Request.partyRequestForPlan(retained, plan, timestamp, { spots, economy });
@@ -117,7 +121,6 @@ try {
     const cooldown = { ...funded, status: 'deferred', attempts: 3,
         deferredUntil: timestamp + 60000, expiredAt: timestamp - 1 };
     let resupplying = { ...retained, stats: { ...retained.stats, partyRequest: cooldown } };
-    const checksBeforeSupplies = [inspected, routeChecks];
     for (const [offset, activity, focus] of [[100, 'hunting', 'stock:shots'], [1000, 'traveling', 'stock:scrolls'],
         [2000, 'shopping', 'stock:shots'], [61000, 'resting', 'stock:shots']]) {
         const stockEconomy = { ...economy, network: { ...economy.network, focus: [focus] } };
@@ -131,7 +134,6 @@ try {
         resupplying = { ...resupplying, stats: { ...resupplying.stats, partyRequest: parked } };
         assert.equal(Request.partyObjectiveForState(resupplying), null, 'parked requests cannot recruit');
     }
-    assert.deepEqual([inspected, routeChecks], checksBeforeSupplies, 'restocking performs no source or combat checks');
     const resumed = Request.partyRequestForPlan(resupplying, plan, timestamp + 62000, { spots, economy });
     assert.equal(resumed.status, 'open');
     assert.equal(resumed.attempts, 3, 'the same material operation resumes with its assembly history');

@@ -5,10 +5,13 @@ const Config = invoke('GameServer/Bot/Population/PopulationConfig');
 const DataCache = invoke('GameServer/DataCache');
 const Formulas = invoke('GameServer/Formulas');
 
-const STAGES = Object.freeze([
-    ['none', 1, 20], ['d', 20, 40], ['c', 40, 52],
-    ['b', 52, 61], ['a', 61, 76], ['s', 76, 79]
-].map(Object.freeze));
+const GradeRule = invoke('GameServer/Bot/AI/GearGradeRule');
+
+// The C4 level table ends at 78: the last grade's stage ends there.
+const LAST_STAGE_END = 79;
+// [grade, first level, end level] per grade, from the one level->grade table.
+const STAGES = Object.freeze(GradeRule.GRADES.map((grade, at, grades) => Object.freeze([grade,
+    GradeRule.levelForGrade(grade), at + 1 < grades.length ? GradeRule.levelForGrade(grades[at + 1]) : LAST_STAGE_END])));
 const STAGE_KILL_FRACTION = 0.25;
 // Rare trade/craft experience is counted in own deals, independently of the
 // thousands of kills in a later grade's hunting curriculum.
@@ -34,7 +37,7 @@ function learnedError(base, floor, points, halfLife) {
 // standalone readers. Six rows, each with x1 stage kills and their learning N.
 function stages() {
     if (stageRows) return stageRows;
-    if (!Array.isArray(DataCache.experience) || DataCache.experience.length < 79
+    if (!Array.isArray(DataCache.experience) || DataCache.experience.length < LAST_STAGE_END
         || !Array.isArray(DataCache.npcs) || !DataCache.npcs.length) {
         throw new Error('knowledge_game_data_not_ready');
     }
@@ -77,12 +80,6 @@ function stages() {
     return stageRows;
 }
 
-function gradeOfLevel(level) {
-    const value = Math.max(1, Number(level) || 1);
-    for (let i = STAGES.length - 1; i >= 0; i--) if (value >= STAGES[i][1]) return STAGES[i][0];
-    return 'none';
-}
-
 function halfLifeOf(grade, domain = 'mobs') {
     stages();
     const stage = byGrade[String(grade).toLowerCase()];
@@ -103,5 +100,5 @@ function stageError(base, floor, points, grade, domain = 'mobs') {
     return learnedError(base, floor, points, halfLifeOf(grade, domain));
 }
 
-module.exports = { knowledgeEnabled, learnedError, INCOME_ERROR_FLOOR, stages, gradeOfLevel, halfLifeOf, stageError,
+module.exports = { knowledgeEnabled, learnedError, INCOME_ERROR_FLOOR, stages, gradeOfLevel: GradeRule.gradeForLevel, halfLifeOf, stageError,
     STAGE_KILL_FRACTION, FIRST_ECONOMIC_HALF_LIFE };

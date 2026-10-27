@@ -24,16 +24,12 @@ function addItem(items, line, side, town) {
         name: line.name || `Item ${selfId}`,
         wtsUnits: 0,
         wtbUnits: 0,
-        activeDemandWtsUnits: 0,
-        speculativeWtsUnits: 0,
         minimumWtsPrice: Infinity,
         maximumWtbPrice: 0,
         towns: {}
     };
     entry[side === 'wts' ? 'wtsUnits' : 'wtbUnits'] += count;
     if (side === 'wts') {
-        if (line.marketReason === 'speculative_demand') entry.speculativeWtsUnits += count;
-        else entry.activeDemandWtsUnits += count;
         if (Number(line.price || 0) > 0) entry.minimumWtsPrice = Math.min(entry.minimumWtsPrice, Number(line.price));
     } else if (Number(line.price || 0) > 0) {
         entry.maximumWtbPrice = Math.max(entry.maximumWtbPrice, Number(line.price));
@@ -301,7 +297,6 @@ function buildDetail({ states = [], stores = [], transactions = MarketTelemetry.
     const recentTrades = durableHistory?.recent || [
         ...(transactions.recentPeerTrades || []),
         ...(transactions.recentPlayerTrades || []),
-        ...(transactions.recentStaticTrades || []),
         ...(transactions.recentNpcTrades || [])
     ].sort((left, right) => Number(right.at || 0) - Number(left.at || 0));
     recentTrades.forEach((trade) => ensure(trade.selfId));

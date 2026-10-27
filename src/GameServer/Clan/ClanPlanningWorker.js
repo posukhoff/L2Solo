@@ -78,40 +78,31 @@ function restore(payload) {
 const market = {
     get TOWN_NPC_SELLERS() { return context.towns || {}; },
     npcOffersAll: (id) => npcOffers.get(Number(id)) || [],
-    // MarketOpportunity.bestOffer over the same sources: the board, the
-    // configured merchants (with the plan) and the NPC shops in the towns.
+    // The one buyer's offer search (OfferQuery.bestBuyerOffer) over the same
+    // sources as MarketOpportunity.bestOffer: the board, the configured
+    // merchants (with the plan) and the NPC shops in the towns. A clan buy is
+    // an errand (settled-only lines, no meeting): no buyer row is read here.
     bestOffer(id, options = {}) {
-        const towns = options.town ? [options.town] : options.towns || null;
-        return OfferQuery.bestSellOffer(tables.ready('board') ? boardIndex : null, Number(id), {
-            towns,
-            excludeOwner: options.buyerCharacterId,
-            budget: options.budget,
-            cost: options.cost,
-            accept: options.accept,
-            others: OfferQuery.othersIn(towns, fixedOffers.get(Number(id)) || [], npcOffers.get(Number(id)) || [])
+        return OfferQuery.bestBuyerOffer(tables.ready('board') ? boardIndex : null, Number(id), options, {
+            others: towns => OfferQuery.othersIn(towns, fixedOffers.get(Number(id)) || [], npcOffers.get(Number(id)) || [])
         });
     }
 };
 const stubs = new Map([
     ['GameServer/DataCache', catalogs],
     ['GameServer/Bot/Economy/MarketOpportunity', market],
-    ['GameServer/Bot/Economy/CraftShopService', {
-        ...require('../Bot/Economy/CraftEligibility'),
-        CraftStations: [{}],
-        availableRecipes: () => context.recipes || [],
-        stationRecipes: (_station, recipes) => recipes,
-        publishedStationRecipes: () => {
-            const recipes = context.recipes || [];
-            return { recipes, ids: new Set(recipes.map((recipe) => Number(recipe.recipeId))), stationByRecipeId: new Map() };
-        }
-    }],
+    ['GameServer/Bot/Economy/CraftShopService', { ...require('../Bot/Economy/CraftEligibility') }],
     ['GameServer/World/Generics/NpcShopBuyLists', { allEntries: () => context.shopEntries || [] }]
 ]);
+const allowedModules = new Set();
 global.invoke = (name) => {
     if (stubs.has(name)) return stubs.get(name);
-    if (name === 'Database' || name === 'Server'
-        || /GameServer\/(World\/World$|Bot\/BotManager|Network|Persistence)/.test(name)) {
-        throw new Error(`clan planning worker forbidden dependency: ${name}`);
+    if (!allowedModules.has(name)) {
+        if (name === 'Database' || name === 'Server'
+            || /GameServer\/(World\/World$|Bot\/BotManager|Network|Persistence)/.test(name)) {
+            throw new Error(`clan planning worker forbidden dependency: ${name}`);
+        }
+        if (typeof name === 'string') allowedModules.add(name);
     }
     return originalInvoke(name);
 };

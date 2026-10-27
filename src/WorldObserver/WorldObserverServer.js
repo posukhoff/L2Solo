@@ -588,8 +588,8 @@ function compactClanCraftPlan(goal, members, warehouse, knowledge = []) {
     return { kind: 'craft', reasonCode, craft: {
         recipeId: recipe.recipeId, recipeItemId: recipe.recipeItemId, level: recipe.level,
         successRate: recipe.successRate, productCount: recipe.productCount,
-        crafterName: crafter?.name || (provider ? 'Unavailable' : 'Public crafting service'),
-        learned: provider ? provider.known : true,
+        crafterName: crafter?.name || 'Unavailable',
+        learned: !!provider?.known,
         customerName: carrier.name, activity: carrier.activity,
         stage: blocked ? 'blocked' : traveling || crafting || ready ? ready && ready.recipeId !== recipe.recipeId ? 'components' : 'crafting' : 'resources',
         nextItemName: ready ? itemName(ready.productId) : plan.next?.itemId ? itemName(plan.next.itemId) : null,
@@ -666,7 +666,7 @@ async function clanContributionTotals() {
 }
 
 function clanAuxiliaryRows() {
-    const bloodMarkId = Number(ClanSimulationConfig.bloodMarkItemId || 1419);
+    const bloodMarkId = ClanSimulationConfig.bloodMarkItemId;
     return Promise.all([
         Database.execute([`
             SELECT clanId,

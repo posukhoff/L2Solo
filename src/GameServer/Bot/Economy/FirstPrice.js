@@ -3,23 +3,27 @@ const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const NpcShopPriceScale = require('../../World/Generics/NpcShopPriceScale');
 const DataCache = invoke('GameServer/DataCache');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
-const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const PriceDecision = require('./PriceDecision');
+const CrystalCatalog = require('../../Knowledge/CrystalCatalog');
+const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const HuntEfficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
 const C4RecipeItems = invoke('GameServer/Items/C4RecipeItems');
-const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
 
-// The first price of an item nobody has traded yet (design 15.4): the hours a
-// bot hunts to obtain one times what an hour of bots of that level earns,
-// not below the NPC buy-back and not above the NPC price.
+// The first price of an item nobody has traded yet (design 15.4): the
+// cheapest way to hunt or make it. Hunted: the hours a bot hunts to obtain
+// one times what an hour of bots of that level earns (Where, How long);
+// made: Made below. Not below the NPC buy-back, not above the NPC price
+// (withinWalls).
 //
 // Where (design: the best spot with the item): on every ordinary spot where
 // a monster drops (or, for the spoiler, spoils) the item, items per hour =
-// kills per hour from the spot table x the monster's share of the spot's
-// spawns x the expected amount per kill at the server's rate (the author's
-// itemDropYield, with the deep-blue rule at the level the table rates the
-// spot at). The spot with the most items per hour wins; its level is the
+// kills per hour from the spot table x the units one kill there yields
+// (GearAcquisitionPlanner.sourcePerKill: the monster's loot table's share of
+// the spot's kills x the expected amount per kill at the server's rate, the
+// author's itemDropYield, with the deep-blue rule at the level the table
+// rates the spot at; a spoil x the landing of that level's Spoil). The spot with the most items per hour wins; its level is the
 // item's level.
 //
 // How long: the kills needed there, 1 / (share x amount per kill), at the
@@ -31,27 +35,15 @@ const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
 // times the kill rate behind the bots' measured hour, and mixing the two
 // would put every common drop at the buy-back.
 //
-// An item without a hunting source (group E, user 2026-10-05): a crafted one
-// costs its materials (each at the NPC price when an NPC sells it, else at
-// its own first price) plus the labour, the craft time (its MP over the
-// seated MP regeneration of the lowest crafter able to make it) at that
-// crafter's hour; a crystal costs the cheapest gear of its grade per crystal
-// it breaks into; a no-grade shot the NPC price; anything else the NPC
-// buy-back. Every price stays inside the NPC walls. Adena and items without
-// a base price have none (null).
-function npcShare(spot, reward) {
-    const entries = spot?.npcEntries || [];
-    const name = String(reward.template?.name || '').trim().toLowerCase();
-    let total = 0;
-    let matched = 0;
-    for (const entry of entries) {
-        const count = Math.max(1, Number(entry.count || 1));
-        total += count;
-        if (Number(entry.selfId) === Number(reward.selfId) || String(entry.name || '').trim().toLowerCase() === name) matched += count;
-    }
-    return total > 0 ? matched / total : 0;
-}
-
+// Made (group E, user 2026-10-05): a crafted item costs its materials (each
+// at the NPC price when an NPC sells it, else at its own first price) plus
+// the labour, the craft time (its MP over the seated MP regeneration of the
+// lowest crafter able to make it) at that crafter's hour, over the recipe's
+// success rate; a crystal costs the cheapest dropped gear of its grade per
+// crystal it breaks into. The lowest of hunted, crafted and crystal wins (a
+// tie keeps that order). An item with none of them: a no-grade shot the NPC
+// price; anything else the NPC buy-back. Every price stays inside the NPC
+// walls. Adena and items without a base price have none (null).
 // Kills per hour of the roles able to hunt the spot alone, each at the
 // level the table rates the spot at for it, and the mean of those levels.
 function hunt(spotId, roles) {
@@ -73,13 +65,13 @@ function dropPrice(id, item, spots, timestamp) {
     let best = null;
     for (const source of GearAcquisitionPlanner.sourceIndexFor(spots).get(id) || []) {
         if (source.spot?.raidBoss === true) continue;
-        const share = npcShare(source.spot, source.reward);
-        if (!(share > 0)) continue;
         const where = hunt(source.spot.id, source.kind === 'spoil' ? ['spoiler'] : SpotValueTable.roles());
         if (!where) continue;
         const { expectedYield } = GearAcquisitionPlanner.itemDropYield(source.reward, id, source.kind,
             { npcLevel: source.npcLevel, killerLevel: where.level });
-        const perKill = share * Number(expectedYield || 0);
+        const spoiler = source.kind === 'spoil'
+            ? { level: where.level, skillLevel: SpotValueTable.roleSpoilLevel('spoiler', where.level) } : null;
+        const perKill = GearAcquisitionPlanner.sourcePerKill(source, Number(expectedYield || 0), spoiler);
         const perHour = where.kills * perKill;
         if (!(perHour > 0) || (best && perHour <= best.perHour)) continue;
         best = { perHour, perKill, level: where.level, spotId: source.spot.id, npcId: Number(source.reward.selfId), kind: source.kind };
@@ -97,12 +89,14 @@ function dropPrice(id, item, spots, timestamp) {
 // NPC is then the buyer's other source. A D+ shot or a crystal that no NPC
 // sells has no ceiling (E91, user 2026-10-07: the market balances it); with
 // the ceiling at the NPC price scaled by the rate, a D shot was clamped to 20
-// while its cost is 58. A hunted item keeps the ceiling.
+// while its cost is 58. A hunted item keeps the rate-scaled ceiling even when
+// no NPC sells it: there it is no NPC price but a guard on the hunt estimate,
+// which charges the whole hunting hour to one drop (lift it with that fix).
 function withinWalls(item, price, { made = false } = {}) {
     const base = Number(item.template?.price || 0);
     if (base > 0) {
-        const floor = NpcSellRules.npcBuyPrice(base);
-        const open = made && !Number.isFinite(invoke('GameServer/Bot/Economy/BotMarketPricing').npcPrice({ selfId: item.selfId }));
+        const floor = PriceDecision.buyback(item.selfId);
+        const open = made && !Number.isFinite(BotMarketPricing.npcPrice({ selfId: item.selfId }));
         const ceiling = open ? Infinity : NpcShopPriceScale.price(base, ProgressionRates.profile().multiplier);
         price = Math.min(ceiling, Math.max(floor, price));
     }
@@ -142,15 +136,24 @@ function seatedMpPerSecond(level) {
 }
 
 const MAX_CRAFT_DEPTH = 5;
+// The cheapest admitted recipe of the product (a product can have several:
+// other chances, inputs and books; a tie keeps the data's order).
 function craftPrice(id, item, options, depth) {
-    const recipe = C4RecipeItems.resolveByProductId(id);
-    if (!Sources.allowsRecipe(recipe)) return null;
-    if (depth >= MAX_CRAFT_DEPTH) {
-        // Cut short: what is priced from here is no full price to keep.
-        options.cut = true;
-        return null;
+    let best = null;
+    for (const recipe of C4RecipeItems.resolveVariantsByProductId(id)) {
+        if (!Sources.allowsRecipe(recipe)) continue;
+        if (depth >= MAX_CRAFT_DEPTH) {
+            // Cut short: what is priced from here is no full price to keep.
+            options.cut = true;
+            return null;
+        }
+        const found = recipePrice(recipe, item, options, depth);
+        if (found && (!best || found.price < best.price)) best = found;
     }
-    const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
+    return best;
+}
+
+function recipePrice(recipe, item, options, depth) {
     let materials = 0;
     for (const material of recipe.materials || []) {
         const npc = BotMarketPricing.npcPrice({ selfId: material.selfId });
@@ -163,13 +166,15 @@ function craftPrice(id, item, options, depth) {
     const seconds = Number(recipe.mpCost || 0) / seatedMpPerSecond(level);
     const hour = HuntEfficiency.huntIncome({ level, stats: {} }, options.timestamp);
     const labour = seconds / 3600 * hour.perHour;
-    const count = Math.max(1, Number(recipe.productCount || 1));
-    return { price: withinWalls(item, (materials + labour) / count, { made: true }), materials: materials / count, labour: labour / count,
-        crafterLevel: level, source: 'craft' };
+    // A failed craft loses its materials and labour: one product costs the tries it takes.
+    const perProduct = Math.max(1, Number(recipe.productCount || 1)) * Number(recipe.successRate) / 100;
+    return { price: withinWalls(item, (materials + labour) / perProduct, { made: true }), materials: materials / perProduct,
+        labour: labour / perProduct, crafterLevel: level, source: 'craft' };
 }
 
 // The gear that breaks into each crystal, with its crystal count: crystal
-// selfId -> [{ gear, crystals }], static data built once.
+// selfId -> [{ gear, crystals }], the one crystallizable-gear catalogue
+// (CrystalCatalog.byGrade) under the item sources, kept per Sources.revision.
 let gearByCrystal = null;
 let crystalRevision = -1;
 function crystalSources(id) {
@@ -177,9 +182,8 @@ function crystalSources(id) {
     if (!gearByCrystal || crystalRevision !== revision) {
         crystalRevision = revision;
         gearByCrystal = new Map();
-        for (const { gear, crystals, rank } of require('../../Knowledge/CrystalCatalog').facts(DataCache.items)) {
-            const crystalId = CRYSTAL_IDS[rank.toUpperCase()];
-            if (!Sources.hasSource(gear.selfId) || !(crystals > 0) || !crystalId) continue;
+        for (const rows of CrystalCatalog.byGrade(DataCache.items).values()) for (const { gear, crystals, crystalId } of rows) {
+            if (!Sources.hasSource(gear.selfId)) continue;
             if (!gearByCrystal.has(crystalId)) gearByCrystal.set(crystalId, []);
             gearByCrystal.get(crystalId).push({ gear, crystals });
         }
@@ -192,6 +196,7 @@ function crystalPrice(id, item, options) {
     if (!sources) return null;
     let best = null;
     for (const { gear, crystals } of sources) {
+        // The drop price, not the gear's first price: gear recipes consume the grade's crystals, pricing by craft would cycle.
         const drop = dropPrice(Number(gear.selfId), gear, options.spots, options.timestamp);
         if (!drop) continue;
         const unit = drop.price / crystals;
@@ -203,42 +208,72 @@ function crystalPrice(id, item, options) {
 // A shot of no grade, by the one item classifier (MarketCounters.counterOf).
 function noGradeShotPrice(item) {
     if (invoke('GameServer/Bot/Economy/MarketCounters').counterOf(item.selfId) !== 'shot none') return null;
-    const npc = invoke('GameServer/Bot/Economy/BotMarketPricing').npcPrice(item);
+    const npc = BotMarketPricing.npcPrice(item);
     return Number.isFinite(npc) ? { price: Math.max(1, Math.round(npc)), source: 'npc' } : null;
 }
 
 function priceOf(id, options, depth) {
     const item = ItemTemplateIndex.find(DataCache.items, id);
     if (!Sources.hasSource(id) || !item || id === 57 || !(Number(item.template?.price) > 0)) return null;
-    return dropPrice(id, item, options.spots, options.timestamp)
-        || craftPrice(id, item, options, depth)
-        || crystalPrice(id, item, options)
+    let best = null;
+    for (const found of [dropPrice(id, item, options.spots, options.timestamp), craftPrice(id, item, options, depth), crystalPrice(id, item, options)]) {
+        if (found && (!best || found.price < best.price)) best = found;
+    }
+    return best
         || noGradeShotPrice({ ...item, selfId: id })
-        || { price: NpcSellRules.npcBuyPrice(Number(item.template.price)), source: 'buyback' };
+        || { price: PriceDecision.buyback(id), source: 'buyback' };
 }
 
+// The first prices for the market's readers (PriceBelief, the counters' index)
+// and of a recipe's materials, kept while their inputs hold: the item sources
+// (Sources.revision), the spot table with its spot catalog
+// (SpotValueTable.revision) and the NPC prices (BotMarketPricing.npcRevision).
+// Rates and the reward catalog are restart inputs, not read here: the table
+// sees them at its own next read, and the clan worker's rate switch arrives
+// with its useNpcOfferSnapshot. The kill share of a source
+// (SpotRewardExpectation.killShare) reads the spots and the NPC and reward
+// tables the source index is built on (Sources.revision); a spoil's landing
+// reads the skill table, a restart input too.
+// The hunting hour of a price has no own samples, so it reads only the spot
+// table under those same inputs. The spots a kept price is asked for are the
+// thread's spot catalog, the one the spot table reads (MarketCounters and
+// SpotValueTable get the same array on main and in the worker), so the table's
+// revision stands for them; firstPrice keeps nothing of its own. A read at the
+// top compares the three tokens; one moved drops every kept price and the next
+// read of an id prices it again: no clock, a price moves only with its inputs.
+// A price whose recipe chain was cut at MAX_CRAFT_DEPTH (deep inside another
+// item's materials) is used there but not kept: the item's own price, asked at
+// the top, prices its whole chain.
+const cache = new Map();
+let keptSources = null, keptTable = null, keptNpc = null;
+// Moves whenever the kept prices are dropped: a reader that holds values
+// made of first prices (RecipeProductionIndex market facts) compares it.
+let generation = 0;
+function keepFor() {
+    const sources = Sources.revision(), table = SpotValueTable.revision(), npc = BotMarketPricing.npcRevision();
+    if (sources === keptSources && table === keptTable && npc === keptNpc) return;
+    keptSources = sources; keptTable = table; keptNpc = npc;
+    cache.clear(); generation++;
+}
+function revision() { keepFor(); return generation; }
+
 function firstPrice(itemId, { spots = [], timestamp = Date.now() } = {}) {
+    keepFor();
     return priceOf(Number(itemId), { spots, timestamp }, 0);
 }
 
-// The first price for the market's readers (PriceBelief) and of a recipe's
-// materials, kept an hour of this thread's clock: it moves only with the
-// static base hunting income. A price whose recipe chain was cut at MAX_CRAFT_DEPTH
-// (deep inside another item's materials) is used there but not kept: the
-// item's own price, asked at the top, prices its whole chain.
-const CACHE_MS = 60 * 60 * 1000;
-const cache = new Map();
+// depth > 0: a material of a price being made, whose entry already checked the tokens.
 function cachedFirstPrice(itemId, options = {}, depth = 0) {
+    if (depth === 0) keepFor();
     const id = Number(itemId);
-    // priceOf admits the source; an item without one is kept as a null price.
-    const kept = cache.get(id);
-    const clock = Date.now();
-    if (kept && clock - kept.at < CACHE_MS) return kept.value;
-    const own = { spots: options.spots || [], timestamp: Number(options.timestamp || clock), cut: false };
+    // priceOf admits the source; an item without one is kept as a null price (undefined: not kept).
+    const held = cache.get(id);
+    if (held !== undefined) return held;
+    const own = { spots: options.spots || [], timestamp: Number(options.timestamp || Date.now()), cut: false };
     const value = priceOf(id, own, depth)?.price ?? null;
     if (own.cut) options.cut = true;
-    else cache.set(id, { at: clock, value });
+    else cache.set(id, value);
     return value;
 }
 
-module.exports = { firstPrice, cachedFirstPrice, resetCache() { cache.clear(); } };
+module.exports = { firstPrice, cachedFirstPrice, revision, resetCache() { cache.clear(); generation++; } };

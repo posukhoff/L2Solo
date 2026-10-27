@@ -96,7 +96,6 @@ async function run() {
     assert.equal(native.amount(after, 4589), 0);
     assert.equal(native.amount(after, 4601), 10);
     assert.equal(native.amount(after, 57), 1000000 + 50 * price(4589) + 40 * price(4601));
-    assert.equal(Disposition.npcLiquidationCandidates(drawnStock.state).length, 0, 'another cleanup cannot resell the retained dyes');
     const draw = await Database.applyBotImprovement(selected.characterId, { kind: 'henna', symbolId: 157,
         materials: [{ selfId: symbol.dyeSelfId, amount: symbol.dyeAmount }], fee: symbol.price }, { coldState: drawnStock.state });
     assert.equal(draw.result, 'henna');

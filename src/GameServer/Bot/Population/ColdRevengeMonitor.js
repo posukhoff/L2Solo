@@ -1,8 +1,8 @@
 const Policy = require('../../Social/RevengePolicy');
 const TendencyRoll = require('../AI/TendencyRoll');
 const MAX_ACTORS = 128;
-const partyId = state => state.party?.partyId || state.partyId || null;
-const unitId = state => partyId(state) || `solo:${state.characterId}`;
+const { partyIdOf } = require('./PartyId');
+const unitId = state => partyIdOf(state) || `solo:${state.characterId}`;
 function available(state, at) {
     return state?.phase === 'cold' && ['hunting', 'grouped'].includes(state.activity) && state.vitals?.hp > 0
         && state.spotId && !state.stats?.travel && !state.stats?.coldCompetition?.wait
@@ -35,8 +35,8 @@ class ColdRevengeMonitor {
     // `rng` is the test override of the roll (tests force outcomes with () => 0).
     sampleActors(actors, read, memory, at, personaFor, rng = null, acceptEvent = () => true) {
         const events = [];
-        const identity = s => ({ id: s.characterId, clanId: Number(s.stats?.clanId || 0), partyId: partyId(s) });
-        const participant = e => ({ id: e.state.characterId, name: e.state.name, partyId: partyId(e.state),
+        const identity = s => ({ id: s.characterId, clanId: Number(s.stats?.clanId || 0), partyId: partyIdOf(s) || null });
+        const participant = e => ({ id: e.state.characterId, name: e.state.name, partyId: partyIdOf(e.state) || null,
             size: this.leaderParty(e.state.characterId)?.memberIds?.length || 1,
             partyRevision: this.leaderParty(e.state.characterId)?.revision,
             revision: Number(e.state.simulation?.revision || 0), memoryRevision: memory.revision(e.state.characterId) });

@@ -25,7 +25,7 @@
     };
     const wholeNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
     const adena = value => value == null || !Number.isFinite(Number(value)) ? '—' : `${wholeNumber.format(Number(value))} <span class="economy-unit">A</span>`;
-    const reason = value => ({ superseded: 'Replaced by a newer wish', source_unavailable: 'No source available',
+    const reason = value => ({ superseded: 'Replaced by a newer wish', preempted: 'Paused for a more urgent need', source_unavailable: 'No source available',
         wish_focus: 'Waiting for the priority wish', no_missing_craftable_upgrade: 'No craftable upgrades available',
         insufficient_funds: 'Needs more adena' })[value] || null;
     const activityName = action => ({ hunting: action.funding ? 'Hunting for income' : 'Hunting for items',
@@ -77,7 +77,7 @@
             ${money ? `<article class="economy-card economy-money">
                 <header class="economy-section-heading"><h4>Adena & spending</h4><span>Latest budget</span></header>
                 <dl class="economy-money-metrics">${fact('Wallet', adena(money.wallet))}${fact('Survival reserve', adena(money.survivalReserve))}
-                    ${fact('Estimated income / hour', adena(money.adenaPerHour))}${money.firstUnfundedPrice > 0 ? fact('Next unfunded wish', adena(money.firstUnfundedPrice)) : ''}</dl>
+                    ${fact('Estimated income / hour', adena(money.adenaPerHour))}${money.firstUnfundedPrice > 0 ? fact('Cash for next unfunded wish', adena(money.firstUnfundedPrice)) : ''}</dl>
                 ${money.funded.length ? `<div class="economy-budget"><div class="economy-budget-heading"><h5>Planned purchases</h5><span>Amounts are priorities only</span></div>
                     ${money.funded.map(row => `<div class="economy-budget-row"><span>${row.item ? item(row.item) : 'Other planned purchases'}</span><strong>${adena(row.cost)}</strong></div>`).join('')}</div>` : '<p class="economy-note">No purchases budgeted yet.</p>'}
             </article>` : ''}

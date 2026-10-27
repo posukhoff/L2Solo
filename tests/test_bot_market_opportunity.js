@@ -88,7 +88,7 @@ try {
         actor: { fetchId: () => 9200, fetchPrivateStore: () => budgetStore },
         coldMarketState: { characterId: 9200, adena: 150, stats: { marketStore: budgetStore } }
     }];
-    assert.deepStrictEqual(MarketOpportunity.activeBuyDemandSelfIds(), [],
+    assert.deepStrictEqual(invoke('GameServer/AfkTrade/AfkTradeService').activeDemandSelfIds(), [],
         'a budget-backed live WTB is not board demand');
     assert.deepStrictEqual(MarketOpportunity.findBuyOffers(1864, { town: 'Giran' }), [],
         'only board buy records are sold into');

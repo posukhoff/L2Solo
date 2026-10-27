@@ -1,7 +1,7 @@
 const Roles = invoke('GameServer/Bot/AI/BotRoles');
 const Rates = invoke('GameServer/ProgressionRates');
 const DataCache = invoke('GameServer/DataCache');
-const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const PriceDecision = require('../Economy/PriceDecision');
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 const MAX_SPOTS = 8;
@@ -37,8 +37,7 @@ function lootValue(items = []) {
     for (const item of items) {
         const amount = Math.max(0, Number(item.amount || 0));
         if (Number(item.selfId) === 57) { value += amount; continue; }
-        const price = Number(ItemTemplateIndex.find(DataCache.items, item.selfId)?.template?.price || 0);
-        value += NpcSellRules.npcBuyPrice(price) * amount;
+        value += PriceDecision.buyback(item.selfId) * amount;
     }
     return value;
 }
@@ -258,11 +257,13 @@ function huntHour(hunt, state = {}) {
         || table.rankedIncome(tableRole, levelOf(state), costs, -7, false, rewardOptions)[0];
     return Math.max(1, row ? netIncome(row, costs) : 0);
 }
-function hourValue(state, timestamp = Date.now(), mode) {
-    const hunt = huntIncome(state, timestamp, mode);
-    const packetHour = !mode && Number(state.stats?.money?.[0]);
-    return { perHour: packetHour > 0 ? packetHour : huntHour(hunt, state), perKill: hunt.perKill,
-        expPerHour: hunt.expPerHour, source: hunt.source };
+// The bot's hour, the one owner: the worker's saved figure (money packet
+// hour, EconomyContext) first; only a bot without one runs its hunt, or the
+// hunt the caller already built (`hunt`), through huntHour.
+function hourValue(state, timestamp = Date.now(), { hunt } = {}) {
+    const packetHour = Number(state.stats?.money?.[0]);
+    if (packetHour > 0 && Number.isFinite(packetHour)) return { perHour: packetHour };
+    return { perHour: huntHour(hunt || huntIncome(state, timestamp), state) };
 }
 // Kept as lifecycle adapters for callers which accepted earlier samples.
 function observe() {}

@@ -4,9 +4,11 @@ const BotEquipmentCompatibility = invoke('GameServer/Bot/AI/BotEquipmentCompatib
 const BotWeaponCompatibility = invoke('GameServer/Bot/AI/BotWeaponCompatibility');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const ArmorPolicy = invoke('GameServer/Bot/AI/BotArmorPolicy');
-const { gradeForLevel } = invoke('GameServer/Bot/AI/GearGradeRule');
+const { GRADES: RANK_ORDER, gradeForLevel } = invoke('GameServer/Bot/AI/GearGradeRule');
 const Diagnostics = invoke('GameServer/Bot/Economy/EconomyDiagnostics');
 const Item = invoke('GameServer/Model/Item');
+const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+const Crystallization = invoke('GameServer/Bot/Economy/BotCrystallization');
 
 const ARMOR_SLOTS = {
     earringRight: 1,
@@ -25,7 +27,6 @@ const ARMOR_SLOTS = {
     fullArmor: 15
 };
 
-const RANK_ORDER = ['none', 'd', 'c', 'b', 'a', 's'];
 const UPGRADE_COOLDOWN_MS = 5000;
 // session -> the inputs of its last periodic pass that found no upgrade.
 const emptyPasses = new WeakMap();
@@ -256,18 +257,23 @@ function bestUpgradeSlot(actor, item, plannedScores) {
     }, null)?.slot || null;
 }
 
-// A worn item is never hidden; an unworn one reserved as a luxury-exchange
-// material must stay in the backpack for the exchange.
-function isReservedExchangeMaterial(session, item) {
-    if (item.fetchEquipped()) return false;
-    const plan = session?.coldLifeState?.stats?.equipmentPlan;
-    return plan?.strategy === 'luxury_exchange'
-        && Boolean(plan.materials?.some(row => Number(row.selfId) === Number(item.fetchSelfId())));
+// The luxury-exchange inputs the bot's plan holds, read once per pass from
+// the disposition view (ItemDisposition.exchangeMaterials owns the answer).
+function exchangeInputIds(session) {
+    const state = session?.coldLifeState;
+    return new Set(Disposition.exchangeMaterials(state && Disposition.equipmentInputPlan(state))
+        .map(row => Number(row.selfId)));
 }
 
-function findBestUpgrades(session) {
+// A worn item is never hidden; an unworn one held as a luxury-exchange
+// material must stay in the backpack for the exchange.
+function isReservedExchangeMaterial(reservedIds, item) {
+    return !item.fetchEquipped() && reservedIds.has(Number(item.fetchSelfId()));
+}
+
+function findBestUpgrades(session, reservedIds = exchangeInputIds(session)) {
     const actor = session?.actor;
-    const items = (actor?.backpack?.fetchItems ? actor.backpack.fetchItems() : []).filter(item => !isReservedExchangeMaterial(session, item));
+    const items = (actor?.backpack?.fetchItems ? actor.backpack.fetchItems() : []).filter(item => !isReservedExchangeMaterial(reservedIds, item));
     const suitableItems = items.filter((item) => isSuitableItem(actor, item));
     const torsoUpgrades = findTorsoUpgrades(actor, suitableItems);
     const plannedScores = new Map();
@@ -324,11 +330,12 @@ function safeCandidate(session, itemId) {
     const items = actor?.backpack?.fetchItems ? actor.backpack.fetchItems() : [];
     const item = items.find((candidate) => Number(candidate.fetchId?.()) === Number(itemId || 0));
     if (!item) return { item: null, slot: null, reason: 'item_not_found' };
-    if (isReservedExchangeMaterial(session, item)) return { item, slot: null, reason: 'reserved_exchange_material' };
+    const reservedIds = exchangeInputIds(session);
+    if (isReservedExchangeMaterial(reservedIds, item)) return { item, slot: null, reason: 'reserved_exchange_material' };
     if (!isSuitableItem(actor, item)) return { item, slot: null, reason: 'incompatible_item' };
     if (ArmorPolicy.ARMOR_SLOTS.has(Number(item.fetchSlot()))
         && ArmorPolicy.completeSets(items.filter(candidate => isSuitableItem(actor,candidate,true))).length) {
-        const planned = findBestUpgrades(session).filter(entry => ArmorPolicy.ARMOR_SLOTS.has(entry.slot));
+        const planned = findBestUpgrades(session, reservedIds).filter(entry => ArmorPolicy.ARMOR_SLOTS.has(entry.slot));
         const selected = planned.find(entry => Number(entry.item.fetchId()) === Number(itemId));
         if (!selected) return { item, slot: null, reason: 'not_an_upgrade' };
         if (planned.length > 1) return { item, slot: null, reason: 'requires_equipment_optimization' };
@@ -391,8 +398,9 @@ function applyUpgradeEntries(session, upgrades) {
 
 // What findBestUpgrades reads: the bag (its array and size, which direct
 // writers replace or change, and the native inventory revision), the worn gear
-// (equipment revision), level and class (grade, role) and the exchange plan
-// that reserves materials. The bag key is the one SurvivalFloor keeps for its
+// (equipment revision), level and class (grade, role), the exchange plan
+// that reserves materials and the skill list that decides which of them the
+// bot can crystallize (ItemDisposition.equipmentInputPlan). The bag key is the one SurvivalFloor keeps for its
 // bag view; an in-place amount or enchant change bumps the revisions only on a
 // bound bag, so a held mark binds it (Item.bindInventory).
 function upgradeInputs(session) {
@@ -400,7 +408,8 @@ function upgradeInputs(session) {
     const backpack = actor.backpack;
     const items = backpack.fetchItems?.() || [];
     return [items, items.length, backpack.inventoryRevision, backpack.equipmentRevision,
-        actor.fetchLevel?.(), actor.fetchClassId?.(), session.coldLifeState?.stats?.equipmentPlan];
+        actor.fetchLevel?.(), actor.fetchClassId?.(), session.coldLifeState?.stats?.equipmentPlan,
+        Crystallization.ownSkills(session.coldLifeState)];
 }
 
 function sameInputs(left, right) {

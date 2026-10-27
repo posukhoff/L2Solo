@@ -1,4 +1,5 @@
 const refreshPartyMemberships = require('../../World/PartyMembershipPublication');
+const { partyIdOf } = require('../Population/PartyId');
 const Catalog = invoke('GameServer/Items/C4Unseal');
 const Mammon = invoke('GameServer/World/GiranMammon');
 const Karma = invoke('GameServer/Karma');
@@ -69,7 +70,7 @@ function beginTravel(state, timestamp = Date.now(), { fromCraft = false } = {}) 
         && Catalog.resolve(selected.unseal.sourceId, selected.unseal.productId);
     const busyFlags = continuation ? BUSY_FLAGS.filter(key => !['craftReturn', 'marketReturn', 'partyMarketReturn'].includes(key)) : BUSY_FLAGS;
     if (state.phase !== 'cold' || state.activity !== 'hunting'
-        || state.party?.partyId || state.partyId || Karma.closesTowns(state.stats?.karma)
+        || partyIdOf(state) || Karma.closesTowns(state.stats?.karma)
         || BotErrands.busyWith(state, busyFlags)
         || Number(state.stats?.mammonRetryAt||0)>timestamp || !candidate(state)) return null;
     const nearestTown = TownRespawn.getClosestTown(state.loc?.locX,state.loc?.locY,state.loc?.locZ);

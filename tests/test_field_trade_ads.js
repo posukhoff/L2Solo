@@ -38,8 +38,11 @@ const id = 730062;
         const options = { board: Afk.boardIndex(), now: 1800000000000, findSpot: () => null,
             npcOffersFor: () => [], onTownDecision: () => {} };
         const Counters = invoke('GameServer/Bot/Economy/MarketCounters');
-        // Public completed prices are price evidence, not a pending buyer.
-        for (const itemId of [1786, 1867, 79, 1835]) Counters.deal(itemId, 1000, 1, options.now - 1, id + 1);
+        // Public completed prices are price evidence, not a pending buyer; two
+        // deals in Giran are a forecast flow that makes each item worthwhile
+        // for a store line (MarketPricing.quotable).
+        for (const itemId of [1786, 1867, 79, 1835])
+            for (const ago of [2, 1]) Counters.deal(itemId, 1000, 1, options.now - ago, id + 1, 'Giran');
         const economy = { ...Decision.economyFor(state, options), moneyPrice: .001 };
         const Roll = invoke('GameServer/Bot/AI/TendencyRoll'), roll = Roll.roll;
         // Fix this one character decision, not a buyer or a sale outcome.
@@ -78,7 +81,7 @@ const id = 730062;
         state = Life.cachedState(id) || state;
         state = await Life.upsertState({ ...state, stats: { ...state.stats,
             money: [10000, .0001, 100, 0, .001, 2000, 1864] } }, 'field_bid_funding');
-        await execute({ buyAds: [[1864, 1, 10]] });
+        await execute({ buyAds: [[1864, 1, 10]], buyTown: 'Giran' });
         const bid = Afk.ownerRecords(id).find(row => row.kind === 'buy_ad');
         assert(bid); assert.equal(bid.custodyPolicy, 1);
         assert.equal(bid.escrowAdena, 0, 'an unaccepted WTB reserves no adena');

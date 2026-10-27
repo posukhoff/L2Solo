@@ -6,6 +6,7 @@ const TownRespawn = require('../../World/TownRespawn');
 const OfferOrder = require('./OfferOrder');
 const Karma = require('../../Karma');
 const TripPayment = require('../Travel/TripPayment');
+const TwinCluster = require('./TwinCluster');
 // A sale town whose gatekeeper fee the bot's money cannot cover is dropped.
 const fareShort = (fees, state) => TripPayment.fareShort('sale_town', fees, require('./PurchaseFunding').budget(state));
 
@@ -53,6 +54,20 @@ function dGradeMarketFor(state = {}) {
     return bucket < GLUDIO_D_GRADE_SHARE_PERCENT ? 'Gludio' : 'Dion';
 }
 
+// The market a bot's census cell buys in before its goods' grade
+// (DemandCensus): karma Floran, else its D market. Reads karma and
+// characterId only (no spot lookup on main).
+function homeMarket(state = {}) {
+    return Karma.closesTowns(state?.stats?.karma) ? Karma.TOWN_NAME : dGradeMarketFor(state);
+}
+// The town goods of a grade trade in for a bot whose home market is `home`:
+// Floran stays, C and up Giran, D its D market; no grade has no rule here
+// (the farming origin's village, targetTownForItems).
+function gradeTown(rank, home) {
+    if (home === Karma.TOWN_NAME) return home;
+    return ['c', 'b', 'a', 's'].includes(rank) ? 'Giran' : rank === 'd' ? home : null;
+}
+
 function targetTownForItems(state, items = [], options = {}) {
     // A bot with karma trades in Floran (design 5.8, E48).
     if (Karma.closesTowns(state?.stats?.karma)) return Karma.TOWN_NAME;
@@ -71,21 +86,14 @@ function targetTownForItems(state, items = [], options = {}) {
         const origin = OfferOrder.farmingOrigin(state, options.findSpot || ((spotId) => SpotService.findById(spotId)));
         return nearestNoGradeMarket(origin)?.name || 'Giran';
     }
-    if (!hasHigherGrade && hasDGrade) return dGradeMarketFor(state);
-    return 'Giran';
+    return gradeTown(!hasHigherGrade && hasDGrade ? 'd' : 'c', dGradeMarketFor(state));
 }
 
-// The prepared bid and its native publication use the same meeting town.
-// Retain the oldest matching buy ad, unless karma closes that town.
-function buyAdTown(state, items, owned = []) {
-    let standing = null;
-    for (const line of owned) {
-        if (!['buy_ad', 'shop'].includes(line.kind) || line.storeType !== 3 || !(line.count > 0)
-            || !items.some(item => Number(item.selfId) === Number(line.selfId))) continue;
-        if (!standing || line.recordId < standing.recordId) standing = line;
-    }
-    return standing && Karma.townFor(state.stats?.karma, standing.town) === standing.town
-        ? standing.town : targetTownForItems(state, items);
+// The prepared bid and its native publication use the same town: the
+// bot's twin town (TwinCluster.townOf; packet: the build that proposed it),
+// else (a station, no worker build yet) the grade town of the items.
+function buyAdTown(state, items, packet = null) {
+    return TwinCluster.townOf(state, packet) || targetTownForItems(state, items);
 }
 
 // One bounded town choice over the actual offered stock. Category counters
@@ -132,8 +140,7 @@ function* chooseTown(state, items = [], options = {}) {
                     yield 'quote';
                 }
                 if (!known) break;
-                const template = require('../../Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, row.id);
-                const npc = invoke('GameServer/Items/NpcSellRules').npcBuyPrice(Number(template?.template?.price || 0));
+                const npc = Price.buyback(row.id);
                 const units = Math.min(row.units, held?.units ?? row.units);
                 const outcome = Price.saleOutcome({ units, applicableUnits: demand.applicableUnits,
                     willingUnits: demand.willingUnits, cheaperUnits: cheaper, price: row.price, residualUnitValue: npc,
@@ -196,27 +203,17 @@ function shopTown(state, items = [], options = {}) {
     return next.value.town;
 }
 
-// The town a bot without a shop opens one in: the decision it already made
-// (stats.shopTown, kept until it is back on its spot) or a new roll
-// (shopTown). Returns { town, shopTown } with shopTown the decision to keep
-// when one was made now.
-function openingTown(state, items, timestamp = Date.now()) {
-    if (state?.stats?.shopTown?.town) return { town: state.stats.shopTown.town, shopTown: null };
-    const town = shopTown(state, items, { timestamp });
-    return { town, shopTown: { town, at: timestamp } };
-}
-
-// Where a bot's sale trip goes: the town of a buyer bidding on its bag (the
-// static and buy-ad buyers, until step 3.6); else the town of its shop, which
-// never moves (N51, E46); else the town its shop will open in (openingTown).
-function saleTown(state, timestamp = Date.now()) {
-    if (Karma.closesTowns(state?.stats?.karma)) return { town: Karma.TOWN_NAME, shopTown: null };
-    const buyerTown = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService').bestTownFor(state)?.town
-        || invoke('GameServer/Bot/Economy/StaticBuyerService').bestTownFor(state)?.town;
-    if (buyerTown) return { town: buyerTown, shopTown: null };
+// Where a bot's sale trip goes: the town of a buy-ad buyer bidding on its
+// bag (bots never sell to a static buyer, C8); else where its store stands
+// (TwinCluster.storeTown: its shop, which never moves (N51, E46), else its
+// twin town, where its shop opens); else, before its first worker build, the
+// grade town of its bag. Returns { town }.
+function saleTown(state) {
+    if (Karma.closesTowns(state?.stats?.karma)) return { town: Karma.TOWN_NAME };
+    const buyerTown = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService').bestTownFor(state)?.town; // lazy: worker the buy store service loads main-thread modules (Network/Response)
+    if (buyerTown) return { town: buyerTown };
     const shop = invoke('GameServer/AfkTrade/AfkTradeService').findOwnerProjection(state?.characterId)?.shop;
-    if (shop?.town) return { town: shop.town, shopTown: null };
-    return openingTown(state, ItemDisposition.saleCandidates(state), timestamp);
+    return { town: TwinCluster.storeTown(state, shop) || targetTownForItems(state, ItemDisposition.saleCandidates(state)) };
 }
 
 function targetTownForSale(state) {
@@ -228,9 +225,10 @@ module.exports = {
     GLUDIO_D_GRADE_SHARE_PERCENT,
     NO_GRADE_MARKETS,
     dGradeMarketFor,
+    homeMarket,
+    gradeTown,
     marketTown,
     nearestNoGradeMarket,
-    openingTown,
     saleTown,
     shopTown,
     chooseTown,

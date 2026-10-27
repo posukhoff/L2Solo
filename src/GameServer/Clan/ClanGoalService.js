@@ -235,7 +235,7 @@ async function contextFor(clan) {
     const stock = warehouseRows
         .filter((item) => Number(item.selfId) === Number(Config.bloodMarkItemId))
         .reduce((sum, item) => sum + Math.max(0, number(item.amount) - number(item.reservedAmount)), 0);
-    const offer = stock < 1 ? MarketOpportunity.bestOffer(Config.bloodMarkItemId, { budget: Infinity }) : null;
+    const offer = stock < 1 ? MarketOpportunity.bestOffer(Config.bloodMarkItemId, { budget: Infinity, purpose: 'clan' }) : null;
     const halls = await Database.fetchClanHallAuctions();
     const economy = ClanEconomy.forClan(clan, { warehouse: warehouseRows, halls, proofOffer: offer });
     const affordable = offer && Number(offer.price) <= economy.budgetFor('level', Config.bloodMarkItemId);

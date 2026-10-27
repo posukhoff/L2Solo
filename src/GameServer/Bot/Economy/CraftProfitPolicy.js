@@ -1,67 +1,65 @@
 'use strict';
-const Valuation = require('./EconomicValuation');
 const RecipeCatalog = require('../../Knowledge/RecipeCatalog');
 
 function successProbability(recipe) {
     const rate = Number(recipe?.successRate);
     return Number.isFinite(rate) && rate >= 0 && rate <= 100 ? rate / 100 : NaN;
 }
-function craftOutcomes(recipe, { success = {}, failure = {}, batches = 1 } = {}) {
-    const probability = successProbability(recipe);
-    if (!Number.isFinite(probability) || !Number.isSafeInteger(batches) || batches < 0 || batches > 64) return [];
-    // craftSelf/craftInventoryItems make one draw for the whole native batch.
-    // Clip the successful physical output first; never clip its expectation.
-    return [{ ...success, probability }, { ...failure, probability: 1 - probability }];
-}
+// MP hours of any batch count (the 64-batch bound is per command: craftFacts perCommand).
 function mpHours(recipe, batches = 1, { mpPerHour } = {}) {
     const mp = Number(recipe?.mpCost ?? 0);
-    if (!Number.isFinite(mp) || mp < 0 || !Number.isSafeInteger(batches) || batches < 0 || batches > 64) return null;
+    if (!Number.isFinite(mp) || mp < 0 || !Number.isSafeInteger(batches) || batches < 0) return null;
     if (!mp || !batches) return 0;
     return Number.isFinite(mpPerHour) && mpPerHour > 0 ? mp * batches / mpPerHour : null;
 }
-
-function revenue(recipe, price) {
-    return Number(price) * Number(recipe?.productCount || 0)
-        * successProbability(recipe);
+// The batches an MP pool pays for, at most one command's 64 (a recipe with no
+// MP cost: 64). The one MP bound of a craft: the craft facts (perCommand), a
+// basket's quantity search (WealthCraftPolicy), a workshop's published
+// capacity (CraftWorkshopService) and a plan's own or workshop craft
+// (ColdCraftingService).
+function mpBatches(mp, recipe) {
+    const cost = Number(recipe?.mpCost || 0);
+    return cost > 0 ? Math.min(64, Math.floor(Math.max(0, Number(mp) || 0) / cost)) : 64;
 }
-// Materials retain their market opportunity value even when already owned.
-// A missing monetary hour or MP production rate is unknown labour, never free labour.
-function margin(recipe, price, inputs, { hourAdena, hunt, mpPerHour, tripCost = 0 } = {}) {
-    hourAdena = hunt?.perHour ?? hourAdena;
-    const mp = Math.max(0, Number(recipe?.mpCost || 0));
-    if (mp && (!(hourAdena >= 0) || !Number.isFinite(hourAdena) || !(mpPerHour > 0))) return null;
+// The labour of one craft: its MP hours at the crafter's seated recovery and
+// their worth at the crafter's hour (null: MP rate unknown). A workshop's fee
+// (TwinCluster) is this labour.
+function labour(recipe, { hourAdena, mpPerHour } = {}) {
     const hours = mpHours(recipe, 1, { mpPerHour });
-    if (hours === null) return null;
-    const labour = hours * Number(hourAdena || 0);
-    const moneyPrice = hourAdena > 0 ? 1 / hourAdena : 1;
-    const common = { ownInputOpportunityValue: Number(inputs), actualCashFees: Math.max(0, Number(tripCost || 0)),
-        foregoneBenefitHours: hourAdena > 0 ? hours : 0, cycleHours: hours };
-    const value = Valuation.opportunity({ moneyPrice }, craftOutcomes(recipe, {
-        success: { ...common, receipts: Number(price) * Number(recipe?.productCount || 0) }, failure: common }));
-    if (!value.known) return null;
-    const expectedRevenue = value.expectedReceipts;
-    const profit = value.valueHours / moneyPrice;
-    return Number.isFinite(profit) ? { expectedRevenue, inputs: Number(inputs), labour, hours, profit,
-        perHour: hours > 0 ? profit / hours : profit } : null;
+    return hours === null ? null : { hours, adena: hours * Number(hourAdena || 0) };
 }
-// Revenue less materials and trip, in adena per craft hour; zero-MP is no repeatable clock.
-function craftIncomePerHour(margin) {
-    return margin?.hours > 0 ? (margin.profit + margin.labour) / margin.hours : null;
+
+// The part of a recipe's price one sale carries: a learned recipe is kept,
+// so its price P spreads over the units the crafter can sell in its time in
+// grade (rate R units/h over H hours). One sale of `units` carries
+// P x units / (R x H), never more than P; an endless rate or horizon
+// carries nothing. Without a known (positive) rate or horizon the sale
+// carries the whole price.
+function learningShare(price, units, ratePerHour, horizonHours) {
+    const whole = Math.max(0, Number(price) || 0);
+    if (![units, ratePerHour, horizonHours].every(value => value > 0)) return whole;
+    const part = units / (ratePerHour * horizonHours);
+    return Number.isNaN(part) ? whole : whole * Math.min(1, part);
+}
+// What a learned recipe keeps for its crafter past one sale (the crafter's
+// own step over the shared one-craft margin every other reader values a
+// scroll at, RecipeProductionIndex.scrollValue): the crafts its open demand
+// sells in the horizon beyond this sale's `units` (rate R units/h over H
+// hours, `perCraft` units each), each worth the recipe's market margin, less
+// one sale trip in adena; at least the part of the price later sales carry
+// (price - share). O(1).
+function keptRecipeValue({ price, share, margin, perCraft, units, ratePerHour, horizonHours, tripCost = 0 }) {
+    const carried = Math.max(0, (Number(price) || 0) - (Number(share) || 0));
+    if (!(margin > 0) || !(perCraft > 0) || ![ratePerHour, horizonHours].every(value => value > 0 && Number.isFinite(value)))
+        return carried;
+    const crafts = Math.max(0, ratePerHour * horizonHours - (Number(units) || 0)) / perCraft;
+    return Math.max(carried, margin * crafts - Math.max(0, Number(tripCost) || 0));
 }
 function contextFor(state, timestamp = Date.now()) {
     const context = require('../Population/ColdEconomyDecision').economyFor(state, { timestamp });
     return { ...context, ...invoke('GameServer/Bot/Population/ColdOccupationSources').craftLabour(state, timestamp) };
 }
 function tripFor(state, options = {}) { return invoke('GameServer/Bot/Economy/EconomicTrip').reader(state, options); }
-function inputValue(id, state, context = {}) {
-    const worth = context.worth?.(Number(id));
-    if (Number.isFinite(worth) && worth > 0) return worth;
-    const offer = invoke('GameServer/AfkTrade/AfkTradeService').offers(id, 1, { characterId: state.characterId })[0];
-    const npc = invoke('GameServer/Bot/Economy/BotMarketPricing').npcPrice({ selfId: Number(id) });
-    const price = Math.min(Number(offer?.price || Infinity), Number(npc));
-    return Number.isFinite(price) && price > 0 ? price
-        : invoke('GameServer/Bot/Economy/MarketCounters').firstPrice(id);
-}
 function requirements(recipe, batches = 1) {
     if (!Number.isSafeInteger(batches) || batches < 1 || batches > 64) return null;
     const prepared = RecipeCatalog.inputsFor(recipe);
@@ -108,7 +106,7 @@ function* prepareCraftFacts(recipe, { output, batches, executor = 'cold', mpCapa
     if (!Number.isSafeInteger(count) || count < 0) return { status: 'unknown', reason: 'quantity' };
     const mpCost = Math.max(0, Number(recipe.mpCost || 0));
     const bound = executor === 'hot' ? 1 : executor === 'workshop' ? Number(capacityBatches)
-        : mpCost > 0 ? Math.floor(Number(mpCapacity) / mpCost) : 64;
+        : mpBatches(mpCapacity, recipe);
     const perCommand = Math.min(64, bound);
     if (!(perCommand >= 1)) return { status: 'unknown', reason: executor === 'workshop' ? 'capacity' : 'mp_capacity' };
     const gross = new Map(), once = new Set();
@@ -132,8 +130,7 @@ function* prepareCraftFacts(recipe, { output, batches, executor = 'cold', mpCapa
     }
     const mp = mpCost * count;
     // Own MP is labour; a workshop crafter spends his own MP for the fee.
-    const labourMp = executor === 'workshop' ? 0 : mp;
-    const labourHours = labourMp ? Number(mpPerHour) > 0 ? labourMp / Number(mpPerHour) : NaN : 0;
+    const labourHours = executor === 'workshop' ? 0 : mpHours(recipe, count, { mpPerHour }) ?? NaN;
     const cash = Math.max(0, Number(fee) || 0) * count;
     // Unknown labour keeps the quantities for readers that need no hours.
     return { ...(Number.isFinite(labourHours) ? { status: 'ready' } : { status: 'unknown', reason: 'mp_regen' }), recipeId: Number(recipe.recipeId), productCount, batches: count, output: count * productCount,
@@ -189,5 +186,5 @@ function materials(items, recipe, batches = 1) {
 function succeeds(recipe, random = Math.random) {
     return Number(recipe.successRate) >= 100 || Number(random()) * 100 < Number(recipe.successRate);
 }
-module.exports = { prepareCraftFacts, craftFacts, requirements, batchesFor, craftableBatches, revenue, margin, craftIncomePerHour, contextFor, tripFor, inputValue, materials, succeeds,
-    mpHours, successProbability, craftOutcomes };
+module.exports = { prepareCraftFacts, craftFacts, requirements, batchesFor, craftableBatches, labour, learningShare, keptRecipeValue, contextFor, tripFor, materials, succeeds,
+    mpHours, mpBatches };

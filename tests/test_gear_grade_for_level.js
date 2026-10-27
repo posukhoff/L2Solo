@@ -8,6 +8,7 @@ const Module = require('module');
 require('../src/Global');
 
 const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
+const { gradeBand, gradeForLevel, GRADE_SAMPLE_LEVEL } = invoke('GameServer/Bot/AI/GearGradeRule');
 
 function expectedGrade(level) {
     const value = Number(level || 1);
@@ -37,4 +38,12 @@ for (const level of levels) {
     assert.strictEqual(rankAllowed({}, actor), true, 'an item with no rank counts as none');
     assert.strictEqual(rankAllowed({ fetchRank: () => 'x' }, actor), false, 'an unknown rank is refused');
 }
+// gradeBand: the owner's level span of a level's grade; the edges sit at 19/20, 39/40, 51/52, 60/61, 75/76.
+const bands = [['none', 1, 19], ['d', 20, 39], ['c', 40, 51], ['b', 52, 60], ['a', 61, 75], ['s', 76, 99]];
+for (const [rank, min, max] of bands) {
+    assert.deepStrictEqual(gradeBand(min), { rank, min, max }, `band at its first level ${min}`);
+    assert.deepStrictEqual(gradeBand(max), { rank, min, max }, `band at its last level ${max}`);
+    assert.strictEqual(gradeForLevel(GRADE_SAMPLE_LEVEL[rank]), rank, `the sample level of ${rank} lies in its band`);
+}
+assert.deepStrictEqual(gradeBand(undefined), { rank: 'none', min: 1, max: 19 }, 'no level counts as level 1');
 console.log('test_gear_grade_for_level: ok');

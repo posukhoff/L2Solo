@@ -1,23 +1,28 @@
 const Diagnostics = require('./EconomyDiagnostics');
+const { partyIdOf } = require('../Population/PartyId');
 const CombinedErrands = require('../Population/CombinedErrandPolicy');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
+const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const GoalState = invoke('GameServer/Bot/Goals/GoalState');
 const TradeChat = invoke('GameServer/Bot/Economy/ColdMarketTradeChat');
 const GoalExecutor = invoke('GameServer/Bot/Goals/GoalExecutor');
 const MarketTelemetry = invoke('GameServer/Bot/Economy/MarketTelemetry');
 const OfferOrder = require('./OfferOrder');
 const OfferQuery = require('./OfferQuery');
+const ReadyTradeChoice = require('./ReadyTradeChoice');
 const TownVisitInterval = require('./TownVisitInterval');
 const NpcRestock = require('./NpcRestockPlan');
-const { personalOfferAllowed } = require('../Population/PartyAdmission');
+const { readAdmission, admissionReadsHold } = require('../Population/PartyAdmission');
+const { settlesAtOnce } = require('../../AfkTrade/BoardIndex');
 const ColdEconomyDecision = require('../Population/ColdEconomyDecision');
 const EconomicTrip = require('./EconomicTrip');
 const EconomicValuation = require('./EconomicValuation');
 const PriceDecision = require('./PriceDecision');
 const ProductionPolicy = require('./ProductionPolicy');
+const FixedShots = require('./FixedShotOffers');
 
 function purchaseObservation(state, selfId, requested, budget, phase, reason, extra) {
     if (!Diagnostics.active()) return;
@@ -183,13 +188,10 @@ function buyOffer(state, offer, options = {}) {
     });
 }
 
-// What sells an item at a fixed price in each town: the NPC shops and the
-// configured shot merchants until 3.6 (their stock never runs out for a cold bot, as
-// the author's cold NPC restock had it).
-function staticOffers(selfId) {
-    return [...MarketOpportunity.npcOffersAll(selfId),
-        ...MarketOpportunity.fixedStoreOffers(selfId)];
-}
+// What sells an item at a fixed price in each town (FixedShotOffers.staticOffers)
+// over main's NPC shop view, the one its purchases execute against
+// (MarketOpportunity.npcOffersAll).
+const staticOffers = selfId => FixedShots.staticOffers(selfId, MarketOpportunity.npcOffersAll);
 
 // The bot's round trip to a town in Adena, from its farming place
 // (OfferOrder.tripCost); none to the town it is shopping in.
@@ -283,6 +285,9 @@ function purchaseTerms(state, plan, spent = 0) {
 // once when the bot stands in it, else leaves it an errand and starts the
 // author's market trip (GoalExecutor.beginMarketTravel); on arrival
 // tryPurchase buys the errand (buyHere). One trip per purchase.
+// An errand purchase (OfferQuery.settledOnlyFor: a craft's scroll and inputs,
+// a shot crafter's crystal gear, a clan's buy) buys only from lines that sell
+// at once; the clan planners pick its offer with the same purpose.
 function planPurchase(state, selfId, amount, options = {}) {
     const { money = Infinity, maxPrice = Infinity, npc = true, towns = null,
         timestamp = Date.now(), cost = null } = options;
@@ -290,17 +295,20 @@ function planPurchase(state, selfId, amount, options = {}) {
     // The selected executable quote funds its own missing mandatory units.
     // A personal estimate never becomes a second purse held across the trip.
     let fundingContext;
+    // settledOnly cuts the quote depth after the filter (cheapestTown); accept
+    // also guards the funding price and the worker's source lines.
+    const settledOnly = OfferQuery.settledOnlyFor(options.purpose);
     const accept = line => {
         if (options.npcOnly) return false;
+        if (settledOnly && !settlesAtOnce(line)) return false;
         // A raid's reserved supply is an explicit purchase, rather than a
         // personal wish certificate for a bilateral conditional advertisement.
         // Use backed shops and NPC stock; do not keep restaging an ineligible meeting.
         if (options.purpose === 'raid_supply' && (line?.conditional || line?.custodyPolicy === 1)) return false;
-        const allowed = personalOfferAllowed(line, state);
-        if (line?.conditional || line?.custodyPolicy === 1) {
-            options.onAdmissionRead?.(Number(line.ownerId ?? line.sourceId), allowed);
-        }
-        return allowed;
+        // A line whose meeting this bot was refused at this ad revision.
+        if (ReadyTradeChoice.meetingRefused(line, state)) return false;
+        // A held denial records the owners it read (PartyAdmission.readAdmission).
+        return readAdmission(line, state, options.admissionReads || null);
     };
     const moneyForTown = (_town, npcPrice, lines) => {
         if (!options.currentFunding) return money;
@@ -336,7 +344,7 @@ function planPurchase(state, selfId, amount, options = {}) {
         plan = OfferQuery.cheapestTown(AfkTrade.boardIndex(), selfId, {
             amount, money, moneyForTown, maxPrice, towns, excludeOwner: state?.characterId, accept,
             npcOffers: npc ? staticOffers(selfId) : [], cost: cost || tripFrom(state, timestamp),
-            quoteDepth: options.quoteDepth ? PriceDecision.QUOTE_DEPTH : 0
+            quoteDepth: options.quoteDepth ? PriceDecision.QUOTE_DEPTH : 0, settledOnly
         });
         // An errand retains its finite quote depth, including a legal NPC
         // remainder. Arrival must not turn that selected source into a
@@ -361,8 +369,12 @@ function planPurchase(state, selfId, amount, options = {}) {
 // not cancel them or charge an already justified town visit twice.
 function worthwhileTravel(state, plan, options = {}) {
     if (!plan || !(plan.units > 0)) return false;
+    // lazy: cycle RaidSupplyPolicy -> PurchaseFunding -> economy modules; raid supply path only.
     if (options.purpose === 'raid_supply' && require('../Population/RaidSupplyPolicy').held(state)?.id === options.raidPreparationId) return true;
-    if (options.purpose === 'clan') return true;
+    // A selected wealth craft's r is already net of every input's cash and
+    // trip (WealthCraftPolicy basket); valuing its purchases again here
+    // counted the trip twice and refused every recipe trip.
+    if (options.purpose === 'clan' || options.purpose === 'wealth_craft') return true;
     const context = options.economy || ColdEconomyDecision.economyFor(state);
     const route = context.trip?.details ? context.trip.details(plan.town)
         : EconomicTrip.read(state, plan.town, {
@@ -393,7 +405,6 @@ function worthwhileTravel(state, plan, options = {}) {
     return result.known && result.valueHours > 0;
 }
 const deniedTrips = new WeakMap();
-const ADMISSION_OWNER_LIMIT = 8;
 function canTravelForPurchase(state, request, options = {}) {
     if (request?.purpose === 'raid_supply' && require('../Population/RaidSupplyPolicy').held(state)?.id === request.raidPreparationId) return true;
     if (request?.purpose === 'clan') return true;
@@ -403,8 +414,8 @@ function canTravelForPurchase(state, request, options = {}) {
     const board = invoke('GameServer/AfkTrade/AfkTradeService').boardIndex();
     // One refusal lives only with its held prepared plan (perf C1: each view
     // of one plan shares it). Public quote
-    // versions omit membership, so retain at most eight observed owner/allowed
-    // pairs and recheck them through the same indexed admission on a hit.
+    // versions omit membership, so it keeps the owners its plan read
+    // (PartyAdmission.readAdmission) and rechecks them on a hit.
     // A built context names its inputs (inputKey), a near body's held view
     // its card's (inputHash).
     let key = null;
@@ -415,23 +426,15 @@ function canTravelForPurchase(state, request, options = {}) {
             ProductionPolicy.shotsDisabled()]);
         if (token.length <= 2048) key = token;
         const previous = key && deniedTrips.get(economy.plan || economy);
-        if (previous?.key === key && previous.owners.every(([ownerId, allowed]) =>
-            personalOfferAllowed({ custodyPolicy: 1, ownerId }, state) === allowed)) return false;
+        if (previous?.key === key && admissionReadsHold(previous.owners, state)) return false;
     }
-    const owners = [];
-    let overflow = false;
-    const onAdmissionRead = key ? (ownerId, allowed) => {
-        if (overflow) return;
-        const held = owners.find(pair => pair[0] === ownerId);
-        if (held) { held[1] = allowed; return; }
-        if (owners.length === ADMISSION_OWNER_LIMIT) { overflow = true; return; }
-        owners.push([ownerId, allowed]);
-    } : undefined;
-    const plan = planPurchase(state, id, amount, { ...request, ...options, onAdmissionRead,
+    const owners = key ? [] : null;
+    const plan = planPurchase(state, id, amount, { ...request, ...options, admissionReads: owners,
         cost: options.cost || (typeof economy.trip === 'function' ? economy.trip : null),
         ...(request.town ? { towns: [request.town] } : {}), currentFunding: true });
     const allowed = worthwhileTravel(state, plan, { ...request, ...options, economy });
-    if (key && !allowed && !overflow) deniedTrips.set(economy.plan || economy, { key, owners });
+    // An overflowed read list is kept too: it never holds (admissionReadsHold).
+    if (key && !allowed) deniedTrips.set(economy.plan || economy, { key, owners });
     else deniedTrips.delete(economy.plan || economy);
     return allowed;
 }
@@ -444,6 +447,18 @@ function endVisit(current) {
         // The completed cold visit uses the same clock as the hot town event.
         visitEvery: ended ? current.stats.visitEvery : TownVisitInterval.arrived(current.stats),
         townVisit: current.stats?.townVisit ? { ...current.stats.townVisit, completed: true } : null } };
+}
+
+// A bought recipe scroll is learned by its purchase for the bot's own use (a
+// scroll bought for the clan stays in the bag for the deposit): its own recipe, through the learner's gate
+// (ItemDisposition.recipeDisposition 'learn': this bot can learn it and does
+// not know it yet). The economy card is not read: the buy itself moves the
+// row, and a card that no longer matches left the scroll unlearned and listed.
+async function learnBought(state, selfId, purpose) {
+    if (purpose === 'clan') return state;
+    const recipeId = Number(ItemDisposition.recipeInfo({ selfId })?.recipe.recipeId || 0);
+    if (!(recipeId > 0)) return state;
+    return await LifeState.learnCraftableRecipes(state) || state;
 }
 
 // Buys a plan in the town the bot stands in: each board line one deal, then
@@ -522,6 +537,12 @@ async function buyHere(state, plan, options = {}) {
         units >= plan.amount ? 'filled' : npcPrice > 0 && money < (plan.amount - units) * npcPrice ? 'funding_partial'
             : Number(plan.units || 0) < plan.amount ? 'supply_partial' : 'source_changed_or_refused',
         Diagnostics.enabled(state.characterId) ? { planned: Number(plan.units), actual: units, remaining: Math.max(0, plan.amount - units), spent, town: plan.town } : undefined);
+    const learned = units > 0 ? await learnBought(current, plan.selfId, plan.purpose) : current;
+    if (learned !== current) {
+        current = learned;
+        if (current.phase !== 'cold' || LifeState.hotRow(current.characterId)) return { state: current, units, spent, hot: true,
+            progressApplied: !!options.goal };
+    }
     return { state: current, units, spent, hot: false, progressApplied: !!options.goal && units > 0 };
 
 }
@@ -605,12 +626,35 @@ function savedRoute(errand) {
         quoteDepth: errand.quoteDepth, tag };
 }
 
+// The one set of terms a kept errand is planned on: its departure gate
+// (GoalExecutor.beginMarketTravel), its move to another town (tryPurchase) and
+// its arrival (buyErrand) read the same route (npc, quote depth, whole fill),
+// caps and valuation, so a trip departs only to what its arrival would buy.
+function errandTerms(errand) {
+    return { towns: [errand.town], purpose: errand.purpose, ...savedRoute(errand), ...fundingTerms(errand),
+        money: errand.money ?? Infinity, maxPrice: errand.maxPrice ?? Infinity };
+}
+
+// The departure gate of a kept errand: its town fills it on errandTerms.
+function errandDeparts(state, errand, options = {}) {
+    return canTravelForPurchase(state, { ...errandTerms(errand), selfId: Number(errand.selfId),
+        amount: Number(errand.amount), town: errand.town }, options);
+}
+
+// The kept errand a market_errand goal goes to buy (NeedsEvaluator), if it is still pending.
+function goalErrand(state, goal, timestamp = Date.now()) {
+    if (goal?.type !== 'market_errand' || !goal.plan?.marketTown) return null;
+    const selfId = Number(goal.target?.itemId);
+    return CombinedErrands.pending(state, timestamp)
+        .find(row => Number(row.selfId) === selfId && row.town === goal.plan.marketTown) || null;
+}
+
 // A cold bot needs `amount` of an item for `purpose` (a shot restock, a
 // crafter's input, a clan order...): it buys where it stands when that town
 // is the cheapest with the trip, else it keeps an errand and goes there.
-// Returns { state, bought, units, traveling, plan }; `persist` false leaves
-// the state unsaved (a caller that saves it). A bot in a party keeps the
-// errand: its party's market break takes it there (NeedsEvaluator).
+// Returns { state, bought, units, traveling, plan }. A bot in a party keeps the
+// errand: its party's market break takes it there (NeedsEvaluator); an errand
+// the departure gate refuses on its own terms ends at once (endErrandNoOffer).
 async function acquire(state, selfId, amount, options = {}) {
     // ARCH-NOTE: a saved cap outlives the packet that admitted it. Recheck
     // at planning, arrival and each debit using the originating valuation.
@@ -632,14 +676,20 @@ async function acquire(state, selfId, amount, options = {}) {
         tag: savedRouteTag(options), at: Number(options.timestamp || Date.now()), ...fundingTerms(options) };
     const withErrand = CombinedErrands.enqueue(state, errand);
     const from = state.activity === 'shopping' ? { ...withErrand, activity: 'hunting' } : withErrand;
-    const travel = state.party?.partyId || state.partyId || (state.activity === 'shopping' && state.stats?.townVisit?.completed !== true)
-        ? null : GoalExecutor.beginMarketTravel(from, errandGoal(errand));
+    const wait = partyIdOf(state) || (state.activity === 'shopping' && state.stats?.townVisit?.completed !== true);
+    let refused = null;
+    const travel = wait ? null : GoalExecutor.beginMarketTravel(from, errandGoal(errand), undefined,
+        { onErrandRefused: row => { refused = row; } });
+    if (refused) {
+        // The errand's own terms refuse its town: it ends as its arrival would.
+        const ended = await endErrandNoOffer(withErrand, errand, true);
+        return { state: ended.state, bought: false, units: 0, traveling: false, plan, reason: ended.reason };
+    }
     if (travel && state.activity === 'shopping') travel.stats.marketReturn = state.stats?.marketReturn || travel.stats.marketReturn;
     const next = travel || withErrand;
-    if (Diagnostics.active()) purchaseObservation(state, selfId, amount, options.money, 'market_travel', travel ? 'departed' : state.party?.partyId || state.partyId ? 'party_wait' : 'town_visit_wait',
+    if (Diagnostics.active()) purchaseObservation(state, selfId, amount, options.money, 'market_travel', travel ? 'departed' : partyIdOf(state) ? 'party_wait' : 'town_visit_wait',
         Diagnostics.enabled(state.characterId) ? { errandAt: errand.at, town: errand.town, planned: Number(plan.units), caller: errand.purpose } : undefined);
     // errandAt: this call left the errand (a clan credit travels with it).
-    if (options.persist === false) return { state: next, bought: false, units: 0, traveling: !!travel, plan, errandAt: errand.at };
     const saved = await LifeState.upsertState(next, travel ? `market_errand_${errand.purpose}` : 'market_errand_kept');
     return { state: saved || next, bought: false, units: 0, traveling: !!travel && !!saved, plan, errandAt: saved ? errand.at : null };
 }
@@ -663,7 +713,9 @@ async function acquireMaterials(state, requirements) {
     let reservedState = null, reserved = null;
     const held = (value, id) => {
         if (reservedState !== value) {
-            reserved = invoke('GameServer/Bot/Economy/ItemDisposition').reservedEquipmentAmounts(value);
+            // The executing craft takes what its decision's split gave it: the
+            // focus part only (the goals' claims guard sale and warehouse).
+            reserved = ItemDisposition.reservedEquipmentAmounts(value);
             reservedState = value;
         }
         return require('./WealthCraftDecision').freeAmount(value,
@@ -708,6 +760,39 @@ async function endErrand(characterId, errand, spent, saved) {
     return saved ? invoke('GameServer/Clan/ClanPurchaseCredit').returnUnspent(characterId, errand, spent) : null;
 }
 
+// The errand leaves the queue (a remainder stays only when a plan holds it);
+// stats.lastErrand records what it bought for the job that sent it. An end
+// that bought nothing keeps the record: units an earlier visit bought stay
+// held for the clan (CombinedErrandPolicy.clanHeld).
+function errandClosed(state, errand, units, remainder = null) {
+    const after = CombinedErrands.complete(state, errand);
+    const remaining = remainder ? CombinedErrands.enqueue(after, remainder) : after;
+    if (!(Number(units) > 0)) return remaining;
+    return { ...remaining, stats: { ...remaining.stats,
+        lastErrand: { purpose: errand.purpose, selfId: errand.selfId, units, tag: errand.tag || null, at: Date.now() } } };
+}
+
+// The no_offer end: the errand's terms buy nothing in its town, seen on
+// arrival or by the departure gate on the same terms; its job plans again.
+// departed: the gate's end, which closes the current goal only when it is this
+// errand's (acquire's caller holds its own goal; a clan errand is never refused).
+async function endErrandNoOffer(state, errand, departed = false) {
+    const cleared = errandClosed(state, errand, 0);
+    const saved = await LifeState.upsertState(cleared, 'market_errand_no_offer');
+    const returned = departed && !goalForErrand(state, errand) ? null : await endErrand(state.characterId, errand, 0, saved);
+    return { state: returned?.state || saved || cleared, purchased: false, units: 0, reason: 'market_errand_no_offer' };
+}
+
+// A market trip for a goal (GoalExecutor.beginMarketTravel). A kept errand
+// its own terms refuse ends here as its arrival would end it, not held until
+// it lapses. Returns { travel, state }: state is the ended one, else the given.
+async function departOrEndErrand(state, goal, timestamp = Date.now(), options = {}) {
+    let refused = null;
+    const travel = GoalExecutor.beginMarketTravel(state, goal, timestamp, { ...options, onErrandRefused: row => { refused = row; } });
+    if (travel || !refused) return { travel, state };
+    return { travel: null, state: (await endErrandNoOffer(state, refused, true)).state };
+}
+
 // On arrival: the errand of the town the bot stands in, bought there (the
 // plan made again for this town, as the board stands now); what it bought
 // stays as stats.lastErrand for the job that sent it (a clan's order).
@@ -723,32 +808,33 @@ async function buyErrand(state, options = {}) {
         const refunded = await endErrand(state.characterId, errand, 0, dropped);
         return { state: refunded?.state || dropped || state, purchased: false, units: 0, reason: 'market_errand_no_offer' };
     }
-    const terms = { towns: [errand.town], purpose: errand.purpose, ...savedRoute(errand), ...fundingTerms(errand),
-        money: errand.money ?? Infinity, maxPrice: errand.maxPrice ?? Infinity };
+    const terms = errandTerms(errand);
     const plan = planPurchase(state, errand.selfId, errand.amount,
         { ...terms, money: purchaseMoney(state, { ...terms, selfId: errand.selfId }) });
-    const bought = plan ? await buyHere(state, plan, { ...options, goal: goalForErrand(state, errand),
-        ...(!options.skipNpc && !plan.lines?.length ? { errand } : {}) }) : { state, units: 0, hot: false };
+    if (!plan) {
+        if (Diagnostics.active()) purchaseObservation(state, errand.selfId, errand.amount, undefined, 'errand_result', 'no_source',
+            Diagnostics.enabled(state.characterId) ? { errandAt: errand.at, actual: 0, remaining: Number(errand.amount), town: errand.town } : undefined);
+        return endErrandNoOffer(state, errand);
+    }
+    const bought = await buyHere(state, plan, { ...options, goal: goalForErrand(state, errand),
+        ...(!options.skipNpc && !plan.lines?.length ? { errand } : {}) });
     if (bought.pending) return { ...bought, purchased: bought.units > 0 };
     if (bought.hot) return { state: bought.state, purchased: bought.units > 0, reason: 'bot_went_hot' };
     const rest = Math.max(0, Number(errand.amount) - Number(bought.units || 0));
-    if (Diagnostics.active()) purchaseObservation(state, errand.selfId, errand.amount, plan?.money, 'errand_result', rest === 0 ? 'filled' : !plan ? 'no_source' : 'partial',
+    if (Diagnostics.active()) purchaseObservation(state, errand.selfId, errand.amount, plan.money, 'errand_result', rest === 0 ? 'filled' : 'partial',
         Diagnostics.enabled(state.characterId) ? { errandAt: errand.at, actual: Number(bought.units || 0), remaining: rest, spent: Number(bought.spent), town: errand.town } : undefined);
     const active = CombinedErrands.pending(bought.state).find(other => CombinedErrands.key(other) === CombinedErrands.key(errand));
     if (!active || Number(active.at) !== Number(errand.at) || Number(active.amount) !== Number(errand.amount)) {
         return { state: bought.state, purchased: bought.units > 0, units: bought.units, reason: 'errand_changed' };
     }
-    const after = CombinedErrands.complete(bought.state, errand);
     // Keep a physical partial fill. A quote/funding refusal with no current
-    // plan returns to the originating job instead of retaining a stale cap.
-    const remainder = { ...errand, amount: rest,
+    // plan returned to the originating job above instead of retaining a stale cap.
+    const remainder = rest > 0 ? { ...errand, amount: rest,
         ...(errand.purpose === 'clan' ? { tag: { ...errand.tag,
-            clanPart: Math.max(0, Number(errand.tag?.clanPart || 0) - Number(bought.spent || 0)) } } : {}) };
-    const remaining = rest > 0 && plan ? CombinedErrands.enqueue(after, remainder) : after;
-    const cleared = { ...remaining, stats: { ...remaining.stats,
-        lastErrand: { purpose: errand.purpose, selfId: errand.selfId, units: bought.units, tag: errand.tag || null, at: Date.now() } } };
+            clanPart: Math.max(0, Number(errand.tag?.clanPart || 0) - Number(bought.spent || 0)) } } : {}) } : null;
+    const cleared = errandClosed(bought.state, errand, bought.units, remainder);
     const saved = await LifeState.upsertState(cleared, bought.units > 0 ? 'market_errand_bought' : 'market_errand_no_offer');
-    const returned = rest === 0 || !plan ? await endErrand(state.characterId, errand, bought.spent, saved) : null;
+    const returned = rest === 0 ? await endErrand(state.characterId, errand, bought.spent, saved) : null;
     return { state: returned?.state || saved || cleared, purchased: bought.units > 0, units: bought.units,
         reason: bought.units > 0 ? 'market_errand_bought' : 'market_errand_no_offer' };
 }
@@ -760,14 +846,12 @@ const ColdMarketService = {
         if (errand?.town === state.currentRegion) return buyErrand(state);
         if (goal?.type === 'market_errand' && errand) {
             // The errand's town is another one: the bot goes on there.
-            return acquire(state, errand.selfId, errand.amount, { money: errand.money ?? Infinity,
-                maxPrice: errand.maxPrice ?? Infinity, purpose: errand.purpose, towns: [errand.town],
-                ...savedRoute(errand), ...fundingTerms(errand) })
+            return acquire(state, errand.selfId, errand.amount, errandTerms(errand))
                 .then((result) => ({ ...result, purchased: result.bought, reason: 'market_errand_town' }));
         }
         const expectedBenefit = goal?.plan?.expectedBenefit;
         const activeGearPurchase = goal?.type === 'upgrade_gear'
-            && (!expectedBenefit || ['market_search_for_weapon', 'market_search_for_gear'].includes(expectedBenefit));
+            && (!expectedBenefit || expectedBenefit === 'market_search_for_gear');
         const activeMaterialPurchase = goal?.type === 'buy_craft_material'
             && (!expectedBenefit || expectedBenefit === 'market_buy_craft_material');
         if ((goal?.status && goal.status !== 'active') || (!activeGearPurchase && !activeMaterialPurchase) || !goal.target?.itemId) {
@@ -818,6 +902,8 @@ const ColdMarketService = {
             budget: goal.plan?.weaponBridge ? PurchaseFunding.budget(state)
                 : PurchaseFunding.spendable(state, 0, PurchaseFunding.goalTerms(goal)),
             buyerCharacterId: state.characterId,
+            // At most the card's price (bestOffer never offers a line whose
+            // meeting this bot was refused: buyOffer would stage it again).
             accept: candidate => Number(candidate.price) <= arrival.unitPrice
         });
         if (!offer && !activeMaterialPurchase) {
@@ -862,7 +948,9 @@ const ColdMarketService = {
             .then(bought => ({ ...bought, purchased: bought.units > 0 }))
             // The native writer funds the line by the same terms the offer
             // was budgeted with (a weapon bridge: the whole wallet).
-            : buyOffer(state, offer, goal.plan?.weaponBridge ? {} : goalFunding(goal));
+            : buyOffer(state, offer, goal.plan?.weaponBridge ? {} : goalFunding(goal)).then(async bought =>
+                bought.purchased && !bought.hot && bought.state?.phase === 'cold'
+                    ? { ...bought, state: await learnBought(bought.state, goal.target.itemId, goal.plan?.purpose) } : bought);
         return execution.then((bought) => {
             if (bought.pending) return bought;
             if (!bought.purchased) {
@@ -947,6 +1035,9 @@ const ColdMarketService = {
     acquire,
     acquireMaterials,
     errandGoal,
+    goalErrand,
+    errandDeparts,
+    departOrEndErrand,
     pendingErrand
 };
 

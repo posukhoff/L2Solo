@@ -56,6 +56,9 @@ const EMPTY_SPOTS = [];
 let spotSource = () => EMPTY_SPOTS;
 let rewardSpots = EMPTY_SPOTS, rewardSpotCount = 0;
 let rewardRevision = 0;
+// Moves whenever the table's rows are dropped (spot catalog, rewards, rates, table file): a reader keeping
+// values computed from the table keeps them while it holds (FirstPrice).
+let tableRevision = 0;
 const spoilLevels = new Map();
 
 function useSpots(source) {
@@ -66,14 +69,24 @@ function useSpots(source) {
 function refreshCatalog(rates) {
     const spots = spotSource() || EMPTY_SPOTS;
     const revision = Rewards.revision(rates);
-    if (spots !== rewardSpots || spots.length !== rewardSpotCount || revision !== rewardRevision) {
+    if (catalogMoved(spots) || revision !== rewardRevision) {
         rewardSpots = spots; rewardSpotCount = spots.length;
         rewardRevision = revision;
-        countReset(cachedRows());
-        clearValueMemo(); bestRows.clear(); incomeRows.clear();
-        clearIncomeBases();
+        dropRows();
         spoilLevels.clear();
     }
+}
+
+function catalogMoved(spots) {
+    return spots !== rewardSpots || spots.length !== rewardSpotCount;
+}
+
+// The table's computed rows go with the inputs they came from.
+function dropRows() {
+    tableRevision++;
+    countReset(cachedRows());
+    clearValueMemo(); bestRows.clear(); incomeRows.clear();
+    clearIncomeBases();
 }
 
 function roleSpoilLevel(role, level) {
@@ -94,7 +107,7 @@ const valueMemo = new Map();
 // drops at the cap).
 const valueMemoOrder = [];
 let valueMemoTail = 0;
-function clearValueMemo() { valueMemo.clear(); valueMemoOrder.length = 0; valueMemoTail = 0; }
+function clearValueMemo() { valueMemo.clear(); valueMemoOrder.length = 0; valueMemoTail = 0; memoScrolls.length = 0; }
 // The Map holds a key's slot; the row lives at that slot as 12 numbers in a slab and a flag
 // byte. A new row drops the key filed at its slot, so a slot holds its key's row while the key
 // lives. L104: at the cap (x10, 24k real rows) the memo held 7.0 MB of the cold worker heap
@@ -104,6 +117,9 @@ const ROW_NUMBERS = 12;
 const NO_ROW = 1, NO_STACKS = 2, NO_REWARDS = 4;
 const ADENA = 4, LOOT = 7, SHOTS = 8, POTIONS = 9;
 let memoNumbers = new Float64Array(0), memoFlags = new Uint8Array(0);
+// The slot's recipe scroll rows (recipeScrolls), a shared frozen list of the
+// reward table (SpotRewardExpectation), undefined for none.
+const memoScrolls = [];
 function growSlab() {
     const rows = Math.min(MAX_VALUE_MEMO, Math.max(1024, memoFlags.length * 2));
     const numbers = new Float64Array(rows * ROW_NUMBERS), flags = new Uint8Array(rows);
@@ -114,6 +130,7 @@ function growSlab() {
 }
 function storeRow(slot, row) {
     if (slot >= memoFlags.length) growSlab();
+    memoScrolls[slot] = row?.scrolls || undefined;
     if (!row) { memoFlags[slot] = NO_ROW; return; }
     const n = memoNumbers, at = slot * ROW_NUMBERS;
     n[at] = row.kills; n[at + 1] = row.deaths; n[at + 2] = row.exp; n[at + 3] = row.sp; n[at + ADENA] = row.adena;
@@ -247,6 +264,21 @@ function value(spotId, role, level, shots = true, rewardOptions = {}) {
     return rowAt(memoValue(t, rates, spotId, role, level, shots, skill));
 }
 
+// The recipe scrolls one kill at the spot yields for this role, level and
+// spoil skill, as value() reads its rewards: [scrollId, units per kill, NPC
+// buy price] rows (game data, SpotRewardExpectation held.scrolls: drops for every
+// hunter, spoils by the skill's landing), held in value()'s memo slot with
+// its row (same key, same drop), so a read is O(1); [] where value() has no
+// row. The caller prices them; this table holds no market value.
+function recipeScrolls(spotId, role, level, shots = true, rewardOptions = {}) {
+    const t = load(), rates = ProgressionRates.profile();
+    refreshCatalog(rates);
+    refreshValueMemo(t, rates);
+    const skill = rewardOptions.spoilSkillLevel ?? roleSpoilLevel(role, level);
+    return memoScrolls[memoValue(t, rates, spotId, role, level, shots, skill)] || NO_SCROLLS;
+}
+const NO_SCROLLS = Object.freeze([]);
+
 // The memo key: one small integer for a known spot, role, an integer level
 // and spoil skill (no string per call); any other argument set keeps the
 // five-part string. Each part is read as its string, as the string key reads
@@ -286,35 +318,49 @@ function memoValue(t, rates, spotId, role, level, shots, skill) {
     return slot;
 }
 
-function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLevel(role, level)) {
-    const s = t.spotIndex.get(String(spotId));
-    const r = t.roleIndex.get(role);
-    if (s === undefined || r === undefined) return null;
+// The table-only part of a spot's hour (no rewards): the measured row, the level curve and the kills, or
+// null when the bot finds no target it may fight alone there at this level. s, r: the spot's and role's
+// table indexes.
+function combat(t, s, r, level, shots) {
     const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(Boolean(shots))];
     if (!row) return null;
-    const [, spotLevel, , spotCap, pull] = t.spots[s];
+    const spot = t.spots[s], spotLevel = spot[1];
     const gap = Math.min(t.maxLevel, Number(level)) - spotLevel;
     if (!(gap >= row[t.f.minGap])) return null;
     const curve = t.curves[r][Math.floor(spotLevel / t.bandLevels)];
     const refGap = row[t.f.refGap];
-    const ratio = (name) => {
-        const reference = at(curve[name], t.gaps, refGap);
-        return reference > 0 ? at(curve[name], t.gaps, gap) / reference : 1;
-    };
-    const kills = Math.min(row[t.f.kph] * ratio('kph'), spotCap) * pull;
+    const kills = Math.min(row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap), spot[3]) * spot[4];
     if (!(kills > 0)) return null;
+    return { row, curve, gap, refGap, kills, expRatio: ratio(curve.exp, t.gaps, refGap, gap),
+        busyRatio: ratio(curve.busy, t.gaps, refGap, gap), gapFactor: expGapFactor(gap) };
+}
+// A curve's value at the bot's gap over its value at the row's reference gap.
+function ratio(values, gaps, refGap, gap) {
+    const reference = at(values, gaps, refGap);
+    return reference > 0 ? at(values, gaps, gap) / reference : 1;
+}
+// Exp of the hour: kills x the row's exp per kill at the bot's gap x the exp rate.
+function hourExp(t, rates, c) {
+    return c.kills * (c.row[t.f.exp] * c.expRatio * c.gapFactor) * rates.exp;
+}
+
+function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLevel(role, level)) {
+    const s = t.spotIndex.get(String(spotId));
+    const r = t.roleIndex.get(role);
+    if (s === undefined || r === undefined) return null;
+    const c = combat(t, s, r, level, shots);
+    if (!c) return null;
+    const { row, curve, gap, refGap, kills, expRatio, busyRatio, gapFactor } = c;
     // Combat remains an offline measurement. Money comes from the native
     // reward groups at each defeated NPC's level and the current rates.
     // Keep the original multiplication order and return a fresh result.
-    const expRatio = ratio('exp'), busyRatio = ratio('busy');
-    const gapFactor = expGapFactor(gap), lootFactor = lootRateFactor(t.spots[s], rates.drop);
+    const lootFactor = lootRateFactor(t.spots[s], rates.drop);
     const rewards = Rewards.value(rewardSpot(spotId), Math.min(t.maxLevel, Number(level)), { spoilSkillLevel: skill });
-    const exp = row[t.f.exp] * expRatio * gapFactor;
     const busy = row[t.f.busy] * busyRatio;
     return {
         kills,
         deaths: kills * Math.max(0, row[t.f.deaths] + at(curve.deaths, t.gaps, gap) - at(curve.deaths, t.gaps, refGap)),
-        exp: kills * exp * rates.exp,
+        exp: hourExp(t, rates, c),
         sp: kills * row[t.f.sp] * expRatio * gapFactor * rates.sp,
         adena: kills * (rewards?.adena || 0),
         dropLoot: kills * (rewards?.drop || 0),
@@ -325,7 +371,9 @@ function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLev
         potions: kills * row[t.f.potions] * busyRatio,
         stacks: t.f.stacks < 0 || row[t.f.stacks] === null ? null
             : kills * row[t.f.stacks] * lootFactor,
-        busyShare: Math.min(1, kills * busy / 3600)
+        busyShare: Math.min(1, kills * busy / 3600),
+        // Kept in the memo slot beside the row (recipeScrolls), not in rowAt.
+        scrolls: rewards?.scrolls || null
     };
 }
 
@@ -347,26 +395,33 @@ function referenceLevel(spotId, role, shots = true) {
     return row ? t.spots[s][1] + row[t.f.refGap] : null;
 }
 
-// Static role/level/shot result, shared by every bot of that role. Built
-// once per game-data combination, never by walking the population.
-function best(role, level, shots = true, metric = 'exp') {
+// Static role/level/shot result, shared by every bot of that role: the row
+// of the most exp per hour. Built once per game-data combination, never by
+// walking the population.
+function best(role, level, shots = true) {
     const t = load(), rates = ProgressionRates.profile();
     refreshCatalog(rates);
     if (t !== incomeTable || rates !== incomeRates) {
         incomeTable = t; incomeRates = rates;
-        countReset(cachedRows());
-        bestRows.clear(); incomeRows.clear();
-        clearIncomeBases();
+        dropRows();
     }
-    const key = `${role}:${level}:${Boolean(shots)}:${metric}`;
+    const key = `${role}:${level}:${Boolean(shots)}`;
     if (bestRows.has(key)) { DiagnosticConfig.developerDiagnostics && (stats.bestHits += 1); return bestRows.get(key); }
     DiagnosticConfig.developerDiagnostics && (stats.bestMisses += 1);
-    let bestRow = null;
-    // A whole-table scan reads each spot once: it bypasses the per-bot memo.
-    for (const spot of t.spots) {
-        const row = computeValue(t, rates, spot[0], role, level, shots);
-        if (row && (!bestRow || (metric === 'income' ? row.adena + row.loot > bestRow.adena + bestRow.loot : row.exp > bestRow.exp))) bestRow = { ...row, spotId: spot[0] };
+    // Exp is table-only (no reward groups): the scan reads the table's combat part of each spot, the
+    // first spot of the most exp wins, and only the winner's full row is priced. It bypasses the per-bot memo.
+    const r = t.roleIndex.get(role);
+    let bestIndex = -1, bestExp = 0;
+    for (let s = 0; r !== undefined && s < t.spots.length; s++) {
+        const c = combat(t, s, r, level, shots);
+        if (!c) continue;
+        const exp = hourExp(t, rates, c);
+        if (bestIndex < 0 || exp > bestExp) { bestIndex = s; bestExp = exp; }
     }
+    const spotId = bestIndex < 0 ? null : t.spots[bestIndex][0];
+    const bestRow = bestIndex < 0 ? null : { ...computeValue(t, rates, spotId, role, level, shots), spotId };
+    // The scroll rows live in value()'s memo slot only (recipeScrolls).
+    if (bestRow) delete bestRow.scrolls;
     bestRows.set(key, bestRow);
     return bestRow;
 }
@@ -376,9 +431,7 @@ function incomeSource() {
     refreshCatalog(rates);
     if (t !== incomeTable || rates !== incomeRates) {
         incomeTable = t; incomeRates = rates;
-        countReset(cachedRows());
-        incomeRows.clear(); bestRows.clear(); clearValueMemo();
-        clearIncomeBases();
+        dropRows();
     }
     refreshValueMemo(t, rates);
     return { t, rates };
@@ -476,13 +529,44 @@ function roles() {
     return load().roles;
 }
 
+// role:level -> { shots, exp } per hour of the role's best exp spot at the
+// level (best(role, level, true)). The exp argmax is rate-invariant (a rate
+// profile scales every spot alike) and the shots come from the table alone;
+// the exp carries the rate profile, so the use is kept for the loaded table
+// and profile: cleared by useFile and by a new profile (bandRates), never by
+// a catalogue refresh. Read by the demand census (MarketDemand), whose
+// main-thread reads must not rebuild best rows.
+const bandUses = new Map();
+let bandRates = null;
+function bandUse(role, level) {
+    const rates = ProgressionRates.profile();
+    if (rates !== bandRates) { bandRates = rates; bandUses.clear(); }
+    const key = `${role}:${level}`;
+    let use = bandUses.get(key);
+    if (!use) {
+        const row = best(role, level, true);
+        bandUses.set(key, use = Object.freeze({ shots: Number(row?.shots) || 0, exp: Number(row?.exp) || 0 }));
+    }
+    return use;
+}
+function shotsUse(role, level) { return bandUse(role, level).shots; }
+
+// The table's revision as of now. The spot catalog is checked at once; rates and rewards are seen at the
+// table's own next read (rates are a restart input; the clan worker's rate switch comes with its NPC snapshot).
+function revision() {
+    if (catalogMoved(spotSource() || EMPTY_SPOTS)) incomeSource();
+    return tableRevision;
+}
+
 // Tests: read another file, or the default one again.
 function useFile(next = DEFAULT_FILE) {
     file = next;
     table = null;
+    tableRevision++;
     bestRows.clear();
+    bandUses.clear();
     clearValueMemo();
     clearIncomeBases();
 }
 
-module.exports = { value, spotLevel, referenceLevel, roles, best, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };
+module.exports = { value, recipeScrolls, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };

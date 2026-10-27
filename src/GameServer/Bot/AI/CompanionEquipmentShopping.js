@@ -7,6 +7,7 @@ const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const TownNpcCatalog = invoke('GameServer/Bot/Economy/TownNpcCatalog');
 const DecisionEvents = invoke('GameServer/Bot/AI/DecisionEvents');
 const EconomyContext = invoke('GameServer/Bot/Economy/EconomyContext');
+const MarketPricing = invoke('GameServer/Bot/Economy/MarketPricing');
 
 const MAX_PURCHASES_PER_VISIT = 12;
 
@@ -89,8 +90,10 @@ function checkedPlan(session, state, town, options = {}) {
         // The leaf's funded root funds it (the card leaf's r), as for a cold goal (PurchaseFunding.goalTerms).
         const ratio = PurchaseFunding.leafRatio(leaf);
         const funding = ratio > 0 ? { valueRate: ratio } : {};
+        // The economy's own worth caps a unit; a root's input has none (NaN).
+        const own = MarketPricing.ownWorth(economy)?.(selfId);
         const budget = Math.min(PurchaseFunding.spendable(fundedState, 0, PurchaseFunding.goalTerms({ plan: funding }, selfId)) / amount,
-            economy.worth(selfId) ?? Infinity);
+            own >= 0 ? own : Infinity);
         const offer = MarketOpportunity.bestHotOffer(selfId, { town: town.name, buyerCharacterId: state.characterId, budget,
             accept: row => Number(row.count) >= amount && (row.sourceType === 'private_store' && row.store?.kind === 'player'
                 || !leaf.sourceType || (leaf.sourceType === 'npc' ? row.sourceType === 'npc'

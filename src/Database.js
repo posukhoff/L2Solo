@@ -23,7 +23,9 @@ const { XP_DIVIDER: KARMA_XP_DIVIDER } = require('./GameServer/Karma');
 const InteractionMemoryPolicy = require('./GameServer/Social/InteractionMemoryPolicy');
 const ClanNameCatalog = require('./GameServer/Clan/ClanNameCatalog');
 const BoardRules = require('./GameServer/AfkTrade/BoardRules');
+const { marketStoreTitle, marketBuyStoreTitle } = require('./GameServer/Bot/Economy/MarketStoreTitle');
 const BotErrands = require('./GameServer/Bot/Population/BotErrands');
+const CombinedErrands = require('./GameServer/Bot/Population/CombinedErrandPolicy');
 const NativeWriteCheckpoint = require('./GameServer/Bot/Population/NativeWriteCheckpoint');
 const EconomyCommit = require('./GameServer/Bot/Economy/EconomyCommit');
 const Diagnostics = require('./GameServer/Bot/Economy/EconomyDiagnostics');
@@ -1907,6 +1909,35 @@ function applySchemaMigrations() {
             ELSE json_remove(statsJson, '$.build') END
             WHERE json_valid(statsJson) AND (json_type(statsJson, '$.build') IS NOT NULL OR ${hasTargetLists})`);
     }]);
+    // Ours, numbered after rebuild's 74-80 (were our 75 and 76).
+    // A bot's sell ad is a meeting offer (custody 1): an old world's escrow
+    // sell ad gives its items back and stays as the same offer. A bot's escrow
+    // buy ad is its buy store now (reconcileBotBuyAdsUnsafe keeps or closes it).
+    migrations.push([81, () => {
+        const rows = all(`SELECT shops.* FROM afk_trade_shops shops JOIN characters c ON c.id = shops.ownerId
+            WHERE shops.custodyPolicy = 0 AND shops.kind = 'sell_ad' AND substr(c.username, 1, 4) = 'bot_' ORDER BY shops.id`);
+        const owners = new Set();
+        for (const row of rows) {
+            const lines = all('SELECT * FROM afk_trade_lines WHERE shopId=? ORDER BY id', [row.id]);
+            for (const line of lines) {
+                creditRecordOwnerUnsafe(row.ownerId, line, line.count);
+                // The journal observes the release under the old custody.
+                write('UPDATE afk_trade_lines SET count=0 WHERE id=?', [line.id]);
+            }
+            creditRecordOwnerUnsafe(row.ownerId, { selfId: 57 }, row.escrowAdena);
+            write('UPDATE afk_trade_shops SET custodyPolicy=1,escrowAdena=0,revision=revision+1 WHERE id=?', [row.id]);
+            for (const line of lines) write('UPDATE afk_trade_lines SET count=?,intentJson=NULL,intentRevision=-1 WHERE id=?', [line.count, line.id]);
+            owners.add(Number(row.ownerId));
+        }
+        for (const ownerId of owners) {
+            const life = one('SELECT * FROM bot_life_state WHERE characterId=?', [ownerId]);
+            if (life) writeColdInventorySnapshotUnsafe(ownerId, life, [], null, { tradeIntentDirty: true });
+        }
+    }]);
+    // The town a bot opens its stores in is its twin's (TwinCluster.townOf,
+    // the mind): the body's held shop town goes.
+    migrations.push([82, () => write(`UPDATE bot_life_state SET statsJson = json_remove(statsJson, '$.shopTown')
+        WHERE json_type(statsJson, '$.shopTown') IS NOT NULL`)]);
     const applied = new Set(connection.prepare('SELECT version FROM schema_migrations').all().map((row) => Number(row.version)));
     migrations.forEach(([version, apply]) => {
         if (applied.has(version)) return;
@@ -2403,6 +2434,7 @@ function economyStepUnsafe(characterId, command, kind) {
         inventory: jsonObject(row.inventorySummary) };
     // Current own protection is prepared once inside the atomic boundary,
     // never inferred from the worker's spending proposal.
+    // lazy: cycle ItemDisposition's chain loads Database
     const reserved = invoke('GameServer/Bot/Economy/ItemDisposition').reservedEquipmentAmounts(state);
     return { row, command, reserved };
 }
@@ -2485,7 +2517,7 @@ function prepareCraftReservationsUnsafe(step, recipe) {
     if (!step || !recipe) return;
     const stats = SavedStats.merge(step.row.statsJson, step.row.mindJson), plan = stats.equipmentPlan;
     if (plan?.strategy !== 'craft' || plan.clanGoal?.clanId
-        || !['active', 'component_ready', 'ready_to_craft'].includes(plan.status)) return;
+        || !invoke('GameServer/Bot/AI/GearAcquisitionPlanner').planRunning(plan)) return; // lazy: cycle the planner's chain loads Database
     const unsealSource = Number(plan.unseal?.sourceId) === Number(recipe.productId)
         && Number(plan.target?.selfId) === Number(plan.unseal?.productId)
         && invoke('GameServer/Items/C4Unseal').resolve(plan.unseal.sourceId, plan.unseal.productId);
@@ -2504,16 +2536,20 @@ function prepareCraftReservationsUnsafe(step, recipe) {
 function checkEconomyMaterialProtectionUnsafe(characterId, step, selfId, used, sale = false) {
     if (!step) return;
     const stats = SavedStats.merge(step.row.statsJson, step.row.mindJson), inventory = jsonObject(step.row.inventorySummary);
-    // Bilateral market acceptance also rechecks the current gear/craft/clan
-    // reserves inside its transaction, without a prepared economy command.
-    step.reserved ??= invoke('GameServer/Bot/Economy/ItemDisposition').reservedEquipmentAmounts({
-        level: Number(step.row.level), phase: step.row.phase, stats, inventory });
-    const item = inventory[selfId] || {};
-    if (item.protected || item.acceptedCustomer || item.assignedClan || item.available === false) throw Error('economy_material_protected');
-    const goalReserve = stats.equipmentPlan?.status === 'active' && Number(stats.equipmentPlan.target?.selfId) === Number(selfId) ? 1 : 0;
-    const reserve = Math.max(Number(stats.clanMaterialDemand?.[selfId] || 0), goalReserve,
-        Number(step.reserved?.[selfId] || 0), Number(item.protectedAmount || 0), Number(item.starterMobLootAmount || 0), Number(item.reservedAmount || 0))
-        + (sale ? Number(invoke('GameServer/Bot/Economy/ItemDisposition').productionInputAmounts({ stats })[selfId] || 0) : 0);
+    // lazy: cycle ItemDisposition's chain loads Database
+    const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+    const state = { level: Number(step.row.level), phase: step.row.phase, stats, inventory };
+    // A sale (a listing, a buy-store fill, a trade meeting) is a consumer
+    // outside the decision: it reads the one held reader (heldAmounts: the
+    // focus plan with its goal target, the goals' claims, the production kit,
+    // the clan supply), the kit held on top of the row's own holds too
+    // (rowReserve, the one rule). The decision's own step (a craft, a learn)
+    // takes the focus part its command prepared, or the current one, no kit.
+    const kit = sale ? Disposition.productionInputAmounts(state) : {};
+    const reserved = sale ? Disposition.heldAmounts(state, Date.now(), { kit })
+        : step.reserved ??= Disposition.reservedEquipmentAmounts(state);
+    const reserve = Disposition.rowReserve(state, { ...inventory[selfId], selfId: Number(selfId) }, reserved, kit);
+    if (reserve === Infinity) throw Error('economy_material_protected');
     const available = Number(one('SELECT COALESCE(SUM(amount),0) amount FROM items WHERE characterId=? AND selfId=? AND equipped=0',
         [characterId, Number(selfId)]).amount);
     if (available - reserve < used) throw Error('economy_material_protected');
@@ -2561,6 +2597,14 @@ function writeColdInventorySnapshotUnsafe(characterId, row, changedIds, mp = nul
     const inventoryPatch = Object.fromEntries(ids
         .map(id => [id, physical[id] || null]));
     return { ...normalizeRow(coldSimulationRow(characterId)), inventoryPatch };
+}
+
+// A hot member's clan transfer: the stats patch carries the hold release
+// (lastErrand null = json_patch drops it).
+function hotClanTransferUnsafe(characterId, life, selfId, event) {
+    const next = clanTransferStats(jsonObject(life.statsJson), event, selfId);
+    return writeColdInventorySnapshotUnsafe(characterId, life, [selfId], null,
+        { lastClanWarehouseTransfer: next.lastClanWarehouseTransfer, lastErrand: next.lastErrand ?? null });
 }
 
 // The funded order belongs to the native party row. Worker patches may
@@ -2643,6 +2687,16 @@ function syncAdenaSnapshotUnsafe(characterId, amount, event = null) {
     return true;
 }
 
+// The bot's stats after a clan warehouse transfer of selfId (event): the
+// transfer is recorded and a deposit ends the bot's clan hold on the units it
+// moved (CombinedErrandPolicy.releaseClanHeld). Both phases of
+// transferInventoryToClanWarehouse write it.
+function clanTransferStats(stats, event, selfId) {
+    const next = { ...stats, lastClanWarehouseTransfer: { ...event } };
+    return event.clanId && Number(event.amount) < 0
+        ? CombinedErrands.releaseClanHeld(next, event.clanId, selfId, -Number(event.amount)) : next;
+}
+
 function updateColdInventorySnapshotUnsafe(characterId, selfId, event = null, expectedRevision = null, allowParty = false) {
     const id = Number(characterId);
     const itemId = Number(selfId);
@@ -2668,8 +2722,8 @@ function updateColdInventorySnapshotUnsafe(characterId, selfId, event = null, ex
         name: previous.name || (itemId === 57 ? 'Adena' : `Item ${itemId}`),
         amount: physical
     };
-    const stats = jsonObject(row.statsJson);
-    if (event) stats.lastClanWarehouseTransfer = { ...event };
+    let stats = jsonObject(row.statsJson);
+    if (event) stats = clanTransferStats(stats, event, itemId);
     const nextRevision = currentRevision + 1;
     if (allowParty) stats.clanInventoryRevision = nextRevision;
     // The adena column is the wallet the next cold resolve starts from; it
@@ -3466,8 +3520,15 @@ function repriceAfkTradeLineUnsafe(characterId, id, unitPrice, expectedRevision,
         changedIds.push(Number(line.selfId));
     }
     const timestamp = now();
-    write('UPDATE afk_trade_lines SET price = ?, count = ?, updatedAt = ? WHERE id = ?',
-        [unitPrice, count, timestamp, id]);
+    // The owner's look is its consent at the new bid: a buy line's certificate
+    // follows the price, so a fill does not meet the old one.
+    let intentJson = line.intentJson;
+    if (Number(shop.storeType) === 3 && intentJson) {
+        try { intentJson = JSON.stringify(TradeIntent.atPrice(JSON.parse(intentJson), unitPrice)); }
+        catch (_) { /* an unreadable certificate stays: a fill goes without it (TradeMeetingService adCertificate) */ }
+    }
+    write('UPDATE afk_trade_lines SET price = ?, count = ?, intentJson = ?, updatedAt = ? WHERE id = ?',
+        [unitPrice, count, intentJson, timestamp, id]);
     write(`UPDATE afk_trade_shops SET escrowAdena = ?, revision = revision + 1,
         updatedAt = ? WHERE id = ?`, [reserved, timestamp, shop.id]);
     const owner = one('SELECT username FROM characters WHERE id = ?', [characterId]);
@@ -3635,17 +3696,24 @@ function checkRecordRevisionUnsafe(shop, expected) {
 }
 
 // Per-bot caps (BoardRules): a shop holds at most BOT_SHOP_LINES lines; a bot
-// holds at most BOT_RECORDS[kind] records of another kind. Over the cap the
-// new record is refused and nothing moves.
-function checkBotCapsUnsafe(ownerId, kind, lineCount) {
+// holds at most BOT_RECORDS[kind] records of another kind. A bot's escrow buy
+// store (buy_ad, custody 0) is its shop's BOT_SHOP_LINES, counted apart from
+// its meeting buy ads (custody 1). Over the cap the new record is refused and
+// nothing moves.
+function botRecordCap(kind, custodyPolicy) {
+    return kind === 'buy_ad' && Number(custodyPolicy) === 0 ? BoardRules.BOT_SHOP_LINES : Number(BoardRules.BOT_RECORDS[kind] || 0);
+}
+function checkBotCapsUnsafe(ownerId, kind, lineCount, custodyPolicy = 1) {
     if (!isBotOwnerUnsafe(ownerId)) return;
     if (kind === 'shop') {
         if (lineCount > BoardRules.BOT_SHOP_LINES) throw new Error('board_cap_reached');
         return;
     }
-    const held = Number(one('SELECT COUNT(*) AS count FROM afk_trade_shops WHERE ownerId = ? AND kind = ?',
-        [Number(ownerId), kind]).count || 0);
-    if (held + 1 > Number(BoardRules.BOT_RECORDS[kind] || 0)) throw new Error('board_cap_reached');
+    const held = Number((kind === 'buy_ad'
+        ? one('SELECT COUNT(*) AS count FROM afk_trade_shops WHERE ownerId = ? AND kind = ? AND custodyPolicy = ?',
+            [Number(ownerId), kind, Number(custodyPolicy) === 0 ? 0 : 1])
+        : one('SELECT COUNT(*) AS count FROM afk_trade_shops WHERE ownerId = ? AND kind = ?', [Number(ownerId), kind])).count || 0);
+    if (held + 1 > botRecordCap(kind, custodyPolicy)) throw new Error('board_cap_reached');
 }
 
 // A closed record is deleted at once (design 16.19): its holdings first go
@@ -3694,6 +3762,17 @@ function fenceAfkTradePartiesUnsafe(characterIds, selfIds) {
     return rows;
 }
 
+// A bot shop's title names its remaining stock: the one rewrite after its
+// lines change in place (a fill, a reprice, a partial withdraw), in the
+// caller's transaction. lines = the shop's lines with count > 0 (a few rows,
+// no population/market scan); the revision is the caller's.
+function retitleBotShopUnsafe(shopId, lines) {
+    const sellTitle = marketStoreTitle(lines), buyTitle = marketBuyStoreTitle(lines);
+    write(`UPDATE afk_trade_shops SET title = CASE WHEN storeType = 3 THEN ? ELSE ? END
+        WHERE id = ? AND title != CASE WHEN storeType = 3 THEN ? ELSE ? END`,
+    [buyTitle, sellTitle, shopId, buyTitle, sellTitle]);
+}
+
 // After a deal: a record with nothing left is closed and deleted; one with
 // lines left gets the bot's title for its remaining stock. Returns true when
 // the record closed.
@@ -3703,15 +3782,7 @@ function completeAfkTradeIfFilledUnsafe(shopId, timestamp, botOwned = false) {
     const remaining = lines ? lines.length : Number(one(`SELECT COUNT(*) AS count FROM afk_trade_lines
         WHERE shopId = ? AND count > 0`, [shopId])?.count || 0);
     if (remaining > 0) {
-        if (lines) {
-            const { marketStoreTitle, marketBuyStoreTitle } = invoke('GameServer/Bot/Economy/MarketStoreTitle');
-            const sellTitle = marketStoreTitle(lines), buyTitle = marketBuyStoreTitle(lines);
-            // Same trade transaction and existing revision: only this shop's few
-            // remaining lines are inspected, with no population/market scan.
-            write(`UPDATE afk_trade_shops SET title = CASE WHEN storeType = 3 THEN ? ELSE ? END
-                WHERE id = ? AND title != CASE WHEN storeType = 3 THEN ? ELSE ? END`,
-            [buyTitle, sellTitle, shopId, buyTitle, sellTitle]);
-        }
+        if (lines) retitleBotShopUnsafe(shopId, lines);
         return false;
     }
     const shop = one('SELECT * FROM afk_trade_shops WHERE id = ?', [shopId]);
@@ -3736,7 +3807,7 @@ function validBoardRecord(kind, storeType, rows) {
 // and one per item. `expectedRevision` names the shop it replaces. No kind
 // has a deadline (expiresAt 0): records close by events (user, 2026-10-05).
 // Returns { shop, changedIds }.
-function openBoardRecordUnsafe(characterId, config, rows, { prepaid = false, bidWallet = null } = {}) {
+function openBoardRecordUnsafe(characterId, config, rows, { prepaid = false } = {}) {
     const kind = config.kind;
     const storeType = BoardRules.storeTypeFor(kind, config.storeType);
     if (rows.some(line => BeginnerShots.isRestricted(line.selfId))) throw Error('beginner_shot_not_tradable');
@@ -3764,9 +3835,12 @@ function openBoardRecordUnsafe(characterId, config, rows, { prepaid = false, bid
         [characterId, kind, Number(line.selfId), Math.max(0, Math.floor(Number(line.enchant || 0)))]);
         if (same) throw new Error('board_ad_exists');
     }
-    checkBotCapsUnsafe(characterId, kind, rows.length);
+    // A bot's buy ad is a meeting bid (custody 1) unless it asks for an
+    // escrow store (custodyPolicy 0, BuyAdPolicy.storeLines).
+    const conditional = ['buy_ad', 'sell_ad'].includes(kind) && isBotOwnerUnsafe(characterId)
+        && !(kind === 'buy_ad' && Number(config.custodyPolicy) === 0);
+    checkBotCapsUnsafe(characterId, kind, rows.length, conditional ? 1 : 0);
 
-    const conditional = ['buy_ad', 'sell_ad'].includes(kind) && isBotOwnerUnsafe(characterId);
     let escrowAdena = 0;
     if (!conditional && storeType === BoardRules.BUY) {
         escrowAdena = rows.reduce((sum, line) => {
@@ -3901,7 +3975,7 @@ function openBoardRecordUnsafe(characterId, config, rows, { prepaid = false, bid
         ]);
     });
     if (conditional && storeType === BoardRules.BUY) {
-        checkConditionalBidUnsafe(characterId, rows[0], Number(rows[0].price), bidWallet);
+        checkConditionalBidUnsafe(characterId, rows[0], Number(rows[0].price));
         const revision = Number(one('SELECT simulationRevision FROM bot_life_state WHERE characterId=?', [characterId])?.simulationRevision || 0);
         if (rows[0].intent) {
             const intent = TradeIntent.encode(rows[0].intent);
@@ -3915,10 +3989,12 @@ function openBoardRecordUnsafe(characterId, config, rows, { prepaid = false, bid
 // identities and pricing cursors; money moves once by the net remaining
 // reserve, including additions/removals. The caller already checked the
 // complete expected set inside this same transaction.
-function checkConditionalBidUnsafe(characterId, line, price = Number(line.price), walletOverride = null) {
+// `money`: the money the line is paid from (default the bag; the bot buy
+// reconcile passes its running store money).
+function checkConditionalBidUnsafe(characterId, line, price = Number(line.price), money = null) {
     const total = Number(line.count) * price;
     if (!Number.isSafeInteger(total) || total < 1) throw Error('invalid_afk_trade_budget');
-    const wallet = walletOverride ?? Number(one('SELECT COALESCE(SUM(amount),0) amount FROM items WHERE characterId=? AND selfId=57', [characterId]).amount);
+    const wallet = money ?? Number(one('SELECT COALESCE(SUM(amount),0) amount FROM items WHERE characterId=? AND selfId=57', [characterId]).amount);
     if (total > wallet) throw Error('not_enough_adena');
     const row = one('SELECT * FROM bot_life_state WHERE characterId=?', [characterId]);
     // survivalCost: the line's kit cost (in memory from executePlan), the
@@ -3928,63 +4004,17 @@ function checkConditionalBidUnsafe(characterId, line, price = Number(line.price)
         { ...(line.intent ? { r: line.intent.valueRate } : { itemId: Number(line.selfId) }), ...(survivalCost ? { survivalCost } : {}) }, wallet);
 }
 
-// A purchase changes custody only here: reserve the shop's complete budget,
-// retire promoted ads, and return a displaced sale shop in one transaction.
-function reconcileBotPurchasesUnsafe(characterId, held, configs, purchase, timestamp) {
-    const currentRow = one("SELECT id FROM afk_trade_shops WHERE ownerId=? AND kind='shop' AND status='active'", [characterId]);
-    const current = currentRow ? afkTradeShopUnsafe(currentRow.id) : null;
-    if ((current?.id || null) !== (purchase?.expected?.id || null)
-        || current && current.revision !== purchase.expected.revision) throw Error('afk_trade_shop_changed');
-    const config = purchase.config;
-    if (config && (!validBoardRecord('shop', config.storeType, config.lines) || config.storeType !== BoardRules.BUY))
-        throw Error('invalid_afk_trade_shop');
-    const rows = config?.lines || [];
-    const keys = new Set(rows.map(line => `${line.selfId}:${Number(line.enchant || 0)}`));
-    const roots = rows.filter(line => line.intent?.key).map(line => line.intent.key);
-    if (new Set(roots).size !== roots.length) throw Error('economy_plan_duplicate_root');
-    if (keys.size !== rows.length || configs.some(ad => keys.has(`${ad.lines[0].selfId}:${Number(ad.lines[0].enchant || 0)}`)))
-        throw Error('board_ad_exists');
-    const same = current?.storeType === BoardRules.BUY && config && current.town === config.town
-        && current.lines.filter(line => line.count > 0).length === rows.length
-        && rows.every(line => current.lines.some(old => old.selfId === line.selfId && old.enchant === Number(line.enchant || 0)
-            && old.count === line.count && old.price === line.price));
-    // A kept shop's escrow stays locked; a closing one refunds it to the bag
-    // first (closeBoardRecordUnsafe), so only then does it back the bids.
-    const wallet = Number(one('SELECT COALESCE(SUM(amount),0) amount FROM items WHERE characterId=? AND selfId=57', [characterId]).amount)
-        + (!same && current?.storeType === BoardRules.BUY ? current.escrowAdena : 0);
-    const closed = [], changedIds = [];
-    if (current && !same && (config || current.storeType === BoardRules.BUY)) {
-        changedIds.push(...closeBoardRecordUnsafe(current, { at: timestamp }), 57);
-        closed.push(closedRecord(current, 'closed'));
-    }
-    const ads = reconcileBotBuyAdsUnsafe(characterId, held, configs, timestamp, { bidWallet: wallet });
-    let shop = same ? current : null;
-    if (config && !same) {
-        checkBotCapsUnsafe(characterId, 'shop', rows.length);
-        let total = 0;
-        for (const line of rows) {
-            if (line.intent) TradeIntent.encode(line.intent);
-            checkConditionalBidUnsafe(characterId, line);
-            total += Number(line.count) * Number(line.price);
-        }
-        const life = one('SELECT statsJson, mindJson FROM bot_life_state WHERE characterId=?', [characterId]);
-        if (life) {
-            const allowance = PurchaseFunding.spendable({ adena: wallet, stats: SavedStats.merge(life.statsJson, life.mindJson) }, 0,
-                { upperBound: true, survivalCost: rows.reduce((sum, line) => sum + Math.max(0, Number(line.survivalCost) || 0), 0) });
-            if (!Number.isSafeInteger(total) || total > allowance) throw Error('economy_funding_changed');
-        }
-        const opened = openBoardRecordUnsafe(characterId, { ...config, kind: 'shop' }, rows);
-        shop = opened.shop;
-        changedIds.push(...opened.changedIds);
-    }
-    return { ...ads, shop, closed: [...closed, ...ads.closed],
-        changed: [...ads.changed, ...(shop && !same ? [shop] : [])],
-        ownerInventory: changedIds.length ? afkTradeInventoryUnsafe(characterId) : ads.ownerInventory,
-        coldLifeRows: changedIds.length ? fenceAfkTradePartiesUnsafe([characterId], changedIds) : ads.coldLifeRows };
-}
-
-function reconcileBotBuyAdsUnsafe(characterId, held, configs, timestamp, { bidWallet = null } = {}) {
-    if (configs.length > BoardRules.BOT_RECORDS.buy_ad) throw Error('board_cap_reached');
+// A bot's buy ads are its escrow store (custody 0, at most BOT_SHOP_LINES:
+// the adena is held and a seller fills at once) and its meeting bids
+// (custody 1, BOT_RECORDS.buy_ad: money moves at the meeting). A record keeps
+// its custody: a line that changes side closes and opens again. The legacy
+// bot BUY shop closes here with its escrow back in the bag.
+function reconcileBotBuyAdsUnsafe(characterId, held, configs, timestamp) {
+    const bot = isBotOwnerUnsafe(characterId);
+    const custodyOf = config => bot && Number(config.custodyPolicy) !== 0 ? 1 : 0;
+    const stores = configs.filter(config => custodyOf(config) === 0).length;
+    if (bot ? stores > BoardRules.BOT_SHOP_LINES || configs.length - stores > BoardRules.BOT_RECORDS.buy_ad
+        : configs.length > BoardRules.BOT_RECORDS.buy_ad) throw Error('board_cap_reached');
     const key = (town, line) => `${town || ''}:${Number(line.selfId)}:${Number(line.enchant || 0)}`;
     const current = new Map(held.map(shop => [key(shop.town, shop.lines[0]), shop]));
     const identities = new Set(), wanted = configs.map(config => {
@@ -3995,43 +4025,97 @@ function reconcileBotBuyAdsUnsafe(characterId, held, configs, timestamp, { bidWa
             || !Number.isSafeInteger(Number(line.price)) || Number(line.price) <= 0) throw Error('invalid_afk_trade_line');
         if (identities.has(identity)) throw Error('board_ad_exists');
         identities.add(identity);
-        const previous = current.get(key(config.town, line));
+        const custody = custodyOf(config);
+        const found = current.get(key(config.town, line));
+        const previous = found && Number(found.custodyPolicy) === custody ? found : null;
         // A retained line's price belongs to MarketPricing.look, not the
         // newly prepared opening price. A quantity review preserves it.
         const price = previous ? Number(previous.lines[0].price) : Number(line.price);
         const reserve = count * price;
         if (!Number.isSafeInteger(reserve)) throw Error('invalid_afk_trade_budget');
         if (!previous && line.pricing) pricingValues(line.pricing);
-        return { config, line, previous, count, price, reserve };
+        return { config, line, previous, custody, count, price, reserve };
     });
-    if (isBotOwnerUnsafe(characterId)) {
-        for (const row of wanted) if (!row.previous || row.count > Number(row.previous.lines[0].count)) checkConditionalBidUnsafe(characterId, row.line, row.price, bidWallet);
-        const revision = Number(one('SELECT simulationRevision FROM bot_life_state WHERE characterId=?', [characterId])?.simulationRevision || 0);
+    if (bot) {
+        const changedIds = [], closedShops = [];
+        const legacy = one("SELECT id FROM afk_trade_shops WHERE ownerId=? AND kind='shop' AND status='active' AND storeType=?",
+            [characterId, BoardRules.BUY]);
         const keep = new Set(wanted.filter(row => row.previous).map(row => row.previous.id));
         const removed = held.filter(shop => !keep.has(shop.id));
-        const changedIds = [];
-        for (const shop of removed) changedIds.push(...closeBoardRecordUnsafe(shop));
+        // Closes first: their escrow is back in the bag before the checks.
+        for (const shop of [...(legacy ? [afkTradeShopUnsafe(legacy.id)] : []), ...removed]) {
+            changedIds.push(...closeBoardRecordUnsafe(shop, { at: timestamp }));
+            if (Number(shop.escrowAdena) > 0) changedIds.push(57);
+            closedShops.push(shop);
+        }
+        // Then the escrow store, as BuyAdPolicy.retainedLines walks it: its
+        // money is the bag plus the kept store escrow; in plan order a growing
+        // line's reserve fits its terms on the money the lines before it left,
+        // so together the store's net growth fits the bag. Its whole escrow
+        // fits the bot's money queue (the old BUY shop's rule).
+        const grows = row => !row.previous || row.count > Number(row.previous.lines[0].count);
+        const store = wanted.filter(row => row.custody === 0);
+        let money = Number(one('SELECT COALESCE(SUM(amount),0) amount FROM items WHERE characterId=? AND selfId=57', [characterId]).amount)
+            + store.reduce((sum, row) => sum + (row.previous ? Number(row.previous.escrowAdena) : 0), 0);
+        const life = store.some(grows) && one('SELECT statsJson, mindJson FROM bot_life_state WHERE characterId=?', [characterId]);
+        if (life) {
+            const total = store.reduce((sum, row) => sum + row.reserve, 0);
+            const allowance = PurchaseFunding.spendable({ adena: money, stats: SavedStats.merge(life.statsJson, life.mindJson) }, 0,
+                { upperBound: true, survivalCost: store.reduce((sum, row) => sum + Math.max(0, Number(row.line.survivalCost) || 0), 0) });
+            if (!Number.isSafeInteger(total) || total > allowance) throw Error('economy_funding_changed');
+        }
+        for (const row of store) {
+            if (grows(row)) {
+                if (row.line.intent) TradeIntent.encode(row.line.intent);
+                checkConditionalBidUnsafe(characterId, row.line, row.price, money);
+            }
+            money -= row.reserve;
+        }
+        // A kept store line that shrinks frees its escrow before any growth
+        // is debited; the bag then ends at `money`.
+        for (const row of store) if (row.previous && row.reserve < Number(row.previous.escrowAdena)) {
+            afkTradeCreditAdenaUnsafe(characterId, Number(row.previous.escrowAdena) - row.reserve);
+            changedIds.push(57);
+        }
+        // Meeting bids hold no cash: each fits the bag the store left.
+        for (const row of wanted) if (row.custody !== 0 && grows(row)) {
+            if (row.line.intent) TradeIntent.encode(row.line.intent);
+            checkConditionalBidUnsafe(characterId, row.line, row.price, money);
+        }
+        const revision = Number(one('SELECT simulationRevision FROM bot_life_state WHERE characterId=?', [characterId])?.simulationRevision || 0);
         const retained = [], opened = [], changed = [];
         for (const row of wanted) {
-            const intent = row.line.intent ? TradeIntent.encode(row.line.intent) : null;
             if (!row.previous) {
-                const record = openBoardRecordUnsafe(characterId, { ...row.config, kind: 'buy_ad' }, row.config.lines, { bidWallet }).shop;
-                opened.push(record); changed.push(record); continue;
+                const result = openBoardRecordUnsafe(characterId, { ...row.config, kind: 'buy_ad', custodyPolicy: row.custody }, row.config.lines);
+                changedIds.push(...result.changedIds);
+                opened.push(result.shop); changed.push(result.shop); continue;
             }
-            const previous = row.previous, line = previous.lines[0];
-            if (previous.custodyPolicy !== 1) throw Error('trade_intent_migration_pending');
-            if (intent) intent[2] = row.price;
+            const previous = row.previous, line = previous.lines[0], title = String(row.config.title || '').slice(0, 52);
+            if (row.custody === 0) {
+                if (line.count === row.count && previous.title === title && row.reserve === Number(previous.escrowAdena)) {
+                    retained.push(previous); continue;
+                }
+                // A shrink was credited above, before the checks.
+                const difference = row.reserve - Number(previous.escrowAdena);
+                if (difference > 0) { afkTradeDebitAdenaUnsafe(characterId, difference); changedIds.push(57); }
+                write('UPDATE afk_trade_lines SET count=?,updatedAt=? WHERE id=?', [row.count, timestamp, line.id]);
+                write('UPDATE afk_trade_shops SET title=?,escrowAdena=?,revision=revision+1,updatedAt=? WHERE id=?',
+                    [title, row.reserve, timestamp, previous.id]);
+                const record = afkTradeShopUnsafe(previous.id); retained.push(record); changed.push(record);
+                continue;
+            }
+            const intent = row.line.intent ? TradeIntent.encode({ ...row.line.intent, price: row.price }) : null;
             const encoded = intent ? JSON.stringify(intent) : null;
-            if (line.count !== row.count || line.intentJson !== encoded || line.intentRevision !== (intent ? revision : -1) || previous.title !== String(row.config.title || '').slice(0,52)) {
+            if (line.count !== row.count || line.intentJson !== encoded || line.intentRevision !== (intent ? revision : -1) || previous.title !== title) {
                 write('UPDATE afk_trade_lines SET count=?,price=?,intentJson=?,intentRevision=?,updatedAt=? WHERE id=?',
                     [row.count, row.price, encoded, intent ? revision : -1, timestamp, line.id]);
-                write('UPDATE afk_trade_shops SET title=?,revision=revision+1,updatedAt=? WHERE id=?', [String(row.config.title || '').slice(0,52), timestamp, previous.id]);
+                write('UPDATE afk_trade_shops SET title=?,revision=revision+1,updatedAt=? WHERE id=?', [title, timestamp, previous.id]);
                 const record = afkTradeShopUnsafe(previous.id); retained.push(record); changed.push(record);
             } else retained.push(previous);
         }
-        return { closed: removed.map(shop => closedRecord(shop, 'closed')), opened, retained, changed,
+        return { closed: closedShops.map(shop => closedRecord(shop, 'closed')), opened, retained, changed,
             ownerInventory: changedIds.length ? afkTradeInventoryUnsafe(characterId) : null,
-            coldLifeRows: changedIds.length ? fenceAfkTradePartiesUnsafe([characterId], changedIds) : {} };
+            coldLifeRows: changedIds.length ? fenceAfkTradePartiesUnsafe([characterId], [...new Set(changedIds)]) : {} };
     }
     const oldReserve = held.reduce((sum, shop) => sum + Number(shop.escrowAdena), 0);
     const newReserve = wanted.reduce((sum, row) => sum + row.reserve, 0);
@@ -4679,17 +4763,6 @@ const Database = {
             'market:trade-overview');
     },
 
-    fetchMarketBuyerActivity({ timestamp = now(), rangeMs = 24 * 60 * 60 * 1000 } = {}) {
-        const since = Number(timestamp) - Math.max(1, Math.min(MARKET_TRADE_RETENTION_MS, Number(rangeMs) || 86400000));
-        // A matched AFK trade can write both seller and buyer journal rows.
-        // Distinct buyers count that transaction once and bound repeat purchases
-        // of the same equipment by one bot during the review window.
-        return readHistory(() => History.all(`SELECT selfId, COUNT(DISTINCT buyerCharacterId) AS buyers
-            FROM market_trades
-            WHERE occurredAt >= ? AND buyerCharacterId > 0
-                AND sourceType NOT IN ('npc', 'static_buy_store', 'static_sell_store')
-            GROUP BY selfId`, [since]), 'market:buyer-activity');
-    },
 
     // The board deals the market counters replay at start (MarketCounters.load),
     // oldest first: the last `perItem` deals of every item and every deal in
@@ -4775,7 +4848,9 @@ const Database = {
         { operation: 'market:recent-fixed-deals', read: true }));
     },
 
-    fetchRecentBoardDeals({ perItem = 32, rangeMs = 24 * 60 * 60 * 1000 } = {}) {
+    // The last `perItem` deals of each item and every deal of the `rangeMs`
+    // before the board's last one (the caller's day, MarketCounters.DAY_MS).
+    fetchRecentBoardDeals({ perItem = 32, rangeMs = 0 } = {}) {
         return flushHistory().then(() => enqueue(() => {
             const rows = History.all(`WITH board AS (
                 SELECT id, selfId, unitPrice, quantity, occurredAt, sellerCharacterId, buyerCharacterId, town, enchant
@@ -4931,7 +5006,7 @@ const Database = {
     // new ones take it. A bot's buy ads follow its goal this way. `expected`
     // maps every record of that kind the caller saw to its revision (the
     // move's idempotency key): any other state refuses the move.
-    replaceBoardRecords(ownerId, kind, configs = [], { expected = null, expectedAuthority = null, buyShop = undefined } = {}) {
+    replaceBoardRecords(ownerId, kind, configs = [], { expected = null, expectedAuthority = null } = {}) {
         const characterId = Number(ownerId);
         const list = Array.isArray(configs) ? configs : [];
         if (!characterId || kind === 'shop' || !BoardRules.isKind(kind)
@@ -4959,7 +5034,6 @@ const Database = {
             }
             if (kind === 'buy_ad' && isBotOwnerUnsafe(characterId)) {
                 if (!expected) throw Error('afk_trade_shop_changed');
-                if (buyShop !== undefined) return reconcileBotPurchasesUnsafe(characterId, closed, list, buyShop, timestamp);
                 return reconcileBotBuyAdsUnsafe(characterId, closed, list, timestamp);
             }
             const changedIds = [57];
@@ -5254,6 +5328,9 @@ const Database = {
                         write('UPDATE afk_trade_lines SET count = 0, updatedAt = ? WHERE id = ?', [timestamp, line.id]);
                         write('DELETE FROM afk_trade_lines WHERE id = ?', [line.id]);
                     }
+                    // Bot-only path (AfkTradeService.repriceBotLines): the
+                    // title stops naming the withdrawn lines.
+                    retitleBotShopUnsafe(recordId, lines.filter((line) => !lineIds.has(Number(line.id))));
                     write('UPDATE afk_trade_shops SET revision = revision + 1, updatedAt = ? WHERE id = ?', [timestamp, recordId]);
                     shops.set(recordId, afkTradeShopUnsafe(recordId));
                 }
@@ -7586,8 +7663,13 @@ const Database = {
             if (!learned.length && !step) return { learned, coldLifeRow: null };
             const receipt = { success: learned.length > 0, units: learned.length, nativeId: Number(recipes[0]?.recipeId || 0) };
             const learning = { learned, at: now() };
+            // Learning the shot plan's demanded recipe fills that demand.
+            // lazy: cycle ItemDisposition's chain loads Database
+            const demanded = step ? invoke('GameServer/Bot/Economy/ItemDisposition').demandedRecipeId(
+                { stats: SavedStats.merge(step.row.statsJson, step.row.mindJson) }) : 0;
+            const filled = demanded > 0 && learned.some(recipe => Number(recipe.recipeId) === demanded) ? { shotRecipeDemand: null } : null;
             const completedRow = step ? completeEconomyStepUnsafe(characterId, step, receipt,
-                learned.map(recipe => recipe.recipeItemId), null, learning) : syncEconomySnapshotUnsafe(characterId, coldState, learned.map(recipe => recipe.recipeItemId));
+                learned.map(recipe => recipe.recipeItemId), null, learning, filled) : syncEconomySnapshotUnsafe(characterId, coldState, learned.map(recipe => recipe.recipeItemId));
             // The snapshot sync above moved a cold row already; only a write
             // without it moves the revision here.
             if (!step) write(`UPDATE bot_life_state SET statsJson = json_set(statsJson, '$.lastRecipeBookLearning', json(?))${completedRow ? '' : `, ${MOVE_FAR_REVISION}`}
@@ -7652,8 +7734,7 @@ const Database = {
                 const template = Index.find(DataCache.items, itemId);
                 if (seller) {
                     const quote = Shop.rowForNpc(Number(seller.sourceId), itemId);
-                    if (!quote || Number(quote.price) !== price
-                        || !require('./GameServer/Bot/Economy/ProductionPolicy').allowsNpcShot(itemId)) throw Error('npc_quote_changed');
+                    if (!quote || Number(quote.price) !== price) throw Error('npc_quote_changed');
                 }
                 const stackable = line.stackable === undefined ? !!template?.etc?.stackable : !!line.stackable;
                 const slot = line.slot === undefined ? Number(template?.etc?.slot || 0) : Number(line.slot);
@@ -7749,15 +7830,14 @@ const Database = {
             for (const id of equipped?.ids || []) changed.add(id);
             Object.assign(patch, equipped?.patch);
             if (step && lines.some(line => line.errands.length)) {
-                const Errands = require('./GameServer/Bot/Population/CombinedErrandPolicy');
                 const stats = jsonObject(step.row.statsJson);
-                let errands = Errands.pending({ stats });
+                let errands = CombinedErrands.pending({ stats });
                 for (const line of lines) for (const entry of line.errands) {
-                    const index = errands.findIndex(other => Errands.key(other) === Errands.key(entry.errand)
+                    const index = errands.findIndex(other => CombinedErrands.key(other) === CombinedErrands.key(entry.errand)
                         && Number(other.at) === Number(entry.errand.at) && Number(other.amount) === Number(entry.errand.amount));
                     if (index < 0) {
                         if (Diagnostics.active()) stageNativeDiagnostic(characterId, step, 'npc_errand', 'stale_errand',
-                            { item: line.selfId, errandKey: Errands.key(entry.errand), errandAt: Number(entry.errand.at),
+                            { item: line.selfId, errandKey: CombinedErrands.key(entry.errand), errandAt: Number(entry.errand.at),
                                 requested: Number(entry.errand.amount), planned: entry.units, actual: 0, spent: 0 });
                         continue;
                     }
@@ -7767,7 +7847,7 @@ const Database = {
                         ...(Number.isFinite(old.money) ? { money: Math.max(0, old.money - entry.spent) } : {}),
                         ...(old.purpose === 'clan' ? { tag: { ...old.tag, clanPart: Math.max(0, Number(old.tag?.clanPart || 0) - entry.spent) } } : {}) };
                     if (Diagnostics.active()) stageNativeDiagnostic(characterId, step, 'npc_errand', rest ? 'partial' : 'completed',
-                        { item: line.selfId, errandKey: Errands.key(old), errandAt: Number(old.at),
+                        { item: line.selfId, errandKey: CombinedErrands.key(old), errandAt: Number(old.at),
                             requested: Number(old.amount), planned: entry.units, actual: entry.units, spent: entry.spent, remaining: rest });
                     patch.lastErrand = { purpose: old.purpose, selfId: old.selfId, units: entry.units, tag: old.tag || null, at: now() };
                 }
@@ -8104,6 +8184,9 @@ const Database = {
                 changedIds.push(item.selfId, proposal.scrollId);
             } else if (proposal.kind === 'crystallize') {
                 const Crystals = invoke('GameServer/Bot/Economy/BotCrystallization');
+                // Its own flow label: the crystal stack row moves once per
+                // command (events = commands), the input rows once per piece.
+                EconomyJournal.detail('crystallize');
                 const character = one('SELECT * FROM characters WHERE id = ?', [characterId]);
                 const life = one('SELECT * FROM bot_life_state WHERE characterId = ?', [characterId]);
                 const Life = invoke('GameServer/Bot/Population/BotLifeState');
@@ -8114,40 +8197,40 @@ const Database = {
                 const protectedInventory = jsonObject(life?.inventorySummary);
                 for (const id of Object.keys(source.inventory))
                     source.inventory[id] = { ...protectedInventory[id], ...source.inventory[id] };
-                const position = state ? life : character;
-                const town = invoke('GameServer/World/TownRespawn').getClosestTown(position?.locX, position?.locY, position?.locZ);
-                const self = proposal.mode === 'self';
-                const learned = self && one('SELECT level FROM skills WHERE characterId = ? AND selfId = 248', [characterId]);
-                if (!invoke('GameServer/Bot/AI/PersonalGearProgression').allowsCGradeAcquisition(source)
-                    || (self ? Number(learned?.level || 0) < 1
-                        : Number(proposal.npcId) !== Crystals.npcId || town.name !== 'Giran'
-                            || Math.hypot(Number(position.locX) - town.locX, Number(position.locY) - town.locY) > 7500))
+                // The learned skill row certifies the bot's own Crystallize;
+                // BotCrystallization.canSelf reads it as the level a grade needs.
+                const learned = one('SELECT selfId, level FROM skills WHERE characterId = ? AND selfId = 248', [characterId]);
+                const skilled = { skills: learned ? [learned] : [] };
+                if (!Crystals.canSelf(skilled, 'd'))
                     throw Error('invalid_bot_crystallization');
                 const inputs = proposal.items || [{ selfId: proposal.sourceSelfId, amount: proposal.amount || 1 }];
-                if (!Array.isArray(inputs) || !inputs.length || inputs.length > Crystals.BATCH_LIMIT)
-                    throw Error('improvement_source_changed');
-                const claimed = new Set(), selected = []; let total = 0, crystalId = null;
+                if (!Array.isArray(inputs) || !inputs.length) throw Error('improvement_source_changed');
+                const claimed = new Set(), selected = [], readFree = Crystals.freeReader(source);
+                let total = 0, crystalId = null;
                 for (const input of inputs) {
                     const id = Number(input.selfId), count = Number(input.amount), template = ItemTemplateIndex.findStrictRequired(DataCache.items, id);
                     const reward = Crystals.reward(template);
                     if (claimed.has(id) || !Number.isSafeInteger(count) || count < 1 || !reward
                         || crystalId && crystalId !== reward.crystalId
-                        || self && Number(learned?.level || 0) < (template.etc.rank === 'c' ? 2 : 1)
-                        || Crystals.free(source, id) < count || selected.length + count > Crystals.BATCH_LIMIT)
+                        || !Crystals.canSelf(skilled, template.etc.rank)
+                        || readFree(id) < count)
                         throw Error('improvement_source_changed');
                     crystalId = reward.crystalId;
                     claimed.add(id);
                     const rows = physical.filter(row => row.selfId === id && !row.equipped && row.amount === 1).slice(0, count);
                     if (rows.length !== count) throw Error('improvement_source_changed');
-                    for (const item of rows) { selected.push(item); total += Crystals.reward(template, item.enchant, self).net; }
+                    for (const item of rows) { selected.push(item); total += Crystals.reward(template, item.enchant).net; }
                 }
                 const target = one('SELECT id,amount FROM items WHERE characterId=? AND selfId=? ORDER BY id LIMIT 1', [characterId, crystalId]);
                 const amount = Number(target?.amount || 0) + total;
                 if (!Number.isSafeInteger(amount) || amount > 2147483647) throw Error('crystal stack is full');
-                for (const item of selected) mutate('DELETE FROM items WHERE characterId=? AND id=?', [characterId, item.id]);
+                // One command breaks every selected piece in one statement.
+                mutate(`DELETE FROM items WHERE characterId=? AND id IN (${selected.map(() => '?').join(',')})`,
+                    [characterId, ...selected.map(item => item.id)]);
                 if (target) mutate('UPDATE items SET amount=? WHERE characterId=? AND id=?', [amount, characterId, target.id]);
                 else mutate('INSERT INTO items(selfId,name,amount,equipped,slot,characterId) VALUES(?,?,?,0,0,?)',
                     [crystalId, ItemTemplateIndex.findStrictRequired(DataCache.items, crystalId).template.name, amount, characterId]);
+                EconomyJournal.detail(null);
                 changedIds.push(...claimed, crystalId); result = 'crystallize';
             } else if (proposal.kind === 'luxury_exchange') {
                 const Luxury = invoke('GameServer/Bot/Economy/BotLuxuryExchange');
@@ -8163,14 +8246,14 @@ const Database = {
                     source.inventory[id] = { ...protectedInventory[id], ...source.inventory[id] };
                 const position = state ? life : character;
                 const town = invoke('GameServer/World/TownRespawn').getClosestTown(position?.locX, position?.locY, position?.locZ);
-                if (!Luxury.eligible(source, recipe, proposal.forCrystals === true) || town?.name !== 'Giran'
+                if (!Luxury.eligible(source, recipe) || town?.name !== 'Giran'
                     || Math.hypot(Number(position.locX) - town.locX, Number(position.locY) - town.locY) > 7500)
                     throw Error('invalid_bot_luxury_exchange');
                 const blocker = Life.marketPurchaseBlocker(source, { selfId: recipe.itemId }, recipe.amount);
                 if (blocker) throw Error(blocker);
                 const supply = require('./GameServer/Bot/Economy/ClanCrystalSupply').requirement(source);
                 const plan = supply?.plan;
-                const selectedExchange = Luxury.resolve(plan?.strategy === 'luxury_exchange' ? plan.exchange : plan?.crystalPreparation?.exchange);
+                const selectedExchange = plan?.strategy === 'luxury_exchange' ? Luxury.resolve(plan.exchange) : null;
                 const clanState = plan && jsonObject(one('SELECT stateJson FROM clan_simulation_clans WHERE clanId=?', [source.clanId])?.stateJson);
                 const ownsInputs = selectedExchange?.itemId === recipe.itemId && [clanState?.goal, clanState?.productionGoal]
                     .some(goal => goal?.goalKey === plan?.clanGoal?.goalKey
@@ -8189,7 +8272,7 @@ const Database = {
                     'INSERT INTO items(selfId,name,amount,equipped,slot,characterId) VALUES(?,?,1,0,?,?)',
                     [product.selfId, product.template.name, Number(product.etc.slot), characterId]);
                 changedIds.push(recipe.itemId); result = 'luxury_exchange';
-                const equipped = state && !proposal.forCrystals && equipColdPurchaseUnsafe(characterId, { row: life }, recipe.itemId, true);
+                const equipped = state && equipColdPurchaseUnsafe(characterId, { row: life }, recipe.itemId, true);
                 if (equipped) { changedIds.push(...equipped.ids); equipmentPatch = equipped.patch; }
             } else if (proposal.kind === 'sa') {
                 const SA = invoke('GameServer/Items/C4WeaponSAExchange');
@@ -8416,31 +8499,35 @@ const Database = {
                     WHERE members.id IN (?, ?)`, [crafterId, customerId]);
                 workshopCrafter = rows.find(row => Number(row.characterId) === Number(crafterId));
                 const customer = rows.find(row => Number(row.characterId) === Number(customerId));
-                for (const [row, revision] of [[workshopCrafter, workshop.crafterRevision], [customer, workshop.customerRevision]]) {
-                    if (row === customer && !row?.phase) {
-                        if (!row || Number(row.physicalHp) <= 0) throw new Error('customer unavailable');
-                        continue;
-                    }
-                    if (!row || (row === customer && step ? row.phase !== step.row.phase : row.phase !== 'cold')
-                        || row.partyId || Number(row.phase === 'hot' ? row.physicalHp : row.hp) <= 0
-                        || ['dead', 'respawning', 'traveling'].includes(row.activity)
-                        || Number(row.simulationRevision) !== Number(revision)) throw new Error('workshop ownership changed');
-                }
+                // A cold crafter's workshop stands at its place whatever its
+                // body does (CraftWorkshopService.placeFor); the customer
+                // stands there, alive and free.
+                if (!workshopCrafter || workshopCrafter.phase !== 'cold'
+                    || Number(workshopCrafter.simulationRevision) !== Number(workshop.crafterRevision)) throw new Error('workshop ownership changed');
+                if (customer && !customer.phase) {
+                    if (Number(customer.physicalHp) <= 0) throw new Error('customer unavailable');
+                } else if (!customer || (step ? customer.phase !== step.row.phase : customer.phase !== 'cold')
+                    || customer.partyId || Number(customer.phase === 'hot' ? customer.physicalHp : customer.hp) <= 0
+                    || ['dead', 'respawning', 'traveling'].includes(customer.activity)
+                    || Number(customer.simulationRevision) !== Number(workshop.customerRevision)) throw new Error('workshop ownership changed');
                 if (customer.phase && !step) throw Error('workshop_command_missing');
-                const stats = jsonObject(workshopCrafter.statsJson);
-                const entry = stats.workshop?.entries?.find(row => Number(row.recipeId) === Number(recipe.recipeId));
-                if (!entry || Number(entry.price) !== Number(workshop.entryPrice)
+                // The crafter's offer is read where it is saved: its twin in
+                // its mind (TwinCluster; merge reads body and mind).
+                const stateOf = row => ({ characterId: Number(row.characterId), clanId: Number(row.clanId),
+                    stats: SavedStats.merge(row.statsJson, row.mindJson) });
+                const crafterState = stateOf(workshopCrafter);
+                // lazy: cycle CraftWorkshopService loads Database
+                const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
+                const quote = Workshops.quote(crafterState, stateOf(customer), recipe.recipeId);
+                if (!quote || Number(quote.entryPrice) !== Number(workshop.entryPrice)
                     || !rules.canCraft({ classId: workshopCrafter.classId, level: workshopCrafter.characterLevel }, recipe)
                     || !one('SELECT recipeId FROM character_recipes WHERE characterId = ? AND recipeId = ?', [crafterId, recipe.recipeId])
                     || Number(workshopCrafter.mp) < Number(recipe.mpCost) * batches
-                    || Math.hypot(Number(customer.phase === 'cold' ? customer.locX : customer.physicalX) - Number(workshopCrafter.locX),
-                        Number(customer.phase === 'cold' ? customer.locY : customer.physicalY) - Number(workshopCrafter.locY)) > 1200) {
+                    || !Workshops.inWorkshopRange(Workshops.placeFor(crafterState), customer.phase === 'cold'
+                        ? { locX: customer.locX, locY: customer.locY } : { locX: customer.physicalX, locY: customer.physicalY })) {
                     throw new Error('workshop unavailable');
                 }
-                const stateOf = row => ({ characterId: Number(row.characterId), clanId: Number(row.clanId),
-                    stats: jsonObject(row.statsJson) });
-                const quote = invoke('GameServer/Bot/Economy/CraftWorkshopService').quote(stateOf(workshopCrafter), stateOf(customer), recipe.recipeId);
-                if (!quote || Number(price) !== quote.price * batches || Number(workshop.fee) !== Number(price)
+                if (Number(price) !== quote.price * batches || Number(workshop.fee) !== Number(price)
                     || !Number.isSafeInteger(Number(price)) || Number(price) < 0) throw new Error('workshop price changed');
                 const required = new Map();
                 for (const input of recipe.materials) required.set(Number(input.selfId),
@@ -8465,9 +8552,7 @@ const Database = {
                     if (!product || !template || !!product.stackable !== !!template.etc?.stackable
                         || Number(product.slot || 0) !== Number(template.etc?.slot || 0)) throw Error('craft_product_template_changed');
                 }
-                // A Giran station is public infrastructure: as in its own
-                // service it spends no MP (it never rests while cold).
-                crafterMp = Number(workshopCrafter.mp) - (rules.isStationService({ stats }) ? 0 : Number(recipe.mpCost) * batches);
+                crafterMp = Number(workshopCrafter.mp) - Number(recipe.mpCost) * batches;
             }
             let manualOrder = null;
             if (clanOrder) {
@@ -8621,12 +8706,8 @@ const Database = {
                     production.revenue = Number(production.revenue || 0) + fee;
                     production.lastRecipeId = Number(workshop.recipeId);
                     production.at = now();
-                    const shop = { ...jsonObject(workshopCrafter.statsJson).workshop };
-                    shop.entries = shop.entries.map(entry => Number(entry.recipeId) !== Number(workshop.recipeId) ? entry
-                        : { ...entry, fills: Number(entry.fills || 0) + Number(workshop.batches),
-                            earned: Number(entry.earned || 0) + fee });
-                    write("UPDATE bot_life_state SET statsJson = json_set(statsJson, '$.production', json(?), '$.workshop', json(?)) WHERE characterId = ?",
-                        [JSON.stringify(production), JSON.stringify(shop), crafterId]);
+                    write("UPDATE bot_life_state SET statsJson = json_set(statsJson, '$.production', json(?)) WHERE characterId = ?",
+                        [JSON.stringify(production), crafterId]);
                 }
                 clanStates = {
                     crafterState: normalizeRow(one('SELECT * FROM bot_life_state WHERE characterId = ?', [crafterId])),
@@ -9764,7 +9845,7 @@ const Database = {
                 };
                 stats.marketWanted = {
                     itemId: selfId,
-                    itemName: selfId === 1419 ? 'Blood Mark' : `Item ${selfId}`,
+                    itemName: ItemTemplateIndex.find(DataCache.items, selfId)?.template?.name || `Item ${selfId}`,
                     lastMissingAt: now(),
                     clanId: clan
                 };
@@ -10242,7 +10323,7 @@ const Database = {
             const lifeUpdate = expectedPhase === 'cold' ? updateColdInventorySnapshotUnsafe(character, selfId, event,
                 expectedSimulationRevision === null ? Number(life.simulationRevision || 0) : Number(expectedSimulationRevision), allowParty)
                 : { ok: true, simulationRevision: Number(life.simulationRevision || 0) + 1,
-                    row: writeColdInventorySnapshotUnsafe(character, life, [selfId], null, { lastClanWarehouseTransfer: event }) };
+                    row: hotClanTransferUnsafe(character, life, selfId, event) };
             if (!lifeUpdate.ok) throw new Error(`clan warehouse deposit rejected: ${lifeUpdate.code}`);
             if (reward > 0) {
                 let remaining = reward;
@@ -11210,31 +11291,6 @@ function withTradeMeetingFlush(id, work, label) {
     });
 }
 Object.assign(Database, {
-    migrateConditionalTradeAds(ownerId) {
-        return withCharacterFlush(ownerId, () => inTransaction(() => {
-            const rows = all("SELECT * FROM afk_trade_shops WHERE ownerId=? AND custodyPolicy=0 AND kind IN ('buy_ad','sell_ad') ORDER BY id", [ownerId]);
-            if (!isBotOwnerUnsafe(ownerId)) return { migrated: 0 };
-            for (const row of rows) {
-                const lines = all('SELECT * FROM afk_trade_lines WHERE shopId=? ORDER BY id', [row.id]);
-                if (row.storeType === BoardRules.SELL) for (const line of lines) {
-                    creditRecordOwnerUnsafe(ownerId, line, line.count);
-                    // Journal observes release under the old custody policy.
-                    write('UPDATE afk_trade_lines SET count=0 WHERE id=?', [line.id]);
-                }
-                creditRecordOwnerUnsafe(ownerId, { selfId: 57 }, row.escrowAdena);
-                write('UPDATE afk_trade_shops SET custodyPolicy=1,escrowAdena=0,revision=revision+1 WHERE id=?', [row.id]);
-                for (const line of lines) write('UPDATE afk_trade_lines SET count=?,intentJson=NULL,intentRevision=-1 WHERE id=?', [line.count, line.id]);
-            }
-            const life = one('SELECT * FROM bot_life_state WHERE characterId=?', [ownerId]);
-            const fenced = rows.length && life ? writeColdInventorySnapshotUnsafe(ownerId, life, [], null, { tradeIntentDirty: true }) : null;
-            return { migrated: rows.length, row: fenced };
-        }, 'board:intent-migration'));
-    },
-    fetchConditionalMigrationOwners() {
-        return inTransaction(() => all(`SELECT DISTINCT shops.ownerId FROM afk_trade_shops shops JOIN characters c ON c.id=shops.ownerId
-            WHERE shops.custodyPolicy=0 AND shops.kind IN ('buy_ad','sell_ad') AND substr(c.username,1,4)='bot_'
-            ORDER BY shops.ownerId LIMIT 32`).map(row => row.ownerId), 'board:intent-migration-page');
-    },
     fetchAfkTradeShop(id) { return inTransaction(() => afkTradeShopUnsafe(Number(id)), 'board:record-read'); },
     reconcileConditionalSellAds(ownerId) {
         const id = Number(ownerId);
@@ -11274,7 +11330,6 @@ Object.assign(Database, {
             return { sequence: slot.nextSequence, meetingId: slot.meetingId, anchor: TradeMeetings.anchor(Number(id)), revision: Number(row?.simulationRevision || 0),
                 partyId: row?.partyId || null, playerPartyId: row?.playerPartyId || null,
                 phase: row?.phase || 'player', hotAt: Number(row?.lastHotAt || 0),
-                needRevision: Number(row?.simulationRevision || 0),
                 inventory: afkTradeInventoryUnsafe(id), acceptedIncoming: acceptedTradeIncomingUnsafe(Number(id), row),
                 position: tradeMeetingPositionUnsafe(Number(id)) };
         }, 'board:meeting-prepare'));
@@ -11322,6 +11377,9 @@ Object.assign(Database, {
         }, 'board:meeting-arrival');
     },
     cancelTradeMeeting(id, reason) { return withTradeMeetingFlush(id, () => TradeMeetings.terminal(Number(id), false, reason), 'board:meeting-cancel'); },
+    recordTradeMeetingRefusal(id, lineId, revision) {
+        return withCharacterFlush(id, () => inTransaction(() => TradeMeetings.refused(Number(id), Number(lineId), Number(revision)), 'board:meeting-refused'));
+    },
     acknowledgeTradeMeeting(id, actor) { return withCharacterFlush(actor, () => inTransaction(() => TradeMeetings.acknowledge(Number(id), Number(actor)), 'board:meeting-ack')); },
     recoverTradeMeetings(afterId = 0) { return inTransaction(() => all('SELECT id,actorA,actorB,state FROM board_trade_meetings WHERE id>? ORDER BY id LIMIT 32', [afterId]), 'board:meeting-recover'); }
 });

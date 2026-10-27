@@ -1,12 +1,12 @@
 'use strict';
-const Sections = require('../Economy/DecisionSections');
+const { partyIdOf } = require('./PartyId');
 
 // Complete group inputs are process-local. Only source versions and the joint
 // policy's small stats packet cross back to the main thread.
 function source(state) {
     return { characterId: Number(state.characterId),
         updatedAt: Number(state.updatedAt || 0), phase: state.phase,
-        partyId: Sections.partyIdOf(state),
+        partyId: partyIdOf(state),
         revision: Number(state.simulation?.revision || 0) };
 }
 
@@ -52,8 +52,8 @@ async function calculate(party, members, prepare, timestamp, current = () => tru
         const wall = performance.now(), cpu = process.threadCpuUsage?.();
         const raidAssessment = require('./OpportunisticRaidPolicy').assessment(members,
             invoke('GameServer/RaidBoss/RaidBossSourceCatalog').findById(objective.spotId), {
-                timestamp, maxFightSeconds: objective.maxFightSeconds, reserve: objective.shotReserve,
-                fundSupplies: objective.fundRaidSupplies === true });
+                timestamp, reserve: objective.shotReserve,
+                fundSupplies: objective.fundRaidSupplies === true, worth: objective.raidWorth === true });
         const used = cpu && process.threadCpuUsage(cpu);
         // Charge only synchronous forecast work on this worker thread. Queue
         // waits and other server threads must not inflate the search budget.
@@ -73,7 +73,7 @@ async function calculate(party, members, prepare, timestamp, current = () => tru
     }
     const policy = require('./PartyGoalPolicy');
     const context = policy.groupContext(party, members, { timestamp, memberContexts: contexts, rememberGroup: false });
-    return policy.joint(party, members, { context, timestamp, memberContexts: contexts, spots });
+    return policy.joint(party, members, { context, timestamp, spots });
 }
 
 // The recruit check of a pending join: the members with the recruits on one

@@ -1,4 +1,5 @@
 const BotErrands = invoke('GameServer/Bot/Population/BotErrands');
+const { partyIdOf } = require('../Bot/Population/PartyId');
 
 // Errands a hall visit or a hall restart must not interrupt: every errand
 // except a warehouse errand, a merchant store or a craft shop/station. A PvP
@@ -24,7 +25,7 @@ function fromSession(session, actor) {
 function fromState(state) {
     return {
         karma: Number(state?.stats?.karma || 0),
-        grouped: !!(state?.party?.partyId || state?.partyId),
+        grouped: !!partyIdOf(state),
         merchant: state?.activity === 'merchant',
         accountName: state?.accountName || '',
         pvp: !!state?.stats?.pvpEncounter,

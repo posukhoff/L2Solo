@@ -1,5 +1,9 @@
 const Material = require('./CraftMaterialParty');
-function activePlanTarget(plan) {
+// The one owner of the NPC a hunt aims at: an active plan's next hunt, a gear
+// drop or a craft material's source (a player farming an item aims at the
+// monster that drops it). The kill roll (preferredNpcId) and the planner's
+// aimed share (SpotRewardExpectation.killShare targeted) both read this.
+function planTargetNpcId(plan) {
     return plan?.status === 'active' ? Number(plan.next?.npcId || plan.targetNpcId || 0) : 0;
 }
 
@@ -23,8 +27,8 @@ function npcId(party, leader, stateOf = cachedState) {
         return Number(party.stats.objective.npcId || 0);
     }
     return Number(party?.stats?.objective?.npcId || 0)
-        || activePlanTarget(party?.stats?.acquisitionGoal)
-        || activePlanTarget(leader?.stats?.equipmentPlan);
+        || planTargetNpcId(party?.stats?.acquisitionGoal)
+        || planTargetNpcId(leader?.stats?.equipmentPlan);
 }
 // A cheap representative of ordinary hunting, weighted by the actual spawn
 // population. Stable per hunting unit so teammates never invent separate goals.
@@ -50,4 +54,4 @@ function competitionNpcId(party, leader, spot, stateOf = cachedState) {
     let roll = (hash >>> 0) / 4294967296 * entries.reduce((sum, e) => sum + weight(e), 0);
     return Number((entries.find(e => (roll -= weight(e)) < 0) || entries.at(-1)).selfId);
 }
-module.exports = { npcId, competitionNpcId };
+module.exports = { npcId, competitionNpcId, planTargetNpcId };

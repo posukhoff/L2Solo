@@ -36,8 +36,21 @@ function spotName(spot) {
     return `${primary} fields`;
 }
 
+// A number and its string are one property key: one lookup.
 function levelCount(spot, level) {
-    return Number(spot?.levelCounts?.[String(level)] || spot?.levelCounts?.[level] || 0);
+    return Number(spot?.levelCounts?.[level] || 0);
+}
+
+// Whether a spot's level counts hold any level: a key list of an
+// integer-keyed object costs ~0.7 us, and the source route reader asks ~700
+// spots per build. The counts are spawn data, never written after the
+// catalogue builds them: one answer per counts object, dropped with it.
+const countedLevels = new WeakMap();
+function hasLevels(levelCounts) {
+    if (typeof levelCounts !== 'object') return Object.keys(levelCounts).length > 0;
+    let known = countedLevels.get(levelCounts);
+    if (known === undefined) countedLevels.set(levelCounts, known = Object.keys(levelCounts).length > 0);
+    return known;
 }
 
 function finiteNumber(value, fallback) {
@@ -102,7 +115,7 @@ function huntBand(targetLevel, options = {}) {
 function eligibleDensity(spot, targetLevel, options = {}) {
     if (!spot) return 0;
     const band = huntBand(targetLevel, options);
-    if (spot.levelCounts && Object.keys(spot.levelCounts).length > 0) {
+    if (spot.levelCounts && hasLevels(spot.levelCounts)) {
         let count = 0;
         for (let level = band.min; level <= band.max; level++) count += levelCount(spot, level);
         return count;
@@ -140,12 +153,13 @@ function respawnsPerHour(npc) {
     return respawn > 0 ? 3600 / respawn : 0;
 }
 
+// levelFit's eligible density and ratio, without its other fields.
 function isSuitable(spot, targetLevel, options = {}) {
     if (!spot) return false;
-    const fit = levelFit(spot, targetLevel, options);
+    const eligible = eligibleDensity(spot, targetLevel, options);
     const minDensity = Math.max(1, Number(options.minEligibleDensity ?? 3));
     const minRatio = Math.max(0, Math.min(1, Number(options.minEligibleRatio ?? 0.25)));
-    return fit.eligibleDensity >= minDensity && fit.eligibleRatio >= minRatio;
+    return eligible >= minDensity && eligible / Math.max(1, Number(spot.density || 1)) >= minRatio;
 }
 
 const SpotService = {

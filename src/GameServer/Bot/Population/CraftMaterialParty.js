@@ -1,5 +1,16 @@
 'use strict';
 
+const { levelForGrade } = require('../AI/GearGradeRule');
+const { partyIdOf } = require('./PartyId');
+const KillRewards = require('./ColdKillRewards');
+const Network = require('../Economy/WishNetwork');
+
+// The one owner of what a material party serves: craft targets of these
+// grades (user 2026-10-24: C joins the author's B/A). A C target from the
+// level that wears C (40); B and A targets from the B level (52), as the author's.
+const GRADES = Object.freeze(['c', 'b', 'a']);
+const MIN_LEVEL = levelForGrade(GRADES[0]), B_LEVEL = levelForGrade('b');
+const levelFloor = rank => Math.min(levelForGrade(rank), B_LEVEL);
 const MAX_SOURCE_CHECKS = 32, MAX_CAMPS = 4, MAX_CORE = 3, MAX_MEMBERS = 5;
 const REVIEW_MS = 5 * 60000, SOURCE_CACHE_SIZE = 256;
 const sources = new WeakMap();
@@ -11,13 +22,15 @@ const requestOf = state => isObjective(state.stats?.partyRequest) ? state.stats.
 // and a class declaration cannot substitute for the learned Spoil skill.
 function partySpoiler(members) {
     const member = members.slice(0, MAX_MEMBERS).find(state => invoke('GameServer/Bot/AI/BotRoles').isSpoiler(state));
-    return member ? require('./ColdKillRewards').spoilerFor(member,
+    return member ? KillRewards.spoilerFor(member,
         { skills: require('./ColdCombatProfile').skillsFor(member) }) : null;
 }
 
 // One indexed item lookup, never a scan of the hunting atlas. Bound both the
 // cold-cache work and retained alternatives; shared static rows die with the
 // source index. Actor combat/route checks are separate and never cached here.
+// spoiler: the party's spoiler ({ level, skillLevel }, partySpoiler /
+// ColdKillRewards.spoilerFor) or null; its Spoil landing is in each rate.
 function campsFor(state, itemId, spots, spoiler) {
     const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
     const index = Planner.sourceIndexFor(spots);
@@ -26,7 +39,8 @@ function campsFor(state, itemId, spots, spoiler) {
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
     let cache = sources.get(index);
     if (!cache) sources.set(index, cache = new Map());
-    const key = `${itemId}:${state.level}:${tableRole}:${Number(spoiler)}:${Planner.rateProfileSignature()}`;
+    const spoilKey = spoiler ? `${spoiler.skillLevel}@${spoiler.level}` : 0;
+    const key = `${itemId}:${state.level}:${tableRole}:${spoilKey}:${Planner.rateProfileSignature()}`;
     const held = cache.get(key);
     if (held?.done) {
         // Least recently used: a key read again moves to the newest end.
@@ -43,7 +57,8 @@ function campsFor(state, itemId, spots, spoiler) {
             || !Planner.isBotEligibleSourceNpcId(npcId)) continue;
         const yieldPerKill = Planner.itemDropYield(entry.reward, itemId, entry.kind,
             { npcLevel: level, killerLevel: state.level }).expectedYield;
-        const rate = yieldPerKill * positive(entry.sourceCount) / Math.max(1, positive(entry.totalCount));
+        // The party aims at the camp's NPC (target, BackgroundPartyResolver).
+        const rate = Planner.sourcePerKill(entry, yieldPerKill, spoiler, true);
         if (!(rate > 0)) continue;
         const row = { spotId: entry.spot.id, npcId, itemId, sourceKind: entry.kind, rate, npcLevel: level,
             forecastKnown: !!Table.value(entry.spot.id, tableRole, state.level, true) };
@@ -64,14 +79,14 @@ function campsFor(state, itemId, spots, spoiler) {
 // keeps the last "no camp is worth a party" answer while the bot's decision
 // sequence, the memo key and the spot list hold, until the review time.
 function request(state, plan, { spots = [], economy, memo = null, timestamp = Date.now() } = {}) {
-    if (state.partyId || state.party?.partyId || state.level < 52 || !plan?.recipeId
+    if (partyIdOf(state) || state.level < MIN_LEVEL || !plan?.recipeId
         || !['active', 'deferred', 'blocked'].includes(plan.status) || plan.clanGoal
         || !spots.length || !economy) return null;
     const focus = economy.network?.focus?.[0];
     if (focus !== `power:${plan.target?.selfId}:${plan.target?.slot}`) return null;
     const Index = require('../../Item/ItemTemplateIndex'), Data = invoke('GameServer/DataCache');
     const target = Index.find(Data.items, plan.target.selfId);
-    if (!['b', 'a'].includes(target?.etc?.rank)) return null;
+    if (!GRADES.includes(target?.etc?.rank) || state.level < levelFloor(target.etc.rank)) return null;
     const Progression = invoke('GameServer/Bot/AI/PersonalGearProgression');
     if (!Progression.adventurer(state) || Progression.marketOnly(state, target)) return null;
     const recipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(plan.recipeId);
@@ -92,7 +107,7 @@ function request(state, plan, { spots = [], economy, memo = null, timestamp = Da
         && (activity.activity === 'shopping' || activity.activity === 'crafting'
             || activity.activity === 'improving' || activity.activity === 'hunting' && activity.itemId === material.selfId)) return null;
     const quote = economy.network?.plans?.get(`item:${material.selfId}`);
-    const materialCash = quote?.kind === 'buy' && quote.quoted && quote.availableUnits >= amount
+    const materialCash = quote?.kind === 'buy' && quote.quoted && Network.shortOf(quote, amount) === 0
         ? positive(quote.basePrice) * amount + positive(quote.tripFees) : null;
     const materialSoloHours = ['drop', 'spoil'].includes(quote?.kind) && quote.executable
         && quote.readyHours >= 0 ? quote.readyHours * amount + positive(quote.tripHours) : null;
@@ -113,7 +128,7 @@ function request(state, plan, { spots = [], economy, memo = null, timestamp = Da
         return null;
     };
     const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
-    const spoiler = !!invoke('GameServer/Bot/Population/ColdKillRewards').spoilerFor(state, { skills: Profile.skillsFor(state) });
+    const spoiler = KillRewards.spoilerFor(state, { skills: Profile.skillsFor(state) });
     const camps = campsFor(state, material.selfId, spots, spoiler);
     if (!camps.length) return noRequest();
     const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
@@ -145,7 +160,7 @@ function supplyPause(state, plan, { economy, timestamp = Date.now() } = {}) {
     const held = requestOf(state);
     const focus = economy?.network?.focus?.[0] || '';
     if (!held || !['open', 'deferred'].includes(held.status) || !focus.startsWith('stock:')
-        || state.partyId || state.party?.partyId || state.activity === 'dead'
+        || partyIdOf(state) || state.activity === 'dead'
         || !plan?.recipeId || plan.clanGoal || plan.levelingRecovery
         || !['active', 'deferred', 'blocked'].includes(plan.status)
         || remaining({ ...state, stats: { ...state.stats, equipmentPlan: plan } }, held) <= 0) return null;

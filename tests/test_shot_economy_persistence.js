@@ -16,6 +16,10 @@ const nativeReview = state => withNativeInput(state, (accepted, now) => Shots.re
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const BotMarket = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const Census = invoke('GameServer/Bot/Economy/DemandCensus');
+const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
+const ItemTemplateIndex = require('../src/GameServer/Item/ItemTemplateIndex');
+const NpcShops = invoke('GameServer/World/Generics/NpcShopBuyLists');
 const dbPath = isolated.world;
 const originalCraft = DB.craftInventoryItems;
 let sequence = 0;
@@ -41,7 +45,9 @@ async function bot({ classId = 57, mp = 1000, shots = 1000, recipe = true, money
         inventory: Life.inventorySummaryFromItems(await DB.fetchItems(characterId)),
         vitals: { hp: 1000, maxHp: 1000, mp, maxMp: 1000 },
         loc: { ...TOWNS[town] },
-        persona: { primaryDrive: 'adventure' }, stats: { classId, generatedCold: true } }, 'economy_test');
+        persona: { primaryDrive: 'adventure' }, stats: { classId, generatedCold: true,
+            // The learned Crystallize the worker reads (crystal routes need it).
+            coldCombat: Profile.legacySnapshot({ stats: { classId } }, await DB.fetchSkills(characterId)) } }, 'economy_test');
 }
 async function balances(id) {
     const rows = await DB.fetchItems(id);
@@ -54,10 +60,13 @@ async function balances(id) {
     }
     return { inventory, physical, life };
 }
+// A fighter short of shots: its demand reaches crafters as the census of
+// what is worn (DemandCensus, counted and put at once), not as a row of its own.
 async function demand() {
-    const buyer = await bot({ classId: 0, shots: 0, recipe: false });
-    return Life.upsertState({ ...buyer, stats: { ...buyer.stats,
-        shotDemand: { itemId: 1463, amount: 3000, maxSpend: 300000, at: Date.now() } } }, 'shot_demand_test');
+    const state = await bot({ classId: 0, shots: 0, recipe: false });
+    Census.observe({ characterId: state.characterId, state, kind: 'put' });
+    Census.flush();
+    return state;
 }
 async function run() {
     for (const suffix of ['', '-wal', '-shm']) fs.rmSync(dbPath + suffix, { force: true });
@@ -114,15 +123,20 @@ async function run() {
     // crystallization, craft/CAS and lifecycle SQL; no economic selection or
     // profitable-workshop claim is inferred from this manual transaction.
     const recipe = Recipes.resolveByRecipeId(20);
-    const Policy = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
     const Profit = invoke('GameServer/Bot/Economy/CraftProfitPolicy');
     let physicalState = Life.snapshot(crafter.characterId);
-    const inputs = await withNativeInput(physicalState, async (accepted, at) => {
-        const index = Shots.marketSnapshot(at);
-        const route = Policy.crystalRoute(accepted, 'd', 1458,
-            recipe.materials.find(item => Number(item.selfId) === 1458).amount, index);
-        assert(route && route.source === 'npc', 'the native catalogue supplies the crystallizable gear route');
-        const template = index.itemTemplates.get(route.selfId);
+    const inputs = await withNativeInput(physicalState, async (accepted) => {
+        const offers = NpcShops.allOffers();
+        const npcPrice = id => Math.min(...offers.filter(row => Number(row.selfId) === id).map(row => Number(row.price))
+            .filter(price => price > 0));
+        const itemTemplate = id => ItemTemplateIndex.findStrict(Cache.items, id);
+        // The native catalogue's first NPC-sold D gear: one crystallizable source.
+        const gearRow = Cache.items.find(item => String(item.etc?.rank || '').toLowerCase() === 'd'
+            && Number(item.etc?.cristals) > 0 && /^(Weapon|Armor)\./.test(String(item.template?.kind || ''))
+            && Number.isFinite(npcPrice(Number(item.selfId))));
+        assert(gearRow, 'the native catalogue supplies the crystallizable gear route');
+        const route = { selfId: Number(gearRow.selfId), price: npcPrice(Number(gearRow.selfId)) };
+        const template = itemTemplate(route.selfId);
         const purchased = await DB.purchaseNpcInventoryItem(accepted.characterId, { selfId: route.selfId,
             name: template.template.name, amount: 1, unitPrice: route.price, stackable: false,
             slot: Number(template.etc.slot || 0), coldState: accepted });
@@ -132,12 +146,12 @@ async function run() {
         const gear = (await DB.fetchItems(afterGear.characterId)).find(item => Number(item.selfId) === route.selfId && !item.equipped);
         const crystals = await DB.crystallizeInventoryItem(afterGear.characterId, { sourceId: gear.id,
             sourceSelfId: route.selfId, crystalId: 1458, crystalAmount: Number(template.etc.cristals),
-            crystalName: index.itemTemplates.get(1458).template.name, coldState: afterGear });
+            crystalName: itemTemplate(1458).template.name, coldState: afterGear });
         const afterCrystal = Life.acceptLifecycleRow(crystals.coldLifeRow);
         const ore = recipe.materials.find(item => Number(item.selfId) !== 1458);
-        const orePrice = Number(index.npcPrice.get(Number(ore.selfId)));
+        const orePrice = npcPrice(Number(ore.selfId));
         const purchasedOre = await DB.purchaseNpcInventoryItem(afterCrystal.characterId, { selfId: Number(ore.selfId),
-            name: index.itemTemplates.get(Number(ore.selfId)).template.name, amount: Number(ore.amount),
+            name: itemTemplate(Number(ore.selfId)).template.name, amount: Number(ore.amount),
             unitPrice: orePrice, coldState: afterCrystal });
         assert(purchasedOre.ok);
         const afterOre = Life.acceptLifecycleRow(purchasedOre.coldLifeRow);

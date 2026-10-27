@@ -123,7 +123,7 @@ function validPartyIncomeReviews(joint, sources) {
         && ['soloHours', 'partyHours'].every(key => row[key] === null || row[key] >= 0)
         && ['fee', 'soloBuffPrice'].every(key => typeof row[key] === 'number' && Number.isFinite(row[key]) && row[key] >= 0)
         && (row.soloSpotId === null || typeof row.soloSpotId === 'string' && row.soloSpotId.length <= 128)
-        && [null, 'solo_route', 'paid_buff', 'native_craft'].includes(row.soloSource)
+        && [null, 'solo_route', 'paid_buff'].includes(row.soloSource)
         && [null, 'own_party', 'table_party'].includes(row.partySource));
 }
 
@@ -219,12 +219,6 @@ function validateEnvelope(message, direction, options = {}) {
                 || payload.pageIndex > 0 && payload.party !== undefined)
             || !Array.isArray(payload.escrows) || payload.escrows.length !== payload.members.length
             || payload.escrows.some(value => typeof value !== 'number' || !Number.isFinite(value) || value < 0)
-            || payload.recipeKnowledge !== undefined && (!Array.isArray(payload.recipeKnowledge)
-                || payload.recipeKnowledge.length !== payload.members.length
-                || payload.recipeKnowledge.some(row => !row || typeof row !== 'object'
-                    || row.recipeBook != null && (typeof row.recipeBook !== 'string' || row.recipeBook.length > 512)
-                    || row.knownShotRecipes !== undefined && (!Array.isArray(row.knownShotRecipes)
-                        || row.knownShotRecipes.length > 8 || row.knownShotRecipes.some(id => !Number.isSafeInteger(id)))))
             || !Number.isSafeInteger(payload.timestamp) || payload.timestamp <= 0
             || !Number.isSafeInteger(payload.replyBy) || payload.replyBy < payload.timestamp)
             return { ok: false, reason: 'invalid_party_goal_request' };

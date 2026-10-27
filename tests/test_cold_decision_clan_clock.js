@@ -11,7 +11,9 @@ const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
 const Providers = require(root + '/src/GameServer/Bot/Economy/WishProviders');
 const capture = require(root + '/src/GameServer/Bot/Population/ColdEconomyDecision').capture;
-const timestamp = 1e12, targetId = 193;
+// T43 table: this bot's hunt now pays for Stick of Faith (193), its own gear root;
+// Stick of Eternity (196), a C mage weapon it does not pick, is the non-top-k target.
+const timestamp = 1e12, targetId = 196;
 const state = { characterId: 910001, updatedAt: timestamp, phase: 'cold', activity: 'resting', level: 41, adena: 100000,
     exp: Number(Data.experience[40]), sp: 1000,
     inventory: { 1: { selfId: 1, amount: 1, equipped: true, equippedCount: 1, slot: 7 } },

@@ -1,4 +1,3 @@
-const BuyerActivity = invoke('GameServer/Bot/Economy/MarketBuyerActivity');
 const Pricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
 
 const ITEM_COOLDOWN_MS = 20 * 60 * 1000;
@@ -50,7 +49,7 @@ function index(shops, minLot = minLotValue()) {
     return { minLotValue: minLot, books, candidates };
 }
 
-// The pick reads the clock, the cooldowns and the buyers: every call.
+// The pick reads the clock and the cooldowns: every call.
 function pick({ books, candidates }, { now, lastItemAt, lastOwnerAt, lastTownAt, preferredSide }) {
     let best = null;
     let preferred = null;
@@ -59,14 +58,13 @@ function pick({ books, candidates }, { now, lastItemAt, lastOwnerAt, lastTownAt,
         if (now - (lastOwnerAt.get(Number(shop.ownerId))?.at ?? -Infinity) < 8 * 60 * 1000
             || now - (lastItemAt.get(itemKey(type, line)) ?? -Infinity) < ITEM_COOLDOWN_MS) continue;
         const book = books.get(id);
-        const recentBuyers = BuyerActivity.count(line.selfId);
         let score;
         if (type === 1) {
             if (price > book.minAsk * 1.05) continue;
             const bargain = book.secondAsk < Infinity && book.secondAsk >= price * 1.1;
-            if (book.askOffers > 4 && !recentBuyers && book.maxBid < price && !bargain) continue;
-            score = Math.min(recentBuyers, 5) * 12 + (bargain ? 25 : 0)
-                + (book.askOffers <= 2 ? 12 : 0) + Math.min(10, Math.log10(price * Number(line.count) + 1) * 2);
+            if (book.askOffers > 4 && book.maxBid < price && !bargain) continue;
+            score = (bargain ? 25 : 0) + (book.askOffers <= 2 ? 12 : 0)
+                + Math.min(10, Math.log10(price * Number(line.count) + 1) * 2);
         } else {
             if (price < book.maxBid * 0.95) continue;
             score = 20 + (book.minAsk < Infinity && price >= book.minAsk * 0.8 ? 12 : 0)
@@ -84,8 +82,4 @@ function pick({ books, candidates }, { now, lastItemAt, lastOwnerAt, lastTownAt,
     return preferred || best;
 }
 
-function choose(shops, context) {
-    return pick(index(shops), context);
-}
-
-module.exports = { choose, index, pick, minLotValue, itemKey, ITEM_COOLDOWN_MS, MIN_AD_LOT_BASE_ADENA };
+module.exports = { index, pick, minLotValue, itemKey, ITEM_COOLDOWN_MS, MIN_AD_LOT_BASE_ADENA };

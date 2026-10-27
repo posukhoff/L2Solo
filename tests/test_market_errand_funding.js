@@ -16,7 +16,7 @@ const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Errands = require('../src/GameServer/Bot/Population/CombinedErrandPolicy');
 const GIRAN = { locX: 83396, locY: 147904, locZ: -3400 };
 const DION = { locX: 17000, locY: 145000, locZ: -3000 };
-const WALLET = 1000000, RATE = 2e-5;
+const WALLET = 1000000, RATE = 2e-5, RECIPE_SCROLL = 1666;
 const OLD = [77000, 1.3e-5, 15000, 0], CHANGED = [77000, 3e-5, 15000, 1200000];
 let nextId = 719120;
 
@@ -175,6 +175,43 @@ async function noSpend(state, itemId, message) {
         assert.equal(JSON.parse(valueSaved.statsJson).marketErrand.valueHours, 1);
         await noSpend(await arrive(valueTrip, [77000, .0001, 15000, 0]), 1864,
             'the original one-hour value cannot pay a now overpriced recipe');
+
+        // A crafter's recipe errand learns the scroll it buys on arrival: the
+        // shot plan set its scroll demand before the trip (ColdShotEconomyService).
+        const recipeSeller = await arrive(await stateFor());
+        await Database.setItem(recipeSeller.characterId, { selfId: RECIPE_SCROLL, name: 'Recipe: Wooden Arrow', amount: 1, slot: 0 });
+        await sellShop(recipeSeller.characterId, 'One recipe',
+            { selfId: RECIPE_SCROLL, name: 'Recipe: Wooden Arrow', count: 1, price: 20000, enchant: 0, stackable: true });
+        const artisan = await stateFor(OLD, { classId: 56,
+            shotRecipeDemand: { itemId: RECIPE_SCROLL, amount: 1, maxSpend: 20000, at: Date.now() } });
+        await Database.setSkill({ selfId: 172, name: 'Create Item', level: 3 }, artisan.characterId);
+        const recipeTrip = await arrive(await errand(artisan, RECIPE_SCROLL, 1,
+            { npc: false, purpose: 'recipe', r: undefined, valueHours: 1 }));
+        const recipeBought = await Market.tryPurchase(recipeTrip, { type: 'market_errand' });
+        assert.equal(recipeBought.units, 1, 'the recipe errand buys its scroll');
+        assert((await Database.fetchCharacterRecipes(artisan.characterId)).some(row => Number(row.recipeId) === 1),
+            'the bought recipe is in the recipe book at once');
+        assert.equal(await stock(artisan.characterId, RECIPE_SCROLL), 0, 'learning consumes the bought scroll');
+        assert.equal(Errands.pending(recipeBought.state).length, 0, 'the errand is done');
+
+        // A selected wealth craft's r is already net of each input's cash and
+        // trip town (its basket): its far recipe purchase leaves on that plan
+        // instead of valuing the same trip a second time.
+        const crafter = await stateFor();
+        const stem = Afk.boardIndex().list(1864, Afk.SELL, 'Giran')
+            .find(line => Number(line.ownerId) === seller.characterId);
+        const netRate = 1.4e-5;
+        const craftTrip = await Market.acquire(crafter, 1864, 1, { towns: ['Giran'], npc: false, purpose: 'wealth_craft',
+            r: netRate, money: Funding.spendable(crafter, 0, { r: netRate }), maxPrice: stem.price, quoteDepth: 5,
+            sourcePlan: { town: 'Giran', selfId: 1864, lines: [{ line: stem, count: 1, price: stem.price }],
+                cost: stem.price, landed: stem.price } });
+        assert.equal(craftTrip.traveling, true, 'the selected craft purchase departs for its seller town');
+        const craftSaved = JSON.parse((await Database.execute(['SELECT statsJson FROM bot_life_state WHERE characterId=?',
+            [crafter.characterId]]))[0].statsJson).marketErrand;
+        assert.equal(craftSaved.town, 'Giran');
+        assert.equal(craftSaved.purpose, 'wealth_craft');
+        assert.equal(Market.canTravelForPurchase(crafter, { selfId: 1864, amount: 1, town: 'Giran',
+            purpose: 'wealth_craft', r: netRate }), true, 'the departure gate admits the same selected craft purchase');
 
         const partialPacket = [77000, 1.3e-5, 15000, 0, 4e-5, 890000, 999999];
         const partial = await arrive(await errand(await stateFor(partialPacket), 1864, 3, { npc: false }));

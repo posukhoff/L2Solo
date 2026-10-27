@@ -92,12 +92,6 @@ Config.coldHonestTravel = false;
     assert.notStrictEqual(farGiran, 'Giran');
     assert.strictEqual(MarketTownPolicy.shopTown(hunter({ stats: { karma: 1 } }), [{ selfId: SABER, price: 1, count: 1 }]),
         Karma.TOWN_NAME, 'a PK opens in Floran');
-    // The decision is made once: a bot that chose keeps its town.
-    const chose = hunter({ stats: { shopTown: { town: 'Dion', at: 1 } } });
-    assert.deepStrictEqual(MarketTownPolicy.openingTown(chose, [{ selfId: SABER, price: 50000, count: 1 }]),
-        { town: 'Dion', shopTown: null });
-    const fresh = MarketTownPolicy.openingTown(hunter(), [{ selfId: SABER, price: 50000, count: 1 }], 7000);
-    assert.deepStrictEqual(fresh.shopTown, { town: fresh.town, at: 7000 }, 'a new decision is returned to keep');
     // The weighted roll: zero-valued options together keep TendencyRoll.MIN.
     const options = [{ action: 'a', value: 100 }, { action: 'b', value: 0 }, { action: 'c', value: -5 }];
     let others = 0;
@@ -195,13 +189,13 @@ Config.coldHonestTravel = false;
     // The errand's town and arrival are the subject here. Whether the trip
     // pays for itself (24512a44) has its own fixture
     // (test_acquisition_trip_value.js); this hunter has no weapon to value shots.
-    const canTravel = ColdMarketService.canTravelForPurchase;
-    ColdMarketService.canTravelForPurchase = () => true;
+    const departs = ColdMarketService.errandDeparts;
+    ColdMarketService.errandDeparts = () => true;
     let travel;
     try {
         travel = GoalExecutor.beginMarketTravel(state, { ...goal, status: 'active' }, 1000);
     } finally {
-        ColdMarketService.canTravelForPurchase = canTravel;
+        ColdMarketService.errandDeparts = departs;
     }
     assert.strictEqual(travel.stats.travel.townName, 'Dion');
     assert.strictEqual(travel.stats.travel.arrivalActivity, 'shopping');
@@ -261,12 +255,10 @@ Config.coldHonestTravel = false;
         const ctx = MarketPricing.traderContext(state, { board, persona: { traits: {}, understanding: 0.5 }, npcOffersFor: () => [],
             timestamp: t0 + 100, knowledgeEnabled: false });
         // N79 derives current OwnWorth from native usefulness/money price.
-        // These original empty-bag inputs need no Stem, so a new ad is refused.
+        // These original empty-bag inputs need no Stem.
         const nativeWorth = ctx.economy.itemUsefulness(STEM) / ctx.economy.moneyPrice;
         assert.strictEqual(ctx.economy.worth(STEM), nativeWorth);
         assert.strictEqual(nativeWorth, 0, 'no native Stem use is manufactured from legacy metadata');
-        assert.strictEqual(MarketPricing.bid(STEM, ctx, { units: 20, worth: 400, cap: 400, rollKey: ['b'] }), null,
-            'legacy metadata cannot fund a new bid above current OwnWorth');
         // This branch is explicitly a historical standing-line learning unit,
         // not a new native buy-ad publication or physical SQLite trade. Preserve
         // the original prior/market/trader/grid/roll and worth400 metadata that

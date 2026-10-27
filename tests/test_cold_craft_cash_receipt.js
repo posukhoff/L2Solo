@@ -3,10 +3,10 @@ const assert = require('node:assert/strict');
 require('./helpers/databaseIsolation');
 const isolated = require('./helpers/isolatedSocialDatabase')('cold-craft-cash-receipt');
 require('../src/Global');
+const { publishTwinOffer } = require('./helpers/twinOffer');
 isolated.assertConfigured(options.default);
 const DataCache = invoke('GameServer/DataCache');
 const ColdCraftingService = invoke('GameServer/Bot/Economy/ColdCraftingService');
-const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 DataCache.init();
 
 async function verifyAuthoredPhysicalCraft() {
@@ -20,16 +20,23 @@ async function verifyAuthoredPhysicalCraft() {
             + Number(material.amount));
     }
     const nativeItem = selfId => DataCache.items.find(row => Number(row.selfId) === Number(selfId));
-    const crystalId = [...inputs.keys()].find(id => /^Crystal:/i.test(nativeItem(id)?.template?.name || ''));
-    const gemstoneId = [...inputs.keys()].find(id => /^Gemstone(?:\s|:)/i.test(nativeItem(id)?.template?.name || ''));
     console.log('Authored recipe inputs:', JSON.stringify({
         recipeId: recipe.recipeId,
         productId: recipe.productId,
         materials: [...inputs].map(([id, amount]) => ({ id, amount, name: nativeItem(id)?.template?.name }))
     }));
-    assert(crystalId && gemstoneId, 'the actual selected C weapon recipe requires crystals and gemstones');
-    const nativeStation = ColdCraftingService.stationForRecipe(recipe.recipeId);
-    assert(nativeStation, 'the actual recipe is published by a native station');
+    // No Giran station crafts for a bot: a personal craft is a dwarf's
+    // workshop exchange. The receipt runs on Steel (two raw inputs, no
+    // component) at one workshop, then on the Crystal Staff at another.
+    assert.strictEqual(ColdCraftingService.stationForRecipe(recipe.recipeId), null, 'no native station crafts recipe 198 for a bot');
+    const stationRecipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(30);
+    const stationInputs = new Map(stationRecipe.materials.map(row => [Number(row.selfId), Number(row.amount)]));
+    const [firstInputId, secondInputId] = stationInputs.keys();
+    assert(firstInputId && secondInputId, 'the station recipe has two physical inputs');
+    assert.strictEqual(ColdCraftingService.stationForRecipe(stationRecipe.recipeId), null, 'no native station crafts Steel for a bot');
+    // Everyone stands at Giran's centre: a bot workshop stands at its twin
+    // town's centre (no shop), and a customer reaches it within WORKSHOP_RANGE.
+    const giran = invoke('GameServer/Bot/Economy/ColdMarketListingService').townCenter('Giran');
     const held = (items, selfId) => items.filter(row => Number(row.selfId) === selfId)
         .reduce((sum, row) => sum + Number(row.amount), 0);
     const item = (selfId, amount) => ({ selfId, amount, name: nativeItem(selfId)?.template?.name || `Item ${selfId}`,
@@ -38,12 +45,12 @@ async function verifyAuthoredPhysicalCraft() {
         await Database.createAccount(accountName, 'fixture');
         const race = Number(DataCache.classTemplates.find(row => Number(row.classId) === classId)?.template?.race || 0);
         const id = Number((await Database.createCharacter(accountName, { name, race, classId, sex: 0,
-            face: 0, hair: 0, hairColor: 0, maxHp: 1000, maxMp: 1000, ...nativeStation.loc })).insertId);
+            face: 0, hair: 0, hairColor: 0, maxHp: 1000, maxMp: 1000, ...giran })).insertId);
         const exp = Number(DataCache.experience[level - 1]);
         await Database.execute(['UPDATE characters SET level=?, exp=?, hp=1000, mp=1000 WHERE id=?', [level, exp, id]]);
         for (const row of rows) await Database.setItem(id, row);
         return Life.upsertState({ characterId: id, accountName, name, phase: 'cold', activity: 'crafting',
-            level, exp, loc: { ...nativeStation.loc }, currentRegion: 'Giran',
+            level, exp, loc: { ...giran }, currentRegion: 'Giran',
             adena: held(rows, 57), inventory: Life.inventorySummaryFromItems(await Database.fetchItems(id)),
             vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
             stats: { classId, generatedCold: true, money: [36000, 0, 0, 0], ...stats }, timing: {} }, 'native_gear_craft_fixture');
@@ -61,13 +68,15 @@ async function verifyAuthoredPhysicalCraft() {
         await Database.init();
         assert(Database.isReady());
         await Life.init();
-        const crafter = await seed(ColdCraftingService.crafterAccount(nativeStation), 'NativeGearStation',
-            57, 70, [item(57, 1000000)], { craftStationId: nativeStation.id, generatedIndex: 10000 });
+        let crafter = await seed('bot_native_gear_steel', 'NativeGearSteel', 57, 70, [item(57, 1000000)], { role: 'crafter', twin: { town: 'Giran' } });
+        await Database.setCharacterRecipe(crafter.characterId, stationRecipe.recipeId, stationRecipe.type);
+        crafter = await publishTwinOffer(crafter);
+        const steelProvider = { [stationRecipe.recipeId]: { workshop: true, characterId: crafter.characterId } };
         let customer = await seed('bot_native_gear_customer', 'NativeGearCustomer', 10, 40,
-            [item(57, 1000000), ...[...inputs].filter(([id]) => id !== crystalId && id !== gemstoneId)
+            [item(57, 1000000), ...[...stationInputs].filter(([id]) => id !== firstInputId && id !== secondInputId)
                 .map(([id, amount]) => item(id, amount))], {
-                equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: recipe.recipeId,
-                    target: { selfId: recipe.productId } }
+                equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: stationRecipe.recipeId,
+                    target: { selfId: stationRecipe.productId }, craftProviders: steelProvider }
             });
         const created = await Database.createAutonomousClan({ name: 'PersonalCraftClan', leaderId: customer.characterId,
             memberIds: [customer.characterId], founderQuorum: 1, maxBotClans: 40, maxBotMemberShare: 1 });
@@ -75,14 +84,14 @@ async function verifyAuthoredPhysicalCraft() {
         await Database.execute(['UPDATE clans SET level=1 WHERE id=?', [created.clanId]]);
         await invoke('GameServer/Clan/ClanGoalService').clanProjectionById(created.clanId);
         customer = Life.cachedState(customer.characterId);
-        assert.equal(customer.stats.equipmentPlan.strategy, 'craft', 'joining preserves a personal equipment recipe');
+        assert.equal(customer.stats.equipmentPlan.strategy, 'craft', 'joining preserves a personal craft recipe');
         assert.equal(customer.stats.equipmentPlan.clanGoal, undefined);
         const ids = [customer.characterId, crafter.characterId];
         const noGrantBefore = await image(ids);
         const physical = noGrantBefore[0].items;
-        const supplemented = await ColdCraftingService.supplementMaterials(customer.characterId, physical, recipe);
+        const supplemented = await ColdCraftingService.supplementMaterials(customer.characterId, physical, stationRecipe);
         assert.strictEqual(supplemented.items, physical, 'preparation returns the same physical rows');
-        assert.deepStrictEqual(supplemented.supplemented, [], 'preparation grants no crystal or gemstone');
+        assert.deepStrictEqual(supplemented.supplemented, [], 'preparation grants no input');
         assert.deepStrictEqual(await image(ids), noGrantBefore, 'preparation cannot create inputs or mutate SQL/cache');
         async function refuse(label) {
             customer = await Life.upsertState({ ...customer, activity: 'crafting',
@@ -94,39 +103,40 @@ async function verifyAuthoredPhysicalCraft() {
             assert.strictEqual(result.reason, 'not_ready', label);
             assert.deepStrictEqual(await image(ids), before, `${label}: all SQL rows, wallets and caches stay unchanged`);
         }
-        await refuse('no physical crystals or gemstones');
-        await Database.setItem(customer.characterId, item(crystalId, inputs.get(crystalId) - 1));
-        await refuse('one crystal short and no gemstone');
-        const crystal = (await Database.fetchItems(customer.characterId)).find(row => Number(row.selfId) === crystalId);
-        await Database.updateItemAmount(customer.characterId, crystal.id, inputs.get(crystalId));
-        await refuse('all crystals still require the physical gemstones');
-        await Database.setItem(customer.characterId, item(gemstoneId, inputs.get(gemstoneId) - 1));
-        await refuse('one gemstone short');
-        const gemstone = (await Database.fetchItems(customer.characterId)).find(row => Number(row.selfId) === gemstoneId);
-        await Database.updateItemAmount(customer.characterId, gemstone.id, inputs.get(gemstoneId));
+        await refuse('neither physical input');
+        await Database.setItem(customer.characterId, item(firstInputId, stationInputs.get(firstInputId) - 1));
+        await refuse('the first input one short, no second');
+        const first = (await Database.fetchItems(customer.characterId)).find(row => Number(row.selfId) === firstInputId);
+        await Database.updateItemAmount(customer.characterId, first.id, stationInputs.get(firstInputId));
+        await refuse('the whole first input still requires the second');
+        await Database.setItem(customer.characterId, item(secondInputId, stationInputs.get(secondInputId) - 1));
+        await refuse('the second input one short');
+        const second = (await Database.fetchItems(customer.characterId)).find(row => Number(row.selfId) === secondInputId);
+        await Database.updateItemAmount(customer.characterId, second.id, stationInputs.get(secondInputId));
         customer = await Life.upsertState({ ...customer, activity: 'crafting',
             inventory: Life.inventorySummaryFromItems(await Database.fetchItems(customer.characterId)) },
         'native_gear_all_inputs_acquired');
-        // A hot station is an actual native service denial before exchange.
+        // A workshop owner gone hot leaves the board: the plan waits, nothing
+        // is exchanged.
         const coldCrafter = Life.cachedState(crafter.characterId);
         await Life.upsertState({ ...coldCrafter, phase: 'hot' }, 'native_gear_station_hot');
         const unavailableBefore = await image(ids);
         const unavailableInput = structuredClone(customer);
         const unavailable = await ColdCraftingService.craft(customer, () => 0);
-        assert.strictEqual(unavailable.reason, 'station_busy');
+        assert.strictEqual(unavailable.reason, 'not_ready', 'a hot owner is away for now, not gone');
         assert.strictEqual(unavailable.crafted, false);
-        assert.deepStrictEqual(customer, unavailableInput, 'station refusal cannot mutate caller state');
-        assert.deepStrictEqual(await image(ids), unavailableBefore, 'unavailable station changes no SQL/cache rows');
+        assert.deepStrictEqual(customer, unavailableInput, 'an away crafter cannot mutate caller state');
+        assert.deepStrictEqual(await image(ids), unavailableBefore, 'an away crafter changes no SQL/cache rows');
         await Life.upsertState({ ...Life.cachedState(crafter.characterId), phase: 'cold' },
             'native_gear_station_restored', { releaseHot: true });
         assert.strictEqual((await Life.findByCharacterId(crafter.characterId)).phase, 'cold',
-            'the explicit hot ownership handback restores the native station before receipt controls');
+            'the explicit hot ownership handback restores the workshop owner before receipt controls');
 
         // A real SQLite abort occurs after transaction-local ingredient deletes
         // and before product insertion. Rollback preserves all physical facts;
         // the existing refresh may update reconciliation metadata separately.
         await Database.execute([`CREATE TRIGGER refuse_native_gear_product BEFORE INSERT ON items
-            WHEN NEW.characterId = ${customer.characterId} AND NEW.selfId = ${recipe.productId}
+            WHEN NEW.characterId = ${customer.characterId} AND NEW.selfId = ${stationRecipe.productId}
             BEGIN SELECT RAISE(ABORT, 'native_gear_product_refused'); END;`, []]);
         const rollbackBefore = await image(ids);
         const rollbackInput = structuredClone(customer);
@@ -141,42 +151,42 @@ async function verifyAuthoredPhysicalCraft() {
             'real transaction failure rolls back ingredients/product/wallet/physical characters');
         await Database.execute(['DROP TRIGGER refuse_native_gear_product', []]);
         const before = await image(ids);
-        const entry = CraftShopService.profileFor(crafter).entries.find(row => row.recipeId === recipe.recipeId);
-        assert(entry && Number.isSafeInteger(entry.price) && entry.price > 0, 'native published fee is positive');
+        const entry = ColdCraftingService.stationForRecipe(stationRecipe.recipeId, customer);
+        assert(entry?.workshop && Number.isSafeInteger(entry.price) && entry.price > 0, 'the workshop fee is positive');
         const result = await ColdCraftingService.craft(customer, () => 0);
         assert.strictEqual(result.crafted, true, 'all authored physical inputs enable one native manufacture');
-        assert.strictEqual(result.recipeId, recipe.recipeId);
+        assert.strictEqual(result.recipeId, stationRecipe.recipeId);
         assert.strictEqual(result.reason, 'crafted');
         assert.strictEqual(result.batchCount, 1);
         assert.deepStrictEqual(result.supplementedMaterials, []);
         const afterItems = await Database.fetchItems(customer.characterId);
         const stationItems = await Database.fetchItems(crafter.characterId);
-        for (const [id, amount] of inputs) {
+        for (const [id, amount] of stationInputs) {
             assert.strictEqual(held(before[0].items, id) - held(afterItems, id), amount,
                 `authored recipe consumes exactly ${amount} physical input ${id}`);
             assert.strictEqual(Number(result.state.inventory[id]?.amount || 0), held(afterItems, id),
                 `the returned inventory cannot retain consumed input ${id}`);
         }
-        assert.strictEqual(held(afterItems, recipe.productId), recipe.productCount, 'exactly one recipe output');
+        assert.strictEqual(held(afterItems, stationRecipe.productId), stationRecipe.productCount, 'exactly one recipe output');
         assert.strictEqual(held(afterItems, 57), held(before[0].items, 57) - entry.price);
         assert.strictEqual(held(stationItems, 57), held(before[1].items, 57) + entry.price);
         const [stationRow] = await Database.execute(['SELECT adena FROM bot_life_state WHERE characterId=?', [crafter.characterId]]);
-        assert.strictEqual(stationRow.adena, held(stationItems, 57), 'the station\'s saved wallet holds the fee it earned');
+        assert.strictEqual(stationRow.adena, held(stationItems, 57), 'the crafter\'s saved wallet holds the fee it earned');
         assert.strictEqual(Life.cachedState(crafter.characterId).adena, held(stationItems, 57),
-            'the station\'s held wallet holds the fee it earned');
+            'the crafter\'s held wallet holds the fee it earned');
         assert.strictEqual(held(afterItems, 57) + held(stationItems, 57),
             held(before[0].items, 57) + held(before[1].items, 57), 'fee transfers conserve both physical wallets');
         assert.strictEqual(result.state.adena, held(afterItems, 57), 'returned wallet follows the committed physical debit');
         const settled = await Life.upsertState(result.state, 'native_gear_craft_settled');
         assert.strictEqual(Life.cachedState(customer.characterId).adena, held(afterItems, 57));
-        assert.strictEqual(settled.inventory[recipe.productId].amount, recipe.productCount);
-        for (const id of inputs.keys()) assert.strictEqual(Number(settled.inventory[id]?.amount || 0), 0);
+        assert.strictEqual(settled.inventory[stationRecipe.productId].amount, stationRecipe.productCount);
+        for (const id of stationInputs.keys()) assert.strictEqual(Number(settled.inventory[id]?.amount || 0), 0);
         const persisted = (await Database.execute(['SELECT inventorySummary, adena FROM bot_life_state WHERE characterId=?',
             [customer.characterId]]))[0];
         assert.strictEqual(persisted.adena, held(afterItems, 57));
         const persistedInventory = JSON.parse(persisted.inventorySummary);
-        assert.strictEqual(persistedInventory[recipe.productId].amount, recipe.productCount);
-        for (const id of inputs.keys()) assert.strictEqual(Number(persistedInventory[id]?.amount || 0), 0);
+        assert.strictEqual(persistedInventory[stationRecipe.productId].amount, stationRecipe.productCount);
+        for (const id of stationInputs.keys()) assert.strictEqual(Number(persistedInventory[id]?.amount || 0), 0);
         const duplicateBefore = await image(ids);
         const duplicate = await ColdCraftingService.craft({ ...settled, activity: 'crafting' }, () => 0);
         assert.strictEqual(duplicate.crafted, false, 'consumed inputs cannot manufacture a second output');
@@ -184,9 +194,9 @@ async function verifyAuthoredPhysicalCraft() {
         assert.deepStrictEqual(await image(ids), duplicateBefore, 'duplicate attempt changes no SQL rows, wallet or cache');
         // Native zero-balance control: the existing receipt amount 0 is valid.
         const exactFeeCustomer = await seed('bot_native_gear_exact_fee', 'NativeGearExactFee', 10, 40,
-            [item(57, entry.price), ...[...inputs].map(([id, amount]) => item(id, amount))], {
-                equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: recipe.recipeId,
-                    target: { selfId: recipe.productId } }
+            [item(57, entry.price), ...[...stationInputs].map(([id, amount]) => item(id, amount))], {
+                equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: stationRecipe.recipeId,
+                    target: { selfId: stationRecipe.productId }, craftProviders: steelProvider }
             });
         const exactFeeInput = structuredClone(exactFeeCustomer);
         const exactFeeCraft = await ColdCraftingService.craft(exactFeeCustomer, () => 0);
@@ -201,10 +211,10 @@ async function verifyAuthoredPhysicalCraft() {
         const populationConfig = invoke('GameServer/Bot/Population/PopulationConfig');
         const oldBuyersDisabled = populationConfig.staticBuyersDisabled;
         const workshopOwner = await seed('bot_native_gear_workshop', 'NativeGearWorkshop',
-            57, 70, [item(57, 1000000)], { role: 'crafter' });
+            57, 70, [item(57, 1000000)], { role: 'crafter', twin: { town: 'Giran' } });
         await Database.setCharacterRecipe(workshopOwner.characterId, recipe.recipeId, recipe.type);
-        const publishedWorkshop = await Workshop.review(workshopOwner);
-        assert(publishedWorkshop.stats.workshop.entries.some(row => row.recipeId === recipe.recipeId),
+        const publishedWorkshop = await publishTwinOffer(workshopOwner);
+        assert([...Workshop.publicForRecipe(recipe.recipeId, {})].some(row => row.characterId === workshopOwner.characterId),
             'the physical learned recipe produces a native public workshop offer');
         const workshopCustomer = await seed('bot_native_gear_workshop_customer', 'NativeGearWorkshopBuyer',
             10, 40, [item(57, 1000000), ...[...inputs].map(([id, amount]) => item(id, amount))], {
@@ -257,7 +267,9 @@ async function verifyAuthoredPhysicalCraft() {
             assert.deepStrictEqual(await image(workshopIds), workshopDuplicateBefore);
             assert.equal(ColdCraftingService.stationForRecipe(recipe.recipeId, workshopSettled), null,
                 'a finished plan keeps no workshop agreement');
-            const currentStation = Workshop.find(recipe.recipeId, workshopSettled);
+            const offered = customer => ({ workshop: true, characterId: workshopOwner.characterId,
+                price: Workshop.lookup(workshopOwner.characterId, recipe.recipeId, customer).price });
+            const currentStation = offered(workshopSettled);
             const batchCustomer = await seed('bot_workshop_batch_customer', 'WorkshopBatchBuyer', 0, 40,
                 [item(57, 1000000), ...[...inputs].map(([id, amount]) => item(id, amount * 2))], {
                     equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: recipe.recipeId,
@@ -275,7 +287,7 @@ async function verifyAuthoredPhysicalCraft() {
             assert.equal(batchResult.state.adena, 1000000 - currentStation.price * 2);
             assert.equal(ColdCraftingService.stationForRecipe(recipe.recipeId, batchCustomer)?.characterId,
                 workshopOwner.characterId, 'the agreed dwarf is kept; a different dwarf is never selected');
-            const recoveryStation = Workshop.find(recipe.recipeId, batchResult.state);
+            const recoveryStation = offered(batchResult.state);
             assert(recoveryStation);
             const recovering = await seed('bot_workshop_lost_reply', 'WorkshopLostReply', 0, 40,
                 [item(57, 1000000), ...[...inputs].map(([id, amount]) => item(id, amount * 2))], {
@@ -315,13 +327,21 @@ async function verifyAuthoredPhysicalCraft() {
             Workshop.remove(workshopOwner.characterId);
         }
         // Private receipt validation controls use the existing unit facade
-        // boundary. They do not claim a native committed exchange or funding.
+        // boundary on the direct exchange, a clan crafter's (the Steel dwarf
+        // joins the customer's clan; the customer is a member too, else
+        // ClanMembershipPolicy drops a goal of another clan). They do not
+        // claim a native committed exchange or funding.
         const nativeExchange = Database.craftForCustomer;
+        await Database.execute(['UPDATE characters SET clanId=? WHERE id=?', [created.clanId, crafter.characterId]]);
         const receiptCustomer = await seed('bot_native_receipt_validation', 'NativeReceiptValidation', 10, 40,
-            [item(57, 1000000), ...[...inputs].map(([id, amount]) => item(id, amount))], {
-                equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: recipe.recipeId,
-                    target: { selfId: recipe.productId } }
+            [item(57, 1000000), ...[...stationInputs].map(([id, amount]) => item(id, amount))], {
+                equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: stationRecipe.recipeId,
+                    target: { selfId: stationRecipe.productId }, clanGoal: { clanId: created.clanId },
+                    craftProviders: { [stationRecipe.recipeId]: { characterId: crafter.characterId, known: true, loc: { ...giran } } } },
+                clanId: created.clanId
             });
+        await Database.execute(['UPDATE characters SET clanId=? WHERE id=?', [created.clanId, receiptCustomer.characterId]]);
+        assert(ColdCraftingService.stationForRecipe(stationRecipe.recipeId, receiptCustomer)?.clan, 'the clan crafter crafts Steel');
         const receiptInput = structuredClone(receiptCustomer);
         const receiptIds = [receiptCustomer.characterId, crafter.characterId];
         try {
@@ -333,28 +353,13 @@ async function verifyAuthoredPhysicalCraft() {
                 assert.deepStrictEqual(receiptCustomer, receiptInput, 'invalid private receipt cannot mutate caller input');
                 assert.deepStrictEqual(await image(receiptIds), invalidBefore, 'invalid facade receipt reaches no later SQL/cache writer');
             }
-            // Existing public-station unit facades may omit the whole result.
-            // These controls perform no physical exchange and prove only the
-            // prior facade contract; native paid conservation is checked above.
-            for (const receipt of [undefined, null, {}]) {
-                const customerItems = await Database.fetchItems(receiptCustomer.characterId);
-                const crafterItems = await Database.fetchItems(crafter.characterId);
-                Database.craftForCustomer = async () => receipt;
-                const fallback = await ColdCraftingService.craft(receiptCustomer, () => 0);
-                assert.strictEqual(fallback.crafted, true);
-                assert.strictEqual(fallback.result, receipt);
-                assert.strictEqual(fallback.state.adena, receiptCustomer.adena);
-                assert.deepStrictEqual(receiptCustomer, receiptInput, 'missing receipt preserves caller state');
-                assert.deepStrictEqual(await Database.fetchItems(receiptCustomer.characterId), customerItems);
-                assert.deepStrictEqual(await Database.fetchItems(crafter.characterId), crafterItems);
-            }
         } finally {
             Database.craftForCustomer = nativeExchange;
         }
 
-        console.log('Native authored craft conservation:', JSON.stringify({ recipeId: recipe.recipeId,
-            productId: recipe.productId, inputs: [...inputs], fee: entry.price, output: recipe.productCount,
-            crystalId, gemstoneId, duplicateRefused: true }));
+        console.log('Native authored craft conservation:', JSON.stringify({ recipeId: stationRecipe.recipeId,
+            productId: stationRecipe.productId, inputs: [...stationInputs], fee: entry.price, output: stationRecipe.productCount,
+            firstInputId, secondInputId, duplicateRefused: true }));
     } finally {
         await Database.close();
         require('node:fs').rmSync(isolated.directory, { recursive: true, force: true });

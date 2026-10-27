@@ -1,6 +1,7 @@
 'use strict';
 
 const Roles = invoke('GameServer/Bot/AI/BotRoles');
+const { partyIdOf } = require('./PartyId');
 const Combat = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Gear = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const Shots = invoke('GameServer/Inventory/ShotStock');
@@ -13,7 +14,7 @@ const Minions = require('../../../../data/Npcs/Minions/c4_raid_bosses.json');
 const Supply = require('./RaidSupplyPolicy');
 const Priority = require('./RaidRosterPriority');
 const Healing = require('./RaidHealingEstimate');
-const GRADE = { none: 0, d: 1, c: 2, b: 3, a: 4, s: 5 };
+const { GRADE_RANK } = invoke('GameServer/Bot/AI/GearGradeRule');
 const BASE_CLASSES = new Set([0, 10, 18, 25, 31, 38, 44, 53]);
 const id = s => Number(s?.characterId);
 const isObjective = o => o?.opportunisticRaid === true && o.sourceKind === 'raid';
@@ -48,7 +49,7 @@ function available(s, timestamp = Date.now(), preparationId = null) {
     return !!s?.accountName && s.phase === 'cold' && Number(s.level) >= 20
         && !BASE_CLASSES.has(Number(s.classId ?? s.stats?.classId))
         && ['hunting', 'resting', 'party_wait'].includes(s.activity)
-        && !s.party?.partyId && !s.partyId && Number(s.vitals?.hp) > 0
+        && !partyIdOf(s) && Number(s.vitals?.hp) > 0
         && (!Supply.held(s, timestamp) || Supply.held(s, timestamp).id === preparationId)
         && !criminal(s)
         && !s.stats?.travel && !s.stats?.tradeMeeting && !s.stats?.supplyErrand
@@ -412,7 +413,7 @@ function assessment(members, spot, { timestamp = Date.now(), maxFightSeconds = 7
     if (!composition(members).ready) { fail('raid_composition'); unchecked.push('equipment', 'combat'); return result(); }
     const level = Number(spot.avgLevel);
     if (members.some(s => !levelAllowed(s, level))) { fail('raid_level'); unchecked.push('equipment', 'combat'); return result(); }
-    const requiredRank = Math.max(1, GRADE[Gear.gradeForLevel(level)] || 0);
+    const requiredRank = Math.max(1, GRADE_RANK[Gear.gradeForLevel(level)] || 0);
     const data = invoke('GameServer/DataCache');
     const item = require('../../Item/ItemTemplateIndex');
     for (const s of members) {

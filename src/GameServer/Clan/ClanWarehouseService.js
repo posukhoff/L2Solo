@@ -1,4 +1,5 @@
 const { DiagnosticMetricMap } = require('../Bot/Population/DiagnosticMetricMap');
+const { partyIdOf } = require('../Bot/Population/PartyId');
 const DiagnosticConfig = require('../Bot/Population/PopulationConfig');
 const Crafting = require('./ClanCraftingPolicy');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
@@ -122,7 +123,7 @@ function spareWearableIds(member) {
 async function offerSpareGear(clan, member, warehouseRows, warehouseRevision) {
     const id = number(member.characterId);
     // A party holds the member's data: it offers once it is free.
-    if (member.partyId || member.party?.partyId) return { deposited: 0, warehouseRevision };
+    if (partyIdOf(member)) return { deposited: 0, warehouseRevision };
     const spare = spareWearableIds(member);
     const seen = seenSpare.get(id);
     const freshIds = (seen ? spare.filter((selfId) => !seen.has(selfId)) : spare).slice(0, 16);

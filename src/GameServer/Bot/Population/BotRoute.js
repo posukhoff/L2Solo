@@ -309,7 +309,12 @@ function route(state, currentSpot, party, partyMembers = [], { spots, timestamp,
 // as route:trip:detour); a flight (death pressure, unsafe ground) names none:
 // it stays an event, as does a trip away from a spot the bot may not hunt
 // and the detour of a leaf that hunts a material at its monster (only that
-// monster brings the material in).
+// monster brings the material in). Such a leaf's full spot is named as
+// fullSpotId (with a trip, or alone as { needed: false } when none starts):
+// beginHuntingTrip writes its "was full" mark, the one an arrival on a full
+// spot writes, so the next decision point refuses the leaf (EconomyContext
+// spotExcluded) and the source choice skips the spot
+// (GearAcquisitionPlanner.sourceRouteReader) until the mark expires.
 const DETOUR_REASONS = new Set(['level_replan', 'equipment_source_replan']);
 function trip(owner, state, leaf, { spots, currentSpot = null, timestamp, hasRoom = null }) {
     if (!routable(state, null, [])) return null;
@@ -329,7 +334,11 @@ function trip(owner, state, leaf, { spots, currentSpot = null, timestamp, hasRoo
     const chosen = owner?.route || choose(state, currentSpot, null, [], { spots, timestamp, frame });
     if (owner && !owner.route) owner.route = chosen;
     const started = record(state, chosen, null, [], { spots, currentSpot, timestamp, frame });
-    if (!started || !wished?.full || !DETOUR_REASONS.has(started.reason) || ColdEconomyDecision.materialHunt(leaf)) return started;
+    if (wished?.full && ColdEconomyDecision.materialHunt(leaf)) {
+        EconomyDiagnostics.count('route', 'trip', 'material_full');
+        return { ...(started || { needed: false }), fullSpotId: wished.spotId };
+    }
+    if (!started || !wished?.full || !DETOUR_REASONS.has(started.reason)) return started;
     EconomyDiagnostics.count('route', 'trip', 'detour');
     return { ...started, leafSpotId: wished.spotId };
 }

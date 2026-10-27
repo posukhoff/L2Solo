@@ -88,7 +88,8 @@ async function parityAndIntegration() {
         .map(entry => Number(entry.selfId)))].filter(id => !wearableIds.has(id))
         .map(selfId => ({ selfId, price: pricing.npcPrice({ selfId }) }))
         .filter(row => Number.isFinite(row.price) && row.price > 0);
-    assert.deepEqual(context.npcPriceRows, expectedPrices,
+    const byId = rows => [...rows].sort((left, right) => left.selfId - right.selfId);
+    assert.deepEqual(byId(context.npcPriceRows), byId(expectedPrices),
         'the compact snapshot covers every native positive nonwearable NPC quote');
     assert.equal((await Runtime.context()).npcPriceRows, context.npcPriceRows,
         'scalar NPC quotes reuse the existing static rate cache');

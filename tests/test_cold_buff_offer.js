@@ -68,8 +68,9 @@ async function run() {
         assert.equal(projectedPacket.recipientId, buyer.characterId);
         assert.ok(Buffer.byteLength(JSON.stringify(projectedPacket)) <= 512);
         Memory.assess = assess;
-        const native = Cold.coldOffer(provider, buyer, timestamp);
-        assert.ok(native);
+        const chosen = Offer.select(provider, buyer, timestamp);
+        assert.ok(chosen);
+        const native = { effects: Offer.effectsFor(chosen.selected, timestamp) };
         assert.deepEqual(Offer.expand(packet.effects, timestamp), native.effects, 'the entire native effect set is identical');
         assert.equal(Policy.priceFor({ provider, recipient: buyer, skills: Offer.select(provider, buyer, timestamp).selected, town: false }),
             Policy.priceFor({ provider, recipient: buyer, mp: packet.mpCost, count: packet.effects.length, town: false }));

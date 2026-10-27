@@ -1,4 +1,5 @@
 const DiagnosticConfig = require('./PopulationConfig');
+const { partyIdOf } = require('./PartyId');
 
 const Database = invoke('Database');
 const InventorySummary = invoke('GameServer/Bot/Population/InventorySummary');
@@ -24,9 +25,9 @@ function eligibility(state = {}, options = {}) {
     if (!state?.characterId) return { ok: false, reason: 'missing_state' };
     if (state.phase !== 'cold') return { ok: false, reason: 'not_cold' };
     if (!SIMPLE_ACTIVITIES.has(String(state.activity || '')) && options.allowLifecycle !== true) return { ok: false, reason: 'legacy_activity' };
-    if ((state.partyId || state.party?.partyId) && options.allowParty !== true) return { ok: false, reason: 'background_party' };
+    if (partyIdOf(state) && options.allowParty !== true) return { ok: false, reason: 'background_party' };
     if (options.allowLifecycle === true) {
-        return { ok: true, reason: state.partyId || state.party?.partyId ? 'background_party_cold' : 'trusted_cold_lifecycle' };
+        return { ok: true, reason: partyIdOf(state) ? 'background_party_cold' : 'trusted_cold_lifecycle' };
     }
     if (options.hasWarehouseWorkflow === true) return { ok: false, reason: 'warehouse_state' };
     const stats = state.stats || {};
@@ -45,7 +46,7 @@ function eligibility(state = {}, options = {}) {
         if (/(market|shop|sell|buy)/i.test(reason)) return { ok: false, reason: 'market_state' };
         if (/craft/i.test(reason)) return { ok: false, reason: 'craft_state' };
     }
-    return { ok: true, reason: state.partyId || state.party?.partyId ? 'background_party_cold' : 'simple_solo_cold' };
+    return { ok: true, reason: partyIdOf(state) ? 'background_party_cold' : 'simple_solo_cold' };
 }
 
 function persistencePatch(state = {}, timestamp = Date.now(),

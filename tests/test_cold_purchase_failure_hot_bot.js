@@ -73,7 +73,7 @@ const fixtureDatabaseMethods = { ...fixtureDatabase };
             ...extra
         });
         const goal = { type: 'upgrade_gear', status: 'active', target: { itemId: 2, itemName: 'Long Sword', itemSlot: 7, adena: 1000 },
-            plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' } };
+            plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran' } };
         const afkOffer = { selfId: 2, itemName: 'Long Sword', price: 1000, sourceType: 'afk_player_store', store: { id: 5, ownerId: 9001 } };
 
         async function run() {

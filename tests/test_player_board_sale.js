@@ -11,6 +11,9 @@ const Meetings = require('../src/GameServer/AfkTrade/TradeMeetingService');
 const HtmlLink = invoke('GameServer/Network/Request/HtmlLink');
 const Coordinator = invoke('GameServer/Bot/Population/ColdSimulationCoordinator');
 const NativeChoice = require('./helpers/nativeMarketChoice');
+// T43 table: at level 30 the buyer's hunt pays ~15.7k/h, so the NPC helmet's benefit (2.0 h) is under its
+// price in hunt hours (2.2 h) and it selects an unsold Plate Helmet bid; at 32 the same D kit gap pays for itself.
+const LEVEL = 32;
 const seller = 730702, buyer = 730703, supplier = 730704;
 const point = { locX: 83396, locY: 147904, locZ: -3404 };
 const waitFor = async (predicate, label) => {
@@ -21,7 +24,7 @@ const waitFor = async (predicate, label) => {
     }
 };
 (async () => {
-    const fixture = await createWorld([{ id: seller, name: 'BoardSeller' }, { id: buyer, name: 'BoardBuyer', level: 30 },
+    const fixture = await createWorld([{ id: seller, name: 'BoardSeller' }, { id: buyer, name: 'BoardBuyer', level: LEVEL },
         { id: supplier, name: 'BoardSupply' }], 'player-board-sale');
     try {
         World.user = { sessions: [], revision: 0 };
@@ -34,7 +37,7 @@ const waitFor = async (predicate, label) => {
         await Database.setItem(seller, { selfId: 1, name: 'Short Sword', amount: 1, equipped: true, slot: 7 });
         const originalWornSword = (await Database.fetchItems(seller)).find(row => row.selfId === 1);
         assert(originalWornSword.equipped && originalWornSword.slot === 7);
-        const kit = require('./fixtures/profitable_stock_state').kitFor(0, 30);
+        const kit = require('./fixtures/profitable_stock_state').kitFor(0, LEVEL);
         const lookup = invoke('GameServer/Bot/Population/ColdNpcPlanningCatalog').createLookup(Coordinator.npcPlanningCatalogRows());
         const missing = kit.entries.find(item => [6, 9, 12].includes(Number(item.slot))
             && kit.inventory[item.selfId].amount === 1 && lookup.offersFor(item.selfId).length > 0);
@@ -45,14 +48,14 @@ const waitFor = async (predicate, label) => {
                 amount: 1, equipped: true, slot: Number(item.slot), enchant: 0 });
         }
         await Database.execute(['UPDATE characters SET exp=?,locX=?,locY=?,locZ=?,hp=1000,maxHp=1000,mp=1000,maxMp=1000 WHERE id=?',
-            [Number(Data.experience[29]), point.locX, point.locY, point.locZ, buyer]]);
+            [Number(Data.experience[LEVEL - 1]), point.locX, point.locY, point.locZ, buyer]]);
         await Life.init();
-        await Life.upsertState({ characterId: buyer, name: 'BoardBuyer', level: 30, exp: Number(Data.experience[29]),
+        await Life.upsertState({ characterId: buyer, name: 'BoardBuyer', level: LEVEL, exp: Number(Data.experience[LEVEL - 1]),
             phase: 'cold', activity: 'hunting', loc: point, currentRegion: 'Giran', spotId: '7_20', adena: 1000000,
             inventory: Life.inventorySummaryFromItems(await Database.fetchItems(buyer)),
             vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
             persona: { primaryDrive: 'wealth', traits: {} },
-            stats: { classId: 0, generatedCold: true, classProgressionClassId: 0, classProgressionLevel: 30 },
+            stats: { classId: 0, generatedCold: true, classProgressionClassId: 0, classProgressionLevel: LEVEL },
             timing: { lastResolvedAt: Date.now(), nextResolveAt: Date.now() + 3600000 } }, 'board_buyer_fixture');
         await Afk.init();
         const initial = await NativeChoice.capture(Life.cachedState(buyer), { nativeRoutes: true }, 'board_native_wanted');

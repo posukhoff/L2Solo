@@ -96,6 +96,12 @@ function applyPendingRaise(session, stats) {
     const raise = session?.nearRaise;
     if (raise) applyRaise(stats, Number(raise.bits) || 0, raise.impossible === true);
 }
+// The decision a step executes, from the packet it was accepted with: a
+// rejection names it, so a newer decision is never refused (rejectedState).
+function acceptedOf(characterId, packet = {}) {
+    return { characterId: Number(characterId), stats: { decisionSeq: packet.decisionSeq, activityLeaf: packet.activityLeaf,
+        wishFocus: packet.wishFocus, wishSections: packet.wishSections } };
+}
 // A hot body's rejection: one impossible raise while it waits for its
 // decision, a second rejection in that window adds nothing.
 function rejectSession(session, accepted) {
@@ -177,4 +183,4 @@ function raiseSections(before, after, ...lists) {
     stats.wishDirty = (Number(stats.wishDirty) || 0) | bits;
     return bits;
 }
-module.exports = { statsFor, decisionStatsFor, applyRaise, raiseDecision, takePostedRaise, applyPendingRaise, nearFields, receive, held, checkWallet, rejectedState, rejectSession, raiseSections };
+module.exports = { statsFor, decisionStatsFor, applyRaise, raiseDecision, takePostedRaise, applyPendingRaise, nearFields, receive, held, checkWallet, rejectedState, acceptedOf, rejectSession, raiseSections };

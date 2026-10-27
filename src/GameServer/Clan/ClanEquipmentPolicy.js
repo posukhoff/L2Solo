@@ -6,8 +6,8 @@ function number(value, fallback = 0) {
 // A blocked equipment route is never a clan objective. The equipment service
 // must keep walking nearby members/targets until it finds an actionable plan;
 // mandatory clan-progression items use the separate clan goal policy.
-const PLAN_STATUSES = new Set(['active', 'component_ready', 'ready_to_craft']);
-const GRADE_RANK = Object.freeze({ none: 0, d: 1, c: 2, b: 3, a: 4, s: 5 });
+const { GRADE_RANK } = invoke('GameServer/Bot/AI/GearGradeRule');
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const ROLE_PRIORITY = Object.freeze({
     tank: 45,
     healer: 40,
@@ -27,7 +27,7 @@ function hasTarget(plan) {
 }
 
 function isAcquisitionPlan(plan) {
-    return PLAN_STATUSES.has(String(plan?.status || '')) && hasTarget(plan);
+    return GearAcquisitionPlanner.planRunning(plan) && hasTarget(plan);
 }
 
 function routeFor(plan) {
@@ -275,7 +275,6 @@ function buildGoal(clan, selection, previousGoal = null, timestamp = Date.now(),
 }
 
 module.exports = {
-    PLAN_STATUSES,
     buildGoal,
     goalKey,
     hasTarget,

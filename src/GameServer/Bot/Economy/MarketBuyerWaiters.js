@@ -1,10 +1,11 @@
 const DiagnosticConfig = require('../Population/PopulationConfig');
+const { partyIdOf } = require('../Population/PartyId');
 const PurchaseFunding = require('./PurchaseFunding');
 
 function eligible(state) {
     return state?.phase === 'cold' && ['hunting', 'party_wait'].includes(state.activity)
         && Number(state.vitals?.hp ?? state.hp ?? 1) > 0
-        && !state.partyId && !state.party?.partyId && !state.stats?.travel
+        && !partyIdOf(state) && !state.stats?.travel
         && !state.stats?.pveEncounter && !state.stats?.pvpEncounter;
 }
 

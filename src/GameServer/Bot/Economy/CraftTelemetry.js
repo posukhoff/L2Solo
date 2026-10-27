@@ -1,5 +1,6 @@
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const DataCache = invoke('GameServer/DataCache');
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 function amount(state = {}, selfId) {
     return Number(state.inventory?.[String(selfId)]?.amount || state.inventory?.[selfId]?.amount || 0);
@@ -11,7 +12,7 @@ function itemName(selfId, plan = {}) {
 }
 
 function active(plan) {
-    return ['active', 'component_ready', 'ready_to_craft'].includes(plan?.status) && ['craft', 'direct_drop'].includes(plan?.strategy);
+    return GearAcquisitionPlanner.planRunning(plan) && ['craft', 'direct_drop'].includes(plan?.strategy);
 }
 
 function planEvents(state, previous = {}, next = {}) {

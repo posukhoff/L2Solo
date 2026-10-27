@@ -40,7 +40,7 @@ function stub(object, key, value) { const prior = object[key]; restore.push(() =
         stub(Afk, 'buyFromShop', trade); stub(Afk, 'sellToShop', trade);
         for (const side of [1, 3]) {
             board.put(quote(side));
-            const plan = { take: [side, 1869, 2, 77, 78, 4, 237], buyAds: [],
+            const plan = { take: [side, 1869, 2, 77, 78, 4, 237], buyAds: [], buyTown: 'Giran',
                 withdraw: [rows.opened[0].lines[0].id], sell: [[1869, 5, 999, 'Giran']] };
             const accepted = await Market.executePlan(current, plan);
             assert.equal(accepted.pending, true);

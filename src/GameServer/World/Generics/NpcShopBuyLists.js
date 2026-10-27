@@ -1,4 +1,5 @@
 const NpcShopPriceScale = require('./NpcShopPriceScale');
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
 
 // Seeded from L2Hub C2 shop pages. Talking Island Lector, Silvia and Katerina
 // are confirmed by NPC sell-list pages; Jackson armor is still a partial
@@ -1127,13 +1128,14 @@ const FALLBACKS = {
     orc_amulets: ['orcAmulets']
 };
 
-// No-grade shots belong to ordinary grocers. D+ production belongs to
-// crafters; configured bot fallback is controlled by the production switch.
-const SHOT_IDS = new Set([1835, 2509, 3947, 1463, 1464, 1465, 1466, 1467,
-    2510, 2511, 2512, 2513, 2514, 3948, 3949, 3950, 3951, 3952]);
+// No-grade shots belong to ordinary grocers; no NPC list sells a graded (D+)
+// shop shot (crafters make them; the configured shot merchants of
+// FixedShotOffers.offers sell them while staticShotsDisabled is off). The one
+// gate: every list reader (flatten, rowForNpc, rowsForNpc, townOffers,
+// allOffers) goes through it.
 function allowedEntry(entry) {
     const id = Number(typeof entry === 'number' ? entry : entry.selfId);
-    return !SHOT_IDS.has(id) || [1835, 2509, 3947].includes(id);
+    return !ShotStock.gradedShopShot(id);
 }
 
 // Lists are rebuilt on every lookup, so the rate is read once per build;
@@ -1257,7 +1259,7 @@ function townOffers() {
 // Market valuation uses TownServiceCatalog's seller admission (including
 // numeric coordinates), then folds all full shop rows by numeric item ID.
 // rowForNpc keeps the FIRST numeric row; this minimum-positive view must not.
-function townPriceForItem(selfId) {
+function townPrices() {
     DataCache ||= invoke('GameServer/DataCache');
     const rate = progressionMultiplier();
     if (!sameInputs(townPriceView, rate)) {
@@ -1270,7 +1272,19 @@ function townPriceForItem(selfId) {
         }
         townPriceView = { ...inputs, prices };
     }
-    return townPriceView.prices.get(Number(selfId)) ?? null;
+    return townPriceView.prices;
+}
+
+function townPriceForItem(selfId) {
+    return townPrices().get(Number(selfId)) ?? null;
+}
+
+// The same town prices as { selfId, price } rows: what a worker's
+// BotMarketPricing snapshot needs to answer npcPrice as main does.
+function townPriceRows() {
+    const rows = [];
+    for (const [selfId, price] of townPrices()) rows.push({ selfId, price });
+    return rows;
 }
 
 const EMPTY = Object.freeze([]);
@@ -1291,6 +1305,7 @@ module.exports = {
     rowsForNpc(npcSelfId) { return rowIndexForNpc(npcSelfId).rows; },
     townOffers,
     townPriceForItem,
+    townPriceRows,
 
     npcIds() {
         return Object.keys(NPC_LISTS).map(Number);

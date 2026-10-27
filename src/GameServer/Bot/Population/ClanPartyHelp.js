@@ -1,4 +1,5 @@
 const Config = invoke('GameServer/Bot/Population/PopulationConfig');
+const { partyIdOf } = require('./PartyId');
 const ClanService = invoke('GameServer/Clan/ClanService');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const Parties = invoke('GameServer/Bot/Population/BackgroundPartyState');
@@ -41,7 +42,7 @@ function available(state, grouped = false, requestingHelp = false) {
         && !state.stats?.equipmentPlan?.clanGoal
         && !state.stats?.partyRequest?.clanGoalKey
         && (requestingHelp || state.stats?.partyRequest?.priority !== 'required')
-        && (grouped || !state.party?.partyId && !state.partyId);
+        && (grouped || !partyIdOf(state));
 }
 
 function safeSpot(members, spotId, now, party = null) {

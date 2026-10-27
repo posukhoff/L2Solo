@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { WishNetwork, moneyQueue } = require('../src/GameServer/Bot/Economy/WishNetwork');
+const { WishNetwork, moneyQueue, MAX_NODES } = require('../src/GameServer/Bot/Economy/WishNetwork');
 
 const queue = moneyQueue([
     { key: 'sword', price: 100, valueHours: 10 },
@@ -48,7 +48,7 @@ assert.throws(() => network.build({ ...input, inputKey: 'cycle', roots: ['sword'
 assert.throws(() => network.build({ ...input, inputKey: 'missing', roots: ['sword'], nodes: [
     { key: 'sword', need: 'power', valueHours: 1, paths: [{ requirements: [{ key: 'missing' }] }] }
 ] }), /missing_wish_requirement/);
-assert.throws(() => network.build({ ...input, inputKey: 'too-large', nodes: Array.from({ length: 41 }, (_, i) => ({ key: String(i) })) }),
+assert.throws(() => network.build({ ...input, inputKey: 'too-large', nodes: Array.from({ length: MAX_NODES + 1 }, (_, i) => ({ key: String(i) })) }),
     /invalid_wish_network_input/);
 console.log('wish network core: PASS (one queue, four needs, path cost, shared demand, focus, event cache and group reuse)');
 
@@ -158,21 +158,22 @@ const liquidationInput = { actorKey: 'finite-sale', inputKey: 'bag', remembered:
     wallet: 10, hourAdena: 0, roots: ['upgrade'], nodes: [{ key: 'upgrade', need: 'power',
         valueHours: 1000, price: 254442, paths: [{ activity: 'shopping', price: 254442 }] }],
     moneyPaths: [{ activity: 'selling', kind: 'liquidate', repeatable: false,
-        capacityCash: 4171, cashFees: 0, actionHours: .25, items: [1867] }] };
+        cashFees: 0, actionHours: .25, sale: [[1867, 1, 1, 4171]] }] };
 const finiteSale = network.build(liquidationInput);
 assert.equal(finiteSale.activity.contribution, 4171);
+assert.deepEqual(finiteSale.activity.items, [1867]);
 assert.equal(finiteSale.activity.effort, .25, 'finite cash uses the actual action time');
 assert.equal(finiteSale.activity.valueHours, finiteSale.moneyPrice * 4171);
 assert(finiteSale.activity.valueHours < 1000, 'one sale cannot claim the entire expensive upgrade');
 assert.equal(finiteSale.hourAdena, 0, 'a liquidation never establishes repeatable income');
-for (const patch of [{ capacityCash: 0 }, { cashFees: 4171 }, { actionHours: NaN },
-    { actionHours: -1 }, { cashFees: NaN }, { capacityCash: Infinity }, { available: false }]) {
+for (const patch of [{ sale: [[1867, 0, 0, 4171]] }, { sale: [] }, { cashFees: 4171 }, { actionHours: NaN },
+    { actionHours: -1 }, { cashFees: NaN }, { sale: [[1867, 1, 1, Infinity]] }, { available: false }]) {
     const result = network.build({ ...liquidationInput, inputKey: JSON.stringify(patch),
         moneyPaths: [{ ...liquidationInput.moneyPaths[0], ...patch }] });
     assert.equal(result.activity, null, 'empty, uneconomic or unknown finite actions cannot fund a gap');
 }
 const cappedSale = network.build({ ...liquidationInput, inputKey: 'large-bag',
-    moneyPaths: [{ ...liquidationInput.moneyPaths[0], capacityCash: 300000, cashFees: 100 }] });
+    moneyPaths: [{ ...liquidationInput.moneyPaths[0], sale: [[1867, 100, 100, 3000]], cashFees: 100 }] });
 assert.equal(cappedSale.activity.contribution, 254432, 'finite value is capped at the remaining gap');
 assert.equal(network.build({ ...liquidationInput, inputKey: 'receipt', wallet: 4181,
     activityLeaf: finiteSale.activityLeaf, moneyPaths: [] }).activity, null,
@@ -216,3 +217,41 @@ for (let seed = 0; seed < 40; seed++) {
 }
 assert(exactRows.has(100 + PACKET_ROWS - 1), 'with exactly PACKET_ROWS funded wishes the last one owns a row and stays selectable');
 console.log('PASS selected purchase is payable by the money packet rows (FX-E3 row bound)');
+
+// Open item (q): a producer root still to learn its recipe can take one step
+// now, its scroll; it holds only the scroll's cash in the money queue, so a
+// lower root it cut before is funded. A root with its recipe holds its whole
+// price. Its queue place stays its whole price's ratio.
+const sold = (key, itemId, price) => ({ key, price, paths: [{ kind: 'buy', activity: 'shopping', price, itemId,
+    executable: true, quoted: true, availableUnits: 1000 }] });
+const producerInput = (learn, extra = {}) => ({ actorKey: `scroll:${learn}:${!!extra.root}`, inputKey: `scroll:${learn}:${!!extra.root}`, wallet: 10000, hourAdena: 1000,
+    remembered: false, persona: { traits: { commitment: 0 } }, roots: ['resale:72', 'gear'],
+    nodes: [
+        { key: 'resale:72', need: 'power', object: { itemId: 72, kind: 'resale' }, valueHours: 400, ...extra.root,
+            paths: [{ kind: 'craft', activity: 'crafting', costHours: .1, itemId: 72, productCount: 1, recipeId: 72,
+                requiresRecipeLearning: learn, requirements: [...learn ? [{ key: 'item:2298', amount: 1, once: true }] : [],
+                    { key: 'item:1864', amount: 10 }] }] },
+        sold('item:2298', 2298, 1000), { ...sold('item:1864', 1864, 5000), ...extra.input },
+        { key: 'gear', need: 'power', object: { itemId: 300 }, valueHours: 10, price: 5000,
+            paths: [{ activity: 'shopping', price: 5000, costHours: 1 }] }] });
+const { spendable, moneyReached } = require('../src/GameServer/Bot/Economy/PurchaseFunding');
+const holder = result => ({ adena: 10000, stats: { money: packetFor(result, result.hourAdena, 0) } });
+const gearSpend = result => spendable(holder(result), 0, { r: result.queue.find(wish => wish.key === 'gear').ratio });
+const learning = network.build(producerInput(true));
+assert.deepEqual(learning.queue.map(wish => [wish.key, wish.funded]), [['resale:72', true], ['gear', true]],
+    'a root still to learn holds only its scroll, so the lower root is funded');
+assert.equal(gearSpend(learning), 10000 - 1000, 'the lower root spends the wallet less the scroll');
+const learned = network.build(producerInput(false));
+assert.deepEqual(learned.queue.map(wish => [wish.key, wish.funded]), [['resale:72', false], ['gear', false]],
+    'a root with its recipe holds its whole price and stays the gap');
+assert.equal(learned.gap.key, 'resale:72');
+assert.equal(gearSpend(learned), 0, 'the root with its recipe holds the whole wallet');
+// An awaiting gap (an unsupported progression root: one input has no seller
+// now) holds no money but keeps its whole charge: a wallet that covers its
+// scroll and the lower root has not reached it.
+const awaiting = network.build(producerInput(true, { root: { progressionPriority: 1 }, input: { paths: [{ kind: 'buy',
+    activity: 'shopping', price: 5000, itemId: 1864, executable: true, quoted: true, availableUnits: 0 }] } }));
+assert.equal(awaiting.gap?.key, 'resale:72');
+assert.equal(awaiting.gap.supported, false);
+assert.equal(moneyReached(holder(awaiting)), false, 'the awaiting gap keeps its whole charge');
+console.log('PASS a root still to learn its recipe holds only its scroll in the money queue');

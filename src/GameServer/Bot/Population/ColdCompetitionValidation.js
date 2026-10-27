@@ -9,14 +9,14 @@ const BUSY_DETAILS = {
     market: 'member_market_return'
 };
 // Fixed reason codes and scalar context only: no roster/state copies or I/O.
-const partyIdOf = state => state?.party?.partyId || state?.partyId || null;
+const { partyIdOf } = require('./PartyId');
 const failed = (reason, detail, participant, characterId = participant.id, context = {}) =>
     ({ ok: false, reason, detail, rejectionContext: { characterId, partyId: participant.partyId || null, ...context } });
 
 function principal(state, participant, memory) {
     const fail = (detail, context) => failed('state_or_memory_changed', detail, participant, participant.id, context);
     if (!state) return fail('principal_missing');
-    if (partyIdOf(state) !== (participant.partyId || null)) return fail('principal_party_changed', { actual: partyIdOf(state) });
+    if (partyIdOf(state) !== String(participant.partyId || '')) return fail('principal_party_changed', { actual: partyIdOf(state) || null });
     const revision = Number(state.simulation?.revision || 0);
     if (revision !== participant.revision) return fail('principal_revision_changed', { expected: participant.revision, actual: revision });
     const memoryRevision = memory.revision(participant.id);
@@ -53,7 +53,7 @@ function member(state, characterId, participant, event, { party: group, resume =
     const activities = resume || group ? ['grouped', 'hunting', 'resting'] : retreat ? ['hunting'] : ['grouped', 'hunting'];
     if (!activities.includes(state.activity)) return fail('member_activity', { actual: state.activity });
     if (!(state.vitals?.hp > 0)) return fail('member_dead');
-    if (partyIdOf(state) !== (participant.partyId || null)) return fail('member_party_changed', { actual: partyIdOf(state) });
+    if (partyIdOf(state) !== String(participant.partyId || '')) return fail('member_party_changed', { actual: partyIdOf(state) || null });
     if (!resume && state.spotId !== event.spotId) return fail('member_spot_changed', { expected: event.spotId, actual: state.spotId });
     if (state.stats?.travel) return fail('member_travelling');
     const wait = state.stats?.coldCompetition?.wait;

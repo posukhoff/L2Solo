@@ -23,6 +23,12 @@ try {
     assert.equal(reader('Dion'), 0, 'an action in the current visit adds no journey');
     const EconomicTrip = require('../src/GameServer/Bot/Economy/EconomicTrip');
     assert.deepEqual(drain(EconomicTrip.details(state, 'Giran')), reader.details('Giran'), 'cooperative and synchronous readers share one result');
+    const giranRow = reader.details('Giran');
+    assert.equal(reader('Giran'), EconomicTrip.price(giranRow, 1000), 'the town reader and a caller pricing the row agree');
+    assert.equal(EconomicTrip.price({ known: true, hours: 0.5, fees: 7 }, 3), 9, 'hours x hour is rounded to whole Adena');
+    assert.equal(EconomicTrip.price({ known: false, hours: NaN, fees: NaN }, 1000), Infinity);
+    assert.equal(EconomicTrip.price({ known: true, hours: 1, fees: 5 }, -1), Infinity, 'no priced hour, no priced trip');
+    assert.equal(EconomicTrip.price({ known: true, hours: 1, fees: 5 }, NaN), Infinity);
     const visiting = { ...state, stats: {} };
     assert.equal(EconomicTrip.read(visiting, 'Giran').hours, outward.durationMs / 3600000, 'staying in town does not invent a return');
     const planned = { ...state, activity: 'traveling', currentRegion: 'Field', loc: home,

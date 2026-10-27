@@ -1,11 +1,13 @@
 'use strict';
 const DiagnosticConfig = require('../Population/PopulationConfig');
+const { partyIdOf } = require('../Population/PartyId');
 const Policy = require('./BotImprovementPolicy');
 const DecisionEvents = require('../AI/DecisionEvents');
 const pendingCold = new Map(), pendingHot = new WeakMap();
 let improvementDeferred = 0;
 const INPUT_REJECTIONS = new Set(['improvement_source_changed', 'improvement_missing_materials', 'improvement_missing_template',
-    'invalid_bot_enchant', 'invalid_bot_henna', 'invalid_bot_crystal_quest', 'soul_crystal_resonance']);
+    'invalid_bot_enchant', 'invalid_bot_henna', 'invalid_bot_crystal_quest', 'soul_crystal_resonance',
+    'invalid_bot_crystallization']);
 const rejectedInput = error => INPUT_REJECTIONS.has(error?.message);
 function chosen(state, context) {
     const leaf = context.network.activity;
@@ -15,14 +17,14 @@ function inTown(state) {
     const town = invoke('GameServer/World/TownRespawn').getClosestTown(state.loc?.locX || 0, state.loc?.locY || 0, state.loc?.locZ || 0);
     return town.name === state.currentRegion && Math.hypot(state.loc?.locX - town.locX, state.loc?.locY - town.locY) <= 7500;
 }
+// A bot crystallizes only with its own skill, where it stands: no town, no NPC.
 function selfCrystallization(improvement) {
-    return improvement?.kind === 'crystallize' && improvement.mode === 'self';
+    return improvement?.kind === 'crystallize';
 }
 function acquisitionTravel(state, leaf, timestamp = Date.now()) {
-    if (leaf?.activity !== 'improving' || !['crystallize', 'luxury_exchange'].includes(leaf.improvement?.kind)
-        || selfCrystallization(leaf.improvement)
+    if (leaf?.activity !== 'improving' || leaf.improvement?.kind !== 'luxury_exchange'
         || !invoke('GameServer/Bot/AI/PersonalGearProgression').allowsCGradeAcquisition(state)
-        || state.party?.partyId || state.partyId || state.stats?.pveEncounter || state.stats?.pvpEncounter
+        || partyIdOf(state) || state.stats?.pveEncounter || state.stats?.pvpEncounter
         || !['hunting', 'resting', 'party_wait', 'shopping'].includes(state.activity)
         || state.activity === 'shopping' && state.stats?.townVisit && state.stats.townVisit.completed !== true
         || state.currentRegion === 'Giran' && inTown(state)) return null;
@@ -49,8 +51,7 @@ async function reviewCold(state, options = {}) {
         : null;
     const improvement = chosen(state, context);
     if (!improvement || improvement.kind !== 'enchant' && !selfCrystallization(improvement) && !inTown(state)) return Promise.resolve({state,changed:false});
-    if (['luxury_exchange', 'crystallize'].includes(improvement.kind)
-        && !selfCrystallization(improvement) && state.currentRegion !== 'Giran') return { state, changed: false };
+    if (improvement.kind === 'luxury_exchange' && state.currentRegion !== 'Giran') return { state, changed: false };
     const original = Life.cachedState(state.characterId);
     const work = invoke('Database').applyBotImprovement(state.characterId, {
         ...improvement, lossHours: improvement.riskHours * context.riskWeight
@@ -88,8 +89,7 @@ function reviewHot(session) {
         && record?.session === session && record.retired !== true && actor.fetchIsOnline?.() !== false && !actor.isDead?.();
     if (!current()) return Promise.resolve(null);
     const packet = context.statsPacket || context.state?.stats || {};
-    const accepted = { characterId: Number(actor.fetchId()), stats: { decisionSeq: packet.decisionSeq,
-        activityLeaf: packet.activityLeaf, wishFocus: packet.wishFocus, wishSections: packet.wishSections } };
+    const accepted = DecisionEvents.acceptedOf(actor.fetchId(), packet);
     // Smiths and symbol makers use the actual town interaction, never a
     // remote synthetic NPC grant. Enchant itself has no NPC requirement.
     if (improvement.kind !== 'enchant' && !selfCrystallization(improvement)) {
@@ -134,7 +134,7 @@ function reviewHot(session) {
     pendingHot.set(actor,work); return work;
 }
 function stationMatches(npc, improvement) {
-    if (['luxury_exchange', 'crystallize'].includes(improvement.kind)) return Number(npc.fetchSelfId()) === Number(improvement.npcId);
+    if (improvement.kind === 'luxury_exchange') return Number(npc.fetchSelfId()) === Number(improvement.npcId);
     if (improvement.kind === 'sa') return [7300,7471,7678,7688,7846,7898,8271,8316].includes(npc.fetchSelfId());
     if (improvement.kind === 'crystal_quest') return [7115,7194,7856].includes(npc.fetchSelfId());
     return /symbol maker/i.test(String(npc.fetchTitle?.() || ''));

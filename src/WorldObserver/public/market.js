@@ -454,7 +454,7 @@ function renderMarketTowns() {
 function renderMarketTrades() {
     const rows = (marketState.data?.transactions?.recent || []).slice(0, 18);
     marketEls.recent.innerHTML = rows.length ? rows.map((trade) => {
-        const wtb = trade.channel === 'wtb' || trade.channel === 'static_wtb';
+        const wtb = trade.channel === 'wtb';
         const counterparty = wtb ? trade.buyer?.name : trade.seller?.name;
         return `<div class="market-trade-ledger-row">
             <b class="${wtb ? 'wtb' : 'wts'}">${wtb ? 'Bought' : 'Sold'}</b>

@@ -9,6 +9,8 @@ const DataCache = invoke('GameServer/DataCache');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const PartyRequestPlanner = invoke('GameServer/Bot/Population/PartyRequestPlanner');
+const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
+const NpcShopBuyLists = invoke('GameServer/World/Generics/NpcShopBuyLists');
 const ColdNpcPlanningCatalog = require('../src/GameServer/Bot/Population/ColdNpcPlanningCatalog');
 const BotRoute = require('../src/GameServer/Bot/Population/BotRoute');
 const {
@@ -577,6 +579,17 @@ try {
     } finally {
         delete rewards.forEach;
     }
+
+    // The worker prices NPC goods from the snapshot main sends it (catalog_page
+    // 'npc_offers'): a material, a consumable and a no-grade shot cost there
+    // what they cost on main.
+    BotMarketPricing.useNpcOfferSnapshot(npcCatalogRows);
+    for (const selfId of [1785, 3031, 1835]) {
+        const town = NpcShopBuyLists.townPriceForItem(selfId);
+        assert(town > 0, `fixture: an NPC in town sells ${selfId}`);
+        assert.strictEqual(BotMarketPricing.npcPrice({ selfId }), town, `the worker's NPC price of ${selfId} is main's`);
+    }
+    BotMarketPricing.useNpcOfferSnapshot(null);
 
     console.log('Cold worker leveling route planning checks passed');
 } finally {

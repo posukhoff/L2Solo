@@ -7,6 +7,8 @@ const BotPersona = invoke('GameServer/Bot/AI/BotPersona');
 const BotSocialMemory = invoke('GameServer/Bot/AI/BotSocialMemory');
 const BotToolAudit = invoke('GameServer/Bot/AI/BotToolAudit');
 const BotMerchantStoreService = invoke('GameServer/Bot/Economy/BotMerchantStoreService');
+const PriceBelief = invoke('GameServer/Bot/Economy/PriceBelief');
+const AfkTradeService = invoke('GameServer/AfkTrade/AfkTradeService');
 
 const NEGOTIATION_TTL_MS = 90 * 1000;
 const MAX_ROUNDS = 3;
@@ -83,11 +85,24 @@ function personaFor(bot) {
     };
 }
 
+// The bot's own worth of one unit of an item (PriceBelief.reader on the
+// board, its own lines excluded), 0 when it knows none: the reference of a
+// haggle with a player for an unlisted item (pricePolicy) and the ceiling of
+// a bot buy store's counter-offer (BotAfkTradeChat.buyPriceLimit).
+function ownPrice(session, ownerId, selfId) {
+    const state = { ...session?.coldLifeState, characterId: Number(ownerId) };
+    return PriceBelief.reader({ state, persona: BotPersona.of(Number(ownerId)),
+        board: AfkTradeService.boardIndex() }).price(Number(selfId));
+}
+
 function pricePolicy(bot, player, item, quantity, listing = null) {
     const template = templateFor(item.fetchSelfId());
     const basePrice = Math.max(1, Number(template?.template?.price || item.fetchPrice?.() || item.model?.price || 1));
     const listingUnitPrice = Math.max(0, Number(listing?.price || 0));
-    const referenceUnitPrice = listingUnitPrice || BotEconomyPricing.scalePrice(basePrice, 1);
+    // An unlisted item: the bot's own worth of it; the scaled template price
+    // only when it knows none.
+    const referenceUnitPrice = listingUnitPrice || Math.round(ownPrice(bot, actorId(bot), item.fetchSelfId()))
+        || BotEconomyPricing.scalePrice(basePrice, 1);
     const persona = personaFor(bot);
     const relation = relationshipFor(player, bot);
     if (listingUnitPrice) {
@@ -441,7 +456,7 @@ async function republishAcceptedStore(bot, negotiation) {
     }
     bot.afkRepricing = true;
     try {
-        const updated = await invoke('GameServer/AfkTrade/AfkTradeService').repriceBot(
+        const updated = await AfkTradeService.repriceBot(
             bot.actor.afkTradeOwnerId, line.afkTradeLineId,
             negotiation.currentUnitPrice, negotiation.storeRevision, negotiation.quantity
         );
@@ -603,6 +618,7 @@ function storeContext(bot, player) {
 }
 
 module.exports = {
+    ownPrice,
     MAX_QUANTITY,
     MAX_ROUNDS,
     MAX_UNIT_PRICE,

@@ -53,12 +53,9 @@ async function run() {
         const economy = invoke('GameServer/Bot/Economy/EconomyContext').forState({ ...state, currentRegion: 'Giran' }, {
             routeRows: require('../src/GameServer/Bot/Economy/EconomicTrip').towns.map(town => town === 'Giran' ? [true, 0, 0] : [true, 1, 30000]),
             spots: invoke('GameServer/Bot/Population/SpotProfiles').ensure() });
-        assert(economy.projection.moneyPaths.some(path => path.kind === 'liquidate' && path.items.includes(291)),
-            'saved personal stock participates in native funding paths: ' + JSON.stringify({ paths: economy.projection.moneyPaths,
-                sale: candidates(Warehouse.saleState(state)), route: economy.trip.details('Giran'),
-                seller: invoke('GameServer/Bot/Population/ColdOccupationSources').hasNpcSellerInTown('Giran') }));
-        assert.equal(economy.projection.moneyPaths.find(path => path.kind === 'liquidate').town, 'Giran',
-            'a cash-poor bot uses the reachable NPC rather than an unaffordable market trip');
+        // The town visit sells the bag only: stored stock funds no NPC liquidation (craftfocus).
+        assert(!economy.projection.moneyPaths.some(path => path.kind === 'liquidate' && path.sale.some(row => row[0] === 291)),
+            'stored personal stock the visit cannot sell is no funding path: ' + JSON.stringify(economy.projection.moneyPaths));
         const decision = Listing.evaluate(Warehouse.saleState(state), { economy, slots: 0 });
         assert(!decision.warehouse.some(row => row.selfId === 291), 'a clan adventurer cannot send sale stock back into storage');
 

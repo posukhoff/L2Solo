@@ -17,8 +17,17 @@ const Sections = invoke('GameServer/Bot/Economy/DecisionSections');
 const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const Profit = invoke('GameServer/Bot/Economy/CraftProfitPolicy');
 const Policy = invoke('GameServer/Bot/Economy/WealthCraftPolicy');
+// The search WealthCraftDecision runs, for one dwarven recipe.
+const opportunityFor = (state, recipe, planFor, exits, ownedFor, context) =>
+    Policy.chooseQuantity({ state, recipe, planFor, exits, ownedFor, context });
+const Wealth = invoke('GameServer/Bot/Economy/WealthCraftDecision');
+const Shots = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
 const CraftShop = invoke('GameServer/Bot/Economy/CraftShopService');
 const Workshop = invoke('GameServer/Bot/Economy/CraftWorkshopService');
+const HotWealth = invoke('GameServer/Bot/Economy/HotWealthCraftService');
+const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
+const Crafting = invoke('GameServer/Crafting/RecipeCrafting');
+const World = invoke('GameServer/World/World');
 const nativeChoice = require('./helpers/nativeMarketChoice');
 
 // Craft levels and the native packet use the authored catalogue before the
@@ -105,12 +114,46 @@ async function run() {
         'a Bounty Hunter can evaluate production within its retained craft skill');
     assert.strictEqual(Service.eligible({ ...state, level: 78, stats: { ...state.stats, classId: 118 } }), true,
         'a Maestro crafts for profit like a Warsmith');
+    // The producer root's craft on its chosen buyer line, inputs at 1 adena
+    // by default: only the craft level decides below
+    // (WealthCraftDecision.producerStep). r: the root's money-queue ratio.
+    const producerStep = ({ r = .01, unit = 1, price = 50000, amount = 1, money = [1000, .001, 0, 0] } = {}) => {
+        const purchase = count => ({ town: 'Giran', units: count, whole: true, cost: count * unit, landed: count * unit,
+            lines: [{ line: { lineId: 1, selfId: 1, revision: 1 }, count, price: unit }], tripDetails: { known: true, hours: 0, fees: 0 } });
+        const options = { ownStock: new Map(), existing: () => 0,
+            prepareExits: function* () { yield 'quote'; return [{ type: 'afk', price, count: amount, town: 'Giran', trip: 0,
+                offer: { recordId: 7, lineId: 70, ownerId: 9002, revision: 1, price, count: amount, town: 'Giran' } }]; },
+            preparePurchase: function* (owner, id, count) { yield 'quote'; return purchase(count); } };
+        const iterator = Wealth.producerStep({ ...state, stats: { ...state.stats, money } },
+            [{ key: `resale:${productId}`, amount, recipeId: recipe.recipeId, exit: [7, 70, price, 1], recipeReady: true, r }], [recipe.recipeId],
+            { context: { hourAdena: 1000, moneyPrice: .001, mpPerHour: 100000 }, options });
+        let next; do { next = iterator.next(); } while (!next.done);
+        return next.value;
+    };
     recipe.level = 8;
     assert.strictEqual(CraftShop.canCraft(state, recipe), false, 'recipe8 exceeds level60 craft level7');
-    assert.strictEqual(Service.chooseOpportunity(state, [{ recipeId: recipe.recipeId }]), null,
-        'a recipe above the craft level is skipped');
+    assert.strictEqual(producerStep(), null, 'a recipe above the craft level is skipped');
     recipe.level = 7;
     assert.strictEqual(CraftShop.canCraft(state, recipe), true, 'recipe7 reaches the unchanged actual skill-tree limit');
+    assert.strictEqual(producerStep()?.recipe.recipeId, recipe.recipeId, 'a recipe within the craft level is crafted');
+    // Inputs 30000 adena, sale 45000: about half the cash comes back as net
+    // value. The step spends at its funded root's place in the money queue.
+    const halfReturn = producerStep({ r: .002, unit: 10000, price: 45000 });
+    assert(halfReturn && halfReturn.valueHours > 0 && halfReturn.valueHours < .001 * 30000,
+        'a craft returning about half its cash in net value is made for a funded root');
+    assert.strictEqual(halfReturn.r, .002, 'the craft step carries its root\'s money-queue ratio');
+    assert.strictEqual(producerStep({ r: 0, unit: 10000, price: 45000 }), null,
+        'an unfunded root does not spend cash on its craft inputs');
+    // 340000 of the 400000 purse is held for a higher root: the ratio may
+    // spend 60000, two 30000 batches of the three the root asks for.
+    assert.strictEqual(producerStep({ r: .002, unit: 10000, price: 45000, amount: 3,
+        money: [1000, .001, 0, 0, .01, 340000, 99] })?.batches, 2,
+    'a root whose ratio cannot pay every batch crafts the batches it can pay');
+    // A ratio the money queue already rounded charges its own packet row.
+    for (const ratio of [3.86e-6, 9.86e-3]) {
+        assert.deepStrictEqual(Funding.packetAfterPurchase([1000, 1e-6, 0, 0, ratio, 5000, 0], 2000, { r: ratio }),
+            [1000, 1e-6, 0, 0, ratio, 3000, 0], `a purchase at ratio ${ratio} pays down its root's row`);
+    }
     recipe.level = 4;
 
     // ARCH-NOTE: the original recipe90001/product999999 is an authored unit
@@ -125,9 +168,9 @@ async function run() {
         - inputs - entry.mpCost / paid.mpPerHour * paid.hourAdena - trip;
     const labour = recipe.mpCost / paid.mpPerHour * paid.hourAdena;
     assert.strictEqual(labour, 2000, '20MP at 1MP/second priced at 100 Adena/second');
-    assert.strictEqual(Policy.opportunityFor(state, recipe, planFor, [exit]), null,
+    assert.strictEqual(opportunityFor(state, recipe, planFor, [exit]), null,
         'without a paid clock the original positive is unknown labour');
-    const unit = Policy.opportunityFor(state, recipe, planFor, [exit], undefined, paid);
+    const unit = opportunityFor(state, recipe, planFor, [exit], undefined, paid);
     assert(unit, 'the complete original basket is physically affordable and has positive paid net profit');
     assert.strictEqual(unit.basket.cost, 25000);
     assert.strictEqual(unit.basket.cashCost, 25000);
@@ -135,43 +178,39 @@ async function run() {
     assert.strictEqual(unit.revenue, 50000);
     assert.strictEqual(unit.expectedProfit, net(recipe, 50000, 25000));
     assert.strictEqual(unit.expectedProfit, 23000);
-    assert.strictEqual(Policy.craftMargin(recipe, 50000, 25000), 25000, 'cash margin retains the original 25000 accounting fact');
     const breakEven = 25000 + labour;
     assert.strictEqual(breakEven, 27000);
-    assert.strictEqual(Policy.opportunityFor(state, recipe, planFor, [{ ...exit, price: breakEven }], undefined, paid), null);
-    assert.strictEqual(Policy.opportunityFor(state, recipe, planFor, [{ ...exit, price: breakEven - 1 }], undefined, paid), null);
-    assert.strictEqual(Policy.opportunityFor(state, recipe, planFor, [{ ...exit, price: breakEven + 1 }], undefined, paid).expectedProfit, 1);
-    assert.strictEqual(Policy.opportunityFor({ ...state, adena: 24999 }, recipe, planFor, [exit], undefined, paid), null,
+    assert.strictEqual(opportunityFor(state, recipe, planFor, [{ ...exit, price: breakEven }], undefined, paid), null);
+    assert.strictEqual(opportunityFor(state, recipe, planFor, [{ ...exit, price: breakEven - 1 }], undefined, paid), null);
+    assert.strictEqual(opportunityFor(state, recipe, planFor, [{ ...exit, price: breakEven + 1 }], undefined, paid).expectedProfit, 1);
+    assert.strictEqual(opportunityFor({ ...state, adena: 24999 }, recipe, planFor, [exit], undefined, paid), null,
         'cash must cover all original inputs before buying');
-    assert.strictEqual(Policy.opportunityFor({ ...state, vitals: { mp: 19 } }, recipe, planFor, [exit], undefined, paid), null);
-    assert(Policy.opportunityFor({ ...state, vitals: { mp: 20 } }, recipe, planFor, [exit], undefined, paid));
-    assert.strictEqual(Policy.opportunityFor(state, { ...recipe, successRate: 50 }, planFor, [exit], undefined, paid), null,
+    assert.strictEqual(opportunityFor({ ...state, vitals: { mp: 19 } }, recipe, planFor, [exit], undefined, paid), null);
+    assert(opportunityFor({ ...state, vitals: { mp: 20 } }, recipe, planFor, [exit], undefined, paid));
+    assert.strictEqual(opportunityFor(state, { ...recipe, successRate: 50 }, planFor, [exit], undefined, paid), null,
         'the full input cost and paid clock remain payable on a failed roll');
     assert.strictEqual(net({ ...recipe, successRate: 50 }, 50000, 25000), -2000);
-    assert.strictEqual(Policy.opportunityFor(state, recipe, planFor, [{ ...exit, count: 0 }], undefined, paid), null);
-    assert.strictEqual(Policy.opportunityFor(state, recipe, id => id === 1865 ? null : planFor(id, 2), [exit], undefined, paid), null);
-    assert.strictEqual(Policy.opportunityFor(state, recipe, (id, amount) => ({ ...planFor(id, amount), whole: false }), [exit], undefined, paid), null);
+    assert.strictEqual(opportunityFor(state, recipe, planFor, [{ ...exit, count: 0 }], undefined, paid), null);
+    assert.strictEqual(opportunityFor(state, recipe, id => id === 1865 ? null : planFor(id, 2), [exit], undefined, paid), null);
+    assert.strictEqual(opportunityFor(state, recipe, (id, amount) => ({ ...planFor(id, amount), whole: false }), [exit], undefined, paid), null);
     assert.deepStrictEqual(Profit.materials(originalPhysicalMaterials, recipe), [
         { id: 10, selfId: 1864, amount: 2 }, { id: 11, selfId: 1865, amount: 1 }], 'original complete physical ingredient rows');
     assert.strictEqual(Profit.materials(originalPhysicalMaterials.slice(0, 1), recipe), null, 'missing ore cannot produce the output');
     assert.strictEqual(Profit.succeeds(recipe, () => { throw Error('100% success must not roll'); }), true);
     for (const mp of [100, 80]) {
-        const repeatable = Policy.opportunityFor({ ...state, vitals: { mp } }, recipe, planFor, [exit], undefined, paid);
+        const repeatable = opportunityFor({ ...state, vitals: { mp } }, recipe, planFor, [exit], undefined, paid);
         assert(repeatable && repeatable.expectedProfit === 23000, 'a complete funded unit basket has no arbitrary timer');
         assert.strictEqual(mp - recipe.mpCost, mp === 100 ? 80 : 60, 'original two-round MP accounting is a unit fact, not consumed stock');
     }
     const ratio = unit.expectedProfit / paid.hourAdena / unit.basket.cashCost;
     assert(ratio < nativePacket[1], 'the original synthetic gain is below the actual native money floor');
     assert.strictEqual(Funding.spendable(state, 0, { r: ratio }), 0);
-    assert.strictEqual(Service.chooseOpportunity(state, [{ recipeId: recipe.recipeId }], paid), null,
-        'a profitable calculator output cannot replace native E3 funding');
     const planning = adena => ({ ...state, adena, stats: { ...state.stats, equipmentPlan: {
         status: 'active', strategy: 'market', target: { selfId: 100, name: 'Planned Gear', slot: 7 },
         market: { town: 'Giran', price: 370000, sourceType: 'npc', reserve: 10000 } } } });
     for (const current of [state, planning(state.adena), planning(state.adena + 380000)]) {
         assert.strictEqual(Funding.spendable(current, 0, { r: ratio }), 0,
             'the original wallet/gear-plan variants do not override the real gain floor');
-        assert.strictEqual(Service.chooseOpportunity(current, [{ recipeId: recipe.recipeId }], paid), null);
     }
     const blocked = await Service.execute(state, { ...unit, template: DataCache.items[0], r: ratio });
     assert.strictEqual(blocked.crafted, false);
@@ -207,10 +246,10 @@ async function run() {
     const trip = Profit.tripFor(away, paid)('Giran');
     assert(Number.isFinite(trip) && trip > 0, 'actual native routes price the original Dion/Giran round trip');
     const awayPlanFor = (id, amount) => { const plan = planFor(id, amount); return plan && { ...plan, landed: plan.landed + trip }; };
-    assert.strictEqual(Policy.opportunityFor(away, recipe, awayPlanFor, [{ ...exit, trip }], undefined, paid), null,
+    assert.strictEqual(opportunityFor(away, recipe, awayPlanFor, [{ ...exit, trip }], undefined, paid), null,
         'the real trip outweighs the original 23000 net margin');
     exitPrice = 500000;
-    const lucrative = Policy.opportunityFor({ ...away, characterId: 9007 }, recipe, awayPlanFor,
+    const lucrative = opportunityFor({ ...away, characterId: 9007 }, recipe, awayPlanFor,
         [{ ...exit, price: exitPrice, trip }], undefined, paid);
     assert(lucrative && lucrative.expectedProfit === net(recipe, exitPrice, 25000 + trip, trip));
     assert.strictEqual(lucrative.basket.cashCost, 25000);
@@ -223,13 +262,12 @@ async function run() {
     const leather = { type: 'dwarven', recipeId: 25, level: 1, productId: 1882,
         productCount: 1, successRate: 100, mpCost: 10, materials: [{ selfId: 1867, amount: 6 }] };
     const leatherPlan = (id, count) => id === 1867 ? { town: 'Giran', cost: 500 * count, landed: 500 * count, units: count, whole: true } : null;
-    const fixed = Policy.opportunityFor({ ...state, characterId: 9004, name: 'ResourceCrafter' }, leather,
-        leatherPlan, [{ type: 'static', price: 10000, count: 1, trip: 0 }], undefined, paid);
+    const fixed = opportunityFor({ ...state, characterId: 9004, name: 'ResourceCrafter' }, leather,
+        leatherPlan, [{ type: 'afk', price: 10000, count: 1, trip: 0 }], undefined, paid);
     assert(fixed);
     assert.strictEqual(fixed.basket.cost, 3000);
     assert.strictEqual(fixed.expectedProfit, net(leather, 10000, 3000));
     assert.strictEqual(fixed.expectedProfit, 6000);
-    assert.strictEqual(Policy.craftMargin(leather, 10000, 3000), 7000, 'original static-exit cash gain, not a native paid craft');
     assert.deepStrictEqual(Profit.materials([{ id: 12, selfId: 1867, amount: 6 }], leather), [{ id: 12, selfId: 1867, amount: 6 }]);
 
     // Main waits for the exact guarded worker action; it does not rescan a
@@ -267,7 +305,7 @@ async function run() {
     Recipes.resolveByRecipeId = id => Number(id) === 25 ? leather : null;
     try {
         const fundedCrafter = { ...state, stats: { ...state.stats, money: [1000, .00001, 0, 0] } };
-        const step = { recipeId: 25, batches: 1, exit: [991013, 9910130, 90000, 1] };
+        const step = { recipeId: 25, batches: 1, exit: [991013, 9910130, 90000, 1], r: .01 };
         const currentBasket = Service.recheck(fundedCrafter, step, [{ recipeId: 25 }]);
         assert(currentBasket, 'a backed native buyer and legal ingredients still pass spending recheck');
         const mpRefusal = {};
@@ -281,8 +319,92 @@ async function run() {
         assert.strictEqual(Service.recheck(fundedCrafter,
             { ...step, exit: [991012, 9910120, 100000, 1] }, [{ recipeId: 25 }]), null,
         'a selected party personal buyer cannot pass spending recheck');
-        assert.strictEqual(Service.recheck(fundedCrafter, { recipeId: 25, batches: 1 }, [{ recipeId: 25 }])?.exit.offer.recordId,
-            991013, 'the legacy bounded exit look selects the legal backed buyer');
+        assert.strictEqual(Service.recheck(fundedCrafter, { ...step, r: 0 }, [{ recipeId: 25 }]), null,
+            'a buyer-line step without its root\'s ratio that must buy inputs goes back to the worker');
+        // C8: a craft for sale keeps the worker's listing exit; with no buyer
+        // line it crafts and keeps the product, a buyer exit still sells into its line.
+        const listingBoard = new BoardIndex();
+        listingBoard.put({ id: 991011, ownerId: 991002, storeType: AfkTrade.SELL, kind: 'shop', town: 'Giran', revision: 1,
+            lines: [{ lineId: 9910110, selfId: 1867, count: 6, price: 500 }] });
+        AfkTrade.boardIndex = () => listingBoard;
+        const listingStep = { recipeId: 25, batches: 1, exit: [-2, Shots.townCode('Giran'), 12000, 1] };
+        assert.deepStrictEqual(Shots.unpackStep(Shots.packStep({ wealth: { ...listingStep, r: 0.01 } })).wealth,
+            { ...listingStep, r: 0.01 }, 'the packed wealth step keeps its listing exit and value ratio');
+        // The crafter takes the more valuable craft: a shot step replaces the
+        // wealth step only with more value hours; a tie keeps the wealth step.
+        const wealthStep = { wealth: { recipeId: 25, batches: 2 } }, shotStep = { craft: { recipeId: 20, batches: 4 } };
+        assert.strictEqual(Shots.moreValuableStep({ step: wealthStep, valueHours: 36 }, { step: shotStep, valueHours: 12 }),
+            wealthStep, 'a wealth craft worth more than the shot craft is the step');
+        assert.strictEqual(Shots.moreValuableStep({ step: wealthStep, valueHours: 12 }, { step: shotStep, valueHours: 20 }),
+            shotStep, 'a shot craft worth more than the wealth craft is the step');
+        assert.strictEqual(Shots.moreValuableStep({ step: wealthStep, valueHours: 15 }, { step: shotStep, valueHours: 15 }),
+            wealthStep, 'equal value keeps the wealth craft');
+        assert.strictEqual(Shots.moreValuableStep(null, { step: shotStep, valueHours: 0 }), null,
+            'a shot craft of no value is no step');
+        assert.strictEqual(Service.recheck(fundedCrafter, listingStep, [{ recipeId: 25 }]), null,
+            'a listing step that must buy inputs without a value ratio goes back to the worker');
+        assert.strictEqual(Service.recheck(fundedCrafter, { ...listingStep, r: 0.01 }, [{ recipeId: 25 }])?.exit.town, 'Giran',
+            'a funded listing step passes the spending recheck with no buyer line');
+        const stocked = { ...fundedCrafter, inventory: { 1867: { selfId: 1867, amount: 6 } } };
+        const saved = { fetchItems: Database.fetchItems, craft: Database.craftInventoryItems, admit: Database.admitEconomyCommand,
+            refresh: LifeState.refreshInventory, upsert: LifeState.upsertState, sell: AfkTrade.sellToShop, offers: AfkTrade.offers };
+        Database.fetchItems = async (id, tag) => tag === 'wealth_craft_product' ? [{ id: 13, selfId: 1882, amount: 1 }]
+            : [{ id: 12, selfId: 1867, amount: 6 }];
+        Database.admitEconomyCommand = async () => ({ command: {}, row: null });
+        Database.craftInventoryItems = async () => ({ success: true, units: 1, mp: 90 });
+        LifeState.refreshInventory = async next => ({ ...next, inventory: { 1882: { selfId: 1882, amount: 1 } } });
+        LifeState.upsertState = async next => next;
+        let sale = null;
+        AfkTrade.sellToShop = async (characterId, store, selfId, count, terms) => {
+            sale = { selfId, count, lineId: terms.lineId };
+            return { amount: count, totalPrice: 90000 * count, coldState: terms.coldState };
+        };
+        try {
+            const listed = Service.recheck(stocked, listingStep, [{ recipeId: 25 }]);
+            assert.strictEqual(listed?.exit.type, 'listing', 'owned inputs need no value ratio to pass');
+            const kept = await Service.execute(stocked, listed);
+            assert.strictEqual(kept.crafted, true, 'a listing exit with no buyer line still crafts');
+            assert.strictEqual(kept.sold, false);
+            assert.strictEqual(kept.reason, 'for_sale', 'the product stays in the bag for the listing');
+            assert.strictEqual(kept.state.inventory[1882].amount, 1);
+            // A hot crafter runs the producer's listing exit too: the leaf
+            // carries it to the spending recheck, which passes with no buyer line.
+            const hotSaved = { registered: World.registeredActorById, stateFor: Economy.stateForActor,
+                forget: Economy.forget, craftSelf: Crafting.craftSelf };
+            const actor = { fetchId: () => stocked.characterId, fetchHp: () => 100, fetchMp: () => 1000,
+                fetchPrivateStoreType: () => 0, isDead: () => false, fetchIsOnline: () => true,
+                state: { fetchHits: () => false, fetchCasts: () => false },
+                backpack: { fetchRecipeBook: () => [{ recipeId: 25 }] } };
+            const session = { actor }, registered = { actor, session };
+            let craftedHot = null;
+            World.registeredActorById = id => Number(id) === stocked.characterId ? registered : null;
+            Economy.stateForActor = () => ({ ...stocked, phase: 'hot' });
+            Economy.forget = () => {};
+            Crafting.craftSelf = async (who, recipeId) => { craftedHot = recipeId; return true; };
+            try {
+                const hot = await HotWealth.review(session, { statsPacket: {},
+                    network: { activity: { activity: 'crafting', rootKey: 'resale:1882', recipeId: 25, exit: listingStep.exit } } });
+                assert.deepStrictEqual(hot, { attempted: true, crafted: true },
+                    'a hot listing craft with owned inputs and no buyer line crafts');
+                assert.strictEqual(craftedHot, 25);
+            } finally {
+                World.registeredActorById = hotSaved.registered; Economy.stateForActor = hotSaved.stateFor;
+                Economy.forget = hotSaved.forget; Crafting.craftSelf = hotSaved.craftSelf;
+            }
+            assert.strictEqual(sale, null, 'no sale into a buy line for a listing exit');
+            AfkTrade.boardIndex = () => sourceBoard;
+            const sold = Service.recheck(stocked, step, [{ recipeId: 25 }]);
+            assert.strictEqual(sold?.exit.offer.recordId, 991013);
+            AfkTrade.offers = (selfId, storeType) => storeType === AfkTrade.BUY && selfId === 1882
+                ? [{ ...sold.exit.offer, price: sold.exit.price, count: 1, store: buyStore }] : [];
+            const done = await Service.execute(stocked, sold);
+            assert.strictEqual(done.reason, 'sold', 'a buyer exit still sells the product into its line');
+            assert.deepStrictEqual(sale, { selfId: 1882, count: 1, lineId: 9910130 });
+        } finally {
+            Database.fetchItems = saved.fetchItems; Database.craftInventoryItems = saved.craft;
+            Database.admitEconomyCommand = saved.admit; LifeState.refreshInventory = saved.refresh;
+            LifeState.upsertState = saved.upsert; AfkTrade.sellToShop = saved.sell; AfkTrade.offers = saved.offers;
+        }
     } finally {
         AfkTrade.boardIndex = nativeBoardIndex;
         DataCache.items = syntheticItems;

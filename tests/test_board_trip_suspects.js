@@ -90,7 +90,7 @@ async function run() {
         assert.strictEqual(trades, 0, `E45: ${trades} deal(s) between Giran and Dion with no trip`);
     });
 
-    // E46: a bot's shop stays in its town (design 4.15, N51): a review after
+    // E46: a bot's shop stays in its town (design 4.15, N51): a listing after
     // the bot moved its hunt to another village keeps it where it stands.
     await check('E46', async () => {
         const owner = await bot('bot_e46_owner', 'E46Owner', [{ selfId: VARNISH, name: 'Varnish', amount: 30 }]);
@@ -106,8 +106,7 @@ async function run() {
         ListingPolicy.evaluate = () => ({ listings: [{ selfId: VARNISH, name: 'Varnish', count: 26, price: 100, rank: 'none' }],
             decisions: [] });
         try {
-            await BotAfkMarket.reconcile(synced, { type: 'sell_inventory', status: 'active',
-                plan: { expectedBenefit: 'market_sale_inventory' } });
+            await BotAfkMarket.listOnBoard(synced);
         } finally {
             ListingPolicy.evaluate = evaluate;
         }

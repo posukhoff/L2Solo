@@ -24,10 +24,6 @@ function candidates(town, options = {}) {
     return TownServiceCatalog.candidates(ROLE, town, options);
 }
 
-function closestSeller(town, options = {}) {
-    return candidates(town, options)[0] || null;
-}
-
 function targetFor(town, options = {}) {
     return TownServiceCatalog.targetFor(ROLE, town, options);
 }
@@ -39,7 +35,6 @@ function targetForNpc(town, npcSelfId, options = {}) {
 module.exports = {
     MAX_TOWN_DISTANCE: TownServiceCatalog.MAX_TOWN_DISTANCE,
     candidates,
-    closestSeller,
     rows,
     rowsForTown,
     sellersByTown,

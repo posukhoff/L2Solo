@@ -9,7 +9,6 @@ const DataCache = invoke('GameServer/DataCache');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const MarketListingPolicy = invoke('GameServer/Bot/Economy/MarketListingPolicy');
-const ColdShotEconomyService = invoke('GameServer/Bot/Economy/ColdShotEconomyService');
 
 DataCache.init();
 
@@ -44,19 +43,14 @@ assert.strictEqual(ShotStock.keptAmounts(full)[D_SOULSHOT], target,
     'empty and physically filled own stack use the same planned bag interval');
 assert.strictEqual(ShotStock.planForState(full).selfId, D_SOULSHOT, 'a warrior with a D sword fires D soulshots');
 
-// Cold: the sale set (listings) and the NPC cleanup set (forced inventory
-// cleanup, a closed store) keep the restocked own shot and sell the old grade.
+// Cold: the sale set (listings, the NPC cleanup set reads it) keeps the
+// restocked own shot and sells the old grade.
 const sale = counts(ItemDisposition.saleCandidates(full, { unlimited: true }));
 assert.strictEqual(sale.get(D_SOULSHOT), undefined, 'a freshly restocked own shot is not for sale');
 assert.strictEqual(sale.get(NG_SOULSHOT), 2000, 'shots of an older grade are spare');
-const npc = counts(ItemDisposition.npcLiquidationCandidates(full));
-assert.strictEqual(npc.get(D_SOULSHOT), undefined, 'inventory cleanup does not sell the own shot to the NPC');
-assert.strictEqual(npc.get(NG_SOULSHOT), 2000, 'inventory cleanup sells the old-grade shots to the NPC');
 
 assert.strictEqual(counts(ItemDisposition.saleCandidates(stateWith(target + 500), { unlimited: true })).get(D_SOULSHOT), undefined,
     'an ordinary bot keeps all current ammunition above the restock target');
-assert.strictEqual(counts(ItemDisposition.npcLiquidationCandidates(stateWith(target + 500))).get(D_SOULSHOT), undefined,
-    'a smaller restock target cannot sell current ammunition to the NPC');
 
 // Round trip: a native restock from an empty stack leaves no own shot to sell.
 const low = stateWith(0);
@@ -92,10 +86,6 @@ const crafterWithout = (state) => {
 // Removing an old-grade stack increases native bag room; derive this
 // crafter's target from the same inventory used by the surplus decision.
 const crafterTarget = ShotStock.keptAmounts(crafterWithout(crafter(0)))[D_SOULSHOT];
-assert.strictEqual(ColdShotEconomyService.hasShotSurplus(crafterWithout(crafter(crafterTarget))), false,
-    'a crafter holding its own shot up to the restock target has no surplus');
-assert.strictEqual(ColdShotEconomyService.hasShotSurplus(crafterWithout(crafter(crafterTarget + 1))), true,
-    'a crafter holding more than the restock target has a surplus');
 assert.strictEqual(counts(ItemDisposition.saleCandidates(crafter(crafterTarget + 500), { unlimited: true })).get(D_SOULSHOT) > 0, true,
     'a native crafter can still offer its current-grade production surplus');
 

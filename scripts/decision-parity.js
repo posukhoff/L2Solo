@@ -8,6 +8,8 @@ const { DatabaseSync } = require('node:sqlite');
 require('../src/Global');
 const Data = invoke('GameServer/DataCache'); Data.init();
 const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
+const SavedStats = invoke('GameServer/Bot/SavedStats');
+const TwinCluster = invoke('GameServer/Bot/Economy/TwinCluster');
 const Decision = require('../src/GameServer/Bot/Population/ColdEconomyDecision');
 const Protocol = require('../src/GameServer/Bot/Population/ColdSimulationProtocol');
 const { npcPlanningCatalogRows } = require('../src/GameServer/Bot/Population/ColdSimulationCoordinator');
@@ -22,7 +24,7 @@ const states = rows.map(row => ({ characterId: row.characterId, name: row.charac
     vitals: { hp: row.hp, maxHp: row.maxHp, mp: row.mp, maxMp: row.maxMp },
     timing: { lastResolvedAt: row.lastResolvedAt, nextResolveAt: row.nextResolveAt },
     simulation: { revision: row.simRevision || 0 },
-    party: row.partyId ? { partyId: row.partyId } : null, stats: json(row.statsJson), inventory: json(row.inventorySummary) }));
+    party: row.partyId ? { partyId: row.partyId } : null, stats: SavedStats.merge(row.statsJson, row.mindJson), inventory: json(row.inventorySummary) }));
 db.close();
 const spots = invoke('GameServer/Bot/Population/SpotProfiles').ensure(), catalog = npcPlanningCatalogRows();
 const board = new (invoke('GameServer/AfkTrade/BoardIndex').BoardIndex)();
@@ -93,7 +95,7 @@ parentPort.on('message', message => {
         await wait(message => message.type === 'ready' && message.payload.phase === 'running'); send('pause', {}, 'pause');
         // Each crafter's workshop as main computes it; the oracle hands it to
         // the worker as the decision the worker published for that state.
-        const workshops = new Map(states.map(state => [state.characterId, state.stats?.workshop?.entries?.length
+        const workshops = new Map(states.map(state => [state.characterId, TwinCluster.entriesOf(state)?.length
             ? Economy.craftIncome(state, { hourAdena: Economy.basics(state).hunt.perHour, worth: Economy.basics(state).price, timestamp: Number(state.updatedAt) + 1 }) : null]));
         for (let at = 0; at < states.length; at += 4) send('snapshot_page', { rows: states.slice(at, at + 4)
             .map(state => ({ state })), ack: true }, 'state-' + at);
@@ -114,7 +116,7 @@ parentPort.on('message', message => {
                     JSON.stringify(workerDecision.watch) === JSON.stringify(mainDecision.watch),
                     JSON.stringify([...workerDecision.usefulness]) === JSON.stringify([...mainDecision.usefulness])];
                 leafEqual += +checks[0]; watchEqual += +checks[1]; usefulEqual += +checks[2];
-                if (row.seen.stats?.workshop?.entries?.length) crafters++;
+                if (TwinCluster.entriesOf(row.seen)?.length) crafters++;
                 captureMs.push(row.captureMs); buildMs.push(row.buildMs);
                 if (!checks.every(Boolean)) mismatches.push({ id: row.id, checks, worker: leaf(workerDecision.activity), main: leaf(mainDecision.activity),
                     workerWatch: workerDecision.watch, mainWatch: mainDecision.watch });

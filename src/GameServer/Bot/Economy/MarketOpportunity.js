@@ -8,11 +8,7 @@ const TownNpcCatalog = require('./TownNpcCatalog');
 const OfferOrder = require('./OfferOrder');
 const OfferQuery = require('./OfferQuery');
 const ProductionPolicy = require('./ProductionPolicy');
-const SHOT_IDS = new Set([
-    1835, 1463, 1464, 1465, 1466, 1467,
-    2509, 2510, 2511, 2512, 2513, 2514,
-    3947, 3948, 3949, 3950, 3951, 3952
-]);
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
 // These offers are bot purchase plans. The shared accessor only needs this
 // price context; resolving a buyer actor here would add a world lookup.
 const BOT_PRICE_CONTEXT = Object.freeze({ session: Object.freeze({ botSession: true }) });
@@ -106,12 +102,10 @@ function npcTownOffers(selfId, town, held) {
 }
 
 function npcOffers(selfId, town) {
-    if (!ProductionPolicy.allowsNpcShot(selfId)) return [];
     return npcTownOffers(selfId, town, npcOfferCache(selfId)).map(offer => ({ ...offer }));
 }
 
 function npcOffersAll(selfId) {
-    if (!ProductionPolicy.allowsNpcShot(selfId)) return [];
     const held = npcOfferCache(selfId);
     held.all ||= Object.freeze(npcOfferTowns.flatMap(town => npcTownOffers(selfId, town, held)));
     // Preserve callers' ownership of the returned array and rows.
@@ -125,8 +119,7 @@ function botCanBuy(offer) {
     if (!offer) return false;
     const fixed = offer.sourceType === 'configured_store' || offer.sellerKind === 'fixed'
         || (offer.sourceType === 'private_store' && MerchantStoreConfigs[offer.sourceName]);
-    if (offer.sourceType === 'npc' && !ProductionPolicy.allowsNpcShot(offer.selfId)) return false;
-    return !fixed || (SHOT_IDS.has(Number(offer.selfId)) && ProductionPolicy.allowsFixedShot(offer.selfId));
+    return !fixed || ProductionPolicy.allowsFixedShot(offer.selfId);
 }
 
 // A live private store's line as an offer: a configured city merchant is
@@ -147,7 +140,7 @@ function storeOffer(session, store, item, town) {
         town: town || store.town || null,
         selfId: Number(item.selfId),
         itemName: itemName(item.selfId),
-        price: sellerKind === 'fixed' && SHOT_IDS.has(Number(item.selfId))
+        price: sellerKind === 'fixed' && ShotStock.SHOP_SHOT_RANK.has(Number(item.selfId))
             ? invoke('GameServer/Bot/TradeService').storeItemPrice(store, item, BOT_PRICE_CONTEXT)
             : Number(item.price),
         count: Number(item.count),
@@ -202,29 +195,26 @@ function hotOffers(selfId, options = {}) {
         .sort((left, right) => OfferOrder.compareOffers(left, right, options.cost));
 }
 
-// The one offer query (OfferQuery) for a buyer on the main thread: what a
-// cold bot can buy without meeting anyone (board records, NPC shops and the
-// configured shot merchants; a player's or a bot's live private store trades
-// face to face only, E14, E22), in `town`, in each of `towns` or in every
-// town (the board and the configured merchants only: an NPC shop is in a
-// town), the first in the one order within `budget` that `accept` takes.
+// The one buyer's offer search (OfferQuery.bestBuyerOffer) on the main
+// thread: what a cold bot can buy without meeting anyone (board records, NPC
+// shops and the configured shot merchants; a player's or a bot's live private
+// store trades face to face only, E14, E22), in `town`, in each of `towns` or
+// in every town (the board and the configured merchants only: an NPC shop is
+// in a town), the first in the one order within `budget` that `accept` takes,
+// never a line whose meeting the buyer was refused (OfferQuery.meetingRefused);
+// an errand `purpose` takes only lines that settle at once (OfferQuery.settledOnlyFor).
 function bestOffer(selfId, options = {}) {
-    const towns = options.town ? [options.town] : options.towns || null;
-    const fixed = fixedStoreOffers(selfId);
-    const npc = towns ? towns.flatMap((town) => npcOffers(selfId, town)) : [];
-    return OfferQuery.bestSellOffer(AfkTrade.boardIndex(), selfId, {
-        towns,
-        excludeOwner: options.buyerCharacterId,
-        budget: options.budget,
-        cost: options.cost,
-        accept: (offer) => botCanBuy(offer)
-            && PartyAdmission.personalOfferAllowed(offer,
-                invoke('GameServer/Bot/Population/BotLifeState').cachedState?.(Number(options.buyerCharacterId)),
-                invoke('GameServer/Bot/Population/BotLifeState').cachedState?.(Number(offer.sourceId)),
-                World.registeredActorById?.(Number(options.buyerCharacterId))?.session,
-                World.registeredActorById?.(Number(offer.sourceId))?.session) && (!options.accept || options.accept(offer)),
+    const buyerId = Number(options.buyerCharacterId);
+    const Life = invoke('GameServer/Bot/Population/BotLifeState'); // lazy: cycle BotLifeState loads the economy modules
+    const buyerState = Life.cachedState?.(buyerId), buyerSession = World.registeredActorById?.(buyerId)?.session;
+    return OfferQuery.bestBuyerOffer(AfkTrade.boardIndex(), selfId, options, {
+        buyerState,
+        allowed: (offer) => botCanBuy(offer)
+            && PartyAdmission.personalOfferAllowed(offer, buyerState, Life.cachedState?.(Number(offer.sourceId)),
+                buyerSession, World.registeredActorById?.(Number(offer.sourceId))?.session),
         toOffer: AfkTrade.offerOf,
-        others: OfferQuery.othersIn(towns, fixed, npc)
+        others: (towns) => OfferQuery.othersIn(towns, fixedStoreOffers(selfId),
+            towns ? towns.flatMap((town) => npcOffers(selfId, town)) : [])
     });
 }
 
@@ -279,22 +269,21 @@ function liveBuyBoard(town, excludeOwner = 0) {
 }
 
 // The buy records of the board (escrow held), best first in the board's own
-// order (BoardIndex.compareLines: the bid, a player before a bot, the record):
+// order (BoardIndex.compareLines: the bid, a player before a bot, the record),
+// none whose meeting the seller was refused (OfferQuery.meetingRefused):
 // the budget-backed buy stores whose money stayed in the wallet are gone (E24).
 function findBuyOffers(selfId, options = {}) {
     const town = options.town || null;
+    // lazy: cycle BotLifeState loads the economy modules
+    const sellerState = invoke('GameServer/Bot/Population/BotLifeState').cachedState?.(Number(options.sellerCharacterId));
     return AfkTrade.offers(selfId, 3, { town, characterId: options.sellerCharacterId })
-        .filter((offer) => offer.available && PartyAdmission.personalOfferAllowed(offer,
-            invoke('GameServer/Bot/Population/BotLifeState').cachedState?.(Number(options.sellerCharacterId)), null,
-            World.registeredActorById?.(Number(options.sellerCharacterId))?.session));
+        .filter((offer) => offer.available && !OfferQuery.meetingRefused(offer, sellerState)
+            && PartyAdmission.personalOfferAllowed(offer, sellerState, null,
+                World.registeredActorById?.(Number(options.sellerCharacterId))?.session));
 }
 
 function bestBuyOffer(selfId, options = {}) {
     return findBuyOffers(selfId, options)[0] || null;
-}
-
-function activeBuyDemandSelfIds() {
-    return AfkTrade.activeDemandSelfIds();
 }
 
 // A companion may leave the field for the city that actually sells the
@@ -313,7 +302,7 @@ function bestSupplyOffer(selfId, options = {}) {
 
 let supplyIds = null;
 function supplyItemIds() {
-    supplyIds ||= [...new Set([...(NpcShopBuyLists.allEntries?.() || []).map((entry) => Number(entry.selfId)), ...SHOT_IDS]
+    supplyIds ||= [...new Set([...(NpcShopBuyLists.allEntries?.() || []).map((entry) => Number(entry.selfId)), ...ShotStock.SHOP_SHOT_RANK.keys()]
         .filter(Boolean))];
     return [...new Set([...supplyIds, ...AfkTrade.boardIndex().selfIds(AfkTrade.SELL)])];
 }
@@ -349,7 +338,7 @@ function supplyCatalog(limit = 96, origin = null) {
             } : null;
         })
         .filter(Boolean)
-        .sort((a, b) => Number(SHOT_IDS.has(b.selfId)) - Number(SHOT_IDS.has(a.selfId)) || a.name.localeCompare(b.name))
+        .sort((a, b) => Number(ShotStock.SHOP_SHOT_RANK.has(b.selfId)) - Number(ShotStock.SHOP_SHOT_RANK.has(a.selfId)) || a.name.localeCompare(b.name))
         .slice(0, Math.max(1, Number(limit) || 96));
 }
 
@@ -397,7 +386,6 @@ module.exports = {
     bestHotOffer,
     liveBuyBoard,
     bestBuyOffer,
-    activeBuyDemandSelfIds,
     bestSupplyOffer,
     hotOffers,
     findBuyOffers,

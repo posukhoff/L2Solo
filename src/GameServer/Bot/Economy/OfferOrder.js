@@ -65,16 +65,22 @@ function compareIds(left, right) {
     return String(left ?? '').localeCompare(String(right ?? ''));
 }
 
+// The seller part of the one order: a player before a bot, an NPC last.
+// OfferQuery.cheapestIn breaks a tie of two towns' fills by it.
+function compareSellers(left, right) {
+    return Number(fromPlayer(right)) - Number(fromPlayer(left))
+        || Number(left.sourceType === 'npc') - Number(right.sourceType === 'npc');
+}
+
 // The one order of offers for every buyer: the price plus the trip to the
 // offer's town (`cost`, from tripCost; none for a buyer that does not travel)
-// first; at the same cost a player before a bot, an NPC last; then a stable
+// first; at the same cost the sellers (compareSellers); then a stable
 // id (the board record and line, the town, the seller).
 function compareOffers(left, right, cost = null) {
     const leftPrice = landedPrice(left, cost);
     const rightPrice = landedPrice(right, cost);
     return (leftPrice === rightPrice ? 0 : leftPrice < rightPrice ? -1 : 1)
-        || Number(fromPlayer(right)) - Number(fromPlayer(left))
-        || Number(left.sourceType === 'npc') - Number(right.sourceType === 'npc')
+        || compareSellers(left, right)
         || compareIds(left.recordId ?? 0, right.recordId ?? 0)
         || compareIds(left.lineId ?? 0, right.lineId ?? 0)
         || String(left.town || '').localeCompare(String(right.town || ''))
@@ -91,13 +97,4 @@ function best(offers, { budget = Infinity, cost = null } = {}) {
     return chosen;
 }
 
-// A companion's supply errand: cheaper first; at the same price an NPC
-// before a configured store, since NPC stock never runs out; then the town
-// nearest the buyer.
-function compareSupplyOffers(left, right, origin) {
-    return Number(left.price) - Number(right.price)
-        || Number(left.sourceType !== 'npc') - Number(right.sourceType !== 'npc')
-        || compareDistance(left, right, origin);
-}
-
-module.exports = { best, compareDistance, compareOffers, compareSupplyOffers, farmingOrigin, landedPrice, tripCost };
+module.exports = { best, compareDistance, compareOffers, compareSellers, farmingOrigin, landedPrice, tripCost };

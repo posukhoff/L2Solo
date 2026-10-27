@@ -17,36 +17,12 @@ async function run() {
     const originalSave = LifeState.upsertState;
     LifeState.upsertState = async (value) => value;
     try {
-        // The physical buy stall that abandoned the plan on expiry is gone
-        // (step 3.3: a buy ad returns its escrow and the bot reviews again);
-        // the planner's own abandonment stands for it here.
-        const abandoned = Planner.abandonAcquisition(state, 75, now);
-        assert.strictEqual(abandoned.stats.equipmentPlan.status, 'abandoned');
-        const remembered = JSON.parse(JSON.stringify(abandoned));
-        const context = Planner.replanContextFor(remembered, remembered.stats.equipmentPlan, now + 1);
-        assert(context.excludedTargetIds.includes(2566));
-        assert(context.excludedMaterialIds.includes(75));
-        const alternative = Planner.preferredTarget(remembered, { ...context, findMarketOffer: () => null });
-        assert(alternative, 'another dual-sword route should remain available');
-        assert(!alternative.recipe.materials.some((item) => item.selfId === 75), 'changing the duals must not retain the failed blade');
-        const idle = Planner.finalizePlan(remembered, remembered.stats.equipmentPlan,
-            { status: 'complete', strategy: 'none' }, context, now + 2);
-        assert(Planner.replanContextFor(remembered, idle, now + 3).excludedMaterialIds.includes(75),
-            'an idle tick without alternatives must retain the failure memory');
-        assert.strictEqual(Planner.replanContextFor(remembered, idle, now + 5 * 3600000).excludedMaterialIds.length, 0);
         const variants = new Set(Array.from({ length: 30 }, (_, i) => Planner.preferredTarget(
             { ...state, characterId: i + 1 }, { findMarketOffer: () => null })?.item.selfId));
         assert(variants.size > 1, 'comparable dual routes must not synchronize the whole population');
     } finally {
         LifeState.upsertState = originalSave;
     }
-
-    assert.strictEqual(Planner.abandonAcquisition(state, 1869, now), state,
-        'an unrelated shopping goal must not discard the equipment plan');
-    const clanState = { ...state, stats: { ...state.stats,
-        equipmentPlan: { ...plan, clanGoal: { clanId: 1, goalKey: 'assigned-weapon' } } } };
-    assert.strictEqual(Planner.abandonAcquisition(clanState, 75, now), clanState,
-        'an individual purchase timeout must not cancel a clan-owned objective');
 
     const stamped = Planner.finalizePlan(state, null, plan, {}, now);
     const stalled = Planner.replanContextFor(state, stamped, now + 5 * 3600000);

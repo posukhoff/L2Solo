@@ -8,6 +8,14 @@ function isServiceCrafter(state = {}) {
     const level = craftLevelFor(state);
     return Number.isFinite(level) && level > 0;
 }
+// The one answer to "may this bot produce for the market on its own": a
+// crafter that roams (no craft station, no bot_craft_N service account).
+// WishProviders' producer roots and the crystal sale root
+// (BotCrystallization.canRootSale) read it.
+function marketProducer(state = {}) {
+    return isServiceCrafter(state) && !state.stats?.craftStationId
+        && !/^bot_craft_\d+$/i.test(String(state.accountName || ''));
+}
 
 // Craft level = the Create Item level the class line has learned by this
 // character level, read from the skill tree like a hot character's skills: a
@@ -37,10 +45,16 @@ function craftLevelFor(state = {}) {
     return row[level];
 }
 
-// Create Item capability is shared by every class that has the skill.
-function canCraft(state = {}, recipe = {}) {
-    const level = craftLevelFor(state), required = Number(recipe.level);
-    return Number.isFinite(level) && Number.isFinite(required) && required > 0 && level >= required;
+// The one answer to "does this bot craft this recipe itself": Create Item
+// capability is shared by every class that has the skill, its level covers the
+// recipe; sure: a dwarven recipe with a sure result (a failed roll would
+// strand the inputs of the craft it feeds: a producer's component,
+// WealthCraftDecision.ownComponent; a shot scrap, ShotCraftPolicy). Known
+// recipes and MP stay the caller's (each reads its own book and batch).
+function canCraft(state = {}, recipe = {}, { sure = false } = {}) {
+    const level = craftLevelFor(state), required = Number(recipe?.level);
+    return Number.isFinite(level) && Number.isFinite(required) && required > 0 && level >= required
+        && (!sure || recipe.type === 'dwarven' && Number(recipe.successRate) === 100);
 }
 
-module.exports = { isServiceCrafter, craftLevelFor, canCraft };
+module.exports = { isServiceCrafter, marketProducer, craftLevelFor, canCraft };

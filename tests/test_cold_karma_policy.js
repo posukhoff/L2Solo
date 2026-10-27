@@ -32,7 +32,7 @@ try {
     assert(route.arrivalAt > 1000, 'relocation must take time');
     assert.strictEqual(planned.plannedState.stats.equipmentPlan, null);
     assert.strictEqual(lifecycleKind(state), 'resolver', 'karma must bypass economic command routing');
-    const shoppingGoal = { type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_weapon' } };
+    const shoppingGoal = { type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_gear' } };
     // A white bot pays its town trip (N2): a Scroll of Escape and the gatekeeper fee.
     const hunting = { ...state, activity: 'hunting', adena: 1000000,
         inventory: { 57: { selfId: 57, amount: 1000000 }, 736: { selfId: 736, amount: 1 } } };

@@ -18,11 +18,11 @@ const id = 730093;
         phase: 'cold', activity: 'shopping', level: 23, adena, currentRegion: 'Gludin',
         loc: { locX: gludin.locX, locY: gludin.locY, locZ: gludin.locZ },
         vitals: { hp: 300, maxHp: 300, mp: 100, maxMp: 100 }, inventory: {},
-        stats: { classId: 0, generatedCold: true, shopTown: { town: 'Talking Island', at: now - 1000 },
+        stats: { classId: 0, generatedCold: true, twin: { town: 'Talking Island' },
             townVisit: { town: 'Gludin', startedAt: now - 1000, reason: 'sell_inventory', completed: true },
             marketReturn: { loc: { locX: -52612, locY: 195042, locZ: -3664 },
                 regionName: 'Ratman Warrior fields', spotId: '-9_32' } } });
-    const board = { shopTown: 'Talking Island', listed: 2 };
+    const board = { storeTown: 'Talking Island', listed: 2 };
 
     const poor = await Listing.travelToShopTown(visitor(0), board, now);
     assert.equal(poor.reason, 'shop_town_unreached', 'no Adena for the gatekeeper: the shop town is not reached');

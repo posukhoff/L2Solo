@@ -6,8 +6,7 @@ require('./helpers/databaseIsolation');
 const { createWorld, Database } = require('./helpers/c4QuestHarness');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Market = invoke('GameServer/Bot/Economy/MarketCounters');
-const Flow = require('../src/GameServer/Bot/Economy/MarketTradeDemand');
-const Listing = require('../src/GameServer/Bot/Economy/MarketListingPolicy');
+const Flow = require('../src/GameServer/Bot/Economy/MarketDemand');
 const seller = 755021, buyer = 755022, itemId = 76;
 
 (async () => {
@@ -45,9 +44,6 @@ const seller = 755021, buyer = 755022, itemId = 76;
         }
         for (let i = 0; i < 4; i++) await purchase(5);
         assert.equal(Flow.forecast(itemId, 'Giran'), null, '+5 purchases cannot create +0 demand');
-        const listings = [{ selfId: 2275, price: 100000, count: 1 }, { selfId: itemId, price: 1000, count: 1, enchant: 0 }];
-        assert.equal(Listing.prioritizeListings(listings).at(0).selfId, 2275,
-            'enchanted trades cannot displace another listing with false base-item demand');
         let rows = await Database.fetchRecentBoardDeals();
         assert.deepEqual(rows.map(row => row.enchant), [5, 5, 5, 5]);
         Market.reset(); Market.load(rows);
@@ -65,6 +61,6 @@ const seller = 755021, buyer = 755022, itemId = 76;
         assert.equal(Flow.forecast(itemId, 'Giran', now), null, 'unknown legacy quality is not proof of +0 demand');
         Market.reset(); Market.load(legacy.map(row => ({ ...row, selfId: 1881 })));
         assert(Flow.forecast(1881, 'Giran', now), 'legacy non-enchantable resources retain their genuine flow');
-        console.log('PASS native enchanted/plain purchases, listing priority, quality replay and legacy history migration');
+        console.log('PASS native enchanted/plain purchases, quality replay and legacy history migration');
     } finally { Afk._resetForTests(); await world.close(); }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });

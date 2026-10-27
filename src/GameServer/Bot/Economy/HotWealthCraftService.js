@@ -1,9 +1,13 @@
 'use strict';
+const BotWarehouse = invoke('GameServer/Bot/Economy/BotWarehouseService');
+const { partyIdOf } = require('../Population/PartyId');
 
 // The shared worker wish selects one finite batch. Hot execution only checks
 // that selected recipe against live stock, then calls the player's native
 // self-craft owner; it never buys inputs or grants a sale/profit here.
 const DecisionEvents = require('../AI/DecisionEvents');
+const Profit = require('./CraftProfitPolicy');
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const pending = new WeakMap();
 function canStart(session, leaf) {
     const actor = session?.actor;
@@ -11,7 +15,7 @@ function canStart(session, leaf) {
         || !Number.isSafeInteger(Number(leaf.recipeId)) || Number(leaf.recipeId) <= 0) return false;
     const recipe = invoke('GameServer/Items/C4RecipeItems').resolveByRecipeId(Number(leaf.recipeId));
     return !!recipe && Number(recipe.productId) === Number(leaf.rootKey.slice(7))
-        && !actor.isDead?.() && Number(actor.fetchHp?.()) > 0 && Number(actor.fetchMp?.()) >= Number(recipe.mpCost)
+        && !actor.isDead?.() && Number(actor.fetchHp?.()) > 0 && Profit.mpBatches(actor.fetchMp?.(), recipe) >= 1
         && Number(actor.fetchPrivateStoreType?.() || 0) === 0 && !actor.state?.fetchHits?.() && !actor.state?.fetchCasts?.()
         && !session.currentTargetId && !session.partyCompanion && !session.followPlayerSession && !session.hotBackgroundPartyId;
 }
@@ -34,25 +38,24 @@ function review(session, context) {
         const permitted = state => registered?.actor === actor && registered?.session === session && registered.retired !== true
             && World.registeredActorById(Number(actor.fetchId())) === registered && session.actor === actor
             && actor.fetchIsOnline?.() !== false && !actor.isDead?.() && state.phase === 'hot'
-            && state.vitals.hp > 0 && state.vitals.mp >= Number(recipe.mpCost)
+            && state.vitals.hp > 0 && Profit.mpBatches(state.vitals.mp, recipe) >= 1
             && Number(actor.fetchPrivateStoreType?.() || 0) === 0 && !actor.state?.fetchHits?.() && !actor.state?.fetchCasts?.()
             && !session.currentTargetId && !session.partyCompanion && !session.followPlayerSession
-            && !session.hotBackgroundPartyId && !state.party?.partyId && !state.partyId
+            && !session.hotBackgroundPartyId && !partyIdOf(state)
             && !state.stats?.craftStationId && !/^bot_craft_\d+$/i.test(String(state.accountName || ''))
             && Craft.isServiceCrafter(state) && Craft.canCraft(state, recipe)
             && !(state.stats?.equipmentPlan?.strategy === 'craft'
-                && ['active', 'component_ready', 'ready_to_craft'].includes(state.stats.equipmentPlan.status));
+                && GearAcquisitionPlanner.planRunning(state.stats.equipmentPlan));
         const book = () => actor.backpack?.fetchRecipeBook?.(actor, recipe.type) || [];
         const ready = state => {
             const opportunity = require('./ColdWealthCraftService').recheck(state,
-                { recipeId: Number(recipe.recipeId), batches: 1, scroll: [-1] }, book());
+                { recipeId: Number(recipe.recipeId), batches: 1, scroll: [-1], exit: leaf.exit }, book());
             // Ready when the basket orders nothing: its owned rows already took the
             // free stock through the one quantity reader (remainingQuantity).
             return opportunity && opportunity.basket.purchases.length === 0 ? opportunity : null;
         };
         const packet = context.statsPacket || DecisionEvents.statsFor(session);
-        const accepted = { characterId: Number(actor.fetchId()), stats: { decisionSeq: packet.decisionSeq, activityLeaf: packet.activityLeaf,
-            wishFocus: packet.wishFocus, wishSections: packet.wishSections } };
+        const accepted = DecisionEvents.acceptedOf(actor.fetchId(), packet);
         const retirePreparation = () => Economy.forget(Number(actor.fetchId()));
         let state = liveState();
         if (!permitted(state)) return { attempted: false };
@@ -66,8 +69,7 @@ function review(session, context) {
         try {
             if (!book().some(row => Number(row.recipeId ?? row) === Number(recipe.recipeId))) {
                 attempted = true;
-                await invoke('GameServer/Bot/Economy/BotWarehouseService').learnActorRecipes(actor, state, session,
-                    { recipeIds: [Number(recipe.recipeId)] });
+                await BotWarehouse.learnActorRecipes(actor, state, session);
                 state = liveState();
                 if (!permitted(state)) return { attempted, crafted: false };
                 if (!ready(state)) { DecisionEvents.rejectSession(session, accepted); return { attempted, crafted: false }; }

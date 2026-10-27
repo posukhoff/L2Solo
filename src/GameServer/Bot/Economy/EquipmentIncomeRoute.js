@@ -5,13 +5,19 @@ const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
 const BotHuntEfficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const SpotEconomics = require('./SpotEconomics');
+const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
+
+// A crystal is no drop or spoil: its resale root breaks spare gear and
+// hunts nothing, so its focus never widens the hunting band.
+const crystalResale = new Set(Object.values(CRYSTAL_IDS).map(id => `resale:${id}`));
 
 // Only economic errands may deliberately hunt below the ordinary XP band.
 // Deep-blue drop/spoil penalties still apply in the native reward facts.
 // Clan warehouse custody does not change a member's ordinary earning routes.
 function economicHunt(state) {
+    const focus = String(state.stats?.wishFocus?.[0] || '');
     return invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state)
-        && /^(power:|resale:)/.test(String(state.stats?.wishFocus?.[0] || ''));
+        && /^(power:|resale:)/.test(focus) && !crystalResale.has(focus);
 }
 
 // The game table's spot list for one bot (ARCH-08-b): its table role (a
@@ -31,8 +37,10 @@ function spotList(state, { price } = {}) {
 }
 
 // list: the search's spotList, when the caller reads it too.
+// board, read: the market the spot rows' recipe scrolls are priced at and the
+// build's input hook (SpotEconomics.create).
 function select(state, { spots = [], timestamp = Date.now(), price, required = false, mode,
-    maxChecks = 32, list = null } = {}) {
+    maxChecks = 32, list = null, board, read } = {}) {
     if (!spots.length || state.party?.partyId || ['party', 'duo'].includes(mode)
         || !invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state)) return null;
     const minGap = -15;
@@ -43,7 +51,7 @@ function select(state, { spots = [], timestamp = Date.now(), price, required = f
     const Match = invoke('GameServer/Bot/AI/BotTargetMatchup');
     const Index = invoke('GameServer/Bot/AI/SpotIndex');
     const Risk = invoke('GameServer/Bot/Population/SpotRiskPolicy');
-    const evaluate = SpotEconomics.create(state, { timestamp, price, moneyWeight: 1 });
+    const evaluate = SpotEconomics.create(state, { timestamp, price, moneyWeight: 1, board, read });
     const excluded = Risk.excludedSpotIdsForStates([state], timestamp);
     const options = { timestamp, mode: 'solo', matchupProfiles: Match.stateProfiles(state, { timestamp }) };
     const survives = Match.soloSpotUpperBound(options.matchupProfiles);

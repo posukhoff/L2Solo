@@ -35,7 +35,6 @@ const originals = {
     statesByIds: LifeState.statesByIds,
     allStates: LifeState.allStates,
     bestBuyOffer: MarketOpportunity.bestBuyOffer,
-    activeBuyDemandSelfIds: MarketOpportunity.activeBuyDemandSelfIds,
     saleDecision: BotMarket.saleDecision,
     deleteItem: Database.deleteItem,
     updateItemAmount: Database.updateItemAmount,
@@ -284,7 +283,7 @@ async function run() {
     }, { state: liveState });
     assert.strictEqual(preview.itemCount, 1, 'hot private-store sales must expose only swords beyond the active combination reserve');
 
-    const live = await BotWarehouse.depositActor(liveActor, liveState);
+    const live = await BotWarehouse.depositActorAtWarehouse(liveActor, liveState, null, warehouseTarget);
     assert.strictEqual(live.count, 20, 'active bots must store materials without adding a third warehouse gear copy');
     assert.deepStrictEqual(liveBackpack.items.map((item) => item.selfId), [1, 123, 123, 123],
         'equipped, reserved, and warehouse-overflow swords must survive until the existing NPC sell step');
@@ -313,7 +312,6 @@ async function run() {
         saleDecisions += 1;
         return { listings: [], npc: [], answers: [{ item: { selfId: 5220 }, count: 50, line: { town: 'Giran' } }] };
     };
-    MarketOpportunity.activeBuyDemandSelfIds = () => [5220];
     const sparseDemandRows = Array.from({ length: 150 }, (_, index) => ({
         selfId: 6000 + index,
         amount: 1
@@ -422,7 +420,6 @@ run().catch((err) => {
     LifeState.statesByIds = originals.statesByIds;
     LifeState.allStates = originals.allStates;
     MarketOpportunity.bestBuyOffer = originals.bestBuyOffer;
-    MarketOpportunity.activeBuyDemandSelfIds = originals.activeBuyDemandSelfIds;
     BotMarket.saleDecision = originals.saleDecision;
     Database.deleteItem = originals.deleteItem;
     Database.updateItemAmount = originals.updateItemAmount;

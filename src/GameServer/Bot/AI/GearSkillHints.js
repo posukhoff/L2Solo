@@ -1,14 +1,6 @@
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const BotEquipmentCompatibility = invoke('GameServer/Bot/AI/BotEquipmentCompatibility');
-
-const GRADE_BANDS = [
-    { rank: 'none', min: 1, max: 19 },
-    { rank: 'd', min: 20, max: 39 },
-    { rank: 'c', min: 40, max: 51 },
-    { rank: 'b', min: 52, max: 60 },
-    { rank: 'a', min: 61, max: 75 },
-    { rank: 's', min: 76, max: 99 }
-];
+const { gradeForLevel } = invoke('GameServer/Bot/AI/GearGradeRule');
 
 const HINTS = {
     archer: {
@@ -313,11 +305,6 @@ function familyHint(classId, role) {
     return null;
 }
 
-function gradeForLevel(level) {
-    const value = Number(level || 1);
-    return GRADE_BANDS.find((band) => value >= band.min && value <= band.max) || GRADE_BANDS[0];
-}
-
 function actorValue(value, key, fallback = null) {
     const fetcher = `fetch${key[0].toUpperCase()}${key.slice(1)}`;
     if (value && typeof value[fetcher] === 'function') return value[fetcher]();
@@ -377,7 +364,7 @@ function forCharacter(character = {}, options = {}) {
         warnings: ['reserve MP for support and recovery']
     } : tierForRole(role, state.level);
     const family = familyHint(state.classId, role);
-    const specialAbilities = base.specialAbilities[grade.rank] || [];
+    const specialAbilities = base.specialAbilities[grade] || [];
     const skillHints = [
         ...activeSkills(base.skills, state.level),
         ...(tier.skillPriorities || []).map((name) => ({
@@ -396,7 +383,7 @@ function forCharacter(character = {}, options = {}) {
         role,
         classId: state.classId,
         level: state.level,
-        grade: grade.rank,
+        grade,
         tier: tier.label,
         classFamily: family?.family || null,
         armor: BotEquipmentCompatibility.armorStyleFor(role, state.classId),
@@ -415,6 +402,5 @@ function forCharacter(character = {}, options = {}) {
 
 module.exports = {
     HINTS,
-    gradeForLevel,
     forCharacter
 };

@@ -23,6 +23,9 @@ const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const BotAfkMarket = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const NeedsEvaluator = invoke('GameServer/Bot/Goals/NeedsEvaluator');
+const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
+const ClanOrderService = invoke('GameServer/Clan/ClanOrderService');
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 const STEM = 1864;
 const SOULSHOT = 1835;
@@ -60,24 +63,50 @@ function picked(offer) {
     AfkTrade._resetForTests();
 }
 
-// C7 (BotAfkMarketService.canTradeRemotely): without a planned market town the
-// remote search sees board records in every town and no NPC; with one, a
-// cheaper NPC there keeps the bot off the board.
+// A clan buy is an errand (ClanOrderService.memberOffer, the clan equipment
+// market pick): it skips a cheaper meeting-only line (a bot's sell ad, custody
+// 1) and takes the line that settles at once; a wish buy still sees the ad.
+{
+    record(991151, { kind: 'sell_ad', custodyPolicy: 1, lines: [{ selfId: STEM, count: 3, price: 10 }] });
+    record(991152, { kind: 'shop', lines: [{ selfId: STEM, count: 3, price: 12 }] });
+    const member = { characterId: 991153, accountName: 'bot_991153', phase: 'cold', level: 20, adena: 100000,
+        currentRegion: 'Giran', activity: 'hunting', inventory: {}, stats: { generatedCold: true } };
+    assert.strictEqual(picked(MarketOpportunity.bestOffer(STEM, { town: 'Giran', buyerCharacterId: 991153 })),
+        'afk_bot_store:991151:Giran:10', 'a wish buy sees the cheaper meeting line');
+    assert.strictEqual(picked(ClanOrderService.memberOffer(member, STEM)),
+        'afk_bot_store:991152:Giran:12', 'clan member offer: the settled line, not the meeting one');
+    const equipment = GearAcquisitionPlanner.marketOfferForTarget({ selfId: STEM }, member, { maxMarketPrice: 12, purpose: 'clan' });
+    assert.strictEqual(picked(equipment), 'afk_bot_store:991152:Giran:12', 'clan equipment market pick: the settled line');
+    AfkTrade._resetForTests();
+}
+
+// Remote trade or travel (BuyAdPolicy.remoteBuy): the worker's batch decides,
+// main reads the buy ads it published and builds no bid of its own. The
+// sword trades at its template price, a bid main used to build could fill.
 {
     const orc = invoke('GameServer/Bot/Economy/MarketTownPolicy').NO_GRADE_MARKETS
         .find(market => market.name === 'Orc Village');
-    assert(orc && [orc.locX, orc.locY, orc.locZ].every(Number.isFinite), 'C7: the authored Orc market has a real travel centre');
     const state = { characterId: 991201, accountName: 'bot_991201', phase: 'cold', level: 20, adena: 1000000,
         loc: { locX: orc.locX, locY: orc.locY, locZ: orc.locZ }, currentRegion: orc.name, activity: 'hunting',
         inventory: {}, stats: { generatedCold: true } };
-    const goal = (marketTown) => ({ type: 'upgrade_gear', status: 'active', target: { itemId: SWORD, adena: 900000 },
-        plan: { expectedBenefit: 'market_search_for_weapon', marketTown, estimatedCost: 900000 } });
-    assert.strictEqual(BotAfkMarket.canTradeRemotely(state, goal(null)), true, 'C7: no town, no NPC in the way');
-    assert.strictEqual(BotAfkMarket.canTradeRemotely(state, goal('Giran')), false, 'C7: an NPC in the planned town');
+    const goal = (plan = {}) => ({ type: 'upgrade_gear', status: 'active', target: { itemId: SWORD, adena: 900000 },
+        plan: { expectedBenefit: 'market_search_for_gear', marketTown: null, estimatedCost: 900000, ...plan } });
+    for (let deal = 0; deal < 10; deal++) MarketCounters.deal(SWORD, 136000, 1, Date.now() - (10 - deal) * 60000, 7);
+    assert.strictEqual(BotAfkMarket.canTradeRemotely(state, goal()), false,
+        'no bid for the goal item in the bot\'s batch: the goal travels');
+    record(991201, { kind: 'buy_ad', storeType: AfkTrade.BUY, custodyPolicy: 1,
+        lines: [{ selfId: SWORD, count: 1, price: 100000 }] });
+    assert.strictEqual(BotAfkMarket.canTradeRemotely(state, goal()), true,
+        'the batch bid for the goal item: the bot trades remotely');
+    assert.strictEqual(BotAfkMarket.canTradeRemotely(state, goal({ sourceType: 'afk', priceSource: 'offer' })), false,
+        'a ready player ask is bought where it stands');
+    assert.strictEqual(BotAfkMarket.canTradeRemotely(state, goal({ sourceType: 'npc' })), false,
+        'an NPC purchase is made in its town');
     record(991202, { town: 'Dion', lines: [{ selfId: SWORD, count: 1, price: 1 }] });
     assert.strictEqual(picked(MarketOpportunity.bestOffer(SWORD, { town: null, budget: 1000000, buyerCharacterId: 991201 })),
         'afk_bot_store:991202:Dion:1', 'C7: a board line in any town');
     AfkTrade._resetForTests();
+    MarketCounters.reset();
 }
 
 // C11 (ShotStock.restockTarget): a hot shot trip goes to the best seller in

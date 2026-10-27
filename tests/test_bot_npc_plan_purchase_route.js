@@ -16,6 +16,8 @@ const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner'
 const BotAfkMarket = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const GoalExecutor = invoke('GameServer/Bot/Goals/GoalExecutor');
 const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
+const BuyAdPolicy = invoke('GameServer/Bot/Economy/BuyAdPolicy');
+const MarketTownPolicy = invoke('GameServer/Bot/Economy/MarketTownPolicy');
 const { character, amount } = require('./helpers/nativeMarketFixture');
 DataCache.init();
 try {
@@ -76,9 +78,15 @@ const posted = await AfkTrade.publishBot(7, { kind: 'buy_ad', storeType: AfkTrad
 assert.strictEqual(Number(posted.escrowAdena), 0);
 assert.strictEqual(amount(await Database.fetchItems(7), 57), 300000);
 assert.strictEqual(BotAfkMarket.buyOrderEscrow(7), 0);
-const result = await BotAfkMarket.reconcile(LifeState.snapshot(7), activeGoal);
-assert.strictEqual(result.withdrawn, true, 'the conditional WTB is removed before the NPC trip');
-assert.strictEqual(AfkTrade.ownerRecords(7).length, 0);
+// The worker's bids for the NPC-plan goal hold none for its target, so the
+// plan main applies removes the conditional WTB before the NPC trip.
+const bids = BuyAdPolicy.linesFor(LifeState.snapshot(7), activeGoal, { board: AfkTrade.boardIndex(), watchList: [] });
+assert.deepStrictEqual(bids, [], 'an NPC-shop plan is not bid for');
+const applied = await BotAfkMarket.executePlan(LifeState.snapshot(7), { sell: [], withdraw: [], travel: null,
+    buyAds: bids.map(line => [line.selfId, line.count, line.price]),
+    buyTown: MarketTownPolicy.buyAdTown(LifeState.snapshot(7), bids) }, { reviewGoal: false });
+assert(!applied.buyPending && !applied.pending, `the plan applies: ${JSON.stringify(applied)}`);
+assert.strictEqual(AfkTrade.ownerRecords(7).length, 0, 'the conditional WTB is removed before the NPC trip');
 assert.strictEqual(BotAfkMarket.buyOrderEscrow(7), 0);
 assert.strictEqual(amount(await Database.fetchItems(7), 57), 300000, 'an unaccepted WTB never moves the original wallet');
 assert.strictEqual(amount(await Database.fetchItems(7), plan.target.selfId), 0, 'withdrawal is not an NPC purchase');
@@ -88,7 +96,6 @@ console.log(JSON.stringify({ sourcePlanTarget: plan.target.selfId, npcTown: plan
 console.log('Bot NPC plan purchase route checks passed');
 } finally {
     await AfkTrade._resetForTests();
-    BotAfkMarket._resetForTests?.();
     await Database.close();
 }
 })().catch(error => { console.error(error); process.exitCode = 1; });

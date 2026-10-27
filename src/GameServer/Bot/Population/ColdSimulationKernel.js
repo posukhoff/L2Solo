@@ -1,4 +1,5 @@
 const { isDeepStrictEqual } = require('node:util');
+const { partyIdOf } = require('./PartyId');
 const DiagnosticConfig = require('./PopulationConfig');
 const CharacterStateSources = require('../../World/CharacterStateSources');
 const SparseNumericStorage = require('./SparseNumericStorage');
@@ -28,6 +29,7 @@ const PartyGoalCalculation = require('./PartyGoalCalculation');
 const Protocol = require('./ColdSimulationProtocol');
 const ColdStateDelta = require('./ColdStateDelta');
 const InventorySummary = require('./InventorySummary');
+const SavedStats = require('../SavedStats');
 const { HUNTING_TRAVEL_MS, beginHuntingTrip } = require('./HuntingTravel');
 const CraftMaterialPartyRoute = require('./CraftMaterialPartyRoute');
 const CraftMaterialParty = require('./CraftMaterialParty');
@@ -36,6 +38,7 @@ const PartyHuntingTarget = require('./PartyHuntingTarget');
 const PurchaseFunding = require('../Economy/PurchaseFunding');
 const { pressureFor } = require('./PopulationPressure');
 const EconomyDiagnostics = require('../Economy/EconomyDiagnostics');
+const CommittedExits = require('../Economy/CommittedExits');
 const ColdEconomyDecision = require('./ColdEconomyDecision');
 const BotErrands = require('./BotErrands');
 const PartyMarketBreak = require('./PartyMarketBreak');
@@ -43,6 +46,8 @@ const { eligible: eligibleBuyer } = require('../Economy/MarketBuyerWaiters');
 const { SpotOccupancyIndex, stateKey } = require('./SpotOccupancyIndex');
 const C4Unseal = require('../../Items/C4Unseal');
 const ClanEquipment = require('./ClanEquipmentPartyPolicy');
+const RaidSupplyPolicy = require('./RaidSupplyPolicy');
+const ColdRaidEncounter = require('./ColdRaidEncounter');
 
 class DueHeap {
     constructor() {
@@ -203,7 +208,7 @@ const NO_FACTS = Object.freeze({ leaderParty: () => null, partyMembers: () => []
 
 // party: the party row this bot leads, or null.
 function partySessionExpiryAt(state = {}, party = null, partySession = {}) {
-    const partyId = party?.partyId || state.party?.partyId || state.partyId || '';
+    const partyId = party?.partyId || partyIdOf(state);
     if (!partyId) return 0;
 
     const explicitExpiry = Number(
@@ -233,7 +238,7 @@ function partyIntegrityInvalid(party, members, partySession = {}) {
     if (declaredMemberIds.length < minSize) return true;
     const partyId = String(party.partyId || '');
     const attachedCount = members.filter((member) => (
-        String(member?.party?.partyId || member?.partyId || '') === partyId
+        partyIdOf(member) === partyId
     )).length;
     return attachedCount < minSize || attachedCount !== declaredMemberIds.length;
 }
@@ -364,7 +369,7 @@ function lifecycleKind(state = {}, facts = NO_FACTS) {
     if (leads) return 'party';
     if (state.activity === 'crafting' && state.stats?.craftShop) return 'event_driven';
     const stats = state.stats || {};
-    if (require('./RaidSupplyPolicy').held(state)) {
+    if (RaidSupplyPolicy.held(state)) {
         return ['shopping', 'merchant'].includes(state.activity) ? 'command' : 'resolver';
     }
     const plan = stats.equipmentPlan || {};
@@ -400,7 +405,10 @@ function lifecycleKind(state = {}, facts = NO_FACTS) {
     if (stats.mammonReturn || (Number(stats.mammonRetryAt || 0) <= Date.now()
         && C4Unseal.sealedHeld(state.inventory))) return 'command';
     if (String(plan.strategy || '') === 'craft') {
-        if (state.activity !== 'hunting' || ['component_ready', 'ready_to_craft'].includes(String(plan.status || ''))) return 'command';
+        // A ready step the bot crafts itself waits here for one batch of MP
+        // (plan.selfCraftMp, WishProviders.personalCraftPlan).
+        if (state.activity !== 'hunting' || ['component_ready', 'ready_to_craft'].includes(String(plan.status || ''))
+            && !(Number(plan.selfCraftMp || 0) > Number(state.vitals?.mp || 0))) return 'command';
     }
     if (state.activity === 'traveling' && stats.travel) {
         const reason = String(stats.travel.reason || '');
@@ -481,6 +489,14 @@ function proposalResult(result = {}) {
     };
 }
 
+// The spoil a step's loot lands: its items tagged by the spoil roll
+// (BackgroundDropResolver.rollSpoilForFight), null without one (no array).
+function landedSpoil(items) {
+    let spoil = null;
+    for (const item of items || []) if (item.spoil === true && Number(item.amount) > 0) (spoil ||= []).push(item);
+    return spoil;
+}
+
 // Stable membership of the same authoritative states, not another state
 // snapshot or due queue. Producer writes keep traversal O(1) under churn.
 class RetainedStateMap extends Map {
@@ -493,9 +509,8 @@ class RetainedStateMap extends Map {
     #skillDtos;
     #sharingFailures = 0;
 
-    constructor(sources, shotIndex = null, now = Date.now) {
+    constructor(sources, now = Date.now) {
         super();
-        this.shotIndex = shotIndex;
         this.now = now;
         this.#skillDtos = require('worker_threads').isMainThread ? null
             : new (require('./SkillDtoInterner').SkillDtoInterner)();
@@ -517,7 +532,6 @@ class RetainedStateMap extends Map {
 
     set(id, entry) {
         const current = this.get(id);
-        this.shotIndex?.update(entry.state);
         try { this.sources.publish(id, entry); }
         catch (error) {
             // Preserve native publication/error semantics, including a publisher
@@ -549,6 +563,10 @@ class RetainedStateMap extends Map {
             // the far card is dropped here and none is built while the bot is near.
             record.wishAdvisory = record.state?.phase === 'cold' ? wishAdvisory : null;
         }
+        // A first row's held card restores the bot's exit in flight, so the
+        // restart's catch-up builds of its rivals do not count it open.
+        if (!current && this.#skillDtos && record?.wishAdvisory)
+            CommittedExits.commit(id, ColdEconomyDecision.heldProducers(record.wishAdvisory.card));
         if (this.#skillDtos) {
             let staged;
             try {
@@ -573,15 +591,15 @@ class RetainedStateMap extends Map {
         this.#skillDtos?.remove(id);
         const current = this.get(id);
         if (!current) return false;
+        CommittedExits.remove(id);
         if (typeof invoke === 'function') invoke('GameServer/Bot/Economy/EconomyContext').forgetContext(id, 'owner_release');
-        this.shotIndex?.remove(id);
         return this.sources.remove(id, current.state);
     }
     clear() {
         this.#skillDtos?.clear();
+        CommittedExits.clear();
         for (const id of this.keys()) {
             if (typeof invoke === 'function') invoke('GameServer/Bot/Economy/EconomyContext').forgetContext(id, 'owner_release');
-            this.shotIndex?.remove(id);
         }
         this.sources.clear();
     }
@@ -636,7 +654,7 @@ class ColdSimulationKernel {
         // These are the original shared state objects. Shrinking their shape
         // or the coldCombat packet requires a shared-state task, not another
         // detached copy or an unmeasured fixed-memory subtraction.
-        this.states = new RetainedStateMap(CharacterStateSources.attachKernel(options.stateSources || CharacterStateSources.standalone()), options.shotIndex, this.now);
+        this.states = new RetainedStateMap(CharacterStateSources.attachKernel(options.stateSources || CharacterStateSources.standalone()), this.now);
         this.occupancy = new SpotOccupancyIndex({ locationIndex: this.states.locationIndex });
         this.interactionMemory = new (require('../../Social/InteractionMemory'))();
         // Worker tables the steps read (partyPut, pressureRow): party rows by
@@ -687,6 +705,11 @@ class ColdSimulationKernel {
         // Ok commit acks with numbers only whose state this thread could not
         // rebuild (no proposal kept, a bad number): always counted.
         this.ackUnbuilt = 0;
+        // Spoil units cold steps landed, counted at the step's ok commit ack
+        // (countSpoil), never at its compute: a dropped or recomputed step
+        // counts nothing. byItem = units per item, top = its 3 largest item
+        // ids. Since start, always on, on the heartbeat (status spoil=).
+        this.spoilLanded = { units: 0, byItem: new Map(), top: [] };
         this.paused = false;
         this.stopping = false;
         this.resolveChain = Promise.resolve();
@@ -799,7 +822,7 @@ class ColdSimulationKernel {
     leaderParty(characterId, state = this.states.get(Number(characterId))?.state) {
         const party = this.partyOf(characterId);
         if (!party || Number(party.leaderId) !== Number(characterId)) return null;
-        if (state && String(state.party?.partyId || state.partyId || '') !== String(party.partyId)) return null;
+        if (state && partyIdOf(state) !== String(party.partyId)) return null;
         return party;
     }
 
@@ -896,6 +919,12 @@ class ColdSimulationKernel {
             this.refreshPartyMeetingLeader(characterId, current);
             return false;
         }
+        // Every held stats object in one key order: one hidden class per key set.
+        // The held state itself is kept as it is (its identity is the route/slot input).
+        if (state !== current?.state) {
+            const stats = SavedStats.inKeyOrder(state.stats);
+            if (stats !== state.stats) state = { ...state, stats };
+        }
         // The incoming state's due time and kind, read once by the same-revision
         // compare and handed to ensureScheduled below for this state only (the
         // kind also reads the clock, so it is never kept past this call).
@@ -928,7 +957,8 @@ class ColdSimulationKernel {
         const version = Number(this.versions.get(characterId) || 0) + 1;
         this.versions.set(characterId, version);
         // The bot's one record: { state, version, route, materialMemo,
-        // economyPending, economyPlanHash, wishAdvisory, raiseSeq, nearRoute }.
+        // economyPending, economyPlanHash, wishAdvisory, raiseSeq, nearRoute,
+        // edgeBasis } (edgeBasis: ColdEconomyPlan.heldBasis, over a blocked stretch).
         // Every field but the state and version is this thread's own and
         // survives a new state: the kept route (BotRoute.trip) until its
         // step's drops, the material memo (partyRequestForPlan), the economy
@@ -1202,7 +1232,7 @@ class ColdSimulationKernel {
                 }
                 const members = memberIds.map((memberId) => this.states.get(memberId).state);
                 const attachedMembers = members.filter((member) => (
-                    String(member.party?.partyId || member.partyId || '') === String(party?.partyId || '')
+                    partyIdOf(member) === String(party?.partyId || '')
                 ));
                 // Existing accepted meetings advance through the same atomic
                 // group lifecycle; their finite transitions never enter hunt.
@@ -1351,7 +1381,8 @@ class ColdSimulationKernel {
             }).catch(error => {
                 if (!this.cancelCommand(id, attempt)) return;
                 this.emit('command_ack', { results: [{ ...identity, pageIndex: -1, ok: false,
-                    reason: String(error.message || error) }] });
+                    reason: String(error.message || error),
+                    ...(typeof error?.cause === 'string' ? { cause: error.cause } : {}) }] });
             });
             return true;
         } catch (error) {
@@ -1438,10 +1469,10 @@ class ColdSimulationKernel {
             const elapsedMs = current.state.timing?.lastResolvedAt
                 ? Math.max(1000, timestamp - Number(current.state.timing.lastResolvedAt))
                 : 60000;
-            const raidPreparing = require('./RaidSupplyPolicy').held(current.state, timestamp);
+            const raidPreparing = RaidSupplyPolicy.held(current.state, timestamp);
             const hallVisit = !raidPreparing && (!!current.state.stats?.clanHallVisit || this.hallNeeded(current.state));
             const lifecyclePlan = !hallVisit && !raidPreparing && this.planLifecycle
-                ? await this.planLifecycle({ state: current.state, timestamp })
+                ? await this.planLifecycle({ state: current.state, timestamp, command: true })
                 : null;
             if (!this.currentCommand(id, attempt)) return;
             const resolveState = lifecyclePlan?.plannedState || current.state;
@@ -1861,7 +1892,7 @@ class ColdSimulationKernel {
                 rng: deterministicRandom(run.members[0] || {}),
                 timestamp: startedAt
             };
-            const raids = require('./ColdRaidEncounter');
+            const raids = ColdRaidEncounter;
             const raid = !meetingPending && run.spot?.raidBoss === true;
             let staged = null;
             if (raid) {
@@ -1893,7 +1924,7 @@ class ColdSimulationKernel {
                     delete resolvedParty.stats.pendingRecruits;
                     const recruits = ids.map(id => this.states.get(id)?.state);
                     const free = recruits.length > 0 && recruits.every(recruit => recruit?.phase === 'cold'
-                        && !recruit.party?.partyId && !recruit.partyId);
+                        && !partyIdOf(recruit));
                     const checked = free && this.reviewRecruits
                         ? this.reviewRecruits({ party: run.party, members: [...run.members, ...recruits], timestamp: startedAt }) : null;
                     recruitCheck = checked ? { outcome: 'accepted', memberIds: run.party.memberIds, recruitIds: ids,
@@ -2015,6 +2046,9 @@ class ColdSimulationKernel {
                     partyResolution: id === Number(run.party.leaderId) ? leaderResolution : null
                 };
                 proposals.push(proposal);
+                // The member's step record (current(): every source is in flight).
+                const memberActive = this.inFlight.get(id);
+                if (memberActive) memberActive.spoil = landedSpoil(result.materialize?.items);
             }
             if (requirementProgress && !meetingPending && !materialHunt) {
                 const leader = proposals.find(proposal => proposal.partyResolution);
@@ -2047,7 +2081,7 @@ class ColdSimulationKernel {
             DiagnosticConfig.developerDiagnostics && (this.stats.resolved += proposals.length);
             this.flush(null, true);
         } catch (error) {
-            if (raidStepId) require('./ColdRaidEncounter').abort(raidStepId);
+            if (raidStepId) ColdRaidEncounter.abort(raidStepId);
             if (!current()) return;
             handled = true;
             for (const source of sources) {
@@ -2060,7 +2094,7 @@ class ColdSimulationKernel {
             this.abandonSteps(run.purpose.memberIds);
             this.requeue(run.purpose.leaderId, this.now() + 1000);
         } finally {
-            if (raidStepId && !published) require('./ColdRaidEncounter').abort(raidStepId);
+            if (raidStepId && !published) ColdRaidEncounter.abort(raidStepId);
             if (this.partyRuns.get(String(partyId)) === run) this.partyRuns.delete(String(partyId));
             if (handled) {
                 const elapsed = DiagnosticConfig.developerDiagnostics ? this.now() - resolveStartedAt : 0;
@@ -2083,7 +2117,7 @@ class ColdSimulationKernel {
             const elapsedMs = active.state.timing?.lastResolvedAt
                 ? Math.max(1000, timestamp - Number(active.state.timing.lastResolvedAt))
                 : 60000;
-            const lifecyclePlan = !require('./RaidSupplyPolicy').held(active.state, timestamp) && this.planLifecycle
+            const lifecyclePlan = !RaidSupplyPolicy.held(active.state, timestamp) && this.planLifecycle
                 ? await this.planLifecycle({ state: active.state, timestamp })
                 : null;
             if (!this.resolverSourceCurrent(source)) return;
@@ -2095,7 +2129,7 @@ class ColdSimulationKernel {
                 spot,
                 spotHunters: this.spotHunters(spot),
                 pressure: pressureFor(active.state, this.pressureRow),
-                targetNpcId: Number(lifecyclePlan?.targetNpcId || lifecyclePlan?.acquisitionPlan?.next?.npcId ||
+                targetNpcId: Number(lifecyclePlan?.targetNpcId || PartyHuntingTarget.planTargetNpcId(lifecyclePlan?.acquisitionPlan) ||
                     (lifecyclePlan?.activityPick?.activity === 'hunting' ? lifecyclePlan.activityPick.npcId : 0) || 0),
                 elapsedMs,
                 rng: deterministicRandom(active.state),
@@ -2111,7 +2145,7 @@ class ColdSimulationKernel {
             const projectedState = projection?.state || projection;
             // The forced cleanup on the fight's result, over a trip this step
             // started (main starts the cleanup trip).
-            const cleanupNeed = projectedState && !require('./RaidSupplyPolicy').held(active.state, timestamp) ? PartyMarketBreak.forcedCleanupNeed(
+            const cleanupNeed = projectedState && !RaidSupplyPolicy.held(active.state, timestamp) ? PartyMarketBreak.forcedCleanupNeed(
                 PartyMarketBreak.withoutStartedTrip(active.state, projectedState), timestamp) : null;
             const priority = playerWaitingTransition(active.state, null, this) ? 'P0'
                 : projection?.durable ? 'P1' : priorityForResult(active.state, result);
@@ -2134,6 +2168,8 @@ class ColdSimulationKernel {
                 options: { allowLifecycle: true, allowParty: !!active.state.stats?.tradeMeeting }
             };
             handled = true;
+            // Worker-local, read at this step's commit ack (onCommitAck).
+            active.spoil = landedSpoil(result.materialize?.items);
             this.dirty.set(Number(characterId), proposal);
             DiagnosticConfig.developerDiagnostics && (this.stats.resolved += 1);
             if (priority !== 'P2' || this.dirty.size >= this.maxBatch) {
@@ -2224,7 +2260,7 @@ class ColdSimulationKernel {
             itemBytes = candidateItemBytes;
         }
         oversized.forEach((proposal) => {
-            if (proposal.raidStepId) require('./ColdRaidEncounter').abort(proposal.raidStepId);
+            if (proposal.raidStepId) ColdRaidEncounter.abort(proposal.raidStepId);
             DiagnosticConfig.developerDiagnostics && (this.stats.proposalOversizeRejected += 1);
             this.abandonSteps([proposal.characterId]);
             this.requeue(Number(proposal.characterId), timestamp + 5000);
@@ -2314,8 +2350,9 @@ class ColdSimulationKernel {
                 return;
             }
             if (this.states.get(id)?.state.phase !== 'cold') return;
-            if (active.pendingRaidStepId) require('./ColdRaidEncounter').acknowledge(active.pendingRaidStepId, id, result.ok);
+            if (active.pendingRaidStepId) ColdRaidEncounter.acknowledge(active.pendingRaidStepId, id, result.ok);
             this.inFlight.delete(id);
+            if (result.ok && active.spoil) this.countSpoil(active.spoil);
             // A committed step's start -> ack time sets the lead, excluding
             // main's wait for its future events: that wait is the lead's own
             // output, not work. A party's shared start and wait are one sample.
@@ -2500,6 +2537,28 @@ class ColdSimulationKernel {
         return this.heartbeatSnapshot();
     }
 
+    // A committed step's landed spoil (landedSpoil) into spoilLanded: units,
+    // per item, and the 3 largest items kept in place (counts only grow, so an
+    // item enters the top by passing its smallest). Hot (near) bots' spoil
+    // (SpoilSweep on main) is not counted, nor a step whose bot main took
+    // before its ack.
+    countSpoil(spoil) {
+        const landed = this.spoilLanded;
+        for (const item of spoil) {
+            const id = Number(item.selfId), units = Number(item.amount);
+            landed.units += units;
+            const total = (landed.byItem.get(id) || 0) + units;
+            landed.byItem.set(id, total);
+            const top = landed.top;
+            if (!top.includes(id)) {
+                if (top.length < 3) top.push(id);
+                else if (total > landed.byItem.get(top[2])) top[2] = id;
+                else continue;
+            }
+            top.sort((a, b) => landed.byItem.get(b) - landed.byItem.get(a));
+        }
+    }
+
     heartbeatSnapshot(forSizing = false) {
         const now = this.now(), head = this.heap.peek();
         const scheduled = head && head.kind !== 'alarm' ? this.scheduleTokens.get(Number(head.characterId)) : null;
@@ -2534,6 +2593,8 @@ class ColdSimulationKernel {
             commandingAgeMs: this.commanding.size ? Math.max(0, now - oldestCommandAt) : 0,
             reviewsSkipped: this.reviewsSkipped,
             ackUnbuilt: this.ackUnbuilt,
+            spoil: { units: this.spoilLanded.units,
+                top: this.spoilLanded.top.map(id => [id, this.spoilLanded.byItem.get(id)]) },
             stepLeadMs: Math.round(this.stepLeadMs),
             maxInFlight: this.maxInFlight,
             maxAtomicPartySize: this.maxAtomicPartySize,

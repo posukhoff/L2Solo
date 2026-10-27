@@ -8,6 +8,7 @@ const priorConfig = process.env.L2NODE_CONFIG_FILE;
 process.env.L2NODE_CONFIG_FILE = path.join(directory, 'test.ini');
 fs.writeFileSync(process.env.L2NODE_CONFIG_FILE, `[Database]\npath=${directory}/world.sqlite\nhistoryPath=${directory}/history.sqlite\n`);
 require('../src/Global');
+const { publishTwinOffer } = require('./helpers/twinOffer');
 const Database = invoke('Database');
 const Data = invoke('GameServer/DataCache');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
@@ -20,8 +21,8 @@ const Craft = invoke('GameServer/Bot/Economy/ColdCraftingService');
 const Shots = invoke('GameServer/Bot/Economy/ColdShotEconomyService');
 const Pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
 const Opportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
-const Buyers = invoke('GameServer/Bot/Economy/StaticBuyerService');
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const location = { locX: 83396, locY: 147904, locZ: -3400 };
 const previous = { buyers: Config.staticBuyersDisabled, shots: Config.staticShotsDisabled };
 let serial = 0;
@@ -38,7 +39,9 @@ async function seed(items, { crafter = false, nativePlayer = false, activity = '
         inventory: Life.inventorySummaryFromItems(await Database.fetchItems(id)),
         adena: Number(items.find(item => item.selfId === 57)?.amount || 0),
         vitals: { hp: 1000, maxHp: 1000, mp: 3000, maxMp: 3000 },
-        stats: { classId: crafter ? 57 : 0, generatedCold: true, money: [36000, 1 / 36000, 0, 0] }, timing: {} }, 'production_seed');
+        stats: { classId: crafter ? 57 : 0, generatedCold: true, money: [36000, 1 / 36000, 0, 0],
+            // A crafter's workshop stands at its twin town's centre, where the customers stand.
+            ...(crafter ? { twin: { town: 'Giran' } } : {}) }, timing: {} }, 'production_seed');
 }
 const cash = amount => ({ selfId: 57, name: 'Adena', amount });
 const ore = (selfId, amount) => ({ selfId, name: `Material ${selfId}`, amount });
@@ -54,25 +57,19 @@ async function run() {
     Config.staticBuyersDisabled = false; Config.staticShotsDisabled = false;
     assert.equal(Policy.buyersDisabled(), false); assert.equal(Policy.shotsDisabled(), false);
     const playerDPrice = Pricing.cheapestPurchase(1463);
-    assert(Number.isFinite(playerDPrice)); assert(Buyers.buyersInTown('Giran').length > 0);
+    assert(Number.isFinite(playerDPrice));
     Config.staticBuyersDisabled = true; Config.staticShotsDisabled = true;
-    assert.equal(Buyers.buyersInTown('Giran').length, 0);
     assert.equal(Policy.allowsFixedShot(1463), false);
     assert.equal(Pricing.botPurchasePrice(1463), Infinity);
     assert.equal(Pricing.cheapestPurchase(1463), playerDPrice, 'player authored price unchanged');
     assert(Opportunity.npcOffersAll(1835).length > 0); assert.equal(Opportunity.npcOffersAll(1463).length, 0);
     console.log('PASS two default-off switches, NG grocers, D+ no bot fallback and player pricing');
 
-    const recipe = Recipes.resolveByRecipeId(1);
-    assert.equal(Profit.margin(recipe, 10, 100, { hourAdena: null, mpPerHour: 3000 }), null);
-    const margin = Profit.margin({ ...recipe, successRate: 60 }, 10, 100, { hourAdena: 10000, mpPerHour: 3000 });
-    assert.equal(margin.expectedRevenue, recipe.productCount * 10 * 0.6);
-    assert.equal(margin.labour, recipe.mpCost / 3000 * 10000);
     assert.equal(Profit.materials([ore(1458, 1)], { materials: [ore(1458, 1), ore(1458, 1)] }), null);
     assert.equal(Craft.hasMaterials({ inventory: {} }, { materials: [ore(1458, 1)] }), false);
     const empty = await Craft.supplementMaterials(999999, [], { materials: [ore(1458, 1)] });
     assert.deepEqual(empty, { items: [], supplemented: [] });
-    console.log('PASS shared labour/success profit and every material required');
+    console.log('PASS every material required');
     }
     Config.staticBuyersDisabled = true; Config.staticShotsDisabled = true;
     const recipe = Recipes.resolveByRecipeId(1);
@@ -82,10 +79,14 @@ async function run() {
     await Database.setCharacterRecipe(crafter.characterId, 20, 'dwarven');
     await Database.setSkill({ selfId: 172, name: 'Create Item', passive: false, level: 8 }, crafter.characterId);
     await Database.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 1 }, crafter.characterId);
-    crafter = await Workshop.review(crafter);
+    // The learned Crystallize reaches the worker's view as the live refresh puts it there.
+    crafter = await Life.upsertState({ ...crafter, stats: { ...crafter.stats, coldCombat:
+        Profile.legacySnapshot(crafter, await Database.fetchSkills(crafter.characterId)) } }, 'production_skills');
+    // The worker's offer: the recipe at its MP labour at the bot's hour.
+    crafter = await publishTwinOffer(crafter, { hourAdena: 20000 });
     assert(Workshop.boardRecords().some(row => row.ownerId === crafter.characterId && row.entries.some(entry => entry.recipeId === 1)));
-    assert.equal(Workshop.lookup(crafter.characterId, 1, { characterId: 800001, stats: {} }).entryPrice,
-        invoke('GameServer/Bot/Economy/CraftShopService').productPrice(recipe));
+    assert.equal(Workshop.lookup(crafter.characterId, 1, { characterId: 800001, stats: {} }).entryPrice, Math.round(20000
+        * Profit.mpHours(recipe, 1, { mpPerHour: invoke('GameServer/Bot/Population/ColdOccupationSources').mpPerHour(crafter) })));
     if (process.argv.includes('--workshop-current')) {
         const customer = await seed([cash(100000), ore(1864, 4), ore(1869, 2)]);
         await Workshop.craft(crafter.characterId, 1, customer.characterId);
@@ -149,21 +150,23 @@ async function run() {
     await Afk.publishBot(buyer.characterId, { storeType: Afk.BUY, town: 'Giran', ...location,
         title: 'Funded shots', lines: [{ selfId: 1463, name: 'D Soulshot', count: 1000, price: 1000, enchant: 0, stackable: true, slot: 0 }] });
     crafter = Life.cachedState(crafter.characterId);
-    const index = await Shots.marketSnapshot();
     const shotRecipe = Recipes.resolveByRecipeId(20);
-    const candidate = Shots.craftCandidate(crafter, shotRecipe, index);
-    if (!candidate) console.log('CHAIN INPUT', { signals: index.shotDemand.get(1463), gear: index.gear.get('d')?.slice(0, 2),
-        hour: Profit.contextFor(crafter).hourAdena, mpPerHour: Profit.contextFor(crafter).mpPerHour, orePrice: index.npcPrice.get(1785) });
-    assert(candidate, 'actual funded demand, real gear and NPC ore create a profitable native route');
-    assert(candidate.gear, 'crystals are obtained from a real route');
-    const craftedState = await Shots.craft(crafter, candidate, index, Date.now());
+    // The worker's selection (ShotCraftPolicy.selectionFor): this helmet line and this bid line.
+    const ask = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === seller.characterId);
+    const bid = Afk.offers(1463, Afk.BUY).find(row => Number(row.sourceId) === buyer.characterId);
+    const step = { craft: { recipeId: 20, batches: 7,
+        gear: [45, 0, ask.recordId, ask.lineId, ask.price, ask.expectedRevision].map(Number),
+        exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) } };
+    const candidate = Shots.recheck(crafter, step.craft);
+    assert(candidate?.gear, 'actual funded demand, real gear and NPC ore create a profitable native route');
+    // What execute runs for a known recipe once the bot is free to craft.
+    const craftedState = await Shots.craft(crafter, { ...candidate, maxBatches: step.craft.batches }, null, Date.now());
     const inventory = await Database.fetchItems(crafter.characterId);
     assert(held(inventory, 1463) >= shotRecipe.productCount);
     assert(held(inventory, 1458) > 0, 'real D gear leaves real spare crystals');
     assert.equal(held(inventory, 45), 0);
     assert.equal(held(inventory, 1785), 0, 'purchased native Soul Ore consumed');
     assert(craftedState.adena < crafter.adena, 'the real gear and ore are paid');
-    assert(Shots.hasShotSurplus(craftedState));
     const listing = await invoke('GameServer/Bot/Economy/ColdMarketListingService').open(craftedState,
         { town: craftedState.currentRegion });
     const records = Afk.ownerRecords(crafter.characterId);

@@ -22,18 +22,24 @@ function createOpportunity(context = {}) {
     moneyPrice, discountRate, risk, probability: 0, count: 0, valueHours: 0,
     expectedReceipts: 0, expectedResidual: 0, cashNow: 0, cycleHours: 0 };
 }
+// A quantity of an outcome that must be a finite non-negative number.
+const invalidAmount = value => !Number.isFinite(value) || value < 0;
 function addOutcome(acc, outcome = {}) {
     if (!acc?.known) return false;
     const probability = Number(outcome.probability);
-    const fields = ['ownBenefitHours', 'receipts', 'monetaryResidual', 'ownInputOpportunityValue',
-        'cashNow', 'actualCashFees', 'foregoneBenefitHours', 'riskHours', 'delayHours', 'cycleHours'];
-    const values = fields.map(field => Number(outcome[field] ?? 0));
+    // Own benefit and monetary residual may be negative (finite); the rest not.
+    const ownBenefit = Number(outcome.ownBenefitHours ?? 0), receipts = Number(outcome.receipts ?? 0),
+        residual = Number(outcome.monetaryResidual ?? 0), inputValue = Number(outcome.ownInputOpportunityValue ?? 0),
+        cash = Number(outcome.cashNow ?? 0), fees = Number(outcome.actualCashFees ?? 0),
+        foregone = Number(outcome.foregoneBenefitHours ?? 0), risk = Number(outcome.riskHours ?? 0),
+        delay = Number(outcome.delayHours ?? 0), cycle = Number(outcome.cycleHours ?? 0);
     const rate = Number(outcome.discountRate ?? acc.discountRate);
     if (outcome.known === false || !Number.isFinite(probability) || probability < 0 || probability > 1
-        || !Number.isFinite(rate) || rate < 0 || values.some((value, at) => !Number.isFinite(value)
-            || value < 0 && at !== 0 && at !== 2)
+        || !Number.isFinite(rate) || rate < 0
+        || !Number.isFinite(ownBenefit) || invalidAmount(receipts) || !Number.isFinite(residual)
+        || invalidAmount(inputValue) || invalidAmount(cash) || invalidAmount(fees) || invalidAmount(foregone)
+        || invalidAmount(risk) || invalidAmount(delay) || invalidAmount(cycle)
         || ++acc.count > OUTCOME_LIMIT) { acc.known = false; return false; }
-    const [ownBenefit, receipts, residual, inputValue, cash, fees, foregone, risk, delay, cycle] = values;
     const discounted = receipts * Math.exp(-rate * delay);
     // Residual own use belongs in ownBenefitHours, monetary residual in the
     // independent remaining-goods exit. A caller never counts both for one unit.
@@ -45,8 +51,8 @@ function addOutcome(acc, outcome = {}) {
     acc.expectedResidual += probability * residual;
     acc.cashNow += probability * (cash + fees);
     acc.cycleHours += probability * cycle;
-    if (![acc.valueHours, acc.expectedReceipts, acc.expectedResidual, acc.cashNow, acc.cycleHours]
-        .every(Number.isFinite)) acc.known = false;
+    if (!(Number.isFinite(acc.valueHours) && Number.isFinite(acc.expectedReceipts) && Number.isFinite(acc.expectedResidual)
+        && Number.isFinite(acc.cashNow) && Number.isFinite(acc.cycleHours))) acc.known = false;
     return acc.known;
 }
 function finishOpportunity(acc) {
@@ -113,6 +119,20 @@ function decisionHorizon(state, context) {
     return Number.isFinite(context.horizonHours) ? context.horizonHours
         : stageHours(state, context.hunt.expPerHour, context.persona);
 }
+// The one horizon verdict (E212): a plan fits the decision horizon only
+// when its elapsed hours end before it. The gear verdict (WishProviders
+// statusOf) and the farm lot (horizonUnits) read it.
+function withinHorizon(hours, horizonHours) {
+    return positive(hours) < horizonHours;
+}
+// The most units of `unitHours` each whose hours together fit the horizon
+// (withinHorizon): a farm lot is what its source delivers in the horizon.
+function horizonUnits(unitHours, horizonHours) {
+    if (!(unitHours > 0)) return Infinity;
+    let units = Math.floor(horizonHours / unitHours);
+    if (units > 0 && !withinHorizon(units * unitHours, horizonHours)) units--;
+    return Math.max(0, units);
+}
 function deathHours(state, { expPerHour = 0, walkBackHours, returnHours, lostGearHours = 0, spotId } = {}) {
     const Death = invoke('GameServer/Progression/DeathExperience');
     const loss = Death.calculateLoss({ ...state, exp: state.stats?.exp ?? state.exp ?? 0 });
@@ -146,5 +166,6 @@ function progressStats(state, { timestamp = Date.now(), startedAt = 0, kills = 0
         frustration: Math.max(0, frustration - positive(kills) / Math.max(1, positive(stats.lifelongKills) + positive(kills))),
         lifelongKills: positive(stats.lifelongKills) + (knowledgeEnabled ? positive(kills) : 0) };
 }
-module.exports = { riskWeight, stageHours, decisionHorizon, deathHours, karmaHours, pkDropValue, resale, progressStats, trait,
+module.exports = { riskWeight, stageHours, decisionHorizon, withinHorizon, horizonUnits, deathHours, karmaHours, pkDropValue,
+    resale, progressStats, trait,
     opportunity, acquisition, createOpportunity, addOutcome, finishOpportunity, OUTCOME_LIMIT, fundingDelay, readyBenefit };

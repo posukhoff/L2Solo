@@ -52,7 +52,7 @@ const after = build(14);
 assert.equal(after.activity.amount, 14);
 assert.equal(after.activity.rootKey, root.key, 'same root, no new one for the looted units');
 assert.deepEqual([...after.plans.keys()].filter(key => String(key).startsWith('power:')), [root.key]);
-const rows = Intent.project({}, after, {}, () => 2).filter(row => row.itemId === itemId);
+const rows = Intent.project({}, after, {}).filter(row => row.itemId === itemId);
 assert.equal(rows.length, 1, 'one advert row for the root');
 assert.equal(rows[0].amount, 14);
 const fresh = capture({ network: after, inputKey: 'owned:14' }, looted).activity;

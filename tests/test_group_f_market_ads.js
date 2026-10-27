@@ -20,6 +20,9 @@ const ListingPolicy = invoke('GameServer/Bot/Economy/MarketListingPolicy');
 const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const ShopPlaces = invoke('GameServer/Bot/Economy/ShopPlaces');
 const MarketTownPolicy = invoke('GameServer/Bot/Economy/MarketTownPolicy');
+const BuyAdPolicy = invoke('GameServer/Bot/Economy/BuyAdPolicy');
+const Twin = invoke('GameServer/Bot/Economy/TwinCluster');
+const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const World = invoke('GameServer/World/World');
 const NativeChoice = require('./helpers/nativeMarketChoice');
 const directory = isolated.directory;
@@ -106,7 +109,7 @@ async function run() {
             exp: Number(DataCache.experience[level - 1]), adena: Number(inventory[57]?.amount || 0), loc: { ...loc }, currentRegion,
             inventory,
             vitals: { hp: 100, maxHp: 100, mp: 100, maxMp: 100 },
-            stats: { ...previous?.stats, classId: 0, karma, generatedCold: true, shopTown: { town: 'Giran', at: 1 } }, timing: {} }, 'test-group-f-ads');
+            stats: { ...previous?.stats, classId: 0, karma, generatedCold: true }, timing: {} }, 'test-group-f-ads');
         const native = await capture(state, `group_f_${name}_budget`);
         for (const wish of native.captured.queue.filter(row => row.key.startsWith('stock:'))) {
             const amount = Number(wish.object?.amount), selfId = Number(wish.object?.itemId);
@@ -129,15 +132,38 @@ async function run() {
         Counters.reset();
         Counters.deal(selfId, 1000, 20, Date.now(), 999999, demandTown, 999998);
     };
-    // 8c589920: category counter deals are no longer item demand. A new buy
-    // ad opens in the grade/location table town (buyAdTown ->
-    // targetTownForItems); a sell ad opens by MarketTownPolicy.shopTown, whose
-    // supported-forecast branch needs an item demand context the main thread
-    // does not pass, so it takes the same table. Standing records keep their
-    // towns when the table answer later changes (the bot moved).
+    // 8c589920: category counter deals are no longer item demand. A bot's
+    // buy ads open in its twin town (TwinCluster.propose at the worker build,
+    // MarketTownPolicy.buyAdTown, carried by the plan as buyTown); a sell ad
+    // opens by MarketTownPolicy.shopTown, whose supported-forecast branch
+    // needs an item demand context the main thread does not pass, so it takes
+    // the grade/location table. Standing sell records keep their towns when
+    // the table answer later changes (the bot moved).
     const TI = { locX: -84700, locY: 244200, locZ: -3730 };
     const moveTo = async (id, loc, region) => (await captureCurrent(await LifeState.upsertState({ ...LifeState.snapshot(id),
         loc: { ...loc }, currentRegion: region }, 'test-group-f-ads-move'), `group_f_move_${id}`)).state;
+    // The worker's bid for a goal (BuyAdPolicy.linesFor, as ColdEconomyPlan
+    // prepares it) and its town (the build's twin, buyAdTown), published by
+    // main as a plan (executePlan). Every buy row the bot then has stands in
+    // that one town. Returns the ad holding the goal's item and the twin.
+    const planBids = (state, goal) => {
+        const escrow = Market.buyOrderEscrow(state.characterId);
+        return BuyAdPolicy.linesFor({ ...state, adena: Funding.budget(state, escrow) }, goal,
+            { board: AfkTrade.boardIndex(), watchList: [], money: BuyAdPolicy.goalMoney(state, goal, escrow) });
+    };
+    const publishPlan = async (state, goal) => {
+        const lines = planBids(state, goal);
+        assert(lines.length, `the useful native bid is planned: ${JSON.stringify(goal)}`);
+        const twin = Twin.propose(state, { board: AfkTrade.boardIndex(), watchList: [] }) || state.stats?.twin;
+        assert(twin?.town, 'the worker build gives every bot a twin town');
+        const buyTown = MarketTownPolicy.buyAdTown(state, lines, { twin });
+        const result = await Market.executePlan(LifeState.snapshot(state.characterId) || state, { sell: [], withdraw: [],
+            travel: null, buyAds: lines.map(line => [line.selfId, line.count, line.price]), buyTown }, { reviewGoal: false });
+        assert(!result.buyPending && !result.tradeDeferred && !result.pending, `the plan publishes: ${JSON.stringify(result)}`);
+        const bids = AfkTrade.ownerRecords(state.characterId).filter(record => record.storeType === AfkTrade.BUY);
+        assert.deepEqual([...new Set(bids.map(record => record.town))], [buyTown], 'all of the bot\'s buy rows stand in its twin town');
+        return { ad: bids.find(record => record.lines.some(line => Number(line.selfId) === Number(goal.target.itemId))), twin };
+    };
     const gearGoal = native => {
         const wanted = native.captured.queue.find(row => row.key === native.read.activity?.rootKey);
         const advice = native.goals.find(row => row.type === 'upgrade_gear'
@@ -180,7 +206,7 @@ async function run() {
             currentRegion: 'Floran Village', stats }, 'test-group-f-karma-move');
         return captureCurrent(state, label);
     };
-    await check('buy ad opening uses the shop town table and keeps its town', async () => {
+    await check('a bot opens all of its buy ads in its twin town, a PK in Floran', async () => {
         const id = await create('Buyer');
         const native = await stateFor(id, 'Buyer');
         let state = native.state;
@@ -190,24 +216,16 @@ async function run() {
             'the advertised item is genuinely useful and funded by the native gear review');
         const advice = native.goals.find(row => row.target?.itemId === goal.target.itemId && row.plan?.sourceType === 'npc');
         assert(advice, 'the selected canonical purchase has a native executor');
-        assert.equal((await Market.openBuyAd(native.state, advice)).opened, false,
+        assert.deepEqual(planBids(native.state, advice), [],
             'a selected NPC purchase never becomes an executing advertisement');
         state = native.state;
-        await Market.reconcile(state, null);
-        assert.equal(AfkTrade.ownerRecords(id).filter(record => record.kind === 'buy_ad').length, 0,
-            'watching native gear advice alone does not execute an advertisement');
-        seedDemand(goal.target.itemId);
-        const opened = await Market.openBuyAd(state, goal, 'Giran');
-        assert.equal(opened.opened, true, `the useful native bid opens: ${JSON.stringify({ reason: opened.reason, goal })}`);
-        const tableTown = MarketTownPolicy.targetTownForItems(state, [{ selfId: goal.target.itemId }]);
-        assert.notEqual(tableTown, 'Giran', 'D-grade stock has its own market town');
-        assert.equal(opened.store?.town, tableTown, 'caller town cannot replace the opening town');
-        const recordId = opened.store.id;
+        const opened = await publishPlan(state, goal);
+        assert.equal(opened.ad?.town, opened.twin.town, 'the bid opens in the bot\'s twin town');
+        const recordId = opened.ad.id;
         state = await moveTo(id, TI, 'Talking Island');
-        await Market.reconcile(state, goal);
-        assert.equal(AfkTrade.ownerRecords(id).find(record => record.kind === 'buy_ad')?.town, tableTown);
-        assert.equal(AfkTrade.ownerRecords(id).find(record => record.kind === 'buy_ad')?.id, recordId,
-            'a move alone does not replace a standing ad');
+        const kept = await publishPlan(state, goal);
+        assert.equal(kept.twin.town, opened.twin.town, 'the twin town is not where the bot stands');
+        assert.equal(kept.ad?.id, recordId, 'a move alone does not replace a standing ad');
         // The same owner now has a real NG helmet gap; its existing ad and
         // escrow stay present while the native worker reviews the new kit.
         const nextNative = await stateFor(id, 'Buyer', { level: 10, loc: TI, currentRegion: 'Talking Island' });
@@ -217,11 +235,11 @@ async function run() {
             'the changed target is a genuinely useful and funded native NG helmet');
         const nextGoal = gearGoal(nextNative);
         assert.notEqual(nextGoal.target.itemId, goal.target.itemId, 'the authored NG kit wants a different helmet');
-        const next = await Market.reconcile(state, nextGoal);
-        assert.equal(next.shop?.town, 'Talking Island', 'a different wanted item chooses a new ad town');
-        const center = ListingService.townCenter('Talking Island');
-        assert(Math.hypot(next.shop.locX - center.locX, next.shop.locY - center.locY) < 2500,
-            'the persisted Talking Island ad uses its own town coordinates');
+        const next = await publishPlan(state, nextGoal);
+        assert.equal(next.ad?.town, next.twin.town, 'a different wanted item opens in the twin town, not a town of its own');
+        const center = ListingService.townCenter(next.ad.town);
+        assert(Math.hypot(next.ad.locX - center.locX, next.ad.locY - center.locY) < 2500,
+            'the persisted ad uses its own town coordinates');
         const sourceId = await floranSource(nextNative, 'StandingKarmaSource');
         const pkNative = await moveToKarma(nextNative, 'group_f_karma_standing');
         const pkGoal = gearGoal(pkNative);
@@ -230,8 +248,8 @@ async function run() {
         assert.equal(pkAdvice.plan.sourceType, 'afk');
         assert.equal(Market.canTradeRemotely(pkNative.state, pkAdvice), false,
             'the selected local player executor is not an ad instruction');
-        const pk = await Market.openBuyAd(pkNative.state, pkGoal);
-        assert.equal(pk.store?.town, 'Floran Village', 'a continuing ad in a closed town moves to Floran for a PK');
+        const pk = await publishPlan(pkNative.state, pkGoal);
+        assert.equal(pk.ad?.town, 'Floran Village', 'a PK\'s buy ads move to Floran');
         await Market.withdraw(id); await Market.withdraw(sourceId);
     });
     await check('sell ad uses the shop opening algorithm and keeps its town', async () => {
@@ -243,7 +261,13 @@ async function run() {
                 enchant: 0, equipped: false, slot: 0 });
             listings.push({ selfId, name: template.template.name, count: 100, price: 10000 });
         }
-        const { state } = await stateFor(id, 'Seller');
+        // The shop opens in the bot's twin town (the worker build's): the
+        // bot stands there.
+        const { state: built } = await stateFor(id, 'Seller');
+        const home = Twin.townOf(built);
+        assert(home, 'the worker build gives the seller a twin town');
+        const state = await moveTo(id, ListingService.townCenter(home), home);
+        assert.equal(Twin.townOf(state), home, 'standing in it keeps the twin town');
         seedDemand(1867);
         const result = await Market.listOnBoard(state, { decided: { listings }, now: Date.now() });
         assert.equal(result.listed, 4, 'three shop lines and one sell ad');
@@ -273,9 +297,8 @@ async function run() {
         assert.equal(advice.plan.sourceType, 'afk', 'the worker consumes the physically registered external source');
         assert.equal(Market.canTradeRemotely(native.state, advice), false,
             'selected executable player advice remains a purchase, not an executing ad');
-        const result = await Market.openBuyAd(native.state, goal, 'Giran');
-        assert.equal(result.opened, true, `the native karma bid opens: ${JSON.stringify({ reason: result.reason, goal })}`);
-        assert.equal(result.store?.town, 'Floran Village'); await Market.withdraw(id); await Market.withdraw(sourceId);
+        const result = await publishPlan(native.state, goal);
+        assert.equal(result.ad?.town, 'Floran Village'); await Market.withdraw(id); await Market.withdraw(sourceId);
     });
     assert.equal(failures.length, 0, `${failures.length} group F contracts failed`);
 }

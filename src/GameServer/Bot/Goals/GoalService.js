@@ -3,7 +3,7 @@ const NeedsEvaluator = invoke('GameServer/Bot/Goals/NeedsEvaluator');
 const GoalPlanner = invoke('GameServer/Bot/Goals/GoalPlanner');
 
 // A far solo bot's goal has no timer: every consumer of it (tryPurchase,
-// beginMarketTravel, reconcile, standingBuyNeed in PopulationService;
+// beginMarketTravel, reconcile in PopulationService;
 // BotAfkMarketService) sits in the command path and calls review() first.
 
 function reviewSpot(state, explicitSpot = null, existingGoal = null) {
@@ -21,7 +21,7 @@ function reviewSpot(state, explicitSpot = null, existingGoal = null) {
 // A goal served at the market: a sale, a material or gear purchase, an errand.
 function isMarketGoal(goal) {
     return ['sell_inventory', 'buy_craft_material', 'market_errand'].includes(goal?.type)
-        || ['market_search_for_weapon', 'market_search_for_gear'].includes(goal?.plan?.expectedBenefit);
+        || goal?.plan?.expectedBenefit === 'market_search_for_gear';
 }
 
 function reviewDecision(state, existing, options, timestamp) {
@@ -56,11 +56,10 @@ function reviewDecision(state, existing, options, timestamp) {
     return { result: null, unchanged: false, goal, candidates, economy };
 }
 
-// A review hands back the needs it evaluated and the economy it read (not
-// stored), so the AFK market reconcile and the market trip that follow do not
-// evaluate them again for the same state.
-function withCandidates(snapshot, candidates, economy) {
-    return snapshot ? { ...snapshot, candidates, economy } : null;
+// A review hands back the economy it read (not stored), so the market trip
+// that follows does not read it again for the same state.
+function withEconomy(snapshot, economy) {
+    return snapshot ? { ...snapshot, economy } : null;
 }
 
 const GoalService = {
@@ -108,10 +107,10 @@ const GoalService = {
 
         const choose = (existing) => {
             const decision = reviewDecision(state, existing, options, timestamp);
-            if (decision.unchanged) return withCandidates(decision.result, decision.candidates, decision.economy);
+            if (decision.unchanged) return withEconomy(decision.result, decision.economy);
             return GoalState.set(state.characterId, decision.goal, { inputHash: decision.candidates[0]?.inputHash }).then(saved => {
                 if (saved) invoke('GameServer/Bot/AI/BotClanChat').onGoal(state, saved.current, existing?.current, timestamp);
-                return withCandidates(saved, decision.candidates, decision.economy);
+                return withEconomy(saved, decision.economy);
             });
         };
 

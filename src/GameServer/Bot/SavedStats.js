@@ -9,6 +9,12 @@ function compact(stats = {}) {
         delete next.equipmentPlan.economyInputKey; delete next.equipmentPlan.inputKey;
     }
     delete next.marketTrades; delete next.priceBeliefs;
+    // A bot's own shot demand row of older saves: crafters read the census of
+    // what is worn (DemandCensus) instead.
+    delete next.shotDemand;
+    // The workshop list a Giran station kept for bots in older saves: no
+    // station serves bots, a bot crafter's offer is its twin (TwinCluster).
+    delete next.workshop;
     // ARCH-NOTE: existing worlds retain old operation lists (91 withdrawals,
     // 57 NPC sales in the saved-current fixture). Bound them on an ordinary
     // save too, so bots need no new withdrawal/liquidation or startup pass.
@@ -28,7 +34,7 @@ function compact(stats = {}) {
 // and published card). It is saved in its own column (bot_life_state.mindJson),
 // so a refused body write never takes the decision with it.
 const MIND_KEYS = Object.freeze(['decisionSeq', 'activityLeaf', 'wishFocus', 'wishSections', 'wishDirty',
-    'dormantWishes', 'money', 'stockTargets', 'wishAdvisory']);
+    'dormantWishes', 'money', 'stockTargets', 'wishAdvisory', 'twin', 'heldClaims']);
 
 // A whole stats object (or a stats patch) as its two saved halves.
 function split(stats = {}) {
@@ -60,10 +66,38 @@ function merge(statsJson, mindJson) {
     return Object.assign(stats, parsedObject(mindJson));
 }
 
+// One key order for the stats objects a thread holds. V8 gives each key order
+// its own hidden class, and a bot's stats keys come in the order of its own
+// history (a key is added when its event first happens), so 1,700 held bots
+// carried ~1,600 classes (~8 MB of the worker heap, heapaudit 2026-10-24).
+// A key's rank is its first appearance in this thread; stats already in rank
+// order come back as they are, others as a copy in rank order (same keys,
+// same values). Object.fromEntries keeps the copy in fast properties, so
+// every copy with the same keys shares one class.
+const keyRanks = new Map(), keysByRank = [];
+function inKeyOrder(stats) {
+    if (!stats || typeof stats !== 'object' || Array.isArray(stats)) return stats;
+    let last = -1, ordered = true;
+    for (const key of Object.keys(stats)) {
+        let rank = keyRanks.get(key);
+        if (rank === undefined) {
+            rank = keysByRank.length;
+            keyRanks.set(key, rank);
+            keysByRank.push(key);
+        }
+        if (rank < last) ordered = false;
+        else last = rank;
+    }
+    if (ordered) return stats;
+    const entries = [];
+    for (const key of keysByRank) if (Object.hasOwn(stats, key)) entries.push([key, stats[key]]);
+    return Object.fromEntries(entries);
+}
+
 // The two columns a whole-stats writer saves.
 function statsColumns(stats) {
     const { body, mind } = split(stats || {});
     return { statsJson: JSON.stringify(body), mindJson: JSON.stringify(mind) };
 }
 
-module.exports = { compact, MIND_KEYS, split, merge, statsColumns };
+module.exports = { compact, MIND_KEYS, split, merge, statsColumns, inKeyOrder };

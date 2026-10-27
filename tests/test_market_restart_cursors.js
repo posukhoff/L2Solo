@@ -67,7 +67,8 @@ async function restart() {
     assert(Database.isReady());
     for (const row of await Database.execute(['SELECT * FROM bot_life_state'])) LifeState.acceptLifecycleRow(row);
     await AfkTrade.init();
-    return Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS });
+    return Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS,
+        rangeMs: MarketCounters.DAY_MS });
 }
 async function run() {
     clean();

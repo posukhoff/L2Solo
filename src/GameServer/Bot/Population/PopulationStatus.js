@@ -22,6 +22,21 @@ const PvpEncounterRuntime = invoke('GameServer/Bot/Population/PvpEncounterRuntim
 const { heapRecord, heapsLine } = require('./WorkerHeapTelemetry');
 const { performance } = require('node:perf_hooks');
 let mainEluMark = performance.eventLoopUtilization();
+// The counter tables a status line shows as rates since its previous line,
+// by line key: key -> { table: name -> row (numbers), at }. The first line
+// covers the time since this module loaded (the start).
+const lineMarks = new Map(), statusStart = Date.now();
+// The one owner of "since the last line": the table `key` held at its
+// previous line and the seconds since; `next` becomes the mark. A restarted
+// worker starts its tables again: a row gone or its count (row[column])
+// down means the deltas start from an empty table.
+function sinceLastLine(key, next, column = 0) {
+    const now = Date.now(), mark = lineMarks.get(key);
+    let previous = mark?.table || new Map();
+    for (const [name, before] of previous) if (!(next.get(name)?.[column] >= before[column])) { previous = new Map(); break; }
+    lineMarks.set(key, { table: next, at: now });
+    return { previous, seconds: Math.max(1, (now - (mark?.at ?? statusStart)) / 1000) };
+}
 const ClanPlanningCoordinator = invoke('GameServer/Clan/ClanPlanningCoordinator');
 const HistoryDatabase = invoke('HistoryDatabase');
 const CheckpointCoordinator = invoke('DatabaseCheckpointCoordinator');
@@ -93,12 +108,32 @@ const PopulationStatus = {
     // start; nearRaises=, the posts a named raise made (DecisionEvents
     // raiseDecision: town, money, revived, sources, ...); nearDecisions=
     // accepted/refused/dropped, the decisions their bodies took, refused as
-    // older than the one held, or dropped as the bot cooled before they came.
+    // older than the one held, or dropped as the bot cooled before they came;
+    // occupationInvalidations=, the worker's occupation slots marked dirty
+    // since start (ColdOccupationPlanner, heartbeat); censusCrossings=, the
+    // worker's watch rows crossed by the shot census since start
+    // (DecisionSections.marketCrossed, heartbeat); committedExits=entries/refused/takers,
+    // the worker's (bot, exit) commitments of plans in flight now, the
+    // exit reads rivals' commitments left no room since start and the
+    // (bot, ask) takers now: bots shopping an item from a town's asks
+    // (CommittedExits.stats, heartbeat); admissionFlips=flips/items,
+    // the worker's party rule flips since start (a seller joined or left a
+    // party: PartyAdmission.admissionWrite) and the items they gave a new
+    // admission revision (PartyAdmission.admissionEventCounts, heartbeat);
+    // spoil=<units> spoilTop=<item>:<units>,.., spoil units cold steps
+    // landed since start and its 3 largest items
+    // (ColdSimulationKernel.countSpoil, heartbeat; hot bots' spoil not counted).
     nearText(coordinator) {
         const nearFacts = coordinator?.snapshots?.nearFacts || {}, decisions = coordinator?.nearDecisions || {};
         const raises = Object.entries(nearFacts).reduce((sum, [reason, count]) => NEAR_FACTS.includes(reason) ? sum : sum + count, 0);
         return `nearFacts=${NEAR_FACTS.map(reason => nearFacts[reason] || 0).join('/')} nearRaises=${raises}`
-            + ` nearDecisions=${decisions.accepted || 0}/${decisions.refused || 0}/${decisions.dropped || 0}`;
+            + ` nearDecisions=${decisions.accepted || 0}/${decisions.refused || 0}/${decisions.dropped || 0}`
+            + ` occupationInvalidations=${coordinator?.worker?.occupationInvalidations || 0}`
+            + ` censusCrossings=${coordinator?.worker?.censusCrossings || 0}`
+            + ` committedExits=${coordinator?.worker?.committedExits?.entries || 0}/${coordinator?.worker?.committedExits?.refused || 0}/${coordinator?.worker?.committedExits?.takers || 0}`
+            + ` admissionFlips=${coordinator?.worker?.admissionFlips?.flips || 0}/${coordinator?.worker?.admissionFlips?.items || 0}`
+            + ` spoil=${coordinator?.worker?.spoil?.units || 0}`
+            + ` spoilTop=${(coordinator?.worker?.spoil?.top || []).map(([id, units]) => `${id}:${units}`).join(',') || '-'}`;
     },
 
     // The goal's numbers without diagnostics, in the full line's names: cold queue due now and the oldest wait,
@@ -135,6 +170,37 @@ const PopulationStatus = {
     npcHateText() {
         const hate = Npc.hateStats();
         return `npcHate=${hate.outOfReach}o/${hate.noPath}n/${hate.idleWithHate}i`;
+    },
+
+    // The worker's wish builds since the last line (EconomyContext.rebuildStats,
+    // heartbeat), always on: rebuilds=<builds/s>/<worker share> and the rows
+    // dearest first, each <entry>:<reason>:<builds/s>/<same %>/<ms per build>.
+    // entry = the build's caller (economy_lifecycle, economy_refresh<trigger,
+    // economy_near<trigger, ...), reason = why the held build was not served
+    // (not_retained, input_dependency_changed, refused:<verdict's first
+    // refusal>, nodes_needed, incoming_pending) or served (held build served,
+    // ms 0); same % = of the builds with a held one, those that chose its
+    // focus, leaf and first wishes (a rebuild an event could have skipped).
+    // Rates since the last line (sinceLastLine).
+    rebuildText(coordinator) {
+        const rows = coordinator?.worker?.rebuilds;
+        if (!Array.isArray(rows)) return 'rebuilds=-';
+        const next = new Map(), moved = [];
+        for (const row of rows) next.set(`${row[0]}:${row[1]}`, row);
+        const { previous, seconds } = sinceLastLine('rebuilds', next, 2);
+        let builds = 0, ms = 0;
+        for (const [name, row] of next) {
+            const [entry, reason, n, rowMs, same, compared, kind] = row;
+            const before = previous.get(name) || [entry, reason, 0, 0, 0, 0];
+            const dn = n - before[2], dms = rowMs - before[3], dsame = same - before[4], dcompared = compared - before[5];
+            if (dn <= 0) continue;
+            if (!kind) { builds += dn; ms += dms; }
+            moved.push({ name, dn, dms, dsame, dcompared });
+        }
+        moved.sort((a, b) => b.dms - a.dms || b.dn - a.dn);
+        return `rebuilds=${(builds / seconds).toFixed(1)}/${(ms / seconds / 1000).toFixed(2)} ` + (moved.slice(0, 12).map(row =>
+            `${row.name}:${(row.dn / seconds).toFixed(1)}/${row.dcompared ? Math.round(100 * row.dsame / row.dcompared) : '-'}`
+            + `/${(row.dms / row.dn).toFixed(1)}`).join(',') || 'none');
     },
 
     summary() {
@@ -271,7 +337,7 @@ const PopulationStatus = {
             market,
             hotLod,
             hotDispatch,
-            line: `hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} parties=${counts.parties} persisted=${counts.persisted} merchants=${counts.merchants} coldDue=${counts.coldQueue.overdue} coldDueAll=${counts.coldQueue.due} coldDueHigh=${counts.coldQueue.highLevel} coldReplans=${counts.coldQueue.replans} coldDueAge=${Math.round(counts.coldQueue.oldestAgeMs / 1000)}s partyRequests=${counts.partyRequests.total} partyRequired=${counts.partyRequests.required} partyPreferred=${counts.partyRequests.preferred} partyBlocked=${counts.partyRequests.blocked} partyMaxAge=${Math.round(counts.partyRequests.maxAgeMs / 1000)}s partyRequiredReasons=${partyRequiredReasons} marketListings=${market.delta.listingsOpened} marketSpeculative=${market.delta.speculativeListings} marketBuyStores=${market.delta.buyStoresOpened} marketBuys=${market.delta.purchases} marketItems=${market.delta.itemsSold} marketAdena=${market.delta.adenaTraded} dynamicBuyerSales=${market.delta.dynamicBuyerSales} dynamicBuyerItems=${market.delta.dynamicBuyerItems} dynamicBuyerAdena=${market.delta.dynamicBuyerAdena} staticBuyerSales=${market.delta.staticBuyerSales} staticBuyerItems=${market.delta.staticBuyerItems} staticBuyerAdena=${market.delta.staticBuyerAdena} marketNoOffer=${market.delta.noOffer} marketSoldOut=${market.delta.soldOut} marketExpired=${market.delta.expired} marketDemandClosed=${market.delta.demandClosed} marketDemandPruned=${market.delta.demandPrunedItems} ticks=${metrics.delta.hotTicks} resolves=${metrics.delta.backgroundResolves} partyResolves=${metrics.delta.partyResolves} combatActions=${metrics.delta.combatActions} skillUses=${metrics.delta.skillUses} heals=${metrics.delta.heals} skipped=${metrics.delta.skippedResolves} skipReasons=${skipReasons} activations=${metrics.delta.activations} cooldowns=${metrics.delta.cooldowns} partyForms=${metrics.delta.partyFormations} partyRecruits=${metrics.delta.partyRecruits} partyDissolves=${metrics.delta.partyDissolutions} partyFormP95=${partyFormation.p95Ms || 0}ms partyAssembly=${assembly.events || 0}/${assembly.attempts || 0} partyFormBudgetStops=${metrics.delta.partyFormationBudgetStops || 0} partyFormDeferrals=${metrics.delta.partyFormationDeferrals || 0} partyFormStages=${Object.entries(partyFormationStages).map(([stage, value]) => `${stage}:${value.p95Ms || 0}`).join('|') || 'none'} dbFlushes=${metrics.delta.dbFlushes} resolveAvg=${resolve.avgMs || 0}ms resolveP95=${resolve.p95Ms || 0}ms schedulerP95=${scheduler.p95Ms || 0}ms schedulerBudget=${scheduler.budgetMs || 0}ms schedulerMode=${scheduler.mode || 'unknown'} playerMode=${scheduler.playerMode || 'idle'} realPlayers=${scheduler.realPlayers || 0} connectingPlayers=${scheduler.connectingPlayers || 0} companions=${scheduler.companions || 0} coldBatch=${scheduler.coldBatch || 0}/${scheduler.coldBatchLimit || 0} schedulerLag=${scheduler.lagMs || 0}ms schedulerSkips=${metrics.delta.schedulerSkips || 0} backgroundDeferrals=${metrics.delta.backgroundDeferrals || 0} schedulerOverruns=${metrics.delta.schedulerOverruns || 0} slowResolves=${metrics.delta.slowResolves || 0} actorPath=${actorPath.count || 0}/${actorPath.p95Ms || 0}/${actorPath.maxMs || 0}ms companionPath=${companionPath.count || 0}/${companionPath.p95Ms || 0}/${companionPath.maxMs || 0}ms pathWorkers=${pathWorkers.workers || 0}w/${pathWorkers.busy || 0}b/${pathWorkers.queue || 0}q/${pathWorkers.maxQueue || 0}mq/${pathWorkers.completed || 0}ok/${pathWorkers.errors || 0}err/${pathWorkers.rejected || 0}rej/${pathWorkers.stale || 0}stale raidAggro=${raidAggro.engagements || 0}/${raidAggro.minionsAlerted || 0} raidMinions=${raidAggro.refills || 0}/${raidAggro.groupVisits || 0}/${raidAggro.removalFeeds || 0} raidIndex=${raidIndex.bosses || 0}b/${raidIndex.minions || 0}m/${raidIndex.rebuilds || 0}r/${raidIndex.objectsScanned || 0}s npcDecay=${npcDecay.scheduled || 0}s/${npcDecay.expired || 0}e/${npcDecay.retries || 0}r/${npcDecay.discarded || 0}d ${this.npcHateText()} heap=${heapMb}MB lag=${lag}ms lagSustained=${Metrics.sustainedEventLoopLag()}ms maxLag=${maxLag}ms ${Director.statusLine()}`
+            line: `hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} parties=${counts.parties} persisted=${counts.persisted} merchants=${counts.merchants} coldDue=${counts.coldQueue.overdue} coldDueAll=${counts.coldQueue.due} coldDueHigh=${counts.coldQueue.highLevel} coldReplans=${counts.coldQueue.replans} coldDueAge=${Math.round(counts.coldQueue.oldestAgeMs / 1000)}s partyRequests=${counts.partyRequests.total} partyRequired=${counts.partyRequests.required} partyPreferred=${counts.partyRequests.preferred} partyBlocked=${counts.partyRequests.blocked} partyMaxAge=${Math.round(counts.partyRequests.maxAgeMs / 1000)}s partyRequiredReasons=${partyRequiredReasons} marketListings=${market.delta.listingsOpened} marketBuys=${market.delta.purchases} marketItems=${market.delta.itemsSold} marketAdena=${market.delta.adenaTraded} dynamicBuyerSales=${market.delta.dynamicBuyerSales} dynamicBuyerItems=${market.delta.dynamicBuyerItems} dynamicBuyerAdena=${market.delta.dynamicBuyerAdena} marketNoOffer=${market.delta.noOffer} marketSoldOut=${market.delta.soldOut} marketExpired=${market.delta.expired} marketDemandClosed=${market.delta.demandClosed} ticks=${metrics.delta.hotTicks} resolves=${metrics.delta.backgroundResolves} partyResolves=${metrics.delta.partyResolves} combatActions=${metrics.delta.combatActions} skillUses=${metrics.delta.skillUses} heals=${metrics.delta.heals} skipped=${metrics.delta.skippedResolves} skipReasons=${skipReasons} activations=${metrics.delta.activations} cooldowns=${metrics.delta.cooldowns} partyForms=${metrics.delta.partyFormations} partyRecruits=${metrics.delta.partyRecruits} partyDissolves=${metrics.delta.partyDissolutions} partyFormP95=${partyFormation.p95Ms || 0}ms partyAssembly=${assembly.events || 0}/${assembly.attempts || 0} partyFormBudgetStops=${metrics.delta.partyFormationBudgetStops || 0} partyFormDeferrals=${metrics.delta.partyFormationDeferrals || 0} partyFormStages=${Object.entries(partyFormationStages).map(([stage, value]) => `${stage}:${value.p95Ms || 0}`).join('|') || 'none'} dbFlushes=${metrics.delta.dbFlushes} resolveAvg=${resolve.avgMs || 0}ms resolveP95=${resolve.p95Ms || 0}ms schedulerP95=${scheduler.p95Ms || 0}ms schedulerBudget=${scheduler.budgetMs || 0}ms schedulerMode=${scheduler.mode || 'unknown'} playerMode=${scheduler.playerMode || 'idle'} realPlayers=${scheduler.realPlayers || 0} connectingPlayers=${scheduler.connectingPlayers || 0} companions=${scheduler.companions || 0} coldBatch=${scheduler.coldBatch || 0}/${scheduler.coldBatchLimit || 0} schedulerLag=${scheduler.lagMs || 0}ms schedulerSkips=${metrics.delta.schedulerSkips || 0} backgroundDeferrals=${metrics.delta.backgroundDeferrals || 0} schedulerOverruns=${metrics.delta.schedulerOverruns || 0} slowResolves=${metrics.delta.slowResolves || 0} actorPath=${actorPath.count || 0}/${actorPath.p95Ms || 0}/${actorPath.maxMs || 0}ms companionPath=${companionPath.count || 0}/${companionPath.p95Ms || 0}/${companionPath.maxMs || 0}ms pathWorkers=${pathWorkers.workers || 0}w/${pathWorkers.busy || 0}b/${pathWorkers.queue || 0}q/${pathWorkers.maxQueue || 0}mq/${pathWorkers.completed || 0}ok/${pathWorkers.errors || 0}err/${pathWorkers.rejected || 0}rej/${pathWorkers.stale || 0}stale raidAggro=${raidAggro.engagements || 0}/${raidAggro.minionsAlerted || 0} raidMinions=${raidAggro.refills || 0}/${raidAggro.groupVisits || 0}/${raidAggro.removalFeeds || 0} raidIndex=${raidIndex.bosses || 0}b/${raidIndex.minions || 0}m/${raidIndex.rebuilds || 0}r/${raidIndex.objectsScanned || 0}s npcDecay=${npcDecay.scheduled || 0}s/${npcDecay.expired || 0}e/${npcDecay.retries || 0}r/${npcDecay.discarded || 0}d ${this.npcHateText()} heap=${heapMb}MB lag=${lag}ms lagSustained=${Metrics.sustainedEventLoopLag()}ms maxLag=${maxLag}ms ${Director.statusLine()}`
         };
         const missingTotal = require('../Economy/PurchaseFunding').summary().moneyPacketMissing;
         summary.moneyPacketMissing = Math.max(0, missingTotal - lastMoneyPacketMissing);

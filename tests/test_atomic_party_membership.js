@@ -80,7 +80,7 @@ Database.init();
     const preparation = { token: 'party-admission-preparing', actorA: 3200001, actorB: 3200002,
         seqA: 1, seqB: 1, town: 'Giran', point: { locX: 0, locY: 0, locZ: 0 },
         lines: [{ payer: 0, itemId: 1, selfId: 1867, count: 1, price: 100 }],
-        parties: [0, 1].map(() => ({ revision: 0, sequence: 1, needRevision: 0,
+        parties: [0, 1].map(() => ({ revision: 0, sequence: 1,
             phase: 'cold', hotAt: 0,
             route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } })) };
     Meetings.stage(preparation);

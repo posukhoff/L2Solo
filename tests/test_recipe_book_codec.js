@@ -1,0 +1,13 @@
+'use strict';
+const assert = require('node:assert/strict');
+require('../src/Global');
+invoke('GameServer/DataCache').init();
+const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const Codec = require('../src/GameServer/Bot/Economy/RecipeBookCodec');
+const ids = Object.values(Recipes.loadRecipeItems()).filter(row => row.type === 'dwarven').map(row => row.recipeId);
+const packed = Codec.pack(ids);
+assert(Buffer.byteLength(packed) <= 128);
+assert.deepEqual(Codec.unpack(packed).map(row => row.recipeId), [...new Set(ids)].sort((a, b) => a - b));
+assert.equal(Codec.unpack('broken'), null);
+assert.deepEqual(Codec.unpack(Codec.pack([])), []);
+console.log('PASS full dwarven recipe book codec');

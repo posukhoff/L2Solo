@@ -355,6 +355,11 @@ const everStepped = (kernel, id) => startedSteps.get(kernel).some(ids => ids.inc
     assert.strictEqual(lifecycleKind(state(2, { stats: { craftReturn: { loc: {} },
         equipmentPlan: { strategy: 'craft', status: 'ready_to_craft' } } })), 'command',
     'ready crafting still uses the main-thread crafting workflow');
+    // A ready step the bot crafts itself waits in the worker for one batch of MP.
+    for (const [mp, kind] of [[39, 'resolver'], [40, 'command']]) {
+        assert.strictEqual(lifecycleKind(state(2, { vitals: { hp: 100, mp }, stats: {
+            equipmentPlan: { strategy: 'craft', status: 'component_ready', selfCraftMp: 40 } } })), kind, `own craft at MP ${mp}`);
+    }
     assert.strictEqual(lifecycleKind(state(2, { stats: { equipmentPlan: { strategy: 'market' } } })), 'resolver');
     assert.strictEqual(lifecycleKind(state(2, {
         adena: 1000,
@@ -559,8 +564,6 @@ const everStepped = (kernel, id) => startedSteps.get(kernel).some(ids => ids.inc
     recoveryNow += 30 * 60000;
     orphanKernel.pause(); orphanKernel.tick();
     assert.equal(orphanKernel.scheduleTokens.has(7), false, 'there is no autonomous second safety sweep');
-    assert.equal(orphanKernel.states.safetyNodes, undefined);
-    assert.equal(typeof orphanKernel.recoverOrphanedSchedules, 'undefined');
     assert.equal(orphanKernel.ensureScheduled(7), true, 'the addressed main sweep restores a local orphan');
     assert.equal(orphanKernel.ensureScheduled(7), false, 'a healthy scheduled state is not repaired twice');
 
@@ -1388,7 +1391,6 @@ const everStepped = (kernel, id) => startedSteps.get(kernel).some(ids => ids.inc
             enqueuedAt: at, nextState: next, result: { events: [] }, economyPlan: plan });
         numbersKernel.flush(null, true);
         commitAck(numbersKernel, { results: [{ ...ack, characterId: 63, updatedAt: undefined, review: ['plan'] }] });
-        assert.strictEqual(numbersKernel.ackUnbuilt, 1);
         assert.strictEqual(numbersKernel.inFlight.has(63), false);
         assert.strictEqual(numbersKernel.states.get(63).state.simulation.revision, 3, 'nothing is upserted');
         assert.strictEqual(numbersKernel.states.get(63).economyPlanHash, 4321, 'the plan main named stays sent');

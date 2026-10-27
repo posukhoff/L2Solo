@@ -46,7 +46,7 @@ const arrive = async id => {
             const result = await Database.acceptTradeMeeting({ token, actorA: ids[0], actorB: ids[1],
                 seqA: parties[0].sequence, seqB: parties[1].sequence, town: 'Giran', point,
                 lines: [{ payer: 0, itemId: source.id, selfId: 1864, count: 2, price: 100,
-                    needAdId: ad.id, needAdRevision: ad.revision, certificate: JSON.parse(ad.lines[0].intentJson) }],
+                    certificate: JSON.parse(ad.lines[0].intentJson) }],
                 parties: parties.map(p => ({ ...p, route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } })) });
             adopt(result); return result.meeting.id;
         };

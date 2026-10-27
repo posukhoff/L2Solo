@@ -31,7 +31,6 @@ const originals = {
     reconcileBotClanMembership: Database.reconcileBotClanMembership,
     execute: Database.execute,
     fetchItems: Database.fetchItems,
-    fetchMarketBuyerActivity: Database.fetchMarketBuyerActivity,
     fetchWarehouseItems: Database.fetchWarehouseItems,
     updateItemAmount: Database.updateItemAmount,
     updateItemEquipState: Database.updateItemEquipState,
@@ -117,7 +116,6 @@ async function run() {
         { id: 21, selfId: marketItem.selfId, amount: 1, equipped: false, slot: marketItem.etc.slot },
         { id: 22, selfId: equippedItem.selfId, amount: 1, equipped: true, slot: equippedItem.etc.slot }
     ]) : originals.fetchItems(characterId);
-    Database.fetchMarketBuyerActivity = () => Promise.resolve([]);
     Database.fetchWarehouseItems = () => Promise.resolve([]);
     Database.updateItemAmount = (characterId, id, amount) => {
         calls.push({ type: 'amount', characterId, id, amount });
@@ -210,7 +208,7 @@ async function run() {
     };
     // Use the real inventory writer for this physical pre-trade cleanup.
     const preTradePhysicalBefore = await originals.fetchItems(95);
-    const preTradePrice = ItemDisposition.npcLiquidationCandidates(preTradeCleanup, { allowPreTradeCleanup: true })
+    const preTradePrice = MarketListingPolicy.evaluate(preTradeCleanup, { unlimited: true, allowPreTradeCleanup: true }).npc
         .find(item => item.selfId === spellbook.selfId).npcPrice;
     assert.strictEqual(native.amount(preTradePhysicalBefore, spellbook.selfId), 1);
     assert.strictEqual(native.amount(preTradePhysicalBefore, 57), 500);
@@ -254,17 +252,11 @@ async function run() {
     );
     // No market for it (no deal, no buyer): its best outcome is the NPC now
     // (group E: one expected-value decision, one roll).
-    assert.strictEqual(
-        MarketListingPolicy.evaluate(starterMobLootState, { now: 1000, persona: null }).decisions
-            .find((decision) => decision.item.selfId === 1).action,
-        'npc',
-        'low-grade gear nobody buys goes to the NPC shop rather than retained or warehoused'
-    );
-    assert.deepStrictEqual(
-        ItemDisposition.npcLiquidationCandidates(starterMobLootState).map((item) => item.selfId).sort((a, b) => a - b),
-        [1, 1864],
-        'the actual NPC liquidation path must include low-grade gear and cheap materials'
-    );
+    const starterMobLootDecisions = MarketListingPolicy.evaluate(starterMobLootState, { now: 1000, persona: null }).decisions;
+    assert.strictEqual(starterMobLootDecisions.find((decision) => decision.item.selfId === 1).action, 'npc',
+        'low-grade gear nobody buys goes to the NPC shop rather than retained or warehoused');
+    assert.strictEqual(starterMobLootDecisions.find((decision) => decision.item.selfId === 1864).action, 'npc',
+        'a cheap material nobody buys goes to the NPC shop too');
 
     const marketBuyer = {
         characterId: 99,
@@ -299,24 +291,6 @@ async function run() {
         stats: { ...state.stats, marketReturn: { ...state.stats.marketReturn,
             loc: { ...islandLoc }, regionName: 'Talking Island' } }
     }, 'static_buyer_owner_geometry');
-    const buyerRouted = await ListingService.open(buyerRoutedState, { now: 1000, durationMs: 60000 });
-    assert.strictEqual(buyerRouted.listed, false, 'materials accepted by a static buyer must not create a dead private store');
-    assert.strictEqual(buyerRouted.reason, 'sold_to_static_buyer');
-    const staticPrice = invoke('GameServer/Bot/Economy/StaticBuyerService').candidatesFor(buyerRoutedState, 'Talking Island')[0].npcPrice;
-    assert.deepStrictEqual(buyerRouted.state.stats.lastNpcLiquidation.sold, [[1864, 10, staticPrice]]);
-    assert.strictEqual(buyerRouted.state.stats.lastNpcLiquidation.payout, 10 * staticPrice);
-    assert.strictEqual(
-        buyerRouted.state.stats.marketSellRetryAfter,
-        1000 + ListingService.SELL_RETRY_DELAY_MS,
-        'a completed buyer sale without a private listing must defer the next market trip'
-    );
-    assert.strictEqual(GoalExecutor.beginMarketTravel({
-        ...buyerRouted.state,
-        activity: 'hunting'
-    }, {
-        type: 'sell_inventory',
-        plan: { expectedBenefit: 'market_sale_inventory' }
-    }, 1001), null, 'the deferred seller must resume hunting instead of starting another market loop');
 
     const giranLoc = { locX: towns.giran_town.locX, locY: towns.giran_town.locY, locZ: towns.giran_town.locZ };
     await originals.execute(['UPDATE characters SET locX=?,locY=?,locZ=? WHERE id=?',
@@ -327,14 +301,19 @@ async function run() {
         stats: { ...buyerRoutedState.stats, marketReturn: { ...buyerRoutedState.stats.marketReturn,
             loc: { ...giranLoc }, regionName: 'Giran' } }
     }, 'remote_buyer_owner_geometry');
+    // The board traded Stem twice in Dion at its first price: a forecast flow
+    // elsewhere, so a store line may offer it (MarketPricing.quotable) and Giran
+    // holds no forecast (a stock quote); the price belief stays the same.
+    const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
+    for (const at of [998, 999]) MarketCounters.deal(1864, MarketCounters.firstPrice(1864, at), 1, at, 999, 'Dion');
     const remoteBuyer = await ListingService.open(remoteBuyerState, { now: 1000, durationMs: 60000 });
+    MarketCounters.reset();
     const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
     const remoteRecords = await Database.fetchAfkTradeShops(86);
     const remotePublicRecords = AfkTrade.ownerRecords(86);
     const remotePhysicalAfter = await originals.fetchItems(86);
     try {
         assert.strictEqual(remoteBuyer.listed, true, 'unwanted stock with a valid native ask reaches the board');
-        assert.strictEqual(remoteBuyer.buyerSale.sold, false, 'the Giran owner does not sell to the remote static buyer');
         assert.strictEqual(remoteBuyer.dynamicBuyerSale.sold, false);
         assert.deepStrictEqual(remoteBuyer.market.answers, [], 'no buyer or receipts are invented for the quote');
         assert.deepStrictEqual(remoteBuyer.market.npc, []);
@@ -345,7 +324,6 @@ async function run() {
         assert.strictEqual(quote.priced.ask.stockQuote, true);
         assert.strictEqual(quote.priced.ask.price, 52);
         assert.strictEqual(quote.priced.market.buyback, 50);
-        assert.strictEqual(quote.gain, 0, 'a public asking price is not income');
         assert(Number.isNaN(quote.priced.ask.money), 'the native quote has no forecast receipts');
         const recordShape = record => [Number(record.ownerId), record.kind, record.status,
             Number(record.storeType), record.town, Number(record.custodyPolicy),
@@ -419,7 +397,6 @@ run().catch((err) => {
     Database.reconcileBotClanGoals = originalReconcileClanGoals;
     Database.execute = originals.execute;
     Database.fetchItems = originals.fetchItems;
-    Database.fetchMarketBuyerActivity = originals.fetchMarketBuyerActivity;
     Database.fetchWarehouseItems = originals.fetchWarehouseItems;
     Database.updateItemAmount = originals.updateItemAmount;
     Database.updateItemEquipState = originals.updateItemEquipState;

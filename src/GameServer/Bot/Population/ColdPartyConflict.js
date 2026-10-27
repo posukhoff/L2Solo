@@ -6,7 +6,7 @@ const Journal = require('../../../PvpJournal');
 // Main-process execution of one bounded encounter (at most two C4 parties).
 // Membership alone never makes a bot an aggressor or creates a memory edge.
 const { seeded } = require('../AI/TendencyRoll');
-const partyIdOf = state => state?.party?.partyId || state?.partyId || null;
+const { partyIdOf } = require('./PartyId');
 
 const { reaction, select } = require('../../Social/ConflictParticipationPolicy');
 const RevengePolicy = require('../../Social/RevengePolicy');
@@ -49,7 +49,7 @@ async function apply({ event, life, owner, memory, parties, personaFor, particip
     const revengeAllowed = () => {
         if (!revenge || resume) return true;
         const [a, b] = sides.map(s => s.principal);
-        const identity = s => ({ id: s.characterId, clanId: Number(s.stats?.clanId || 0), partyId: partyIdOf(s) });
+        const identity = s => ({ id: s.characterId, clanId: Number(s.stats?.clanId || 0), partyId: partyIdOf(s) || null });
         const social = RevengePolicy.evaluate(memory.assess(identity(a), identity(b), {}, now()), personaFor(a));
         return Number.isFinite(event.revengeRoll) && event.revengeRoll >= 0 && event.revengeRoll < social.chance
             && states.every(s => ColdRevengeMonitor.available(s, now()))

@@ -10,8 +10,8 @@ const Executor = invoke('GameServer/Bot/Goals/GoalExecutor');
 const id = 730092;
 (async () => {
     const world = await createWorld([{ id, classId: 50, level: 27 }], 'cleanup-existing-shop');
-    const reconcile = Market.reconcile;
-    let remoteCalls = 0;
+    const open = Listing.open;
+    let openCalls = 0;
     try {
         await Life.init();
         await Database.createAccount('bot_cleanup_shop', 'fixture');
@@ -36,21 +36,16 @@ const id = 730092;
             vitals: { hp: 187, maxHp: 187, mp: 74, maxMp: 74 },
             inventory: Life.inventorySummaryFromItems(rows),
             stats: { classId: 50, generatedCold: true, forcedMarketCleanup: cleanup,
-                shopTown: { town: 'Giran', at: 1 }, marketSellRetryAfter: 1,
+                twin: { town: 'Giran' }, marketSellRetryAfter: 1,
                 marketReturn: { loc: { locX: 41691, locY: 247407, locZ: -6456 },
                     regionName: 'Elven Ruins', spotId: '6_41' } }
         }, 'cleanup_fixture');
         const goal = { type: 'sell_inventory', status: 'active',
             plan: { expectedBenefit: 'market_sale_inventory', marketTown: 'Giran' } };
         assert(Market.canTradeRemotely(state, goal), 'the existing native shop enables remote selling');
-        Market.reconcile = async current => {
-            remoteCalls++;
-            return { state: current, changed: false };
-        };
         const intent = Population.marketListingIntent(state, goal);
         const before = Date.now();
         const result = await Population.openMarketListing(intent, goal);
-        assert.equal(remoteCalls, 0, 'forced physical cleanup cannot be replaced by the existing remote shop');
         assert.equal(result.state.stats.forcedMarketCleanup, null);
         assert(result.state.stats.marketSellRetryAfter >= before + Listing.SELL_RETRY_DELAY_MS,
             'the completed unload defers another half-full trip');
@@ -62,11 +57,16 @@ const id = 730092;
             plan: { expectedBenefit: 'market_sale_inventory', cleanupReason: 'inventory_half_full' }
         }), null, 'the same half-full reserve cannot immediately start another trip');
         const ordinary = Population.marketListingIntent({ ...result.state, activity: 'shopping' }, goal);
-        await Population.openMarketListing(ordinary, goal);
-        assert.equal(remoteCalls, 1, 'ordinary shop reviews still use the existing remote sale path');
+        Listing.open = async (...args) => {
+            openCalls++;
+            return open(...args);
+        };
+        const remote = await Population.openMarketListing(ordinary, goal);
+        assert.equal(remote.listed, false, 'an existing shop sells remotely through its worker-set lines');
+        assert.equal(openCalls, 0, 'an ordinary review of an existing shop starts no town sale visit');
         console.log('Forced cleanup with an existing native shop checks passed');
     } finally {
-        Market.reconcile = reconcile;
+        Listing.open = open;
         await world.close();
     }
 })().catch(error => { console.error(error); process.exitCode = 1; });

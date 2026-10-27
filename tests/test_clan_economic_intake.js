@@ -12,7 +12,7 @@ const Demand = require('../src/GameServer/Clan/ClanRosterDemand'), Planner = req
 const Capabilities = require('../src/GameServer/Clan/ClanCandidateCapabilities');
 const Crafting = require('../src/GameServer/Clan/ClanCraftingPolicy'), Recipes = invoke('GameServer/Items/C4RecipeItems');
 const Gear = invoke('GameServer/Bot/AI/GearAcquisitionPlanner'), Combat = invoke('GameServer/Bot/Population/ColdCombatProfile');
-const Shops = invoke('GameServer/Bot/Economy/CraftShopService'), Sources = require('../src/GameServer/Items/ItemAcquisitionCatalog');
+const Sources = require('../src/GameServer/Items/ItemAcquisitionCatalog');
 const Config = invoke('GameServer/Clan/ClanSimulationConfig'), Population = invoke('GameServer/Bot/Population/PopulationConfig');
 const base = 846000, crafterId = base + 164, secondCrafter = base + 165, recipe = Recipes.resolveByRecipeId(209);
 const stock = Object.fromEntries(recipe.materials.map(row => [row.selfId, { selfId: row.selfId, amount: row.amount }]));
@@ -44,7 +44,7 @@ seed.prepare("INSERT INTO character_recipes(characterId,recipeId,type) VALUES(?,
 seed.prepare("INSERT INTO character_recipes(characterId,recipeId,type) VALUES(?,?,'dwarven')").run(secondCrafter, recipe.recipeId);
 seed.close();
 const q = (sql, args = []) => DB.execute([sql, args]);
-const original = { published: Shops.publishedStationRecipes, publishedIndex: Shops.publishedRecipeIndex, share: Config.maxBotMemberShare,
+const original = { share: Config.maxBotMemberShare,
     reload: invoke('GameServer/Clan/ClanService').reload, buyers: Population.staticBuyersDisabled,
     plan: Runtime.plan, query: Life.clanOperationCandidates };
 const calls = [], pages = [], rpc = [], endedJobs = [];
@@ -121,7 +121,10 @@ function learningReaderCases() {
 
 async function criticCases() {
     // Separate physical actors/clan/stock from the default native consumer cases.
-    const base = 848000, owns = [member(base, 4, [], stock), member(base + 1, 15), member(base + 2, 17)];
+    // The clan's own Artisan crafts the frame (component, Create Item 4) for its
+    // members, as no Giran station serves bots; the final recipe (level 5)
+    // still needs a recruited Warsmith.
+    const base = 848000, owns = [member(base, 4, [], stock), member(base + 1, 15), member(base + 2, 17), member(base + 3, 56)];
     calls.length = pages.length = rpc.length = endedJobs.length = 0;
     const frame = 1891, mold = 1877, component = Recipes.resolveByProductId(frame);
     const partialCrafter = base + 462, badSpoiler = base + 500, goodSpoiler = base + 501;
@@ -145,6 +148,7 @@ async function criticCases() {
     }
     await q('UPDATE bot_life_state SET inventorySummary=? WHERE characterId=?', [JSON.stringify(partialStock), base]);
     await DB.setCharacterRecipe(partialCrafter, recipe.recipeId, 'dwarven');
+    await DB.setCharacterRecipe(base + 3, component.recipeId, 'dwarven');
     const reward = Data.npcRewards.find(row => Gear.isBotEligibleSourceNpcId(row.selfId)
         && Gear.itemDropYield(row, mold, 'spoil').chance > 0
         && Data.npcs.some(npc => npc.selfId === row.selfId && npc.template.level >= 45 && npc.template.level <= 50));
@@ -152,12 +156,8 @@ async function criticCases() {
     const npc = Data.npcs.find(row => row.selfId === reward.selfId);
     const spot = { id: `ordinary:partial:${reward.selfId}`, avgLevel: npc.template.level, capacity: 10, density: 10,
         npcEntries: [{ selfId: reward.selfId, count: 10 }], center: owns[0].loc };
-    const Profiles = invoke('GameServer/Bot/Population/SpotProfiles'), oldProfiles = Profiles.ensure(), oldPublished = Shops.publishedStationRecipes;
+    const Profiles = invoke('GameServer/Bot/Population/SpotProfiles'), oldProfiles = Profiles.ensure();
     Profiles.cache = [...oldProfiles, spot];
-    // One object until the fixture changes, as the owner publishes it
-    // (ClanPlanningCoordinator.context compares the recipes by identity).
-    const published = { recipes: Object.freeze([component]), ids: new Set([component.recipeId]), stationByRecipeId: new Map() };
-    Shops.publishedStationRecipes = () => published;
     try {
         learningReaderCases();
         const created = await DB.createAutonomousClan({ name: 'PartialEconomic', leaderId: base, memberIds: owns.map(row => row.characterId),
@@ -186,7 +186,7 @@ async function criticCases() {
         const available = member(base + 800, 55, [{ selfId: 254, level: 1 }, { selfId: 42, level: 1 }]);
         const mixedProspects = await Life.statesByIds([partialCrafter, goodSpoiler]);
         for (const patch of [{ phase: 'hot' }, { partyId: 'foreign' }, { recruitmentReserved: true }]) {
-            const view = { ...clan, physicalMemberCount: 4, members: [...clan.members, { ...available, clanId, ...patch }] };
+            const view = { ...clan, physicalMemberCount: owns.length + 1, members: [...clan.members, { ...available, clanId, ...patch }] };
             const result = Demand.economicPlan(Planner.planForMember, { clan: view, prospects: mixedProspects, prepared: { teams: {} } },
                 second.selection.member, [spot], [], { craftRecipes: [component], allowedRecipeIds: [component.recipeId], spoilCapable: false,
                     excludedTargetIds: excluded, economicMode: 'conditional', economicRequirements: team.requirements,
@@ -208,7 +208,7 @@ async function criticCases() {
         assert.deepEqual(endedJobs, [0, 0], 'both native end acknowledgements leave no pending RPC');
         console.log('Economic critic fixes passed: partial63+1 continuation, unavailable owned helper, non-evicting native source CAS/join, shared cold learning');
         console.log('Native RPC by admitted pass:', JSON.stringify([firstCalls, secondCalls]), 'candidate page counts:', pages.map(row => row.count).join(','));
-    } finally { Profiles.cache = oldProfiles; Shops.publishedStationRecipes = oldPublished; }
+    } finally { Profiles.cache = oldProfiles; }
 }
 
 async function recipeEvents(clan, demand) {
@@ -337,13 +337,6 @@ async function selectedSpoil() {
 
 async function main() {
     DB.init(); await Life.init(); await invoke('GameServer/Bot/Population/BackgroundPartyState').init();
-    // One object for the whole run, as the owner publishes it until its
-    // catalogue changes (ClanPlanningCoordinator.context compares by identity).
-    const published = { recipes: Object.freeze([]), ids: new Set(), stationByRecipeId: new Map() };
-    Shops.publishedStationRecipes = () => published;
-    // Main-thread options and the worker context must see the same fixture
-    // public services, including the component service used by criticCases.
-    Shops.publishedRecipeIndex = () => new Map(Shops.publishedStationRecipes().recipes.map(row => [Number(row.recipeId), row]));
     Config.maxBotMemberShare = 1; Population.staticBuyersDisabled = false;
     invoke('GameServer/Clan/ClanService').reload = async () => {};
     Runtime.start();
@@ -441,8 +434,7 @@ async function main() {
         await criticCases();
         console.log('Clan economic intake checks passed: native discovery/conditional RPC, shared64 continuation, selected CAS/join/own craft, canonical recipe/source and committed watches; all four critic regressions');
     } finally {
-        Runtime.plan = original.plan; Life.clanOperationCandidates = original.query; Shops.publishedStationRecipes = original.published;
-        Shops.publishedRecipeIndex = original.publishedIndex;
+        Runtime.plan = original.plan; Life.clanOperationCandidates = original.query;
         Config.maxBotMemberShare = original.share; Population.staticBuyersDisabled = original.buyers;
         invoke('GameServer/Clan/ClanService').reload = original.reload;
         Events.stop(); await Runtime.shutdown(); await DB.close();

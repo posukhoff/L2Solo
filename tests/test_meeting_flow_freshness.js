@@ -52,15 +52,10 @@ const native = require('./helpers/workerEconomyDecision');
             route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } })),
         lines: [{ payer: 0, itemId: 9000001, selfId: recipe.recipeItemId, count: 1, price: 8000,
             enchant: 0, adId: 8001, adRevision: 1, certificate: null }] };
-    const oldInput = input(), priceRevision = Market.revisionOf('shot d');
-    Market.supplyDeal(1463, 1000, 'Giran', timestamp - 1000);
-    const duringMeetingMarket = marketSource.allRows().filter(row => ['h:1463', 'f:shot d'].includes(row[0]));
-    assert.equal(Market.revisionOf('shot d'), priceRevision);
-    const prepared = await native(funded, { ...oldInput, duringMeetingMarket, meetingRequest: structuredClone(request) });
-    assert.equal(prepared.flowInjected, true, 'the update arrives after the native graph was built');
-    assert.equal(prepared.flowInvalidated, true, 'the real market watcher retires in-flight consent on flow alone');
+    const prepared = await native(funded, { ...input(), meetingRequest: structuredClone(request) });
     const packed = MeetingCodec.fromPages(prepared.frames);
-    assert.deepEqual(packed.dependencies, prepared.request.dependencies, 'flow revisions survive the bounded native transport');
+    assert(packed.dependencies.length > 0, 'the proof names the read groups it depends on');
+    assert.deepEqual(packed.dependencies, prepared.request.dependencies, 'the dependencies survive the bounded native transport');
     const board = new BoardIndex({ groupOf: Market.counterOf }); board.put(recordOf(boardRows[0][1]));
     const Life = invoke('GameServer/Bot/Population/BotLifeState'), Afk = invoke('GameServer/AfkTrade/AfkTradeService');
     const Coordinator = invoke('GameServer/Bot/Population/ColdSimulationCoordinator');
@@ -71,19 +66,16 @@ const native = require('./helpers/workerEconomyDecision');
     try {
         Life.cachedState = id => id === state.characterId ? funded : null;
         Afk.boardIndex = () => board;
-        const current = () => Coordinator.meetingPreparationCurrent.call(host, proof, request);
-        assert.equal(current(), true, 'the real worker proof initially agrees with main');
-        const peerRevision = Market.revisionOf('shot c');
-        // No state, board, peer-price, wallet or recipe-book changes.
+        const stale = () => Coordinator.meetingPreparationStale.call(host, proof, request);
+        assert.equal(stale(), null, 'the real worker proof initially agrees with main');
+        // Market flow only: no state, board, wallet or recipe-book changes.
         for (const id of [1464, 1465, 1466, 1467]) {
             Market.supplyDeal(id, 100000, 'Giran', timestamp - 2000);
             Market.supplyDeal(id, 100000, 'Giran', timestamp - 1000);
         }
-        assert.equal(Market.revisionOf('shot c'), peerRevision, 'configured purchases leave peer counters unchanged');
-        assert.equal(current(), false, 'new flow invalidates old meeting consent on main');
-        const fresh = await native(funded, input());
-        assert(!fresh.tradeIntents.some(row => row.itemId === recipe.recipeItemId), 'the fresh graph no longer wants the D recipe');
-        await assert.rejects(native(funded, { ...input(), meetingRequest: structuredClone(request) }), /trade_meeting_need_changed/);
+        // A meeting proof carries no flow revision: flow alone does not retire
+        // consent; the acceptance rechecks the need on the bot's own graph.
+        assert.equal(stale(), null, 'flow alone leaves the meeting proof current on main');
     } finally { Life.cachedState = before.cachedState; Afk.boardIndex = before.boardIndex; Market.reset(); }
-    console.log('PASS native flow-only need change, scoped meeting dependencies, transport and main stale-proof refusal');
+    console.log('PASS native meeting dependencies, transport and main proof check; flow alone keeps consent');
 })().catch(error => { console.error(error.stack, error.meetingTrace); process.exitCode = 1; });

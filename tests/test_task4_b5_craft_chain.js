@@ -1,18 +1,22 @@
 'use strict';
 // Task 4 B5 N1: purchase -> material receipt -> craft -> equip on the real
-// native station recipe 198 (Crystal Staff). The bot holds part of the input,
-// a stubbed board meeting delivers the rest, the station crafts one staff and
-// the bot wears it: one product, equipped, the gear goal closed once.
+// recipe 198 (Crystal Staff) at a dwarf's workshop (a grade station crafts for
+// no bot). The bot holds part of the input, a stubbed board meeting delivers
+// the rest, the dwarf crafts one staff and the bot wears it: one product,
+// equipped, the gear goal closed once.
 const assert = require('node:assert/strict');
 require('./helpers/databaseIsolation');
 const isolated = require('./helpers/isolatedSocialDatabase')('task4-b5-craft-chain');
 require('../src/Global');
+const { publishTwinOffer } = require('./helpers/twinOffer');
 isolated.assertConfigured(options.default);
 const DataCache = invoke('GameServer/DataCache');
 DataCache.init();
 const Database = invoke('Database');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
 const Craft = invoke('GameServer/Bot/Economy/ColdCraftingService');
+const Workshop = invoke('GameServer/Bot/Economy/CraftWorkshopService');
+const Shops = invoke('GameServer/Bot/Economy/CraftShopService');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Market = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
@@ -29,18 +33,18 @@ const item = (selfId, amount) => ({ selfId, amount, name: nativeItem(selfId)?.te
     const inputs = new Map();
     for (const m of recipe.materials) inputs.set(Number(m.selfId), (inputs.get(Number(m.selfId)) || 0) + Number(m.amount));
     const gemstoneId = [...inputs.keys()].find(id => /^Gemstone(?:\s|:)/i.test(nativeItem(id)?.template?.name || ''));
-    const station = Craft.stationForRecipe(recipe.recipeId);
-    assert(gemstoneId && station, 'recipe 198 needs gemstones and has a native station');
+    assert(gemstoneId, 'recipe 198 needs gemstones');
+    const { loc } = Shops.CraftStations.find(row => row.id === 'c_weapons_entry');
     async function seed(accountName, name, classId, level, rows, stats = {}) {
         await Database.createAccount(accountName, 'fixture');
         const race = Number(DataCache.classTemplates.find(row => Number(row.classId) === classId)?.template?.race || 0);
         const id = Number((await Database.createCharacter(accountName, { name, race, classId, sex: 0,
-            face: 0, hair: 0, hairColor: 0, maxHp: 1000, maxMp: 1000, ...station.loc })).insertId);
+            face: 0, hair: 0, hairColor: 0, maxHp: 1000, maxMp: 1000, ...loc })).insertId);
         await Database.execute(['UPDATE characters SET level=?, exp=?, hp=1000, mp=1000 WHERE id=?',
             [level, Number(DataCache.experience[level - 1]), id]]);
         for (const row of rows) await Database.setItem(id, row);
         return Life.upsertState({ characterId: id, accountName, name, phase: 'cold', activity: 'crafting',
-            level, exp: Number(DataCache.experience[level - 1]), loc: { ...station.loc }, currentRegion: 'Giran',
+            level, exp: Number(DataCache.experience[level - 1]), loc: { ...loc }, currentRegion: 'Giran',
             adena: held(rows, 57), inventory: Life.inventorySummaryFromItems(await Database.fetchItems(id)),
             vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
             stats: { classId, generatedCold: true, money: [36000, 0, 0, 0], ...stats }, timing: {} }, 'b5_chain_fixture');
@@ -48,15 +52,18 @@ const item = (selfId, amount) => ({ selfId, amount, name: nativeItem(selfId)?.te
     try {
         await Database.init();
         await Life.init();
-        await seed(Craft.crafterAccount(station), 'ChainStation', 57, 70, [item(57, 1000000)],
-            { craftStationId: station.id, generatedIndex: 10000 });
+        const dwarf = await seed('bot_b5_chain_dwarf', 'ChainDwarf', 57, 70, [item(57, 1000000)], { role: 'crafter', twin: { town: 'Giran' } });
+        await Database.setCharacterRecipe(dwarf.characterId, recipe.recipeId, recipe.type);
+        await publishTwinOffer(dwarf);
+        assert(Workshop.publicRecipeRows(dwarf.characterId).some(row => row[1] === recipe.recipeId), 'the dwarf publishes the Crystal Staff');
         const owned = inputs.get(gemstoneId) - 2, bought = 2;
         const staffSlot = Number(nativeItem(recipe.productId)?.etc?.slot || 0);
         assert(staffSlot > 0, 'the staff has a native paperdoll slot');
         let customer = await seed('bot_b5_chain', 'ChainCustomer', 10, 40,
             [item(57, 1000000), ...[...inputs].map(([id, amount]) => item(id, id === gemstoneId ? owned : amount))], {
                 equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: recipe.recipeId,
-                    target: { selfId: recipe.productId, slot: staffSlot } } });
+                    target: { selfId: recipe.productId, slot: staffSlot },
+                    craftProviders: { [recipe.recipeId]: { workshop: true, characterId: dwarf.characterId } } } });
         const id = customer.characterId;
         const notReady = await Craft.craft(customer, () => 0);
         assert.equal(notReady.crafted, false, 'part of the gemstones is not a craft');

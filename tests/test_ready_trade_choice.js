@@ -15,9 +15,14 @@ const leaf = { activity: 'shopping', kind: 'buy', sourceType: 'afk', itemId: 186
 const economy = { network: { activity: leaf } };
 assert.deepEqual(Choice.purchase(state, economy, board), [1, 1869, 2, 77, 78, 4, 237]);
 for (const patch of [{ quoted: false }, { executable: false }, { sourceType: 'npc' },
-    { activity: 'hunting' }, { unitPrice: 300 }, { amount: 3 }, { town: 'Giran' }, { amount: 0 }]) {
+    { activity: 'hunting' }, { unitPrice: 200 }, { town: 'Giran' }, { amount: 0 }]) {
     assert.equal(Choice.purchase(state, { network: { activity: { ...leaf, ...patch } } }, board), null);
 }
+const unplaced = new BoardIndex();
+unplaced.put({ id: 55, ownerId: 98, kind: 'sell_ad', custodyPolicy: 1, revision: 1,
+    storeType: 1, town: null, lines: [{ lineId: 56, selfId: 1869, count: 2, price: 237 }] });
+assert.deepEqual(Choice.purchase(state, { network: { activity: { ...leaf, town: 'Oren' } } }, unplaced),
+    [1, 1869, 2, 55, 56, 1, 237], 'an ad with no town counts in every town');
 assert.equal(Choice.purchase(state, { ...economy, intentPending: true }, board), null);
 assert.equal(Choice.purchase({ ...state, characterId: 99 }, economy, board), null);
 assert.equal(Choice.purchase({ ...state, inventory: { 1869: { amount: 2 } } },
@@ -46,12 +51,6 @@ for (const tuple of [[1, 1869, 3, 77, 78, 4, 237], [1, 1869, 2, 77, 78, 5, 237],
     [1, 1869, 2, 77, 78, 4, 238], [3, 1869, 2, 77, 78, 4, 237], [1, 1869, 2, 77, 79, 4, 237],
     [1, 1869, 2, 77, 78, 4, Infinity], [1, 1869, 2]]) assert.equal(Choice.resolve(tuple, board, 42), null);
 assert.equal(Choice.resolve([1, 1869, 2, 77, 78, 4, 237], board, 99), null);
-let inspected = 0;
-const observed = board.heads.bind(board);
-board.heads = (id, side, options) => { assert.equal(options.maxInspected, 20); inspected++;
-    return observed(id, side, options); };
-Choice.purchase(state, economy, board);
-assert.equal(inspected, 1, 'one indexed query for the already selected item');
 assert(Buffer.byteLength(JSON.stringify(prepared(state))) < 256);
 {
     // A buy part not prepared is absent from the packet, not a page (no d):

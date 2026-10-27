@@ -4,13 +4,13 @@ const Material = require('./CraftMaterialParty');
 const REASON = 'party_material_route_unavailable';
 const evacuating = party => Material.isObjective(party.stats?.objective) && !!party.stats?.travel?.materialEvacuation;
 
-// Reuse the bounded, indexed B/A material alternatives. A destination must
+// Reuse the bounded, indexed material alternatives (CraftMaterialParty GRADES). A destination must
 // supply every unfinished owner's input, possibly from different mobs. Never
 // scan the atlas or simulate fights to find a replacement for a risky camp.
 function select(party, members, profiles, options) {
     const goals = Material.needs(members, party.stats.objective, party.stats.agreement);
     if (!goals.length) return null;
-    const spoiler = !!Material.partySpoiler(members);
+    const spoiler = Material.partySpoiler(members);
     const alternatives = goals.map(goal => Material.campsFor(
         members.find(state => Number(state.characterId) === Number(goal.characterId)), goal.itemId, profiles, spoiler));
     const Index = invoke('GameServer/Bot/AI/SpotIndex'), Routes = invoke('GameServer/Bot/AI/LevelingRoutes');

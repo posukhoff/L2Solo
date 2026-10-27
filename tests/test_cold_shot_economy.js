@@ -8,6 +8,7 @@ fixture.assertConfigured(options.default);
 useRate('x10');
 const Database = invoke('Database'), Data = invoke('GameServer/DataCache');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
+const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Shots = invoke('GameServer/Bot/Economy/ColdShotEconomyService');
 const Policy = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
@@ -74,6 +75,14 @@ async function images(ids) {
         character: (await Database.execute(['SELECT * FROM characters WHERE id=?', [id]]))[0],
         life: (await Database.execute(['SELECT * FROM bot_life_state WHERE characterId=?', [id]]))[0] })));
 }
+// The worker's selection (ShotCraftPolicy.selectionFor) for a D-shot craft:
+// the seller's helmet line and the buyer's bid line, read now from the board.
+function shotCraft(supplierId, buyerId, batches = 7) {
+    const ask = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === supplierId);
+    const bid = Afk.offers(1463, Afk.BUY).find(row => Number(row.sourceId) === buyerId);
+    return { recipeId: 20, batches, gear: [45, 0, ask.recordId, ask.lineId, ask.price, ask.expectedRevision].map(Number),
+        ...(bid ? { exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) } : {}) };
+}
 (async() => {
     let originals;
     try {
@@ -95,21 +104,15 @@ async function images(ids) {
         const buyerContext = Economy.forState(buyer, { timestamp: now, routeRows: preparedRoutes(buyer) });
         await Afk.closeBotRecord(shotSeller.characterId, shotShop.id);
         const packet = buyerContext.statsPacket;
-        buyer = await Life.upsertState({ ...buyer, stats: { ...buyer.stats, ...packet, shotDemand: { itemId: 1463, amount: 1000,
-            maxSpend: Funding.spendable({ ...buyer, stats: { ...buyer.stats, ...packet } }, 0,
-                { itemId: 1463, survivalCost: buyerContext.kitCost(1463) }), at: now } } }, 'native_funded_shots');
-        const hiddenSignal = Shots.marketSnapshot(now).shotDemand.get(1463).find(row => row.characterId === buyer.characterId);
-        assert.equal(hiddenSignal, undefined, 'private wishes and wallet are unavailable to the seller');
+        buyer = await Life.upsertState({ ...buyer, stats: { ...buyer.stats, ...packet } }, 'native_funded_shots');
         // The backed buy shop provides a concrete quote of 100 per shot.
-        // Its owner clears the transient signal so the indexed ad is the source.
-        buyer = await Life.upsertState({ ...buyer, stats: { ...buyer.stats, shotDemand: null } }, 'native_ad_demand');
         await Afk.publishBot(buyer.characterId, { kind: 'shop',  storeType: Afk.BUY, town: 'Giran', title: 'Funded D shots',
             lines: [{ selfId: 1463, name: 'Soulshot: D-grade', count: 1000, price: 100, enchant: 0, stackable: true, slot: 0 }] });
-        const signal = Shots.marketSnapshot(now).shotDemand.get(1463).find(row => row.characterId === buyer.characterId);
-        assert.equal(signal.amount, 1000); assert.equal(signal.origin, 'public_bid');
         assert.equal(held(await Database.fetchItems(buyer.characterId), 57), 900000, 'the demand is paid into escrow');
         await Database.setCharacterRecipe(crafter.characterId, 20, 'dwarven');
         await Database.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 1 }, crafter.characterId);
+        // The learned Crystallize reaches the worker's view as the live refresh puts it there.
+        crafter = { ...crafter, stats: { ...crafter.stats, coldCombat: Profile.legacySnapshot(crafter, await Database.fetchSkills(crafter.characterId), now) } };
         crafter = await measuredEconomy(crafter, now);
         const recipe = Recipes.resolveByRecipeId(20);
         assert.equal(crafter.stats.money[0], 77000, 'labour uses three measured native hunting rounds');
@@ -119,18 +122,16 @@ async function images(ids) {
         // remains unprofitable for the whole finite 1000-unit bid.
         await sell(supplier, 45, 250000);
         const refusedBefore = await images([crafter.characterId, supplier.characterId]);
-        assert.equal(Shots.craftCandidate(crafter, recipe, Shots.marketSnapshot(now)), null);
-        await Shots.execute(crafter, { craft: { recipeId: 20, batches: 7 } }, now);
+        const refused = shotCraft(supplier.characterId, buyer.characterId);
+        assert.equal(Shots.recheck(crafter, refused), null);
+        await Shots.execute(crafter, { craft: refused }, now);
         assert.deepEqual(await images([crafter.characterId, supplier.characterId]), refusedBefore,
             'below-floor production cannot debit, crystallize or consume materials');
 
         const oldOffer = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === supplier.characterId);
         assert(oldOffer, 'the expensive physical helmet remains in its seller escrow');
         await Afk.repriceBot(supplier.characterId, oldOffer.lineId, 1000, oldOffer.expectedRevision);
-        const index = Shots.marketSnapshot(now), step = Policy.decide(crafter, index, [20]);
-        assert.equal(step.craft.recipeId, 20); assert.equal(step.craft.batches, 7);
-        assert.equal(step.craft.gear[0], 45, 'the selected physical crystal source crosses the compact seam');
-        assert.equal(step.craft.exit[0], index.offersFor(1463, Afk.BUY).find(row => row.sourceId === buyer.characterId).recordId);
+        const step = { craft: shotCraft(supplier.characterId, buyer.characterId) };
         const walletBeforeInterest = held(await Database.fetchItems(buyer.characterId), 57);
         const interest = await Afk.publishBot(buyer.characterId, { kind: 'buy_ad', storeType: Afk.BUY,
             town: 'Giran', title: 'Conditional shot interest', lines: [{ selfId: 1463, name: 'Soulshot: D-grade',
@@ -139,10 +140,17 @@ async function images(ids) {
         assert.equal(held(await Database.fetchItems(buyer.characterId), 57), walletBeforeInterest);
         const conditional = Afk.offers(1463, Afk.BUY).find(offer => offer.recordId === interest.id);
         assert(conditional?.conditional);
-        const interestOnly = { ...index, offersFor: (id, type, excluded) => Number(id) === 1463 && type === Afk.BUY
-            ? [conditional] : index.offersFor(id, type, excluded) };
-        assert.equal(Shots.craftCandidate(crafter, recipe, interestOnly), null,
-            'conditional interest cannot finance production that a backed shop can finance');
+        // Decision (b), 2026-10-24: an unbacked bid is a real buyer sized at
+        // what its line takes: its count past the cheaper foreign asks and the
+        // crafter's own held units; the rest of the batches is residual.
+        const recipeOutput = step.craft.batches * Number(recipe.productCount);
+        const cheaper = Afk.offers(1463, Afk.SELL).filter(offer => Number(offer.sourceId) !== crafter.characterId
+            && offer.price < conditional.price).reduce((sum, offer) => sum + Number(offer.count), 0);
+        const taken = Math.min(recipeOutput, conditional.count - cheaper - held(await Database.fetchItems(crafter.characterId), 1463));
+        const conditionalPlan = Shots.recheck(crafter, { ...step.craft, exit: [conditional.recordId, conditional.lineId,
+            conditional.price, conditional.expectedRevision].map(Number) });
+        assert.equal(conditionalPlan?.expectedSold, taken, 'conditional interest finances the lots its line takes');
+        assert.equal(conditionalPlan.valuation.expectedReceipts, taken * conditional.price);
         await Afk.closeBotRecord(buyer.characterId, interest.id);
         assert.equal(held(await Database.fetchItems(buyer.characterId), 57), walletBeforeInterest);
         const nativeStep = Policy.unpackStep(Policy.packStep(step));
@@ -150,19 +158,11 @@ async function images(ids) {
         assert.equal(Shots.recheck(crafter, { ...nativeStep.craft,
             gear: nativeStep.craft.gear.map((value, at) => at === 5 ? Number(value) + 1 : value) }), null,
         'a source revision mismatch refuses the sparse identity before physical spending');
-        const candidate = Shots.craftCandidate(crafter, recipe, index);
+        const candidate = Shots.recheck(crafter, nativeStep.craft);
         assert(candidate.r >= crafter.stats.money[1]);
         assert(Funding.spendable(crafter, 0, { r: candidate.r }) >= candidate.gear.cash + candidate.orePrice * 21);
-        const history = [];
-        originals = { buy: Afk.buyFromShop, npc: Database.purchaseNpcInventoryItem,
-            basket: Database.purchaseNpcInventoryBasket,
-            crystal: Database.crystallizeInventoryItem, craft: Database.craftInventoryItems };
-        Afk.buyFromShop = async(...args) => {const receipt = await originals.buy(...args);history.push('gear');return receipt;};
-        Database.purchaseNpcInventoryBasket = async(...args) => {const receipt = await originals.basket(...args);history.push('ore');return receipt;};
-        Database.crystallizeInventoryItem = async(...args) => {const receipt = await originals.crystal(...args);history.push('crystal');return receipt;};
-        Database.craftInventoryItems = async(...args) => {const receipt = await originals.craft(...args);history.push('craft');return receipt;};
+        originals = { buy: Afk.buyFromShop, npc: Database.purchaseNpcInventoryItem };
         const result = await Shots.execute(crafter, nativeStep, now);
-        assert.deepEqual(history, ['gear', 'crystal', 'ore', 'craft']);
         const actual = await Database.fetchItems(crafter.characterId);
         assert.equal(result.stats.shotCraft.productId, 1463);
         assert.equal(held(actual, 1463), 1092); assert.equal(result.inventory[1463].amount, 1092);
@@ -186,14 +186,17 @@ async function images(ids) {
             'the added recipe-route demand is physically funded above existing crafted supply');
         let recipeBuyer = await seed([cash(1000000), { selfId: 1463, name: 'Soulshot: D-grade', amount: 1000 },
             { selfId: 129, name: 'Sword of Revolution', amount: 1, equipped: true, slot: 7 }], { classId: 56, level: 20, name: 'Learner' });
+        // The learner breaks bought gear with its own Crystallize (248).
+        await Database.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 1 }, recipeBuyer.characterId);
+        recipeBuyer = { ...recipeBuyer, stats: { ...recipeBuyer.stats, coldCombat: Profile.legacySnapshot(recipeBuyer, await Database.fetchSkills(recipeBuyer.characterId), now) } };
         recipeBuyer = await measuredEconomy(recipeBuyer, now);
-        const recipeIndex = Shots.marketSnapshot(now), recipeStep = Policy.decide(recipeBuyer, recipeIndex, []);
-        assert.equal(recipeStep, null, 'a recipe scroll cannot be valued above its finite supported route');
-        assert(Shots.craftCandidate(recipeBuyer, recipe, recipeIndex), 'the requested recipe has a profitable native route');
+        assert(Shots.recheck(recipeBuyer, shotCraft(supplier.characterId, buyer.characterId)),
+            'the requested recipe has a profitable native route');
         // An expensive scroll is refused before acquisition. A later cheap
         // public quote creates a positive finite acquisition route.
         const beforeRecipe = await images([recipeBuyer.characterId, supplier.characterId]);
-        const waiting = await Shots.execute(recipeBuyer, { recipeTarget: 20 }, now + 31000);
+        const waiting = await Shots.execute(recipeBuyer, { recipeTarget: 20,
+            recipeRoute: shotCraft(supplier.characterId, buyer.characterId) }, now + 31000);
         const afterRecipe = await images([recipeBuyer.characterId, supplier.characterId]);
         assert.deepEqual(afterRecipe.map(row => row.items), beforeRecipe.map(row => row.items));
         assert.deepEqual(afterRecipe.map(row => row.character), beforeRecipe.map(row => row.character));
@@ -201,15 +204,14 @@ async function images(ids) {
         assert.equal(waiting.stats.shotRecipeDemand, undefined);
         const bookOffer = Afk.offers(1804, Afk.SELL).find(row => Number(row.sourceId) === supplier.characterId);
         await Afk.repriceBot(supplier.characterId, bookOffer.lineId, 1, bookOffer.expectedRevision);
-        const acceptedRecipe = Policy.decide(waiting, Shots.marketSnapshot(now + 62000), []);
-        assert.equal(acceptedRecipe.recipeTarget, 20); assert(acceptedRecipe.recipeRoute);
+        const acceptedRecipe = { recipeTarget: 20, recipeRoute: shotCraft(supplier.characterId, buyer.characterId) };
         const learned = await Shots.execute(waiting, Policy.unpackStep(Policy.packStep(acceptedRecipe)), now + 62000);
         assert((await Database.fetchCharacterRecipes(recipeBuyer.characterId)).some(row => Number(row.recipeId) === 20));
         assert.equal(learned.adena, 999999); assert.equal(held(await Database.fetchItems(recipeBuyer.characterId), 57), 999999);
         assert.equal(held(await Database.fetchItems(recipeBuyer.characterId), 1804), 0);
         assert.equal(held(await Database.fetchItems(supplier.characterId), 1804), 0);
         assert.equal(held(await Database.fetchItems(supplier.characterId), 57), 1001001);
-        assert.equal(learned.stats.shotRecipeDemand, null);
+        assert.equal(learned.stats.shotRecipeDemand ?? null, null);
         console.log('PASS finite recipe price refusal, physical paid delivery and scroll consumption');
 
         await Database.setItem(supplier.characterId, { selfId: 1463, name: 'Soulshot: D-grade', amount: 300 });
@@ -234,32 +236,6 @@ async function images(ids) {
         const fighterAfter = await images([fighter.characterId, supplier.characterId]);
         assert.deepEqual(fighterAfter.map(row => row.items), fighterBefore.map(row => row.items));
         assert.equal(reviewed.adena, 51000);
-        // The crafters' demand row (shotDemand) is the far step's output: the
-        // worker's plan for the step proposes it with the step's stats.
-        const workerPlan = require('./helpers/workerEconomyDecision');
-        const missingStep = (await workerPlan(fighter, { timestamp: now + 70000, townVisit: true })).plan;
-        const demand = missingStep.statsPacket.shotDemand;
-        assert.equal(demand?.itemId, 1463, 'the missing stack stays visible to crafters');
-        assert(demand.amount > 0 && demand.maxSpend > 0);
-        const stockedFighter = await nativeEconomy(await seed([cash(51000), { selfId: 1463, name: 'Soulshot: D-grade', amount: 100000 },
-            { selfId: 129, name: 'Sword of Revolution', amount: 1, equipped: true, slot: 7 }],
-        { classId: 1, name: 'Stocked', town: 'Gludio', loc: GLUDIO }), now);
-        const stockedStep = (await workerPlan({ ...stockedFighter, stats: { ...stockedFighter.stats, shotDemand: demand } },
-            { timestamp: now + 70000, townVisit: true })).plan;
-        assert.equal(stockedStep.statsPacket.shotDemand, null, 'a stocked fighter clears its old demand');
-        // An unchanged demand keeps its row with its old `at`: the crafters'
-        // index drops a row 30 min after `at` (MarketDemandIndex).
-        const heldStep = (await workerPlan({ ...fighter, stats: { ...fighter.stats, shotDemand: demand } },
-            { timestamp: now + 80000, townVisit: true })).plan;
-        assert.deepEqual(heldStep.statsPacket.shotDemand, demand, 'an unchanged demand keeps its row and its age');
-        // A step outside hunting/resting/shopping/grouped leaves the row as it
-        // was: none posted for a missing stack, an old one not cleared.
-        const offStep = (await workerPlan({ ...fighter, activity: 'traveling' },
-            { timestamp: now + 70000, townVisit: true })).plan;
-        assert.equal('shotDemand' in offStep.statsPacket, false, 'a traveling step posts no demand row');
-        const offStocked = (await workerPlan({ ...stockedFighter, activity: 'traveling', stats: { ...stockedFighter.stats, shotDemand: demand } },
-            { timestamp: now + 70000, townVisit: true })).plan;
-        assert.deepEqual(offStocked.statsPacket.shotDemand, demand, 'a traveling step keeps the previous row');
 
         // MVP-1: the money price comes only from wishes with a step now, so a
         // short walk to Gludio pays for the batch; this field is far enough
@@ -312,10 +288,17 @@ async function images(ids) {
             { selfId: 1463, amount: 1000 }, { selfId: 129, amount: 1, equipped: true, slot: 7 }],
         { classId: 57, level: 55, name: 'CLearner' });
         cCrafter = await measuredEconomy(cCrafter, now);
-        const cTarget = Shots.recipeTarget(cCrafter, Shots.marketSnapshot(now), [], 21);
+        // The worker's selection for a C-shot craft: crystals bought in Giran
+        // (gear source -3) and the consumer's bid line, read now from the board.
+        const cSelection = (batches = 5) => {
+            const bid = Afk.offers(cRecipe.productId, Afk.BUY).find(row => Number(row.sourceId) === cConsumer.characterId);
+            return { recipeId: 21, batches, gear: [1459, -3, Policy.townCode('Giran'), 0, 100, 0],
+                exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) };
+        };
+        const cTarget = Shots.recheck(cCrafter, cSelection());
         assert(cTarget, 'funded C demand supports acquiring the missing C recipe');
         cCrafter = await Shots.execute(cCrafter, { recipeTarget: 21,
-            recipeRoute: Policy.selectionFor(cTarget.route) }, now + 90000);
+            recipeRoute: Policy.selectionFor(cTarget) }, now + 90000);
         assert((await Database.fetchCharacterRecipes(cCrafter.characterId)).some(row => Number(row.recipeId) === 21));
         assert.equal(held(await Database.fetchItems(cCrafter.characterId), cRecipe.recipeItemId), 0);
         const gearRecipe = Recipes.resolveByProductId(95);
@@ -326,7 +309,7 @@ async function images(ids) {
         const pausedGear = invoke('GameServer/Bot/AI/GearPlanSelection').deferredWishPlan(gearPlan, {}, beforeInputs);
         cCrafter = await Life.upsertState({ ...cCrafter, stats: { ...cCrafter.stats, equipmentPlan: pausedGear } }, 'c_inputs_after_gear_pause');
         assert.equal(Policy.availableMaterial(cCrafter, 1459), 0, 'the collected gear crystal stays reserved');
-        const cCandidate = Shots.craftCandidate(cCrafter, cRecipe, Shots.marketSnapshot(now + 120000));
+        const cCandidate = Shots.recheck(cCrafter, cSelection());
         assert(cCandidate?.batches > 0, 'the learned recipe reaches a finite executable production batch');
         assert.equal(cCandidate.gear.source, 'crystals');
         const crystalSupply = () => Afk.offers(1459, Afk.SELL).filter(row => row.sourceId === supplier.characterId)
@@ -342,9 +325,7 @@ async function images(ids) {
         assert.equal(cCrafter.stats.shotCraft.preparing, undefined, 'completed production clears its preparation facts');
         console.log('PASS physical C recipe purchase/learning, input allocation and C shot production');
     } finally {
-        if (originals) {Afk.buyFromShop = originals.buy;Database.purchaseNpcInventoryItem = originals.npc;
-            Database.purchaseNpcInventoryBasket = originals.basket;
-            Database.crystallizeInventoryItem = originals.crystal;Database.craftInventoryItems = originals.craft;}
+        if (originals) {Afk.buyFromShop = originals.buy;Database.purchaseNpcInventoryItem = originals.npc;}
         await Database.close();fs.rmSync(fixture.directory, { recursive: true, force: true });
     }
 })().catch(error => {console.error(error.stack);process.exitCode = 1;});

@@ -1,11 +1,14 @@
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
+const { partyIdOf } = require('../Population/PartyId');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const EnchantScrolls = invoke('GameServer/Items/C4EnchantScrolls');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+const WealthDecision = invoke('GameServer/Bot/Economy/WealthCraftDecision');
 const ColdSafeEnchantService = invoke('GameServer/Bot/Economy/ColdSafeEnchantService');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const depositQueues = new Map();
 const { MAX_GEAR_COPIES_PER_TYPE } = require('./WarehouseRules');
 
@@ -67,32 +70,30 @@ function overflowCandidate(item, count) {
     };
 }
 
-async function learnActorRecipes(actor, state = null, session = null, { recipeIds = null } = {}) {
+// Every bag scroll the learner takes and the bot's reserves leave free
+// (WealthCraftDecision.heldScroll) whose recipe it does not know yet.
+async function learnActorRecipes(actor, state = null, session = null) {
     const backpack = actor?.backpack;
     if (!session || !backpack?.fetchItems || !backpack.deleteItem || !backpack.registerRecipe || !backpack.hasRecipe) return [];
     const craftLevel = Number(backpack.fetchDwarvenCraftLevel?.(actor) || 0);
     if (craftLevel <= 0) return [];
     const accepted = LifeState.cachedState(Number(actor.fetchId())) || state;
-    if (!recipeIds) {
-        const leaf = invoke('GameServer/Bot/Population/ColdSimulationCoordinator').economyDecisions.decided(accepted)?.activity;
-        recipeIds = leaf?.activity === 'crafting' && Number(leaf.recipeId) > 0 ? [Number(leaf.recipeId)] : [];
-    }
-    if (!recipeIds.length) return [];
 
     const craftState = {
-        ...(state || {}),
-        classId: Number(actor.fetchClassId?.() || state?.classId || state?.stats?.classId || 0),
-        level: Number(actor.fetchLevel?.() || state?.level || 1),
+        ...(accepted || {}),
+        classId: Number(actor.fetchClassId?.() || accepted?.classId || accepted?.stats?.classId || 0),
+        level: Number(actor.fetchLevel?.() || accepted?.level || 1),
         craftLevel,
-        stats: { ...(state?.stats || {}), dwarvenCraftLevel: craftLevel }
+        stats: { ...(accepted?.stats || {}), dwarvenCraftLevel: craftLevel }
     };
+    let reserved = null;
     const learned = [];
     for (const source of backpack.fetchItems().slice()) {
         const item = itemData(source);
         const info = ItemDisposition.recipeInfo(item);
-        if (!info || !recipeIds.includes(Number(info.recipe.recipeId)) || backpack.hasRecipe(actor, info.recipe.recipeId)) continue;
-        const decision = ItemDisposition.recipeDisposition(craftState, item, []);
-        if (decision?.action !== 'learn') continue;
+        if (!info || backpack.hasRecipe(actor, info.recipe.recipeId)) continue;
+        if (!WealthDecision.heldScroll(craftState, info.recipe, item,
+            () => reserved ||= ItemDisposition.reservedEquipmentAmounts(craftState))) continue;
         if (actor.isDead?.()) continue;
 
         const Commit = require('./EconomyCommit');
@@ -139,11 +140,6 @@ async function depositActorUnlocked(actor, state = null, session = null) {
         stored.push({ selfId: item.selfId, name: item.name, amount });
     }
     return { count: stored.reduce((sum, item) => sum + item.amount, 0), items: stored, learned };
-}
-
-function depositActor(actor, state = null, session = null) {
-    if (!actor?.backpack || !actor?.fetchId) return Promise.resolve({ count: 0, items: [] });
-    return serializeDeposit(actor.fetchId(), () => depositActorUnlocked(actor, state, session));
 }
 
 // The actor's warehouse candidates and the amount of each that may be stored:
@@ -309,7 +305,7 @@ function templateFor(selfId) {
 
 function craftRequests(state, warehouseItems) {
     const plan = state?.stats?.equipmentPlan;
-    if (!['active', 'component_ready', 'ready_to_craft'].includes(plan?.status) || plan.strategy !== 'craft') return [];
+    if (!GearAcquisitionPlanner.planRunning(plan) || plan.strategy !== 'craft') return [];
     const Crafting = require('../../Clan/ClanCraftingPolicy');
     return Crafting.warehouseMaterials(plan, state.inventory || {}, warehouseItems || [])
         .map(item => ({ ...item, reason: 'craft' }));
@@ -331,8 +327,7 @@ function marketRequests(state, warehouseItems, reserved = new Map(), options = {
     // room. Only the stock reserved to remain there limits the E keep option.
     const decision = invoke('GameServer/Bot/Economy/BotAfkMarketService').saleDecision(
         { ...state, inventory }, { ...options, economy, stored: reserved });
-    const inBag = new Map(ItemDisposition.saleCandidates(state, { unlimited: true,
-        reserved: economy.craftReservations || ItemDisposition.selectedCraftAmounts(state, economy.network) })
+    const inBag = new Map(ItemDisposition.saleCandidates(state, { unlimited: true })
         .map((item) => [`${Number(item.selfId)}:${Number(item.enchant || 0)}`, Number(item.count)]));
     const choices = [
         ...decision.listings,
@@ -352,7 +347,7 @@ function marketRequests(state, warehouseItems, reserved = new Map(), options = {
 
 function canRelease(state, options = {}) {
     return options.inTown === true && !!state && state.phase === 'cold'
-        && !(state.party?.partyId || state.partyId) && ['hunting', 'resting', 'shopping', 'merchant'].includes(state.activity);
+        && !partyIdOf(state) && ['hunting', 'resting', 'shopping', 'merchant'].includes(state.activity);
 }
 
 function materialRequests(state, warehouseItems) {
@@ -518,7 +513,6 @@ function withdrawalRecord(items, at) {
 module.exports = {
     hasActorWithdrawalCandidates,
     MAX_GEAR_COPIES_PER_TYPE,
-    depositActor,
     depositActorAtWarehouse,
     hasActorDepositCandidates,
     isAtWarehouseService,

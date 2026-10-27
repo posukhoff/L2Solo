@@ -10,7 +10,6 @@ const MarketListingPolicy = invoke('GameServer/Bot/Economy/MarketListingPolicy')
 const MarketTownPolicy = invoke('GameServer/Bot/Economy/MarketTownPolicy');
 const C4RecipeItems = invoke('GameServer/Items/C4RecipeItems');
 const ColdMarketListingService = invoke('GameServer/Bot/Economy/ColdMarketListingService');
-const MarketBuyerActivity = invoke('GameServer/Bot/Economy/MarketBuyerActivity');
 const BotWarehouse = invoke('GameServer/Bot/Economy/BotWarehouseService');
 const Commit = require('../src/GameServer/Bot/Economy/EconomyCommit');
 
@@ -32,7 +31,6 @@ const original = {
     upsertState: LifeState.upsertState,
     learnCraftableRecipes: LifeState.learnCraftableRecipes,
     applyNpcLiquidation: LifeState.applyNpcLiquidation,
-    refreshBuyerActivity: MarketBuyerActivity.refresh,
     depositCold: BotWarehouse.depositCold,
     admit: Commit.admit, finish: Commit.finish
 };
@@ -40,6 +38,7 @@ const original = {
 async function run() {
     const craftState = {
         characterId: 7001,
+        phase: 'cold',
         level: 36,
         classId: 56,
         stats: { classId: 56 },
@@ -131,12 +130,12 @@ async function run() {
     Database.syncInventorySummary = () => Promise.resolve();
     LifeState.upsertState = (state) => Promise.resolve(state);
 
-    assert.equal(await LifeState.learnCraftableRecipes(craftState), craftState,
-        'no accepted economic craft route leaves unselected scrolls intact');
-    const updated = await LifeState.learnCraftableRecipes(craftState, { recipeIds: [recipe.recipeId] });
-    assert.deepStrictEqual(learned, [{ characterId: 7001, recipeId: recipe.recipeId, type: recipe.type }]);
+    // Every held scroll the crafter can learn is learned, whatever its plan wants.
+    const updated = await LifeState.learnCraftableRecipes(craftState);
+    assert.deepStrictEqual(learned, [{ characterId: 7001, recipeId: lowGradeRecipe.recipeId, type: lowGradeRecipe.type },
+        { characterId: 7001, recipeId: recipe.recipeId, type: recipe.type }]);
     assert.strictEqual(updated.inventory[2298].amount, 1, 'learning must consume exactly one recipe item');
-    assert.strictEqual(updated.inventory[2250].amount, 1, 'unselected no-grade recipes remain intact');
+    assert.strictEqual(updated.inventory[2250].amount, 0, 'a held learnable no-grade recipe is learned too');
     assert.strictEqual(updated.inventory[spellbook.selfId].amount, 1, 'spellbooks must remain for NPC liquidation');
     assert.strictEqual(updated.stats.lastRecipeBookLearning.learned[0].recipeId, recipe.recipeId);
 
@@ -159,7 +158,7 @@ async function run() {
     assert.strictEqual(ItemDisposition.canLearnRecipe({ classId: 53, level: 16, craftLevel: 0 }, broadSword), false);
     learned.length = 0;
     const materialCrafter = { ...craftState, characterId: 7002, inventory: { 1814: leatherItem } };
-    const learnedMaterial = await LifeState.learnCraftableRecipes(materialCrafter, { recipeIds: [leatherRecipe.recipeId] });
+    const learnedMaterial = await LifeState.learnCraftableRecipes(materialCrafter);
     assert.deepStrictEqual(learned, [{ characterId: 7002, recipeId: leatherRecipe.recipeId, type: 'dwarven' }]);
     assert.strictEqual(learnedMaterial.inventory[1814].amount, 0, 'learning must consume the material recipe');
 
@@ -173,7 +172,6 @@ async function run() {
         calls.push(['npc', ...candidates.map((item) => Number(item.selfId))]);
         return state;
     };
-    MarketBuyerActivity.refresh = async () => null;
     BotWarehouse.depositCold = async (state) => ({ state, count: 0 });
     await ColdMarketListingService.open({ ...materialCrafter, phase: 'cold', activity: 'shopping', level: 36,
         inventory: { ...materialCrafter.inventory, 2250: craftState.inventory[2250] },
@@ -196,7 +194,6 @@ run().catch((error) => {
     LifeState.upsertState = original.upsertState;
     LifeState.learnCraftableRecipes = original.learnCraftableRecipes;
     LifeState.applyNpcLiquidation = original.applyNpcLiquidation;
-    MarketBuyerActivity.refresh = original.refreshBuyerActivity;
     BotWarehouse.depositCold = original.depositCold;
     Commit.admit = original.admit;
     Commit.finish = original.finish;

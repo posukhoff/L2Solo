@@ -28,11 +28,11 @@ const base = {
     stats: { equipmentPlan: plan }
 };
 const goal = { type: 'upgrade_gear', status: 'active', target: { itemId: 127 },
-    plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran', sourceType: 'npc' } };
+    plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran', sourceType: 'npc' } };
 const refunded = { ...base, adena: 1_500_000 };
 
 const saved = {
-    ownerRecords: AfkTrade.ownerRecords, review: GoalService.review, reconcile: BotAfkMarketService.reconcile,
+    ownerRecords: AfkTrade.ownerRecords, review: GoalService.review, withdrawBuyAds: BotAfkMarketService.withdrawBuyAds,
     beginMarketTravel: GoalExecutor.beginMarketTravel, cachedState: LifeState.cachedState, applyResolve: LifeState.applyResolve,
     upsertState: LifeState.upsertState, recordMany: LifeEvents.recordMany, resolveSolo: BackgroundResolver.resolveSolo,
     ensure: SpotProfiles.ensure, findForState: SpotProfiles.findForState
@@ -45,11 +45,11 @@ const saved = {
         assert.strictEqual(PopulationService.canResumeAffordableMarketPlan(base), true, 'fixture: funded with the escrow');
         const calls = [];
         GoalService.review = () => Promise.resolve({ current: goal, candidates: [] });
-        let reconcileResult = () => Promise.resolve({ changed: true, withdrawn: true, state: refunded });
-        BotAfkMarketService.reconcile = (state, current) => {
-            calls.push('reconcile');
-            assert.strictEqual(current, goal);
-            return reconcileResult();
+        let withdrawResult = () => Promise.resolve({ changed: true, withdrawn: true, state: refunded });
+        BotAfkMarketService.withdrawBuyAds = (ownerId, selfId) => {
+            calls.push('withdraw');
+            assert.deepStrictEqual([ownerId, selfId], [base.characterId, null], 'all of the bot\'s buy records');
+            return withdrawResult();
         };
         GoalExecutor.beginMarketTravel = (state) => { calls.push(`travel:${state.adena}`); return { ...state, activity: 'traveling' }; };
         LifeState.upsertState = (value) => Promise.resolve(value);
@@ -64,7 +64,7 @@ const saved = {
         // withdrawn and the trip starts from the refunded wallet in one pass.
         LifeState.cachedState = () => base;
         let result = await command();
-        assert.deepStrictEqual(calls, ['travel:700000', 'reconcile', 'travel:1500000'], 'withdraw, then leave with the money');
+        assert.deepStrictEqual(calls, ['travel:700000', 'withdraw', 'travel:1500000'], 'withdraw, then leave with the money');
         assert.strictEqual(result.state.activity, 'traveling');
         assert.strictEqual(result.state.adena, 1500000);
 
@@ -72,37 +72,37 @@ const saved = {
         PopulationService.resolveColdState = () => Promise.resolve({ ok: true, reason: 'resolved' });
         for (const failure of [() => Promise.reject(new Error('db')), () => Promise.resolve({ changed: false, state: base })]) {
             calls.length = 0;
-            reconcileResult = failure;
+            withdrawResult = failure;
             result = await command();
-            assert.deepStrictEqual(calls, ['travel:700000', 'reconcile'], 'no trip while the money stays in the order');
+            assert.deepStrictEqual(calls, ['travel:700000', 'withdraw'], 'no trip while the money stays in the order');
             assert.strictEqual(result.reason, 'resolved', 'the bot goes on with its fight');
         }
         // Withdrawn, but the refunded bot may not leave (here: it joined a
         // party meanwhile): the pre-refund state is not applied.
         calls.length = 0;
         const joined = { ...refunded, party: { partyId: 'p1' } };
-        reconcileResult = () => Promise.resolve({ changed: true, withdrawn: true, state: joined });
+        withdrawResult = () => Promise.resolve({ changed: true, withdrawn: true, state: joined });
         let cache = base;
         LifeState.cachedState = () => cache;
-        BotAfkMarketService.reconcile = () => { calls.push('reconcile'); cache = joined; return reconcileResult(); };
+        BotAfkMarketService.withdrawBuyAds = () => { calls.push('withdraw'); cache = joined; return withdrawResult(); };
         result = await command();
-        assert.deepStrictEqual(calls, ['travel:700000', 'reconcile'], 'no trip for a bot that joined a party');
+        assert.deepStrictEqual(calls, ['travel:700000', 'withdraw'], 'no trip for a bot that joined a party');
         assert.strictEqual(result.reason, 'state_changed', 'the fight result of the old state is not applied');
         assert.strictEqual(result.state, joined);
-        BotAfkMarketService.reconcile = () => { calls.push('reconcile'); return reconcileResult(); };
+        BotAfkMarketService.withdrawBuyAds = () => { calls.push('withdraw'); return withdrawResult(); };
         LifeState.cachedState = () => base;
         PopulationService.resolveColdState = fallback;
 
         // 2. The handoff right after a rest.
         calls.length = 0;
-        reconcileResult = () => Promise.resolve({ changed: true, withdrawn: true, state: refunded });
+        withdrawResult = () => Promise.resolve({ changed: true, withdrawn: true, state: refunded });
         LifeState.cachedState = () => null;
         BackgroundResolver.resolveSolo = () => ({ patch: { activity: 'hunting' }, events: [],
             materialize: { exp: 0, sp: 0, adena: 0, items: [] }, nextResolveAt: Date.now() + 30000, debug: { activity: 'recovered' } });
         LifeState.applyResolve = () => Promise.resolve(base);
         const rested = await PopulationService.resolveColdState({ ...base, activity: 'resting',
             stats: { ...base.stats, restUntil: Date.now() - 1 } });
-        assert.deepStrictEqual(calls, ['travel:700000', 'reconcile', 'travel:1500000'], 'after a rest too');
+        assert.deepStrictEqual(calls, ['travel:700000', 'withdraw', 'travel:1500000'], 'after a rest too');
         assert.strictEqual(rested.state.activity, 'traveling');
 
         // No money in an order: the trip starts at once, nothing to withdraw.
@@ -117,7 +117,7 @@ const saved = {
     } finally {
         Object.assign(AfkTrade, { ownerRecords: saved.ownerRecords });
         Object.assign(GoalService, { review: saved.review });
-        Object.assign(BotAfkMarketService, { reconcile: saved.reconcile });
+        Object.assign(BotAfkMarketService, { withdrawBuyAds: saved.withdrawBuyAds });
         Object.assign(GoalExecutor, { beginMarketTravel: saved.beginMarketTravel });
         Object.assign(LifeState, { cachedState: saved.cachedState, applyResolve: saved.applyResolve, upsertState: saved.upsertState });
         Object.assign(LifeEvents, { recordMany: saved.recordMany });

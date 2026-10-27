@@ -58,11 +58,15 @@ const changedOwners = new Set();
 const changedItemIds = new Set();
 
 function notifyBoardChange(change) {
-    // Main and worker economic consumers use the same item->recipe source.
-    // Membership changes follow board events, never a per-actor catalogue scan.
-    const production = ColdOccupationSources.recipeIndex(board);
-    if (change.reset) production.reset();
-    else for (const id of change.selfIds || []) production.update(id);
+    // Main's live board carries the recipe index EconomyContext.marketBoard
+    // builds at main's first board read (its rows walk the recipe catalogue
+    // once, and again on a board reset); here it follows the board: changed
+    // items update their recipes, never a per-actor catalogue scan. Main's
+    // rows are not rechecked on census moves (only the worker's index is,
+    // ColdSimulationWorker recheck).
+    const production = ColdOccupationSources.recipeIndex(board, false);
+    if (production && change.reset) production.reset();
+    else if (production) for (const id of change.selfIds || []) production.update(id);
     for (const listener of boardChangeListeners) {
         try { listener(change); }
         catch (error) { utils.infoWarn('AfkTrade', 'board listener failed: %s', error.message); }
@@ -629,6 +633,12 @@ async function settleOwners(ownerIds = []) {
     }
 }
 
+// A completed meeting's deals (TradeMeeting.terminal, the rows the journal
+// keeps): board deals for the market counters, as a store deal in finalizeTrade.
+function countMeetingDeals(deals = []) {
+    for (const deal of deals) MarketCounters.boardTrade(deal);
+}
+
 async function finalizeTrade(result, kind, counterpartyId) {
     const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
     if (result.replayed) {
@@ -802,7 +812,7 @@ async function repriceBotLines(ownerId, reprices = [], { withdrawals = [], updat
         { withdrawals: leaving, updates: observations, coldAuthority, hotAuthority, canCommitReview });
     syncAfterReprice(ownerId, result);
     result.shops.forEach(refreshRecord);
-    return { changed: result.changed, updated: result.updated,
+    return { changed: result.changed, updated: result.updated, coldLifeRows: result.coldLifeRows,
         skipped: reprices.length - owned.length + withdrawals.length - leaving.length
             + updates.length - observations.length + result.skipped.length };
 }
@@ -813,9 +823,7 @@ async function repriceBotLines(ownerId, reprices = [], { withdrawals = [], updat
 function syncAfterReprice(ownerId, result) {
     if (!result.ownerInventory) return;
     syncOnlineInventory(ownerId, result.ownerInventory);
-    const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
     acceptFenced(result, ownerId);
-    invoke('GameServer/Bot/Economy/BotAfkMarketService').rememberInventory(ownerId, LifeState.snapshot(ownerId));
 }
 
 // A failed publish or relocation leaves the owner's shop as it was: its place
@@ -1089,15 +1097,6 @@ async function init() {
     invoke('GameServer/Bot/AI/KnowledgeLearning').stages();
     const experience = await Database.initializeBotMarketTrades('history');
     (experience.rows || []).forEach(row => LifeState.acceptMarketTrades(row.characterId, row.marketTrades));
-    for (;;) {
-        const owners = await Database.fetchConditionalMigrationOwners();
-        if (!owners.length) break;
-        for (const owner of owners) {
-            const migrated = await Database.migrateConditionalTradeAds(owner);
-            if (migrated.row) LifeState.acceptLifecycleRow(migrated.row);
-        }
-        await new Promise(resolve => setImmediate(resolve));
-    }
     await Database.initializeBoardPricing();
     const shops = await Database.fetchAfkTradeShops(null, { activeOnly: true });
     await require('./GiranShopDistribution').restore(shops);
@@ -1115,8 +1114,8 @@ async function init() {
     // The market counters learn the board's last deals again (group E, E58).
     MarketCounters.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure() || []);
     MarketCounters.reset();
-    MarketCounters.load(await Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS }),
-        await Database.fetchRecentFixedStoreDeals());
+    MarketCounters.load(await Database.fetchRecentBoardDeals({ perItem: MarketCounters.REPLAY_DEALS,
+        rangeMs: MarketCounters.DAY_MS }), await Database.fetchRecentFixedStoreDeals());
     boardReady = true;
     await require('./TradeMeetingService').init();
     notifyBoardChange({ ready: true });
@@ -1150,6 +1149,7 @@ function settlePending() {
 
 module.exports = {
     BUY,
+    countMeetingDeals,
     SELL,
     restorePlace,
     activeShops,
@@ -1166,6 +1166,7 @@ module.exports = {
     committedTrade,
     deliverNotifications,
     findOwnerProjection,
+    kindOf,
     findProjection,
     init,
     leave,

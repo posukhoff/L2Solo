@@ -1,19 +1,26 @@
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
+const { partyIdOf } = require('../Population/PartyId');
 const BeginnerShots = require('../../Items/C4BeginnerShots');
 const ClanCrafting = require('../../Clan/ClanCraftingPolicy');
 const DataCache = invoke('GameServer/DataCache');
+const { GRADES } = invoke('GameServer/Bot/AI/GearGradeRule');
 const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const C4RecipeItems = invoke('GameServer/Items/C4RecipeItems');
 const C4EnchantScrolls = invoke('GameServer/Items/C4EnchantScrolls');
-const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const PriceDecision = require('./PriceDecision');
 const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const ClanSimulationConfig = invoke('GameServer/Clan/ClanSimulationConfig');
 const InventoryLimits = require('../../Inventory/InventoryLimits');
+const Crystallization = invoke('GameServer/Bot/Economy/BotCrystallization');
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
+const CraftInputReservations = require('./CraftInputReservations');
+const ClanSupply = invoke('GameServer/Clan/ClanSupplyPolicy');
+const CombinedErrands = require('../Population/CombinedErrandPolicy');
+const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 const SELLABLE_KINDS = ['Weapon.', 'Armor.', 'Other.Material', 'Other.Shot'];
 const NPC_ONLY_KINDS = ['Other.Recipe', 'Other.Spellbook'];
-const NPC_LIQUIDATION_MAX_UNIT_PRICE = 1000;
 const WAREHOUSE_GEAR_MIN_BASE_PRICE = 1000;
 const INVENTORY_SLOT_LIMIT = 80;
 // A forced trip to town starts at 20 slots of either kind (the author: 3 junk, 6
@@ -26,14 +33,11 @@ const NPC_SURPLUS_GEAR_MIN_SLOTS = 20;
 // trip is the only thing that takes a hunting bot to town, and the thresholds above
 // alone stopped every sale for hours (live, 2026-10-03: 2,513 -> 21 static sales in 2 h).
 const HALF_FULL_CLEANUP_SLOTS = 40;
-const CLAN_PROGRESSION_ITEM_IDS = new Set([1419]);
-const GRADE_ORDER = Object.freeze({ none: 0, d: 1, c: 2, b: 3, a: 4, s: 5 });
-const SHOT_PRODUCT_RANK = Object.freeze({
-    1463: 'd', 1464: 'c', 1465: 'b', 1466: 'a', 1467: 's',
-    2510: 'd', 2511: 'c', 2512: 'b', 2513: 'a', 2514: 's',
-    3948: 'd', 3949: 'c', 3950: 'b', 3951: 'a', 3952: 's'
-});
+const CLAN_PROGRESSION_ITEM_IDS = new Set([ClanSimulationConfig.bloodMarkItemId]);
+const GRADE_ORDER = Object.freeze(Object.fromEntries(GRADES.map((grade, index) => [grade, index])));
 
+// The planner's one running-plan status set (GearAcquisitionPlanner.planRunning).
+const planRunning = plan => Planner.planRunning(plan);
 
 function templateFor(selfId) {
     return ItemTemplateIndex.findLast(DataCache.items, selfId, templateFor) || null;
@@ -52,8 +56,10 @@ function priceFor(state, item, template) {
     if (String(template?.template?.kind || '') === 'Other.Shot'
         && Number(crafted?.productId) === Number(item.selfId)
         && Number(crafted?.unitPrice || 0) > 0) return Number(crafted.unitPrice);
-    // A nominal value of the bag's item (sorting, lot sizes, summaries); a
-    // board line's ask is the bot's belief (MarketListingPolicy.evaluate).
+    // A nominal value of the bag's item, a sort key only (the sale order,
+    // lot sizes, summaries): no value reads it. A board line's ask is the
+    // bot's belief (MarketListingPolicy.evaluate), a held unit's worth
+    // PriceBelief.reader, the NPC's pay PriceDecision.buyback.
     const seed = (Number(state.characterId || 0) * 31) + (Number(item.selfId || 0) * 17);
     const percent = 70 + (Math.abs(seed) % 21);
     return BotMarketPricing.priceAt({ ...item, basePrice, enchant: saleEnchant(item) }, percent / 100);
@@ -91,7 +97,7 @@ function recipeInfo(item) {
 function recipeProductRank(item) {
     const info = recipeInfo(item);
     if (!info) return 'none';
-    return String(info.product?.etc?.rank || SHOT_PRODUCT_RANK[Number(info.recipe.productId)] || 'none')
+    return String(info.product?.etc?.rank || ShotStock.SHOP_SHOT_RANK.get(Number(info.recipe.productId)) || 'none')
         .toLowerCase();
 }
 
@@ -129,27 +135,12 @@ function isClanProgressionItem(item) {
     return CLAN_PROGRESSION_ITEM_IDS.has(Number(item?.selfId || 0));
 }
 
-function isBelowCGrade(item) {
-    const info = recipeInfo(item);
-    return !!info && gradeIndex(info.productRank) < gradeIndex('c');
-}
-
-function isShotRecipeItem(item) {
-    const info = recipeInfo(item);
-    return !!info && isRecipeItem(item)
-        && String(info.product?.template?.kind || '') === 'Other.Shot';
-}
-
 function isMarketRecipeItem(item) {
     const info = recipeInfo(item);
     return !!info && info.recipe.type === 'dwarven' && isRecipeItem(item);
 }
 
 const CRYSTALS = new Set(Object.values(CRYSTAL_IDS));
-
-function isGradeCrystal(item) {
-    return CRYSTALS.has(Number(item?.selfId));
-}
 
 // Consumables a bot sells to the NPC beyond what its class keeps: arrows (a
 // bot's bow spends none, Actor/BowResources), scrolls other than enchant
@@ -209,6 +200,32 @@ function canLearnRecipe(state, item) {
     return CraftShopService.canCraft(state, info.recipe);
 }
 
+// The recipe the shot plan's scroll demand is for, 0 for none. Learning it
+// (or finding it known) fills the demand.
+function demandedRecipeId(state) {
+    return Number(C4RecipeItems.resolve(state?.stats?.shotRecipeDemand?.itemId)?.recipeId || 0);
+}
+
+// The recipe ids a bot knows, sorted and unique: the given book (ids or
+// rows), else its thread's book (EconomyContext.knownRecipesOf: the
+// worker's recipe book, main's workshop cache), else what its state carries
+// (stats.recipes, recipes, the twin's workshop entries).
+function knownRecipeIds(state, book = null) {
+    if (Array.isArray(book)) return recipeIdsOf(book);
+    // lazy: cycle EconomyContext loads this module at its top
+    const held = invoke('GameServer/Bot/Economy/EconomyContext').knownRecipesOf(state);
+    if (Array.isArray(held)) return recipeIdsOf(held);
+    // lazy: cycle TwinCluster loads this module at its top
+    const Twin = invoke('GameServer/Bot/Economy/TwinCluster');
+    return recipeIdsOf([...(state?.stats?.recipes || state?.recipes || []), ...(Twin.entriesOf(state) || [])]);
+}
+function recipeIdsOf(rows) {
+    return [...new Set(rows.map(entry => Number(entry?.recipeId ?? entry)))]
+        .filter(id => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b);
+}
+
+// The one answer to "may this recipe scroll be sold": not while the bot
+// would learn it ('learn': it crafts the recipe and does not know it).
 function recipeDisposition(state, item, knownRecipeIds = []) {
     const info = recipeInfo(item);
     if (!info || !isRecipeItem(item)) return null;
@@ -255,7 +272,7 @@ function skillBookSlotCount(state = {}, candidates) {
 }
 
 function soloSaleSlotLimit(state = {}, timestamp = Date.now()) {
-    return !(state.party?.partyId || state.partyId)
+    return !partyIdOf(state)
         && !(Number(state.stats?.marketSellRetryAfter || 0) > timestamp)
         ? HALF_FULL_CLEANUP_SLOTS : null;
 }
@@ -309,19 +326,37 @@ function inventoryCleanupNeed(state = {}, options = {}) {
 // the unfinished kit. Legacy paused plans retain their exchange/recipe/combine
 // metadata even though GearPlanSelection records strategy='none'. Resolve a
 // reservation-only view; never reactivate their travel or crafting action.
+// A crystal preparation holds inputs only while the bot can break one of them
+// itself (BotCrystallization.crystallizable): an older plan of a bot without
+// the skill frees its gear. A luxury exchange plan carries its gear inputs in
+// materials; the view drops the ones the bot cannot break.
 function equipmentInputPlan(state, plan = state?.stats?.equipmentPlan) {
+    const view = pausedInputPlan(state, plan);
+    const unbreakable = row => !!Crystallization.reward(templateFor(row.selfId))
+        && !Crystallization.crystallizable(state, row.selfId);
+    if (view?.strategy === 'luxury_exchange' && (view.materials || []).some(unbreakable))
+        return { ...view, materials: view.materials.filter(row => !unbreakable(row)) };
+    return view?.crystalPreparation && !(view.crystalPreparation.materials || [])
+        .some(row => Crystallization.crystallizable(state, row.selfId)) ? { ...view, crystalPreparation: null } : view;
+}
+// The one answer to "which inputs does this plan view hold for a luxury
+// exchange": only a running exchange holds them (planRunning; the view
+// already dropped the ones its bot cannot break).
+function exchangeMaterials(view) {
+    return view?.strategy === 'luxury_exchange' && planRunning(view) ? view.materials || [] : [];
+}
+function pausedInputPlan(state, plan) {
     if (plan?.status !== 'deferred' || plan.reason !== 'wish_focus') return plan;
     const strategy = plan.exchange?.kind === 'luxury_exchange' ? 'luxury_exchange'
         : plan.recipeId ? 'craft' : plan.combine ? 'market' : null;
     if (!strategy || !Number(plan.target?.selfId)) return plan;
-    const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
     const target = templateFor(plan.combine?.resultId || plan.target.selfId);
     if (!target || !Planner.considerable(target, state) || Planner.equipmentTargetFulfilled(state, plan)) return plan;
     return { ...plan, strategy, status: 'active' };
 }
 
 function reservedCraftAmounts(state, plan = equipmentInputPlan(state)) {
-    if (!['active', 'component_ready', 'ready_to_craft'].includes(plan?.status) || plan.strategy !== 'craft') return {};
+    if (!planRunning(plan) || plan.strategy !== 'craft') return {};
     if (plan.clanGoal?.clanId && plan.recipeId) return Object.fromEntries(ClanCrafting.requirements(
         ClanCrafting.resolveRecipe(plan.recipeId), state.inventory, null, 1, plan.craftProviders, plan.componentRecipes));
     const reserved = {};
@@ -343,7 +378,8 @@ function reservedCraftAmounts(state, plan = equipmentInputPlan(state)) {
 }
 
 function reservedCombinationAmounts(state, plan = equipmentInputPlan(state)) {
-    if (!plan?.combine || !['active', 'component_ready', 'ready_to_craft', 'blocked'].includes(plan.status)) return {};
+    // A combination holds its parts while blocked too (its first blade may be owned).
+    if (!plan?.combine || !(planRunning(plan) || plan.status === 'blocked')) return {};
     return (plan.combine.requirements || []).reduce((reserved, requirement) => {
         const selfId = Number(requirement.selfId || 0);
         if (!selfId) return reserved;
@@ -370,7 +406,8 @@ function equipmentMaterialAmounts(state, original = state?.stats?.equipmentPlan,
     const amounts = { ...craft };
     for (const [id, amount] of Object.entries(combine)) amounts[id] = Math.max(Number(amounts[id] || 0), amount);
     const rows = [
-        ...(plan?.strategy === 'luxury_exchange' && plan.status === 'active' ? plan.materials || [] : []),
+        ...exchangeMaterials(plan),
+        // A crystal preparation serves only an active plan (GearAcquisitionPlanner.RUNNING_PLAN_STATUSES).
         ...(plan?.status === 'active' ? plan.crystalPreparation?.materials || [] : [])
     ];
     for (const row of rows) amounts[row.selfId] = Math.max(Number(amounts[row.selfId] || 0), Number(row.amount));
@@ -383,22 +420,36 @@ function collectedEquipmentInputs(state, plan = state?.stats?.equipmentPlan) {
         .filter(([, amount]) => amount > 0));
 }
 
-// A selected finite production kit survives the ingredient trips. Selling
-// and storage retain it; the production executor still reads its own inputs.
-function productionInputAmounts(state, timestamp = Date.now()) {
+// The finite production setup a bot holds while it buys its recipe or its
+// inputs, fresh for 30 minutes: a shot craft's preparing row, else a wealth
+// craft that is buying, or `row` when given (a recipe investment,
+// shotRecipeDemand): { recipe, batches } or null. The executor sized it; the
+// kit it reserves (productionInputAmounts) and the lot its producer root
+// plans (WishProviders) keep that size until the craft runs or it lapses.
+function productionSetup(state, timestamp = Date.now(), row = undefined) {
     const shot = state?.stats?.shotCraft?.preparing;
     const wealth = state?.stats?.wealthCraft?.outcome === 'buying' ? state.stats.wealthCraft : null;
-    const setup = shot && Number(shot.at) + 30 * 60 * 1000 > timestamp ? shot : wealth;
+    const setup = row !== undefined ? row : shot && Number(shot.at) + 30 * 60 * 1000 > timestamp ? shot : wealth;
     const recipe = C4RecipeItems.resolveByRecipeId(Number(setup?.recipeId));
     const batches = Number(setup?.batches);
     if (!recipe || !(Number(setup.at) + 30 * 60 * 1000 > timestamp)
-        || !Number.isSafeInteger(batches) || batches < 1 || batches > 64) return {};
-    return Object.fromEntries(recipe.materials.map(row => [row.selfId, Number(row.amount) * batches]));
+        || !Number.isSafeInteger(batches) || batches < 1 || batches > 64) return null;
+    return { recipe, batches };
 }
 
-function saleReservations(state, reserved = reservedEquipmentAmounts(state), timestamp = Date.now()) {
+// A selected finite production kit survives the ingredient trips. Selling
+// and storage retain it; the production executor still reads its own inputs.
+function productionInputAmounts(state, timestamp = Date.now()) {
+    const setup = productionSetup(state, timestamp);
+    if (!setup) return {};
+    return Object.fromEntries(setup.recipe.materials.map(row => [row.selfId, Number(row.amount) * setup.batches]));
+}
+
+// kit: the production kit (productionInputAmounts) when the caller already has it.
+function saleReservations(state, reserved = reservedEquipmentAmounts(state), timestamp = Date.now(),
+    kit = productionInputAmounts(state, timestamp)) {
     const result = { ...reserved };
-    for (const [id, amount] of Object.entries(productionInputAmounts(state, timestamp)))
+    for (const [id, amount] of Object.entries(kit))
         result[id] = Number(result[id] || 0) + amount;
     return result;
 }
@@ -410,12 +461,11 @@ function retainedEquipmentAmounts(state) {
     const retained = owner?.inputPreparation;
     if (!retained || owner.reason === 'cancelled') return {};
     const plan = equipmentInputPlan(state, retained);
-    if (plan?.strategy === 'none' || plan?.status !== 'active') return {};
+    if (plan?.strategy === 'none' || !planRunning(plan)) return {};
     return equipmentMaterialAmounts(state, retained);
 }
 
 function reservedUpgradeAmounts(state) {
-    const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
     const role = Planner.roleFor(state);
     const classId = Number(state?.stats?.classId || state?.classId || 0);
     const allowedRank = gradeIndex(Planner.gradeForLevel(state?.level));
@@ -461,7 +511,8 @@ function reservedEquipmentAmounts(state, options = {}) {
     const unseal = exchange?.unseal;
     if (unseal && Number(exchange.target?.selfId) === Number(unseal.productId)
         && invoke('GameServer/Items/C4Unseal').resolve(unseal.sourceId, unseal.productId)
-        && ['active', 'component_ready', 'ready_to_craft', 'deferred'].includes(exchange.status))
+        // A paused (deferred) kit keeps its unseal source too.
+        && (planRunning(exchange) || exchange.status === 'deferred'))
         upgrades[unseal.sourceId] = Math.max(Number(upgrades[unseal.sourceId] || 0), 1);
     for (const [id, amount] of Object.entries(reservedHennaAmounts(state)))
         upgrades[id] = Math.max(Number(upgrades[id] || 0), amount);
@@ -483,6 +534,67 @@ function reservedEquipmentAmounts(state, options = {}) {
     }, {});
 }
 
+// The one answer to "which bag units does the bot hold for a goal": the
+// focus plan's inputs and upgrades (reservedEquipmentAmounts, clan supply on
+// top) and every live goal's claims of the decision the state carries
+// (CraftInputReservations over stats.heldClaims), the larger per item: one
+// answer for one state on either thread, with or without a card. Its readers
+// are the bag's consumers outside the decision: sale, warehouse, NPC sale,
+// trade. The decision takes reservedEquipmentAmounts: its build splits held
+// stock itself (the state's claims are the previous decision's), and the
+// executors of its steps (a craft's materials, a shot craft, a crystallize)
+// take what that split gave them; a goal's claim covers its own inputs too.
+// A selected finite production kit (productionInputAmounts) is held on top of
+// the focus plan's inputs while its ingredient trips run, and on top of the
+// row's own holds (rowReserve).
+// clan: false leaves out the clan supply's earmark (ClanSupplyPolicy), for
+// the clan warehouse deposit that earmark is for (ClanWarehousePolicy).
+// A bag row's own flags and the clan's craft earmarks are rowHeldAmount's.
+// kit: the production kit when the caller already has it (rowReserve).
+function heldAmounts(state, timestamp = Date.now(), { clan: withClan = true, kit } = {}) {
+    const reserved = saleReservations(state, reservedEquipmentAmounts(state, { clan: withClan }), timestamp, kit);
+    const claims = Object.entries(CraftInputReservations.reservedAmounts(state));
+    if (!claims.length) return reserved;
+    const clan = withClan ? ClanSupply.reservedAmounts(state) : {};
+    for (const [id, amount] of claims) reserved[id] = Math.max(Number(reserved[id] || 0), amount + Number(clan[id] || 0));
+    return reserved;
+}
+
+// The one answer to "how many units of this bag row are held by the row
+// itself" (a summary row; item.selfId): Infinity for a protected, customer-
+// accepted, clan-assigned or unavailable row (none of it moves), else the
+// largest of its protected, starter-loot and reserved amounts, the clan
+// craft's material earmark (stats.clanMaterialDemand) and the units the last
+// clan errand still owes (CombinedErrandPolicy.clanHeld). Read beside a held
+// map through rowReserve; BoardLook reads it alone.
+function rowHeldAmount(state, item) {
+    if (!item) return 0;
+    if (item.protected || item.acceptedCustomer || item.assignedClan || item.available === false) return Infinity;
+    const id = Number(item.selfId);
+    const count = value => Math.max(0, Number(value) || 0);
+    return Math.max(count(item.protectedAmount), count(item.starterMobLootAmount), count(item.reservedAmount),
+        count(state?.stats?.clanMaterialDemand?.[id]), count(CombinedErrands.clanHeld(state, id)));
+}
+
+// The one answer to "how many units of this bag row no consumer takes"
+// (item.selfId; Infinity for a flagged row): the larger of the held map's
+// (`held`: heldAmounts for a sale, the decision's reservedEquipmentAmounts
+// for its own step) and the row's own holds (rowHeldAmount) with the sale's
+// production kit (`kit`: productionInputAmounts; none for the decision's
+// step) on top. The kit and a row hold (the clan craft's earmark, a
+// protected, starter or reserved amount, a clan errand's units) are separate
+// claims on the same units, so they add, as the author's sale guard does
+// (max(clanMaterialDemand, protected, ...) + productionInputAmounts); the
+// sale's map already carries the kit on top of the focus plan, so the kit
+// counts once in either term. Read by WealthCraftDecision.freeAmount and
+// Database's trade protection.
+function rowReserve(state, item, held = {}, kit = {}) {
+    const own = rowHeldAmount(state, item);
+    if (own === Infinity) return Infinity;
+    const count = value => Math.max(0, Number(value) || 0);
+    return Math.max(count(held[item?.selfId]), own + count(kit[item?.selfId]));
+}
+
 // Only the selected, still drawable symbol owns dye inputs. Keeping every
 // usable dye would fill the bag again even though the bot can wear three symbols.
 function reservedHennaAmounts(state = {}) {
@@ -502,8 +614,7 @@ function reservedHennaAmounts(state = {}) {
 // observed prices, travel, progress and timestamps cannot change this input.
 function reservationInputKey(state = {}) {
     const plan = equipmentInputPlan(state);
-    const craft = ['active', 'component_ready', 'ready_to_craft'].includes(plan?.status)
-        && plan.strategy === 'craft';
+    const craft = planRunning(plan) && plan.strategy === 'craft';
     const quantities = rows => (rows || []).map(row => [Number(row.selfId || 0), Number(row.amount || 0)]);
     const clanCraft = craft && plan.clanGoal?.clanId && plan.recipeId;
     const craftInputs = !craft ? null : clanCraft
@@ -512,10 +623,10 @@ function reservationInputKey(state = {}) {
         Object.entries(plan.componentRecipes || {}).map(([id, recipe]) => [Number(id), Number(recipe)]).sort((a, b) => a[0] - b[0])]
         : (plan.materials || []).map(row => [Number(row.selfId || 0), Number(row.amount || 0),
             state.inventory?.[row.selfId]?.amount == null ? Number(row.owned || 0) : null]);
-    const combine = plan?.combine && ['active', 'component_ready', 'ready_to_craft', 'blocked'].includes(plan.status)
+    const combine = plan?.combine && (planRunning(plan) || plan.status === 'blocked')
         ? quantities(plan.combine.requirements) : null;
     return JSON.stringify([Number(plan?.target?.selfId || 0), craftInputs, combine,
-        plan?.strategy === 'luxury_exchange' && plan.status === 'active' ? quantities(plan.materials) : null,
+        quantities(exchangeMaterials(plan)),
         invoke('GameServer/Clan/ClanSupplyPolicy').version(state), retainedEquipmentAmounts(state), reservedHennaAmounts(state),
         state.stats?.equipmentPlan?.heldInputs ?? null, productionInputAmounts(state)]);
 }
@@ -525,7 +636,7 @@ function actorItemValue(item, property, method) {
 }
 
 function unreservedActorItems(state, items = []) {
-    const reserved = saleReservations(state);
+    const reserved = heldAmounts(state);
     (items || []).filter((item) => !!actorItemValue(item, 'equipped', 'fetchEquipped')).forEach((item) => {
         const selfId = Number(actorItemValue(item, 'selfId', 'fetchSelfId') || 0);
         reserved[selfId] = Math.max(0, Number(reserved[selfId] || 0) - Number(actorItemValue(item, 'amount', 'fetchAmount') || 0));
@@ -556,7 +667,9 @@ function protectedStarterLootAmount(item, kind) {
     return Math.max(0, Math.min(Number(item?.amount || 0), Number(item?.starterMobLootAmount || 0)));
 }
 
-function saleFreeAmount(state, item, reserved = {}) {
+// reserved: the sale's held map (heldAmounts); kit: its production kit,
+// held on top of the row's own holds too (rowReserve).
+function saleFreeAmount(state, item, reserved = {}, kit = productionInputAmounts(state)) {
     if (!item) return 0;
     const template = templateFor(item.selfId), kind = kindFor(item, template);
     const protectedAmount = isNpcOnlyItem(item, template, state) ? 0 : protectedStarterLootAmount(item, kind);
@@ -567,15 +680,18 @@ function saleFreeAmount(state, item, reserved = {}) {
     return Math.min(Math.max(0, Number(item.amount || 0) - equippedCount
         - Number(reserved[item.selfId] || 0) - protectedAmount),
     invoke('GameServer/Bot/Economy/WealthCraftDecision').freeAmount(state, { ...item,
-        equippedCount, starterMobLootAmount: protectedAmount }, reserved));
+        equippedCount, starterMobLootAmount: protectedAmount }, reserved, kit));
 }
 
-const { selectedCraftAmounts } = require('./CraftInputReservations');
 function saleCandidates(state, options = {}) {
+    let knownIds = null;
+    const known = () => knownIds ||= knownRecipeIds(state, options.knownRecipes);
     const limit = options.unlimited
         ? Number.MAX_SAFE_INTEGER
         : Math.max(1, Math.min(20, Number(options.limit) || 8));
-    const reserved = saleReservations(state, options.preparedReservations || reservedEquipmentAmounts(state), options.now);
+    const kit = productionInputAmounts(state, options.now);
+    const reserved = options.preparedReservations
+        ? saleReservations(state, options.preparedReservations, options.now, kit) : heldAmounts(state, options.now, { kit });
     const clan = invoke('GameServer/Clan/ClanSupplyPolicy').reservedAmounts(state);
     for (const [id, amount] of Object.entries(reservedHennaAmounts(state)))
         reserved[id] = Math.max(Number(reserved[id] || 0), amount + Number(clan[id] || 0));
@@ -598,7 +714,7 @@ function saleCandidates(state, options = {}) {
         // Prepared reserves can describe only the bag while this projection
         // also includes warehouse or escrow stock. Personal shots stay owned.
         if (invoke('GameServer/Inventory/ShotStock').isPersonalShot(state, selfId)) return [];
-        const sellableAmount = saleFreeAmount(state, item, reserved);
+        const sellableAmount = saleFreeAmount(state, item, reserved, kit);
         if (!selfId || selfId === 57 || BeginnerShots.isRestricted(selfId) || sellableAmount <= 0) return [];
 
         const template = templateFor(selfId);
@@ -615,6 +731,10 @@ function saleCandidates(state, options = {}) {
             && !isEnchantScroll(item)
             && !CRYSTALS.has(selfId)
             && !SELLABLE_KINDS.some((prefix) => kind.startsWith(prefix))) return [];
+        // A scroll the bot would learn (recipeDisposition) is no sale: one on
+        // its own line leaves the listing (a kept line needs a candidate) and
+        // goes back to the bag, where the next learn point learns it.
+        if (isMarketRecipeItem(item) && recipeDisposition(state, item, known())?.action === 'learn') return [];
 
         // NPC-only recipes and unmapped books are explicit cleanup targets. They
         // must not inherit the generic starter-loot protection, otherwise a
@@ -630,7 +750,7 @@ function saleCandidates(state, options = {}) {
             : 0;
         const price = clanProgression
             ? clanPrice
-            : npcOnly ? Math.max(priceFor(state, item, template), NpcSellRules.npcBuyPrice(base)) : priceFor(state, item, template);
+            : npcOnly ? Math.max(priceFor(state, item, template), PriceDecision.buyback(selfId)) : priceFor(state, item, template);
         if (price <= 0 || sellableCount <= 0) return [];
         if (options.presenceOnly) return [true];
         const candidate = {
@@ -670,26 +790,6 @@ function saleCandidates(state, options = {}) {
     }).slice(0, limit);
 }
 
-function npcLiquidationCandidates(state, options = {}) {
-    const maxUnitPrice = Math.max(1, Number(options.maxUnitPrice) || NPC_LIQUIDATION_MAX_UNIT_PRICE);
-    // Do not pass onlyNpc here: low-grade gear and cheap materials are not
-    // intrinsically NPC-only, but the market policy deliberately routes them
-    // to the NPC shop during cleanup. Filter the unified sale set after the
-    // starter-loot protection has been applied.
-    return saleCandidates(state, {
-        unlimited: true,
-        allowPreTradeCleanup: options.allowPreTradeCleanup === true
-    }).filter((item) => {
-        if (isClanProgressionItem(item) || isGradeCrystal(item)) return false;
-        const gear = String(item.kind || '').startsWith('Weapon.') || String(item.kind || '').startsWith('Armor.');
-        const lowGradeGear = gear && gradeIndex(item.rank) < gradeIndex('c');
-        return isNpcOnlyItem(item) || lowGradeGear || item.basePrice <= maxUnitPrice;
-    }).map((item) => ({
-        ...item,
-        npcPrice: NpcSellRules.npcBuyPrice(item.basePrice)
-    }));
-}
-
 // Materials remain useful for future crafting/trading regardless of their NPC
 // value. Gear is worth retaining only once it has crossed out of the starter
 // trash band, leaving cheap no-grade drops for liquidation.
@@ -715,7 +815,7 @@ function warehouseCandidates(state) {
     // Personal surplus finances equipment. Craft inputs and accepted native
     // obligations are already protected by reservations, not spare storage.
     if (invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state)) return [];
-    const reserved = saleReservations(state);
+    const reserved = heldAmounts(state);
     return Object.values(state?.inventory || {}).flatMap((item) => {
         const equipped = Math.max(0, Number(item.equippedCount ?? (item.equipped ? 1 : 0)) || 0);
         // Reservations include equipped copies, as in unreservedActorItems.
@@ -726,36 +826,24 @@ function warehouseCandidates(state) {
     });
 }
 
-function saleSummary(state, options = {}) {
-    const items = saleCandidates(state, options);
-    return {
-        items,
-        itemCount: items.reduce((sum, item) => sum + Number(item.count || 0), 0),
-        marketValue: items.reduce((sum, item) => sum + Number(item.count || 0) * Number(item.price || 0), 0)
-    };
-}
-
 module.exports = {
     GRADE_ORDER,
     INVENTORY_SLOT_LIMIT,
     NPC_ONLY_CLEANUP_MIN_SLOTS,
-    NPC_LIQUIDATION_MAX_UNIT_PRICE,
     NPC_ONLY_KINDS,
     CLAN_PROGRESSION_ITEM_IDS,
     WAREHOUSE_GEAR_MIN_BASE_PRICE,
     basePrice,
     canLearnRecipe,
+    demandedRecipeId,
     craftLevelFor: CraftShopService.craftLevelFor,
     gradeIndex,
-    isBelowCGrade,
     isClanProgressionItem,
-    isGradeCrystal,
     isNpcOnlyItem,
     isQuestItem,
     isRecipeItem,
     recipeProductRank,
     isMarketRecipeItem,
-    isShotRecipeItem,
     isSkillBookItem,
     isStarterEquipment,
     inventoryCleanupNeed,
@@ -764,10 +852,10 @@ module.exports = {
     npcOnlySlotCount,
     skillBookSlotCount,
     isWarehouseCandidate,
-    npcLiquidationCandidates,
     priceFor,
     protectedStarterLootAmount,
     recipeDisposition,
+    knownRecipeIds,
     recipeInfo,
     reservedCombinationAmounts,
     reservedCraftAmounts,
@@ -775,15 +863,18 @@ module.exports = {
     equipmentMaterialAmounts,
     collectedEquipmentInputs,
     productionInputAmounts,
+    productionSetup,
     saleReservations,
     capDeferredInputs,
+    heldAmounts,
+    rowHeldAmount,
+    rowReserve,
     equipmentInputPlan,
+    exchangeMaterials,
     retainedEquipmentAmounts,
     reservationInputKey,
     saleCandidates,
-    selectedCraftAmounts,
     saleFreeAmount,
-    saleSummary,
     isSpareConsumable,
     unreservedActorItems,
     warehouseCandidates

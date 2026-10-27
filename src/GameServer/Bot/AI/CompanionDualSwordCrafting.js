@@ -3,12 +3,14 @@ const refreshPartyMemberships = require('../../World/PartyMembershipPublication'
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const Recipes = invoke('GameServer/Items/C4DualSwordCombinations');
+const { GRADES, gradeForLevel } = invoke('GameServer/Bot/AI/GearGradeRule');
 const Roles = invoke('GameServer/Bot/AI/BotRoles');
 const Compatibility = invoke('GameServer/Bot/AI/BotEquipmentCompatibility');
 const Warehouse = invoke('GameServer/Warehouse/PersonalWarehouse');
 const Services = invoke('GameServer/Bot/Economy/TownServiceCatalog');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
 const Item = invoke('GameServer/Item/Item');
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 const CACHE_MS = 30000;
 function recipeFor(state, plan = state.stats?.equipmentPlan) {
@@ -18,10 +20,9 @@ function recipeFor(state, plan = state.stats?.equipmentPlan) {
     const role = Roles.inferRole(state);
     const classId = Roles.classIdOf(state);
     if (!recipe || !Compatibility.profileFor(role,classId).weaponKinds.includes('Weapon.Dual')) return null;
-    const ranks = ['none','d','c','b','a','s'];
     const item = ItemTemplateIndex.findNumericRowRequired(DataCache.items, recipe.productId);
-    const rank = invoke('GameServer/Bot/AI/GearAcquisitionPlanner').gradeForLevel(state.level);
-    return item && ranks.indexOf(item.etc.rank) <= ranks.indexOf(rank) ? recipe : null;
+    const rank = gradeForLevel(state.level);
+    return item && GRADES.indexOf(item.etc.rank) <= GRADES.indexOf(rank) ? recipe : null;
 }
 
 function refreshWarehouse(session, bot) {
@@ -77,7 +78,10 @@ function plan(session, bot, town, state, candidate = state.stats?.equipmentPlan)
         }
     }
     const target = stationTarget(recipe,town);
-    const refreshed = { ...candidate, status:missing.length ? 'active' : 'ready_to_craft',
+    // The planner's one readiness rule over the bag (a combination has no
+    // component recipe here); not ready = an active plan.
+    const readiness = GearAcquisitionPlanner.craftReadiness(recipe, state, at => at, () => null);
+    const refreshed = { ...candidate, status:readiness.status || 'active',
         strategy:'craft',recipeId:recipe.recipeId,
         target:{selfId:recipe.productId,name:ItemTemplateIndex.findNumericRowRequired(DataCache.items, recipe.productId)?.template?.name,slot:14},
         combine:{type:'dual_sword',resultId:recipe.productId,requirements:recipe.materials},

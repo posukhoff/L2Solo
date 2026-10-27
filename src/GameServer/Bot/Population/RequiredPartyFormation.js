@@ -1,4 +1,5 @@
 const PartyComposition = invoke('GameServer/Bot/Population/BackgroundPartyComposition');
+const { partyIdOf } = require('./PartyId');
 const PartyRequestPlanner = invoke('GameServer/Bot/Population/PartyRequestPlanner');
 const PersonaPartyPolicy = invoke('GameServer/Bot/Population/PersonaPartyPolicy');
 
@@ -44,7 +45,7 @@ function proposalFromStates(states = [], options = {}) {
     const rows = (states || []).filter(eligible);
     const activePartyIdsBySpot = new Map();
     (states || []).forEach((state) => {
-        const partyId = String(state?.party?.partyId || state?.partyId || '');
+        const partyId = partyIdOf(state);
         const spotId = String(state?.spotId || '');
         if (!partyId || !spotId) return;
         if (!activePartyIdsBySpot.has(spotId)) activePartyIdsBySpot.set(spotId, new Set());

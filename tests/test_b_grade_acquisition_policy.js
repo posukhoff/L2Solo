@@ -22,10 +22,9 @@ const state = { characterId: 990471, classId: 3, level: 64, phase: 'cold', activ
     inventory: kit(40), stats: { classId: 3 } };
 for (const id of [invoke('GameServer/Inventory/ShotStock').planForState(state).selfId, 1061, 736])
     state.inventory[id] = { selfId: id, amount: 100000 };
-assert.equal(Progression.assess(state).required, false);
-const debt = Progression.acquisitionAssessment(state);
-assert.equal(debt.rank, 3); assert(debt.required);
-assert.equal(Progression.acquisitionRankFor(state, debt), 'b');
+assert.equal(Progression.assess(state).milestone.required, false, 'a C kit closes the C milestone at 64');
+const debt = Progression.acquisition(state);
+assert.equal(debt.rank, 3); assert(debt.required, 'a C kit at 64 still owes the B kit');
 assert.equal(Progression.marketOnly(state, { etc: { rank: 'a', slot: 0 } }), false,
     'the A equipment gate never blocks crafting ammunition or materials');
 const higher = Data.items.find(item => item.etc?.rank === 'a' && [7, 14].includes(item.etc.slot)
@@ -56,10 +55,12 @@ const armed = { ...state, inventory: kit(40) };
 for (const [id, row] of Object.entries(armed.inventory)) if (row.equippedSlots.some(slot => [7, 14].includes(slot))) delete armed.inventory[id];
 const weapon = Gear.planFor({ classId: 3, level: 52 }).items.find(row => [7, 14].includes(row.slot));
 armed.inventory[weapon.selfId] = { ...weapon, amount: 1, equipped: true, equippedCount: 1, equippedSlots: [weapon.slot] };
-const remaining = Progression.acquisitionAssessment(armed);
+const remaining = Progression.acquisition(armed);
 assert(remaining.required, 'a B weapon does not close armour and jewellery debt');
 assert(!remaining.gaps.has(7) && !remaining.gaps.has(14));
-assert.equal(Progression.acquisitionAssessment({ ...state, inventory: kit(52) }).required, false);
+assert.equal(Progression.acquisition({ ...state, inventory: kit(52) }).required, false);
+assert.equal(Progression.marketOnly({ ...state, inventory: kit(52) }, higher), false,
+    'a closed B kit at 64 opens A drops and crafts, though A is its level grade');
 const paired = { ...state, inventory: kit(52) };
 for (const [id, row] of Object.entries(paired.inventory)) if (row.equippedSlots.some(slot => [1, 2].includes(slot))) delete paired.inventory[id];
 const cEar = Gear.planFor({ classId: 3, level: 40 }).items.find(row => row.slot === 2);
@@ -69,12 +70,13 @@ const secondEar = Planner.preferredTarget(paired, { spots: [], findMarketOffer: 
     ? { ...offer, selfId: 856 } : null });
 assert.equal(secondEar?.item.selfId, 856, 'one B earring does not suppress acquiring the second copy');
 assert.equal(secondEar.slot, 2);
-for (const supported of [true, false]) {
-    const solver = createSolver({ nodes: [{ key: 'gear', need: 'power', valueHours: 1, paths: [
-        { kind: 'drop', activity: 'hunting', costHours: 0, readyHours: 22, acquisitionOrder: 3 },
-        { kind: 'craft', activity: 'crafting', costHours: 1, executable: supported, acquisitionOrder: 1 }
+// B gear is bought or crafted by cost, one rule for every grade (user 2026-10-23).
+for (const [boardPrice, expected] of [[500, 'buy'], [2000, 'craft']]) {
+    const solver = createSolver({ nodes: [{ key: 'gear', need: 'power', valueHours: 10, paths: [
+        { kind: 'buy', activity: 'shopping', price: boardPrice, costHours: 0 },
+        { kind: 'craft', activity: 'crafting', costHours: 1 }
     ] }], hourAdena: 1000, riskWeight: 0 });
-    assert.equal(solver.rootWish('gear').plan.kind, supported ? 'craft' : 'drop',
-        'craft precedes a zero-net-cost drop; an unavailable craft leaves the last-resort drop');
+    assert.equal(solver.rootWish('gear').plan.kind, expected,
+        `board price ${boardPrice} against a 1-hour craft: the cheaper path wins`);
 }
-console.log('PASS B kit before absent A, affordable A market exception, B weapon follow-up and craft before rare drop');
+console.log('PASS B kit before absent A, affordable A market exception, B weapon follow-up and B gear by cost');

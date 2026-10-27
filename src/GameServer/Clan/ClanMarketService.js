@@ -12,6 +12,7 @@ const ClanEconomy = require('./ClanEconomyContext');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const ClanCredit = require('./ClanPurchaseCredit');
+const CombinedErrands = require('../Bot/Population/CombinedErrandPolicy');
 
 const metrics = {
     resolves: 0,
@@ -59,9 +60,8 @@ async function resolveClan(clan) {
     const maxUnitPrice = order ? number(order.maxUnitPrice) : Infinity;
     const candidates = ClanOrderService.marketMembers(clan, [...assigned]);
     const warehouse = playerControlled ? [] : await Database.fetchClanWarehouseItems(clan.id);
-    const initialOffer = playerControlled ? null : MarketOpportunity.bestOffer(itemId, { budget: Infinity });
     const economy = playerControlled ? null : ClanEconomy.forClan(clan, {
-        warehouse, halls: await Database.fetchClanHallAuctions(), proofOffer: initialOffer });
+        warehouse, halls: await Database.fetchClanHallAuctions() });
     const clanBudget = economy ? Math.min(economy.budgetFor('level', itemId),
         invoke('GameServer/ClanHall/Policy').freeAdena(warehouse, clan, clan.state?.mode, null)) : 0;
     // A member on its errand for the clan is on its way; one back from it
@@ -73,10 +73,9 @@ async function resolveClan(clan) {
             recordReason('market_buyer_traveling');
             return { ok: true, skipped: true, reason: 'market_buyer_traveling' };
         }
-        const last = state?.stats?.lastErrand;
-        if (state?.phase === 'cold' && last?.purpose === 'clan' && Number(last.tag?.clanId) === Number(clan.id)
-            && Number(last.selfId) === itemId && Number(state.inventory?.[itemId]?.amount || 0) > 0) {
-            return deposit(clan, goal, itemId, state, { state }, last.tag.offer, { playerControlled, order });
+        if (state?.phase === 'cold' && CombinedErrands.clanHeld(state, itemId, clan.id) > 0
+            && Number(state.inventory?.[itemId]?.amount || 0) > 0) {
+            return deposit(clan, goal, itemId, state, { state }, state.stats.lastErrand.tag.offer, { playerControlled, order });
         }
     }
     let offer = null;
@@ -85,7 +84,7 @@ async function resolveClan(clan) {
         const state = await stateFor(candidate.characterId);
         if (!state || state.phase !== 'cold' || String(state.party?.partyId || '') !== '') continue;
         const nextOffer = playerControlled ? ClanOrderService.memberOffer(state, itemId, Math.min(maxUnitPrice, remainingBudget))
-            : MarketOpportunity.bestOffer(itemId, { buyerCharacterId: state.characterId,
+            : MarketOpportunity.bestOffer(itemId, { buyerCharacterId: state.characterId, purpose: 'clan',
                 budget: Math.min(Number(goal.plan.maxPrice) || Infinity, PurchaseFunding.spendable(state, 0, { free: true }) + clanBudget) });
         if (nextOffer) {
             offer = nextOffer;

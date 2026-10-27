@@ -179,6 +179,36 @@ function* prepare(state) {
 }
 // The same table in one call, for a caller that cannot slice (EconomyContext.forState).
 function prepared(state) { return drain(prepare(state)); }
+// A route table with a row for every town (prepare).
+const fullRows = rows => Array.isArray(rows) && rows.length === towns.length;
+// The one trip price: a row {known, hours, fees} in Adena at one hour value
+// (hours x hour rounded, plus fees); Infinity when the row or the hour is unknown.
+function price(row, hourAdena) {
+    return row?.known && Number.isFinite(hourAdena) && hourAdena >= 0
+        ? Math.round(row.hours * hourAdena) + row.fees : Infinity;
+}
+// A town's trip in Adena at one hour value, each town priced once per reader:
+// an offer order asks it about three times per offer; a reader read only
+// through details allocates nothing.
+function costByTown(row, hourAdena) {
+    let costs = null, least = NaN;
+    const cost = town => {
+        const index = townOrdinal.get(town);
+        if (index === undefined) return Infinity;
+        costs ??= new Array(townOrdinal.size).fill(NaN);
+        if (!Number.isNaN(costs[index])) return costs[index];
+        return costs[index] = price(row(town), hourAdena);
+    };
+    // The cheapest trip to any town, priced once per reader: no ask in any
+    // town lands below its price plus this (PriceDecision.marketFor seenTo).
+    cost.least = () => {
+        if (!Number.isNaN(least)) return least;
+        least = Infinity;
+        for (const town of towns) least = Math.min(least, cost(town));
+        return least;
+    };
+    return cost;
+}
 function preparedReader(rows, { hourAdena } = {}) {
     const row = town => {
         const index = townOrdinal.get(town), value = index === undefined ? null : rows?.[index];
@@ -186,11 +216,7 @@ function preparedReader(rows, { hourAdena } = {}) {
             && Number.isFinite(value[2]) && value[2] >= 0
             ? { known: true, hours: value[1], fees: value[2] } : unknown();
     };
-    const cost = town => {
-        const value = row(town);
-        return value.known && Number.isFinite(hourAdena) && hourAdena >= 0
-            ? Math.round(value.hours * hourAdena) + value.fees : Infinity;
-    };
+    const cost = costByTown(row, hourAdena);
     cost.details = row;
     return cost;
 }
@@ -215,13 +241,9 @@ function reader(state, { hourAdena, origin = null } = {}) {
         }
         return { known: rows[at] === 1, hours: rows[at + 1], fees: rows[at + 2] };
     };
-    const cost = town => {
-        const value = row(town);
-        return value.known && Number.isFinite(hourAdena) && hourAdena >= 0
-            ? Math.round(value.hours * hourAdena) + value.fees : Infinity;
-    };
+    const cost = costByTown(row, hourAdena);
     cost.details = row;
     if (state && typeof state === 'object') readers.set(state, { key, cost });
     return cost;
 }
-module.exports = { details, read, reader, regionalTown, towns, frame, key, prepare, prepared, preparedReader };
+module.exports = { price, details, read, reader, regionalTown, towns, frame, key, prepare, prepared, preparedReader, fullRows };

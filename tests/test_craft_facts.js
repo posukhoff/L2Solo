@@ -57,9 +57,9 @@ const asked = new Map();
 const basket = Basket.basketFor(recipe, (id, amount) => {
     asked.set(id, amount);
     return { whole: true, units: amount, cost: amount, landed: amount, town: 'Giran' };
-}, () => null, 3, { recipeInput: 9001, recipeStock: { count: 0 } });
+}, () => null, 3, {});
 assert.ok(basket);
-assert.deepEqual([...asked], [...Profit.craftFacts(recipe, { batches: 3, recipeInput: 9001, mpPerHour: 600 }).gross]);
+assert.deepEqual([...asked], [...Profit.craftFacts(recipe, { batches: 3, mpPerHour: 600 }).gross]);
 
 // The shared native preparation and the original non-native path must return
 // the same facts and generator steps, including large-batch overflow reasons.

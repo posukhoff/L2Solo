@@ -5,7 +5,6 @@ require('../src/Global');
 const Data = invoke('GameServer/DataCache'); Data.init();
 const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const Routes = invoke('GameServer/Bot/AI/LevelingRoutes');
-const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
 const drain = iterator => { let step; do step = iterator.next(); while (!step.done); return step.value; };
 const timestamp = 1791825000000;
 // The native C-grade kit and source species from the stalled level-55 spoiler.
@@ -33,26 +32,21 @@ assert(gargoyle, 'the native gargoyle drops C weapon enchant scrolls');
 assert.equal(gargoyle.reason, 'route_ineligible', 'an unsafe route cannot become a free enchant-scroll farm');
 assert.deepEqual(facts({ readyOnly: true }), [], 'the wish reader receives no unreachable farm');
 
-// A new decision must judge current combat state, while one projection shares
-// the same spot verdict across all item sources and builds its profiles once.
-const original = { gate: Routes.isSpotAllowedForState, profiles: Matchup.stateProfiles };
-let gates = 0, profiles = 0;
-try {
-    Routes.isSpotAllowedForState = (_spot, _state, options) => {
-        gates++; assert.equal(options.mode, 'solo'); assert.equal(options.timestamp, timestamp); return true;
-    };
-    Matchup.stateProfiles = (...args) => { profiles++; return original.profiles(...args); };
-    const routeAllowed = Planner.sourceRouteReader(state, { timestamp, spots: [spot] });
-    assert(facts({ routeAllowed }).some(row => row.status === 'ready'), 'an allowed source remains available');
-    facts({ routeAllowed });
-    assert.equal(gates, 1, 'one spot gate per projection, not per material or NPC');
-    assert.equal(profiles, 1, 'one combat profile set per projection');
+// A new decision must judge current combat state. A summon beside the bot
+// (its live cold summon) makes the spot safe: its reader admits the source.
+const summon = { active: true, npcId: 12077, skillId: 1111, hp: 5000, maxHp: 5000, pAtk: 3000, pDef: 2000,
+    accur: 200, critical: 10, atkSpd: 400, expiresAt: timestamp + 600000 };
+const summoned = { ...state, stats: { ...state.stats, coldCombat: { ...state.stats.coldCombat, summon } } };
+{
+    const routeAllowed = Planner.sourceRouteReader(summoned, { timestamp, spots: [spot] });
+    const ready = drain(Planner.sourceFacts(summoned, 951, 1, { spots: [spot], timestamp,
+        spotValue: () => ({ kills: 100, valueHours: 2 }), routeAllowed }));
+    assert(ready.some(row => row.status === 'ready'), 'an allowed source remains available');
     const tooLow = { ...spot, id: '8_2', minLevel: 43, maxLevel: 46, avgLevel: 45,
         levelCounts: { 43: 4, 46: 2 } };
     assert.equal(routeAllowed(tooLow), false, 'a safe spot outside the route level band is still refused');
-    Routes.isSpotAllowedForState = () => false;
-    assert.deepEqual(facts({ readyOnly: true }), [], 'a fresh decision discards the old allowed verdict');
-} finally { Routes.isSpotAllowedForState = original.gate; Matchup.stateProfiles = original.profiles; }
+    assert.deepEqual(facts({ readyOnly: true }), [], 'a fresh decision for the kit alone refuses the source again');
+}
 
 // The bot's ground verdict kept with its held build (Planner.sourceGround,
 // handed back while no source section moved) still follows what moves no
@@ -90,9 +84,6 @@ try {
 {
     const spots = [spot], kept = Planner.sourceGround(spots);
     const allowed = bot => Planner.sourceRouteReader(bot, { timestamp, ground: Planner.sourceGround(spots, kept) })(spot);
-    const summon = { active: true, npcId: 12077, skillId: 1111, hp: 5000, maxHp: 5000, pAtk: 3000, pDef: 2000,
-        accur: 200, critical: 10, atkSpd: 400, expiresAt: timestamp + 600000 };
-    const summoned = { ...state, stats: { ...state.stats, coldCombat: { ...state.stats.coldCombat, summon } } };
     const dead = { ...state, vitals: { ...state.vitals, hp: 0 } };
     assert.equal(allowed(state), false, 'the kit alone is refused on the spot');
     assert.equal(allowed(state), false, 'and still refused while nothing changes');

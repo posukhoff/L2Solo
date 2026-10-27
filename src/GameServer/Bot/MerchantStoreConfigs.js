@@ -1,3 +1,6 @@
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
+const { GRADES } = invoke('GameServer/Bot/AI/GearGradeRule');
+
 const BUY_CAP = 999999;
 
 const s = (selfId, priceRate, count) => ({ selfId, priceRate, count });
@@ -9,16 +12,11 @@ const RESOURCE_BUY_RATE = 0.80;
 const rs = (selfId, count) => s(selfId, RESOURCE_SELL_RATE, count);
 const rb = (selfId, count = BUY_CAP) => b(selfId, RESOURCE_BUY_RATE, count);
 
-const SHOT_IDS_BY_GRADE = [
-    [1835, 2509, 3947], // No Grade: Soulshot, Spiritshot, Blessed Spiritshot
-    [1463, 2510, 3948], // D
-    [1464, 2511, 3949], // C
-    [1465, 2512, 3950], // B
-    [1466, 2513, 3951], // A
-    [1467, 2514, 3952]  // S
-];
-const shotsForGrade = (grade) => (SHOT_IDS_BY_GRADE[grade] || SHOT_IDS_BY_GRADE[0])
-    .map((selfId) => s(selfId, 1, BUY_CAP));
+// A shot merchant's stock: the soul, spirit and blessed spirit shot of one
+// grade (0 = no grade .. 5 = S), from the shop shot list's owner.
+const shotsForGrade = (grade) => [...ShotStock.SHOP_SHOT_RANK]
+    .filter(([, rank]) => rank === (GRADES[grade] || 'none'))
+    .map(([selfId]) => s(selfId, 1, BUY_CAP));
 
 module.exports = {
     // Talking Island

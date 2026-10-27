@@ -22,7 +22,8 @@ const shop = { characterId: 55, name: 'Brokk', currentRegion: 'Giran', loc: { lo
 let craftPrice = 1200, craftSucceeded = true, craftError = null;
 const workshop = { boardRecords: () => [{ id: 'workshop_55', kind: 'workshop', ownerId: 55, ownerName: 'Brokk',
     town: 'Giran', loc: shop.loc, revision: 2, entries: [{ recipeId: 17, price: craftPrice }] }],
-    lookup: () => ({ state: shop, recipe: { productId: 1459, productCount: 250, successRate: 60,
+    inWorkshopRange: invoke('GameServer/Bot/Economy/CraftWorkshopService').inWorkshopRange,
+    lookup: () => ({ state: shop, place: { town: 'Giran', loc: shop.loc }, recipe: { productId: 1459, productCount: 250, successRate: 60,
         materials: [{ selfId: 1864, amount: 10 }] }, price: craftPrice }),
     craft: async (owner, recipe, customer, options) => {
         if (craftError) throw craftError;

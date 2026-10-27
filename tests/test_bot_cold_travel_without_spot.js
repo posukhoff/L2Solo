@@ -165,7 +165,7 @@ async function run() {
             current: {
                 type: 'upgrade_gear',
                 target: { itemId: 127 },
-                plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' }
+                plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran' }
             }
         });
     };

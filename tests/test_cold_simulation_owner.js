@@ -72,7 +72,7 @@ function state(characterId, revision, activity = 'hunting') {
     assert.strictEqual(Owner.eligibility({ ...state(characterId, 0), stats: { equipmentPlan: { strategy: 'craft' } } }).reason, 'craft_plan');
     assert.strictEqual(Owner.eligibility({
         ...state(characterId, 0, 'traveling'),
-        stats: { travel: { arrivalActivity: 'shopping', reason: 'market_search_for_weapon' } }
+        stats: { travel: { arrivalActivity: 'shopping', reason: 'market_search_for_gear' } }
     }).reason, 'legacy_travel');
     assert.strictEqual(Owner.eligibility(state(characterId, 0), { hasWarehouseWorkflow: true }).reason, 'warehouse_state');
     assert.strictEqual(Owner.eligibility({ ...state(characterId, 0), stats: { warehouseErrand: {} } }).reason, 'warehouse_state');

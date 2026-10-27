@@ -1,5 +1,7 @@
 const BotEconomyPricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
 let snapshotPrices = null;
+// Moves with every NPC offer snapshot: a price read from npcPrice is kept while it holds (FirstPrice).
+let snapshotRevision = 0;
 
 function indexOffers(offers) {
     const prices = new Map();
@@ -16,6 +18,7 @@ function useNpcOfferSnapshot(offers) {
     // Workers receive immutable offers from the main process and must never
     // load town/world services to evaluate an item.
     snapshotPrices = indexOffers(offers || []);
+    snapshotRevision++;
 }
 
 // Lazy: loaded on first use (load order), then kept; a require per call was ~3% of main busy (perf-map 2026-10-14).
@@ -35,4 +38,4 @@ function priceAt(item, ratio) {
     return Math.max(1, Math.floor(referencePrice(item) * ratio));
 }
 
-module.exports = { npcPrice, referencePrice, priceAt, useNpcOfferSnapshot };
+module.exports = { npcPrice, referencePrice, priceAt, useNpcOfferSnapshot, npcRevision: () => snapshotRevision };

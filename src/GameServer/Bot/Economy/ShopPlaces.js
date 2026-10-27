@@ -466,14 +466,6 @@ function places(town) {
     return Array.from(data.xs, (locX, index) => ({ locX, locY: data.ys[index], locZ: data.zs[index] }));
 }
 
-function freeCount(town) {
-    if (!hasPlaza(town)) return 0;
-    const data = ensureBuilt(town);
-    let free = 0;
-    for (let place = 0; place < data.blockers.length; place++) if (data.blockers[place] === 0) free++;
-    return free;
-}
-
 const stateOwner = (characterId) => `state:${Number(characterId)}`;
 const afkOwner = (ownerId) => `afk:${Number(ownerId)}`;
 
@@ -520,7 +512,6 @@ module.exports = {
     SHOP_TOWNS,
     afkOwner,
     fillCenter,
-    freeCount,
     fullReason,
     hasPlaza,
     isOnSquare,

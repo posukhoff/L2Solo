@@ -27,6 +27,7 @@ const context = {
     module: { exports: {} },
     invoke: name => { assert.ok(dependencies[name], name); return dependencies[name]; },
     require: name => {
+        if (name === '../Population/PartyId') return require('../src/GameServer/Bot/Population/PartyId');
         assert.equal(name, '../../Social/PlayerPartyRelationship');
         return { combine: () => ({ memory, reason: relationshipReason }) };
     }

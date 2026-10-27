@@ -11,7 +11,7 @@ Config.knowledgeErrorsEnabled = false;
 const close = (actual, expected) => assert(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
 const state = { characterId: 990121, level: 50, adena: 3000, stats: { classId: 2, money: [3719, 0.0001, 1000, 900000] } };
 const persona = { traits: {}, understanding: 0.5 };
-const saved = { value: Table.value, best: Table.best, income: Hunt.huntIncome, samples: Hunt.sampledRows };
+const saved = { value: Table.value, income: Hunt.huntIncome, samples: Hunt.sampledRows, ranked: Table.rankedIncome };
 try {
     const rows = { near: { exp: 234195, adena: 30000, loot: 8294, kills: 10, deaths: 0 },
         middle: { exp: 112756, adena: 13000, loot: 2941, kills: 10, deaths: 0 },
@@ -32,15 +32,18 @@ try {
         assert.equal(Economics.moneyWeight({ ...state, stats }), 0);
     }
     assert.equal(Economics.moneyWeight({ ...state, stats: { wishFocus: [1, 0, 900000] } }), 1);
-    Table.best = () => ({ adena: 6000, loot: 4000 });
+    // A bot with no saved hour and no hunt takes the net income of the first ranked row, floor 1.
+    Table.rankedIncome = () => [{ adena: 6000, loot: 4000 }];
     Hunt.huntIncome = () => ({ perHour: 0, expPerHour: 40270 });
     const unsampled = Economics.create({ ...state, stats: { classId: 2, wishFocus: [1, 0, 900000] } },
         { persona, deathHours: 0 });
     close(unsampled({ id: 'near' }).valueHours, 38294 / 10000);
-    Table.best = () => null;
+    Table.rankedIncome = () => [];
+    close(Economics.create({ ...state, stats: { classId: 2, wishFocus: [1, 0, 900000] } },
+        { persona, deathHours: 0 })({ id: 'near' }).valueHours, 38294);
     close(Economics.create({ ...state, stats: { classId: 2 } }, { persona, deathHours: 0, moneyWeight: 1 })({ id: 'grey' }).valueHours, 3719);
 } finally {
-    Table.value = saved.value; Table.best = saved.best; Hunt.huntIncome = saved.income; Hunt.sampledRows = saved.samples;
+    Table.value = saved.value; Table.rankedIncome = saved.ranked; Hunt.huntIncome = saved.income; Hunt.sampledRows = saved.samples;
     Config.knowledgeErrorsEnabled = oldKnowledge;
 }
 console.log('PASS saved money gap, unfunded-focus fallback and shared spot-value units');

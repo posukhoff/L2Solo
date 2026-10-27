@@ -12,7 +12,7 @@ const ids = [730231, 730232, 730233], point = { locX: 83396, locY: 147904, locZ:
 const flush = async () => { for (let n = 0; n < 24; n++) await new Promise(resolve => setImmediate(resolve)); };
 (async () => {
     const world = await createWorld(ids.map(id => ({ id, level: 30 })), 'reserved-board-stock');
-    const original = { prepare: Coordinator.requestMeetingPreparation, current: Coordinator.meetingPreparationCurrent,
+    const original = { prepare: Coordinator.requestMeetingPreparation, stale: Coordinator.meetingPreparationStale,
         cancel: Coordinator.cancelMeetingPreparation };
     try {
         await Database.createAccount('bot_reserved_stock_fixture', 'test');
@@ -31,16 +31,18 @@ const flush = async () => { for (let n = 0; n < 24; n++) await new Promise(resol
             lines: [{ objectId: source.id, selfId: 1867, name: 'Animal Skin', count: 10, price: 100, stackable: true }] }], { expected: {} });
         const ad = (await Database.fetchAfkTradeShops(ids[1]))[0];
         Afk.refreshRecord(ad);
-        let preparations = 0;
+        // The worker's consent: its route, certificates and survival
+        // tranche (the kit cost it funded the purchase with).
+        let preparations = 0, proofSurvival = 0;
         Coordinator.requestMeetingPreparation = async (id, request) => {
             preparations++;
             const side = request.actorA === id ? 0 : 1;
             return { approved: true, token: request.token, characterId: id, sequence: request.parties[side].sequence,
-                route: request.parties[side].route, certificates: request.lines.map(line => line.payer === side
+                route: request.parties[side].route, survivalCost: proofSurvival, certificates: request.lines.map(line => line.payer === side
                     ? Intent.encode({ itemId: line.selfId, amount: line.count, price: line.price,
                         key: `resale:${line.selfId}`, recipeId: 0, valueHours: 2, valueRate: 100 }) : null) };
         };
-        Coordinator.meetingPreparationCurrent = () => true;
+        Coordinator.meetingPreparationStale = () => null;
         Coordinator.cancelMeetingPreparation = () => {};
         const publicCount = () => Afk.boardIndex().ownerLines(ids[1]).reduce((sum, line) => sum + line.count, 0);
         const observedCount = async () => MarketSnapshot.afkStores(await Database.fetchAfkTradeShops(ids[1]))
@@ -95,11 +97,24 @@ const flush = async () => { for (let n = 0; n < 24; n++) await new Promise(resol
         } finally { Database.fetchAfkTradeShops = originalShops; }
         await Meetings.cancel(ids[0]); await flush();
         assert.equal(publicCount(), 10, 'the later native cancellation republishes the original stock');
-        console.log('PASS reserved board stock: partial/full publication, stale quote refusal, independent cancellation and exact asset restoration');
+        // The native accept funds the purchase on the terms the worker
+        // consented to: free cash above the reserve pays 100 of 400, the
+        // survival tranche the worker counted (350) pays the rest.
+        const wallet = (await Database.fetchItems(ids[0])).find(row => row.selfId === 57).amount;
+        await Database.execute(["UPDATE bot_life_state SET mindJson=json_set(mindJson,'$.money[2]',?) WHERE characterId=?", [wallet - 100, ids[0]]]);
+        proofSurvival = 350;
+        assert((await agree(ids[0], 4)).pending, 'a purchase the worker funded from its survival tranche is accepted');
+        await Meetings.cancel(ids[0]); await flush();
+        // Money that really left between consent and accept still refuses.
+        const consented = await Meetings.prepareTrade(ids[0], { shopId: ad.id }, 1867, 4);
+        await Database.execute(['UPDATE items SET amount=amount-200 WHERE characterId=? AND selfId=57', [ids[0]]]);
+        await assert.rejects(Meetings.accept(consented.preparationId, ids[0]), /economy_funding_changed/,
+            'a wallet that dropped below the consented terms is refused');
+        console.log('PASS reserved board stock: partial/full publication, stale quote refusal, independent cancellation and exact asset restoration, accept funds on the worker\'s consented terms');
     } finally {
         await flush(); Meetings.reset(); Afk._resetForTests();
         Coordinator.requestMeetingPreparation = original.prepare;
-        Coordinator.meetingPreparationCurrent = original.current;
+        Coordinator.meetingPreparationStale = original.stale;
         Coordinator.cancelMeetingPreparation = original.cancel;
         await world.close();
     }

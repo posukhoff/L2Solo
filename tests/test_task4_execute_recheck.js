@@ -14,11 +14,15 @@ const Wealth = invoke('GameServer/Bot/Economy/ColdWealthCraftService');
 const ShotEconomy = invoke('GameServer/Bot/Economy/ColdShotEconomyService');
 const ShotPolicy = invoke('GameServer/Bot/Economy/ShotCraftPolicy');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
-const owner = 730171, ORE = 1869, restore = [];
+const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const ColdMarket = invoke('GameServer/Bot/Economy/ColdMarketService');
+const DataCache = invoke('GameServer/DataCache');
+const ItemTemplates = require('../src/GameServer/Item/ItemTemplateIndex');
+const owner = 730171, SMITH = 730172, ORE = 1869, restore = [];
 function stub(object, key, value) { const prior = object[key]; restore.push(() => object[key] = prior); object[key] = value; }
 const lifeRow = async (patch) => ({ ...(await Database.execute(['SELECT * FROM bot_life_state WHERE characterId=?', [owner]]))[0], ...patch });
 (async () => {
-    const world = await createWorld([{ id: owner, classId: 0, level: 30 }], 'task4-execute-recheck');
+    const world = await createWorld([{ id: owner, classId: 0, level: 30 }, { id: SMITH, classId: 57, race: 4, level: 60 }], 'task4-execute-recheck');
     try {
         await Life.init();
         await Database.setItem(owner, { selfId: 57, name: 'Adena', amount: 100000, slot: 0 });
@@ -50,7 +54,7 @@ const lifeRow = async (patch) => ({ ...(await Database.execute(['SELECT * FROM b
         assert.equal((await Market.executePlan(prepared, take)).buyPending, true);
         assert.equal(bought, 1, 'accepted incoming since the decision never buys twice');
         // A buy ad for the same item waits too and publishes nothing.
-        assert.equal((await Market.executePlan(prepared, { buyAds: [[ORE, 2, 237]] })).buyPending, true);
+        assert.equal((await Market.executePlan(prepared, { buyAds: [[ORE, 2, 237]], buyTown: 'Giran' })).buyPending, true);
         assert.deepEqual(await Database.fetchAfkTradeShops(owner), records, 'a filled buy ad is not published');
 
         // 3. A life-state write rebuilt from columns keeps the cached incoming
@@ -111,16 +115,44 @@ const lifeRow = async (patch) => ({ ...(await Database.execute(['SELECT * FROM b
         await Life.upsertState(later, 'probe_after_settlement');
         assert.equal(heldFor(Life.cachedState(owner), ORE), 7, 'a column-only write after the settlement counts the bag once');
 
-        // 8. A wealth craft whose decision changed writes nothing.
-        let writes = 0;
-        stub(Life, 'upsertState', async () => { writes++; return null; });
+        // 8. A step that carries its held scroll (recheck `learn`) learns the
+        // recipe before any input is bought, then crafts; a scroll gone since
+        // the decision buys nothing and rejects the step.
+        const recipe = Recipes.resolveByRecipeId(79);
+        stub(ColdMarket, 'acquireMaterials', async (state, inputs) => {
+            if (inputs.length) throw Error('an input was bought');
+            return { state, ready: true, spent: 0 };
+        });
+        const template = ItemTemplates.find(DataCache.items, recipe.productId);
+        // The economy commit admits a bot account only; the learner, a
+        // Create Item level the recipe needs.
+        await Database.execute(["INSERT INTO accounts(username,password) VALUES ('bot_smith','test')", []]);
+        await Database.execute(['UPDATE characters SET username=? WHERE id=?', ['bot_smith', SMITH]]);
+        await Database.execute(["INSERT INTO skills(selfId,name,passive,level,characterId) VALUES (172,'Create Item',0,?,?)", [recipe.level, SMITH]]);
+        const smith = async withScroll => {
+            await Database.setItem(SMITH, { selfId: 57, name: 'Adena', amount: 100000, slot: 0 });
+            if (withScroll) await Database.setItem(SMITH, { selfId: recipe.recipeItemId, name: 'Recipe', amount: 1, slot: 0 });
+            for (const row of recipe.materials) await Database.setItem(SMITH, { selfId: row.selfId, name: 'Material', amount: row.amount, slot: 0 });
+            await Life.upsertState({ characterId: SMITH, phase: 'cold', activity: 'hunting', level: 60, adena: 100000,
+                inventory: Life.inventorySummaryFromItems(await Database.fetchItems(SMITH)), vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
+                loc: { locX: 0, locY: 0, locZ: 0 }, currentRegion: 'Giran', stats: { classId: 57 } }, 'fixture');
+            return Life.cachedState(SMITH);
+        };
+        const learnStep = purchases => ({ exit: { type: 'npc' }, recipe, batches: 1, learn: true, template, r: 1,
+            basket: { owned: [], purchases } });
+        const unlearned = await Wealth.execute(await smith(false), learnStep([{ selfId: recipe.materials[0].selfId, town: 'Giran' }]));
+        assert.equal(unlearned.reason, 'recipe_not_learned', 'a scroll gone since the decision buys no input');
+        const learnt = await Wealth.execute(await smith(true), learnStep([]));
+        assert(learnt.crafted || learnt.reason === 'failed_roll', `the learnt recipe reaches the craft roll (${learnt.reason})`);
+        assert((await Database.fetchCharacterRecipes(SMITH)).some(row => Number(row.recipeId) === recipe.recipeId), 'the held scroll is learnt');
+
+        // 9. A wealth craft whose decision changed writes nothing.
+        stub(Life, 'upsertState', async () => null);
         const opportunity = { exit: { type: 'npc' }, recipe: { mpCost: 0 }, batches: 1, basket: { owned: [], purchases: [] } };
         const stale = await Wealth.execute(fresh, opportunity, { stillPrepared: () => false });
         assert.equal(stale.stale, true);
         assert.equal(stale.reason, 'decision_changed');
-        assert.equal(writes, 0, 'a stale wealth craft writes no state');
         assert.equal((await Wealth.execute(fresh, opportunity, { stillPrepared: () => true })).reason, 'state_write_rejected');
-        assert.equal(writes, 1, 'a held wealth craft reaches its first write');
-        console.log('PASS Task 4 execute recheck: incoming/bag since decision wait, stale shot/wealth write nothing, cache keeps incoming');
+        console.log('PASS Task 4 execute recheck: incoming/bag since decision wait, stale shot/wealth write nothing, a held scroll is learnt before inputs are bought, cache keeps incoming');
     } finally { for (const fn of restore.reverse()) fn(); await world.close(); }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });

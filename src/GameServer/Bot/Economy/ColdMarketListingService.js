@@ -7,7 +7,6 @@ const TownPathfinder = invoke('GameServer/Bot/AI/TownPathfinder');
 const MarketTownPolicy = invoke('GameServer/Bot/Economy/MarketTownPolicy');
 const MarketTelemetry = invoke('GameServer/Bot/Economy/MarketTelemetry');
 const ShopPlaces = invoke('GameServer/Bot/Economy/ShopPlaces');
-const StaticBuyerService = invoke('GameServer/Bot/Economy/StaticBuyerService');
 const MarketListingPolicy = invoke('GameServer/Bot/Economy/MarketListingPolicy');
 const BuyStoreService = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
 const GoalExecutor = invoke('GameServer/Bot/Goals/GoalExecutor');
@@ -18,10 +17,12 @@ function stoppedDeposit(warehouse) {
     return { state: warehouse.state, listed: false, reason: warehouse.reason, warehouse, aborted: true };
 }
 
-function marketTown(name) {
+// A market town by its name: its own, else Giran's (a trip still goes
+// somewhere); exact: its own or null.
+function marketTown(name, { exact = false } = {}) {
     return TownPathfinder.towns.find((town) => town.name === name)
         || MarketTownPolicy.marketTown(name)
-        || TownPathfinder.towns.find((town) => town.name === 'Giran')
+        || (exact ? null : TownPathfinder.towns.find((town) => town.name === 'Giran'))
         || null;
 }
 
@@ -37,8 +38,9 @@ function marketLocation(town, options) {
 }
 
 // The centre of a market town: the place of a board ad, which stands nowhere.
-function townCenter(name) {
-    const town = marketTown(name);
+// exact: as marketTown (null for a town with no centre of its own).
+function townCenter(name, { exact = false } = {}) {
+    const town = marketTown(name, { exact });
     return town?.center ? { ...town.center } : null;
 }
 
@@ -144,8 +146,7 @@ function open(state, options = {}) {
     // the retry keeps a later pass from answering the same ad again when the
     // payer refuses it (E311).
     if (dynamicBuyerSale.pending) return { ...dynamicBuyerSale, state: deferSellRetry(dynamicBuyerSale.state || state), listed: false };
-    return StaticBuyerService.sell(dynamicBuyerSale.state || state, town?.name).then((buyerSale) => {
-    const saleState = buyerSale.state || dynamicBuyerSale.state || state;
+    const saleState = dynamicBuyerSale.state || state;
     return LifeState.applyNpcLiquidation(saleState, market.npc, {
         source: 'pre_market_junk',
         town: town?.name || saleState.currentRegion || null
@@ -156,16 +157,13 @@ function open(state, options = {}) {
         return BotWarehouse.depositCold(marketState).then((warehouse) => warehouse.aborted ? stoppedDeposit(warehouse) : ({
             state: deferSellRetry(warehouse.state || marketState),
             listed: false,
-            reason: buyerSale.sold
-                ? 'sold_to_static_buyer'
-                : dynamicBuyerSale.sold
-                    ? 'sold_to_dynamic_buyer'
+            reason: dynamicBuyerSale.sold
+                ? 'sold_to_dynamic_buyer'
                 : initialMarket.npc.length
                     ? 'liquidated_junk'
                     : market.warehouse.length
                         ? 'no_market_demand'
                         : 'nothing_to_sell',
-            buyerSale,
             dynamicBuyerSale,
             warehouse,
             market
@@ -176,19 +174,18 @@ function open(state, options = {}) {
     // the records. The bot then goes back to its hunt.
     return invoke('GameServer/Bot/Economy/BotAfkMarketService').listOnBoard(marketState, { ...options, decided: market }).then((board) => {
         const boardState = board.state || marketState;
-        if (board.shopTown) return travelToShopTown(boardState, board, timestamp);
+        if (board.storeTown) return travelToShopTown(boardState, board, timestamp);
         if (!board.listed) {
             return BotWarehouse.depositCold(boardState).then((warehouse) => warehouse.aborted ? stoppedDeposit(warehouse) : ({
                 state: deferSellRetry(warehouse.state || boardState),
                 listed: false,
                 reason: board.reason || 'board_refused',
-                buyerSale,
                 dynamicBuyerSale,
                 warehouse,
                 market
             }));
         }
-        MarketTelemetry.listingOpened({ speculative: false });
+        MarketTelemetry.listingOpened();
         return BotWarehouse.depositCold(boardState).then((warehouse) => {
             if (warehouse.aborted) return stoppedDeposit(warehouse);
             const deposited = warehouse.state || boardState;
@@ -198,7 +195,6 @@ function open(state, options = {}) {
                 state: saved || returning,
                 listed: true,
                 itemCount: board.listed,
-                buyerSale,
                 dynamicBuyerSale,
                 warehouse,
                 market
@@ -208,34 +204,32 @@ function open(state, options = {}) {
     });
     });
     });
-    });
 }
 
-// The bot's shop opens in another town than the one it sold in (its one
-// roll, MarketTownPolicy.openingTown): it travels there with its lines and
+// The bot's shop opens in another town than the one it sold in (its twin
+// town, TwinCluster.townOf): it travels there with its lines and
 // keeps its way back to its spot; the visit there opens the shop. When it
 // cannot travel, its lines wait in the bag for the next visit.
 function travelToShopTown(state, board, timestamp) {
     // The visit saved its sale retry before answering buy ads (open); the trip
     // to the shop town is not a new sale trip and must not wait behind it.
-    const stats = { ...(state.stats || {}), marketSellRetryAfter: null,
-        shopTown: state.stats?.shopTown || { town: board.shopTown, at: timestamp } };
+    const stats = { ...(state.stats || {}), marketSellRetryAfter: null };
     const goal = { type: 'sell_inventory', status: 'active',
-        plan: { expectedBenefit: 'market_sale_inventory', marketTown: board.shopTown } };
+        plan: { expectedBenefit: 'market_sale_inventory', marketTown: board.storeTown } };
     // A sale trip that cannot pay the gatekeeper falls back to the town the
     // Scroll of Escape reaches (GoalExecutor.beginMarketTravel), from a town
     // this same town: only a trip to the shop town counts. Otherwise the lines
     // wait in the bag behind the sale retry, as every other ended sale visit,
     // instead of a new sale trip each resolve (E304 (a)).
     const trip = GoalExecutor.beginMarketTravel({ ...state, activity: 'hunting', stats }, goal, timestamp);
-    const travel = trip?.stats?.travel?.townName === board.shopTown ? trip : null;
+    const travel = trip?.stats?.travel?.townName === board.storeTown ? trip : null;
     if (travel) travel.stats.marketReturn = state.stats?.marketReturn || travel.stats.marketReturn;
     const waiting = travel ? null : { ...state, stats: { ...stats, marketSellRetryAfter: timestamp + SELL_RETRY_DELAY_MS } };
     const next = travel || GoalExecutor.finishMarketVisit(waiting, timestamp, { recoverMissingReturn: true })
         || waiting;
     return LifeState.upsertState(next, travel ? 'cold_market_shop_town_trip' : 'cold_market_shop_town_unreached')
         .then((saved) => ({ state: saved || next, listed: board.listed > 0, itemCount: board.listed,
-            reason: travel ? 'shop_town_trip' : 'shop_town_unreached', shopTown: board.shopTown }));
+            reason: travel ? 'shop_town_trip' : 'shop_town_unreached', storeTown: board.storeTown }));
 }
 
 // A merchant without a stall: the board replaced the stalls (step 3.3), and

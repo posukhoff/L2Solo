@@ -6,15 +6,16 @@
 const { fnv1a32 } = require('../Fnv1a');
 const { createHash } = require('node:crypto');
 const PurchaseFunding = require('./PurchaseFunding');
+const { partyIdOf } = require('../Population/PartyId');
 const Karma = require('../../Karma');
 const Warehouse = require('./PersonalWarehouseIndex');
 const ClanSupply = require('../../Clan/ClanSupplyPolicy');
 const Providers = require('./WishProviders');
 const Floor = require('../Population/SurvivalFloor');
-const InventoryLimits = require('../../Inventory/InventoryLimits');
 const Diagnostics = require('./EconomyDiagnostics');
 const { SELL, BUY } = require('../../AfkTrade/BoardIndex');
-const DataCache = invoke('GameServer/DataCache');
+const MarketDemand = require('./MarketDemand');
+const CommittedExits = require('./CommittedExits');
 const CombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
@@ -75,9 +76,8 @@ function sectionMask(names) {
 // Of the relations fact it reads only the party role (its spot value table
 // and hunt income); relations is in its list for it, so a party join
 // rebuilds it (a deviation from the spec's four sections).
-// sources: the source walk (worn gear and level; party, clan, role;
-// exclusions, risk, hunt rows; the plan, persona, craft station, trades;
-// the hour adena and the money mark). weighing: focus, step and money queue.
+// The source walk itself is walked anew on every build (no piece).
+// weighing: focus, step and money queue.
 // route: the bot's hunting spot search (BotRoute.choose), kept in the worker's
 // record: kit and level (build), party and clan (relations), the ground and
 // the exclusion and "was full" marks (occupation, sources). The matchup it
@@ -85,18 +85,23 @@ function sectionMask(names) {
 const FOUNDATION = sectionMask(['build', 'combat', 'supply', 'occupation', 'relations']);
 const COMPUTED = Object.freeze({
     foundation: FOUNDATION,
-    sources: sectionMask(['build', 'relations', 'occupation', 'sources', 'money']),
     weighing: sectionMask(SECTIONS),
     route: sectionMask(['build', 'relations', 'occupation', 'sources']),
     // The source walk's per-spot ground verdict (GearAcquisitionPlanner.sourceGround):
     // level and kit matchup; its other reads are checked beside it.
     sourceGround: sectionMask(['build']),
-    // The crafter's workshop (its best recipe and income per hour, the
-    // occupation planner's answer), kept with the held build: the planner
-    // reads the money packet (stats.money: hour adena, trip value, craft
-    // labour), which the foundation writes every build, and the kept
-    // recipe's market (its watch rows raise money).
-    workshop: FOUNDATION | sectionMask(['money'])
+    // The crafter's workshop (the occupation planner's answer: the owner's
+    // line feasibility mask), kept with the held build: its section is the
+    // kit (craft level, station, recipe book). The mask reads no hour,
+    // wallet or route row: a money, supply or trip move does not ask again.
+    workshop: sectionMask(['build']),
+    // The twin's grade town (TwinCluster.townAt past the records): the kit
+    // and its reservations (build), the kept stock (supply), the hunting
+    // spot's origin for no-grade stock (occupation), the bag full or its
+    // weight and the stores (sources). Karma is overlaid at read (townOf).
+    // Cargo whose grade mix drifts with no raised section keeps the held town
+    // until the next raise; the watched buys likewise.
+    town: sectionMask(['build', 'supply', 'occupation', 'sources'])
 });
 // The one table of what a moved fact touches, for near and far bots alike
 // (factEvents over factsOf). build: the kit (class, level, gear, hennas,
@@ -123,32 +128,32 @@ function sectionNames(bits) {
 // The kit fact of a view: class, level, worn gear, hennas, skills, the hot
 // capture (view.kitHashes: ColdCombatProfile.kitHash of combatView's parts,
 // hashed once per view), the craft
-// (level, station, workshop), the soul crystal quest and the karma flip that
+// (level, station; the bot's own workshop offer is its output, no input), the soul crystal quest and the karma flip that
 // closes the towns. Effects and night are no economy input, so a buff or the
 // day/night flip moves no fact; the clan is a relations fact; the recipe book
 // is its own fact. Its parts do not read the clock.
 function kitFact(view) {
-    return hash([view.kitHashes, view.craftLevel, view.craftStationId, view.workshop,
+    return hash([view.kitHashes, view.craftLevel, view.craftStationId,
         view.soulCrystalQuest, view.closesTowns]);
 }
 // The kit part of the far reader (stateView), without the bag scan.
 function kitView(state) {
     const stats = state.stats || {};
     return { kitHashes: CombatProfile.kitHash(CombatProfile.combatView(state)), craftLevel: state.craftLevel ?? stats.dwarvenCraftLevel,
-        craftStationId: stats.craftStationId ?? null, workshop: stats.workshop,
+        craftStationId: stats.craftStationId ?? null,
         soulCrystalQuest: !!stats.soulCrystalQuest, closesTowns: Karma.closesTowns(stats.karma) };
 }
 function kit(state) {
     return kitFact(kitView(state));
 }
-function fundingMark(state, escrow = 0) {
-    const packet = state.stats?.money;
+// packet: the money packet the decision priced with (default the state's).
+function fundingMark(state, escrow = 0, packet = state.stats?.money) {
     if (!Array.isArray(packet)) return 0;
     const wallet = PurchaseFunding.budget(state, escrow) - positive(packet[2]);
     const funded = [];
     for (let at = 5; at < packet.length; at += 3) funded.push(wallet >= positive(packet[at]));
     // Items or adena on their way from the board are a board-side money fact.
-    return hash([wallet >= 0, ...funded, PurchaseFunding.moneyReached(state, escrow), state.incomingPending === true]);
+    return hash([wallet >= 0, ...funded, PurchaseFunding.moneyReached(state, escrow, packet), state.incomingPending === true]);
 }
 function reachesUpper(wallet, bounds) {
     const high = bounds?.[1];
@@ -157,7 +162,10 @@ function reachesUpper(wallet, bounds) {
 // Hard (allowSoft false): the held option became unaffordable or its
 // funding/obligation mark moved. Soft: a newly payable next wish or a drift
 // beyond the bot's error (the soft point's, softEvents).
-function moneyChanged(state, baseline, escrow, allowSoft) {
+// packet: the money packet the decision priced with, its funding mark's
+// queue (default the state's; the held verdict passes its build's while the
+// state does not carry it yet: own outputs are not inputs).
+function moneyChanged(state, baseline, escrow, allowSoft, packet = state.stats?.money) {
     if (!baseline) return false;
     const physicalWallet = positive(state.adena), budgetTracked = Array.isArray(baseline.budgetBounds);
     const decisionBudget = budgetTracked ? PurchaseFunding.budget(state, escrow) : physicalWallet;
@@ -165,7 +173,7 @@ function moneyChanged(state, baseline, escrow, allowSoft) {
     // that conservative comparison until an actual build supplies both bounds.
     if (physicalWallet < Number(baseline.cashBounds?.[0] ?? -1)
         || budgetTracked && decisionBudget < Number(baseline.budgetBounds[0])
-        || baseline.funding !== fundingMark(state, budgetTracked ? escrow : 0)) return true;
+        || baseline.funding !== fundingMark(state, budgetTracked ? escrow : 0, packet)) return true;
     return allowSoft && (reachesUpper(physicalWallet, baseline.cashBounds)
         || budgetTracked && reachesUpper(decisionBudget, baseline.budgetBounds)
         || Number(baseline.moneyError) >= 0
@@ -237,16 +245,7 @@ function learnedChange(current, previous, error, share, previousShare, noise = [
 // The learned frustration the decision weighed its risk with (riskWeight's
 // 1 + frustration), rounded: the baseline holds a few bytes.
 const frustrationOf = state => Math.round(positive(state.stats?.frustration) * 1000) / 1000;
-// bondNow: the caller's reader of the current relation bond
-// (WishProviders.relationBond), called only once the rest held; null when the
-// caller read no memory. The bond, like frustration, drifts beyond the error.
-function bondChanged(baseline, bondNow, error) {
-    const base = baseline.bond;
-    if (!Array.isArray(base) || typeof bondNow !== 'function') return false;
-    const bond = bondNow();
-    return Array.isArray(bond) && bond.some((value, at) => Math.abs(value - Number(base[at])) > Math.abs(Number(base[at])) * error);
-}
-function observationChanged(state, baseline, timestamp, mode, bondNow = null) {
+function observationChanged(state, baseline, timestamp, mode) {
     if (!baseline) return true;
     const rows = Hunt.sampledRows(state, timestamp, mode), current = sampleOf(rows);
     const previous = sampleRows(Object.hasOwn(baseline, 'sample') ? baseline.sample : []);
@@ -258,8 +257,7 @@ function observationChanged(state, baseline, timestamp, mode, bondNow = null) {
     return !observationBaselineValid(baseline, previous) || !Number.isFinite(share)
         || Math.abs(share - previousShare) > previousShare * error
         || Number.isFinite(frustration) && Math.abs(frustrationOf(state) - frustration) > (1 + frustration) * error
-        || learnedChange(current, previous, error, share, previousShare, rows.map(row => positive(row.noise)))
-        || bondChanged(baseline, bondNow, error);
+        || learnedChange(current, previous, error, share, previousShare, rows.map(row => positive(row.noise)));
 }
 function bounds(wallet) {
     const result = [-1, null];
@@ -271,24 +269,22 @@ function bounds(wallet) {
     } };
 }
 // facts: the build's semanticFacts(state) when its caller already has them.
-// bond: the build's relation bond (WishProviders.relationBond), null without one.
 // threat: the gear-threat mask the build weighed (context.gearThreatMask),
 // compared hard by the held verdict. marketWatch: the build's watch rows
 // [itemId, storeType, reference price, error] (at most MARKET_WATCH), read by
 // the soft point (softEvents); recorded by every build, never carried.
-function snapshot(state, context, cashBounds, moneyError = -1, mode, money = null, facts = null, bond = null, marketWatch = null) {
+function snapshot(state, context, cashBounds, moneyError = -1, mode, money = null, facts = null, marketWatch = null) {
     const persona = context.persona;
-    const actual = { ...state, stats: { ...state.stats, money: context.statsPacket.money } };
     const budgetTracked = Array.isArray(money?.budgetBounds), escrow = budgetTracked ? money.buyOrderEscrow : 0;
     // budgetBounds tags the budget-aware schema. Its wallet/error use total
     // purchase funds; cashBounds still records physical fees. Old wallets are cash.
     const wallet = budgetTracked ? PurchaseFunding.budget(state, escrow) : positive(state.adena);
     const share = Hunt.onSpotShare(state);
-    return { at: Number(context.timestamp), wallet, cashBounds, funding: fundingMark(actual, escrow), moneyError,
+    return { at: Number(context.timestamp), wallet, cashBounds, funding: fundingMark(state, escrow, context.statsPacket.money), moneyError,
         ...(budgetTracked ? { budgetBounds: money.budgetBounds } : {}),
         bagValue: positive(context.choiceBagValue),
         ...(facts || semanticFacts(state)), threat: context.gearThreatMask,
-        frustration: frustrationOf(state), ...(bond ? { bond } : {}),
+        frustration: frustrationOf(state),
         incomeError: incomeError(state, persona), sample: packSample(sample(state, context.timestamp, mode)),
         ...(share === 1 ? {} : { share }), ...(marketWatch?.length ? { marketWatch } : {}) };
 }
@@ -296,8 +292,7 @@ function snapshot(state, context, cashBounds, moneyError = -1, mode, money = nul
 // inputs crossed the bot's own error since its decision, empty when quiet;
 // no clock: a drift inside the error is never an event, however long.
 // baseline: the decision's (stats.wishSections). input: { board (the board
-// mirror, null: not ready, the market part waits), buyOrderEscrow, memory (a
-// reader of the bot's memory rows, called only when the bond is compared),
+// mirror, null: not ready, the market part waits), buyOrderEscrow,
 // timestamp (the step's) }.
 function softEvents(state, baseline, input) {
     if (!baseline) return NONE;
@@ -312,9 +307,9 @@ function softEvents(state, baseline, input) {
         if (diagnostic) Diagnostics.count('soft', 'raise', source);
     };
     if (meaningfulMoney(state, baseline, input.buyOrderEscrow)) add('money');
-    const bondNow = () => Providers.relationBond(state, { memory: input.memory?.() ?? null });
-    if (observationChanged(state, baseline, input.timestamp, undefined, bondNow)) add('observation');
-    if (input.board && marketCrossed(input.board, baseline.marketWatch, Number(state.characterId))) add('market');
+    if (observationChanged(state, baseline, input.timestamp)) add('observation');
+    if (input.board && marketCrossed(input.board, baseline.marketWatch, Number(state.characterId))
+        || takersCrossed(baseline.marketWatch, Number(state.characterId))) add('market');
     return sections;
 }
 const NONE = Object.freeze([]);
@@ -322,9 +317,41 @@ const SOFT_SECTIONS = Object.freeze({ money: Object.freeze(['money']),
     observation: Object.freeze(['occupation', 'benefits', 'sources']), market: Object.freeze(['sources', 'money']) });
 // The watch rows against the board mirror, one head read per row: a sell line
 // (SELL) below the reference by more than the error, or a buy line (BUY)
-// above it by more than the error. Rows of another shape
-// (a baseline saved by an older build) are skipped.
+// above it by more than the error. A census row (CENSUS: the product's burn
+// per hour the build read, rounded, MarketDemand.censusOf) crosses when the
+// rounded census moved by more than the error either way (to 0 too: the last
+// wearer left); a reference of 0 (none worn, or no census yet when the build
+// ran) crosses on the first burn. No census in the mirror yet (main has not
+// published since a restart) is no crossing. Every census crossing is
+// counted (censusCrossings, the heartbeat's line). A crafter's wake row
+// (DEMANDED: [craft level, DEMANDED, products counted, 0]) crosses when more
+// of its level's products have a census rate (MarketDemand.demandedCount)
+// than the build saw. A sold line's row (SOLD as its fifth field: the buy
+// line a farm_sale root sells to, EconomyContext.marketWatchRows; its
+// reference is that line's price) also crosses when the line closed or
+// fell by more than the error: the root's value is gone. Rows of another
+// shape (a baseline saved by an older build) are skipped.
 const MARKET_WATCH = 20;
+const CENSUS = 0;
+const DEMANDED = 2;
+const SOLD = 1;
+// A waiting buy's row ([itemId, TAKERS, free units, town code],
+// EconomyContext.marketWatchRows from the buy path's takers, WishProviders
+// buyWait): crosses when the rival takers on the town's asks
+// (CommittedExits.rivalTakerUnits) hold fewer than the units free for the
+// bot's ask, so a unit is its own to buy; not on every taker that leaves
+// (one wake per waiter, not one per drop). No board read, O(1) per row.
+const TAKERS = 4;
+function takersCrossed(watch, ownerId) {
+    if (!Array.isArray(watch)) return false;
+    for (let at = 0; at < watch.length && at < MARKET_WATCH; at++) {
+        const row = watch[at];
+        if (Array.isArray(row) && row[1] === TAKERS && row[0] > 0 && row[3] > 0
+            && CommittedExits.rivalTakerUnits(row[0], row[3], ownerId) < row[2]) return true;
+    }
+    return false;
+}
+let censusCrossings = 0;
 function marketCrossed(board, watch, ownerId) {
     if (!Array.isArray(watch)) return false;
     const exclude = { excludeOwner: ownerId };
@@ -332,18 +359,28 @@ function marketCrossed(board, watch, ownerId) {
         const row = watch[at];
         if (!Array.isArray(row)) continue;
         const [itemId, storeType, price, error] = row;
+        if (storeType === TAKERS) continue;
+        if (storeType === DEMANDED) {
+            if (itemId > 0 && price >= 0 && MarketDemand.demandedCount(itemId) > price) { censusCrossings++; return true; }
+            continue;
+        }
+        if (storeType === CENSUS) {
+            if (!(itemId > 0) || !(price >= 0) || !(error >= 0)) continue;
+            const burn = MarketDemand.censusOf(itemId);
+            if (burn === null) continue;
+            const now = Math.round(burn * 1000) / 1000;
+            if (price === 0 ? now > 0 : Math.abs(now - price) > price * error) { censusCrossings++; return true; }
+            continue;
+        }
         if (!(itemId > 0) || !(price > 0) || !(error >= 0)) continue;
-        const line = board.first(itemId, storeType, exclude);
+        // A SOLD row reads the line the farm sells to (Providers.farmLine).
+        const sold = storeType === BUY && row[4] === SOLD;
+        const line = sold ? Providers.farmLine(board, itemId, ownerId) : board.first(itemId, storeType, exclude);
+        if (sold && !(line?.price >= price * (1 - error))) return true;
         if (!line) continue;
         if (storeType === SELL ? line.price < price * (1 - error) : storeType === BUY && line.price > price * (1 + error)) return true;
     }
     return false;
-}
-// Who the friend and the enemy are (WishProviders.relationTargets over the
-// bot's memory), not how much: their trust and hostility are the soft bond.
-function relationTargetIds(state, memory = null) {
-    const { friend, enemy } = Providers.relationTargets(state, { memory });
-    return [friend?.targetId ?? null, enemy?.targetId ?? null];
 }
 // The one fact function, for near and far bots alike: what about the bot's
 // world changed is the fact that differs from the copy kept with the
@@ -352,14 +389,13 @@ function relationTargetIds(state, memory = null) {
 // fields (kitView), recipes (the sorted
 // known recipe ids, null: none read), party (null: none; its partyId and
 // role are the fact, its leaderId is not), clanId,
-// relationTargets ([friend, enemy] ids; null: read here from memory), activity,
+// activity,
 // spotId, stats.travel (occupationPlanned's shape) and stats.relations (the
 // fallback rows without memory), dead, riskDeaths, supply ([id, present] per
 // stock item), stores (four identities), bagFull, weight (level 0-4).
-// memory: the bot's interaction memory rows, null when the caller read none.
-function factsOf(view, memory = null) {
+function factsOf(view) {
     return { build: kitFact(view), recipes: view.recipes ? hash(view.recipes) : null,
-        relations: hash([view.party?.partyId, view.party?.role, view.clanId, ...(view.relationTargets || relationTargetIds(view, memory))]),
+        relations: hash([view.party?.partyId, view.party?.role, view.clanId]),
         occupation: hash([view.spotId, view.activity === 'resting' ? 'hunting' : view.activity]),
         dead: view.dead, riskDeaths: view.riskDeaths, supply: hash(view.supply), stores: hash(view.stores),
         bag: hash([view.bagFull, view.weight]) };
@@ -369,24 +405,18 @@ function factsOf(view, memory = null) {
 function stockIds(shotPlan, potion) {
     return [736, shotPlan.selfId, potion.selfId];
 }
-// The bot's party id as a string (`bgp_<ts36>_<leaderId>`, `bgp_hot_<uuid>`),
-// '' when it has none (the relations fact's party, the held build's kept
-// projection: EconomyContext).
-function partyIdOf(state) {
-    return String(state.party?.partyId || state.partyId || '');
-}
 // The far reader: the raw values of a saved state. recipes: the known recipe
-// ids the build reads (WishProviders.recipeIds), null when the caller holds
-// no recipe book. One bag scan gives the bag full and the load.
+// ids the build reads (ItemDisposition.knownRecipeIds), null when the caller holds
+// no recipe book. One bag scan (the floor's bag) gives the bag full and the
+// load; the kit profile store reads the kit by the hashes this view holds.
 function stateView(state, recipes = null) {
     const stats = state.stats || {};
     const view = kitView(state);
     const partyId = partyIdOf(state);
-    const bag = Floor.stateInventory(state, DataCache.items);
+    const bag = Floor.bagOf(state, CombatProfile.profileFor(state, Date.now(), { kitHashes: view.kitHashes }));
     view.recipes = recipes;
     view.party = partyId ? state.party : null;
     view.clanId = Number(state.clanId ?? stats.clanId ?? 0);
-    view.relationTargets = null;
     view.activity = state.activity;
     view.spotId = state.spotId;
     view.stats = { travel: stats.travel, relations: stats.relations };
@@ -397,10 +427,8 @@ function stateView(state, recipes = null) {
     view.supply = stockIds(shots, potion).map(id => [id, positive(state.inventory?.[id]?.amount) > 0]);
     view.stores = storesOf(state);
     // The bag full: its slot limit (the full-bag sale itself is SurvivalFloor's).
-    view.bagFull = Number(bag.slots >= InventoryLimits.forState(state));
-    // The kit profile store reads the kit by the hashes this view already holds.
-    view.weight = Floor.weightPenalty(bag.load,
-        CombatProfile.profileFor(state, Date.now(), { kitHashes: view.kitHashes }).maxLoad);
+    view.bagFull = Number(bag.slots >= bag.slotLimit);
+    view.weight = Floor.weightPenalty(bag.load, bag.maxLoad);
     return view;
 }
 // The tables main keeps about the bot: the clan's material demand, the
@@ -415,10 +443,9 @@ function storesOf(owner, into = new Array(4)) {
     else into.length = 4;
     return into;
 }
-// memory: the bot's interaction memory (the caller's deps.memory), null when
-// the caller read none. recipes: as stateView's.
-function semanticFacts(state, memory = null, recipes = null) {
-    return factsOf(stateView(state, recipes), memory);
+// recipes: as stateView's.
+function semanticFacts(state, recipes = null) {
+    return factsOf(stateView(state, recipes));
 }
 // A retained calculation accepts its own decision output, not a foreign
 // leaf or focus that happens to share the same sequence. Scalars also let
@@ -446,7 +473,7 @@ function events(before, after, escrow = 0, leaf = null) {
     // A fact the baseline kept as null (no recipe book read) is kept: only a
     // fact the baseline lacks reads the state before.
     const previousFact = key => Object.hasOwn(previous, key) ? previous[key] : (original ||= semanticFacts(before))[key];
-    // No memory and no recipe book here: the relations and the recipes the
+    // No recipe book here: the relations and the recipes the
     // decision kept stand until the next verdict, which reads both.
     const current = { ...semanticFacts(after), relations: previousFact('relations'), recipes: previousFact('recipes') };
     // leaf: the step's held leaf (the worker's round check): the move it
@@ -523,4 +550,4 @@ function kitMoved(before, after) {
     return (before?.stats?.wishSections?.build ?? null) !== (after?.stats?.wishSections?.build ?? null);
 }
 module.exports = { SECTIONS, COMPUTED, FACT_SECTIONS, sectionBit, sectionMask, sectionNames, kit, kitMoved, moneyChanged, observationChanged, incomeError,
-    MARKET_WATCH, softEvents, carrySectionBaseline, baselineIdentity, sample, sampleRows, packSample, observationBaselineValid, bounds, snapshot, semanticFacts, factsOf, relationTargetIds, events, factEvents, occupationPlanned, hash, isEmptyWishPlan, decisionRefusal, partyIdOf };
+    MARKET_WATCH, CENSUS, DEMANDED, SOLD, TAKERS, marketCrossed, censusCrossings: () => censusCrossings, softEvents, carrySectionBaseline, baselineIdentity, sample, sampleRows, packSample, observationBaselineValid, bounds, snapshot, semanticFacts, factsOf, events, factEvents, occupationPlanned, hash, isEmptyWishPlan, decisionRefusal };

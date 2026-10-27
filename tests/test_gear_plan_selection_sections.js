@@ -16,7 +16,7 @@ for (const item of Data.items) {
 }
 assert(source, 'the catalogue supplies a real upgrade and eligible route');
 const plan = { status: 'active', strategy: 'direct_drop',
-    grade: invoke('GameServer/Bot/AI/PersonalGearProgression').acquisitionRankFor(state),
+    grade: invoke('GameServer/Bot/AI/GearGradeRule').gradeForLevel(state.level),
     plannedForLevel: state.level, startedAt: timestamp, expectedKills: 100,
     rateModelVersion: Planner.RATE_MODEL_VERSION, rateProfileSignature: Planner.rateProfileSignature(),
     target: { selfId: target.selfId, slot: target.etc.slot }, next: { ...source, itemId: target.selfId },

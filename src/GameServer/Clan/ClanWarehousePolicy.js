@@ -31,8 +31,10 @@ function isClanWarehouseCandidate(item, config = {}) {
 }
 
 function itemRows(state = {}, items = [], config = {}) {
-    // Clan demand is an earmark for this transfer, not a personal craft input.
-    const reserved = ItemDisposition.reservedEquipmentAmounts(state, { clan: false });
+    // The bag's held units (ItemDisposition.heldAmounts: the focus plan, the
+    // goals' claims, a production kit) stay; the clan supply's earmark is for
+    // this transfer, not a personal hold.
+    const reserved = ItemDisposition.heldAmounts(state, undefined, { clan: false });
     const source = (items || []).map(item => {
         const protectedAmount = Math.min(Number(item.amount || 0), Number(reserved[item.selfId] || 0));
         reserved[item.selfId] = Math.max(0, Number(reserved[item.selfId] || 0) - protectedAmount);

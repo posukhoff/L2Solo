@@ -4,6 +4,7 @@ const Fnv1a = require('../Fnv1a');
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
 const DataCache = invoke('GameServer/DataCache');
+const MarketTownPolicy = invoke('GameServer/Bot/Economy/MarketTownPolicy');
 
 function cleanupGoal(need) {
     return {
@@ -92,7 +93,7 @@ function evaluate(state = {}, options = {}) {
     if (leaf.activity === 'selling') return [{ ...common, type: 'sell_inventory',
         target: { itemIds: leaf.items || [], itemCount: leaf.items?.length || 0 },
         plan: { ...common.plan, kind: 'market_sell', expectedBenefit: 'market_sale_inventory',
-            marketTown: options.saleTown || leaf.town || invoke('GameServer/Bot/Economy/MarketTownPolicy').saleTown(state, timestamp).town } }];
+            marketTown: options.saleTown || leaf.town || MarketTownPolicy.saleTown(state).town } }];
     if (leaf.activity === 'improving') return [{ ...common, type: 'improving', target: { improvement: leaf.improvement },
         plan: { ...common.plan, marketTown: 'Giran', expectedBenefit: 'improvement' } }];
     if (leaf.activity === 'hunting') return [{ ...common, type: leaf.funding ? 'earn_adena' : 'progress_level',

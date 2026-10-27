@@ -50,8 +50,8 @@ try {
     assert.strictEqual(BotMarketPricing.npcPrice({ selfId: BOOTS }), scaled(BOOTS),
         'the cheapest town NPC price includes the village dealers');
 
-    // Static buyers pay at most 90% of the cheapest repeatable purchase; an
-    // unpriced row is bought at its scaled price, not at the raw base price.
+    // The cheapest NPC purchase of an unpriced row is its scaled price, not
+    // the raw base price.
     assert.strictEqual(StaticMerchantPricing.cheapestPurchase(LEATHER_HELMET), scaled(LEATHER_HELMET));
 } finally {
     useRate(previousRate);

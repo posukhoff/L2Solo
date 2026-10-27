@@ -1,4 +1,5 @@
 const ClanCrafting = require('../../Clan/ClanCraftingPolicy');
+const { partyIdOf } = require('../Population/PartyId');
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Karma = require('../../Karma');
 const Database = invoke('Database');
@@ -9,42 +10,72 @@ const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const TownRespawn = invoke('GameServer/World/TownRespawn');
 const ColdTrip = invoke('GameServer/Bot/Population/ColdTrip');
+const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const Profit = require('./CraftProfitPolicy');
+const Commit = require('./EconomyCommit');
 const Production = require('./ProductionPolicy');
 const Workshops = require('./CraftWorkshopService');
 
 const NATIVE_TRAVEL_MS = ColdTrip.AUTHOR_TRIP_MS;
 
-const isStationService = state => CraftShopService.isStationService(state);
+// A plan's workshop agreement now: the dwarf's offer (selected, null when not
+// offered now) and whether its fee left the agreed price (repriced).
+function workshopAgreement(provider, recipeId, state) {
+    const selected = Workshops.lookup(provider.characterId, recipeId, state);
+    return { selected, repriced: !!selected && provider.price != null && Number(selected.entryPrice) !== Number(provider.price) };
+}
 
+// Who crafts this recipe for the bot: the provider its held plan names
+// (plan.craftProviders: a bot workshop or the bot itself from
+// WishProviders.personalCraftPlan, a clan crafter from the clan planners), or
+// the blacksmith of a dual-sword exchange. No Giran station serves bots: a
+// recipe no provider crafts is no craft, null. The bot itself crafts where it
+// stands while its skill covers the recipe (canCraft); capacityBatches is
+// what its MP pays for now (0: it waits for MP, craftTrip).
 function stationForRecipe(recipeId, state = null) {
     const combination = C4DualSwordCombinations.resolveByRecipeId(recipeId);
     if (combination) return combination.station;
     const provider = state?.stats?.equipmentPlan?.craftProviders?.[recipeId];
+    if (provider?.self) {
+        const recipe = C4RecipeItems.resolveByRecipeId(recipeId);
+        if (!CraftShopService.canCraft(state, recipe)) return null;
+        return { id: `self_${state.characterId}`, characterId: Number(state.characterId), self: true,
+            loc: { ...(state.loc || {}) }, recipeId: Number(recipeId),
+            capacityBatches: Profit.mpBatches(state.vitals?.mp, recipe) };
+    }
     if (provider?.workshop) {
-        const selected = Workshops.lookup(provider.characterId, recipeId, state);
         // The agreement is the dwarf and his published fee; his save revision
         // is read here and checked again by the craft after the async reads.
-        if (!selected || provider.price != null && Number(selected.entryPrice) !== Number(provider.price)) return null;
+        const { selected, repriced } = workshopAgreement(provider, recipeId, state);
+        if (!selected || repriced) return null;
         return { id: `workshop_${provider.characterId}`, characterId: provider.characterId,
             playerWorkshop: selected.playerWorkshop === true,
-            loc: selected.state.loc, townName: selected.state.currentRegion, workshop: true,
+            loc: { ...selected.place.loc }, townName: selected.place.town, workshop: true,
             recipeId: Number(recipeId), price: selected.price, entryPrice: selected.entryPrice,
             revision: Number(selected.state.simulation?.revision || 0),
-            capacityBatches: Math.min(64, Math.floor(Number(selected.state.vitals?.mp || 0) / Math.max(1, Number(selected.recipe.mpCost || 0)))) };
+            capacityBatches: Profit.mpBatches(selected.state.vitals?.mp, selected.recipe) };
     }
     if (provider && state.stats.equipmentPlan.clanGoal?.clanId
         && (!Production.buyersDisabled() || state.stats.equipmentPlan.clanGoal.orderId)) return {
         id: `clan_crafter_${provider.characterId}`, characterId: provider.characterId,
         loc: provider.loc, clan: true
     };
-    if (Production.buyersDisabled()) return null;
-    return CraftShopService.publishedStationRecipes().stationByRecipeId.get(Number(recipeId)) || null;
+    return null;
 }
 
-function crafterAccount(station) {
-    const index = CraftShopService.CraftStations.findIndex((entry) => entry.id === station?.id);
-    return index < 0 ? null : `bot_craft_${String(index + 1).padStart(2, '0')}`;
+// Why stationForRecipe found no provider: gone for good (true: the held plan
+// cannot run) or away for now (false: the plan waits). Gone: a workshop its
+// cold owner withdrew or repriced (Workshops.withdrawn, workshopAgreement); a
+// craft the plan names no workshop for (none, or a clan crafter) while the
+// static buyers are enabled. Away: that same craft while the static buyers are
+// disabled; the plan waits.
+function providerGone(state, recipeId) {
+    const provider = state?.stats?.equipmentPlan?.craftProviders?.[recipeId];
+    if (provider?.self) return false;
+    if (provider?.workshop) {
+        return Workshops.withdrawn(provider.characterId, recipeId) || workshopAgreement(provider, recipeId, state).repriced;
+    }
+    return !Production.buyersDisabled();
 }
 
 function componentFor(state, selfId) {
@@ -64,39 +95,73 @@ function hasMaterials(state, recipe) {
     return !!required && [...required].every(([id, amount]) => Number(state?.inventory?.[id]?.amount || 0) >= amount);
 }
 
-// Equipment recipes can require another manufactured resource (for example,
-// Varnish of Purity).  Craft the deepest ready component first; its output is
-// then available to the parent recipe on the next cold-life tick.
-function readyRecipeFor(state, recipe, visited = new Set()) {
-    if (!recipe || visited.has(Number(recipe.recipeId))) return null;
+// The held plan's next craft by the plan's one readiness rule
+// (Planner.craftReadiness): the deepest recipe with its inputs in the bag
+// whose provider runs it now (stationForRecipe: offered, with MP for a batch;
+// a component's output reaches its parent on the next cold-life tick). A
+// recipe the plan already holds the product of is no craft.
+// gone (nextCraft only): collects a recipe the plan crafts (the final one, a
+// named provider or component recipe) whose inputs are in the bag but whose
+// provider no longer offers it.
+function readyRecipeFor(state, recipe, gone = null) {
     const plan = state?.stats?.equipmentPlan;
-    if (!visited.size && !plan?.clanGoal && Number(plan?.recipeId) === Number(recipe.recipeId)
+    if (!recipe || !plan?.clanGoal && Number(plan?.recipeId) === Number(recipe.recipeId)
         && requiredCraftCount(recipe, recipe, state) === 0) return null;
-    const nextVisited = new Set(visited).add(Number(recipe.recipeId));
-    if (hasMaterials(state, recipe)) return recipe;
-
-    for (const [id, amount] of Profit.requirements(recipe) || []) {
-        const owned = Number(state?.inventory?.[id]?.amount || 0);
-        if (owned >= amount) continue;
-        const component = componentFor(state, id);
-        if (!component || !stationForRecipe(component.recipeId, state)) continue;
-        const ready = readyRecipeFor(state, component, nextVisited);
-        if (ready) return ready;
-    }
-    return null;
+    const crafter = at => {
+        const station = stationForRecipe(at.recipeId, state);
+        if (station && !(station.workshop && !(station.capacityBatches >= 1))) return recipeForState(state, at);
+        if (gone && (Number(at.recipeId) === Number(recipe.recipeId) || plan?.craftProviders?.[at.recipeId]
+            || Number(plan?.componentRecipes?.[at.productId]) === Number(at.recipeId))
+            && hasMaterials(state, at) && providerGone(state, at.recipeId)) gone.recipe = at;
+        return null;
+    };
+    return Planner.craftReadiness(recipe, state, crafter, id => componentFor(state, id), []).recipe;
 }
 
-function beginTravel(state, timestamp = Date.now()) {
-    if (Karma.closesTowns(state?.stats?.karma)) return null;
+// The held plan's next craft: the deepest ready recipe and who crafts it.
+// refusal: a craft the plan holds whose provider is gone for good
+// (providerGone), the ready recipe itself or a planned component with its
+// inputs in the bag: the held plan cannot run, a rejection the caller raises
+// as an event (PopulationService resolveColdCraft, ShoppingState
+// workshopTarget), for a bot at the provider or on its way. A provider away
+// for now: no station, no refusal, the plan waits.
+function nextCraft(state) {
     const plan = state?.stats?.equipmentPlan;
-    if (!state || state.activity === 'traveling' || !['active', 'component_ready', 'ready_to_craft'].includes(plan?.status) || plan.strategy !== 'craft') return null;
-    const finalRecipe = C4RecipeItems.resolveByRecipeId(plan.recipeId)
-        || C4DualSwordCombinations.resolveByRecipeId(plan.recipeId);
-    let recipe = readyRecipeFor(state, finalRecipe);
-    const station = stationForRecipe(recipe?.recipeId, state);
-    if (!recipe || !station) return null;
+    const finalRecipe = C4RecipeItems.resolveByRecipeId(plan?.recipeId)
+        || C4DualSwordCombinations.resolveByRecipeId(plan?.recipeId);
+    const gone = { recipe: null };
+    const recipe = readyRecipeFor(state, finalRecipe, gone);
+    const station = recipe ? stationForRecipe(recipe.recipeId, state) : null;
+    return { finalRecipe, recipe, station, refusal: !recipe && gone.recipe ? 'missing_station' : null };
+}
+
+// The station runs the next craft where the bot stands now: its own recipe
+// with MP for a batch, a workshop in range (and MP, readyRecipeFor), a clan
+// crafter (craft() follows him) or a dual-sword blacksmith.
+function runsHere(state, station) {
+    if (!station) return false;
+    if (station.self) return station.capacityBatches >= 1;
+    return !station.workshop || Workshops.inWorkshopRange(station, state.loc);
+}
+
+const NO_TRIP = Object.freeze({ trip: null, refusal: null });
+const CRAFT_HERE = Object.freeze({ trip: null, refusal: null, here: true });
+// The trip to the held plan's next craft (trip null: none), the craft where
+// the bot stands (here: its own recipe; out of MP it hunts on and regains
+// it), or its refusal. A plan that says ready (its status from the same
+// readiness rule) with nothing its providers run now is refused (no_crafter):
+// the plan rebuilds instead of coming back to this command every step. A
+// closed town stops only a trip.
+function craftTrip(state, timestamp = Date.now()) {
+    const plan = state?.stats?.equipmentPlan;
+    if (!state || state.activity === 'traveling' || !Planner.planRunning(plan) || plan.strategy !== 'craft') return NO_TRIP;
+    const { finalRecipe, recipe, station, refusal } = nextCraft(state);
+    if (refusal) return { trip: null, refusal };
+    if (!station) return plan.status === 'active' ? NO_TRIP : { trip: null, refusal: 'no_crafter' };
+    if (station.self) return station.capacityBatches >= 1 ? CRAFT_HERE : NO_TRIP;
+    if (Karma.closesTowns(state.stats?.karma)) return NO_TRIP;
     const nearestTown = TownRespawn.getClosestTown(state.loc?.locX, state.loc?.locY, state.loc?.locZ);
-    return ColdTrip.toTown(state, {
+    return { trip: ColdTrip.toTown(state, {
         to: { ...station.loc },
         townName: station.townName || 'Giran',
         regionName: station.regionName || station.townName || 'Giran',
@@ -108,7 +173,11 @@ function beginTravel(state, timestamp = Date.now()) {
         stationId: station.id
     }, timestamp, {
         craftReturn: state.stats?.craftReturn || { loc: { ...(state.loc || {}) }, spotId: state.spotId || null, regionName: state.currentRegion || null }
-    });
+    }), refusal: null };
+}
+
+function beginTravel(state, timestamp = Date.now()) {
+    return craftTrip(state, timestamp).trip;
 }
 
 // The trip back from a craft station to the spot the bot left (craftReturn).
@@ -230,21 +299,19 @@ async function combineDualSword(state, recipe, station) {
 
 async function craft(state, random = Math.random) {
     const plan = state?.stats?.equipmentPlan;
-    const finalRecipe = C4RecipeItems.resolveByRecipeId(plan?.recipeId)
-        || C4DualSwordCombinations.resolveByRecipeId(plan?.recipeId);
-    let recipe = readyRecipeFor(state, finalRecipe);
-    const station = stationForRecipe(recipe?.recipeId, state);
-    if (!state || state.activity !== 'crafting' || !recipe || !station) {
-        return { state, crafted: false, reason: 'not_ready' };
-    }
+    const next = nextCraft(state);
+    const { finalRecipe, station } = next;
+    let recipe = next.recipe;
+    if (!state || state.activity !== 'crafting') return { state, crafted: false, reason: 'not_ready' };
+    if (next.refusal) return { state, crafted: false, reason: next.refusal };
+    if (!recipe || !station) return { state, crafted: false, reason: 'not_ready' };
     if (C4DualSwordCombinations.isCombination(recipe)) {
         return combineDualSword(state, recipe, station);
     }
+    if (station.self) return craftHere(state, finalRecipe, recipe, station);
 
-    const account = crafterAccount(station);
-    const characters = station.clan || station.workshop ? [{ id: station.characterId }] : await Database.fetchCharacters(account);
-    const crafter = characters[0];
-    if (!crafter) return { state, crafted: false, reason: 'missing_station' };
+    // The provider is a clan crafter or a bot workshop (stationForRecipe).
+    const crafter = { id: station.characterId };
     const crafterState = await LifeState.findByCharacterId(crafter.id);
     if (!crafterState || crafterState.phase !== 'cold') return { state, crafted: false, reason: 'station_busy' };
 
@@ -252,7 +319,7 @@ async function craft(state, random = Math.random) {
     if (station.clan) {
         const clanId = Number(plan.clanGoal?.clanId);
         const [membership] = await Database.execute(['SELECT clanId FROM characters WHERE id = ?', [crafter.id]]);
-        if (Number(membership?.clanId) !== clanId || (crafterState.partyId || crafterState.party?.partyId)
+        if (Number(membership?.clanId) !== clanId || partyIdOf(crafterState)
             || Number(crafterState.vitals?.hp) <= 0 || ['dead', 'respawning'].includes(crafterState.activity)
             || !CraftShopService.canCraft(crafterState, recipe)) {
             return { state, crafted: false, reason: 'clan_crafter_unavailable' };
@@ -269,13 +336,15 @@ async function craft(state, random = Math.random) {
         state = { ...state, stats: { ...state.stats, equipmentPlan: { ...plan, craftProviders: providers } } };
         recipe = recipeForState(state, recipe);
     }
-    const profile = station.clan || station.workshop ? null : CraftShopService.profileFor(crafterState);
-    const entry = station.workshop ? Workshops.quote(crafterState, state, recipe.recipeId)
-        : station.clan ? { price: 0 } : profile.entries.find((candidate) => Number(candidate.recipeId) === Number(recipe.recipeId));
+    // A workshop stands at its place (station.loc, Workshops.lookup): moved
+    // since the trip, the customer travels there again.
+    if (station.workshop && !Workshops.inWorkshopRange(station, state.loc)) {
+        return { state: beginTravel(state) || state, crafted: false, reason: 'workshop_moved' };
+    }
+    const entry = station.workshop ? Workshops.quote(crafterState, state, recipe.recipeId) : { price: 0 };
     const template = ItemTemplateIndex.find(DataCache.items, recipe.productId);
-    const stationService = !station.clan && !station.workshop && isStationService(crafterState);
     const crafterMp = Number(crafterState.vitals?.mp || 0);
-    if (!entry || !template || (!stationService && crafterMp < Number(recipe.mpCost || 0))) {
+    if (!entry || !template || Profit.mpBatches(crafterMp, recipe) < 1) {
         return { state, crafted: false, reason: 'station_unavailable' };
     }
 
@@ -283,7 +352,7 @@ async function craft(state, random = Math.random) {
     const customerItems = await Database.fetchItems(state.characterId, 'cold_craft');
     const requestedBatch = !learning ? requiredCraftCount(finalRecipe, recipe, state) : 1;
     const materialBatch = craftableBatchCount(customerItems, recipe, Math.min(64, requestedBatch));
-    const batchCount = station.clan || station.workshop ? Math.min(materialBatch, Math.floor(crafterMp / Math.max(1, Number(recipe.mpCost)))) : materialBatch;
+    const batchCount = Math.min(materialBatch, Profit.mpBatches(crafterMp, recipe));
     if (!batchCount || !hasNonSupplementalMaterials(customerItems, recipe, batchCount)) {
         const reconciled = await refreshPhysicalInventory(state);
         return { state: reconciled, crafted: false, reason: 'materials_changed' };
@@ -317,9 +386,7 @@ async function craft(state, random = Math.random) {
                 stackable: !!template.etc?.stackable,
                 slot: Number(template.etc?.slot || 0)
             } : null,
-            // Public server stations are infrastructure, not ordinary players.
-            // They must remain available to the whole cold population indefinitely.
-            crafterMp: stationService ? crafterMp : crafterMp - Number(recipe.mpCost || 0) * batchCount,
+            crafterMp: crafterMp - Number(recipe.mpCost || 0) * batchCount,
             price,
             adena: { name: 'Adena' },
             ...(plan.clanGoal?.orderId ? { clanOrder: { orderId: plan.clanGoal.orderId,
@@ -330,25 +397,25 @@ async function craft(state, random = Math.random) {
                 mpCost: Number(recipe.mpCost) * batchCount } } : {})
         });
     } catch (error) {
-        let failure = error;
+        // The recovery only finds a craft that landed; its own refusal
+        // (craft_executor_changed: no landed command) hides the cause.
         if (station.workshop && error.economyCommand) {
             try {
                 result = await Workshops.craft(crafter.id, recipe.recipeId, state.characterId,
                     { original: error.economyCommand });
-            } catch (recoveryError) { failure = recoveryError; }
+            } catch { /* nothing landed: the original error stands */ }
         }
         if (!result) {
             // A refusal spends nothing. Keep the original header if delivery
             // is uncertain; an ordinary replan never invents a second attempt.
             return { state: await refreshPhysicalInventory(state), crafted: false, reason: 'craft_rejected',
-                error: String(failure?.message || failure),
+                error: String(error?.message || error),
                 ...(error.economyCommand ? { economyCommand: error.economyCommand } : {}) };
         }
     }
     if (station.workshop) success = result.success !== false;
-    // ARCH-NOTE: E3 physical craft fees must reach the returned wallet.
-    // Validate the existing exchange receipt before subsequent writers. Missing
-    // receipts retain the existing zero-fee and unit-facade behavior.
+    // The craft fee reaches the returned wallet through the exchange receipt:
+    // validate it before the writers below; no receipt means no fee was paid.
     const cashReceipt = result?.customerAdena;
     const committedAdena = cashReceipt == null ? undefined : cashReceipt.amount;
     if (cashReceipt != null && (!Number.isSafeInteger(committedAdena) || committedAdena < 0)) {
@@ -359,7 +426,9 @@ async function craft(state, random = Math.random) {
         LifeState.acceptLifecycleRow(result.crafterState);
         const committed = LifeState.acceptLifecycleRow(result.customerState);
         state = { ...committed, stats: { ...state.stats, ...committed.stats } };
-    } else if (station.clan) {
+    } else {
+        // Clan crafter: both rows are clan-craft states; the customer keeps only
+        // the clan inventory revision, and the provider is marked as knowing the recipe.
         LifeState.acceptClanCraftState(result.crafterState);
         const committed = LifeState.acceptClanCraftState(result.customerState);
         state = { ...committed, stats: { ...state.stats, clanInventoryRevision: committed.stats.clanInventoryRevision } };
@@ -369,15 +438,13 @@ async function craft(state, random = Math.random) {
     // the committed cash afterwards: refreshInventory preserves virtual income
     // with Math.max and cannot reconcile a paid fee from an older balance.
     if (cashReceipt != null) state = { ...state, adena: committedAdena };
-    // The station's copy read before the exchange: its wallet takes the fee
-    // the exchange credited (crafterAdena, null when no fee was paid).
-    const crafterCash = result?.crafterAdena;
-    if (!station.clan && !station.workshop) await LifeState.upsertState({
-        ...crafterState,
-        ...(crafterCash ? { adena: crafterCash.amount, inventory: { ...(crafterState.inventory || {}),
-            57: { ...(crafterState.inventory?.[57] || {}), selfId: 57, name: 'Adena', amount: crafterCash.amount } } } : {}),
-        vitals: { ...(crafterState.vitals || {}), mp: stationService ? crafterMp : crafterMp - Number(recipe.mpCost || 0) }
-    }, 'cold_manufacture');
+    return settle(state, plan, finalRecipe, recipe, station, template, success, result, batchCount, supplemental.supplemented);
+}
+
+// After a craft (success or a failed roll): back to the spot after the final
+// recipe, on to the next ready component, or to the unseal errand.
+async function settle(state, plan, finalRecipe, recipe, station, template, success, result, batchCount, supplemented = []) {
+    const componentCraft = Number(recipe.recipeId) !== Number(finalRecipe?.recipeId);
     const craftReturn = state.stats?.craftReturn;
     const timestamp = Date.now();
     const needsUnseal = success && !componentCraft && Number(plan.unseal?.sourceId) === Number(recipe.productId);
@@ -393,20 +460,30 @@ async function craft(state, random = Math.random) {
     // must not send it back to the field before its final native conversion.
     const unsealTravel = needsUnseal
         ? invoke('GameServer/Bot/AI/BotMammonUnseal').beginTravel(refreshed, timestamp, { fromCraft: true }) : null;
-    const nextReadyRecipe = componentCraft ? readyRecipeFor(refreshed, finalRecipe) : null;
-    const continueCrafting = componentCraft
-        && !!nextReadyRecipe
-        && !C4DualSwordCombinations.isCombination(nextReadyRecipe);
+    // After a component: crafting on where its next step runs here now, a
+    // trip to the next step's station elsewhere (craftTrip), else back to
+    // the spot (out of MP the bot hunts on and regains it).
+    const next = componentCraft ? nextCraft(refreshed) : null;
+    const nextCraftable = !!next?.recipe && !C4DualSwordCombinations.isCombination(next.recipe);
+    const continueCrafting = nextCraftable && runsHere(refreshed, next.station);
+    const nextTrip = nextCraftable && !continueCrafting && next.station && !next.station.self
+        ? craftTrip(refreshed, timestamp).trip : null;
     const returnAfterComponent = componentCraft && !continueCrafting && craftReturn?.loc;
     const settled = unsealTravel || (continueCrafting
         ? { ...refreshed, activity: 'crafting' }
-        : returnAfterComponent
+        : nextTrip || (returnAfterComponent
             ? returnTrip(refreshed, state.loc || station.loc, craftReturn, 'component_craft_return', timestamp)
             : needsUnseal && craftReturn?.loc
                 ? returnTrip(refreshed, state.loc || station.loc, craftReturn, 'equipment_craft_return', timestamp)
-                : refreshed);
+                : refreshed));
+    // The kept plan names the MP of its next own step (the worker's wait,
+    // plan.selfCraftMp); a next step by another crafter waits for none.
+    const keptPlan = next?.recipe && settled.stats?.equipmentPlan;
+    const nextPlan = keptPlan && { ...keptPlan, selfCraftMp: Number(next.recipe.mpCost || 0) };
+    if (nextPlan && !next.station?.self) delete nextPlan.selfCraftMp;
+    const planned = nextPlan ? { ...settled, stats: { ...settled.stats, equipmentPlan: nextPlan } } : settled;
     return {
-        state: settled,
+        state: planned,
         crafted: success,
         reason: success ? componentCraft ? 'component_crafted' : 'crafted' : 'craft_failed',
         result,
@@ -415,8 +492,62 @@ async function craft(state, random = Math.random) {
         productId: Number(recipe.productId),
         productName: template.template?.name || `Item ${recipe.productId}`,
         batchCount
-        , supplementedMaterials: supplemental.supplemented
+        , supplementedMaterials: supplemented
     };
 }
 
-module.exports = { NATIVE_TRAVEL_MS, isStationService, stationForRecipe, crafterAccount, hasMaterials, hasNonSupplementalMaterials, hasCombinationIngredients, readyRecipeFor, supplementMaterials, craftableBatchCount, requiredCraftCount, beginTravel, craft };
+// The bot crafts its plan's recipe itself where it stands (a `self`
+// provider): the batches the plan still needs that its bag and MP pay for.
+async function craftHere(state, finalRecipe, recipe, station) {
+    const items = await Database.fetchItems(state.characterId, 'cold_craft_self');
+    const batchCount = Math.min(craftableBatchCount(items, recipe, Math.min(64, requiredCraftCount(finalRecipe, recipe, state))),
+        station.capacityBatches);
+    const materials = batchCount > 0 ? materialRows(items, recipe, batchCount) : null;
+    if (!materials) return { state: await refreshPhysicalInventory(state), crafted: false, reason: 'materials_changed' };
+    let own;
+    try {
+        own = await craftOwn(state, recipe, batchCount, materials);
+    } catch (error) {
+        // Another economy write of the bot in flight is a wait; any other
+        // refusal (a recipe or material changed, a reserved input) rebuilds.
+        return { state: await refreshPhysicalInventory(state), crafted: false,
+            reason: ['economy_operation_in_flight', 'economy_admission_pressure'].includes(error?.message)
+                ? 'own_craft_busy' : 'own_craft_rejected',
+            error: String(error?.message || error) };
+    }
+    // The row holds the saved stats: this step's plan stays, the commit
+    // leaf is the row's.
+    return settle({ ...own.state, stats: { ...state.stats, economyCommit: own.state.stats?.economyCommit } },
+    state.stats.equipmentPlan, finalRecipe, recipe, station, ItemTemplateIndex.find(DataCache.items, recipe.productId),
+    own.result?.success === true, own.result, batchCount);
+}
+
+// The committed row of an own craft (else the admitted state) with the MP the
+// receipt left.
+function acceptOwnCraft(result, admitted) {
+    const row = result?.coldLifeRow ? Commit.acceptRow(result.coldLifeRow) : admitted;
+    return { ...row, vitals: { ...(row.vitals || {}), mp: Number(result?.mp ?? row.vitals?.mp) } };
+}
+
+// One native craft by the bot itself (no station, no fee) under the economy
+// commit admission: accept(receipt, admitted state) turns the receipt of
+// Database.craftInventoryItems (coldLifeRow, success, units, mp) into the
+// bot's state before the admission ends. Returns that state and the receipt.
+// Read by the plan's own craft (craftHere), the producer
+// (ColdWealthCraftService.execute) and the shot scrap (ColdShotEconomyService).
+async function craftOwn(state, recipe, batches, materials, accept = acceptOwnCraft) {
+    const template = ItemTemplateIndex.find(DataCache.items, Number(recipe.productId));
+    let admission = null;
+    try {
+        admission = await Commit.admit(state, Commit.KINDS.craft);
+        const result = await Database.craftInventoryItems(admission.state.characterId, {
+            materials, coldState: admission.state, recipeId: Number(recipe.recipeId), batches,
+            economyCommand: admission.command,
+            product: { selfId: Number(recipe.productId), name: template?.template?.name || '',
+                amount: Number(recipe.productCount || 1) * batches, stackable: !!template?.etc?.stackable,
+                slot: Number(template?.etc?.slot || 0) } });
+        return { state: await accept(result, admission.state), result };
+    } finally { if (admission) Commit.finish(state.characterId, admission.command); }
+}
+
+module.exports = { NATIVE_TRAVEL_MS, craftOwn, stationForRecipe, hasMaterials, hasNonSupplementalMaterials, hasCombinationIngredients, readyRecipeFor, nextCraft, supplementMaterials, craftableBatchCount, requiredCraftCount, craftTrip, beginTravel, craft };

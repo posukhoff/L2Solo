@@ -96,7 +96,7 @@ async function cases() {
     out.market_buy = withStubs([
         [invoke('GameServer/Bot/Economy/ColdMarketService'), 'canTravelForPurchase', () => true]
     ], () => digest(GoalExecutor.beginMarketTravel(hunter(), {
-        type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' }
+        type: 'upgrade_gear', plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran' }
     }, T)));
 
     const giranCenter = { locX: 83396, locY: 147904, locZ: -3400 };
@@ -135,7 +135,8 @@ async function cases() {
         [LifeState, 'refreshInventory', async (state) => state]
     ], async () => digest((await ColdCraftingService.craft(atStation)).state));
 
-    // A nested component crafted at a public station, then the return.
+    // A nested component crafted by a crafter of the bot's clan (no Giran
+    // station crafts for a bot), then the return.
     const finalRecipe = Recipes.resolveByRecipeId(189);
     const componentRecipe = Recipes.resolveByRecipeId(29);
     const componentItems = componentRecipe.materials.map((material, index) => ({ id: index + 1, selfId: material.selfId, amount: material.amount * 3 }));
@@ -143,29 +144,38 @@ async function cases() {
     const componentInventory = { ...WALLET, ...Object.fromEntries(componentItems.map((item) => [item.selfId, { ...item }])) };
     finalRecipe.materials.filter((material) => Number(material.selfId) !== Number(componentRecipe.productId))
         .forEach((material) => { componentInventory[material.selfId] = { selfId: material.selfId, amount: material.amount }; });
-    const crafterStubs = (items, stationId) => [
+    const crafterLoc = { locX: 83400, locY: 147900, locZ: -3400 };
+    const clanCraft = plan => ({ ...plan, clanGoal: { clanId: 1 },
+        craftProviders: { [componentRecipe.recipeId]: { characterId: 900, known: true, loc: crafterLoc } } });
+    const crafterStubs = (items, customer) => [
         [Date, 'now', () => T],
-        [Database, 'fetchCharacters', async () => [{ id: 900 }]],
+        [Database, 'execute', async () => [{ clanId: 1 }]],
+        [Database, 'fetchCharacterRecipes', async () => [{ recipeId: componentRecipe.recipeId }]],
         [Database, 'fetchItems', async () => items],
-        [Database, 'craftForCustomer', async () => ({ ok: true })],
-        [LifeState, 'findByCharacterId', async () => ({ characterId: 900, level: 70, phase: 'cold', vitals: { mp: 1, maxMp: 1000 },
-            stats: { classId: 57, craftStationId: stationId } })],
+        [Database, 'craftForCustomer', async () => ({ ok: true, customerState: customer })],
+        [LifeState, 'findByCharacterId', async () => ({ characterId: 900, level: 70, phase: 'cold', activity: 'crafting',
+            loc: crafterLoc, vitals: { hp: 1000, mp: 1000, maxMp: 1000 }, stats: { classId: 57 } })],
+        [LifeState, 'acceptClanCraftState', (row) => row],
         [LifeState, 'upsertState', async (state) => state],
         [LifeState, 'refreshInventory', async (state) => state]
     ];
-    out.craft_component_return = await withStubs(crafterStubs(componentItems, 'resource_core'), async () => digest((await ColdCraftingService.craft(hunter({
+    const componentCustomer = hunter({
         activity: 'crafting', loc: { locX: 83396, locY: 147904, locZ: -3400 }, inventory: componentInventory,
-        stats: { classId: 2, equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: finalRecipe.recipeId }, craftReturn }
-    }))).state));
+        stats: { classId: 2, equipmentPlan: clanCraft({ status: 'ready_to_craft', strategy: 'craft', recipeId: finalRecipe.recipeId }), craftReturn }
+    });
+    out.craft_component_return = await withStubs(crafterStubs(componentItems, componentCustomer),
+        async () => digest((await ColdCraftingService.craft(componentCustomer)).state));
 
-    // The final equipment crafted at a public station, then the return.
-    const finalItems = finalRecipe.materials.map((material, index) => ({ id: index + 1, selfId: material.selfId, amount: material.amount }));
+    // The plan's final craft by the clan crafter, then the return.
+    const finalItems = componentRecipe.materials.map((material, index) => ({ id: index + 1, selfId: material.selfId, amount: material.amount }));
     finalItems.push({ id: 99, selfId: 57, amount: 500000 });
     const finalInventory = { ...WALLET, ...Object.fromEntries(finalItems.map((item) => [item.selfId, { ...item }])) };
-    out.craft_equipment_return = await withStubs(crafterStubs(finalItems, 'd_weapons'), async () => digest((await ColdCraftingService.craft(hunter({
+    const finalCustomer = hunter({
         activity: 'crafting', loc: { locX: 83396, locY: 147904, locZ: -3400 }, inventory: finalInventory,
-        stats: { classId: 2, equipmentPlan: { status: 'ready_to_craft', strategy: 'craft', recipeId: finalRecipe.recipeId }, craftReturn }
-    }))).state));
+        stats: { classId: 2, equipmentPlan: clanCraft({ status: 'ready_to_craft', strategy: 'craft', recipeId: componentRecipe.recipeId }), craftReturn }
+    });
+    out.craft_equipment_return = await withStubs(crafterStubs(finalItems, finalCustomer),
+        async () => digest((await ColdCraftingService.craft(finalCustomer)).state));
 
     // The Mammon trip and its return (away from the Blacksmith: nothing unsealed).
     const sealed = hunter({ inventory: { ...WALLET, 6674: { selfId: 6674, amount: 1 } } });

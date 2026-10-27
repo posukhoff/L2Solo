@@ -157,7 +157,7 @@ test('SELL holds authored floor, follows asks, fixed observer rows are current',
 
 test('zero executable SELL is the best ask while zero BUY never establishes a bid', () => {
     const source = materialLine(Configs.IslandMats);
-    const authored = Pricing.botPriceFor(Configs.IslandMats, source);
+    const authored = Pricing.configuredPrice(source);
     line(12, 1, 0, { kind: 'shop' });
     line(13, 1, authored + 1000);
     assert.strictEqual(Pricing.priceFor(Configs.IslandMats, source), authored,
@@ -220,7 +220,7 @@ test('spawned and spread-cloned rows retain source identity through window and t
     const session = await player('FClone');
     const store = staticStore(Configs.IslandMats);
     store.items = store.items.map(item => ({ ...item }));
-    const configured = Pricing.botPriceFor(Configs.IslandMats, materialLine(Configs.IslandMats));
+    const configured = Pricing.configuredPrice(materialLine(Configs.IslandMats));
     line(20, 1, configured + 100);
     open(session, merchant(store));
     assert.strictEqual(session.activeMerchantTrade.prices[MATERIAL], configured + 100);
@@ -268,7 +268,7 @@ test('HTML windows and both trades read current prices and journal executed pric
     const session = await player('FHtml');
     const store = staticStore(Configs.IslandMats);
     session.viewedPrivateStoreSeller = merchant(store);
-    const configured = Pricing.botPriceFor(Configs.IslandMats, materialLine(Configs.IslandMats));
+    const configured = Pricing.configuredPrice(materialLine(Configs.IslandMats));
     line(40, 1, configured + 123);
     await BuyHtml(session, ['buy-merchant-item']);
     assert(session.sent.at(-1).args[1].includes(`${configured + 123}a`));
@@ -293,7 +293,7 @@ test('bot shots retain authored price after player refresh; other static purchas
     const session = await player('FBotShots', { bot: true });
     const store = staticStore(Configs.IslandMats, SHOT);
     const source = Configs.IslandMats.items.find(item => item.selfId === SHOT);
-    const configured = Pricing.botPriceFor(Configs.IslandMats, source);
+    const configured = Pricing.configuredPrice(source);
     line(50, 1, configured + 400, { selfId: SHOT });
     TradeService.refreshStorePrices(store);
     assert.strictEqual(store.items[0].price, configured + 400);
@@ -307,18 +307,12 @@ test('bot shots retain authored price after player refresh; other static purchas
     assert.strictEqual((await TradeService.buyFromStore(session.actor, ordinary, MATERIAL, 1)).totalAdena, 7);
 });
 
-test('bot static buy-back remains old price; a failing player write restores stock and money', async () => {
+test('a failing player write to a static buyer restores stock and money', async () => {
     const session = await player('FRollback');
     const store = staticStore(Configs['4manda']);
     line(60, 3, 888);
     const item = session.actor.backpack.fetchItemFromSelfId(MATERIAL);
-    const oldPrice = Pricing.botPriceFor(Configs['4manda'], materialLine(Configs['4manda']));
-    const bot = await player('FBotLiquidation', { bot: true });
-    const botMoney = wallet(bot);
     TradeService.refreshStorePrices(store);
-    const botSale = await TradeService.sellToStore(bot.actor, store, MATERIAL, 1);
-    assert.strictEqual(botSale.totalAdena, oldPrice);
-    assert.strictEqual(wallet(bot), botMoney + oldPrice);
     const count = store.items[0].count;
     const money = wallet(session);
     Database.updateItemAmount = async (characterId, objectId, value) => {
@@ -416,31 +410,23 @@ test('bot gear sale to a static buyer is rejected before mutation; player and or
     assert.strictEqual(amount(bot, 219), 0);
 });
 
-test('hot buyer selection and inventory sale keep only static materials at the old bot price', async () => {
+test('a bot sells neither materials nor gear to a static buyer', async () => {
     const bot = await player('FHotMixedSeller', { bot: true });
     await giveGear(bot);
     const gear = staticStore(Configs.Veteranas, 219);
-    const gearBuyer = merchant(gear, 83001, 'Veteranas');
-    assert.strictEqual(TradeService.findBestBuyerForActor(bot.actor, [{ actor: gearBuyer, plan: 'merchant',
-        accountId: 'bot_f_static_gear' }]), null, 'a gear-only static buyer is not a hot bot destination');
     const materials = staticStore(Configs['4manda']);
     const store = { storeType: 3, items: [...gear.items, ...materials.items] };
     line(80, 3, 9999);
     TradeService.refreshStorePrices(store);
-    const oldPrice = Pricing.botPriceFor(Configs['4manda'], materialLine(Configs['4manda']));
-    const preview = TradeService.previewSaleToStore(bot.actor, store);
-    assert.deepStrictEqual(preview.lines.map(item => item.selfId), [MATERIAL]);
-    assert.strictEqual(preview.totalAdena, oldPrice * 20);
+    assert.deepStrictEqual(TradeService.previewSaleToStore(bot.actor, store).lines, []);
     const money = wallet(bot);
-    const stock = gear.items[0].count;
+    await assert.rejects(TradeService.sellToStore(bot.actor, store, MATERIAL, 1), /static.*unavailable/i);
     // This is ShoppingState's actual arrival executor for a non-AFK buyer.
     const result = await TradeService.sellInventoryToStore(bot.actor, store);
-    assert.strictEqual(result.itemsSold, 20);
-    assert.strictEqual(result.totalAdena, oldPrice * 20);
-    assert.strictEqual(wallet(bot), money + oldPrice * 20);
-    assert.strictEqual(amount(bot, MATERIAL), 0);
+    assert.strictEqual(result.itemsSold, 0);
+    assert.strictEqual(wallet(bot), money);
+    assert.strictEqual(amount(bot, MATERIAL), 20);
     assert.strictEqual(amount(bot, 219), 1);
-    assert.strictEqual(gear.items[0].count, stock);
 });
 
 test('all four accepted native/HTML player trades persist once with executed prices', async () => {

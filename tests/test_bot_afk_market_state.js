@@ -94,7 +94,7 @@ async function run() {
     // from then on the bot reviews it from afar.
     assert.strictEqual(BotAfkMarket.canTradeRemotely(hunting, sellGoal), false, 'no shop is opened from afar');
     await BotAfkMarket.listOnBoard({ ...hunting, activity: 'shopping',
-        stats: { ...hunting.stats, shopTown: { town: 'Talking Island', at: 1 } } });
+        stats: { ...hunting.stats, twin: { town: 'Talking Island' } } });
     const opened = { state: LifeState.snapshot(ownerId), shop: AfkTrade.findOwnerProjection(ownerId).shop };
     assert.strictEqual(BotAfkMarket.canTradeRemotely(opened.state, sellGoal), true);
     assert.strictEqual(opened.shop.storeType, AfkTrade.SELL);
@@ -117,16 +117,15 @@ async function run() {
     assert.strictEqual(remoteQuote.ok, true, 'shop owner must negotiate without leaving the hunt');
     assert.strictEqual(Negotiation.declinePrice(AfkTrade.findOwnerProjection(ownerId).session,
         remotePlayer).ok, true);
-    assert.strictEqual(await BotAfkMarket.reconcile(opened.state, sellGoal).then((result) => result.changed), false);
 
     await Database.setItem(ownerId, { selfId: 1865, name: 'Varnish', amount: 2,
         enchant: 0, equipped: false, slot: 0 });
     const withLoot = await LifeState.syncExternalInventory(ownerId, 'test_new_loot', LifeState.snapshot(ownerId));
     ListingPolicy.evaluate = () => ({ listings: [{ selfId: 1865, name: 'Varnish',
         count: 23, price: 100, rank: 'none' }] });
-    const refreshed = await BotAfkMarket.reconcile(withLoot, sellGoal);
-    assert.strictEqual(refreshed.changed, true, 'new loot should refresh the same persistent shop');
-    assert.strictEqual(refreshed.shop.lines[0].count, 23);
+    const refreshed = await BotAfkMarket.listOnBoard(withLoot);
+    assert.strictEqual(refreshed.listed, 1, 'new loot listed at a visit refreshes the same persistent shop');
+    assert.strictEqual(AfkTrade.findOwnerProjection(ownerId).shop.lines[0].count, 23);
     assert.strictEqual((await Database.fetchAfkTradeShops(ownerId)).length, 1);
     const originalFindHot = BotManager.findSessionByName;
     BotManager.findSessionByName = (name) => name === 'RemoteTrader'
@@ -158,32 +157,35 @@ async function run() {
     assert.strictEqual(LifeState.snapshot(ownerId).activity, 'hunting');
     assert.strictEqual(LifeState.snapshot(ownerId).adena, 10000100);
 
-    const buyGoal = { type: 'upgrade_gear', status: 'active',
-        target: { itemId: cWeapon.selfId, itemName: cWeapon.template.name },
-        plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' } };
-    // A buy goal opens a buy ad beside the shop (the board, step 3.3): the bot
-    // sells and buys at once; the shop and its stock stay.
+    // Both wanted gear pieces trade at their template price: the buyer's
+    // belief, its worth, sits above the NPC buy-back, where a bid can fill.
+    for (const gear of [cWeapon, DataCache.items.find((item) => Number(item.selfId) === 45)]) {
+        for (let deal = 0; deal < 10; deal++) MarketCounters.deal(gear.selfId, Number(gear.template.price), 1, Date.now() - (10 - deal) * 60000, 999);
+    }
+    // The plan's bid opens a buy ad beside the shop (the board, step 3.3): the
+    // bot sells and buys at once; the shop and its stock stay.
     const varnishBefore = amount(await Database.fetchItems(ownerId), 1865);
-    const switched = await BotAfkMarket.reconcile(LifeState.snapshot(ownerId), buyGoal);
-    assert.strictEqual(switched.changed, true);
-    assert.strictEqual(switched.state.activity, 'hunting');
-    assert.strictEqual(switched.shop.storeType, AfkTrade.BUY);
-    assert.strictEqual(switched.shop.kind, 'buy_ad');
-    assert.strictEqual(switched.shop.town, MarketTownPolicy.targetTownForItems(LifeState.snapshot(ownerId), [{ selfId: cWeapon.selfId }]), 'new bids use their item fallback without fabricating sale receipts');
+    const plannedBuy = (selfId) => ({ sell: [], withdraw: [], travel: null,
+        buyAds: [[selfId, 1, Number(DataCache.items.find(item => Number(item.selfId) === selfId).template.price)]], buyTown: 'Talking Island' });
+    const planned = await BotAfkMarket.executePlan(LifeState.snapshot(ownerId), plannedBuy(cWeapon.selfId), { reviewGoal: false });
+    const bid = AfkTrade.ownerRecords(ownerId).find(record => record.kind === 'buy_ad');
+    assert.strictEqual(planned.state.activity, 'hunting');
+    assert.strictEqual(bid.storeType, AfkTrade.BUY);
+    assert.strictEqual(bid.town, 'Talking Island', 'the bid stands in the twin town, beside its shop');
     assert.strictEqual(MarketSnapshot.snapshot().dynamic.wtb, 1);
     assert.strictEqual((await Database.fetchAfkTradeShops(ownerId)).length, 2, 'the shop and the buy ad');
     assert(AfkTrade.findOwnerProjection(ownerId), 'the shop still stands');
     assert.strictEqual(amount(await Database.fetchItems(ownerId), 1865), varnishBefore,
         'a buy ad leaves the shop\'s stock where it is');
     assert.strictEqual(AfkTrade.offers(cWeapon.selfId, AfkTrade.BUY)[0].sourceType, 'afk_bot_buy_store');
-    assert.strictEqual(await BotAfkMarket.reconcile(switched.state, buyGoal).then((result) => result.changed), false);
+    const standing = AfkTrade.ownerRecords(ownerId).find(record => record.id === bid.id);
     const walletBeforeReprice = LifeState.snapshot(ownerId).adena;
-    const repriced = await AfkTrade.repriceBot(ownerId, switched.shop.lines[0].id,
-        Number(switched.shop.lines[0].price) - 1, switched.shop.revision);
+    const repriced = await AfkTrade.repriceBot(ownerId, standing.lines[0].id,
+        Number(standing.lines[0].price) - 1, standing.revision);
     assert.strictEqual(repriced.escrowAdena, 0, 'a conditional bid has no escrow to refund on a price edit');
     assert.strictEqual(LifeState.snapshot(ownerId).adena, walletBeforeReprice, 'changing willingness does not create adena');
     await assert.rejects(AfkTrade.repriceBot(ownerId, repriced.lines[0].id,
-        Number(repriced.lines[0].price) - 1, switched.shop.revision), /afk_trade_shop_changed/);
+        Number(repriced.lines[0].price) - 1, standing.revision), /afk_trade_shop_changed/);
 
     const sellShop = AfkTrade.findOwnerProjection(ownerId).shop;
     await assert.rejects(Database.createAfkTradeShop(ownerId, {
@@ -214,22 +216,20 @@ async function run() {
     await Database.setItem(ownerId, { selfId: cWeapon.selfId, name: cWeapon.template.name,
         amount: 1, enchant: 0, equipped: false, slot: 0 });
     await LifeState.syncExternalInventory(ownerId, 'test_actual_gear_acquired', LifeState.snapshot(ownerId));
-    await BotAfkMarket.reconcile(LifeState.snapshot(ownerId), buyGoal);
+    await BotAfkMarket.executePlan(LifeState.snapshot(ownerId), { sell: [], withdraw: [], travel: null, buyAds: [], buyTown: 'Talking Island' },
+        { reviewGoal: false });
     assert.strictEqual(LifeState.snapshot(ownerId).activity, 'hunting');
     assert.strictEqual(Number(LifeState.snapshot(ownerId).inventory[cWeapon.selfId]?.amount), 1);
     assert.deepStrictEqual((await Database.fetchAfkTradeShops(ownerId)).map((shop) => shop.kind), ['shop'],
-        'actual goal completion closes only the obsolete conditional buy advert');
+        'the plan without the acquired item closes only the obsolete conditional buy advert');
 
-    const dGradeGoal = { type: 'upgrade_gear', status: 'active',
-        target: { itemId: 45, itemName: 'Bone Helmet', adena: 1000000 },
-        plan: { expectedBenefit: 'market_search_for_gear', marketTown: 'Giran', priceSource: 'offer' } };
     const choicesBefore = townChoices.length;
-    const dGradeBuyer = await BotAfkMarket.reconcile(LifeState.snapshot(ownerId), dGradeGoal);
-    assert.strictEqual(dGradeBuyer.changed, true);
+    await BotAfkMarket.executePlan(LifeState.snapshot(ownerId), plannedBuy(45), { reviewGoal: false });
     assert.strictEqual(townChoices.length, choicesBefore, 'a purchase bid never invokes a sale-income town roll');
-    assert.strictEqual(dGradeBuyer.shop.town, MarketTownPolicy.targetTownForItems(LifeState.snapshot(ownerId), [{ selfId: 45 }]),
-        'an unsupported new purchase bid keeps the declared grade fallback');
+    assert.strictEqual(AfkTrade.ownerRecords(ownerId).find(record => record.kind === 'buy_ad').town,
+        plannedBuy(45).buyTown, 'a new purchase bid stands in the town its plan priced it for');
     await BotAfkMarket.withdraw(ownerId);
+    MarketCounters.reset();
 
     await Database.createAccount('bot_afk_second_seller', 'pw');
     await Database.createAccount('bot_afk_second_buyer', 'pw');
@@ -278,8 +278,8 @@ async function run() {
         stats: { generatedCold: true }, timing: {}
     }, 'test_bot_afk_fallback');
     ListingPolicy.evaluate = () => ({ listings: [] });
-    const fallback = await BotAfkMarket.reconcile(fallbackState, sellGoal);
-    assert.strictEqual(fallback.changed, false, 'material fallback must not bypass listing policy');
+    const fallback = await BotAfkMarket.listOnBoard(fallbackState);
+    assert.strictEqual(fallback.listed, 0, 'material fallback must not bypass listing policy');
     assert.strictEqual(AfkTrade.findOwnerProjection(fallbackId), null);
     assert.strictEqual(amount(await Database.fetchItems(fallbackId), 1865), 20);
 
@@ -313,21 +313,10 @@ async function run() {
     });
     assert.strictEqual(amount(await Database.fetchItems(surplusOwnerId), 45), 1,
         'the equipped helmet remains with the bot while its duplicate is for sale');
-    // Group E: buyers of its kind on the board keep the line worth more than
-    // the NPC; with none at all its best outcome is no board line.
-    try {
-        for (let deal = 0; deal < 12; deal++) MarketCounters.deal(45, 23000, 1, Date.now() - (12 - deal) * 5 * 60 * 1000, 999);
-        const retained = await BotAfkMarket.reconcile(LifeState.snapshot(surplusOwnerId), null);
-        assert.strictEqual(retained.changed, false,
-            'buyers of its kind keep a persistent gear listing at its price');
-        assert(AfkTrade.findOwnerProjection(surplusOwnerId));
-    } finally {
-        MarketCounters.reset();
-        BotAfkMarket._resetForTests();
-    }
-    // A reset supplies no price-review edge: the main review keeps the line.
-    const kept = await BotAfkMarket.reconcile(LifeState.snapshot(surplusOwnerId), null);
-    assert.strictEqual(kept.changed, false, 'the main review does not decide a kept line');
+    // Another owner's bid keeps the helmet worthwhile (MarketPricing.quotable).
+    const helmetBid = 990045;
+    AfkTrade.boardIndex().put({ id: helmetBid, kind: 'buy_ad', storeType: AfkTrade.BUY, ownerId: 999,
+        town: 'Gludio', custodyPolicy: 1, lines: [{ lineId: helmetBid, selfId: 45, count: 1, price: 1000 }] });
     const MarketPricing = invoke('GameServer/Bot/Economy/MarketPricing');
     const board = AfkTrade.boardIndex();
     const lookCtx = { ...ListingPolicy.traderContext(LifeState.snapshot(surplusOwnerId), {}), timestamp: Date.now() };
@@ -369,6 +358,7 @@ async function run() {
     } finally {
         PriceBelief.prior = originalPrior;
         MarketCounters.reset();
+        AfkTrade.boardIndex().remove(helmetBid);
     }
     // Explicit native owner withdrawal independently proves the old physical
     // return invariant. The absent counter edge is not an NPC-choice proof.
@@ -458,7 +448,7 @@ async function run() {
             character('LotSeller'))).insertId);
         const lotStockId = Number((await Database.setItem(lotOwnerId, { selfId: 1865,
             name: 'Varnish', amount: 19, enchant: 0, equipped: false, slot: 0 })).insertId);
-        const lotState = await LifeState.upsertState({
+        await LifeState.upsertState({
             characterId: lotOwnerId, accountName: 'bot_afk_lot_seller', name: 'LotSeller',
             phase: 'cold', activity: 'hunting', level: 45, adena: 0,
             loc: { locX: -84700, locY: 244200, locZ: -3730 },
@@ -469,15 +459,13 @@ async function run() {
         }, 'test_bot_afk_lot');
         ListingPolicy.evaluate = (state) => ({ listings: [{ selfId: 1865, name: 'Varnish',
             kind: 'Other.Material', count: Number(state.inventory?.['1865']?.amount || 0), price: 1000 }] });
-        const premature = await BotAfkMarket.reconcile(lotState, sellGoal);
-        assert.strictEqual(premature.changed, false);
         assert.strictEqual(AfkTrade.findOwnerProjection(lotOwnerId), null, 'a remote quote does not move physical stock');
         assert.strictEqual(amount(await Database.fetchItems(lotOwnerId), 1865), 19);
         await Database.updateItemAmount(lotOwnerId, lotStockId, 20);
         const accumulated = await LifeState.syncExternalInventory(lotOwnerId,
             'test_lot_accumulated', LifeState.snapshot(lotOwnerId));
         await BotAfkMarket.listOnBoard({ ...accumulated, activity: 'shopping',
-            stats: { ...accumulated.stats, shopTown: { town: 'Talking Island', at: 1 } } });
+            stats: { ...accumulated.stats, twin: { town: 'Talking Island' } } });
         const bulk = { shop: AfkTrade.findOwnerProjection(lotOwnerId).shop };
         assert.strictEqual(bulk.shop.lines[0].count, 20);
         assert.strictEqual(bulk.shop.lines[0].price, 1000);
@@ -594,24 +582,23 @@ async function run() {
     await AfkTrade.publishBot(recipeSellerId, { storeType: AfkTrade.SELL, title: 'Materials',
         town: 'Giran', locX: 81100, locY: 148000, locZ: -3466,
         appearance: { model: character('RecipeSeller') }, lines: materialRows });
-    // The most valuable unit asks keep the showcase. A recipe without an
-    // existing buyer may still wait in a conditional overflow advertisement.
+    // The most valuable unit asks keep the showcase. A recipe scroll is
+    // worthwhile without a bid or a deal (MarketPricing.quotable): it takes a
+    // sell ad, which holds no goods, so it stays in the bag.
     try {
         for (let deal = 0; deal < 30; deal++) {
-            for (const row of materialRows) MarketCounters.deal(row.selfId, 100000, 10, Date.now() - (30 - deal) * 60000, 999);
+            for (const row of materialRows) MarketCounters.deal(row.selfId, 100000, 10, Date.now() - (30 - deal) * 60000, 999, 'Giran');
         }
-        await BotAfkMarket.reconcile(LifeState.snapshot(recipeSellerId), sellGoal);
+        await BotAfkMarket.listOnBoard(LifeState.snapshot(recipeSellerId));
         const shopLines = AfkTrade.findOwnerProjection(recipeSellerId).shop.lines.filter((line) => Number(line.count) > 0);
         assert(shopLines.length && !shopLines.some((line) => Number(line.selfId) === 3033), 'the recipe takes no line first');
-        assert.strictEqual(amount(await Database.fetchItems(recipeSellerId), 3033), 1, 'the recipe nobody trades stays in the bag');
-        assert(AfkTrade.ownerRecords(recipeSellerId).some((record) => record.kind === 'sell_ad'
-            && record.custodyPolicy === 1 && (record.lines || []).some((line) => Number(line.selfId) === 3033)),
-        'the recipe can await a buyer on the board without losing physical stock');
+        assert.strictEqual(amount(await Database.fetchItems(recipeSellerId), 3033), 1, 'the advertised recipe stays in the bag');
+        assert(AfkTrade.ownerRecords(recipeSellerId).some((record) => record.kind === 'sell_ad' && (record.lines || [])
+            .some((line) => Number(line.selfId) === 3033)), 'the recipe scroll gets a sell ad without a bid');
     } finally {
         MarketCounters.reset();
     }
     await AfkTrade._resetForTests();
-    BotAfkMarket._resetForTests();
     console.log('Bot AFK market state checks passed');
 }
 

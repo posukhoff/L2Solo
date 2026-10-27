@@ -20,8 +20,7 @@ function shortfall(state = {}, price = 0, reserve = 0, escrow = 0) {
 function surplus(state = {}, price = 0, reserve = 0) {
     return Math.max(0, budget(state) - nonnegative(price) - nonnegative(reserve));
 }
-function moneyReached(state, escrow = 0) {
-    const packet = state?.stats?.money;
+function moneyReached(state, escrow = 0, packet = state?.stats?.money) {
     if (!Array.isArray(packet) || packet.length < 4 || !(Number(packet[3]) > 0)) return false;
     let fundedPrice = 0;
     for (let i = 5; i < packet.length; i += 3) fundedPrice = Math.max(fundedPrice, Number(packet[i]) || 0);
@@ -148,12 +147,6 @@ function stockAllowance(state, wish, itemId, survivalCost, scale = 1) {
 function stockTerms(wish, itemId, survivalCost) {
     return { itemId, survivalCost, ...(wish ? { r: significant(wish.ratio) } : {}) };
 }
-function forOpportunity(state, opportunity, escrow = 0) {
-    if (!opportunity?.known || !Number.isFinite(opportunity.valueHours) || opportunity.valueHours <= 0
-        || !Number.isFinite(opportunity.cashNow) || opportunity.cashNow < 0) return 0;
-    return spendable(state, escrow, { r: opportunity.cashNow > 0
-        ? opportunity.valueHours / opportunity.cashNow : Infinity });
-}
 function nativeTerms(options = {}, itemId = 0) {
     const terms = { itemId: Math.max(0, Number(itemId) || 0) };
     if (typeof options.raidPreparationId === 'string') terms.raidPreparationId = options.raidPreparationId;
@@ -181,11 +174,13 @@ function goalTerms(goal, itemId = goal?.target?.itemId) {
 }
 // ARCH-NOTE: round value rates upward to three digits so a stored money floor
 // never falls below 1/hour; applying the same monotone rounding keeps funded ratios admissible.
+// Idempotent: a rounded ratio rounds to itself (value * scale of 3.86e-6 is
+// 386.00000000000006), so a re-rounded r still names its packet row.
 function significant(value) {
     value = nonnegative(value);
     if (!value) return 0;
     const scale = 10 ** (2 - Math.floor(Math.log10(value)));
-    return Number((Math.ceil(value * scale) / scale).toPrecision(3));
+    return Number((Math.ceil(value * scale - 1e-9) / scale).toPrecision(3));
 }
 // The money packet keeps this many (ratio, cumulative, itemId) rows; with more
 // funded wishes the last row merges the tail and carries itemId 0 (FX-E3).
@@ -210,6 +205,14 @@ function packetFor(network, hour, reserve) {
     }
     return packet;
 }
-function tripEscrow(plan, escrow = 0) { return plan?.market?.sourceType === 'npc' ? escrow : 0; }
-module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, forOpportunity, nativeTerms, tripEscrow, budgetFor, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
-    summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }), resetCounters: () => { moneyPacketMissing = 0; } };
+// The buy-order escrow a purchase of `offer` is planned to spend. A departing
+// BUY trip withdraws the bot's escrow whatever the source
+// (PopulationService.marketTravelWithRefund); a goal that trades remotely
+// (BotAfkMarketService.canTradeRemotely) does not travel and its bid spends
+// the escrow instead. Counting it for an NPC offer only is the cautious
+// count: an NPC purchase never keeps a WTB, so its trip surely withdraws.
+// One rule for the planner (an offer) and the gates (a plan).
+function offerEscrow(offer, escrow = 0) { return offer?.sourceType === 'npc' ? escrow : 0; }
+function tripEscrow(plan, escrow = 0) { return offerEscrow(plan?.market, escrow); }
+module.exports = { budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, quoteScale, nativeTerms, offerEscrow, tripEscrow, budgetFor, packetAfterPurchase, moneyReached, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, goalTerms, stockTerms,
+    summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }) };

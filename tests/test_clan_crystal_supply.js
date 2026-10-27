@@ -16,16 +16,26 @@ const Native = require('./helpers/nativeMarketFixture');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
 const town = { locX: 83396, locY: 147904, locZ: -3400 };
 const q = (sql, values = []) => DB.execute([sql, values]);
-async function seed(id, targetId) {
+// Bots crystallize only with their own skill (C4: Crystallize 248, dwarf
+// crafters; never at the Giran station): the owner is a Warsmith (57) with
+// Crystallize level 2 (D and C) unless a case asks for another class.
+async function seed(id, targetId, classId = 57) {
     await Native.character(DB, id, `ClanCrystal${id}`, `bot_clan_crystal_${id}`, town);
-    await q('UPDATE characters SET level=55,classId=17,clanId=701 WHERE id=?', [id]);
+    await q('UPDATE characters SET level=55,classId=?,clanId=701 WHERE id=?', [classId, id]);
+    if (classId === 57) await DB.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 2 }, id);
     await DB.setItem(id, { selfId: 57, name: 'Adena', amount: 30000000 });
-    for (const item of invoke('GameServer/Bot/AI/BotGear').planFor({ classId: 17, level: 40 }).items) {
+    for (const item of invoke('GameServer/Bot/AI/BotGear').planFor({ classId, level: 40 }).items) {
         if (item.selfId !== targetId && !(targetId === 608 && item.slot === 9)) await DB.setItem(id, { ...item, amount: 1, equipped: true,
             name: Data.items.find(row => row.selfId === item.selfId).template.name });
     }
     const recipe = invoke('GameServer/Items/C4RecipeItems').resolveVariantsByProductId(targetId)[0];
     const exchange = invoke('GameServer/Bot/Economy/BotLuxuryExchange').recipes().get(targetId);
+    // Bots pay the exchange's full price, C and D crystals. C crystals come
+    // from drops or from C gear bought on the board (no NPC sells either), so
+    // on this empty board the owner already holds the C part; the D part is
+    // the supply chain under test (Giran NPC D gear -> own Crystallize).
+    for (const row of exchange?.materials || []) if (Number(row.selfId) === 1459)
+        await DB.setItem(id, { selfId: 1459, name: 'Crystal: C-Grade', amount: Number(row.amount) });
     const plan = { status: 'active', strategy: exchange ? 'luxury_exchange' : 'craft',
         target: { selfId: targetId, slot: exchange ? 9 : 15 },
         ...(exchange ? { exchange, materials: exchange.materials } : { recipeId: recipe.recipeId, materials: recipe.materials }),
@@ -33,9 +43,9 @@ async function seed(id, targetId) {
     let state = { characterId: id, accountName: `bot_clan_crystal_${id}`, name: `ClanCrystal${id}`, clanId: 701,
         level: 55, phase: 'cold', activity: 'shopping', currentRegion: 'Giran', loc: town, adena: 30000000,
         inventory: Life.inventorySummaryFromItems(await DB.fetchItems(id)), vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
-        stats: { classId: 17, clanId: 701, equipmentPlan: plan,
+        stats: { classId, clanId: 701, equipmentPlan: plan,
             clanMaterialDemand: Object.fromEntries(plan.materials.map(row => [row.selfId, row.amount])) } };
-    state.stats.coldCombat = invoke('GameServer/Bot/Population/ColdCombatProfile').legacySnapshot(state, []);
+    state.stats.coldCombat = invoke('GameServer/Bot/Population/ColdCombatProfile').legacySnapshot(state, await DB.fetchSkills(id));
     for (const [selfId, amount] of [[invoke('GameServer/Inventory/ShotStock').planForState(state).selfId, 3000], [1061, 20], [736, 10]])
         await DB.setItem(id, { selfId, name: Data.items.find(row => row.selfId === selfId).template.name, amount });
     state.inventory = Life.inventorySummaryFromItems(await DB.fetchItems(id));
@@ -55,7 +65,9 @@ async function run() {
     Data.init(); await DB.init(); await Life.init();
     invoke('GameServer/Bot/Population/ColdOccupationSources').initialise();
     await q("INSERT INTO clans(id,name,level,leaderId) VALUES(701,'CrystalSupply',3,98101)");
-    for (const [id, targetId] of [[98101, 608], [98102, 2406]]) {
+    // The B recipe case (2406) is gone: it needed C crystals from luxury C
+    // gear broken at once, and C crystals come from drops or board C gear.
+    for (const [id, targetId] of [[98101, 608]]) {
         let state = await seed(id, targetId);
         const original = structuredClone(state.stats.equipmentPlan);
         const { lifecycleKind } = require('../src/GameServer/Bot/Population/ColdSimulationKernel');
@@ -101,16 +113,20 @@ async function run() {
                 assert(result.changed, `${leaf.kind}: ${result.reason}`);
                 state = result.state; operations.push(leaf.kind);
             }
-            if (targetId === 608 && state.inventory[608]?.equipped) break;
-            if (targetId === 2406 && Number(state.inventory[1459]?.amount) >= 95) break;
+            if (state.inventory[608]?.equipped) break;
         }
         assert(operations.includes('buy') && operations.includes('crystallize') && operations.includes('luxury_exchange'));
-        if (targetId === 608) assert(state.inventory[608]?.equipped, 'native exchange delivers and equips the requested C gloves');
-        else assert(Number(state.inventory[1459]?.amount) >= 95, 'native D purchase, D crystallization, C exchange and C crystallization fund the B recipe');
+        assert(state.inventory[608]?.equipped, 'native exchange delivers and equips the requested C gloves');
         assert(state.adena < 30000000 && state.adena >= 0, 'all inputs are physically paid for');
         assert((await DB.fetchItems(id)).some(row => row.equipped && row.slot !== 9), 'worn equipment survives crystallization');
         console.log(targetId, operations.join(' -> '));
     }
+    // A clan owner without the skill (a Prophet) never crystallizes: bots have
+    // no station; on an empty board its crystal root waits for a seller.
+    const prophet = await seed(98107, 608, 17);
+    assert(Supply.requirement(prophet), 'the Prophet still asks for its clan crystals');
+    assert.notEqual(context(prophet).network.activity?.improvement?.kind, 'crystallize',
+        'a bot without Crystallize gets no crystallize operation');
     const waiting = await seed(98106, 608), board = new BoardIndex();
     const beforeSupply = context(waiting, { board, rememberContext: true });
     const supplied = { ...waiting, inventory: { ...waiting.inventory,
@@ -148,12 +164,11 @@ async function run() {
     const field = { ...crowded, activity: 'hunting', currentRegion: 'Breka Orc Overlord fields',
         loc: { locX: 78088, locY: 124933, locZ: -2792 }, stats: { ...crowded.stats,
             partyMarketReturn: { partyId: 'retired_clan_party', until: now - 1 } } };
-    const travel = Improvements.acquisitionTravel(field, crowdedEconomy.network.activity, now);
-    assert(travel?.stats.travel && !travel.stats.partyMarketReturn, 'an expired party ticket cannot block the selected crystallization trip');
+    // Crystallize is the bot's own skill (no station): the selected
+    // crystallization starts no trip from the field, party ticket or not.
+    assert.equal(Improvements.acquisitionTravel(field, crowdedEconomy.network.activity, now), null,
+        'the own-skill crystallization needs no trip to town');
     assert.equal(field.stats.partyMarketReturn.partyId, 'retired_clan_party', 'trip planning leaves the input snapshot unchanged');
-    assert.equal(Improvements.acquisitionTravel({ ...field, stats: { ...field.stats,
-        partyMarketReturn: { ...field.stats.partyMarketReturn, until: now + 60000 } } }, crowdedEconomy.network.activity, now),
-        null, 'a current party reservation still owns its member');
 
     let exact = await seed(98103, 608);
     await DB.setItem(exact.characterId, { selfId: 1458, name: 'Crystal: D-Grade', amount: 310 });

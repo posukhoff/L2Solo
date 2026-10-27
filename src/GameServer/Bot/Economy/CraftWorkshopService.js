@@ -3,13 +3,33 @@ const Profit = require('./CraftProfitPolicy');
 const Commit = require('./EconomyCommit');
 const Diagnostics = require('./EconomyDiagnostics');
 const ShotCraftPolicy = require('./ShotCraftPolicy');
+const TwinCluster = require('./TwinCluster');
 const { isMainThread } = require('node:worker_threads');
 const TableChannel = require('../Population/ColdTableChannel').shared;
 const recipes = () => invoke('GameServer/Items/C4RecipeItems');
 const life = () => invoke('GameServer/Bot/Population/BotLifeState');
+// lazy: worker AfkTradeService is main-thread; the worker loads this module
+const afk = () => invoke('GameServer/AfkTrade/AfkTradeService');
+// How far a customer reaches a workshop from (its place, TwinCluster.placeOf),
+// the one owner: the board's meet, the cold customer's trip and the craft's
+// commit (Database craftForCustomer) all ask inWorkshopRange.
+const WORKSHOP_RANGE = 1200;
+function inWorkshopRange(place, loc) {
+    return !!place?.loc && Math.hypot(Number(loc?.locX) - Number(place.loc.locX),
+        Number(loc?.locY) - Number(place.loc.locY)) <= WORKSHOP_RANGE;
+}
+// Where a bot's workshop stands now (TwinCluster.placeOf at its standing
+// store, AfkTradeService.findOwnerProjection). Main only.
+function placeFor(state) {
+    return state ? TwinCluster.placeOf(state, afk().findOwnerProjection(Number(state.characterId))?.shop) : null;
+}
+function samePlace(a, b) {
+    return a === b || !!a && !!b && a.town === b.town && a.loc.locX === b.loc.locX
+        && a.loc.locY === b.loc.locY && a.loc.locZ === b.loc.locZ;
+}
 const byRecipe = new Map();
 const owners = new Map();
-const publicDigests = new Map(), publicScopeDigests = new Map();
+const publicScopeDigests = new Map();
 const publicCandidates = new (require('./PublicWorkshopIndex').PublicWorkshopIndex)();
 // A live player's manufacture rows stay apart from the bot rows above: the
 // bot digests are what the worker mirrors (publicRows), and a meeting proof
@@ -46,7 +66,7 @@ function refreshPlayers() {
             for (const entry of Manufacture.shop(actor).entries) {
                 const recipe = recipes().resolveByRecipeId(entry.recipeId);
                 if (!recipe || !Number.isSafeInteger(entry.price) || entry.price < 0) continue;
-                const capacity = Math.min(64, Math.floor(Number(actor.fetchMp?.() || 0) / Math.max(1, recipe.mpCost)));
+                const capacity = Profit.mpBatches(actor.fetchMp?.(), recipe);
                 if (capacity) rows.push([id, recipe.recipeId, entry.price, town,
                     actor.fetchLocX(), actor.fetchLocY(), actor.fetchLocZ(), capacityBucket(capacity)]);
             }
@@ -66,6 +86,7 @@ function playerLookup(ownerId, recipeId, customer) {
     if (!row) return null;
     const recipe = recipes().resolveByRecipeId(recipeId);
     return { playerWorkshop: true, recipe, price: row[2], entryPrice: row[2], session: owner.session,
+        place: { town: row[3], loc: { locX: row[4], locY: row[5], locZ: row[6] } },
         state: { characterId: Number(ownerId), currentRegion: row[3],
             loc: { locX: row[4], locY: row[5], locZ: row[6] }, vitals: { mp: row[7] * Math.max(1, recipe.mpCost) } } };
 }
@@ -74,16 +95,9 @@ function togglePublicDigest(row, direction = 1) {
     if (!productId) return;
     const hash = invoke('GameServer/Bot/Fnv1a').fnv1a32(JSON.stringify(row));
     const scope = invoke('GameServer/Bot/Economy/MarketCounters').counterOf(productId);
-    for (const [index, key] of [[publicDigests, productId], [publicScopeDigests, scope]]) {
-        const prior = index.get(key) || { xor: 0, sum: 0, count: 0 };
-        const next = { xor: (prior.xor ^ hash) >>> 0, sum: (prior.sum + direction * hash) >>> 0,
-            count: prior.count + direction };
-        if (next.count > 0) index.set(key, next); else index.delete(key);
-    }
-}
-function publicRecipeDigest(productId) {
-    const value = publicDigests.get(Number(productId));
-    return value ? `${value.xor}:${value.sum}:${value.count}` : '0:0:0';
+    const prior = publicScopeDigests.get(scope) || { xor: 0, sum: 0, count: 0 };
+    const next = { xor: (prior.xor ^ hash) >>> 0, sum: (prior.sum + direction * hash) >>> 0, count: prior.count + direction };
+    if (next.count > 0) publicScopeDigests.set(scope, next); else publicScopeDigests.delete(scope);
 }
 function publicScopeDigest(scope) {
     const value = publicScopeDigests.get(scope);
@@ -93,25 +107,13 @@ function candidateRow(row) {
     return { characterId: row[0], recipeId: row[1], price: row[2], entryPrice: row[2],
         townName: row[3], loc: { locX: row[4], locY: row[5], locZ: row[6] }, capacityBatches: row[7] };
 }
-const inputOwners = new Map();
-const ownerInputs = new Map();
 const crafters = new Map();
 const knownRecipes = new Map();
 const encodedRecipes = new Map();
 function recipesChanged(id) { knownRecipes.delete(Number(id)); encodedRecipes.delete(Number(id)); }
-let inputIds = null;
-function watchedInputs() {
-    if (!inputIds) {
-        inputIds = new Set();
-        for (const recipe of Object.values(recipes().loadRecipeItems())) {
-            if (recipe.type === 'dwarven') inputIds.add(Number(recipe.recipeItemId));
-        }
-        for (const id of invoke('GameServer/Bot/Economy/ProductionPolicy').GRADED_SHOTS) inputIds.add(id);
-    }
-    return inputIds;
-}
 let unsubscribe = null;
 let unsubscribeOwnership = null;
+let unsubscribeBoard = null;
 
 // The state object each owner was last indexed from. Life states are replaced,
 // not mutated, so the same object registered again (the change and the market
@@ -123,10 +125,9 @@ function remove(id, { recipes: dropRecipes = true, publish = true } = {}) {
     // A bot with a 'recipes' row: a cold crafter, or one whose recipes are loaded.
     const recipeRowShown = dropRecipes && (crafters.has(Number(id)) || knownRecipes.has(Number(id)));
     const removedRecipes = owners.get(Number(id)) || [];
-    for (const row of publicRecipeRows(id)) { togglePublicDigest(row, -1); publicCandidates.remove(`w:${Number(id)}:${row[1]}`); }
+    dropPublicRows(id);
     if (publish) for (const recipeId of removedRecipes) invoke('GameServer/Bot/Population/ColdTableChannel').shared
         .changed('board', { key: `w:${Number(id)}:${recipeId}`, removed: true });
-    invoke('GameServer/Bot/Economy/ShotMarketIndex').native().remove(id);
     if (dropRecipes) recipesChanged(id);
     // Not under publish: the board rows publishRows rewrites do not include it.
     if (recipeRowShown) TableChannel.changed('recipes', { key: Number(id), removed: true });
@@ -136,12 +137,6 @@ function remove(id, { recipes: dropRecipes = true, publish = true } = {}) {
         if (!records?.size) byRecipe.delete(recipeId);
     }
     owners.delete(Number(id));
-    for (const itemId of ownerInputs.get(Number(id)) || []) {
-        const records = inputOwners.get(itemId);
-        records?.delete(Number(id));
-        if (!records?.size) inputOwners.delete(itemId);
-    }
-    ownerInputs.delete(Number(id));
     crafters.delete(Number(id));
 }
 function register(state) {
@@ -155,48 +150,46 @@ function register(state) {
     indexState(id, state);
     if (state?.phase === 'cold') registeredStates.set(id, state);
 }
+// The owner's public rows leave the digest and the candidate index.
+function dropPublicRows(id) {
+    for (const row of publicRecipeRows(id)) { togglePublicDigest(row, -1); publicCandidates.remove(`w:${Number(id)}:${row[1]}`); }
+}
+// The owner's public rows built at its place, into the digest and the index.
+function setPublicRows(id, place) {
+    const ids = owners.get(id);
+    ids.place = place;
+    ids.publicRows = Object.freeze(buildPublicRecipeRows(id).map(row => Object.freeze(row)));
+    for (const row of ids.publicRows) { togglePublicDigest(row); publicCandidates.put(`w:${id}:${row[1]}`, candidateRow(row)); }
+}
+// The worker's mirror gets the rows that differ from previousRows.
+function publishRows(id, previousRows) {
+    const rows = publicRecipeRows(id), keys = new Set(rows.map(row => row[1]));
+    for (const row of previousRows) if (!keys.has(row[1])) TableChannel.changed('board', { key: `w:${id}:${row[1]}`, removed: true });
+    for (const row of rows) {
+        const prior = previousRows.find(old => old[1] === row[1]);
+        if (!prior || row.some((value, at) => value !== prior[at])) TableChannel.changed('board', [`w:${id}:${row[1]}`, ...row]);
+    }
+}
 function indexState(id, state) {
     const previousRows = publicRecipeRows(id);
     remove(id, { recipes: state?.phase !== 'cold', publish: false });
-    const publishRows = () => {
-        const rows = publicRecipeRows(id), keys = new Set(rows.map(row => row[1]));
-        const channel = invoke('GameServer/Bot/Population/ColdTableChannel').shared;
-        for (const row of previousRows) if (!keys.has(row[1])) channel.changed('board', { key: `w:${id}:${row[1]}`, removed: true });
-        for (const row of rows) {
-            const prior = previousRows.find(old => old[1] === row[1]);
-            if (!prior || row.some((value, at) => value !== prior[at])) channel.changed('board', [`w:${id}:${row[1]}`, ...row]);
-        }
-    };
-    if (!state || state.phase !== 'cold') { publishRows(); return; }
-    invoke('GameServer/Bot/Economy/ShotMarketIndex').native().update(state);
-    const watched = watchedInputs(), items = new Set();
-    for (const key in state.inventory || {}) {
-        const itemId = Number(key);
-        if (watched.has(itemId) && Number(state.inventory[key]?.amount || 0) > 0) items.add(itemId);
-    }
-    if (state.stats?.shotDemand?.itemId) items.add(Number(state.stats.shotDemand.itemId));
-    if (state.stats?.shotRecipeDemand?.itemId) items.add(Number(state.stats.shotRecipeDemand.itemId));
-    for (const itemId of items) {
-        if (!inputOwners.has(itemId)) inputOwners.set(itemId, new Map());
-        inputOwners.get(itemId).set(id, state);
-    }
-    ownerInputs.set(id, items);
+    if (!state || state.phase !== 'cold') { publishRows(id, previousRows); return; }
     if (invoke('GameServer/Bot/Economy/CraftShopService').isServiceCrafter(state)) crafters.set(id, state);
     else recipesChanged(id);
-    const shop = state?.stats?.workshop;
-    if (!shop || state.phase !== 'cold' || Number(state.vitals?.hp) <= 0
-        || state.partyId || state.party?.partyId || ['dead', 'traveling'].includes(state.activity)) { publishRows(); return; }
+    // A cold twin's workshop stands at its place (placeFor) wherever its
+    // body hunts; a hot owner is away.
+    const entries = TwinCluster.entriesOf(state);
+    if (!entries?.length || state.phase !== 'cold') { publishRows(id, previousRows); return; }
     const ids = [];
-    for (const entry of shop.entries || []) {
+    for (const entry of entries) {
         const recipeId = Number(entry.recipeId);
         if (!byRecipe.has(recipeId)) byRecipe.set(recipeId, new Map());
         byRecipe.get(recipeId).set(id, state); // Original canonical source, never a second actor/state book.
         ids.push(recipeId);
     }
     owners.set(id, ids);
-    ids.publicRows = Object.freeze(buildPublicRecipeRows(id).map(row => Object.freeze(row)));
-    for (const row of publicRecipeRows(id)) { togglePublicDigest(row); publicCandidates.put(`w:${id}:${row[1]}`, candidateRow(row)); }
-    publishRows();
+    setPublicRows(id, placeFor(state));
+    publishRows(id, previousRows);
 }
 function init() {
     if (!unsubscribe) unsubscribe = life().subscribeChanges(register);
@@ -204,6 +197,30 @@ function init() {
         const current = life().cachedState(id);
         if (current) register(current); else remove(id);
     });
+    // The held rows read the shop's place (placeFor): an owner whose board
+    // records changed is placed again, every owner when the board resets or
+    // comes ready (also when it was ready before this subscription).
+    if (!unsubscribeBoard && isMainThread) {
+        unsubscribeBoard = afk().subscribeBoardChanges(change => reindex(change.reset || change.ready && !change.ownerIds
+            ? [...owners.keys()] : (change.ownerIds || []).filter(id => owners.has(Number(id)))));
+        if (afk().isBoardReady()) reindex([...owners.keys()]);
+    }
+}
+// Moves the owners' rows to where their workshops stand now. A board change
+// moves only the place: the offer and the capacity read the life state, which
+// register rebuilds when it is replaced.
+function reindex(ids) {
+    for (const value of ids) {
+        const id = Number(value), held = owners.get(id), state = registeredStates.get(id);
+        if (!held) continue;
+        if (!state || !life().cachedState(id)) { remove(id); continue; }
+        const place = placeFor(state);
+        if (samePlace(place, held.place)) continue;
+        const previousRows = publicRecipeRows(id);
+        dropPublicRows(id);
+        setPublicRows(id, place);
+        publishRows(id, previousRows);
+    }
 }
 function discount(crafter, customer, trust = 0) {
     const clan = Number(crafter.clanId || crafter.stats?.clanId || 0);
@@ -213,40 +230,13 @@ function discount(crafter, customer, trust = 0) {
     return empathy * Math.max(0, Math.min(1, (Number(trust) + 100) / 200));
 }
 function quote(crafter, customer, recipeId) {
-    const entry = crafter.stats?.workshop?.entries?.find(row => Number(row.recipeId) === Number(recipeId));
+    const entry = TwinCluster.entriesOf(crafter)?.find(row => Number(row.recipeId) === Number(recipeId));
     if (!entry) return null;
     const memory = invoke('GameServer/Social/InteractionMemoryRuntime');
     const identity = state => ({ id: Number(state.characterId), clanId: Number(state.clanId || state.stats?.clanId || 0) });
     const relation = memory.assess(identity(crafter), identity(customer), {}, Date.now()).personal;
     const price = Math.max(0, Math.floor(Number(entry.price) * (1 - discount(crafter, customer, relation?.trust))));
     return { price, entryPrice: Number(entry.price) };
-}
-function find(recipeId, customer) {
-    let best = null;
-    for (const row of publicForRecipe(recipeId, customer)) {
-        const selected = lookup(row.characterId, recipeId, customer);
-        if (!selected) continue;
-        const priced = { id: `workshop_${row.characterId}`, ...row, workshop: true,
-            price: selected.price, entryPrice: selected.entryPrice };
-        if (!best || priced.price < best.price || priced.price === best.price && priced.characterId < best.characterId) best = priced;
-    }
-    return best;
-}
-
-function servicePrice(recipe, previous, state) {
-    const Belief = invoke('GameServer/Bot/Economy/PriceBelief');
-    const first = invoke('GameServer/Bot/Economy/CraftShopService').productPrice(recipe);
-    const belief = { mu: Math.log(Math.max(1, first)), K: Belief.S0 };
-    const observations = [];
-    for (const [id, peer] of byRecipe.get(Number(recipe.recipeId)) || []) {
-        if (id === Number(state.characterId) || life().cachedState(id) !== peer) continue;
-        const price = peer.stats.workshop.entries.find(entry => Number(entry.recipeId) === Number(recipe.recipeId))?.price;
-        if (price > 0) observations.push([Math.log(price), 1]);
-    }
-    const paid = Number(previous?.earned || 0), filled = Number(previous?.fills || 0);
-    if (paid > 0 && filled > 0) observations.push([Math.log(paid / filled), filled]);
-    Belief.learn(belief, observations);
-    return { ...previous, price: Math.max(1, Math.round(Math.exp(belief.mu))), firstPrice: first };
 }
 async function craft(ownerId, recipeId, customerId, { expectedPrice = null, expectedRevision = null,
     batches = 1, original = null, random = Math.random, funding = { r: 1 } } = {}) {
@@ -357,67 +347,24 @@ const recipeRow = id => ({ characterId: Number(id), ...knowledgeFor(id) });
 // takes its row away.
 if (isMainThread) TableChannel.register('recipes', { key: row => row.characterId,
     allRows: () => [...knownRecipes.keys()].map(recipeRow) });
-async function review(state) {
-    init();
-    const rules = invoke('GameServer/Bot/Economy/CraftShopService');
-    if (!state || !rules.isServiceCrafter(state) || state.phase !== 'cold') {
-        if (state) register(state);
-        return state;
-    }
-    const id = Number(state.characterId);
-    const known = await knownFor(id);
-    const current = life().cachedState(state.characterId);
-    if (current && current !== state) return current;
-    const prior = new Map((state.stats?.workshop?.entries || []).map(entry => [Number(entry.recipeId), entry]));
-    // A Giran station is a workshop for bots as for the player (E212): its
-    // own station list at the station fee, never a learned price.
-    const fees = rules.isStationService(state)
-        ? new Map(rules.profileFor(state).entries.map(entry => [Number(entry.recipeId), entry.price])) : null;
-    const entries = known.map(id => recipes().resolveByRecipeId(id)).filter(recipe => recipe
-        && rules.canCraft(state, recipe) && (!fees || fees.has(Number(recipe.recipeId))))
-        .slice(0, rules.MAX_PUBLIC_RECIPES).map(recipe => ({ recipeId: recipe.recipeId, ...(fees
-            ? { ...prior.get(recipe.recipeId), price: fees.get(Number(recipe.recipeId)), firstPrice: fees.get(Number(recipe.recipeId)) }
-            : servicePrice(recipe, prior.get(recipe.recipeId), state)) }));
-    const previous = state.stats?.workshop?.entries || [];
-    if (!entries.length && !previous.length) { remove(state.characterId, { recipes: false }); return state; }
-    if (entries.length === previous.length && entries.every((entry, i) =>
-        Number(entry.recipeId) === Number(previous[i].recipeId)
-        && ['price', 'firstPrice', 'earned', 'fills'].every(key => Number(entry[key] || 0) === Number(previous[i][key] || 0)))) {
-        register(state); return state;
-    }
-    const next = { ...state, stats: { ...state.stats, workshop: { title: `${state.name}'s workshop`,
-        entries, town: state.currentRegion, loc: state.loc } } };
-    const saved = await life().upsertState(next, 'workshop_updated') || state;
-    register(saved);
-    return saved;
-}
-function inputSources(itemId) {
-    return [...(inputOwners.get(Number(itemId))?.values() || [])].filter(state => life().cachedState(state.characterId) === state);
-}
-function inputStateFor(ownerId) {
-    ownerId = Number(ownerId);
-    const crafter = crafters.get(ownerId);
-    if (crafter) return crafter;
-    const itemId = ownerInputs.get(ownerId)?.values().next().value;
-    return itemId === undefined ? null : inputOwners.get(itemId)?.get(ownerId) || null;
-}
-function crafterCandidates(limit = 16) {
-    const result = [], count = Math.min(crafters.size, limit);
-    const iterator = crafters.entries();
-    for (let inspected = 0; inspected < count; inspected++) {
-        const [id, state] = iterator.next().value;
-        crafters.delete(id); crafters.set(id, state);
-        if (life().cachedState(state.characterId) === state) result.push(state);
-    }
-    return result;
-}
 
+// A workshop that no longer offers this recipe for good: its cold owner's
+// saved workshop (its twin) leaves it out.
+// A hot owner, one outside the cache or with no place yet is away for now:
+// lookup misses it until it is back.
+function withdrawn(ownerId, recipeId) {
+    const owner = life().cachedState(ownerId);
+    return owner?.phase === 'cold'
+        && !(TwinCluster.entriesOf(owner) || []).some(entry => Number(entry.recipeId) === Number(recipeId));
+}
 function lookup(ownerId, recipeId, customer) {
     const player = playerLookup(ownerId, recipeId, customer);
     if (player) return player;
     const state = byRecipe.get(Number(recipeId))?.get(Number(ownerId));
     if (!state || life().cachedState(ownerId) !== state) return null;
-    return { state, recipe: recipes().resolveByRecipeId(recipeId), ...quote(state, customer, recipeId) };
+    const place = owners.get(Number(ownerId))?.place;
+    if (!place) return null;
+    return { state, place, recipe: recipes().resolveByRecipeId(recipeId), ...quote(state, customer, recipeId) };
 }
 // Existing public recipe index is the source; only its published fee, place
 // and present physical capacity cross the worker boundary. No foreign book.
@@ -435,15 +382,16 @@ function capacityBucket(batches) {
     return bucket;
 }
 function buildPublicRecipeRows(ownerId) {
-    const id = Number(ownerId), result = [];
+    const id = Number(ownerId), result = [], place = owners.get(id)?.place;
+    if (!place) return result;
     for (const recipeId of owners.get(id) || []) {
         const state = byRecipe.get(recipeId)?.get(id);
-        const entry = state?.stats?.workshop?.entries?.find(row => Number(row.recipeId) === recipeId);
+        const entry = TwinCluster.entriesOf(state)?.find(row => Number(row.recipeId) === recipeId);
         const recipe = recipes().resolveByRecipeId(recipeId);
-        if (!state || !entry || !recipe || ![state.loc?.locX, state.loc?.locY, state.loc?.locZ].every(Number.isFinite)) continue;
-        const capacity = Math.min(64, Math.floor(Number(state.vitals?.mp || 0) / Math.max(1, Number(recipe.mpCost || 0))));
+        if (!state || !entry || !recipe) continue;
+        const capacity = Profit.mpBatches(state.vitals?.mp, recipe);
         result.push([id, recipeId, Number(entry.price),
-            state.currentRegion, state.loc.locX, state.loc.locY, state.loc.locZ, capacityBucket(capacity)]);
+            place.town, place.loc.locX, place.loc.locY, place.loc.locZ, capacityBucket(capacity)]);
     }
     return result;
 }
@@ -459,37 +407,12 @@ function* publicRows() {
 function boardRecords() {
     return [...owners.keys()].flatMap(id => {
         const state = life().cachedState(id);
-        if (!state?.stats?.workshop || state.phase !== 'cold') return [];
+        const entries = TwinCluster.entriesOf(state);
+        const place = owners.get(id).place;
+        if (!entries?.length || state.phase !== 'cold' || !place) return [];
         return [{ id: `workshop_${id}`, kind: 'workshop', ownerId: id, ownerName: state.name,
-            town: state.currentRegion, loc: state.loc, title: state.stats.workshop.title,
-            entries: state.stats.workshop.entries, revision: state.simulation?.revision || 0 }];
+            town: place.town, loc: { ...place.loc }, title: `${state.name}'s workshop`,
+            entries, revision: state.simulation?.revision || 0 }];
     });
 }
-async function publishDemand(state, recipe, productPrice, context) {
-    for (const material of recipe.materials || []) {
-        const missing = Math.max(0, Number(material.amount) - Number(state.inventory?.[material.selfId]?.amount || 0));
-        if (!missing) continue;
-        let others = 0;
-        for (const other of recipe.materials || []) if (other !== material) {
-            const value = Profit.inputValue(other.selfId, state, context);
-            if (!(value > 0)) return state;
-            others += value * Number(other.amount);
-        }
-        const margin = Profit.margin(recipe, productPrice, others, context);
-        const input = Profit.inputValue(material.selfId, state, context);
-        const cash = missing * input;
-        const r = margin?.profit > 0 && cash > 0 ? margin.profit / context.hourAdena / cash : 0;
-        const budget = invoke('GameServer/Bot/Economy/PurchaseFunding').spendable(state, 0, { r });
-        const worth = margin && margin.profit / Number(material.amount);
-        if (!(worth > 0)) continue;
-        const price = Math.floor(Math.min(worth, budget / missing));
-        if (price < 1) continue;
-        const result = await invoke('GameServer/Bot/Economy/BotAfkMarketService').openBuyAd(state, {
-            type: 'buy_craft_material', status: 'active', target: { itemId: material.selfId, amount: missing,
-                adena: price }, plan: { estimatedCost: price, valueRate: r, expectedBenefit: 'market_buy_craft_material', priceSource: 'recipe_margin' }
-        });
-        return result.state || state; // One owned money focus; the next input follows its fill event.
-    }
-    return state;
-}
-module.exports = { init, register, registerPlayer, remove, recipesChanged, knownFor, cachedRecipes, bookFor, knowledgeFor, review, find, publicForRecipe, publicRecipeRows, publicRows, publicRecipeDigest, publicScopeDigest, itemFingerprint: publicRecipeDigest, quote, discount, boardRecords, lookup, craft, inputSources, inputStateFor, crafterCandidates, publishDemand };
+module.exports = { init, register, registerPlayer, remove, recipesChanged, knownFor, cachedRecipes, bookFor, knowledgeFor, publicForRecipe, publicRecipeRows, publicRows, publicScopeDigest, quote, discount, boardRecords, lookup, placeFor, inWorkshopRange, withdrawn, craft };

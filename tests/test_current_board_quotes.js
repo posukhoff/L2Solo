@@ -15,7 +15,9 @@ const line = { ownerId: 42, lineId: 7, recordId: 8, selfId: 1835, price: 9, coun
     storeType: 3, custodyPolicy: 1, revision: 1, fills: 0,
     pricing: { price: 9, worth: 100, seenCounter: 0, seenAt: 1, seenCount: 100,
         seenFills: 0, sigma: .2, rival: 0 } };
-const ctx = worth => ({ characterId: 42, timestamp: 1000, adena: 10000,
+// 1835 is the owner's own product: its SELL line is worthwhile
+// (MarketPricing.quotable), only the price review decides.
+const ctx = worth => ({ characterId: 42, timestamp: 1000, adena: 10000, ownProducts: () => new Set([1835]),
     economy: { worth: () => worth }, trader: { assertiveness: .5, caution: .5, wait: 0 },
     board: { itemRevision: () => 1, first: () => null }, npcOffersFor: () => [],
     reviewReasons: new Map([[7, 4]]) });
@@ -43,11 +45,10 @@ try {
     assert.equal(repaired.reprices[0].pricing.worth, 4, 'lost cold checkpoint uses current prepared value');
     const sell = { ...line, storeType: 1, price: 4, pricing: { ...line.pricing, price: 4, worth: 0 } };
     centre = 8;
-    const sale = Pricing.look(state, [sell], ctx(100));
-    assert.equal(sale.reprices[0].price, 8, 'old conditional stock quote follows current evidence');
-    assert.equal(sale.reprices[0].previousPricing.price, 4, 'native previous-pricing fence remains');
+    assert.equal(Pricing.look(state, [sell], ctx(100)), null,
+        'no line evidence: the conditional stock quote stands');
     assert.equal(Pricing.look(state, [{ ...sell, custodyPolicy: 0 }], ctx(100)), null,
-        'unknown forecast cannot reprice a backed shop as an unreserved advert');
+        'no line evidence: the shop stock quote stands');
     assert.equal(Pricing.look(state, [sell], { ...ctx(100), ownStock: { known: false } }), null,
         'unknown joint physical stock cannot create a replacement quote');
     assert.equal(Decision.chooseAsk({ mu: Math.log(8), K: 3 }, Decision.marketFor(),

@@ -118,7 +118,7 @@ try {
     console.log('Bot goal WTB escrow checks passed');
 } finally {
     AfkTrade.ownerRecords = originalProjection;
-    await AfkTrade._resetForTests(); Market._resetForTests();
+    await AfkTrade._resetForTests();
     await Database.close();
 }
 })().catch(error => { console.error(error); process.exitCode = 1; });

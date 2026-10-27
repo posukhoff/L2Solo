@@ -178,10 +178,11 @@ function channels(profile, target) {
     return result;
 }
 
-function evaluate(profiles, target) {
+// attacksOf: channels, or a caller's per-target list of them (npcVerdict).
+function evaluate(profiles, target, attacksOf = channels) {
     let neutral = 0, effective = 0;
     for (const profile of profiles || []) {
-        const attacks = channels(profile, target);
+        const attacks = attacksOf(profile, target);
         if (!attacks.length) continue; // Missing legacy skill data is not immunity.
         neutral += Math.max(...attacks.map(a => a.weight));
         effective += Math.max(...attacks.map(a => a.weight * a.modifier));
@@ -195,7 +196,7 @@ function evaluate(profiles, target) {
 // Full-health readiness, not an estimate of the current injured fight. Keep
 // headroom for misses, interrupted casts and the retreat before zero HP.
 // Missing legacy projections remain neutral until real stats are available.
-function soloSurvival(profiles, target, minimum = 1.5) {
+function soloSurvival(profiles, target, minimum = 1.5, attacksOf = channels) {
     // The cold solo executor damages the owner; the summon only adds attacks.
     // Native actor profiles retain their ordinary tanking behavior.
     const receivers = profiles?.filter(profile => profile.soloDamageReceiver !== false);
@@ -205,7 +206,7 @@ function soloSurvival(profiles, target, minimum = 1.5) {
     }
     const lifetime = Math.max(...receivers.map(profile => profile.maxHp
         / (70 * target.pAtk / profile.pDef * positive(target.atkSpd || 253) / 500)));
-    const damage = profiles.reduce((sum, profile) => sum + Math.max(0, ...soloChannels(profile, target)
+    const damage = profiles.reduce((sum, profile) => sum + Math.max(0, ...soloChannels(profile, target, attacksOf)
         .map(attack => Math.min((attack.survivalWeight ?? attack.weight) * lifetime,
             attack.damageBudget ?? Infinity) * attack.modifier)), 0);
     const survivalRatio = damage / target.maxHp;
@@ -213,8 +214,8 @@ function soloSurvival(profiles, target, minimum = 1.5) {
         reason: survivalRatio >= minimum ? 'solo_survival_ready' : 'insufficient_survival_margin' };
 }
 
-function soloChannels(profile, target) {
-    const attacks = channels(profile, target);
+function soloChannels(profile, target, attacksOf = channels) {
+    const attacks = attacksOf(profile, target);
     if (!profile.soloAttackScores) return attacks;
     // The executor chooses by native skill priority, not maximum DPS. Do not
     // admit a fight on a fast spell the bot would never select at full HP.
@@ -228,12 +229,12 @@ function soloChannels(profile, target) {
     return best ? [best] : [];
 }
 
-function soloCanHunt(profiles, target, { maxTargetLevel, npcLevel } = {}) {
-    const survival = soloSurvival(profiles, target);
+function soloCanHunt(profiles, target, { maxTargetLevel, npcLevel, attacksOf = channels } = {}) {
+    const survival = soloSurvival(profiles, target, 1.5, attacksOf);
     if (maxTargetLevel && Number(npcLevel || 0) > maxTargetLevel) {
         return { ...survival, eligible: false, reason: 'recovery_level' };
     }
-    return survival.survivalRatio === null ? { ...evaluate(profiles, target), survivalRatio: null } : survival;
+    return survival.survivalRatio === null ? { ...evaluate(profiles, target, attacksOf), survivalRatio: null } : survival;
 }
 
 // An optimistic damage bound, not another survival gate. Compile skills once
@@ -263,11 +264,20 @@ function soloSpotUpperBound(profiles) {
         }
         return bound;
     });
-    // Search-local, capped at 256 species (~8 KiB of pairs); never retained on
-    // a bot, a shared verdict fingerprint or a saved combat projection.
+    // Search-local, capped at 4096 species (every C4 NPC template; ~130 KiB of
+    // pairs at most, dies with the search); never retained on a bot, a shared
+    // verdict fingerprint or a saved combat projection. A source route reader
+    // asks it for ~700 spots of one build (R3 cost: at 256 a third of its
+    // asks recomputed a species).
     const seen = new Map();
+    // Every answer is kept, the unhuntable (null) and unknown-stat (true) too.
     function maybeSafe(selfId) {
         if (seen.has(selfId)) return seen.get(selfId);
+        const allowed = speciesBound(selfId);
+        if (seen.size < 4096) seen.set(selfId, allowed);
+        return allowed;
+    }
+    function speciesBound(selfId) {
         const npc = npcTemplate(selfId);
         if (!npc || !huntingTargetPolicy().canHunt(npc)) return null;
         const target = coldCombatProfile().npcCombatStats(npc);
@@ -282,9 +292,7 @@ function soloSpotUpperBound(profiles) {
             bound.continuous * seconds / positive(target.pDef),
             Math.min(bound.physicalRate * seconds, bound.physicalBudget) / positive(target.pDef),
             Math.min(bound.magicRate * seconds, bound.magicBudget) / positive(target.mDef)) * vulnerability, 0);
-        const allowed = damage / target.maxHp >= 1.5;
-        if (seen.size < 256) seen.set(selfId, allowed);
-        return allowed;
+        return damage / target.maxHp >= 1.5;
     }
     return spot => {
         let total = 0, safe = 0;
@@ -344,10 +352,15 @@ function npcVerdict(verdicts, selfId, options) {
     let verdict = null;
     if (npc && huntingTargetPolicy().canHunt(npc)) {
         const target = coldCombatProfile().npcCombatStats(npc);
-        const match = evaluate(options.profiles, target);
+        // One attack list per profile against this species: the efficiency and
+        // the solo survival read the same channels (pure in profile and target).
+        const lists = new Map();
+        const attacksOf = profile => { let list = lists.get(profile);
+            if (!list) lists.set(profile, list = channels(profile, target)); return list; };
+        const match = evaluate(options.profiles, target, attacksOf);
         const withinRecoveryLevel = !options.maxTargetLevel || Number(npc.template?.level || 0) <= options.maxTargetLevel;
         const canHunt = options.soloSafety ? soloCanHunt(options.profiles, target,
-            { maxTargetLevel: options.maxTargetLevel, npcLevel: Number(npc.template?.level || 0) }).eligible
+            { maxTargetLevel: options.maxTargetLevel, npcLevel: Number(npc.template?.level || 0), attacksOf }).eligible
             : match.eligible && withinRecoveryLevel;
         verdict = Object.freeze({ efficiency: match.efficiency, canHunt });
     }

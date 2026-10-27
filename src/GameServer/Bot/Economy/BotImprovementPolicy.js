@@ -5,6 +5,7 @@ const ItemIndex = require('../../Item/ItemTemplateIndex');
 const Valuation = require('./EconomicValuation');
 const Tendency = require('../AI/TendencyRoll');
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
+const Rewards = require('./SpotRewardExpectation');
 const positive = value => Math.max(0, Number(value) || 0);
 function template(id) { return ItemIndex.find(invoke('GameServer/DataCache').items, id); }
 function instances(state) {
@@ -130,7 +131,8 @@ function opportunities(state, ctx) {
                     price: price * cost.count, riskHours: ctx.hunt.perHour > 0 ? loss / ctx.hunt.perHour : Infinity }];
             }).filter(row => {
                 const held = positive(state.inventory?.[row.scrollId]?.amount);
-                ctx.quantityInputs?.physical(row.scrollId, held);
+                // Priced against the wallet, no threshold noted: untracked.
+                ctx.quantityInputs?.physical(row.scrollId, held); ctx.quantityInputs?.untracked('physical', row.scrollId);
                 const cash = row.price - held * ctx.price(row.scrollId);
                 ctx.walletBoundary?.(cash);
                 return cash <= positive(state.adena);
@@ -193,7 +195,8 @@ function crystalPath(state, id, ctx, spots = []) {
     if (!target || target.stage <= 0 || target.stage > 10 || state.level < 40) return null;
     const held = Object.values(state.inventory || {}).filter(row => {
         if (!Native.catalog.crystals[row.selfId] && ![4662,4663,4664].includes(Number(row.selfId))) return false;
-        ctx.quantityInputs?.physical(row.selfId, positive(row.amount));
+        // Compared with 1 and 2 below, not noted: untracked.
+        ctx.quantityInputs?.physical(row.selfId, positive(row.amount)); ctx.quantityInputs?.untracked('physical', row.selfId);
         return row.amount > 0;
     });
     if (held.length > 1 || held[0]?.amount > 1) return null;
@@ -203,13 +206,17 @@ function crystalPath(state, id, ctx, spots = []) {
     let best = null;
     for (const spot of spots) {
         if (spot.raidBoss) continue;
-        const entries = spot.npcEntries || [];
-        const total = entries.reduce((n, npc) => n + Math.max(1, Number(npc.count || 1)), 0);
-        const valid = entries.filter(npc => { const rule = Native.catalog.npcs[npc.selfId];
-            return rule && rule.maxStage <= 10 && rule.maxStage >= target.stage; });
-        const eligible = valid.reduce((n, npc) => n + Math.max(1, Number(npc.count || 1)), 0);
+        // The kills drawn as the cold kill draws them (SpotRewardExpectation.composition).
+        const entries = Rewards.composition(spot);
+        let eligible = 0, npcId = 0;
+        for (const npc of entries) {
+            const rule = Native.catalog.npcs[npc.selfId];
+            if (!rule || rule.maxStage > 10 || rule.maxStage < target.stage) continue;
+            eligible += npc.share;
+            npcId ||= npc.selfId;
+        }
         const rate = ctx.spotValue(spot);
-        const kills = positive(rate?.kills) * eligible / Math.max(1, total);
+        const kills = positive(rate?.kills) * eligible;
         if (!kills || !(rate?.exp > 0)) continue;
         // Native .32 advance/.58 unchanged/.10 broken. A break restarts
         // from stage zero; solve the whole renewal instead of pricing one kill.
@@ -221,7 +228,7 @@ function crystalPath(state, id, ctx, spots = []) {
         const zero = a / (1 - b), attempts = own.a + own.b * zero;
         const costHours = attempts / kills;
         if (!best || costHours < best.costHours) best = { kind: 'soul_crystal', activity: 'hunting', costHours,
-            spotId: spot.id, npcId: valid[0].selfId, itemId: Number(id), amount: 1 };
+            spotId: spot.id, npcId, itemId: Number(id), amount: 1 };
     }
     return best;
 }

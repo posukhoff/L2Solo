@@ -1,0 +1,184 @@
+{
+ "header": {
+  "schema": 1,
+  "inputs": {
+   "bandLevels": 2,
+   "maxLevel": 78
+  }
+ },
+ "roles": [
+  "dps",
+  "mage",
+  "tank",
+  "dagger",
+  "archer",
+  "healer",
+  "buffer",
+  "spoiler"
+ ],
+ "shots": [
+  1,
+  0
+ ],
+ "gaps": [
+  -4,
+  -2,
+  0,
+  2,
+  4,
+  6,
+  8,
+  10,
+  12,
+  14,
+  16,
+  18,
+  20
+ ],
+ "rowFields": [
+  "minGap",
+  "refGap",
+  "kph",
+  "busy",
+  "deaths",
+  "exp",
+  "sp",
+  "adena",
+  "loot",
+  "shots",
+  "potions",
+  "stacks"
+ ],
+ "curveFields": [
+  "kph",
+  "busy",
+  "deaths",
+  "exp",
+  "adena"
+ ],
+ "spots": [
+  [
+   "16_7",
+   58,
+   4,
+   96,
+   1,
+   0.9968,
+   0.7957
+  ]
+ ],
+ "rows": [
+  [
+   [
+    -4,
+    6,
+    101,
+    21.9,
+    0.011,
+    4240,
+    357.8,
+    572,
+    72.15,
+    5.139,
+    21,
+    0.02262
+   ],
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ]
+ ],
+ "curves": {
+  "dps": {
+   "29": {
+    "kph": [
+     null,
+     null,
+     null,
+     0.703,
+     1.049,
+     1,
+     0.9795,
+     1.115,
+     1.209,
+     1.193,
+     1.439,
+     1.836,
+     2.308
+    ],
+    "busy": [
+     null,
+     null,
+     null,
+     1.332,
+     0.9631,
+     1,
+     1.024,
+     0.8855,
+     0.8802,
+     0.8103,
+     0.6822,
+     0.5077,
+     0.3952
+    ],
+    "deaths": [
+     null,
+     null,
+     null,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "exp": [
+     null,
+     null,
+     null,
+     1,
+     1.034,
+     1,
+     1.017,
+     1.016,
+     1.059,
+     1.064,
+     1.056,
+     1.103,
+     1.131
+    ],
+    "adena": [
+     null,
+     null,
+     null,
+     2.69,
+     1.518,
+     1,
+     0.7295,
+     0.2941,
+     0.2861,
+     0.2074,
+     0.1216,
+     0.08443,
+     0.05645
+    ]
+   }
+  }
+ }
+}

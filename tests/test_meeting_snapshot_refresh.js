@@ -7,7 +7,7 @@ const state = { characterId: 1, phase: 'cold', activity: 'shopping', updatedAt: 
     timing: { lastResolvedAt: 1000, nextResolveAt: 2000 }, stats: {}, inventory: { 57: { amount: 1000 } },
     simulation: { revision: 1 } };
 const party = { phase: 'cold', revision: 1, hotAt: 0,
-    sequence: 1, needRevision: 1, route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } };
+    sequence: 1, route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } };
 const request = { token: 'refresh-test', actorA: 1, actorB: 2, seqA: 1, seqB: 1, town: 'Giran',
     point: { locX: 1, locY: 2, locZ: 3 }, parties: [party, { ...party }],
     lines: [{ payer: 0, itemId: 3, selfId: 1867, count: 1, price: 10 }] };

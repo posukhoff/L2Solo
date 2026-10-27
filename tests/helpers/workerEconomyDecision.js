@@ -27,8 +27,6 @@ module.exports.nativeMeetingPreparation = async (id, timestamp, request) => {
     const state = kernel.states.get(Number(id)).state;
     const own = request.actorA === Number(id) ? 0 : 1;
     Object.assign(request.parties[own], require('../Economy/EconomyCommit').authority(state));
-    request.parties[own].needRevision = request.parties[own].revision;
-    for (const party of request.parties) party.needRevision ??= party.revision;
     const Intent = require('../Economy/TradeIntent'), original = Intent.meetingPurchase;
     const originalStep = occupationPlanner.step;
     let trace, flowInjected = false, flowInvalidated = false;
@@ -76,8 +74,7 @@ module.exports.nativeEconomyDecision = async (id, timestamp, nativeRoutes = fals
     return { ...(nativeRoutes ? { watchList: economy.watchList } : {}),
         warehouseAssets: invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').inventory(state),
         decision: { ...decision }, activity: economy.network.activity, materials: decision.materials, statsPacket: economy.statsPacket, reserveInputs,
-        tradeIntents: require('../Economy/TradeIntent').project(state, economy.network, economy.projection,
-            id => economy.worth(id) ?? economy.price(id), 40),
+        tradeIntents: require('../Economy/TradeIntent').project(state, economy.network, economy.projection, 40),
         queue: economy.network.queue.map(row => ({ key: row.key, materials: row.object?.materials || [], price: row.price, ratio: row.ratio, valueHours: row.valueHours, funded: row.funded, cumulativePrice: row.cumulativePrice, object: row.object })),
         forbiddenLoaded: Object.keys(require.cache).filter(key => /\/(?:Database|Network)\/|\/src\/Database\.js$|\/World\/World\.js$|\/Bot\/BotManager\.js$/.test(key)) };
 };`;

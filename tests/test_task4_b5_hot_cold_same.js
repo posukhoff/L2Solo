@@ -10,6 +10,7 @@ const Database = invoke('Database');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Market = invoke('GameServer/Bot/Economy/BotAfkMarketService');
+const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const Needs = invoke('GameServer/Bot/Goals/NeedsEvaluator');
 const Events = invoke('GameServer/Bot/AI/DecisionEvents');
 const Commit = require('../src/GameServer/Bot/Economy/EconomyCommit');
@@ -20,7 +21,7 @@ invoke('GameServer/DataCache').init();
 fixture.assertConfigured(options.default);
 
 const itemId = 1864, rootKey = 'power:101:7'; // Stem: a craft material, no equipment slot
-const material = { key: `item:${itemId}`, price: 2, paths: [{ kind: 'buy', activity: 'shopping', price: 2, itemId,
+const material = { key: `item:${itemId}`, price: 200, paths: [{ kind: 'buy', activity: 'shopping', price: 200, itemId,
     executable: true, quoted: true, availableUnits: 100 }] };
 const product = { key: 'item:101', price: 500, paths: [{ kind: 'craft', activity: 'crafting', costHours: .1,
     itemId: 101, productCount: 2, recipeId: 7, grossRequirements: [{ key: material.key, amount: 10 }],
@@ -40,13 +41,15 @@ const goalOf = (state, economy) => Needs.evaluate(state, { now: 1000, errand: nu
 async function run() {
     Database.init();
     await Life.init();
+    // Stem trades at 200 on the board: the bot's belief, its worth here, sits above the NPC buy-back (50).
+    for (let deal = 0; deal < 10; deal++) MarketCounters.deal(itemId, 200, 1, Date.now() - (10 - deal) * 60000, 7);
     await Native.character(Database, 1, 'Native1', 'bot_b5_hotcold');
     await Database.setItem(1, { selfId: 57, name: 'Adena', amount: 10000, stackable: true });
     await Database.setItem(1, { selfId: itemId, name: 'Stem', amount: 4, stackable: true });
     const cold = await Life.upsertState({ characterId: 1, accountName: 'bot_b5_hotcold', name: 'Native1', level: 30,
         exp: 0, sp: 0, adena: 10000, phase: 'cold', activity: 'hunting', homeRegion: 'Giran', currentRegion: 'Giran',
         loc: { x: 83000, y: 148000, z: -3400 }, vitals: { hp: 100, maxHp: 100, mp: 100, maxMp: 100 },
-        stats: { generatedCold: true, classId: 0, shopTown: { town: 'Giran', at: 1 }, money: [10000, .0001, 0, 0, .001, 10000, itemId] },
+        stats: { generatedCold: true, classId: 0, twin: { town: 'Giran' }, money: [10000, .0001, 0, 0, .001, 10000, itemId] },
         inventory: { 57: { selfId: 57, amount: 10000 }, [itemId]: { selfId: itemId, amount: 4 } },
         simulation: { revision: 0 }, timing: {}, updatedAt: Date.now() }, 'native_fixture');
 
@@ -60,16 +63,16 @@ async function run() {
     const hotGoal = goalOf(hotState, { ...held, state: hotState });
     const view = goal => ({ type: goal.type, itemId: goal.target.itemId, amount: goal.target.amount,
         adena: goal.target.adena, rootKey: goal.plan.wishKey, kind: goal.plan.kind, activity: goal.plan.economyActivity });
-    assert.deepEqual(view(coldGoal), { type: 'buy_craft_material', itemId, amount: 26, adena: 2, rootKey,
+    assert.deepEqual(view(coldGoal), { type: 'buy_craft_material', itemId, amount: 26, adena: 200, rootKey,
         kind: 'buy', activity: 'shopping' });
     assert.deepEqual(view(hotGoal), view(coldGoal), 'hot and cold read the same leaf, root, item and amount');
 
-    // Cold opens its buy ad for the root's material.
-    const opened = await Market.reconcileBuyAds(cold, coldGoal, [coldGoal]);
+    // Cold opens its buy ad for the root's material: the worker plan's bid.
+    await Market.executePlan(cold, { sell: [], withdraw: [], travel: null, buyAds: [[itemId, 26, 200]], buyTown: 'Giran' }, { reviewGoal: false });
     assert.equal(buyAds(1).length, 1, 'cold publishes one buy ad');
     const ad = buyAds(1)[0];
     assert.equal(ad.lines[0].selfId, itemId);
-    assert.equal(ad.lines[0].count, 26, opened.reason);
+    assert.equal(ad.lines[0].count, 26);
     const escrow = ad.escrowAdena;
     const walletAfterAd = Native.amount(await Database.fetchItems(1), 57);
     assert.equal(walletAfterAd, 10000 - escrow);
@@ -77,13 +80,11 @@ async function run() {
     // Flip hot with the ad open: the hot review neither withdraws nor republishes it.
     const hot = await Life.upsertState({ ...(await current(1)), phase: 'hot', timing: { lastHotAt: Date.now() } }, 'receipt_handoff');
     assert.equal(hot.phase, 'hot');
-    assert.equal((await Market.reconcileBuyAds(hot, hotGoal, [hotGoal])).changed, false);
     assert.deepEqual(buyAds(1).map(row => [row.id, row.revision]), [[ad.id, ad.revision]], 'hot keeps the one cold ad');
     // Back cold: the same order is recognised, no second ad, no second escrow.
     await Life.upsertState({ ...(await current(1)), phase: 'cold' }, 'receipt_return', { releaseHot: true });
     const back = await current(1);
     assert.equal(back.phase, 'cold');
-    assert.equal((await Market.reconcileBuyAds(back, coldGoal, [coldGoal])).changed, false);
     assert.deepEqual(buyAds(1).map(row => [row.id, row.revision]), [[ad.id, ad.revision]], 'cold return keeps the same ad');
     assert.equal(Native.amount(await Database.fetchItems(1), 57), walletAfterAd, 'escrow taken once');
     const ads = await Database.execute(['SELECT COUNT(*) AS n FROM afk_trade_shops WHERE ownerId=? AND storeType=3', [1]]);

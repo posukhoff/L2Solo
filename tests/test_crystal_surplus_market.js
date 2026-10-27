@@ -13,9 +13,6 @@ const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const Listing = invoke('GameServer/Bot/Economy/MarketListingPolicy');
 const Supplies = invoke('GameServer/Clan/ClanSupplyPolicy');
 const Selection = invoke('GameServer/Bot/AI/GearPlanSelection');
-const Pricing = invoke('GameServer/Bot/Economy/MarketPricing');
-const Providers = invoke('GameServer/Bot/Economy/WishProviders');
-const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
 const Native = require('./helpers/nativeMarketFixture');
 const sellerId = 938002, buyerId = 938001;
 const point = { locX: 83396, locY: 147904, locZ: -3400 };
@@ -32,38 +29,12 @@ const adopt = result => Object.values(result.coldLifeRows || {}).forEach(row => 
 
 async function run() {
     Data.init(); Database.init();
-    const quoteOptions = { ...saleOptions, now: 1800000000000, board: new BoardIndex(),
-        npcOffersFor: () => [], findSpot: () => null };
     for (const id of [1458, 1459, 1460, 1461, 1462]) {
         const bot = state(id), before = structuredClone(bot);
         const candidate = Disposition.saleCandidates(bot, saleOptions).find(row => row.selfId === id);
         assert.equal(candidate?.count, 20, `free grade crystal ${id} reaches sale selection`);
         assert.equal(Listing.classify(bot, candidate).action, 'market');
         assert.equal(Disposition.isSpareConsumable(bot.inventory[id]), false, 'crystals remain crafting inputs');
-        assert.equal(Disposition.npcLiquidationCandidates(bot).length, 0, 'cleanup cannot quote grade crystals to the NPC');
-        assert.equal(Providers.liquidationCandidates(bot, { stock: () => ({ itemId: 1464, target: 0 }) }).length,
-            0, 'the planner cannot count crystals as immediate NPC funding');
-        const sale = Listing.evaluate(bot, quoteOptions);
-        assert.equal(sale.npc.length, 0, 'a crystal with no known buyer is not NPC junk');
-        assert.equal(sale.listings[0]?.count, 20, 'free crystals publish a waiting market quote');
-        assert(sale.listings[0].price > 0);
-        assert.equal(sale.decisions[0].priced.ask.stockQuote, true);
-        assert(Number.isNaN(sale.decisions[0].priced.ask.money), 'a waiting quote promises no receipts');
-        const full = Listing.evaluate(bot, { ...quoteOptions, slots: 0 });
-        assert.equal(full.npc.length, 0, 'a full board cannot send crystals to the NPC');
-        assert.equal(full.decisions[0].action, 'keep', 'displaced crystals wait in the bag');
-        const knownDemand = Listing.evaluate(bot, { ...quoteOptions,
-            demandFor: () => ({ known: true, applicableUnits: 0, delayHours: 0 }) });
-        assert.equal(knownDemand.listings[0]?.count, 20,
-            'even known exhausted demand leaves a quote instead of an NPC fallback');
-        const line = { ownerId: sellerId, recordId: id, lineId: id, selfId: id, storeType: 1,
-            custodyPolicy: 0, count: 20, price: 1, town: 'Giran', revision: 1,
-            pricing: Pricing.lineState(id, Listing.traderContext(bot, quoteOptions), { price: 1 }) };
-        const review = Pricing.look(bot, [line], { ...Listing.traderContext(bot, { ...quoteOptions,
-            demandFor: () => ({ known: true, applicableUnits: 0, delayHours: 0 }) }),
-            reviewReasons: new Map([[line.lineId, 2]]) });
-        assert.equal(review?.withdrawals.length || 0, 0, 'an NPC price comparison cannot withdraw existing crystal supply');
-        assert(review?.reprices[0]?.price > 1, 'the existing backed offer actually receives its market quote');
         assert.deepEqual(bot, before, 'sale selection does not consume physical stock');
     }
     assert.equal(count(state(1458, { equipmentPlan: exchange })), 8, 'C luxury inputs stay reserved');
@@ -115,6 +86,11 @@ async function run() {
     const expiredProduction = { ...productionTrip, stats: { ...productionTrip.stats,
         shotCraft: { preparing: { ...productionTrip.stats.shotCraft.preparing, at: Date.now() - 31 * 60000 } } } };
     assert.equal(count(expiredProduction), 11, 'an obsolete production setup releases only its own input reserve');
+    // The production kit and the clan craft's earmark are two claims on the
+    // same crystals: a sale leaves both (the author's sale guard), 20 - 4 - 15.
+    assert.equal(count(state(1458, { clanMaterialDemand: { 1458: 15 },
+        shotCraft: { preparing: { recipeId: 20, batches: 4, at: Date.now() } } })), 1,
+    'the production kit is held on top of the clan earmark');
     assert.notEqual(Disposition.reservationInputKey(productionStock),
         Disposition.reservationInputKey({ ...productionStock, stats: { equipmentPlan: { ...pausedCraft, heldInputs: { 1458: 21 } } } }),
         'reservation caches include the paused physical ownership');
@@ -150,13 +126,6 @@ async function run() {
     assert.equal(count(stock), 11, 'explicit physical reservations stay owned');
     stock.inventory[1458].acceptedCustomer = true;
     assert.equal(count(stock), 0, 'accepted customer stock cannot be sold');
-    const selected = { kind: 'luxury_exchange', grossRequirements: [{ key: 'item:1458', amount: 12 }],
-        requirements: [{ key: 'item:1458', amount: 12 }] };
-    const network = { activity: { rootKey: 'power:95:14' },
-        queue: [{ key: 'power:95:14', plan: { requirements: [{ key: 'item:95', plan: selected }] } }] };
-    const selectedReserve = Disposition.selectedCraftAmounts(state(), network);
-    assert.equal(selectedReserve[1458], 12, 'selected wish DAG protects the physical luxury input');
-    assert.equal(count(state(), { reserved: selectedReserve }), 8);
     Supplies.useRowSource(id => id === 42 ? [42, 1, [[1458, 3]], 1] : undefined);
     assert.equal(count(state(1458, { clanId: 42, equipmentPlan: exchange })), 5,
         'personal C exchange and active clan need have separate quantities');
@@ -172,10 +141,6 @@ async function run() {
         stats: { classId: 0, money: [1000, 0, 0, 0], ...(id === sellerId ? { equipmentPlan: bridge } : {}) },
         vitals: { hp: 100, maxHp: 100 } }, 'fixture');
     const held = Life.snapshot(sellerId);
-    assert.equal(await Life.applyNpcLiquidation(held, [{ selfId: 1458, count: 20, npcPrice: 1000 }]), held,
-        'a stale NPC decision cannot sell crystals or mint its payout');
-    assert.equal(Native.amount(await Database.fetchItems(sellerId), 1458), 20);
-    assert.equal(Native.amount(await Database.fetchItems(sellerId), 57), 10000);
     const producing = await Life.upsertState({ ...held, stats: { ...held.stats,
         shotCraft: { preparing: { recipeId: 20, batches: 5, at: Date.now() } } } }, 'fixture_production_inputs');
     const crystalItem = (await Database.fetchItems(sellerId)).find(row => row.selfId === 1458);
@@ -198,7 +163,7 @@ async function run() {
         return Database.acceptTradeMeeting({ token, actorA: buyerId, actorB: sellerId,
             seqA: parties[0].sequence, seqB: parties[1].sequence, town: 'Giran', point,
             lines: [{ payer: 0, itemId: source.id, selfId: 1458, enchant: 0, count: amount, price: 10,
-                needAdId: ad.id, needAdRevision: ad.revision, certificate: JSON.parse(ad.lines[0].intentJson) }],
+                certificate: JSON.parse(ad.lines[0].intentJson) }],
             parties: parties.map(p => ({ ...p, route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } })) });
     }
     await assert.rejects(accept(9, 'crystal-reserve-overdraw'), /economy_material_protected/,
@@ -213,18 +178,6 @@ async function run() {
     assert.equal(Native.amount(await Database.fetchItems(buyerId), 1458), 8, 'buyer receives the physical surplus');
     assert.equal(Native.amount(await Database.fetchItems(sellerId), 57), 10080);
     assert.equal(Native.amount(await Database.fetchItems(buyerId), 57), 9920);
-    const selling = await Life.syncExternalInventory(buyerId, 'fixture_settlement');
-    const sale = Listing.evaluate(selling, quoteOptions);
-    assert.equal(sale.listings[0]?.count, 8, 'the received free crystals can be offered again');
-    const published = await invoke('GameServer/Bot/Economy/BotAfkMarketService').listOnBoard(selling,
-        { decided: sale, now: quoteOptions.now });
-    assert(published.listed > 0, 'the native board publishes the actual crystal stock');
-    const records = await Database.fetchAfkTradeShops(buyerId);
-    const offers = records.filter(row => row.storeType === 1 && row.status === 'active')
-        .flatMap(row => row.lines).filter(row => row.selfId === 1458);
-    assert.equal(offers.reduce((sum, row) => sum + row.count, 0), 8);
-    assert.equal(Native.amount(await Database.fetchItems(buyerId), 57), 9920,
-        'publishing a crystal quote creates no adena');
-    console.log('Crystal surplus: market-only sales, full board, review, reservations, native publication and settlement passed');
+    console.log('Crystal surplus: sale selection, reservations, native publication guard and settlement passed');
 }
 run().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

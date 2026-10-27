@@ -7,7 +7,7 @@ const MIN_MEMBERS = 7;
 const MAX_MEMBERS = 9;
 const MAX_LEVEL_ABOVE_BOSS = 8;
 const MAX_LEVEL_BELOW_BOSS = 5;
-const GRADE_RANK = Object.freeze({ none: 0, d: 1, c: 2, b: 3, a: 4, s: 5 });
+const { GRADE_RANK } = invoke('GameServer/Bot/AI/GearGradeRule');
 const MIN_EFFECTIVE_LEVEL_ADVANTAGE = 2;
 const EFFECTIVE_LEVEL_GEAR_COMPENSATION = 4;
 const ARMOR_GRADE_TOLERANCE = Object.freeze({
@@ -314,19 +314,21 @@ function assessment(clan = {}, profile = {}, previousGoal = null, options = {}) 
     const raidComposition = composition(eligible, compositionOptions);
     const power = feasibility(core, profile, readinessCache);
     const raidEstimate = require('./ClanRaidEstimate').estimate(eligible, profile, readinessCache);
-    const ready = raidComposition.ready && power.ready;
+    // A roster the estimate sees never killing the boss (its reason) is not ready.
+    const killable = !raidEstimate?.reason;
+    const ready = raidComposition.ready && power.ready && killable;
     return {
         ...raidComposition,
         ...power,
         ready,
-        reason: !raidComposition.ready ? 'raid_gear_insufficient' : power.reason,
+        reason: !raidComposition.ready ? 'raid_gear_insufficient' : power.ready && !killable ? raidEstimate.reason : power.reason,
         eligible,
         core,
         raidEstimate,
         candidates,
         available,
         deficits: { ...raidComposition.deficits, coreMembers: Math.max(0, MIN_MEMBERS - core.length),
-            gear: 0, power: power.ready ? 0 : 1 },
+            gear: 0, power: power.ready && killable ? 0 : 1 },
         minMembers: desiredMembers,
         maxMembers: MAX_MEMBERS
     };

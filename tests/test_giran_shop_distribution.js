@@ -17,6 +17,13 @@ const World = invoke('GameServer/World/World');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
 const ShopPlaces = invoke('GameServer/Bot/Economy/ShopPlaces');
+// The stalls a town's square can still give: taken by probes, then released.
+function takeable(town) {
+    const probes = [];
+    while (ShopPlaces.take(town, `probe:${probes.length}`)) probes.push(`probe:${probes.length}`);
+    probes.forEach(owner => ShopPlaces.release(owner));
+    return probes.length;
+}
 const Distribution = require('../src/GameServer/AfkTrade/GiranShopDistribution');
 const Geo = invoke('GameServer/Geodata/GeodataEngine');
 const Placement = invoke('GameServer/Bot/Population/ActivationPlacement');
@@ -124,19 +131,19 @@ async function run() {
     const records = await Database.fetchAfkTradeShops();
     records.filter(row => row.kind === 'shop').forEach(row => ShopPlaces.occupy(ShopPlaces.afkOwner(row.ownerId), row.town, row));
     ShopPlaces.syncState(crafter, { activity: 'crafting', stats: { craftShop: { town: 'Giran', loc: all[1] } } });
-    const free = ShopPlaces.freeCount('Giran');
+    const free = takeable('Giran');
     const relocate = Database.relocateBotAfkTradeShops;
     Database.relocateBotAfkTradeShops = async () => { throw Error('relocation_refused'); };
     await assert.rejects(Distribution.restore(records), /relocation_refused/);
     Database.relocateBotAfkTradeShops = relocate;
-    assert.equal(ShopPlaces.freeCount('Giran'), free, 'failed native relocation releases every provisional place and restores old reservations');
+    assert.equal(takeable('Giran'), free, 'failed native relocation releases every provisional place and restores old reservations');
     assert.deepEqual(await snapshot(), before);
     const take = ShopPlaces.take;
     let takes = 0;
     ShopPlaces.take = (...args) => ++takes === 6 ? null : take(...args);
     assert.deepEqual(await Distribution.restore(records), { skipped: true, reason: 'plaza_full:Giran' });
     ShopPlaces.take = take;
-    assert.equal(ShopPlaces.freeCount('Giran'), free, 'a full plaza restores all original reservations');
+    assert.equal(takeable('Giran'), free, 'a full plaza restores all original reservations');
     assert.deepEqual(await snapshot(), before);
 
     assert.equal(await AfkTrade.init(), 166);

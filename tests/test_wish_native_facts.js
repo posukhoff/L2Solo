@@ -41,13 +41,14 @@ for (const plan of drawn(64)) near(plan.successProbability, .5, 'workshop or col
     assert.equal(plan.price, 40, 'two batches x ten inputs x 2 adena');
 }
 
-// Held units are worth their exit value (Q1 A), never the belief price.
+// Held units are worth the node's price, the bot's own belief (user
+// 2026-10-22), the same price its wish pays for a missing unit.
 {
-    const held = { ...buy(202, 5), exitValue: 1 };
+    const held = buy(202, 5);
     const root = rootFor(301, 100, 'item:202', 4);
     const plan = build([root, held], [root.key], id => id === 202 ? { owned: 4 } : {}).plans.get(root.key);
     assert.equal(plan.price, 0);
-    near(plan.effort, 4 * 1 / 100, 'four held units at exit value 1, in the bot hours');
+    near(plan.effort, 4 * 5 / 100, 'four held units at the belief price 5, in the bot hours');
 }
 
 // Farm trips: two farmed items on the same far spot's town pay one trip.

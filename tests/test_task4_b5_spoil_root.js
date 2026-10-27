@@ -27,7 +27,7 @@ assert.equal(result.activity.rootKey, 'power:101:7', 'spoil activity carries the
 const powerKeys = [...result.plans.keys()].filter(key => String(key).startsWith('power:'));
 assert.deepEqual(powerKeys, ['power:101:7'], 'no second power root is created for the farmed material');
 assert.equal(result.plans.get(root.key).requirements[0].plan.requirements[0].amount, 26);
-assert.equal(Intent.project({}, result, {}, () => 2).filter(row => row.itemId === 202).length, 0,
+assert.equal(Intent.project({}, result, {}).filter(row => row.itemId === 202).length, 0,
     'farming the material opens no buy advert for it');
 
 // Same stock, slower spoil (.1 h x 26 = 2.6 h): the purchase wins, still the same root and the same 26.
@@ -41,7 +41,7 @@ result = build([root, product, { ...material, paths: [buy] }], [root.key], id =>
 assert.equal(result.activity.kind, 'buy');
 assert.equal(result.activity.amount, 24, 'purchase variant subtracts incoming two once');
 assert.equal(result.activity.rootKey, 'power:101:7');
-const ads = Intent.project({}, result, {}, () => 2).filter(row => row.itemId === 202);
+const ads = Intent.project({}, result, {}).filter(row => row.itemId === 202);
 assert.equal(ads.length, 1);
 assert.equal(ads[0].amount, 24);
 console.log('Task 4 B5 spoil root: buy-or-spoil material farms 26 under power:101:7, purchase variant stays 24');

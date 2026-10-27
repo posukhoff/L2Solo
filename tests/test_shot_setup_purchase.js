@@ -58,8 +58,13 @@ const native = require('./helpers/workerEconomyDecision');
         shotRecipeDemand: { ...state.stats.shotRecipeDemand, at: timestamp - 31 * 60000 } } };
     const fresh = await native(expired, input);
     const expiredRoot = fresh.queue.find(row => row.key === `resale:${recipe.productId}`);
-    assert(!expiredRoot || expiredRoot.object.amount <= recipe.productCount,
+    // Without a held setup the exit sizes the lot (WishProviders exitLots),
+    // as for a bot that never had one.
+    const unset = (await native({ ...state, stats: { ...state.stats, shotRecipeDemand: null } }, input))
+        .queue.find(row => row.key === `resale:${recipe.productId}`);
+    assert.equal(expiredRoot?.object.amount, unset?.object.amount,
         'a completed or obsolete setup does not permanently inflate future production quantity');
+    assert.notEqual(expiredRoot?.object.amount, recipe.productCount * batches, 'fixture: the exit takes another lot than the setup');
     const inputState = { ...funded, inventory: { ...funded.inventory,
         1459: { selfId: 1459, amount: 25, stackable: true } }, stats: { ...funded.stats,
         shotRecipeDemand: null, shotCraft: { preparing: { recipeId: 21, productId: 1464, batches, at: timestamp } },

@@ -1,4 +1,5 @@
 const Policy = require('../../Social/ResourceCompetitionPolicy');
+const { partyIdOf } = require('./PartyId');
 const Visible = require('../../Social/VisibleStrength');
 const Pvp = require('./ColdPvpResolver');
 
@@ -16,7 +17,7 @@ function refresh(event, { life, parties, memory, personaFor }, timestamp) {
     for (const old of [event.actor, event.peer]) {
         const state = life.cachedState(old.id);
         if (!state) return { reason: 'participant_missing' };
-        const partyId = state.party?.partyId || state.partyId || null;
+        const partyId = partyIdOf(state) || null;
         const party = partyId ? parties?.find(partyId) : null;
         if (partyId && (!party || party.status !== 'active' || !Array.isArray(party.memberIds)
             || party.memberIds.length < 2 || party.memberIds.length > 9

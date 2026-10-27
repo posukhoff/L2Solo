@@ -21,14 +21,10 @@ function canonical(request) {
             selfId: requireSafe(line.selfId, true), enchant: requireSafe(line.enchant || 0),
             count: requireSafe(line.count, true), price: requireSafe(line.price, true),
             adId: requireSafe(line.adId || 0), adRevision: requireSafe(line.adRevision || 0),
-            needAdId: requireSafe(line.needAdId || 0), needAdRevision: requireSafe(line.needAdRevision || 0),
-            certificate: line.certificate || null };
+            certificate: line.certificate || null, intentRevision: requireSafe(line.intentRevision || 0) };
         if (row.selfId === 57 || BeginnerShots.isRestricted(row.selfId)) throw Error('trade_meeting_terms');
         requireSafe(row.count * row.price);
-        if (row.certificate) {
-            const intent = Intent.decode(row.certificate);
-            if (intent.itemId !== row.selfId || intent.amount < row.count || intent.price !== row.price) throw Error('trade_meeting_need_changed');
-        }
+        if (row.certificate && !Intent.covers(Intent.decode(row.certificate), row)) throw Error('trade_meeting_need_changed');
         return row;
     });
     const sides = parties.map((party, side) => {
@@ -40,10 +36,21 @@ function canonical(request) {
             || !['hot', 'cold', 'player'].includes(party.phase)
             || !safe(party.sequence, true) || party.sequence !== (side ? seqB : seqA)) throw Error('trade_meeting_authority');
         return { revision: party.revision, sequence: party.sequence,
-            phase: party.phase, hotAt: party.hotAt, route: { fee: route.fee, scroll: route.scroll, method: route.method, durationMs: route.durationMs }, needRevision: requireSafe(party.needRevision),
+            phase: party.phase, hotAt: party.hotAt, route: { fee: route.fee, scroll: route.scroll, method: route.method, durationMs: route.durationMs },
             survivalCost: requireSafe(party.survivalCost || 0) };
     });
     return { token, actorA, actorB, seqA, seqB, town, point: { locX: point.locX, locY: point.locY, locZ: point.locZ }, lines: basket, parties: sides };
+}
+// Can this side pay for the meeting: the one funding question the worker's
+// consent and the native accept both ask PurchaseFunding.spendable (escrow 0:
+// buy-ad escrow already left the wallet). amount = its paid lines + route fee;
+// r = the lowest certificate value rate; survival tranche = its kit costs.
+function fundingTerms(request, side) {
+    const paid = request.lines.filter(line => line.payer === side);
+    const total = paid.reduce((amount, line) => sum(amount, requireSafe(line.count * line.price)), 0);
+    return { amount: sum(total, requireSafe(request.parties[side].route.fee)),
+        r: Math.min(...paid.map(line => line.certificate ? Intent.decode(line.certificate).valueRate : Infinity)),
+        free: total === 0, survivalCost: requireSafe(request.parties[side].survivalCost || 0) };
 }
 function create(io) {
     const { one, all, write, take, debit, credit, snapshot, protection, funding, now } = io;
@@ -110,30 +117,17 @@ function create(io) {
             const life = one("SELECT *, json_extract(statsJson,'$.playerPartyTakeover.playerId') playerPartyId FROM bot_life_state WHERE characterId=?", [id]);
             if (io.canStartTrade && !io.canStartTrade(id, life)) throw Error('trade_meeting_party_busy');
             if (life && (Number(life.hp) <= 0 || life.activity === 'dead' || Number(life.simulationRevision) !== party.revision || life.phase !== party.phase
-                || Number(life.lastHotAt || 0) !== party.hotAt)) throw Error('trade_meeting_authority_changed');
-            if (life && party.phase === 'hot' && !io.position(id)?.alive) throw Error('trade_meeting_authority_changed');
+                || Number(life.lastHotAt || 0) !== party.hotAt)) throw Error('trade_meeting_authority_changed', { cause: 'life' });
+            if (life && party.phase === 'hot' && !io.position(id)?.alive) throw Error('trade_meeting_authority_changed', { cause: 'body' });
             if (!life) {
                 const position = io.position(id);
                 if (!position?.alive || !position.available || Math.hypot(position.locX - request.point.locX,
                     position.locY - request.point.locY, position.locZ - request.point.locZ) > 200) throw Error('trade_meeting_player_at_point');
             }
             if (one('SELECT 1 FROM board_settlements WHERE ownerId=? LIMIT 1', [id])) throw Error('trade_meeting_delivery_pending');
-            if (life && !fresh) for (const line of request.lines.filter(line => line.payer === side)) {
-                const adId = line.needAdId || line.adId;
-                const ad = adId && one('SELECT * FROM afk_trade_shops WHERE id=?', [adId]);
-                const need = ad && one('SELECT * FROM afk_trade_lines WHERE shopId=? AND selfId=? LIMIT 1', [adId, line.selfId]);
-                if (!line.certificate || !ad || ad.ownerId !== id || ad.storeType !== 3 || ad.custodyPolicy !== 1
-                    || !need?.intentJson || need.intentRevision !== party.revision || need.count < line.count
-                    || (line.needAdId ? ad.revision !== line.needAdRevision : ad.revision !== line.adRevision)) throw Error('trade_meeting_need_changed');
-                const original = JSON.parse(need.intentJson), intent = Intent.decode(line.certificate);
-                if (JSON.stringify(original.slice(3)) !== JSON.stringify(line.certificate.slice(3))
-                    || intent.amount > need.count || intent.price > need.price) throw Error('trade_meeting_need_changed');
-            }
             if (life && fresh && request.lines.some(line => line.payer === side && !line.certificate)) throw Error('trade_meeting_need_changed');
-            const outgoing = sum(totals[side], party.route.fee);
-            if (life) funding(id, { row: life }, outgoing, { r: Math.min(...request.lines.filter(line => line.payer === side)
-                .map(line => line.certificate ? Intent.decode(line.certificate).valueRate : Infinity)), free: totals[side] === 0,
-                survivalCost: party.survivalCost });
+            const { amount: outgoing, ...terms } = fundingTerms(request, side);
+            if (life) funding(id, { row: life }, outgoing, terms);
             // A public bid is evidence of the owner's need, not collateral.
             for (const line of request.lines.filter(line => line.payer === side && line.adId)) {
                 const ad = one('SELECT * FROM afk_trade_shops WHERE id=?', [line.adId]);
@@ -144,8 +138,6 @@ function create(io) {
                 [...committed.map(row => row.id), line.adId, line.selfId, line.enchant])?.amount || 0) : 0;
                 if (!ad || ad.ownerId !== (ad.storeType === 3 ? id : actors[1 - side]) || ad.custodyPolicy !== 1 || ad.revision !== line.adRevision
                     || !adLine || adLine.selfId !== line.selfId || adLine.price !== line.price || adLine.count < sum(reserved, quoteTotals.get(`${line.adId}:${line.selfId}:${line.enchant}`))) throw Error('trade_meeting_quote_changed');
-                if (!fresh && ad.storeType === 3 && (!line.certificate || adLine.intentJson !== JSON.stringify(line.certificate)
-                    || adLine.intentRevision !== party.needRevision || party.needRevision !== party.revision)) throw Error('trade_meeting_need_changed');
             }
             debit(id, outgoing);
         });
@@ -218,14 +210,20 @@ function create(io) {
         const row = meeting(id);
         if (!row) throw Error('trade_meeting_missing');
         if (row.state !== 'accepted') return result(row);
-        const actors = ids(row), changed = [], closed = [];
+        const actors = ids(row), changed = [], closed = [], deals = [];
         const lines = all('SELECT * FROM board_trade_meeting_lines WHERE meetingId=? ORDER BY ordinal', [id]);
         for (const line of lines) {
             if (!line.heldCount) continue;
-            const owner = completed && line.custodyType === 'trade' ? line.payer : 1 - line.payer;
+            const traded = completed && line.custodyType === 'trade';
+            const owner = traded ? line.payer : 1 - line.payer;
             credit(actors[owner], line, line.heldCount, now()); changed.push(line.selfId);
-            const record = completed && line.custodyType === 'trade' ? io.completed?.(row, line) : null;
+            if (!traded) continue;
+            const record = io.completed?.(row, line);
             if (record) closed.push(record);
+            // The board deal as the market_trades row io.completed journals (the
+            // row the boot replay loads): the caller counts it live once committed.
+            deals.push({ selfId: line.selfId, unitPrice: line.price, quantity: line.count, occurredAt: now(),
+                town: row.town, sellerCharacterId: actors[1 - owner], buyerCharacterId: actors[owner] });
         }
         actors.forEach((actor, side) => {
             const own = side ? 'B' : 'A', other = side ? 'A' : 'B';
@@ -236,7 +234,7 @@ function create(io) {
             routeReserveA=0,routeReserveB=0,reason=? WHERE id=?`, [completed ? 'completed' : 'cancelled', String(reason).slice(0, 80), id]);
         io.stopTrip?.(row);
         const next = meeting(id);
-        return { ...result(next, fence(next, changed)), closed };
+        return { ...result(next, fence(next, changed)), closed, deals };
     }
     function present(id, positions) {
         const row = meeting(id);
@@ -275,7 +273,14 @@ function create(io) {
         }
         return { acknowledged: true, cleaned: mask === 3 };
     }
-    return { accept, leg, terminal, present, acknowledge, participant, meeting, active, anchor };
+    // A trader's refused deal on its row (stats.meetingRefused [lineId, revision],
+    // TradeMeetingService.traderRefused): its planners skip that line until
+    // the ad's revision moves.
+    function refused(id, lineId, revision) {
+        const next = snapshot(requireSafe(id, true), [], { meetingRefused: [requireSafe(lineId, true), requireSafe(revision, true)] });
+        return { coldLifeRows: next ? { [id]: next } : {} };
+    }
+    return { accept, leg, terminal, present, acknowledge, participant, meeting, active, anchor, refused };
 }
 function projectIncoming(incoming) {
     // Leave room for the existing numeric agreement reference inside the
@@ -283,4 +288,4 @@ function projectIncoming(incoming) {
     return Buffer.byteLength(JSON.stringify(incoming)) <= 56 ? { acceptedIncoming: incoming }
         : { acceptedIncoming: null, incomingPending: true };
 }
-module.exports = { create, canonical, projectIncoming, MAX_COMMITMENTS };
+module.exports = { create, canonical, fundingTerms, projectIncoming, MAX_COMMITMENTS };

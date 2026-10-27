@@ -508,25 +508,11 @@ assert.deepStrictEqual(
     ItemDisposition.inventoryCleanupNeed({ ...preTradeNpcState, level: 10 }, { now }),
     'young characters use the same item-based cleanup rule as older ones'
 );
-assert.strictEqual(
-    ItemDisposition.npcLiquidationCandidates(preTradeNpcState).length,
-    3,
-    'ordinary NPC liquidation no longer has a character-level boundary'
-);
-assert.strictEqual(
-    ItemDisposition.npcLiquidationCandidates(preTradeNpcState, { allowPreTradeCleanup: true }).length,
-    3,
-    'forced pre-trade cleanup must still expose NPC-only candidates'
-);
 const expectedNpcBookFixtures = npcFixtures.filter(item => !mappedBookIds.has(Number(item.selfId)));
 assert(expectedNpcBookFixtures.length > 0 && expectedNpcBookFixtures.length < npcFixtures.length,
     'the unchanged 21-item mixed bag contains both NPC junk and mapped training books');
 // The quotation helper exposes cheap mapped books too. Both ordinary and
 // infrastructure owners clean them up without paid training demand.
-assert(npcFixtures.every(item => !mappedBookIds.has(Number(item.selfId))
-    || Number(item.template.price) <= ItemDisposition.NPC_LIQUIDATION_MAX_UNIT_PRICE),
-    'the reachable bag combines explicit NPC junk and cheap mapped books');
-assert.strictEqual(ItemDisposition.npcLiquidationCandidates(npcState).length, npcFixtures.length);
 const mixedBookDisposition = MarketListingPolicy.evaluate(npcState);
 const stationMixedState = { ...npcState, stats: { ...npcState.stats, craftStationId: craftStation.id } };
 const stationMixedBefore = structuredClone(stationMixedState);
@@ -558,7 +544,7 @@ const protectedNpcState = {
         }
     }
 };
-assert.strictEqual(ItemDisposition.npcLiquidationCandidates(protectedNpcState)[0].count, 1);
+assert.strictEqual(ItemDisposition.saleCandidates(protectedNpcState, { unlimited: true })[0].count, 1);
 assert(ItemDisposition.inventoryCleanupNeed({
     ...npcState,
     stats: { marketSellRetryAfter: now + 60 * 60 * 1000 }
@@ -592,13 +578,13 @@ const bookHunter = { ...state, inventory: { 99: equippedBook }, stats: {
     ...state.stats, equipment: [{ ...equippedBook, rank: 'none' }], marketSellRetryAfter: now + 60000
 } };
 assert.strictEqual(ItemDisposition.inventoryCleanupNeed(bookHunter, { now }), null);
-assert.deepStrictEqual(ItemDisposition.npcLiquidationCandidates(bookHunter), []);
+assert.deepStrictEqual(ItemDisposition.saleCandidates(bookHunter, { unlimited: true }), []);
 assert.strictEqual(NeedsEvaluator.evaluate(bookHunter, { now }).some(goal => goal.type === 'sell_inventory'), false,
     'an equipped weapon must not interrupt hunting with forced cleanup');
 const spareBook = { ...bookHunter, inventory: { 99: { ...equippedBook, amount: 2,
     instances: [...equippedBook.instances, { id: 100, equipped: false, slot: 7 }] } } };
 assert.strictEqual(ItemDisposition.skillBookSlotCount(spareBook), 0);
-assert.strictEqual(ItemDisposition.npcLiquidationCandidates(spareBook).find(item => item.selfId === 99)?.count, 1,
+assert.strictEqual(ItemDisposition.saleCandidates(spareBook, { unlimited: true }).find(item => item.selfId === 99)?.count, 1,
     'a spare low-grade weapon remains ordinary sellable equipment');
 assert.strictEqual(ItemDisposition.isSkillBookItem({ selfId: 999999, name: 'Spellbook: Missing Kind' }), true);
 assert.strictEqual(ItemDisposition.isSkillBookItem({ selfId: 999999, name: 'Amulet: Missing Kind' }), true);

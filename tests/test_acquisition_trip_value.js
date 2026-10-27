@@ -39,7 +39,7 @@ const Market = invoke('GameServer/Bot/Economy/ColdMarketService');
 const Remote = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const Trip = invoke('GameServer/Bot/Population/ColdTrip');
 const GoalExecutor = invoke('GameServer/Bot/Goals/GoalExecutor');
-const saved = { check: Market.canTravelForPurchase, remote: Remote.canTradeRemotely, trip: Trip.toTown };
+const saved = { check: Market.errandDeparts, remote: Remote.canTradeRemotely, trip: Trip.toTown };
 const now = Date.now();
 const errand = { selfId: 1835, amount: 100, town: 'Giran', purpose: 'shots', r: 0.02,
     survivalCost: 500, tag: [5], at: now };
@@ -51,14 +51,16 @@ let checks = 0, travels = 0, allowed = false;
 try {
     Remote.canTradeRemotely = () => false;
     Trip.toTown = () => { travels++; return { activity: 'traveling' }; };
-    Market.canTravelForPurchase = (_state, request) => {
+    // The departure gate of a kept errand reads the saved errand itself
+    // (ColdMarketService.errandTerms): its source and funding terms.
+    Market.errandDeparts = (_state, kept) => {
         checks++;
-        assert.equal(request.selfId, 1835);
-        assert.equal(request.amount, 100);
-        assert.equal(request.town, 'Giran');
-        assert.equal(request.r, 0.02);
-        assert.equal(request.survivalCost, 500);
-        assert.deepEqual(request.tag, [5], 'saved source and funding terms survive the execution gate');
+        assert.equal(kept.selfId, 1835);
+        assert.equal(kept.amount, 100);
+        assert.equal(kept.town, 'Giran');
+        assert.equal(kept.r, 0.02);
+        assert.equal(kept.survivalCost, 500);
+        assert.deepEqual(kept.tag, [5], 'saved source and funding terms reach the execution gate');
         return allowed;
     };
     assert.equal(GoalExecutor.beginMarketTravel(state, goal, now), null);
@@ -73,7 +75,7 @@ try {
     assert.equal(GoalExecutor.beginMarketTravel(state, sale, now).activity, 'traveling');
     assert.equal(checks, 2, 'forced unloading keeps its existing independent owner');
 } finally {
-    Market.canTravelForPurchase = saved.check;
+    Market.errandDeparts = saved.check;
     Remote.canTradeRemotely = saved.remote;
     Trip.toTown = saved.trip;
 }

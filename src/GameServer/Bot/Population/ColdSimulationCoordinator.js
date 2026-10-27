@@ -1,4 +1,5 @@
 const DiagnosticConfig = require('./PopulationConfig');
+const { partyIdOf } = require('./PartyId');
 const { collectionPagesWithBytes, PAGE_BYTES } = require('./ColdMessagePages');
 const StateWire = require('./ColdStateWire');
 const path = require('path');
@@ -26,6 +27,7 @@ const ColdSimulationOwner = invoke('GameServer/Bot/Population/ColdSimulationOwne
 const RaidEncounterScope = invoke('GameServer/RaidBoss/RaidEncounterScope');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const CraftWorkshopService = invoke('GameServer/Bot/Economy/CraftWorkshopService');
+const TradeMeetingCodec = invoke('GameServer/AfkTrade/TradeMeetingCodec');
 const AfkMarket = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const ColdBuffService = invoke('GameServer/Bot/Economy/ColdBuffService');
 const World = invoke('GameServer/World/World');
@@ -65,19 +67,23 @@ function snapshotRefreshMs() {
     return Math.max(2000, Number(Config.coldWorkerSnapshotRefreshMs) || 10000);
 }
 
-function recipeKnowledgeFor(state) {
-    return CraftShopService.isServiceCrafter(state)
-        ? CraftWorkshopService.knowledgeFor(state.characterId) : {};
+// An error's log text: a board refusal names its site (BotAfkMarketService shopChanged).
+function failure(error) {
+    return `${error?.message || String(error)}${error?.site ? ` at ${error.site}` : ''}`;
 }
 
 const yieldToLoop = require('../../EventLoopTurn');
 
 function npcPlanningCatalogRows() {
-    return ColdNpcPlanningCatalog.buildRows({
+    const gear = ColdNpcPlanningCatalog.buildRows({
         items: DataCache.items || [],
         townNpcSellers: TownNpcCatalog.sellersByTown(),
         fetchForNpc: (npcSelfId) => NpcShopBuyLists.fetchForNpc(npcSelfId)
     });
+    // Main's scalar town prices (no town, no offer) of every id the gear rows do not carry, C+ gear sold in
+    // town included: the worker's npcPrice reads them, its offer lookup skips them.
+    const gearIds = new Set(gear.map(row => row.selfId));
+    return Object.freeze([...gear, ...NpcShopBuyLists.townPriceRows().filter(row => !gearIds.has(row.selfId))]);
 }
 
 const HEAP_SNAPSHOT_DIR = path.join(__dirname, '..', '..', '..', '..', 'tmp', 'heap');
@@ -233,8 +239,8 @@ class ColdSimulationCoordinator {
             snapshotYields: 0,
             snapshotDeferrals: 0,
             afterCommitStepErrors: { partyCache: 0, raidCache: 0, raidSettlement: 0, economyDecision: 0,
-                board: 0, boardLimits: 0, equipment: 0, training: 0, improvement: 0, party: 0, metrics: 0, announce: 0,
-                economyPlan: 0, clanEvents: 0, partyGoals: 0, partyPlans: 0, buff: 0 }
+                board: 0, equipment: 0, training: 0, improvement: 0, party: 0, metrics: 0, announce: 0,
+                economyPlan: 0, clanEvents: 0, partyGoals: 0, partyPlans: 0, buff: 0, bidLimits: 0 }
         };
         // Refused commits by reason and stale_command answers,
         // counted always (cheap): the live read of how often a main write
@@ -521,11 +527,10 @@ class ColdSimulationCoordinator {
             const state = LifeState.cachedState(id);
             if (!state) throw Error('trade_meeting_missing_state');
             this.postCollections('snapshot_page', { rows: [{ state }] });
-            const codec = invoke('GameServer/AfkTrade/TradeMeetingCodec');
             const msgId = `meeting:${id}:${token}`;
             const envelope = frame => Protocol.envelope('command_request', epoch,
                 { requests: [{ kind: 'meeting', characterId: id, commandId: token, frame }] }, `${msgId}:3`);
-            const frames = codec.commandPages(request, envelope, null, { incoming: request.incoming || request.parties.map(party => party.acceptedIncoming || {}) });
+            const frames = TradeMeetingCodec.commandPages(request, envelope, null, { incoming: request.incoming || request.parties.map(party => party.acceptedIncoming || {}) });
             const bytes = frames.reduce((sum, frame) => sum + Buffer.byteLength(JSON.stringify(envelope(frame))), 0);
             // Reserve response headroom in the same global staging budget.
             invoke('GameServer/AfkTrade/TradeMeetingService').adjustTransportPages(4, Math.max(bytes, 4 * 768));
@@ -559,22 +564,23 @@ class ColdSimulationCoordinator {
         }
     }
 
-    meetingPreparationCurrent(proof, request) {
-        if (!proof || proof.epoch !== this.workerEpoch || proof.worker !== this.worker || this.stopping) return false;
+    // A worker's meeting proof against main's own copies: null while it holds,
+    // else the part that moved (the refusal names it).
+    meetingPreparationStale(proof, request) {
+        if (!proof || proof.epoch !== this.workerEpoch || proof.worker !== this.worker || this.stopping) return 'epoch';
         const state = LifeState.cachedState(proof.characterId);
-        if (!state || !EconomyCommit.sameAuthority(EconomyCommit.authority(state), proof.authority)) return false;
+        if (!state || !EconomyCommit.sameAuthority(EconomyCommit.authority(state), proof.authority)) return 'authority';
         const board = invoke('GameServer/AfkTrade/AfkTradeService').boardIndex();
         const Counters = invoke('GameServer/Bot/Economy/MarketCounters');
-        if (!proof.dependencies?.every(([id, boardToken, marketToken, workshopToken]) => {
-            const scope = Counters.counterOf(id), grouped = boardToken.startsWith('g:');
-            return (grouped ? `g:${board.groupFingerprint(scope)}` : board.itemFingerprint(id)) === boardToken
-                && Counters.meetingRevisionOf(scope) === marketToken
-                && (grouped ? `g:${CraftWorkshopService.publicScopeDigest(scope)}` : String(CraftWorkshopService.publicRecipeDigest(id))) === workshopToken;
-        })) return false;
-        return proof.sources.every(([recordId, revision]) => {
+        if (!proof.dependencies?.every(([id, token]) => {
+            const scope = Counters.counterOf(id);
+            return TradeMeetingCodec.dependencyToken(board.groupFingerprint(scope), CraftWorkshopService.publicScopeDigest(scope)) === token;
+        })) return 'dependency';
+        if (!proof.sources.every(([recordId, revision]) => {
             const rows = board.records.get(recordId);
             return rows?.length && rows.every(row => row.revision === revision);
-        }) && proof.token === request.token;
+        })) return 'source';
+        return proof.token === request.token ? null : 'token';
     }
 
     handleMeetingRequest(message, worker, epoch) {
@@ -592,13 +598,13 @@ class ColdSimulationCoordinator {
                 if (previous && JSON.stringify(previous) !== JSON.stringify(request.frame)) throw Error('trade_meeting_consent_changed');
                 held.frames[request.frame[2]] = request.frame;
                 if (held.frames.filter(Boolean).length === request.frame[3]) {
-                    const result = invoke('GameServer/AfkTrade/TradeMeetingCodec').fromPages(held.frames);
+                    const result = TradeMeetingCodec.fromPages(held.frames);
                     if (this.meetingTermsDigest(result) !== held.termsDigest) throw Error('trade_meeting_consent_changed');
                     const side = result.actorA === identity.characterId ? 0 : 1;
                     const own = result.parties[side];
                     const proof = { token: result.token, characterId: identity.characterId, sequence: own.sequence,
                         authority: { phase: own.phase, hotAt: own.hotAt, revision: own.revision },
-                        route: own.route, certificates: result.lines.map(line => line.payer === side ? line.certificate : null),
+                        route: own.route, survivalCost: own.survivalCost, certificates: result.lines.map(line => line.payer === side ? line.certificate : null),
                         dependencies: result.dependencies || [], sources: result.lines.map(line => [line.adId, line.adRevision]), epoch, worker, approved: true };
                     this.finishMeetingPreparation(identity.characterId, held, proof);
                 }
@@ -735,7 +741,8 @@ class ColdSimulationCoordinator {
             for (const result of payload.results || []) {
                 const held = this.commandInflight.get(result.characterId);
                 if (held?.meetingToken === result.commandId && result.ok === false)
-                    this.finishMeetingPreparation(result.characterId, held, null, Error(result.reason || 'trade_meeting_preparation_refused'));
+                    this.finishMeetingPreparation(result.characterId, held, null,
+                        Error(result.reason || 'trade_meeting_preparation_refused', result.cause ? { cause: result.cause } : undefined));
             }
             break;
         case 'ready':
@@ -931,7 +938,6 @@ class ColdSimulationCoordinator {
         const expected = Calculation.sources(members);
         const escrowFor = member => AfkMarket.buyOrderEscrow(member.characterId);
         const escrows = members.map(escrowFor);
-        const recipeKnowledge = members.map(recipeKnowledgeFor);
         const msgId = randomUUID();
         let timer, waitStarted;
         this.partyGoalRequests++;
@@ -939,12 +945,12 @@ class ColdSimulationCoordinator {
             const result = await new Promise((resolve, reject) => {
                 this.waiters.set(msgId, { resolve, reject, expectedType: 'party_goal_result' });
                 timer = setTimeout(() => reject(new Error('party_goal_timeout')), Math.max(1, replyBy - Date.now()));
-                const payload = { party, members, escrows, recipeKnowledge, timestamp, replyBy };
+                const payload = { party, members, escrows, timestamp, replyBy };
                 const bytes = Protocol.byteLength(Protocol.envelope('party_goal_request', epoch, payload, msgId));
                 const pages = bytes <= Protocol.MAX_MESSAGE_BYTES ? [{ payload, bytes }]
                     : members.map((member, pageIndex) => {
                         const page = { ...(pageIndex === 0 ? { party } : { partyId: party.partyId }),
-                            members: [member], escrows: [escrows[pageIndex]], recipeKnowledge: [recipeKnowledge[pageIndex]], timestamp, replyBy,
+                            members: [member], escrows: [escrows[pageIndex]], timestamp, replyBy,
                             pageIndex, pageCount: members.length };
                         return { payload: page, bytes: Protocol.byteLength(Protocol.envelope('party_goal_request', epoch, page, msgId)) };
                     });
@@ -958,8 +964,7 @@ class ColdSimulationCoordinator {
                 return { ok: false, reason: 'party_goal_stale_worker' };
             if (!result.ok) return result;
             if (JSON.stringify(result.sources) !== JSON.stringify(expected)
-                || JSON.stringify(members.map(escrowFor)) !== JSON.stringify(escrows)
-                || JSON.stringify(members.map(recipeKnowledgeFor)) !== JSON.stringify(recipeKnowledge))
+                || JSON.stringify(members.map(escrowFor)) !== JSON.stringify(escrows))
                 return { ok: false, reason: 'party_goal_source_changed' };
             return result;
         } catch (error) {
@@ -1228,12 +1233,11 @@ class ColdSimulationCoordinator {
     }
 
     async reconcileOrphanedBackgroundParties() {
-        const statePartyId = (state) => state?.party?.partyId ?? state?.partyId ?? null;
         // Who claims each party, from one pass over every state, instead of
         // a pass over the states for every party.
         const attachedByParty = new Map();
         for (const state of LifeState.everyState()) {
-            const partyId = String(statePartyId(state) || '');
+            const partyId = partyIdOf(state);
             if (!partyId) continue;
             if (!attachedByParty.has(partyId)) attachedByParty.set(partyId, []);
             attachedByParty.get(partyId).push(Number(state.characterId));
@@ -1242,7 +1246,7 @@ class ColdSimulationCoordinator {
             const memberIds = (party.memberIds || []).map((id) => Number(id)).filter(Boolean);
             const states = memberIds.map((id) => LifeState.cachedState(id)).filter(Boolean);
             const attached = states.filter((state) => (
-                String(statePartyId(state) || '') === String(party.partyId)
+                partyIdOf(state) === String(party.partyId)
             ));
             const leaderAttached = attached.some((state) => Number(state.characterId) === Number(party.leaderId));
             const declared = new Set(memberIds);
@@ -1534,7 +1538,7 @@ class ColdSimulationCoordinator {
         const state = LifeState.cachedState(proposal.characterId);
         if (!state) return null;
         if (Number(state.stats?.clanId) > 0) proposal[CLAN_BEFORE] = { level: state.level, sp: state.sp, inventory: state.inventory };
-        const partyId = String(state.party?.partyId || state.partyId || '');
+        const partyId = partyIdOf(state);
         if ((partyId && invoke('GameServer/Bot/Population/HotPartyLifecycle').pending.has(partyId))
             || this.visibleToRealPlayer(state)) return null;
         if (proposal.nextStateDelta) {
@@ -1577,7 +1581,7 @@ class ColdSimulationCoordinator {
         try { return await work(); }
         catch (error) {
             DiagnosticConfig.developerDiagnostics && (this.counters.afterCommitStepErrors[name] += 1);
-            utils.infoWarn('ColdWorker', 'postcommit %s failed for %s: %s', name, characterId, error?.message || error);
+            utils.infoWarn('ColdWorker', 'postcommit %s failed for %s: %s', name, characterId, failure(error));
             return undefined;
         }
     }
@@ -1605,9 +1609,6 @@ class ColdSimulationCoordinator {
         const step = (name, work) => this.timedStep(entry, name, work);
         const source = entry.proposal[PROPOSAL_SOURCE];
         const sourceCurrent = () => !this.stopping && (!source || source.worker === this.worker && source.epoch === this.workerEpoch);
-        const beforeWrite = () => {
-            if (!sourceCurrent()) throw Error('cold_postcommit_source_retired');
-        };
         // Party work that runs after this flush, in order, while the leader's ack waits.
         const deferred = [];
         const later = (name, work) => deferred.push(() => this.timedStep(entry, name, work,
@@ -1629,7 +1630,7 @@ class ColdSimulationCoordinator {
                 await invoke('GameServer/Bot/Population/ColdRaidWorldBridge').settle(entry.proposal.partyResolution.party, { respawnAt: committed.raidRespawnAt });
             }
         });
-        let state = LifeState.cachedState(id) || entry.nextState;
+        const state = LifeState.cachedState(id) || entry.nextState;
         if (sourceCurrent()) await step('economyDecision',
             () => this.economyDecisions.accept(id, entry.proposal.economyDecision, committed, state));
         if (sourceCurrent() && entry.proposal.market) {
@@ -1647,14 +1648,9 @@ class ColdSimulationCoordinator {
         await step('equipment', () => LifeState.enqueueEquipmentGoalAdvanceForState(state));
         // The bot's own plan, buff and training run in the review command the
         // worker sends on this commit's ack (reviewSteps, executeReviewCommand).
-        // Correct only this owner's standing bids against the committed state,
-        // even when wish preparation or a board write was deferred; a review
-        // that runs a plan corrects them again after it.
-        if (sourceCurrent()) await step('boardLimits', async () => {
-            const checked = await AfkMarket
-                .reviewPurchaseLimits(state, { beforeWrite });
-            state = checked.state || state;
-        });
+        // Its standing bids are lowered there by the plan's bidLimits (the
+        // worker's one decision, BotAfkMarketService.executePlan): a lowering
+        // here would move the record the plan's rows hold and refuse the plan.
         await step('clanEvents', () => invoke('GameServer/Clan/ClanReviewEvents').committedMember(entry.proposal[CLAN_BEFORE], state));
         await step('party', async () => {
             if (entry.proposal.partyResolution?.party) {
@@ -2013,10 +2009,18 @@ class ColdSimulationCoordinator {
         });
         const result = await this.population?.executeWorkerLifecycleCommand?.(state, request, { workerAdmission });
         if (result?.ok && sourceCurrent() && !this.stopping) {
-            const current = LifeState.cachedState(identity.characterId);
-            if (current) result.state = await this.step('improvement', identity.characterId, () => this.reviewCommittedEconomy(current, () => {
+            const id = identity.characterId;
+            const beforeWrite = () => {
                 if (!sourceCurrent() || this.stopping) throw Error('cold_postcommit_source_retired');
-            })) || current;
+            };
+            // The worker's bid limits, once, before the improvement can move
+            // the records their rows certify (BotAfkMarketService.applyBidLimits:
+            // a bot in a meeting skips, a gone or moved line is skipped).
+            const bids = request.precomputedPlan?.bidLimits;
+            if (bids?.length && LifeState.cachedState(id)) await this.step('bidLimits', id,
+                () => AfkMarket.applyBidLimits(LifeState.cachedState(id), bids, { beforeWrite }));
+            const current = LifeState.cachedState(id);
+            if (current) result.state = await this.step('improvement', id, () => this.reviewCommittedEconomy(current, beforeWrite)) || current;
         }
         return result;
     }
@@ -2025,15 +2029,17 @@ class ColdSimulationCoordinator {
     // and the worker's economy plan (its standing bids corrected after it), the
     // buff it bought, its class training. Admitted once on the commit's
     // checkpoint; each step then validates the row inside its own writer (the
-    // plan's writes move the revision), so the guard is only the source.
+    // plan's writes move the revision), so the guard is only the source. Not
+    // the command's ownership: the guard rides the plan's mutation admission
+    // into a meeting accept that writes after this command ended, and that
+    // accept is judged by its own preparation proofs.
     async executeReviewCommand(request, identity, sourceCurrent) {
         const id = identity.characterId;
         const admitted = await this.admitWorkerCommand(identity, sourceCurrent);
         if (admitted.refused) return admitted.refused;
         let state = admitted.state;
         const beforeWrite = () => {
-            if (!sourceCurrent() || this.stopping || this.commandInflight.get(id) !== admitted.owned)
-                throw Error('cold_postcommit_source_retired');
+            if (!sourceCurrent() || this.stopping) throw Error('cold_postcommit_source_retired');
         };
         const trained = { done: false };
         if (request.economyPlan) {
@@ -2052,12 +2058,6 @@ class ColdSimulationCoordinator {
             } finally {
                 this.economyDecisions.release(id);
             }
-            // The plan may have just started a trip or changed the money packet.
-            await this.step('boardLimits', id, async () => {
-                const checked = await AfkMarket
-                    .reviewPurchaseLimits(state, { beforeWrite });
-                state = checked.state || state;
-            });
         }
         if (request.buffOffer) await this.step('buff', id, () => ColdBuffService
             .applyOffer(request.buffOffer, { beforeWrite }));
@@ -2243,7 +2243,7 @@ class ColdSimulationCoordinator {
 
     recordError(error) {
         Metrics.recordColdOwnerError(error);
-        utils.infoWarn('ColdWorker', '%s', error?.message || String(error));
+        utils.infoWarn('ColdWorker', '%s', failure(error));
     }
 
     stop() {

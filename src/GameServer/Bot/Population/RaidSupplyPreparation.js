@@ -1,6 +1,7 @@
 'use strict';
 
 const Policy = require('./OpportunisticRaidPolicy');
+const { partyIdOf } = require('./PartyId');
 const Supply = require('./RaidSupplyPolicy');
 const Combat = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Errands = require('./CombinedErrandPolicy');
@@ -105,7 +106,7 @@ class RaidSupplyPreparation {
             if (!this.active) return;
             const states = plan.memberIds.map(id => this.life.cachedState(id));
             if (!this.owns(plan) || now >= plan.expiresAt || states.some(s => s.phase !== 'cold'
-                || s.party?.partyId || s.partyId || Policy.criminal(s) || Number(s.vitals?.hp) <= 0
+                || partyIdOf(s) || Policy.criminal(s) || Number(s.vitals?.hp) <= 0
                 || !Policy.recruitLevelAllowed(s, plan.objective.sourceLevel))
                 || !states.every((s, i) => states.slice(i + 1).every(peer => Policy.compatible(s, peer, this.memory.assess.bind(this.memory), now)))) {
                 await this.cancel(plan, 'raid_preparation_cancelled'); continue;

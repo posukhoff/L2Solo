@@ -144,7 +144,7 @@ async function workerQuote() {
             quantityPrepared: true, queue: [{ key: 'stock:shots', object: { itemId: 1463 }, valueHours: 1, ratio: 1,
                 plan: { missingAmount: 25, requirements: [{ key: 'item:1463', amount: 25,
                     plan: { ...fallback, executable: true, missingAmount: 25, requirements: [] } }] } }]
-        }, {}, () => 500);
+        }, {});
         assert.deepEqual(intent, [], 'an executable configured purchase retains its native owner');
         const native = await workerQuote();
         assert.deepEqual(native.fallbackQuote, fallback, 'native worker and main share the same configured quote');

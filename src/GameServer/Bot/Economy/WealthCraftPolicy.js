@@ -3,23 +3,26 @@ const Profit = require('./CraftProfitPolicy');
 const { remainingQuantity } = require('./WishNetwork');
 const Valuation = require('./EconomicValuation');
 const Price = require('./PriceDecision');
+const Trip = require('./EconomicTrip');
 const MAX_BATCHES = 64;
 const count = value => Number.isSafeInteger(Number(value)) && Number(value) >= 0 ? Number(value) : NaN;
 
 function* prepareBasket(recipe, planFor, ownedFor = () => null, batches = 1, context = {}) {
-    // Learning consumes one scroll for this whole decision, never one per
-    // manufactured batch. Its purchase joins the same town/fee allocation.
-    const entry = Number(context.recipeInput || 0);
-    const facts = yield* Profit.prepareCraftFacts(recipe, { batches, recipeInput: entry,
+    // A known recipe only: a scroll to learn is the producer root's input
+    // (WishProviders craftPath), never this basket's.
+    const facts = yield* Profit.prepareCraftFacts(recipe, { batches,
         executor: context.executor, mpCapacity: context.mpCapacity, mpPerHour: context.mpPerHour });
     if (facts.status !== 'ready' && facts.reason !== 'mp_regen') return null;
     const required = facts.gross;
     const purchases = [], owned = [], trips = new Map(), allocated = new Map();
+    // Input ids this basket already prices (its own, then each component's):
+    // set on its first component (componentPlan).
+    let claimed = null;
     let cashCost = 0, ownedValue = 0, actualCashFees = 0, travelHours = 0, processingHours = 0,
-        extraMp = 0, residualValue = 0, unknownTrip = false, repeatableInputs = true;
+        extraMp = 0, residualValue = 0;
     for (const [selfId, needed] of required) {
         let missing = needed;
-        const stock = (selfId === entry ? context.recipeStock : ownedFor(selfId)) || {};
+        const stock = ownedFor(selfId) || {};
         const available = count(Math.max(0, Number(stock.count ?? 0) - Number(allocated.get(selfId) || 0)));
         if (!Number.isFinite(available)) return null;
         // The Core quantity reader subtracts held units once, as for a wish.
@@ -31,13 +34,18 @@ function* prepareBasket(recipe, planFor, ownedFor = () => null, batches = 1, con
             allocated.set(selfId, Number(allocated.get(selfId) || 0) + ownCount);
             ownedValue += ownCount * unitValue;
             missing -= ownCount;
-            if (stock.repeatableReplacement !== true) repeatableInputs = false;
         }
         yield 'owned';
         if (!missing) continue;
-        const plan = context.preparePurchase ? yield* context.preparePurchase(selfId, missing, { allocated })
+        const quote = context.preparePurchase ? yield* context.preparePurchase(selfId, missing, { allocated })
             : planFor(selfId, missing);
         if (!context.preparePurchase) yield 'quote';
+        // An input nobody sells whole that the crafter makes itself
+        // (context.component: WealthCraftDecision.ownComponent) comes from
+        // its own basket, crafted first (ColdWealthCraftService.execute).
+        const component = !quote?.whole && context.component?.(selfId);
+        if (component && !claimed) claimed = new Set(required.keys());
+        const plan = component ? yield* componentPlan(component, claimed, selfId, missing, planFor, ownedFor, allocated, context) : quote;
         if (!plan?.whole || Number(plan.units ?? missing) < missing || !Number.isFinite(Number(plan.cost))
             || Number(plan.cost) < 0 || !Number.isFinite(Number(plan.landed))) return null;
         for (const input of plan.ownedInputs || []) {
@@ -54,40 +62,70 @@ function* prepareBasket(recipe, planFor, ownedFor = () => null, batches = 1, con
         processingHours += Number(plan.processingHours || 0);
         extraMp += Number(plan.extraMp || 0);
         residualValue += Number(plan.residualValue || 0);
-        if (plan.repeatable !== true && Number(plan.npc || 0) < missing) repeatableInputs = false;
-        const details = plan.tripDetails || context.trip?.details?.(plan.town);
-        const key = plan.routeKey ?? plan.town ?? `input:${selfId}`;
-        const trip = Math.max(0, Number(plan.landed) - Number(plan.cost));
-        if (!trips.has(key)) trips.set(key, { trip, details });
-        else if (trip > trips.get(key).trip) trips.set(key, { trip, details });
+        // A component's own trips (componentPlan) join the basket's: one
+        // visit per town for both.
+        for (const [key, { trip, details }] of plan.tripTowns || [[plan.routeKey ?? plan.town ?? `input:${selfId}`,
+            { trip: Math.max(0, Number(plan.landed) - Number(plan.cost)), details: plan.tripDetails || context.trip?.details?.(plan.town) }]]) {
+            if (!trips.has(key) || trip > trips.get(key).trip) trips.set(key, { trip, details });
+        }
         if (trips.size > 8) return null;
     }
     let tripEquivalent = 0;
     for (const { trip, details } of trips.values()) {
-        if (details && Number.isFinite(details.hours) && Number.isFinite(details.fees)) {
-            actualCashFees += Math.max(0, details.fees); travelHours += Math.max(0, details.hours);
-            tripEquivalent += Math.max(0, details.fees) + Math.max(0, details.hours) * Number(context.hourAdena || 0);
+        if (details?.known) {
+            actualCashFees += details.fees; travelHours += details.hours;
+            tripEquivalent += Trip.price(details, Number(context.hourAdena || 0));
         } else if (!trip) { /* same town */ }
         else if (Number(context.hourAdena) > 0) {
-            travelHours += trip / Number(context.hourAdena); tripEquivalent += trip; unknownTrip = true;
+            travelHours += trip / Number(context.hourAdena); tripEquivalent += trip;
         } else return null;
         yield 'trip';
     }
-    if (entry) processingHours += Number(context.learningHours || 0);
     const cost = cashCost + ownedValue + tripEquivalent;
     return Number.isFinite(cost) ? { purchases, owned, cashCost, ownedValue, actualCashFees, travelHours,
-        processingHours, extraMp, residualValue, tripTowns: trips, unknownTrip, repeatableInputs, cost: Math.ceil(cost), batches, facts } : null;
+        processingHours, extraMp, residualValue, tripTowns: trips, cost: Math.ceil(cost), batches, facts } : null;
+}
+// A component made inside a basket, one level deep (its own inputs are bought
+// whole or owned): the batches for the missing units, its inputs' cash, its
+// trips merged into the parent's (tripTowns), its MP and labour as the
+// parent's processing. Shaped as a purchase
+// row of prepareBasket (source = { source: 'craft', recipe, batches,
+// purchases }); surplus units count for nothing. A component that takes an
+// input its parent or a sibling component already prices (claimed) is none:
+// both would price the same asks. Its inputs join claimed.
+function* componentPlan(recipe, claimed, selfId, missing, planFor, ownedFor, allocated, context) {
+    const batches = Math.ceil(missing / Math.max(1, Number(recipe.productCount || 1)));
+    if (!Number.isSafeInteger(batches) || batches > MAX_BATCHES) return null;
+    if ((recipe.materials || []).some(row => claimed.has(Number(row.selfId)))) return null;
+    for (const row of recipe.materials || []) claimed.add(Number(row.selfId));
+    const free = id => {
+        const stock = ownedFor(id);
+        return stock ? { ...stock, count: Math.max(0, Number(stock.count || 0) - Number(allocated.get(Number(id)) || 0)) } : null;
+    };
+    const inner = yield* ownCraftBasket(recipe, planFor, free, batches, context);
+    if (!inner) return null;
+    return { whole: true, units: missing, cost: inner.cashCost, landed: inner.cashCost, tripTowns: inner.tripTowns,
+        ownedValue: inner.ownedValue, ownedInputs: inner.owned,
+        processingHours: Number(inner.facts.labourHours || 0) + inner.processingHours,
+        extraMp: Number(inner.facts.mp || 0) + inner.extraMp, residualValue: 0,
+        gear: { source: 'craft', recipe: Number(recipe.recipeId), batches, purchases: inner.purchases } };
+}
+// The basket of a craft its crafter makes itself inside another's basket (a
+// component, componentPlan; a shot scrap, ShotCraftPolicy prepareCrystal):
+// one level deep, cash = its bought inputs plus their fees.
+function* ownCraftBasket(recipe, planFor, ownedFor, batches, context) {
+    const inner = yield* prepareBasket(recipe, planFor, ownedFor, batches, { ...context, component: null });
+    return inner && { ...inner, cash: inner.cashCost + inner.actualCashFees };
 }
 function drain(iterator) { let step; do { step = iterator.next(); } while (!step.done); return step.value; }
 function basketFor(recipe, planFor, ownedFor = () => null, batches = 1, context = {}) {
     if (!Number.isSafeInteger(batches) || batches < 0 || batches > MAX_BATCHES) return null;
     return drain(prepareBasket(recipe, planFor, ownedFor, batches, context));
 }
-function craftMargin(recipe, productPrice, basketCost) { return Profit.revenue(recipe, productPrice) - Number(basketCost); }
 function saleInput(exit, units, context) {
     const conditional = exit.conditional || exit.offer?.conditional;
     const snapshot = exit.prospective, authority = snapshot?.authority, offer = exit.offer;
-    const prospective = conditional && exit.trial === true && exit.repeatable !== true
+    const prospective = conditional && exit.trial === true
         && snapshot?.known === true && snapshot.origin === 'public_bid'
         && authority?.recordId === Number(offer?.recordId) && authority?.lineId === Number(offer?.lineId)
         && authority?.revision === (offer?.revision ?? offer?.expectedRevision)
@@ -108,8 +146,7 @@ function* evaluatePrepared({ state, recipe, batches = 1, basket, exit, ownedFor 
     const successRate = facts.successProbability;
     const productCount = Number(recipe?.productCount) * batches;
     const mp = Number(facts.mp);
-    if (!recipe || exit.unknownJoint || !Number.isSafeInteger(batches) || batches < 1 || batches > MAX_BATCHES
-        || exit.trial === true && batches !== 1
+    if (!recipe || !Number.isSafeInteger(batches) || batches < 1 || batches > MAX_BATCHES
         || batches > Number(exit.maxBatches ?? MAX_BATCHES)
         || !Number.isSafeInteger(productCount) || productCount <= 0 || !(successRate > 0 && successRate <= 1)
         || !Number.isFinite(mp) || mp < 0 || !basket || mp + Number(basket.extraMp || 0) > Number(state?.vitals?.mp || 0)
@@ -171,59 +208,43 @@ function* evaluatePrepared({ state, recipe, batches = 1, basket, exit, ownedFor 
     const expectedProfit = Math.abs(rawProfit - Math.round(rawProfit)) < 1e-7 ? Math.round(rawProfit) : rawProfit;
     const expectedRevenue = successRate * receipts;
     const labour = (mpHours + activeHours + basket.travelHours + exitHours + shopHours) / moneyPrice;
-    const netCash = expectedRevenue + successRate * (monetaryResidual - Number(basket.residualValue || 0))
-        + Number(basket.residualValue || 0)
-        - basket.cashCost - basket.ownedValue - basket.actualCashFees - exitFees;
     return { recipe, basket, exit, batches, revenue: Number(exit.price) * productCount,
         expectedProfit, successRate, hours: cycleHours, valueHours: value.valueHours, valuation: value,
         expectedSold: successRate * (full.sold - without.sold),
-        margin: { expectedRevenue, inputs: basket.cost, labour, hours: cycleHours, profit: expectedProfit,
-            netCash, cycleHours, repeatable: exit.repeatable === true && basket.repeatableInputs && !basket.unknownTrip },
-        repeatable: exit.repeatable === true && basket.repeatableInputs && !basket.unknownTrip,
-        incomePerHour: exit.repeatable === true && basket.repeatableInputs && !basket.unknownTrip && cycleHours > 0 ? netCash / cycleHours : NaN };
+        margin: { expectedRevenue, inputs: basket.cost, labour, hours: cycleHours, profit: expectedProfit, cycleHours } };
 }
 function evaluateBasket(args, recipe, planFor, exit, ownedFor, context, batches = 1) {
     const input = arguments.length === 1 ? args : { state: args, recipe, planFor, exit, ownedFor, context, batches };
     const basket = input.basket || basketFor(input.recipe, input.planFor, input.ownedFor, input.batches ?? 1, input.context);
     return drain(evaluatePrepared({ ...input, basket }));
 }
-function* searchQuantity({ state, recipe, planFor, exits = [], ownedFor = () => null, context = {}, mode = 'action' }) {
+// The batches one search may try (searchQuantity): what the MP pays for
+// (Profit.mpBatches), and the context's cap within MAX_BATCHES.
+function contextBatches(context = {}) {
+    return Math.min(MAX_BATCHES, Math.max(0, Math.floor(Number(context.maxBatches ?? MAX_BATCHES))));
+}
+function* searchQuantity({ state, recipe, planFor, exits = [], ownedFor = () => null, context = {} }) {
     let best = null;
     // Complete bounded search also handles discontinuous quote/fee breakpoints.
     // Zero is the without-case; never force production when every value is <=0.
-    const mp = Number(recipe?.mpCost || 0);
-    const limit = Math.min(MAX_BATCHES, mp > 0 ? Math.floor(Number(state?.vitals?.mp || 0) / mp) : MAX_BATCHES,
-        Math.max(0, Math.floor(Number(context.maxBatches ?? MAX_BATCHES))));
+    const limit = Math.min(Profit.mpBatches(state?.vitals?.mp, recipe), contextBatches(context));
     const first = context.fixedBatches === undefined ? 1 : Number(context.fixedBatches);
     const end = context.fixedBatches === undefined ? limit : Math.min(limit, first);
     if (!Number.isSafeInteger(first) || first < 1 || first > MAX_BATCHES) return null;
     for (let batches = first; batches <= end; batches++) {
-        // A repeated occupation needs a supported replenishment route. The
-        // finite owned bag may fund today's action, but cannot make its future
-        // input supply infinite. Price the actual replenished cycle separately.
-        const inputsFor = mode === 'occupation' ? () => null : ownedFor;
-        const basket = yield* prepareBasket(recipe, planFor, inputsFor, batches, context);
+        const basket = yield* prepareBasket(recipe, planFor, ownedFor, batches, context);
         if (!basket) continue;
         for (const exit of exits) {
             yield 'exit';
             const pricedExit = typeof exit.forQuantity === 'function' ? exit.forQuantity(batches) : exit;
             if (!pricedExit) continue;
-            if (mode === 'occupation' && pricedExit.repeatable !== true) continue;
-            // Unsupported external demand permits only an explicitly valued
-            // minimum trial, never a speculative larger production command.
-            if (pricedExit.trial === true && batches > 1) continue;
             const candidate = yield* evaluatePrepared({ state, recipe, batches, basket, exit: pricedExit, ownedFor, context });
-            const score = mode === 'occupation' ? candidate?.incomePerHour : candidate?.valueHours;
-            if (candidate && score > 0 && (!best || score > (mode === 'occupation' ? best.incomePerHour : best.valueHours))) best = candidate;
+            if (candidate?.valueHours > 0 && (!best || candidate.valueHours > best.valueHours)) best = candidate;
         }
         yield 'candidate';
     }
     return best;
 }
 function chooseQuantity(input) { return drain(searchQuantity(input)); }
-function opportunityFor(state, recipe, planFor, exits = [], ownedFor = () => null, context = {}) {
-    if (recipe?.type !== 'dwarven') return null;
-    return chooseQuantity({ state, recipe, planFor, exits, ownedFor, context });
-}
-module.exports = { MAX_BATCHES, basketFor, craftMargin, evaluateBasket, chooseQuantity,
-    opportunityFor, prepareBasket, evaluatePrepared, searchQuantity, drain };
+module.exports = { MAX_BATCHES, basketFor, evaluateBasket, chooseQuantity,
+    prepareBasket, ownCraftBasket, evaluatePrepared, searchQuantity, drain };

@@ -262,6 +262,12 @@ function isWeaponSlot(slot) {
     const value = Number(slot || 0);
     return value === 7 || value === 14;
 }
+// Paired slots (two earrings, two rings): a kit of the first slot fills the
+// second too; 0 for any other slot.
+function pairedSlot(slot) {
+    const value = Number(slot || 0);
+    return value === 1 ? 2 : value === 4 ? 5 : 0;
+}
 function equipmentSlotKey(slot) {
     const value = Number(slot || 0);
     return isWeaponSlot(value) ? 'weapon' : String(value);
@@ -274,6 +280,7 @@ function equipmentReplacementConflict(slot, wornSlot) {
 
 module.exports = {
     isWeaponSlot,
+    pairedSlot,
     equipmentSlotKey,
     equipmentReplacementConflict,
     armorKindFor,

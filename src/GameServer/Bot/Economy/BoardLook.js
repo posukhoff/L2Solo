@@ -3,6 +3,8 @@ const Counters = require('./MarketCounters');
 const Rolls = require('../AI/TendencyRoll');
 const SpotEconomics = require('./SpotEconomics');
 const BidPurchaseAlternative = require('./BidPurchaseAlternative');
+const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
+const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const MAX_LINES = 8;
 const HOUR_MS = 3600000;
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -27,12 +29,11 @@ function feasibilityPredicate(state, lines, mask = null) {
 // Deep equipment/combine allocations wait for their worker preparation.
 function indexedFeasibility(state, line, reserved = null) {
     const item = state.inventory?.[line.selfId], plan = state.stats?.equipmentPlan;
-    if (item?.protected || item?.acceptedCustomer || item?.assignedClan || item?.available === false) return false;
-    const target = ['active', 'component_ready', 'ready_to_craft'].includes(plan?.status)
+    const target = GearAcquisitionPlanner.planRunning(plan)
         && Number(plan?.target?.selfId) === Number(line.selfId) ? 1 : 0;
-    const held = Math.max(Number(item?.protectedAmount || 0), Number(item?.starterMobLootAmount || 0),
-        Number(item?.reservedAmount || 0), Number(state.stats?.clanMaterialDemand?.[line.selfId] || 0),
-        Number(reserved?.[line.selfId] || 0), target);
+    // The row's reserve (ItemDisposition.rowReserve: Infinity for a flagged row).
+    const held = Math.max(ItemDisposition.rowReserve(state,
+        { ...item, selfId: Number(line.selfId) }, reserved || {}), target);
     if (held > Number(item?.amount || 0)) return false;
     return reserved ? true : undefined;
 }
@@ -124,11 +125,30 @@ function consumeOwnProjection(seen, previous, next, board, ownerId) {
     }
 }
 
+// A trader context's own worth of an item (MarketPricing.ownWorth through
+// preparedWorth): NaN when its economy has no row for it.
 function scalarWorth(ctx, id) {
     if (typeof ctx.preparedWorth === 'function') return ctx.preparedWorth(id);
     // A direct fixture may explicitly provide a prepared scalar reader. This
     // never constructs an economic graph or falls back to a market price.
     return typeof ctx.economy?.worth === 'function' && !ctx.economy?.price ? ctx.economy.worth(id) : NaN;
+}
+// A buy line's worth: the buy intent's own worth (TradeIntent.preparedProject
+// row.worth, NaN when 0) when the economy's watch list holds an intent for
+// the item, else the economy's own worth (scalarWorth). Every watch-list row
+// is an intent: the worker's TradeIntent.project rows or the card's copy
+// (ColdEconomyDecision.watchList, no root key), so a near bot's look answers
+// as the worker's. undefined intent = no intent row. MarketPricing.look
+// reprices from it, inputsFor wakes on it.
+function intentWorth(ctx, id) {
+    const rows = ctx.economy?.watchList;
+    if (!rows?.length) return undefined;
+    const row = rows.find(row => Number(row.itemId) === Number(id));
+    return row ? Number(row.worth) > 0 ? Number(row.worth) : NaN : undefined;
+}
+function buyWorth(ctx, id) {
+    const intent = intentWorth(ctx, id);
+    return intent === undefined ? scalarWorth(ctx, id) : intent;
 }
 function inputsFor(state, line, ctx, target, at, previousAt, preparedDirty) {
     target.fill(NaN, at, at + 23);
@@ -148,10 +168,15 @@ function inputsFor(state, line, ctx, target, at, previousAt, preparedDirty) {
     const sourceValue = line.storeType === 3 && ctx.preparedValue ? ctx.preparedValue(line.selfId) : NaN;
     // ARCH-NOTE: reuse reserved scalar slot for raw prepared usefulness;
     // no demand producer is added by this price-attention change.
-    target[at + 35] = sourceValue;
-    const reusable = sameIdentity && !preparedDirty && (ctx.preparedBuffer
+    // An intent line's worth is read fresh (a watch-list find); Infinity in
+    // the slot marks it, so the line's own worth is never reused from it.
+    const intent = line.storeType === 3 ? intentWorth(ctx, line.selfId) : undefined;
+    target[at + 35] = intent === undefined ? sourceValue : Infinity;
+    const reusable = intent === undefined && sameIdentity && !preparedDirty
+        && target[previousAt + 35] !== Infinity && (ctx.preparedBuffer
         || ctx.preparedValue && Object.is(target[previousAt + 35], sourceValue));
-    const raw = line.storeType === 3 ? reusable ? target[previousAt + 14] : scalarWorth(ctx, line.selfId) : null;
+    const raw = line.storeType === 3 ? intent !== undefined ? intent
+        : reusable ? target[previousAt + 14] : scalarWorth(ctx, line.selfId) : null;
     const worth = raw === null || raw === undefined ? NaN : Number(raw);
     target[at + 14] = Number.isFinite(worth) && worth >= 0 ? worth : NaN;
     target[at + 15] = Number.isFinite(target[at + 14])
@@ -172,7 +197,7 @@ function inputsFor(state, line, ctx, target, at, previousAt, preparedDirty) {
     target[at + 20] = Number(!source) | Number(sell) << 1 | Number(buy) << 2
         | Number(!!stock.protected) << 3 | Number(!!stock.acceptedCustomer) << 4
         | Number(!!stock.assignedClan) << 5 | Number(stock.available === false) << 6
-        | Number(['active', 'component_ready', 'ready_to_craft'].includes(state.stats?.equipmentPlan?.status)
+        | Number(GearAcquisitionPlanner.planRunning(state.stats?.equipmentPlan)
             && Number(state.stats.equipmentPlan.target?.selfId) === Number(line.selfId)) << 7;
     target[at + 21] = Number(ctx.hour); target[at + 22] = Number(ctx.moneyPrice);
 }
@@ -218,7 +243,9 @@ function review(state, lines, ctx, lookSeen) {
         inputsFor(state, line, ctx, cache, SCRATCH, at, dirty);
         const exists = at >= 0 && sameRange(cache, at, SCRATCH, 1, 5);
         if (at >= 0 && !exists) { cache.delete(Number(line.lineId)); at = -1; }
-        let reason = visit && line.storeType === 3 ? 8 : 0;
+        // A new town look reviews every owned line once: an unanswered line
+        // is a pass on either side (PriceBelief.lineObservations).
+        let reason = visit ? 8 : 0;
         // Remembering a proposed correction cannot acknowledge its delivery.
         // A refused write must not hide the same violated purchase limit on
         // the next own resolve, even when its sources have stayed unchanged.
@@ -268,5 +295,5 @@ function review(state, lines, ctx, lookSeen) {
     return result;
 }
 
-module.exports = { MAX_LINES, MAX_OWNED_LINES, SeenLines, attention, review, indexedFeasibility,
+module.exports = { MAX_LINES, MAX_OWNED_LINES, SeenLines, attention, review, indexedFeasibility, scalarWorth, buyWorth,
     lineFingerprint, feasibilityPredicate, consumeOwnProjection };

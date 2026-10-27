@@ -30,11 +30,11 @@ const adapters = {
     'GameServer/Bot/Population/ColdCombatProfile': { skillsFor: () => [], candidateProfiles: () => ({
         before: { pAtk: 100, pDef: 100, mDef: 100 }, after: () => ({ pAtk: 200, pDef: 100, mDef: 100 }) }) },
     'GameServer/Bot/Economy/BotImprovementPolicy': { opportunities: () => [], crystalPath: () => null },
-    'GameServer/Items/C4RecipeItems': { resolveVariantsByProductId: id => allowCraft && id === 101 ? recipeVariants : [],
+    'GameServer/Items/C4RecipeItems': { resolveVariantsByProductId: id => allowCraft ? recipeVariants.filter(row => row.productId === Number(id)) : [],
         resolveByRecipeId: id => recipeVariants.find(row => row.recipeId === Number(id)) || null },
     'GameServer/Items/C4DualSwordCombinations': { resolveByProductId: () => null, resolveByRecipeId: () => null },
     'GameServer/Items/SoulCrystalProgression': require('../src/GameServer/Items/SoulCrystalProgression'),
-    'GameServer/Bot/Economy/CraftShopService': { canCraft: () => ownCraft, isServiceCrafter: () => false },
+    'GameServer/Bot/Economy/CraftShopService': { canCraft: () => ownCraft, isServiceCrafter: () => false, marketProducer: () => false },
     'GameServer/Skills/SkillBookCatalog': { missingBooks: () => [] },
     'GameServer/Bot/Economy/MarketCounters': { moveOf: () => 0, counterOf: () => 'armor c' },
     // No sellable inventory: the liquidation money path stays out of these routes.
@@ -50,12 +50,11 @@ Object.assign(adapters, { 'GameServer/Bot/Economy/PersonalWarehouseIndex': { sal
     'GameServer/Inventory/ShotStock': { keptAmounts: () => ({}) },
     'GameServer/Bot/AI/HealingPotionStock': { keptAmounts: () => ({}) },
     'GameServer/Bot/Travel/ScrollStock': { keptAmounts: () => ({}) } });
-// Task 2 readers: MP per hour, exit value, combat profile and spoil
+// Task 2 readers: MP per hour, combat profile and spoil
 // eligibility come from their own modules (one reader each).
 Object.assign(adapters, {
     'GameServer/Bot/Population/ColdOccupationSources': {
-        craftLabour: state => ({ executor: state.phase === 'hot' ? 'hot' : 'cold', mpCapacity: 1000, mpPerHour: 120000 }),
-        exitValue: function* () { return 0; } },
+        craftLabour: state => ({ executor: state.phase === 'hot' ? 'hot' : 'cold', mpCapacity: 1000, mpPerHour: 120000 }) },
     'GameServer/Bot/Population/ColdKillRewards': { spoilerFor: () => false } });
 adapters['GameServer/Bot/Population/ColdCombatProfile'].profileFor = () => ({ maxMp: 1000 });
 // The farm path reads Planner.sourceFacts (its hunt rules are pinned in
@@ -82,7 +81,9 @@ const network = load('WishNetwork.js', name => {
     if (name === 'node:worker_threads') return require('node:worker_threads');
     if (name === './EconomyDiagnostics') return { active: () => false };
     if (name === './PurchaseFunding') return require('../src/GameServer/Bot/Economy/PurchaseFunding');
+    if (name === './TradeIntent') return require('../src/GameServer/Bot/Economy/TradeIntent');
     if (name === './CompactBytes') return require('../src/GameServer/Bot/Economy/CompactBytes');
+    if (name === './CommittedExits') return require('../src/GameServer/Bot/Economy/CommittedExits');
     if (name === './EconomicValuation') return valuation;
     if (name.endsWith('TendencyRoll')) return tendency;
     if (name.endsWith('Fnv1a')) return { fnv1a32: () => 1 };
@@ -95,10 +96,11 @@ const provider = load('WishProviders.js', name => {
     // This isolated routing fixture supplies admitted synthetic origins.
     if (name.endsWith('ItemAcquisitionCatalog')) return { revision: () => 1, hasSource: () => true, hasNonRaidSource: () => true, allowsRecipe: () => true };
     if (name === './CraftProfitPolicy') return require('../src/GameServer/Bot/Economy/CraftProfitPolicy');
+    if (name === './TwinCluster') return require('../src/GameServer/Bot/Economy/TwinCluster');
     if (name === './EconomyDiagnostics') return { active: () => false, laps: () => null };
     if (name === './EconomicValuation') return valuation;
     if (name === './WishNetwork') return network;
-    if (name === '../AI/PersonalGearProgression') return { assess: () => ({ required: false, gaps: new Map() }), gapFor: () => null, preparation: () => null, priority: () => 0, personal: () => false, allowsCGradeAcquisition: () => false, acquisitionRankFor: () => 'c',
+    if (name === '../AI/PersonalGearProgression') return { assess: () => ({ required: false, gaps: new Map() }), preparation: () => null, priority: () => 0, personal: () => false, allowsCGradeAcquisition: () => false,
         isCGradeHelmet: require('../src/GameServer/Bot/AI/PersonalGearProgression').isCGradeHelmet };
     if (name === '../AI/BotEquipmentCompatibility') return require('../src/GameServer/Bot/AI/BotEquipmentCompatibility');
     if (name === '../../Item/ItemTemplateIndex') return require('../src/GameServer/Item/ItemTemplateIndex');
@@ -106,7 +108,10 @@ const provider = load('WishProviders.js', name => {
     if (name === './BotImprovementPolicy') return { isCaster: () => false };
     if (name === './BotLuxuryExchange') return { recipes: () => new Map() };
     if (name === './WishPurchaseEvidence') return require('../src/GameServer/Bot/Economy/WishPurchaseEvidence');
-    if (name === './WealthCraftDecision') return { freeAmount: (state, row) => Number(row.amount || 0) };
+    if (name === './EconomicTrip') return require('../src/GameServer/Bot/Economy/EconomicTrip');
+    // A buy's wait (buyWait): the town code, rival takers, observed supply.
+    if (['./ShotCraftPolicy', './CommittedExits', './MarketDemand'].includes(name)) return require(path.resolve(root, name));
+    if (name === './WealthCraftDecision') return { freeAmount: (state, row) => Number(row.amount || 0), learnsRecipe: () => true };
     throw Error(name);
 }, invokeAdapter);
 const context = { timestamp: 1, persona, board, hunt: { perHour: 100, expPerHour: 0 }, hourAdena: 100, wallet: 1000, deathHours: 0,
@@ -142,10 +147,9 @@ state.stats.recipes = savedBook;
 assert.equal(run(true, { deps: { knownRecipes: [] } }).nodes.find(row => row.key === 'item:101')
     .paths.find(row => row.kind === 'craft').requiresRecipeLearning, true,
     'an authoritative empty book overrides stale compatibility knowledge');
-assert.deepEqual(provider.recipeIds(state, { knownRecipes: [301, { recipeId: 301 }, 302, 0, NaN] }), [301, 302]);
 let safeScroll = true, scrollKind = 'drop', raidScroll = false;
 const planner = adapters['GameServer/Bot/AI/GearAcquisitionPlanner'];
-planner.sourceIndexFor = () => new Map([[401, [{ kind: scrollKind, totalCount: 1, sourceCount: 1,
+planner.sourceIndexFor = () => new Map([[401, [{ kind: scrollKind,
     spot: { id: 'scroll-source', raidBoss: raidScroll }, reward: { selfId: 501 } }]]]);
 planner.sourceYieldReaderFor = () => () => ({ expectedYield: 1 });
 planner.soloSafeForSource = () => safeScroll;
@@ -187,6 +191,12 @@ assert.equal(partial.activity.activity, 'shopping');
 assert.equal(partial.activity.object, 202);
 assert.equal(partial.activity.amount, 6, 'partial source cannot purchase the unavailable remainder');
 assert.equal(partial.plans.find(([key]) => key === 'item:101')[1].executable, false);
+// The 4 units the town lacks are dear (200 a unit at the bot's price) and the
+// wallet holds 100: the step now (6 at 1) is paid, the units it lacks only
+// weigh in the route choice (componentroute 2026-10-25).
+const tight = run(true, { wallet: 100, context: { price: id => id === 101 ? 100 : 200 } });
+assert.equal(tight.activity?.activity, 'shopping', 'a tight wallet still pays the part on sale now');
+assert.equal(tight.activity.amount, 6);
 stock(202, 10);
 const full = run(true);
 assert.equal(full.activity.activity, 'shopping', 'ingredients must be acquired before crafting');
@@ -196,6 +206,23 @@ stock(202, 10, 1);
 assert.equal(run(true).activity, null, 'own standing stock does not establish external buying supply');
 stock(202, 10, 2, 1);
 assert.equal(run(true).activity, null, 'enchanted item is not a normal recipe ingredient');
+// A buy is priced for the amount the craft needs: Giran's cheaper head holds
+// 2 of 45, Dion's asks hold all 45 (20 at 2, 25 at 3), so the craft can run
+// and the bot shops in Dion.
+const deepBoard = new BoardIndex();
+deepBoard.put({ id: 21, ownerId: 2, storeType: 1, kind: 'sell_ad', town: 'Giran',
+    lines: [{ lineId: 21, selfId: 202, count: 2, price: 1 }] });
+deepBoard.put({ id: 22, ownerId: 3, storeType: 1, kind: 'sell_ad', town: 'Dion',
+    lines: [{ lineId: 22, selfId: 202, count: 20, price: 2 }, { lineId: 23, selfId: 202, count: 25, price: 3 }] });
+const twoTowns = town => ['Giran', 'Dion'].includes(town) ? 0 : Infinity;
+twoTowns.details = town => ({ known: ['Giran', 'Dion'].includes(town), hours: 0, fees: 0 });
+recipeVariants = [{ ...recipe, materials: [{ selfId: 202, amount: 45 }] }];
+const deep = run(true, { deps: { board: deepBoard }, context: { board: deepBoard, trip: twoTowns } });
+recipeVariants = [recipe];
+assert.equal(deep.plans.find(([key]) => key === 'item:101')[1].executable, true, 'the deeper town supplies the whole craft');
+assert.equal(deep.activity?.activity, 'shopping');
+assert.equal(deep.activity.town, 'Dion', 'the bot shops where the amount it needs is sold');
+assert.equal(deep.activity.amount, 45);
 stock(101, 1);
 board.put({ id: 11, ownerId: 2, storeType: 1, kind: 'sell_ad', town: 'Giran',
     lines: [{ lineId: 11, selfId: 101, count: 1, price: 1200 }] });
@@ -265,6 +292,7 @@ new Function('require', 'invoke', 'module', 'exports', fs.readFileSync(path.join
     name => name.endsWith('SurvivalFloor') ? { forState: () => null }
         : name.endsWith('EconomyContext') ? { survivalReserve: () => 0 }
         : name.endsWith('PurchaseFunding') ? { rootRatio: () => 0, leafRatio: () => 0 }
+        : name.endsWith('MarketTownPolicy') ? { saleTown: () => ({ town: 'Giran' }) }
         : name.endsWith('DataCache') ? { items: [] } : (() => { throw Error(name); })(),
     goalsModule, goalsModule.exports);
 const otherTownBoard = new BoardIndex();
@@ -297,12 +325,7 @@ assert.equal(Evidence.reader(state, context, { board: new BoardIndex(), tripCost
 const unknownTown = Evidence.reader(state, context, { board: new BoardIndex(), npcOffersFor: () => [
     { sourceType: 'npc', selfId: 202, town: 'Unknown', price: 3 }] })(202);
 assert.equal(unknownTown, null, 'unknown route is not an executable quote');
-const limitedBoard = new BoardIndex();
-for (let id = 1; id <= 30; id++) limitedBoard.put({ id, ownerId: id < 30 ? 1 : 2,
-    storeType: 1, kind: 'sell_ad', town: 'Giran', lines: [{ lineId: id, selfId: 202, count: 1, price: id }] });
-assert.equal(Evidence.reader(state, context, { board: limitedBoard })(202), null,
-    'quote evidence stops at its twenty-row budget rather than scanning an owner-heavy book');
-console.log('PASS source evidence: native quote query, allowed NPC, unknown route, finite inspection budget');
+console.log('PASS source evidence: native quote query, allowed NPC, unknown route');
 
 // Native producer -> compact transport -> main consumer. A rich buyer loses
 // benefit while waiting even when no earning gap remains in its saved packet.
@@ -452,3 +475,203 @@ assert.deepEqual(onlyPublished.map(row => row.recipeId), [301],
     'an unavailable first variant cannot hide a later published one');
 recipeVariants = [recipe];
 console.log('PASS public paid service for fighter, no scroll/phantom source, route and capacity gates, indexed usable choice per known town');
+
+// A craft needs more of an input than the town sells (componentroute
+// 2026-10-25): 24 units, 8 on sale at 1 a unit, none coming; a published
+// workshop crafts the input from one the town holds whole (2 at 2 a batch,
+// fee 1: 5 a unit). The part on sale is priced for all 24: the 16 it lacks
+// at the bot's price of the input. At 20 a unit the workshop is cheaper and
+// wins, and the gear craft can run; at 1 a unit the buy stays cheaper and
+// stays (cost decides buy against craft, user 2026-10-23).
+const component = { recipeId: 303, productId: 202, productCount: 1, recipeItemId: 403, mpCost: 1, successRate: 100,
+    materials: [{ selfId: 203, amount: 2 }] };
+recipeVariants = [{ ...recipe, materials: [{ selfId: 202, amount: 24 }] }, component];
+const shortBoard = new BoardIndex();
+shortBoard.put({ id: 61, ownerId: 2, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+    lines: [{ lineId: 61, selfId: 202, count: 8, price: 1 }] });
+shortBoard.put({ id: 62, ownerId: 3, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+    lines: [{ lineId: 62, selfId: 203, count: 48, price: 2 }] });
+const componentService = { ...publicService, characterId: 4, recipeId: 303, price: 1, entryPrice: 1, capacityBatches: 30 };
+const shortDeps = { board: shortBoard,
+    workshops: recipeId => [publicService, componentService].filter(row => row.recipeId === recipeId) };
+const routed = run(true, { deps: shortDeps, context: { board: shortBoard, price: id => id === 101 ? 100 : id === 202 ? 20 : 1 } });
+const cheapShort = run(true, { deps: shortDeps, context: { board: shortBoard } });
+recipeVariants = [recipe];
+assert.equal(routed.plans.find(([key]) => key === 'item:202')[1].kind, 'craft',
+    'an input the town sells only in part is crafted at the published workshop when that costs less for all units');
+assert.equal(routed.plans.find(([key]) => key === 'item:101')[1].executable, true, 'the gear craft runs on the crafted input');
+assert.equal(cheapShort.plans.find(([key]) => key === 'item:202')[1].kind, 'buy',
+    'a partly sold input that costs less for all units than the workshop stays a buy');
+// A gear root ranks by completion: a craft whose input buy is short (its
+// units all there in 5 h) finishes after a gear buy ready in 2 h.
+const shortInputNodes = [{ key: 'gear', need: 'power', price: 1, valueHours: 100, progressionPriority: 1,
+    paths: [{ kind: 'craft', activity: 'crafting', price: 0, costHours: 0.5, requirements: [{ key: 'part', amount: 2 }] },
+        { kind: 'buy', activity: 'shopping', price: 10, executable: true, quoted: true, town: 'Giran', costHours: 2 }] },
+{ key: 'part', paths: [{ kind: 'buy', activity: 'shopping', price: 1, executable: true, quoted: true,
+    availableUnits: 1, town: 'Giran', shortHours: 5 }] }];
+const shortInput = new network.WishNetwork().build({ actorKey: 'shortInput', inputKey: 'shortInput', nodes: shortInputNodes,
+    roots: ['gear'], wallet: 1000, hourAdena: 100, persona, remembered: false });
+assert.equal(shortInput.plans.get('gear').kind, 'buy', 'a short input buy delays its parent craft');
+// The same craft when Giran's one ask of the input is held by two rival
+// takers (no supply: never) and Dion sells 8 of the 24 at 2: the market
+// without Giran's asks (the elsewhere buy) is priced for all 24 like any buy.
+// At 20 a unit for the 16 Dion lacks the workshop (5 a unit) wins and the gear
+// craft runs; at 3 a unit the Dion buy (2.67 a unit for all 24) stays the
+// route, under the workshop, and the bot buys the 8 Dion sells now. Giran's
+// held unit is not on sale to the bot (its wait: rivals + 1 - 1 units over no
+// supply, never), so even at 2 a unit, where Giran's unit priced for all 24
+// (1.96) would cost less than Dion's (2), the bot buys in Dion.
+const Exits = require('../src/GameServer/Bot/Economy/CommittedExits');
+const heldBoard = new BoardIndex();
+heldBoard.put({ id: 71, ownerId: 2, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+    lines: [{ lineId: 71, selfId: 202, count: 1, price: 1 }] });
+heldBoard.put({ id: 72, ownerId: 3, storeType: 1, kind: 'sell_ad', town: 'Dion', revision: 1,
+    lines: [{ lineId: 72, selfId: 202, count: 8, price: 2 }] });
+heldBoard.put({ id: 73, ownerId: 5, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+    lines: [{ lineId: 73, selfId: 203, count: 48, price: 2 }] });
+const heldTakers = [991, 992];
+for (const id of heldTakers) Exits.commit(id, [Exits.takerRow({ kind: 'buy', sourceType: 'afk', itemId: 202, amount: 1, town: 'Giran' })]);
+recipeVariants = [{ ...recipe, materials: [{ selfId: 202, amount: 24 }] }, component];
+const heldDeps = { ...shortDeps, board: heldBoard };
+const heldContext = { board: heldBoard, trip: twoTowns };
+const heldRouted = run(true, { deps: heldDeps, context: { ...heldContext, price: id => id === 101 ? 100 : id === 202 ? 20 : 1 } });
+const heldCheap = run(true, { deps: heldDeps, context: { ...heldContext, price: id => id === 101 ? 100 : id === 202 ? 3 : 1 } });
+const heldCheaper = run(true, { deps: heldDeps, context: { ...heldContext, price: id => id === 101 ? 100 : id === 202 ? 2 : 1 } });
+// The same held ask when 3 published workshop variants craft the input
+// (wishcap 2026-10-25): the input's node holds 4 own paths (the held buy, 3
+// crafts) and the Dion buy past them. The build takes that node (before: 5
+// paths, invalid_wish_node, a full rebuild every step) and the bot buys what
+// Dion sells now.
+const variantServices = [304, 305].map(recipeId => ({ ...componentService, characterId: recipeId, recipeId }));
+recipeVariants = [{ ...recipe, materials: [{ selfId: 202, amount: 24 }] }, component,
+    ...variantServices.map(row => ({ ...component, recipeId: row.recipeId, recipeItemId: row.recipeId + 100 }))];
+const variantWorkshops = recipeId => [publicService, componentService, ...variantServices].filter(row => row.recipeId === recipeId);
+const heldVariants = run(true, { deps: { ...heldDeps, workshops: variantWorkshops },
+    context: { ...heldContext, price: id => id === 101 ? 100 : id === 202 ? 3 : 1 } });
+recipeVariants = [recipe];
+for (const id of heldTakers) Exits.remove(id);
+assert.deepEqual([heldVariants.activity?.activity, heldVariants.activity?.object, heldVariants.activity?.town, heldVariants.activity?.amount],
+    ['shopping', 202, 'Dion', 8], 'an input with 4 own paths keeps the other town\'s buy and the bot buys there now');
+assert.equal(heldRouted.plans.find(([key]) => key === 'item:202')[1].kind, 'craft',
+    'the workshop wins over another town\'s buy short of the units the craft needs');
+assert.equal(heldRouted.plans.find(([key]) => key === 'item:101')[1].executable, true, 'the gear craft runs on the crafted input');
+assert.equal(heldCheap.activity?.activity, 'shopping', 'a short buy that costs less for all units stays the route');
+assert.deepEqual([heldCheap.activity.object, heldCheap.activity.town, heldCheap.activity.amount], [202, 'Dion', 8],
+    'the bot buys what the other town sells now');
+assert.deepEqual([heldCheaper.activity?.activity, heldCheaper.activity?.object, heldCheaper.activity?.town, heldCheaper.activity?.amount],
+    ['shopping', 202, 'Dion', 8], 'a unit rival takers hold is not bought now, however cheap: the other town\'s buy is the route');
+console.log('PASS partial buy: priced and timed for all units, the route that costs less for all of them wins, a short input delays its craft');
+// A short buy's completion queues behind every other buyer's bids on the
+// item (luxwait 2026-10-25): the craft needs 1075 of an input Giran sells 75
+// of, supply 100 a hour, no rival takers. With 40000 units of other bots' bid
+// lines on the board (any town) at the planning price (1: price(id), NPC
+// buy-back 0) the 1000 units it lacks arrive after theirs:
+// (40000 + 1 + 999) / 100 = 410 h. Its own 5000-unit bid line is no rival:
+// with only that line on the board the same buy completes in 10 h. Sellers
+// fill the higher bid first and the queue is read at the planning price
+// max(price(id), buyback) (luxwait2, luxwait3): with a buy-back of 3 the
+// others' bids at 2 wait behind it, none ahead: 10 h (410 h when the price
+// is not passed). Its own line never sets its place: a line at 1 below the
+// others' leaves that 10 h, a line at 5 above them leaves the 410 h.
+const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
+Demand.reset();
+Demand.deal(202, 100, 'Giran', context.timestamp);
+const luxBoard = (othersPrice, ownPrice) => {
+    const board = new BoardIndex();
+    board.put({ id: 81, ownerId: 2, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
+        lines: [{ lineId: 81, selfId: 202, count: 75, price: 1 }] });
+    if (ownPrice) board.put({ id: 82, ownerId: 1, storeType: 3, kind: 'buy_ad', town: 'Giran', revision: 1,
+        lines: [{ lineId: 82, selfId: 202, count: 5000, price: ownPrice }] });
+    if (othersPrice) {
+        board.put({ id: 83, ownerId: 7, storeType: 3, kind: 'buy_ad', town: 'Giran', revision: 1,
+            lines: [{ lineId: 83, selfId: 202, count: 20000, price: othersPrice }] });
+        board.put({ id: 84, ownerId: 8, storeType: 3, kind: 'buy_ad', town: 'Dion', revision: 1,
+            lines: [{ lineId: 84, selfId: 202, count: 20000, price: othersPrice }] });
+    }
+    return board;
+};
+recipeVariants = [{ ...recipe, materials: [{ selfId: 202, amount: 1075 }] }];
+const luxHours = (othersPrice, ownPrice, buyback = 0) => {
+    const board = luxBoard(othersPrice, ownPrice);
+    const plan = run(true, { deps: { board }, context: { board, buyback: id => id === 202 ? buyback : 0 } })
+        .plans.find(([key]) => key === 'item:202')[1];
+    assert.equal(plan.kind, 'buy');
+    return plan.shortHours;
+};
+const queuedHours = luxHours(1, 1), ownHours = luxHours(0, 1), aboveHours = luxHours(1, 5);
+const pricedHours = luxHours(2, 0, 3), pricedOwnHours = luxHours(2, 1, 3);
+recipeVariants = [recipe];
+Demand.reset();
+assert.ok(Math.abs(queuedHours - 410) < 1e-6, `the missing units arrive after the other buyers' bids (${queuedHours} h)`);
+assert.ok(Math.abs(ownHours - 10) < 1e-6, `the bot's own bid line is no rival (${ownHours} h)`);
+assert.ok(Math.abs(pricedHours - 10) < 1e-6, `bids below the planning price are no rivals (${pricedHours} h)`);
+assert.ok(Math.abs(pricedOwnHours - 10) < 1e-6, `an own bid below the others' is not its place (${pricedOwnHours} h)`);
+assert.ok(Math.abs(aboveHours - 410) < 1e-6, `an own bid above the others' is not its place (${aboveHours} h)`);
+console.log('PASS short buy completion: queued behind other buyers\' bids at or above the planning price, own bids excluded');
+
+// A buy of more units than one ask holds: its quote takes the town's asks up
+// to its unit price, the meeting buy takes them ad by ad (the cheaper ad of 20
+// first, the rest on a later step) and the leaf check keeps the leaf while
+// the town still sells what is left at that price.
+const Ready = require('../src/GameServer/Bot/Economy/ReadyTradeChoice');
+const meetBoard = new BoardIndex();
+meetBoard.put({ id: 31, ownerId: 2, storeType: 1, kind: 'sell_ad', custodyPolicy: 1, revision: 1, town: 'Dion',
+    lines: [{ lineId: 31, selfId: 202, count: 20, price: 2 }] });
+meetBoard.put({ id: 32, ownerId: 3, storeType: 1, kind: 'sell_ad', custodyPolicy: 1, revision: 1, town: 'Dion',
+    lines: [{ lineId: 32, selfId: 202, count: 25, price: 3 }] });
+const dionTrip = town => town === 'Dion' ? 0 : Infinity;
+dionTrip.details = town => ({ known: town === 'Dion', hours: 0, fees: 0 });
+const quote45 = Evidence.reader(state, { ...context, board: meetBoard, trip: dionTrip }, { board: meetBoard, npcOffersFor: () => [] })(202, 45);
+assert.deepEqual([quote45.town, quote45.unitPrice, quote45.availableUnits, quote45.price], ['Dion', 3, 45, 115 / 45]);
+const leaf45 = { activity: 'shopping', kind: 'buy', sourceType: 'afk', quoted: true, executable: true,
+    itemId: 202, amount: 45, unitPrice: 3, town: 'Dion' };
+assert(Ready.preparedLeaf(meetBoard.list(202, require('../src/GameServer/AfkTrade/BoardIndex').SELL, 'Dion')[0], leaf45, 20, 202), 'an ask under the quoted unit price is the prepared buy');
+assert.deepEqual(Ready.purchase({ characterId: 1, inventory: {} }, { network: { activity: leaf45 } }, meetBoard),
+    [1, 202, 20, 31, 31, 1, 2], 'the buy of 45 takes the cheaper ad of 20 first');
+const buyer = adena => ({ characterId: 1, level: 40, inventory: {}, stats: {}, adena });
+const reserve = NativeEconomy.survivalReserve(buyer(0));
+const leafCheck = adena => NativeEconomy.leafCheck(buyer(adena), leaf45,
+    { board: meetBoard, tripCost: dionTrip, npcOffersFor: () => [] }, { heldUnits: undefined });
+assert.equal(leafCheck(reserve + 120), '', 'the leaf holds while its town sells 45 at most at 3 and the money pays their mean 115 (not 45 x 3)');
+// A standing bid for the same lot in Dion is crossed at the quote's mean
+// (the town sells 45 at 115, a unit 3 rounded up), as the buy fills it.
+const Alternative = require('../src/GameServer/Bot/Economy/BidPurchaseAlternative');
+const bidCtx = { travelDetails: dionTrip.details, hour: 0, board: meetBoard, characterId: 1, state: { characterId: 1 },
+    npcOffersFor: () => [] };
+const bidCap = price => Alternative.cap(202, bidCtx, { units: 45, town: 'Dion', money: 1000000, price });
+assert.equal(bidCap(Math.ceil(quote45.price)), 0, 'a bid at the mean of the town\'s 45 is crossed');
+assert.equal(bidCap(Math.ceil(quote45.price) - 1), Math.ceil(quote45.price) - 1, 'a bid under it stands under that ask');
+// Twenty cheaper lines the buy never takes (enchanted) leave the town's
+// ads to the buy the quote counted.
+const hiddenBoard = new BoardIndex();
+for (let id = 50; id < 70; id++) hiddenBoard.put({ id, ownerId: id, storeType: 1, kind: 'sell_ad', custodyPolicy: 1, revision: 1,
+    town: 'Dion', lines: [{ lineId: id, selfId: 202, enchant: 1, count: 5, price: 1 }] });
+hiddenBoard.put({ id: 31, ownerId: 2, storeType: 1, kind: 'sell_ad', custodyPolicy: 1, revision: 1, town: 'Dion',
+    lines: [{ lineId: 31, selfId: 202, count: 20, price: 2 }] });
+hiddenBoard.put({ id: 32, ownerId: 3, storeType: 1, kind: 'sell_ad', custodyPolicy: 1, revision: 1, town: 'Dion',
+    lines: [{ lineId: 32, selfId: 202, count: 25, price: 3 }] });
+const hiddenQuote = Evidence.reader(state, { ...context, board: hiddenBoard, trip: dionTrip }, { board: hiddenBoard, npcOffersFor: () => [] })(202, 45);
+assert.deepEqual([hiddenQuote.town, hiddenQuote.unitPrice, hiddenQuote.price], ['Dion', 3, 115 / 45]);
+assert.deepEqual(Ready.purchase({ characterId: 1, inventory: {} }, { network: { activity: leaf45 } }, hiddenBoard),
+    [1, 202, 20, 31, 31, 1, 2], 'the buy reads past lines it never takes, as the quote does');
+// A later step: the ad of 20 is gone and 5 of the lot arrived from it; the
+// buy takes the ad of 25 for all it holds, the rest on a further step.
+meetBoard.remove(31);
+assert.deepEqual(Ready.purchase({ characterId: 1, inventory: { 202: { amount: 5 } } },
+    { network: { activity: { ...leaf45, heldAtDecision: 0 } } }, meetBoard), [1, 202, 25, 32, 32, 1, 3],
+'the rest of the buy takes the next ad');
+// The one-unit quote serves larger amounts only while no town lands them
+// cheaper: Giran sells 30 at 5 at home, Dion 50 at 4 behind a
+// 20-adena trip, cheaper with its trip from 20 units on (the tie goes to Dion
+// by name).
+const twoBoard = new BoardIndex();
+twoBoard.put({ id: 41, ownerId: 2, storeType: 1, kind: 'sell_ad', revision: 1, town: 'Giran', lines: [{ lineId: 41, selfId: 202, count: 30, price: 5 }] });
+twoBoard.put({ id: 42, ownerId: 3, storeType: 1, kind: 'sell_ad', revision: 1, town: 'Dion', lines: [{ lineId: 42, selfId: 202, count: 50, price: 4 }] });
+const feeTrip = town => town === 'Giran' ? 0 : town === 'Dion' ? 20 : Infinity;
+feeTrip.details = town => ({ known: ['Giran', 'Dion'].includes(town), hours: 0, fees: feeTrip(town) });
+const twoQuote = Evidence.reader(state, { ...context, board: twoBoard, trip: feeTrip }, { board: twoBoard, npcOffersFor: () => [] });
+for (let n = 1; n <= 25; n++) {
+    const quoted = twoQuote(202, n);
+    assert.deepEqual([quoted.town, quoted.price], n < 20 ? ['Giran', 5] : ['Dion', 4], `the buy of ${n}`);
+}
+console.log('PASS sized buys: quote = meeting buy ad by ad = leaf check; one-unit quote = full table below its bound');

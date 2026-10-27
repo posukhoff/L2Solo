@@ -30,7 +30,6 @@ async function run() {
     const before = JSON.stringify(state.inventory);
     const options = { keptAmounts: {}, unlimited: true };
     assert.deepEqual(Disposition.saleCandidates(state, options).map(row => row.selfId), [1865]);
-    assert.equal(Disposition.npcLiquidationCandidates(state).some(row => row.selfId === 1305), false);
     assert.equal(JSON.stringify(state.inventory), before, 'source admission preserves held stock');
     assert.deepEqual(Listing.classify(state, bad), { action: 'ignore', reason: 'no_acquisition_source' });
     assert.equal(Market.viableSellLine(bad), false);

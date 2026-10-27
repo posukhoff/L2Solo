@@ -10,6 +10,10 @@ const FirstPrice = invoke('GameServer/Bot/Economy/FirstPrice');
 const Efficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const NpcShopPriceScale = invoke('GameServer/World/Generics/NpcShopPriceScale');
+const ProgressionRates = invoke('GameServer/ProgressionRates');
+const NpcShopBuyLists = invoke('GameServer/World/Generics/NpcShopBuyLists');
+const { npcPlanningCatalogRows } = require('../src/GameServer/Bot/Population/ColdSimulationCoordinator');
 
 const near = (actual, expected, message) => assert(Math.abs(actual - expected) < 1e-6 * Math.max(1, Math.abs(expected)),
     `${message}: ${actual} != ${expected}`);
@@ -30,7 +34,7 @@ const basePrice = Number(DataCache.items.find((item) => Number(item.selfId) === 
 const yieldPerKill = Planner.itemDropYield(reward, itemId, 'drop', { npcLevel: 18, killerLevel: 24 }).expectedYield;
 const kills = 1 / (0.75 * yieldPerKill);
 Efficiency.resetLevelBands();
-const defaultHour = Efficiency.hourValue({ level: 24, stats: {} });
+const defaultHour = Efficiency.huntIncome({ level: 24, stats: {} });
 const first = FirstPrice.firstPrice(itemId, { spots });
 assert.strictEqual(first.spotId, 'S');
 assert.strictEqual(first.npcId, 39, 'the monster with the larger share of the spot gives more items per hour: it wins');
@@ -73,34 +77,85 @@ const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const shotD = Recipes.resolveByProductId(1463);
 const crafted = FirstPrice.firstPrice(1463, { spots });
 assert.strictEqual(crafted.source, 'craft', 'a crafted product nobody drops');
-const unitOf = (selfId) => {
+const unitOf = (selfId, where = spots) => {
     const npc = BotMarketPricing.npcPrice({ selfId });
-    return Number.isFinite(npc) ? npc : FirstPrice.firstPrice(selfId, { spots }).price;
+    return Number.isFinite(npc) ? npc : FirstPrice.firstPrice(selfId, { spots: where }).price;
 };
-const materials = shotD.materials.reduce((sum, m) => sum + m.amount * unitOf(m.selfId), 0);
-near(crafted.materials, materials / shotD.productCount, 'materials at the NPC price, else at their own first price');
-const crafterLevel = [...Array(80).keys()].map((i) => i + 1)
-    .find((level) => CraftShop.craftLevelFor({ classId: level >= 40 ? 57 : level >= 20 ? 56 : 53, level }) >= shotD.level);
+const materialsOf = (recipe, where) => recipe.materials.reduce((sum, m) => sum + m.amount * unitOf(m.selfId, where), 0);
+near(crafted.materials, materialsOf(shotD) / shotD.productCount, 'materials at the NPC price, else at their own first price');
+const crafterLevelOf = (recipe) => [...Array(80).keys()].map((i) => i + 1)
+    .find((level) => CraftShop.craftLevelFor({ classId: level >= 40 ? 57 : level >= 20 ? 56 : 53, level }) >= recipe.level);
+const crafterLevel = crafterLevelOf(shotD);
 assert.strictEqual(crafted.crafterLevel, crafterLevel, 'the lowest dwarf able to craft it');
-const restMs = Resolver.estimateRestMs({ level: crafterLevel, stats: { classId: crafterLevel >= 40 ? 57 : crafterLevel >= 20 ? 56 : 53 } },
-    { hp: 1000, maxHp: 1000, mp: 0, maxMp: 10000 }, { requireMana: true });
-const craftHours = shotD.mpCost / (10000 / (restMs / 1000)) / 3600;
-near(crafted.labour, craftHours * Efficiency.hourValue({ level: crafterLevel, stats: {} }).perHour / shotD.productCount,
+const labourOf = (recipe) => {
+    const level = crafterLevelOf(recipe);
+    const restMs = Resolver.estimateRestMs({ level, stats: { classId: level >= 40 ? 57 : level >= 20 ? 56 : 53 } },
+        { hp: 1000, maxHp: 1000, mp: 0, maxMp: 10000 }, { requireMana: true });
+    return recipe.mpCost / (10000 / (restMs / 1000)) / 3600 * Efficiency.hourValue({ level, stats: {} }).perHour;
+};
+near(crafted.labour, labourOf(shotD) / shotD.productCount,
     'labour = the craft time (MP over seated regeneration) at the crafter\'s hour');
+// A product with two recipes, one that succeeds 60% of the time and one 100%:
+// one product costs the materials and labour of 1 / success rate tries, and
+// the cheaper recipe prices it.
+{
+    const recipes = Recipes.resolveVariantsByProductId(357);
+    assert.deepStrictEqual(recipes.map((recipe) => recipe.successRate), [60, 100], 'fixture: a 60% and a 100% recipe');
+    assert(!Number.isFinite(BotMarketPricing.npcPrice({ selfId: 357 })), 'fixture: no NPC sells it, no ceiling');
+    const base = Number(DataCache.items.find((item) => Number(item.selfId) === 357).template.price);
+    const costs = recipes.map((recipe) => (materialsOf(recipe) + labourOf(recipe)) / recipe.productCount / (recipe.successRate / 100));
+    assert.notStrictEqual(Math.round(costs[0]), Math.round(costs[1]), 'fixture: the two recipes cost differently');
+    assert(Math.min(...costs) > NpcSellRules.npcBuyPrice(base), 'fixture: its cost is above the buy-back');
+    const made = FirstPrice.firstPrice(357, { spots });
+    assert.strictEqual(made.source, 'craft');
+    assert.strictEqual(made.price, Math.round(Math.min(...costs)),
+        'crafted price = (materials + labour) / count / success rate, of the cheaper recipe');
+}
 const shotBase = Number(DataCache.items.find((item) => Number(item.selfId) === 1463).template.price);
 // No NPC sells a D shot: its price has the NPC buy-back as the floor and no ceiling (E91).
 assert.strictEqual(crafted.price, Math.max(NpcSellRules.npcBuyPrice(shotBase),
     Math.round(crafted.materials + crafted.labour)), 'crafted price above the NPC buy-back, no NPC ceiling');
-// A crystal: Saber (743 D crystals) drops from monster 65 on the table's spot.
+// Saber drops from monster 65 on the table's spot (rated at 24), and a
+// recipe (mk_saber, 100%) makes it: its first price is the cheaper of the two.
 const sabers = [{ id: 'S', avgLevel: 18, density: 30, npcEntries: [{ selfId: 65, name: 'x', level: 18, count: 1 }] }];
+// Prices are asked for the thread's spot catalog, the one the spot table reads.
+Table.useSpots(sabers);
+const saberBase = Number(DataCache.items.find((item) => Number(item.selfId) === 123).template.price);
+const saberYield = Planner.itemDropYield(DataCache.npcRewards.find((entry) => Number(entry.selfId) === 65), 123, 'drop',
+    { npcLevel: 18, killerLevel: 24 }).expectedYield;
+const saberDrop = Math.round(Math.min(NpcShopPriceScale.price(saberBase, ProgressionRates.profile().multiplier),
+    Math.max(NpcSellRules.npcBuyPrice(saberBase), defaultHour.perKill / saberYield)));
 const saber = FirstPrice.firstPrice(123, { spots: sabers });
+const saberRecipe = Recipes.resolveByProductId(123);
+const saberCraft = Math.round(materialsOf(saberRecipe, sabers) + labourOf(saberRecipe));
+assert(saberCraft < saberDrop, 'fixture: making the saber is cheaper than hunting it');
+assert.strictEqual(saber.source, 'craft', 'a dropped item with a cheaper recipe is priced by the recipe');
+assert.strictEqual(saber.price, saberCraft);
+// A crystal: Saber breaks into 743 D crystals; a crystal costs the gear's drop price per crystal.
 const crystal = FirstPrice.firstPrice(1458, { spots: sabers });
 const crystalBase = Number(DataCache.items.find((item) => Number(item.selfId) === 1458).template.price);
 assert.strictEqual(crystal.source, 'crystal');
-assert.strictEqual(crystal.price, Math.max(NpcSellRules.npcBuyPrice(crystalBase), Math.round(saber.price / 743)),
+assert.strictEqual(crystal.price, Math.max(NpcSellRules.npcBuyPrice(crystalBase), Math.round(saberDrop / 743)),
     'a crystal costs the gear it comes from per crystal, no NPC ceiling');
-BotMarketPricing.useNpcOfferSnapshot([{ selfId: 1835, price: 7 }]);
-assert.deepStrictEqual(FirstPrice.firstPrice(1835, { spots }), { price: 7, source: 'npc' }, 'a no-grade shot at the NPC price');
+Table.useSpots(spots);
+// Hunted only, no NPC sells it, no recipe: the hunt estimate is held at the rate-scaled base price.
+{
+    const bucklerBase = Number(DataCache.items.find((item) => Number(item.selfId) === 945).template.price);
+    assert(!Number.isFinite(BotMarketPricing.npcPrice({ selfId: 945 })) && !Recipes.resolveByProductId(945),
+        'fixture: no NPC sells the Skeleton Buckler and no recipe makes it');
+    const bucklerKills = 1 / (0.75 * Planner.itemDropYield(reward, 945, 'drop', { npcLevel: 18, killerLevel: 24 }).expectedYield);
+    const wall = NpcShopPriceScale.price(bucklerBase, ProgressionRates.profile().multiplier);
+    assert(bucklerKills * defaultHour.perKill > wall, 'fixture: the hunt estimate is above the wall');
+    const buckler = FirstPrice.firstPrice(945, { spots });
+    assert.strictEqual(buckler.source, 'drop');
+    assert(buckler.price <= wall, 'a hunted item no NPC sells stays at or under the rate-scaled base price');
+}
+// The worker's NPC prices: the snapshot main sends it.
+const workerNpcRows = npcPlanningCatalogRows();
+const shotNpcPrice = NpcShopBuyLists.townPriceForItem(1835);
+assert(shotNpcPrice > 0, 'fixture: an NPC sells the no-grade soulshot');
+BotMarketPricing.useNpcOfferSnapshot(workerNpcRows);
+assert.deepStrictEqual(FirstPrice.firstPrice(1835, { spots }), { price: shotNpcPrice, source: 'npc' }, 'a no-grade shot at the NPC price');
 BotMarketPricing.useNpcOfferSnapshot(null);
 const plain = FirstPrice.firstPrice(notDropped.selfId, { spots });
 if (plain.source === 'buyback') assert.strictEqual(plain.price, NpcSellRules.npcBuyPrice(Number(notDropped.template.price)),
@@ -118,16 +173,16 @@ assert.strictEqual(FirstPrice.firstPrice(1804, { spots: [] }).price, NpcSellRule
         .sort((a, b) => Number(a.template.price) - Number(b.template.price));
     const chain = [...loose.slice(0, 6), loose[loose.length - 1]].map((item) => Number(item.selfId));
     assert.strictEqual(new Set(chain).size, 7, 'fixture: seven distinct items');
-    const resolve = Recipes.resolveByProductId;
+    const resolve = Recipes.resolveVariantsByProductId;
     // This artificial price-depth fixture has independent admitted origins.
     const Catalog = invoke('GameServer/Items/ItemAcquisitionCatalog');
     const nativeSource = Catalog.hasSource, nativeRecipe = Catalog.allowsRecipe;
     Catalog.hasSource = id => chain.includes(Number(id)) || nativeSource(id);
     Catalog.allowsRecipe = recipe => chain.includes(Number(recipe?.productId)) || nativeRecipe(recipe);
-    Recipes.resolveByProductId = (id) => {
+    Recipes.resolveVariantsByProductId = (id) => {
         const at = chain.indexOf(Number(id));
         return at >= 0 && at < chain.length - 1
-            ? { productId: chain[at], productCount: 1, level: 1, mpCost: 0, materials: [{ selfId: chain[at + 1], amount: 1 }] }
+            ? [{ productId: chain[at], productCount: 1, successRate: 100, level: 1, mpCost: 0, materials: [{ selfId: chain[at + 1], amount: 1 }] }]
             : resolve(id);
     };
     try {
@@ -139,10 +194,30 @@ assert.strictEqual(FirstPrice.firstPrice(1804, { spots: [] }).price, NpcSellRule
         assert(deep > NpcSellRules.npcBuyPrice(Number(DataCache.items.find((item) => Number(item.selfId) === chain[5]).template.price)),
             'fixture: its full price is above the buy-back the cut gives');
     } finally {
-        Recipes.resolveByProductId = resolve;
+        Recipes.resolveVariantsByProductId = resolve;
         Catalog.hasSource = nativeSource; Catalog.allowsRecipe = nativeRecipe;
         FirstPrice.resetCache();
     }
+}
+
+// A kept first price follows its inputs, not a clock: the thread's spot
+// catalog and the NPC prices.
+{
+    const hunted = FirstPrice.firstPrice(945, { spots }).price;
+    assert.strictEqual(FirstPrice.cachedFirstPrice(945, { spots }), hunted, 'the kept price is the first price');
+    const none = [];
+    Table.useSpots(none);
+    const unhunted = FirstPrice.firstPrice(945, { spots: none }).price;
+    assert.notStrictEqual(unhunted, hunted, 'fixture: without the spot the buckler has another price');
+    assert.strictEqual(FirstPrice.cachedFirstPrice(945, { spots: none }), unhunted, 'the kept price follows the spot catalog');
+    Table.useSpots(spots);
+    assert.strictEqual(FirstPrice.cachedFirstPrice(945, { spots }), hunted, 'and back');
+    BotMarketPricing.useNpcOfferSnapshot(workerNpcRows);
+    assert.strictEqual(FirstPrice.cachedFirstPrice(1835, { spots }), shotNpcPrice);
+    BotMarketPricing.useNpcOfferSnapshot(workerNpcRows.map((row) => (row.selfId === 1835 ? { ...row, price: shotNpcPrice + 2 } : row)));
+    assert.strictEqual(FirstPrice.cachedFirstPrice(1835, { spots }), shotNpcPrice + 2, 'the kept price follows the NPC prices');
+    BotMarketPricing.useNpcOfferSnapshot(null);
+    FirstPrice.resetCache();
 }
 
 Table.useFile();

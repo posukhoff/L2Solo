@@ -6,6 +6,7 @@ require('./helpers/databaseIsolation');
 const fixture = isMainThread ? require('./helpers/isolatedSocialDatabase')('b-grade-craft-progression') : null;
 if (isMainThread) require('../src/Global');
 else require(workerData.workerPath);
+const { publishTwinOffer } = isMainThread ? require('./helpers/twinOffer') : {};
 const Geodata = require('../src/GameServer/Geodata/GeodataEngine');
 const Data = invoke('GameServer/DataCache');
 if (isMainThread) Data.init();
@@ -33,8 +34,9 @@ function verify(recipeId, missing = false, slot = 14, classId = 3, targetId = nu
     assert(variants.includes(recipe) && recipe.successRate === 100);
     assert.equal(Recipes.resolveByProductId(recipe.productId), variants[0], 'existing callers keep their canonical recipe');
     assert(Object.isFrozen(variants), 'the shared native variant catalogue cannot be changed by a review');
-    const station = Shops.publishedStationRecipes().stationByRecipeId.get(recipeId);
-    assert(station, 'the exact native recipe is published');
+    // No Giran station crafts for a bot: the provider is a dwarf's workshop in
+    // Giran, here and in the paid crafts below.
+    const workshop = { loc: { ...Shops.CraftStations.find(row => row.id === 'c_weapons_entry').loc } };
     const state = { characterId: 990410, name: 'CraftBuyer', level: 55, classId,
         phase: 'cold', activity: 'hunting', currentRegion: 'Giran', adena: 100000000,
         loc: { locX: 81100, locY: 148000, locZ: -3466 },
@@ -58,8 +60,9 @@ function verify(recipeId, missing = false, slot = 14, classId = 3, targetId = nu
         equipped(state.inventory, rows[0].selfId, otherSlot);
     }
     for (const material of recipe.materials) state.inventory[material.selfId] = { selfId: material.selfId, amount: material.amount };
-    for (const id of [invoke('GameServer/Inventory/ShotStock').planForState(state).selfId, 1061, 736])
-        state.inventory[id] = { selfId: id, amount: 100000 };
+    // Supplies above their stock targets, within a bag the survival floor accepts.
+    for (const [id, amount] of [[invoke('GameServer/Inventory/ShotStock').planForState(state).selfId, 3000], [1061, 200], [736, 20]])
+        state.inventory[id] = { selfId: id, amount };
     const fragment = recipe.materials[1];
     assert(fragment && fragment.selfId !== recipe.recipeItemId, 'native B equipment requires its key material');
     const board = new BoardIndex();
@@ -70,7 +73,7 @@ function verify(recipeId, missing = false, slot = 14, classId = 3, targetId = nu
     }
     const fee = Shops.productPrice(recipe);
     const service = { characterId: 990412, recipeId, price: fee, entryPrice: fee,
-        capacityBatches: 1, townName: 'Giran', loc: station.loc };
+        capacityBatches: 1, townName: 'Giran', loc: workshop.loc };
     const context = Economy.forState(state, { timestamp, board, spots: [], npcOffersFor: () => [],
         workshop: null, knownRecipes: [], withNodes: true, knowledgeEnabled: false,
         routeRows: invoke('GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]),
@@ -101,7 +104,7 @@ function verify(recipeId, missing = false, slot = 14, classId = 3, targetId = nu
     }
     assert.equal(plan.target.slot, slot, 'the selected paperdoll slot reaches the equipment receipt');
     if (!missing) readyFixtures.set(recipeId, { state: { ...state,
-        stats: { ...state.stats, ...context.statsPacket } }, plan, station });
+        stats: { ...state.stats, ...context.statsPacket } }, plan, workshop });
     return { recipeId, productId: recipe.productId, targetId, missing, activity: leaf.activity };
 }
 
@@ -109,7 +112,7 @@ async function verifyNativeCrafts() {
     const Database = invoke('Database'), Life = invoke('GameServer/Bot/Population/BotLifeState');
     const Craft = invoke('GameServer/Bot/Economy/ColdCraftingService');
     const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
-    const owners = new Map();
+    const TwinCluster = invoke('GameServer/Bot/Economy/TwinCluster');
     fixture.assertConfigured(options.default);
     async function seed(accountName, name, classId, level, inventory, loc, stats) {
         await Database.createAccount(accountName, 'fixture');
@@ -137,17 +140,19 @@ async function verifyNativeCrafts() {
     }
     try {
         await Database.init(); await Life.init();
-        for (const [recipeId, { state, plan, station }] of readyFixtures) {
+        for (const [recipeId, { state, plan, workshop }] of readyFixtures) {
             const recipe = Recipes.resolveByRecipeId(recipeId);
-            let owner = owners.has(station.id) ? Life.cachedState(owners.get(station.id))
-                : await seed(Craft.crafterAccount(station), `Forge${recipeId}`, 57, 70,
-                    { 57: { selfId: 57, amount: 1000 } }, station.loc, { craftStationId: station.id });
-            owners.set(station.id, owner.characterId);
-            await Shops.ensureRecipes(owner.characterId, Shops.profileFor(owner));
-            owner = await Workshops.review(Life.cachedState(owner.characterId));
-            const provider = { ...plan.craftProviders[recipeId], characterId: owner.characterId };
+            // One dwarf per recipe: a workshop craft spends its owner's MP.
+            let owner = await seed(`bot_b_dwarf_${recipeId}`, `Forge${recipeId}`, 57, 70,
+                { 57: { selfId: 57, amount: 1000 } }, workshop.loc, { role: 'crafter', twin: { town: 'Giran' } });
+            await Database.setCharacterRecipe(owner.characterId, recipeId, recipe.type);
+            owner = await publishTwinOffer(Life.cachedState(owner.characterId));
+            assert(Workshops.publicRecipeRows(owner.characterId).some(row => row[1] === recipeId), `${recipeId}: the dwarf publishes the recipe`);
+            // The buyer agrees to the dwarf's published fee (his twin offer).
+            const offer = TwinCluster.entriesOf(owner).find(entry => Number(entry.recipeId) === recipeId);
+            const provider = { ...plan.craftProviders[recipeId], characterId: owner.characterId, price: offer.price };
             let buyer = await seed(`bot_b_craft_${recipeId}`, `Buyer${recipeId}`, state.classId, 55,
-                { ...state.inventory, 57: { selfId: 57, amount: state.adena } }, station.loc,
+                { ...state.inventory, 57: { selfId: 57, amount: state.adena } }, workshop.loc,
                 { ...state.stats, equipmentPlan: { ...plan, craftProviders: { ...plan.craftProviders, [recipeId]: provider } } });
             const before = buyer.adena, ownerBefore = (await Database.fetchItems(owner.characterId)).find(row => row.selfId === 57).amount;
             const committedPlan = buyer.stats.equipmentPlan;
@@ -190,7 +195,7 @@ async function verifyNativeCrafts() {
                 assert.equal(physical.filter(row => row.selfId === material.selfId).reduce((n, row) => n + row.amount, 0), 0);
             assert.equal(buyer.adena, before - provider.price, 'the buyer pays exactly the quoted service fee');
             assert.equal((await Database.fetchItems(owner.characterId)).find(row => row.selfId === 57).amount,
-                ownerBefore + provider.price, 'the station receives the paid fee in its physical wallet');
+                ownerBefore + provider.price, 'the dwarf receives the paid fee in its physical wallet');
             assert.equal((await Craft.craft({ ...buyer, activity: 'crafting' }, () => 0)).crafted, false,
                 'a completed equipment receipt never crafts the equipment again');
             if (plan.unseal) {
@@ -226,75 +231,6 @@ async function verifyNativeCrafts() {
                 assert.equal(buyer.stats.equipmentPlan, undefined, 'only the equipped final variant closes the goal');
                 assert(!Mammon.candidate(buyer), 'the accepted variant cannot loop through Mammon');
             }
-            if ([457, 424].includes(recipeId)) {
-                const Sources = invoke('GameServer/Bot/Population/ColdOccupationSources'); Sources.initialise();
-                const Market = invoke('GameServer/Bot/Economy/ColdMarketService');
-                const Improvements = invoke('GameServer/Bot/Economy/BotImprovementService');
-                const Decision = invoke('GameServer/Bot/Population/ColdEconomyDecision');
-                const bag = structuredClone(state.inventory); delete bag[1459];
-                for (const [id, row] of Object.entries(bag)) if (!row.equipped
-                    && ['d', 'c'].includes(Data.items.find(item => item.selfId === row.selfId)?.etc?.rank)) delete bag[id];
-                let customer = await seed(`bot_crystal_chain_${recipeId}`, `CrystalChain${recipeId}`, state.classId, 55,
-                    { ...bag, 57: { selfId: 57, amount: state.adena } }, station.loc, state.stats);
-                const operations = [];
-                for (let step = 0; step < 12; step++) {
-                    const economy = Economy.forState(customer, { timestamp: Date.now(), board: new BoardIndex(), spots: [],
-                        npcOffersFor: Sources.npcOffersFor, workshop: null, knownRecipes: [], rememberContext: false,
-                        routeRows: invoke('GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]),
-                        workshops: id => id === recipeId ? [{ ...provider, recipeId, entryPrice: provider.price,
-                            capacityBatches: 1, townName: 'Giran', loc: station.loc }] : [] });
-                    const leaf = economy.network.activity;
-                    const selected = Providers.personalCraftPlan(customer, economy);
-                    assert([`power:${plan.target.selfId}:${plan.target.slot}`,
-                        `crystal_input:${plan.target.selfId}:${plan.target.slot}`].includes(leaf?.rootKey), JSON.stringify(leaf));
-                    assert.equal(selected?.recipeId, recipeId, 'crystal preparation retains its B recipe owner');
-                    customer = await Life.upsertState({ ...customer, activity: 'shopping', stats: {
-                        ...customer.stats, ...economy.statsPacket, equipmentPlan: selected } }, 'crystal_chain_step');
-                    if (leaf.activity === 'shopping') {
-                        const purchase = Market.planPurchase(customer, leaf.itemId, leaf.amount, { npcOnly: true,
-                            towns: ['Giran'], money: customer.adena,
-                            r: invoke('GameServer/Bot/Economy/PurchaseFunding').leafRatio(leaf,
-                                economy.network.queue.find(row => row.key === leaf.rootKey)) });
-                        assert(purchase, JSON.stringify(leaf));
-                        const bought = await Market.buyHere(customer, purchase);
-                        assert.equal(bought.units, leaf.amount);
-                        customer = bought.state; operations.push('npc_buy');
-                    } else if (leaf.activity === 'improving') {
-                        const before = customer;
-                        if (leaf.kind === 'crystallize' && leaf.itemId === 1459) {
-                            const physicalBefore = await Database.fetchItems(customer.characterId);
-                            await Database.setSkill({ selfId: 248, name: 'Crystallize', level: 1, passive: true }, customer.characterId);
-                            await assert.rejects(Database.applyBotImprovement(customer.characterId,
-                                { ...leaf.improvement, mode: 'self' }, { coldState: customer }), /improvement_source_changed/,
-                            'D crystallization skill cannot break C equipment');
-                            await assert.rejects(Database.applyBotImprovement(customer.characterId,
-                                { ...leaf.improvement, items: [{ selfId: leaf.improvement.sourceSelfId, amount: 1 },
-                                    { selfId: 626, amount: 1 }] }, { coldState: customer }), /improvement_source_changed/,
-                            'mixed crystal grades cannot share a native operation');
-                            assert.deepEqual(await Database.fetchItems(customer.characterId), physicalBefore,
-                                'refused crystallization changes no physical item or crystal stack');
-                        }
-                        const result = await Improvements.reviewCold(customer, { decide: () => Decision.capture(economy, customer) });
-                        assert(result.changed, JSON.stringify(leaf)); customer = result.state;
-                        if (leaf.kind === 'luxury_exchange') {
-                            assert(leaf.improvement.forCrystals);
-                            assert.equal(customer.inventory[leaf.itemId].equippedCount, 0, 'Luxury scrap is never worn');
-                            operations.push('luxury_input');
-                        } else operations.push(Number(customer.inventory[1459]?.amount || 0) > Number(before.inventory[1459]?.amount || 0)
-                            ? 'crystallize_c' : 'crystallize_d');
-                    } else {
-                        assert.equal(leaf.activity, 'crafting');
-                        customer = await Life.upsertState({ ...customer, activity: 'crafting' }, 'b_chain_ready');
-                        const crafted = await Craft.craft(customer, () => 0);
-                        assert(crafted.crafted, `${crafted.reason}: ${crafted.error}`);
-                        customer = crafted.state; operations.push('craft'); break;
-                    }
-                }
-                assert.deepEqual(operations, ['npc_buy', 'crystallize_d', 'luxury_input', 'crystallize_c', 'craft']);
-                assert((await Database.fetchItems(customer.characterId)).some(row => row.selfId === recipe.productId
-                    && (plan.unseal || row.equipped)),
-                'NPC D -> D crystals -> Luxury C -> C crystals -> native B craft produces the physical receipt');
-            }
         }
         console.log('PASS native B craft receipts, eight glove/boot base crafts -> Mammon -> same physical instance equipped -> closed plan');
     } finally { await Database.close(); }
@@ -317,73 +253,47 @@ const results = [...cases, ...unsealCases].flatMap(([recipeId, slot = 14, classI
 // A chosen paperdoll variant is authoritative even when another armour style
 // would be the default for an incidental, unplanned Mammon visit.
 results.push(verify(430, false, 9, 9, 5710));
+// A B craft whose C crystals come from paid C pieces (crystalPreparation):
+// the bot breaks them with its own Crystallize (no trip, no workshop), and
+// the pieces and the crystals stay reserved for the craft, never sold.
 {
     const Sources = invoke('GameServer/Bot/Population/ColdOccupationSources'); Sources.initialise();
-    const { state: original, plan, station } = readyFixtures.get(457);
+    const Crystals = invoke('GameServer/Bot/Economy/BotCrystallization');
+    const { state: original, plan } = readyFixtures.get(457);
     const state = structuredClone(original);
+    const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
+    state.stats.coldCombat = { ...Profile.legacySnapshot(state, []), skills: [...(state.stats.coldCombat?.skills || []),
+        ...Profile.skillSnapshotsFromRecords([{ selfId: 248, name: 'Crystallize', level: 2, passive: true }])] };
     delete state.inventory[1459];
     for (const [id, row] of Object.entries(state.inventory)) if (!row.equipped
         && ['d', 'c'].includes(Data.items.find(item => item.selfId === row.selfId)?.etc?.rank)) delete state.inventory[id];
-    const provider = plan.craftProviders[457];
-    const context = Economy.forState(state, { timestamp, board: new BoardIndex(), spots: [],
-        npcOffersFor: Sources.npcOffersFor, workshop: null, knownRecipes: [], rememberContext: false,
-        routeRows: invoke('GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]),
-        workshops: id => id === 457 ? [{ ...provider, recipeId: id, entryPrice: provider.price,
-            capacityBatches: 1, townName: 'Giran', loc: station.loc }] : [] });
-    const leaf = context.network.activity, selected = Providers.personalCraftPlan(state, context);
-    assert.equal(leaf.activity, 'shopping');
-    assert.equal(Data.items.find(item => item.selfId === leaf.itemId)?.etc?.rank, 'd');
-    assert.equal(selected.recipeId, 457);
-    assert(selected.crystalPreparation.exchange);
-    const command = invoke('GameServer/Bot/Population/ColdEconomyDecision').capture(context, state);
-    assert(command.data.byteLength + 48 + Buffer.byteLength(JSON.stringify(command.echo)) <= 800,
-        'the crystal chain fits the bounded worker decision');
-    assert.equal(command.activity.itemId, leaf.itemId);
-    const native = invoke('GameServer/Bot/AI/GearAcquisitionPlanner').planFor(state, {
-        recipeId: 457, spots: [], allowedRecipeIds: new Set([457]),
-        findNpcOffer: item => Sources.npcOffersFor(item.selfId).find(row => row.town === 'Giran'),
-        findMarketOffer: item => Sources.npcOffersFor(item.selfId).find(row => row.town === 'Giran') });
-    assert.equal(native.strategy, 'craft'); assert.equal(native.status, 'active');
-    assert.equal(native.next.kind, 'crystal_supply', 'the clan route recognizes renewable C crystals');
-    const interrupted = structuredClone(state);
-    interrupted.stats.equipmentPlan = selected;
-    const inputId = selected.crystalPreparation.exchange.itemId;
-    interrupted.inventory[inputId] = { selfId: inputId, amount: 1, equipped: false };
-    const resumed = Economy.forState(interrupted, { timestamp, board: new BoardIndex(), spots: [],
-        npcOffersFor: Sources.npcOffersFor, workshop: null, workshops: () => [], knownRecipes: [],
-        routeRows: invoke('GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]) });
-    assert.equal(resumed.network.activity.rootKey, `crystal_input:${plan.target.selfId}:${plan.target.slot}`);
+    const crystals = Number(plan.materials.find(row => Number(row.selfId) === 1459)?.amount || 0);
+    assert(crystals > 0, 'the B recipe takes C crystals');
+    const inputId = Crystals.catalog('c')[0];
+    const paid = { ...structuredClone(plan), status: 'active',
+        crystalPreparation: { materials: [{ selfId: inputId, amount: 1 }] } };
+    const prepared = structuredClone(state);
+    prepared.stats.equipmentPlan = paid;
+    prepared.inventory[inputId] = { selfId: inputId, amount: 1, equipped: false };
+    const review = (from, routeRows) => Economy.forState(from, { timestamp, board: new BoardIndex(), spots: [],
+        npcOffersFor: Sources.npcOffersFor, workshop: null, workshops: () => [], knownRecipes: [], rememberContext: false,
+        ...(routeRows ? { routeRows } : {}) });
+    const rootKey = `crystal_input:${paid.target.selfId}:${paid.target.slot}`;
+    const resumed = review(prepared, invoke('GameServer/Bot/Economy/EconomicTrip').towns.map(() => [true, 0, 0]));
+    assert.equal(resumed.network.activity.rootKey, rootKey);
     assert.equal(resumed.network.activity.kind, 'crystallize');
-    assert.equal(resumed.network.activity.itemId, 1459, 'a paid C input is crystallized even when the B workshop disappears');
-    const retained = invoke('GameServer/Bot/AI/GearPlanSelection').selectAcquisitionPlan(interrupted, selected,
-        { preparedEconomy: resumed }).acquisitionPlan;
-    assert.equal(retained.recipeId, selected.recipeId);
-    assert(retained.crystalPreparation, 'a temporary missing final route cannot release the conversion inputs for sale');
-    const stocked = structuredClone(interrupted);
+    assert.equal(resumed.network.activity.itemId, 1459, 'a paid C piece is crystallized even when the B workshop disappears');
+    // The bot breaks its pieces where it stands: no known route is needed.
+    assert.equal(review(prepared, null).network.activity.rootKey, rootKey, 'the paid inputs root needs no trip');
+    const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+    assert(Disposition.reservedEquipmentAmounts(prepared)[inputId] >= 1, 'the paid C piece is not sold');
+    const stocked = structuredClone(prepared);
     delete stocked.inventory[inputId];
-    stocked.inventory[1459] = { selfId: 1459, amount: 1462 };
-    const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner'), originalPlan = Planner.planFor;
-    try {
-        Planner.planFor = () => ({ status: 'complete', reason: 'no_missing_craftable_upgrade' });
-        const rootKey = `power:${selected.target.selfId}:${selected.target.slot}`;
-        const interruptedEconomy = { ...resumed, network: { ...resumed.network,
-            queue: [{ key: rootKey, object: { itemId: selected.target.selfId, slot: selected.target.slot } }],
-            activity: { rootKey, activity: 'hunting' } } };
-        const waiting = invoke('GameServer/Bot/AI/GearPlanSelection').selectAcquisitionPlan(stocked, selected,
-            { preparedEconomy: interruptedEconomy }).acquisitionPlan;
-        assert.equal(waiting.status, 'deferred'); assert.equal(waiting.recipeId, selected.recipeId);
-        const reserved = invoke('GameServer/Bot/Economy/ItemDisposition').reservedEquipmentAmounts({ ...stocked,
-            stats: { ...stocked.stats, equipmentPlan: waiting } });
-        assert(reserved[1459] >= 353, 'a missing final route cannot sell the C crystals reserved for the unfinished B craft');
-    } finally { Planner.planFor = originalPlan; }
-    if (isMainThread) {
-        const clan = invoke('GameServer/Clan/ClanEquipmentPlanner').planForMember({ ...state, stats: {
-            ...state.stats, equipmentPlan: { ...native, strategy: 'direct_drop', status: 'active' } } }, [], [], {
-            throwOnError: true, craftRecipes: [Recipes.resolveByRecipeId(457)], allowedRecipeIds: [457] });
-        assert.equal(clan.strategy, 'craft', 'an old clan drop goal switches to the now available craft');
-    }
-    results.push({ crystalSupply: true, leaf, selected, command: { ...command.activity }, native,
-        resumed: { rootKey: resumed.network.activity.rootKey, kind: resumed.network.activity.kind, itemId: resumed.network.activity.itemId } });
+    stocked.inventory[1459] = { selfId: 1459, amount: crystals };
+    assert(Disposition.reservedEquipmentAmounts(stocked)[1459] >= crystals,
+        'the C crystals reserved for the unfinished B craft are not sold');
+    results.push({ crystalPreparation: true, resumed: { rootKey: resumed.network.activity.rootKey,
+        kind: resumed.network.activity.kind, itemId: resumed.network.activity.itemId } });
 }
 console.log(`PASS B recipe variants and native craft/material goals (${isMainThread ? 'main' : 'worker'})`);
 if (isMainThread) {

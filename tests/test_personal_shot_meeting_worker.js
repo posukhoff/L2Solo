@@ -29,7 +29,7 @@ module.exports.personalShotProbe = async id => {
         revision: 1, custodyPolicy: 1, lines: [{ lineId: recordId+1, selfId, enchant: 0, count: 350, price: 188 }] });
     const request = (selfId, adId) => ({ token: 'personal-shot-'+adId, actorA: id, actorB: id+1, seqA: 0, seqB: 0,
         town: 'Giran', point: { locX: 83396, locY: 147904, locZ: -3400 },
-        parties: [0,1].map(() => ({ ...authority, sequence: 0, needRevision: authority.revision,
+        parties: [0,1].map(() => ({ ...authority, sequence: 0,
             route: { fee: 0, scroll: false, method: 'walk', durationMs: 0 } })),
         lines: [{ payer: 1, itemId: selfId === 1463 ? 710102 : 710103, selfId, enchant: 0, count: 1,
             price: 188, adId, adRevision: 1, certificate: null }] });

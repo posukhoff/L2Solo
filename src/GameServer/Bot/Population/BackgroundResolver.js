@@ -238,7 +238,7 @@ function resolveTravel(state, timestamp = Date.now()) {
     const travel = state.stats?.travel;
     if (!travelRecord(travel)) return null;
     const isLegacyGiranMarketTrip = travel.townName === 'Giran'
-        && ['market_sale_inventory', 'market_search_for_weapon', 'market_search_for_gear'].includes(travel.reason)
+        && ['market_sale_inventory', 'market_search_for_gear'].includes(travel.reason)
         && !['soe_gatekeeper', 'walk_gatekeeper'].includes(travel.method);
     // Cold bots model the native SoE/gatekeeper sequence as a short transit,
     // not a visible straight-line cross-continent walk.  They remain at the

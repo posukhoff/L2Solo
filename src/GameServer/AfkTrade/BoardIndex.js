@@ -104,6 +104,13 @@ function recordOf(row) {
     };
 }
 
+// A line that sells at the counter at once. A conditional line (custodyPolicy 1)
+// sells only through a trade meeting its seller prepares (TradeMeetingService).
+// Reads a board line (custodyPolicy) and an offer (conditional) alike.
+function settlesAtOnce(line) {
+    return !line?.conditional && Number(line?.custodyPolicy) !== 1;
+}
+
 // A line as an offer of the board, the fields every thread reads; the main
 // thread adds the record's store and stall (AfkTradeService).
 function offerFields(line, town = null) {
@@ -116,7 +123,7 @@ function offerFields(line, town = null) {
         sellerKind: line.botOwned ? 'bot' : 'player',
         playerPriority: !line.botOwned,
         town: line.town || town,
-        recordKind: line.kind, conditional: line.custodyPolicy === 1, backed: line.custodyPolicy !== 1,
+        recordKind: line.kind, conditional: !settlesAtOnce(line), backed: settlesAtOnce(line),
         recordId: line.recordId,
         expectedRevision: line.revision,
         lineId: line.lineId,
@@ -143,7 +150,14 @@ class BoardIndex {
         this.ownerChangeObserver = null;
         this.epoch = 0;
         this.itemChanges = new Map();
-        this.itemFingerprints = new Map();
+        // itemId -> admission changes of its meeting lines (admissionRevision),
+        // apart from itemChanges: no line moved, so no reader of the item's
+        // lines rebuilds; only a reader of who may take them does. Kept
+        // through clear(): a count never comes back to a value a reader held.
+        // admissionTracked: a write path announces every flip
+        // (PartyAdmission.watchStates); else no revision exists.
+        this.admissionChanges = new Map();
+        this.admissionTracked = false;
         this.itemIdFingerprints = new Map();
         this.groupFingerprints = new Map();
         // storeType -> itemId -> { all: [line], towns: Map(town -> [line]) }
@@ -158,6 +172,9 @@ class BoardIndex {
         this.groupOf = groupOf;
         // group -> open sell lines
         this.groupLines = new Map();
+        // group -> sorted ids of its items with a sell line (groupItemIds),
+        // kept with the '*' list; about 8 B per indexed id.
+        this.groupItems = new Map();
         // counter -> priced bot owner -> number of surviving lines, on both sides
         this.counterOwners = new Map();
     }
@@ -166,7 +183,6 @@ class BoardIndex {
         if (this.epoch === Number.MAX_SAFE_INTEGER) { this.serial = nextSerial(); this.epoch = 0; }
         else this.epoch++;
         this.itemChanges.clear();
-        this.itemFingerprints.clear();
         this.itemIdFingerprints.clear();
         this.groupFingerprints.clear();
         this.sides.forEach((items) => items.clear());
@@ -174,6 +190,7 @@ class BoardIndex {
         this.records.clear();
         this.owners.clear();
         this.groupLines.clear();
+        this.groupItems.clear();
         this.counterOwners.clear();
     }
 
@@ -182,12 +199,6 @@ class BoardIndex {
         const value = this.itemChanges.get(Number(selfId)) || 0;
         return typeof value === 'number' ? `${this.serial}.${this.epoch}.${value}`
             : `${this.serial}.${this.epoch}.${value.generation}.${value.changes}`;
-    }
-
-    // Shared public content digest survives different main/worker index epochs.
-    // Updated beside the existing index; a preparation reads no line list.
-    itemFingerprint(selfId) {
-        return (this.itemFingerprints.get(Number(selfId)) || [0, 0, 0]).join('.');
     }
 
     // The complete ordered itemIds list, by side. Membership changes only;
@@ -207,11 +218,11 @@ class BoardIndex {
     }
 
     fingerprintLine(line, step) {
+        if (!this.groupOf) return;
         const hash = fnv1a32(JSON.stringify([line.recordId, Number(line.revision || 0), line.custodyPolicy,
             line.lineId, line.kind, line.storeType, line.ownerId, line.town, line.botOwned,
             line.selfId, line.enchant, line.count, line.price, line.pricing || null, line.fills]));
-        this.changeFingerprint(this.itemFingerprints, line.selfId, hash, step);
-        if (this.groupOf) this.changeFingerprint(this.groupFingerprints, this.groupOf(line.selfId), hash, step);
+        this.changeFingerprint(this.groupFingerprints, this.groupOf(line.selfId), hash, step);
     }
 
     // Local numeric reads never allocate/parse an opaque cross-reader token.
@@ -221,6 +232,33 @@ class BoardIndex {
         target[offset + 2] = typeof value === 'number' ? 0 : value.generation;
         target[offset + 3] = typeof value === 'number' ? value : value.changes;
         return true;
+    }
+
+    // A count that changes whenever the party rule's verdict on the owner of
+    // one of this item's meeting lines moves (admissionChanged); it never
+    // goes back on this board. null on a board whose flips no write path
+    // announces (trackAdmission never called: main's): a result that depends
+    // on who may take a meeting line holds on nothing there.
+    admissionRevision(selfId) {
+        return this.admissionTracked ? this.admissionChanges.get(Number(selfId)) || 0 : null;
+    }
+
+    // PartyAdmission.watchStates: every flip of the rule's input comes
+    // through admissionChanged from now on.
+    trackAdmission() { this.admissionTracked = true; }
+
+    // The trade admission of an owner moved (PartyAdmission.admissionWrite: a
+    // party joined or left): every item it holds a meeting line for (a line
+    // that does not settle at once, with stock) gets a new admission
+    // revision. Returns the items moved. O(the owner's lines).
+    admissionChanged(ownerId) {
+        const items = new Set();
+        for (const id of this.owners.get(Number(ownerId)) || EMPTY) for (const line of this.records.get(id)) {
+            if (settlesAtOnce(line) || items.has(line.selfId)) continue;
+            items.add(line.selfId);
+            this.admissionChanges.set(line.selfId, (this.admissionChanges.get(line.selfId) || 0) + 1);
+        }
+        return items.size;
     }
 
     setOwnerChangeObserver(observer) { this.ownerChangeObserver = observer || null; }
@@ -267,12 +305,27 @@ class BoardIndex {
         const at = itemPosition(ids, selfId);
         if (present && ids[at] !== selfId) {
             ids.splice(at, 0, selfId);
-            if (town === '*') this.changeFingerprint(this.itemIdFingerprints, storeType, fnv1a32(String(selfId)), 1);
+            if (town === '*') { this.changeFingerprint(this.itemIdFingerprints, storeType, fnv1a32(String(selfId)), 1); this.groupItem(storeType, selfId, true); }
         } else if (!present && ids[at] === selfId) {
             ids.splice(at, 1);
-            if (town === '*') this.changeFingerprint(this.itemIdFingerprints, storeType, fnv1a32(String(selfId)), -1);
+            if (town === '*') { this.changeFingerprint(this.itemIdFingerprints, storeType, fnv1a32(String(selfId)), -1); this.groupItem(storeType, selfId, false); }
         }
         if (!ids.length) towns.delete(town);
+    }
+
+    // An item gains its first or loses its last sell line: its group's list.
+    groupItem(storeType, selfId, present) {
+        if (!this.groupOf || storeType !== SELL) return;
+        const group = this.groupOf(selfId);
+        let ids = this.groupItems.get(group);
+        if (!ids) {
+            if (!present) return;
+            this.groupItems.set(group, ids = []);
+        }
+        const at = itemPosition(ids, selfId);
+        if (present && ids[at] !== selfId) ids.splice(at, 0, selfId);
+        else if (!present && ids[at] === selfId) ids.splice(at, 1);
+        if (!ids.length) this.groupItems.delete(group);
     }
 
     countGroup(line, step) {
@@ -512,6 +565,13 @@ class BoardIndex {
         return heads;
     }
 
+    // The sorted ids of a group's items (groupOf, MarketCounters.counterOf:
+    // 'gear c') with at least one sell line, in every town. The caller must
+    // not change the list.
+    groupItemIds(group) {
+        return this.groupItems.get(group) || EMPTY;
+    }
+
     // The items with at least one line on a side.
     selfIds(storeType) {
         return [...(this.sides.get(Number(storeType))?.keys() || [])];
@@ -531,6 +591,40 @@ class BoardIndex {
         const lines = [];
         for (const id of this.owners.get(Number(ownerId)) || []) lines.push(...this.records.get(id));
         return lines;
+    }
+
+    // The units of the buy lines of an item, in every town, that a bid at
+    // `price` waits behind: an estimate, sellers rank the top 20 bids by value
+    // net of their trip (MarketPricing.bestAnswer), the higher bid mostly
+    // first (the list's order above), so only the lines priced at or above it
+    // count (a tie counts: same price, the earlier line may come first).
+    // `excludeOwner`'s lines are no rivals: left out of the count, they never
+    // set the place (the caller's price is the one place; its own bid is a
+    // route's output, luxwait3). No price (0): every line. The queue of bids the item's
+    // supply fills (WishProviders buyWait, a short buy's shortHours; luxwait
+    // 2026-10-25). O(log n) to find the first line below the price, then the
+    // lines ahead of it summed: O(log n + ahead), n the item's buy lines
+    // (<= ~80 live); no allocation, no kept sum.
+    buyUnits(selfId, excludeOwner = 0, price = 0) {
+        const list = this.sides.get(BUY).get(Number(selfId))?.all || EMPTY;
+        const place = Number(price) || 0, owner = Number(excludeOwner) || 0;
+        // The first line priced below `place` (the list is highest first).
+        let low = 0, high = list.length;
+        if (place > 0) {
+            while (low < high) {
+                const middle = (low + high) >> 1;
+                if (list[middle].price >= place) low = middle + 1;
+                else high = middle;
+            }
+        } else low = list.length;
+        let ahead = 0;
+        for (let i = 0; i < low; i++) if (!owner || list[i].ownerId !== owner) ahead += list[i].count;
+        return ahead;
+    }
+
+    // The owners with stocked lines (a readonly iterator).
+    ownerIds() {
+        return this.owners.keys();
     }
 
     // The open sell lines of a group (see groupOf).
@@ -555,4 +649,4 @@ class BoardIndex {
     }
 }
 
-module.exports = { BoardIndex, SELL, BUY, compareLines, offerFields, rowOf, recordOf, escrowOf };
+module.exports = { BoardIndex, SELL, BUY, compareLines, settlesAtOnce, offerFields, rowOf, recordOf, escrowOf };

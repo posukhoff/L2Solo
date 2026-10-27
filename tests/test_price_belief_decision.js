@@ -12,6 +12,7 @@ global.invoke = originalInvoke;
 const PriceDecision = invoke('GameServer/Bot/Economy/PriceDecision');
 const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const { BoardIndex, SELL, BUY } = require('../src/GameServer/AfkTrade/BoardIndex');
+const Alternative = require('../src/GameServer/Bot/Economy/BidPurchaseAlternative');
 
 // N79 keeps all public sources and the expected-value decision; personal
 // item memory, fading and attention chance are deliberately removed.
@@ -80,24 +81,48 @@ const fresh1 = PriceDecision.chooseAsk(believed, market(), needy, ['r', 1]);
 assert.strictEqual(PriceDecision.chooseAsk(believed, market(), needy, ['r', 2], fresh1.price).price, fresh1.price);
 assert.notStrictEqual(PriceDecision.chooseAsk(believed, market(), needy, ['r', 2], 5000).price, 5000);
 
-// Disposition and slots: one roll, never 0 or 1; slots by gain, no repeats.
-const picks = { npc: 0, list: 0 };
-for (let at = 0; at < 2000; at++) picks[PriceDecision.chooseByValue([{ action: 'npc', value: 10 }, { action: 'list', value: 100 }], ['d', at]).action] += 1;
-assert(picks.npc > 0 && picks.npc < 100, `the far option keeps a small chance (${picks.npc} of 2000)`);
-const slotsTaken = { big: 0, small: 0 };
-for (let at = 0; at < 500; at++) {
-    for (const chosen of PriceDecision.chooseSlots([{ id: 'big', gain: 90 }, { id: 'small', gain: 10 }, { id: 'none', gain: 0 }], 1, at)) slotsTaken[chosen.id] += 1;
-}
-assert(slotsTaken.big > 400 && slotsTaken.small > 20 && !slotsTaken.none, 'a weighted roll by gain; no gain, no slot');
-assert.strictEqual(PriceDecision.chooseSlots([{ gain: 1 }, { gain: 2 }], 5, 'x').length, 2);
-
 // The bid mirrors the ask: under the bot's value, never over its cap.
 const bids = Array.from({ length: 20 }, (_, at) => PriceDecision.chooseBid(believed, market(), needy, { worth: 1000, cap: 2000 }, ['b', at]));
 assert(bids.every((bid) => bid.price < 1000), 'a bid under what the item is worth');
-assert.strictEqual(PriceDecision.chooseBid(believed, market(), needy, { worth: 1000, cap: 100 }, ['b']), null, 'nothing gains under the cap');
+// The cap lies under the whole price grid: one adena over the buy-back.
+assert.strictEqual(PriceDecision.chooseBid(believed, market(), needy, { worth: 1000, cap: 100 }, ['b'])?.price, 51,
+    'a cap under the whole grid: the buy-back plus one');
+// No NPC buy-back, no price over it to fall back to.
+for (const buyback of [0, null, undefined]) {
+    assert.strictEqual(PriceDecision.chooseBid(believed, { ...market(), buyback }, needy, { worth: 1000, cap: 100 }, ['b']), null,
+        `no buy-back (${buyback}) and a cap under the grid: no bid`);
+}
 const patient = { ...needy, wait: 0.001 };
 assert(median(Array.from({ length: 20 }, (_, at) => PriceDecision.chooseBid(believed, market(), patient, { worth: 1000, cap: 2000 }, ['p', at]).price))
     <= median(bids.map((bid) => bid.price)), 'a patient buyer bids lower');
+// No ask goes at or below the NPC buy-back (50 here), so no bid sits there either.
+const cheapBelief = { mu: Math.log(10), K: 10 };
+const cheapBids = Array.from({ length: 20 }, (_, at) => PriceDecision.chooseBid(cheapBelief, market(), needy, { worth: 1000, cap: 2000 }, ['f', at]));
+assert(cheapBids.every((bid) => bid === null || bid.price > 50), `no bid at or below the buy-back (${cheapBids.map((bid) => bid?.price)})`);
+// A standing bid at the buy-back is not kept even where the near-best bids sit just above it.
+const nearBuyback = PriceDecision.chooseBid({ mu: Math.log(52), K: 10 }, market(), { ...needy, wait: 1e-4 },
+    { worth: 1000, cap: 2000 }, ['f', 0], 50);
+assert(nearBuyback && nearBuyback.price > 50, `a standing bid at the buy-back is replaced (${nearBuyback?.price})`);
+assert.strictEqual(PriceDecision.chooseBid(believed, { ...market(), purchaseCap: 50 }, needy, { worth: 1000, cap: 2000 }, ['f']), null,
+    'an outside purchase at the buy-back is no bid');
+assert.strictEqual(PriceDecision.chooseBid(cheapBelief, market(), needy, { worth: 1000, cap: 50 }, ['f']), null,
+    'a cap under the buy-back: no bid');
+// Where the price grid skips from the buy-back past the cap, the least price that fills is the bid.
+const skipCap = 1000 * Math.exp(0.25 * PriceBelief.sigma(believed)) - 1;
+assert(skipCap > 1001, 'the grid step above the buy-back lies past the cap');
+assert.strictEqual(PriceDecision.chooseBid(believed, { ...market(), buyback: 1000 }, needy, { worth: skipCap, cap: skipCap }, ['g'])?.price, 1001,
+    'one adena over the buy-back when no grid price fits under the cap');
+assert.strictEqual(PriceDecision.chooseBid(believed, { ...market(), buyback: 1000 }, needy, { worth: skipCap, cap: 1000.5 }, ['g']), null,
+    'the buy-back plus one over the cap: no bid');
+// A grid price under the cap is the bid: one adena over the buy-back gives a
+// seller nothing over the NPC (the crafter's meeting answer was a coin flip).
+assert(Array.from({ length: 20 }, (_, at) => PriceDecision.chooseBid(believed, { ...market(), buyback: 1100 }, needy,
+    { worth: 3000, cap: 3000 }, ['h', at]).price).every(price => price > 1101), 'a grid price under the cap, not the buy-back plus one');
+// A bid standing at the buy-back plus one gives way once a grid price fits.
+for (const trader of [needy, patient]) {
+    assert(Array.from({ length: 20 }, (_, at) => PriceDecision.chooseBid(believed, { ...market(), buyback: 1100 }, trader,
+        { worth: 3000, cap: 3000 }, ['h', at], 1101).price).every(price => price > 1101), 'a standing buy-back plus one gives way to a grid price');
+}
 
 // New listings always start at the board and keep only line cursors.
 const marketContext = ctx({ trader: needy, adena: 100000, npcOffersFor: () => [], travel: () => 0, tripCost: null });
@@ -119,16 +144,15 @@ console.log('Public prior and finite decisions: sources, width, asks, competitio
 // keep their independently supported residual value in both branches.
 const Valuation = require('../src/GameServer/Bot/Economy/EconomicValuation');
 const Profit = require('../src/GameServer/Bot/Economy/CraftProfitPolicy');
-const Demand = require('../src/GameServer/Bot/Economy/MarketDemandIndex');
 const success = PriceDecision.saleOutcome({ units: 100, applicableUnits: 10, willingUnits: 10,
     cheaperUnits: 0, price: 100, residualUnitValue: 2 });
 const failure = PriceDecision.saleOutcome({ units: 0, applicableUnits: 10, willingUnits: 10,
     cheaperUnits: 0, price: 100, residualUnitValue: 2 });
 assert.deepEqual(success, { known: true, sold: 10, residual: 90, receipts: 1000, residualValue: 180 });
-const outcomes = Profit.craftOutcomes({ successRate: 60 }, { success: { receipts: success.receipts,
+const outcomes = [{ probability: 0.6, receipts: success.receipts,
     monetaryResidual: success.residualValue, ownInputOpportunityValue: 100, cashNow: 20,
-    actualCashFees: 10, foregoneBenefitHours: 0.25, cycleHours: 1 }, failure: { receipts: failure.receipts,
-    ownInputOpportunityValue: 100, cashNow: 20, actualCashFees: 10, foregoneBenefitHours: 0.25, cycleHours: 1 } });
+    actualCashFees: 10, foregoneBenefitHours: 0.25, cycleHours: 1 }, { probability: 0.4, receipts: failure.receipts,
+    ownInputOpportunityValue: 100, cashNow: 20, actualCashFees: 10, foregoneBenefitHours: 0.25, cycleHours: 1 }];
 const valued = Valuation.opportunity({ moneyPrice: 0.01 }, outcomes);
 assert.equal(valued.expectedReceipts / 100, 6, 'one success draw then finite demand, never min(expected output,demand)');
 assert.equal(valued.expectedResidual, 108);
@@ -152,7 +176,6 @@ assert.deepEqual(Profit.materials([{ id: 1, selfId: STEM, amount: 6 }], {
 assert.deepEqual(Profit.materials([{ id: 1, selfId: STEM, amount: 10 }, { id: 1, selfId: STEM, amount: 10 }], {
     materials: [{ selfId: STEM, amount: 5 }, { selfId: STEM, amount: 5 }] }), [{ id: 1, selfId: STEM, amount: 10 }]);
 assert.equal(Profit.mpHours({ mpCost: 0 }, 1, {}), 0);
-assert.equal(Profit.craftIncomePerHour({ hours: 0, profit: 10, labour: 0 }), null, 'zero-MP does not invent a repeatable clock');
 assert.equal(Profit.mpHours({ mpCost: 10 }, 1, {}), null);
 
 const emptyBoard = new BoardIndex();
@@ -163,8 +186,9 @@ assert.equal(PriceDecision.chooseAsk(believed, unknownMarket, needy, ['unknown']
 'unknown external lifetime retains an accepted commitment');
 emptyBoard.put({ id: 10, ownerId: 1, storeType: SELL, revision: 1, town: 'Giran', lines:
     Array.from({ length: 10 }, (_, at) => ({ lineId: at + 1, selfId: STEM, count: 10, price: 900 })) });
-const stock = Demand.jointStock({ characterId: 1, inventory: {} }, { board: emptyBoard, timestamp: now });
-assert.equal(stock.groups.get(`${STEM}:0`).units, 100, 'ten identical own lines form one physical stock');
+// Ten identical own lines form one physical stock (the caller's ownStock).
+const stock = { known: true, groups: new Map([[`${STEM}:0`, { selfId: STEM, enchant: 0, units: 100, listedUnits: 100,
+    prices: new Set([900]), scope: 'own', availability: { from: now, until: now } }]]) };
 const finiteDemand = { known: true, origin: 'prepared_own_group', authority: { ownerId: 1 },
     selfId: STEM, applicableUnits: 10, delayHours: 0, availability: { from: now, until: now } };
 const jointContext = { ...marketContext, ownStock: stock, demandFor: () => finiteDemand };
@@ -193,27 +217,21 @@ const forbiddenLine = { ownerId: 1, recordId: 99, lineId: 99, selfId: 999999, st
 assert.equal(MarketPricing.look({}, [forbiddenLine], { ...marketContext,
     reviewReasons: new Map([[99, 4]]), canSell: () => false }).withdrawals.length, 1,
     'known protection can withdraw an unknown-price item without inventing a prior');
+// Unknown worth may only lower a bid to a cheaper outside purchase, never to the buy-back (50) or under it.
+const staleBid = { ownerId: 1, recordId: 98, lineId: 98, selfId: STEM, storeType: BUY, town: 'Giran',
+    count: 1, price: 400, revision: 1, pricing: { price: 400, seenCounter: 0, worth: 400 } };
+const unknownWorth = (outside) => MarketPricing.look({}, [staleBid], { ...marketContext, preparedWorth: () => NaN,
+    reviewReasons: new Map([[98, 4]]), purchaseCaps: new Map([[98, outside]]) });
+assert.deepEqual(unknownWorth(50).reprices, [], 'unknown worth: no bid at the buy-back');
+assert.equal(unknownWorth(50).withdrawals.length, 1, 'unknown worth: the ad goes instead');
+assert.equal(unknownWorth(60).reprices[0].price, 60, 'unknown worth: a cheaper outside purchase above it still lowers the bid');
+staleBid.price = staleBid.pricing.price = 50;
+assert.equal(unknownWorth(1000)?.withdrawals.length, 1, 'unknown worth: a standing bid at the buy-back goes');
+// Own standing bids outside a look (cold plan, native reviews): cash 40 a unit under the buy-back 50 withdraws.
+assert.strictEqual(Alternative.lineLimit({ selfId: STEM, price: 60, count: 10, town: 'Giran' },
+    { adena: 0, travelDetails: () => ({ known: true, hours: 0, fees: 200 }) }), 0, 'a cash limit under the buy-back withdraws');
+assert.strictEqual(Alternative.lineLimit({ selfId: STEM, price: 60, count: 10, town: 'Giran' },
+    { adena: 0, travelDetails: () => ({ known: true, hours: 0, fees: 0 }) }), null, 'a bid within the cash stands');
 assert.equal(PriceDecision.marketFor(STEM, { board: emptyBoard, ownerId: 1, timestamp: now }).known, false,
 'split listings never manufacture demand');
-emptyBoard.put({ id: 11, ownerId: 2, storeType: BUY, revision: 1, town: 'Giran',
-    lines: [{ lineId: 11, selfId: STEM, count: 10, price: 1000 }] });
-const publicDemand = Demand.demandFor(STEM, { board: emptyBoard, excludeCharacterId: 1, now, unitPrice: 1000,
-    signals: [{ characterId: 2, amount: 1000, budget: 1e9 }] });
-assert.equal(publicDemand.fundedUnits, 10, 'public count caps a quote; private foreign cash cannot enlarge it');
-assert.equal(publicDemand.repeatable, false);
-assert.equal(publicDemand.lifetimeKnown, false);
-assert.deepEqual(publicDemand.signals, []);
-const needs = Demand.knownNeeds([{ origin: 'own_need', characterId: 1, needId: 'charge:1', amount: 10 },
-    { origin: 'own_need', characterId: 1, needId: 'charge:1', amount: 10 },
-    { origin: 'own_need', characterId: 2, needId: 'foreign', amount: 100 }], { ownerId: 1 });
-assert.equal(needs.needs.size, 1, 'known spirit/blessed substitutes share one charge need; foreign private need excluded');
-assert.equal(needs.needs.get('charge:1').units, 10);
-const reservations = { [STEM]: 3 };
-const reservedStock = Demand.createOwnStock(1, { timestamp: now, reserved: reservations });
-assert(Demand.prepareStockRow(reservedStock, { id: 90, selfId: STEM, amount: 10, equippedCount: 2 }));
-assert.equal(reservations[STEM], 3, 'stock preparation does not consume its source reservations');
-assert(Demand.prepareStockRow(reservedStock, { id: 90, selfId: STEM, amount: 10 }, { origin: 'warehouse' }));
-assert.equal(reservedStock.groups.get(`${STEM}:0`).units, 5, 'equipped/reserved and repeated physical authority excluded');
-assert(Demand.prepareStockRow(reservedStock, { id: 91, selfId: STEM, amount: 20 }, { origin: 'incoming', availableAt: now + 1 }));
-assert.equal(reservedStock.groups.get(`${STEM}:0`).units, 5, 'not-yet-available incoming is not free current supply');
-console.log('Finite outcome, owner stock, permitted quote and shared valuation fixtures passed');
+console.log('Finite outcome, owner stock and shared valuation fixtures passed');

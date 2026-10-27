@@ -18,7 +18,6 @@ const Actor = invoke('GameServer/Actor/Actor');
 const World = invoke('GameServer/World/World');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
 const Trade = invoke('GameServer/Bot/TradeService');
-const Pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
 const Npc = invoke('GameServer/Items/NpcSellRules');
 const Sell = invoke('GameServer/Network/Request/Sell');
 const Response = invoke('GameServer/Network/Response');
@@ -305,14 +304,11 @@ async function run() {
             assert.equal(await remaining(first.shop), 0); assert.equal(await remaining(second.shop), 2);
         } finally { Afk.sellToShop = original; }
     });
-    await check('a bot keeps the capped authored static price without filling an ad', async () => {
+    await check('a bot cannot sell to a static buyer and fills no ad', async () => {
         const bot = await character({ bot: true, skins: 1 }), bid = await order(1000, 1), store = buyer();
-        const source = { storeType: 3, items: [{ selfId: ITEM, count: 999999, price: 1 }] };
-        const price = Pricing.botPriceFor(source, source.items[0]);
         const before = await worldAdena();
-        const result = await Trade.sellToStore(bot.actor, store, ITEM, 1);
-        assert.equal(result.totalAdena, price); assert.equal(await remaining(bid.shop), 1);
-        assert.equal(await worldAdena() - before, price);
+        await assert.rejects(Trade.sellToStore(bot.actor, store, ITEM, 1), /unavailable to bots/);
+        assert.equal(await remaining(bid.shop), 1); assert.equal(await worldAdena(), before);
     });
 }
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
