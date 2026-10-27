@@ -56,6 +56,13 @@ function c4Ids() {
         .filter(([from, to]) => from > 0 && to > 0));
 }
 
+// The C4 id of a Mobius npc id; `where` names the row in the error.
+function c4Id(idMap, sourceId, where) {
+    const id = idMap.get(sourceId);
+    if (!id) throw new Error(`Mobius npc ${sourceId} has no C4 id (${where})`);
+    return id;
+}
+
 function mobiusTypes() {
     const types = new Map();
     xmlFiles(path.join(mobiusData, 'stats', 'npcs')).forEach((file) => {
@@ -91,10 +98,11 @@ function mobiusSpawns() {
     });
 }
 
-function ownTemplates() {
+// Every npc template the world loads, but the ones of the generator's own file (`excluded`).
+function ownTemplates(excluded = `${SLUG}.json`) {
     const directory = path.join(root, 'data', 'Npcs');
     const byId = new Map();
-    fs.readdirSync(directory).filter((name) => name.endsWith('.json') && name !== `${SLUG}.json`).forEach((name) => {
+    fs.readdirSync(directory).filter((name) => name.endsWith('.json') && name !== excluded).forEach((name) => {
         const rows = require(path.join(directory, name));
         if (!Array.isArray(rows)) return;
         rows.filter((row) => row?.template && row.selfId !== undefined)
@@ -116,8 +124,7 @@ function convertSpawns(spawns, idMap, types) {
         const fixed = new Map();
         for (const npc of spawn.npcs) {
             const sourceId = Number(npc.id);
-            const id = idMap.get(sourceId);
-            if (!id) throw new Error(`Mobius npc ${sourceId} has no C4 id (${spawn.id})`);
+            const id = c4Id(idMap, sourceId, spawn.id);
             spawnedIds.add(id);
             if (!MONSTER_TYPES.has(types.get(sourceId))) continue;
             monsterIds.add(id);
@@ -253,4 +260,4 @@ if (require.main === module) {
         + `(${result.heights.lisvus} to the Lisvus Z, ${result.heights.floor} to the floor, ${result.heights.kept} kept).`);
 }
 
-module.exports = { generate, MOBIUS_REVISION };
+module.exports = { generate, MOBIUS_REVISION, MONSTER_TYPES, mobiusData, assertMobiusRevision, xmlFiles, attributes, c4Ids, c4Id, ownTemplates };

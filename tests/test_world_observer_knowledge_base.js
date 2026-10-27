@@ -76,8 +76,9 @@ try {
     const halfHp = service.listNpcs({ hpMultiplier: '0.5', limit: 100 });
     // 44 before the high-grade C4 slices added 11 half-HP group leaders,
     // 55 before the group leaders' minions added 21 half-HP minions,
-    // 76 before the Mobius spawns brought 16 more with their Lisvus templates (T43).
-    assert.strictEqual(halfHp.total, 92);
+    // 76 before the Mobius spawns brought 16 more with their Lisvus templates (T43),
+    // 92 before the Mobius minion rows brought 3 more half-HP minions (T48).
+    assert.strictEqual(halfHp.total, 95);
     assert.ok(halfHp.items.every((npc) => npc.hpMultiplier === 0.5));
     assert.strictEqual(service.listNpcs({ q: 'Marsh Stalker', weakness: 'fire' }).total, 0,
         'an active fire-weakness debuff must not be treated as the caster weakness');
