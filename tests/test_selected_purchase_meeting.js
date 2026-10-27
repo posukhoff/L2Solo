@@ -23,13 +23,16 @@ async function run() {
     state.inventory[1463] = { selfId: 1463, name: 'Soulshot: D-grade', amount: 1000, stackable: true };
     const crystalSupply = await native(state, { timestamp, boardRows, nativeRoutes: true });
     const crystalLeaf = Decision.compact(crystalSupply.decision).activity;
-    // A bot without its own Crystallize (an elf) never buys gear to break:
-    // the board's crystal lot is its crystal supply.
-    assert.equal(crystalLeaf.sourceType, 'afk'); assert.equal(crystalLeaf.itemId, 1458);
+    // A bot without its own Crystallize (an elf) never buys gear to break
+    // (docs/game-decisions.md: only crafter dwarves crystallize). The luxury
+    // price is C + D crystals (gd: bots pay C + D crystals) and nobody sells C
+    // here, so the D lot alone is no supply: whatever it does, it buys no gear.
+    assert.notEqual(crystalLeaf?.sourceType, 'npc', 'no NPC gear is bought to break');
+    assert(!crystalLeaf || [1458, 1459].includes(crystalLeaf.itemId), 'a crystal step buys crystals, never gear');
 
-    // A complete equipment quote: the mandatory root's value pays for the
-    // piece (its valueHours never fall below its price at the money floor), so
-    // its buy intent's worth covers the selected quote.
+    // A complete equipment quote: the money floor orders and funds the
+    // mandatory root, but its buy intent keeps the root's own value
+    // (TradeIntent.rootValue, 9aa9dfdb8): the selected quote is above it.
     const itemId = 233, amount = 1, price = 3000000;
     const [lineId] = boardRows[0][1][6][0];
     boardRows[0][1][6][0] = [lineId, itemId, 0, amount, price, null, 0];
@@ -38,7 +41,7 @@ async function run() {
     assert.equal(leaf.sourceType, 'afk'); assert.equal(leaf.itemId, itemId);
     assert.equal(leaf.amount, amount); assert.equal(leaf.unitPrice, price);
     const standing = capture.tradeIntents.find(row => row.itemId === leaf.itemId);
-    assert(standing.worth >= leaf.unitPrice, 'native mandatory equipment intent is worth its selected quote');
+    assert(standing.worth < leaf.unitPrice, 'native mandatory equipment graph chooses the quote above general willingness');
     const point = invoke('GameServer/World/TownRespawn').towns.dion_town;
     const authority = require('../src/GameServer/Bot/Economy/EconomyCommit').authority(state);
     const request = { token: 'selected-equipment-purchase', actorA: state.characterId, actorB: 2004570,
