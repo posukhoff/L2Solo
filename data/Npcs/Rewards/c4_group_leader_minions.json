@@ -138,6 +138,254 @@
     ]
   },
   {
+    "selfId": 942,
+    "template": {
+      "name": "Nightmare Guide"
+    },
+    "rewards": [
+      {
+        "items": [
+          {
+            "selfId": 57,
+            "name": "Adena",
+            "min": 216,
+            "max": 439,
+            "chance": 100
+          }
+        ],
+        "overall": 70
+      },
+      {
+        "items": [
+          {
+            "selfId": 225,
+            "name": "Mithril Dagger",
+            "min": 1,
+            "max": 1,
+            "chance": 1.186441
+          },
+          {
+            "selfId": 2052,
+            "name": "Mithril Dagger Blade",
+            "min": 1,
+            "max": 1,
+            "chance": 98.813559
+          }
+        ],
+        "overall": 0.118
+      },
+      {
+        "items": [
+          {
+            "selfId": 1866,
+            "name": "Suede",
+            "min": 1,
+            "max": 1,
+            "chance": 35.195834
+          },
+          {
+            "selfId": 1871,
+            "name": "Charcoal",
+            "min": 1,
+            "max": 1,
+            "chance": 52.794929
+          },
+          {
+            "selfId": 1877,
+            "name": "Adamantite Nugget",
+            "min": 1,
+            "max": 1,
+            "chance": 2.111514
+          },
+          {
+            "selfId": 4907,
+            "name": "Spellbook: Solar Flare",
+            "min": 1,
+            "max": 1,
+            "chance": 3.299241
+          },
+          {
+            "selfId": 4909,
+            "name": "Spellbook: Shadow Flare",
+            "min": 1,
+            "max": 1,
+            "chance": 3.299241
+          },
+          {
+            "selfId": 4917,
+            "name": "Spellbook: Aura Bolt",
+            "min": 1,
+            "max": 1,
+            "chance": 3.299241
+          }
+        ],
+        "overall": 8.4868
+      }
+    ],
+    "spoils": [
+      {
+        "items": [
+          {
+            "selfId": 1905,
+            "name": "Omen Beast's Eye Earring Gemstone",
+            "min": 1,
+            "max": 1,
+            "chance": 5.2079
+          }
+        ],
+        "overall": 100
+      },
+      {
+        "items": [
+          {
+            "selfId": 2301,
+            "name": "Recipe: Battle Axe",
+            "min": 1,
+            "max": 1,
+            "chance": 0.2338
+          }
+        ],
+        "overall": 100
+      },
+      {
+        "items": [
+          {
+            "selfId": 2931,
+            "name": "Salamander Skin Boot Lining",
+            "min": 1,
+            "max": 1,
+            "chance": 5.9751
+          }
+        ],
+        "overall": 100
+      }
+    ]
+  },
+  {
+    "selfId": 943,
+    "template": {
+      "name": "Nightmare Keeper"
+    },
+    "rewards": [
+      {
+        "items": [
+          {
+            "selfId": 57,
+            "name": "Adena",
+            "min": 311,
+            "max": 632,
+            "chance": 100
+          }
+        ],
+        "overall": 70
+      },
+      {
+        "items": [
+          {
+            "selfId": 263,
+            "name": "Chakram",
+            "min": 1,
+            "max": 1,
+            "chance": 0.547046
+          },
+          {
+            "selfId": 2073,
+            "name": "Chakram Edge",
+            "min": 1,
+            "max": 1,
+            "chance": 51.31291
+          },
+          {
+            "selfId": 2225,
+            "name": "Recipe: Demon's Stockings",
+            "min": 1,
+            "max": 1,
+            "chance": 48.140044
+          }
+        ],
+        "overall": 0.2742
+      },
+      {
+        "items": [
+          {
+            "selfId": 1867,
+            "name": "Animal Skin",
+            "min": 1,
+            "max": 1,
+            "chance": 46.371164
+          },
+          {
+            "selfId": 1872,
+            "name": "Animal Bone",
+            "min": 1,
+            "max": 1,
+            "chance": 46.371164
+          },
+          {
+            "selfId": 1875,
+            "name": "Stone of Purity",
+            "min": 1,
+            "max": 1,
+            "chance": 2.318558
+          },
+          {
+            "selfId": 1881,
+            "name": "Coarse Bone Powder",
+            "min": 1,
+            "max": 1,
+            "chance": 4.637116
+          },
+          {
+            "selfId": 4041,
+            "name": "Mold Hardener",
+            "min": 1,
+            "max": 1,
+            "chance": 0.301997
+          }
+        ],
+        "overall": 17.4505
+      }
+    ],
+    "spoils": [
+      {
+        "items": [
+          {
+            "selfId": 1874,
+            "name": "Oriharukon Ore",
+            "min": 1,
+            "max": 1,
+            "chance": 5.1365
+          }
+        ],
+        "overall": 100
+      },
+      {
+        "items": [
+          {
+            "selfId": 1875,
+            "name": "Stone of Purity",
+            "min": 1,
+            "max": 1,
+            "chance": 5.1365
+          }
+        ],
+        "overall": 100
+      },
+      {
+        "items": [
+          {
+            "selfId": 2163,
+            "name": "Recipe: Earring of Protection",
+            "min": 1,
+            "max": 1,
+            "chance": 3.931
+          }
+        ],
+        "overall": 100
+      }
+    ]
+  },
+  {
     "selfId": 945,
     "template": {
       "name": "Cadeine"

@@ -6,36 +6,6 @@
     "max": 3
   },
   {
-    "bossId": 376,
-    "minionId": 377,
-    "min": 1,
-    "max": 2
-  },
-  {
-    "bossId": 398,
-    "minionId": 399,
-    "min": 1,
-    "max": 2
-  },
-  {
-    "bossId": 520,
-    "minionId": 445,
-    "min": 3,
-    "max": 5
-  },
-  {
-    "bossId": 522,
-    "minionId": 524,
-    "min": 2,
-    "max": 4
-  },
-  {
-    "bossId": 738,
-    "minionId": 739,
-    "min": 3,
-    "max": 5
-  },
-  {
     "bossId": 745,
     "minionId": 746,
     "min": 1,
@@ -138,10 +108,28 @@
     "max": 3
   },
   {
+    "bossId": 935,
+    "minionId": 934,
+    "min": 1,
+    "max": 3
+  },
+  {
     "bossId": 941,
     "minionId": 940,
     "min": 3,
     "max": 3
+  },
+  {
+    "bossId": 944,
+    "minionId": 942,
+    "min": 1,
+    "max": 1
+  },
+  {
+    "bossId": 944,
+    "minionId": 943,
+    "min": 2,
+    "max": 2
   },
   {
     "bossId": 947,

@@ -15,28 +15,29 @@ const skillRows = require('../data/Npcs/Skills/c4_group_leader_minions.json');
 const skillTemplates = require('../data/Npcs/Skills/c4_group_leader_minions_templates.json');
 const items = require('../data/Items/Others/c4_group_leader_minions.json');
 
-// Lisvus minions.sql: 405 rows = 284 raid-boss rows + 121 ordinary rows; 29 of
-// those belong to 14 leaders our world does not spawn.
-assert.strictEqual(rows.length, 92, 'every ordinary row of a spawned group leader is kept');
+// Lisvus minions.sql: 405 rows = 284 raid-boss rows + 121 ordinary rows; 27 of
+// those belong to 15 leaders the Mobius C4 spawns do not place, 4 to 930 and 933,
+// which Mobius places without minions (T43).
+assert.strictEqual(rows.length, 90, 'every ordinary row of a spawned group leader is kept');
 const leaderIds = [...new Set(rows.map((row) => row.bossId))];
-assert.strictEqual(leaderIds.length, 58);
-assert.strictEqual(new Set(rows.map((row) => `${row.bossId}:${row.minionId}`)).size, 92);
+assert.strictEqual(leaderIds.length, 55);
+assert.strictEqual(new Set(rows.map((row) => `${row.bossId}:${row.minionId}`)).size, 90);
 assert.ok(rows.every((row) => Object.keys(row).join() === 'bossId,minionId,min,max'
     && row.min >= 1 && row.max >= row.min), 'the raid-boss minion row format is kept');
-assert.deepStrictEqual(rows.reduce((sum, row) => [sum[0] + row.min, sum[1] + row.max], [0, 0]), [124, 181]);
+assert.deepStrictEqual(rows.reduce((sum, row) => [sum[0] + row.min, sum[1] + row.max], [0, 0]), [118, 169]);
 
 const raidIds = new Set(raidRows.flatMap((row) => [Number(row.bossId), Number(row.minionId)]));
 assert.ok(rows.every((row) => !raidIds.has(row.bossId) && !raidIds.has(row.minionId)),
     'ordinary groups share no leader or minion with the raid groups');
 
-assert.strictEqual(templates.length, 64, 'missing minion templates come from Lisvus npc.sql');
-assert.strictEqual(rewards.length, 64);
-assert.strictEqual(skillRows.length, 368);
+assert.strictEqual(templates.length, 66, 'missing minion templates come from Lisvus npc.sql');
+assert.strictEqual(rewards.length, 66);
+assert.strictEqual(skillRows.length, 375);
 assert.deepStrictEqual(skillTemplates.map((skill) => skill.selfId), [4163]);
 assert.deepStrictEqual(items.map((item) => item.selfId), [5275]);
 assert.strictEqual(rewards.reduce((sum, reward) => sum
     + reward.rewards.reduce((count, group) => count + group.items.length, 0)
-    + reward.spoils.length, 0), 1026, 'all Lisvus drop and spoil rows of the new minions');
+    + reward.spoils.length, 0), 1050, 'all Lisvus drop and spoil rows of the new minions');
 
 DataCache.init();
 
