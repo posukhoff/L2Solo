@@ -10,7 +10,8 @@ process.on('exit', () => fs.rmSync(isolated.directory, { recursive: true, force:
 const DataCache = invoke('GameServer/DataCache');
 const Pricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const Needs = invoke('GameServer/Bot/Goals/NeedsEvaluator');
-const BuyStore = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
+// The one bid owner (BuyAdPolicy.bidFor); the cold store no longer re-exports it.
+const BuyAd = invoke('GameServer/Bot/Economy/BuyAdPolicy');
 const Listings = invoke('GameServer/Bot/Economy/MarketListingPolicy');
 const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const Market = invoke('GameServer/Bot/Economy/MarketOpportunity');
@@ -194,7 +195,7 @@ function purchaseFor(buyer) {
 }
 
 function checkBid(decision, buyer = decision.buyer, goal = decision.goal, positive = false) {
-    const bid = BuyStore.bidFor(buyer, goal, { economy: decision.economy });
+    const bid = BuyAd.bidFor(buyer, goal, { economy: decision.economy });
     const budget = itemBudget(buyer, goal.target.itemId);
     assert.strictEqual(Funding.spendable(buyer, 0, { itemId: goal.target.itemId }), budget);
     const id = goal.target.itemId;
