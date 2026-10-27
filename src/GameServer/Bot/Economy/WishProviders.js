@@ -820,12 +820,10 @@ function buildProjection(state, ctx, deps) {
         // (BotCrystallization.canSelf), from the grade's one sweep.
         const Crystals = need('./BotCrystallization'), crystalRank = Crystals.CRYSTAL_RANKS.get(Number(id));
         if (crystalRank && Crystals.canSelf(state, crystalRank)) {
-            const choices = crystalChoices(crystalRank);
-            // A funded C kit has an authored unlimited D supplier. Preserve
-            // that chain instead of forecasting thousands of crystals from
-            // one small public lot and repeatedly changing counterparties.
-            if (luxury && choices.some(choice => choice.sourceType === 'npc')) paths.length = 0;
-            for (const choice of choices) {
+            // A funded C kit's D supplier (Giran's NPC gear, crystallized) is
+            // one more path beside the board's crystals, never in place of
+            // them: the solver takes the cheaper by its own effort (T74).
+            for (const choice of crystalChoices(crystalRank)) {
                 const requirements = inputs(choice.inputs || [{ selfId: choice.selfId, amount: 1 }], depth + 1);
                 if (!requirements) continue;
                 paths.push({ ...Crystals.path(id, choice.inputs || choice.selfId),

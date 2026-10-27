@@ -127,7 +127,8 @@ function recipeIndex(board, build = true) {
         // A product the census buys now has customers (wearers, kit wishes;
         // a material's buyers are its trades and buy lines); how many is read
         // where the exit is priced (ShotSalePolicy), not in the index. A census move rechecks
-        // the rows (ColdSimulationWorker table_page -> recheck).
+        // the rows (worker: ColdSimulationWorker table_page -> recheck; main:
+        // DemandCensus -> RecipeProductionIndex.censusMoved, at the next read).
         censusBuyer: recipe => MarketDemand.censusBuys(recipe.productId) }, build);
 }
 

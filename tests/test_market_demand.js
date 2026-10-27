@@ -227,7 +227,10 @@ const weaponsOf = rank => Array.from({ length: weapons?.length || 0 }, (_, at) =
     .filter(at => weapons.rankAt(at) === rank).map(at => Number(weapons.itemAt(at).selfId));
 const [cWeapon] = weaponsOf(2), [dWeapon] = weaponsOf(1);
 assert.ok(cWeapon && dWeapon, 'the fighter wishes D and C weapons');
-assert.equal(Demand.forecast(cWeapon, 'Giran', now), null, 'main, which has no mirror, counts no gear (its readers count trades)');
+// Main reads gear from its own census rows, the worker from its mirror of
+// them: one forecast on both threads (T74).
+const mainGear = Demand.forecast(cWeapon, 'Giran', now);
+assert.ok(mainGear?.applicableUnits >= 1, 'main counts gear from its own census rows');
 assert.ok(Demand.hasCensusSource(cWeapon) && Demand.hasCensusSource(SHOT_D), 'a kit item and a worn shot have a census source');
 assert.equal(Demand.hasCensusSource(57), false, 'adena has no census source');
 // The worker reads gear from its mirror of the census rows.
@@ -237,6 +240,8 @@ sync();
 const gear = Demand.forecast(cWeapon, 'Giran', now);
 assert.ok(gear?.applicableUnits >= 1, 'a bot one grade below asks the next grade\'s gear');
 assert.equal(gear.origin, 'census');
+assert.deepEqual([gear.applicableUnits, gear.delayHours], [mainGear.applicableUnits, mainGear.delayHours],
+    'the worker\'s mirror gives main\'s gear forecast');
 // Board stock does not cut the gear census either: rival C weapons on
 // Giran's board leave the reader the same units over the same wait.
 const gearStock = { list: (id, storeType, where) => Number(id) === cWeapon && storeType === SELL && where === 'Giran'

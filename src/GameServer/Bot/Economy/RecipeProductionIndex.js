@@ -103,6 +103,8 @@ class RecipeProductionIndex {
         // The first prices' generation the held facts read (FirstPrice.revision).
         this.firstPrices = -1;
         this.counters = null;
+        // Main: a census publication came since the last row read (censusMoved).
+        this.censusStale = false;
         for (const recipe of this.catalog.rows) this.refresh(recipe);
     }
     marketFacts(recipe, timestamp = Date.now()) {
@@ -139,7 +141,9 @@ class RecipeProductionIndex {
         const match = /^recipe-production:([0-9])$/.exec(String(scope));
         return match ? this.revisions[Number(match[1])] : 0;
     }
-    rowsFor(level) { return this.rows[Math.max(0, Math.min(9, Math.floor(Number(level) || 0)))].values(); }
+    rowsFor(level) {
+        if (this.censusStale) { this.censusStale = false; this.recheck(); }
+        return this.rows[Math.max(0, Math.min(9, Math.floor(Number(level) || 0)))].values(); }
     refresh(recipe, changed = new Set()) {
         if (!this.accept(recipe)) return changed;
         const available = this.board.list(Number(recipe.productId), 3).length > 0 || this.censusBuyer(recipe);
@@ -199,18 +203,31 @@ function forBoard(board, options, build = true) {
     if (isMainThread) followMainMarket(index);
     return index;
 }
+// Main's indexes, each until its board goes (a test's board).
+const mainIndexes = new Set();
 // Main: a board deal moves its item's evidence and its counter's index (the
 // rows the worker hears as 'i:' and 'c:'), a market reset every row:
 // MarketCounters.subscribeChanges is the one hook of them on main. The
 // listener ends with its index (a test's board).
 function followMainMarket(index) {
     const held = new WeakRef(index);
+    mainIndexes.add(held);
     const stop = MarketCounters().subscribeChanges(change => {
         const index = held.deref();
-        if (!index) stop();
+        if (!index) { stop(); mainIndexes.delete(held); }
         else if (change?.reset) index.marketReset();
         else if (change?.key) index.counterMoved(change.key);
     });
+}
+// Main's census put moved rows (DemandCensus publication): each main index
+// rechecks its rows once at its next read (rowsFor: a hot crafter's build),
+// as the worker's does at its table page (ColdSimulationWorker recheck).
+// O(recipes) per publication read; nothing on main reads the scopes.
+function censusMoved() {
+    for (const held of mainIndexes) {
+        const index = held.deref();
+        if (index) index.censusStale = true; else mainIndexes.delete(held);
+    }
 }
 // The one reader of a recipe's market facts: the board's index holds them;
 // a board with no index (a main reader's own board, a test) computes them at the read.
@@ -264,4 +281,4 @@ function scrollValue(selfId, options = {}) {
     }
     return best > 0 ? best : null;
 }
-module.exports = { forBoard, recipeCatalog, marketFacts, margin, ownMargin, inputCostFor, scrollValue, factStats };
+module.exports = { forBoard, censusMoved, recipeCatalog, marketFacts, margin, ownMargin, inputCostFor, scrollValue, factStats };

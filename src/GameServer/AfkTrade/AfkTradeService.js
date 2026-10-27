@@ -61,9 +61,9 @@ function notifyBoardChange(change) {
     // Main's live board carries the recipe index EconomyContext.marketBoard
     // builds at main's first board read (its rows walk the recipe catalogue
     // once, and again on a board reset); here it follows the board: changed
-    // items update their recipes, never a per-actor catalogue scan. Main's
-    // rows are not rechecked on census moves (only the worker's index is,
-    // ColdSimulationWorker recheck).
+    // items update their recipes, never a per-actor catalogue scan. A census
+    // publication rechecks main's rows at their next read
+    // (RecipeProductionIndex.censusMoved), the worker's at its table page.
     const production = ColdOccupationSources.recipeIndex(board, false);
     if (production && change.reset) production.reset();
     else if (production) for (const id of change.selfIds || []) production.update(id);

@@ -1019,6 +1019,7 @@ const tests = [
     'tests/test_producer_preparation.js',
     'tests/test_unknown_recipe_worker.js',
     'tests/test_gear_chain_end_to_end.js',
+    'tests/test_producer_board_crystals.js',
     'tests/test_twin_workshop_offer.js',
     'tests/test_shot_income_routes.js',
     'tests/test_gear_shot_refill_batch.js',

@@ -13,6 +13,7 @@ const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const Channel = require('../Population/ColdTableChannel');
 const MarketDemand = require('./MarketDemand');
 const MarketTownPolicy = require('./MarketTownPolicy');
+const RecipeProductionIndex = require('./RecipeProductionIndex');
 const Diagnostics = require('./EconomyDiagnostics');
 
 const PUBLISH_MS = 5 * 60 * 1000;
@@ -73,7 +74,10 @@ function flush() {
         put++;
     }
     dirty.clear();
-    if (put && Diagnostics.active()) Diagnostics.count('census', 'rows_published', 'put', put);
+    if (!put) return;
+    // Main's recipe index admits the products the census buys now.
+    RecipeProductionIndex.censusMoved();
+    if (Diagnostics.active()) Diagnostics.count('census', 'rows_published', 'put', put);
 }
 function start(life = LifeState) {
     if (unsubscribe) return;

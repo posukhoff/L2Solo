@@ -170,11 +170,11 @@ function censusRow(key) { return mirror ? mirror().get(key) : census.get(key); }
 // sum of its cells' revisions; read by the forecast and, summed, by the soft
 // point's watch rows (censusOf, DecisionSections.marketCrossed). A class's
 // table use (cellUse) is read again at the item's next census change. Gear
-// only where the census is mirrored (the worker): main keeps shots only, its
-// readers (near traders) count the trades. Any other item: NONE.
+// on both threads from the same `d:` rows (main's own, the worker's mirror),
+// so a crafter's forecast is one answer hot and cold (T74). Any other item:
+// NONE.
 function censusTowns(id) {
     const shot = ShotStock.gradedShopShot(id);
-    if (!shot && !mirror) return NONE;
     if (!shot) kitsMoved();
     let sums = held.get(id);
     if (sums) return sums;
