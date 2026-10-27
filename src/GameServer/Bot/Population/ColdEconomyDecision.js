@@ -432,9 +432,6 @@ function view(state, decision, deps = {}, preparedBase = null) {
             : EconomicValuation.stageHours(state, basics().hunt.expPerHour, basics().persona);
     const own = { state, hourAdena, moneyPrice, survivalReserve: valid ? Number(packet[2]) : base.survivalReserve,
         board, network: { activity }, activity, wish,
-        // The card's held craft step (packed, ShotCraftPolicy.packStep): the
-        // view has no producer rows to size another (WealthCraftDecision.producerStep).
-        heldShot: decision?.shot ?? null,
         watchList: watchList(decision),
         materials: decision?.materials || [], inputHash: decision?.inputHash || 0, decided: !!decision,
         itemUsefulness, worth: id => known(id) !== null && moneyPrice > 0 ? itemUsefulness(id) / moneyPrice : basics().price(id) };

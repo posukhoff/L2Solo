@@ -59,11 +59,8 @@ function selectionFor(route) {
             code === 0 ? Number(quote.lineId || 0) : 0, Number(source.price || 0),
             code === 0 ? Number(quote.revision ?? quote.expectedRevision ?? 0) : 0];
     }
-    // r: the ratio main funds the inputs at (a root's, WealthCraftDecision.producerStep).
-    const r = Number(route.r);
     return { recipeId: Number(route.recipe.recipeId), batches: Number(route.batches),
-        ...(exit ? { exit } : {}), ...(gear ? { gear } : {}), ...(ownReserve > 0 ? { ownReserve } : {}),
-        ...(Number.isFinite(r) && r > 0 ? { r } : {}) };
+        ...(exit ? { exit } : {}), ...(gear ? { gear } : {}), ...(ownReserve > 0 ? { ownReserve } : {}) };
 }
 function availableMaterial(state, selfId) {
     const row = state.inventory?.[selfId];
@@ -272,19 +269,19 @@ function* recipeShotSearch(state, recipe, context, options = {}) {
     const outputReserve = Number(personal?.itemId) === Number(recipe.productId)
         ? Math.max(0, Number(personal.target || 0) - Number(state.inventory?.[recipe.productId]?.amount || 0)
             - Number(state.acceptedIncoming?.[recipe.productId] || 0)) : 0;
-    // A root's row spends at the root's money-queue ratio, the one rule of
-    // every producer row (PurchaseFunding.goalTerms), in the worker and in
-    // main's recheck of its step; without one, within the upper bound at the
-    // step's own value ratio.
-    const rooted = options.r !== undefined;
+    // A producer root's craft (options.rooted: the worker's step and main's
+    // recheck of it) spends at its root's money-queue ratio, the product's
+    // money-packet row (PurchaseFunding.itemRatio, goalTerms; none: held
+    // inputs only); else within the upper bound at its own value ratio.
+    const rootR = options.rooted ? PurchaseFunding.itemRatio(state.stats?.money, recipe.productId) : null;
     const selected = yield* Basket.searchQuantity({ state: { ...state,
-        adena: PurchaseFunding.spendable(state, 0, rooted ? { r: options.r } : { upperBound: true }) }, recipe, exits, ownedFor: ownFor,
+        adena: PurchaseFunding.spendable(state, 0, options.rooted ? { r: rootR } : { upperBound: true }) }, recipe, exits, ownedFor: ownFor,
         planFor: () => null, context: { ...context, existingOutput,
             outputReserve, reservedOutputUnitHours: ownUnitHours, preparePurchase } });
     if (!selected) return null;
     const cash = selected.basket.cashCost + selected.basket.actualCashFees;
-    const r = rooted ? Number(options.r) : cash > 0 ? selected.valueHours / cash : Infinity;
-    if (!rooted && cash > PurchaseFunding.spendable(state, 0, { r })) return null;
+    const r = options.rooted ? rootR : cash > 0 ? selected.valueHours / cash : Infinity;
+    if (!options.rooted && cash > PurchaseFunding.spendable(state, 0, { r })) return null;
     const orePurchase = selected.basket.purchases.find(row => row.selfId === oreId);
     const crystalPurchase = selected.basket.purchases.find(row => row.selfId === crystalId);
     return { ...selected, output, rank, crystalId, requiredCrystals, ore,

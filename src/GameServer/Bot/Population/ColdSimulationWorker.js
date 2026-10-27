@@ -458,12 +458,9 @@ const occupationPlanner = new ColdOccupationPlanner({
         const options = { ...prepared.options, stock: input.stock, buyOrderEscrow: input.buyOrderEscrow, now: input.timestamp };
         // The producer root's craft, sized by its leaf (WealthCraftDecision.producerStep,
         // the one answer to which craft the crafter takes); this step only executes it.
-        // A held card's view has no producer rows: its held step stands, main
-        // rechecks it and a refusal sends it back (a held build is checked).
-        const producers = input.economy?.network?.producers;
-        const selected = !Wealth.eligible(input.state, options) ? null : Array.isArray(producers)
-            ? (yield* Wealth.producerStep(input.state, producers, input.knownRecipes, { context: prepared.context, options }))?.step || null
-            : input.economy?.heldShot ? Shots.unpackStep(input.economy.heldShot) : null;
+        // A held card's view has no producer rows: no craft until a build.
+        const selected = Wealth.eligible(input.state, options) ? (yield* Wealth.producerStep(input.state,
+            input.economy?.network?.producers, input.knownRecipes, { context: prepared.context, options }))?.step || null : null;
         const economyPlan = input.economy ? yield* invoke('GameServer/Bot/Population/ColdEconomyPlan').prepare(input.state, input.economy, {
             ...prepared.options, now: input.timestamp, board: input.board, persona: BotPersona.of(input.state),
             tripCost: prepared.context.trip, preparedCraft: selected,

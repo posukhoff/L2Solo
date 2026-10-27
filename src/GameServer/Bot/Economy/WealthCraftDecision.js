@@ -106,8 +106,9 @@ function* producerStep(state, producers, knownRecipes, { context, options }) {
             return tuple?.[0] === chosen[0] && (chosen[0] === -1 || tuple[1] === chosen[1]);
         };
         // Cash inputs spend at the root's money-queue ratio (one rule for
-        // every reader, PurchaseFunding.goalTerms): the batches are sized
-        // within what that ratio may spend.
+        // every reader, PurchaseFunding.goalTerms; a shot row reads it from
+        // its product's money-packet row, as main's recheck does): the
+        // batches are sized within what that ratio may spend.
         const r = producer.r;
         // The root's units: whole lots on a sale exit; own use the batches
         // that make every missing unit (the solver's ceil). The shot leaf
@@ -120,7 +121,7 @@ function* producerStep(state, producers, knownRecipes, { context, options }) {
         if (shot) {
             // Own use prices no sale exit: the leaf adds its own-use exit.
             candidate = yield* Shots.recipeShotSearch(state, recipe, { ...context, maxBatches },
-                { ...options, knownRecipes, searchMemo, keepExit, r, ...(ownUse ? { prepareExits: null } : {}) });
+                { ...options, knownRecipes, searchMemo, keepExit, rooted: true, ...(ownUse ? { prepareExits: null } : {}) });
         } else {
             const exits = (yield* options.prepareExits(state, recipe)).filter(keepExit);
             // Policy's cash bound is state.adena.
@@ -139,10 +140,12 @@ function* producerStep(state, producers, knownRecipes, { context, options }) {
     if (!best) return null;
     // The one route packer keeps the root's exit (a buyer line, a listing
     // town or own use), the gear the crystals come from and the own reserve.
-    // It carries the root's ratio main funds the inputs at (none: held inputs only).
     const selection = Shots.selectionFor({ ...best, personalStock: best.personalStock || options.stock });
-    // The held scroll main learns before the craft.
-    const step = !best.shot ? { wealth: { ...selection, ...(best.learn ? { scroll: [Number(best.recipe.recipeItemId)] } : {}) } }
+    // A wealth step carries the value ratio main funds the inputs at and the
+    // held scroll main learns before the craft.
+    const step = !best.shot ? { wealth: { ...selection,
+        ...(Number.isFinite(best.r) && best.r > 0 ? { r: Number(best.r) } : {}),
+        ...(best.learn ? { scroll: [Number(best.recipe.recipeItemId)] } : {}) } }
         : best.learn ? { recipeTarget: Number(best.recipe.recipeId), recipeRoute: selection } : { craft: selection };
     return { valueHours: best.valueHours, step };
 }

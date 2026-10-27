@@ -47,6 +47,12 @@ async function measuredEconomy(state, now) {
     const context = Economy.forState(state, { timestamp: now });
     return Life.upsertState({ ...state, stats: { ...state.stats, ...context.statsPacket } }, 'native_craft_money');
 }
+// The producer root of `itemId` funded: its money-packet row at a ratio above
+// the money price (PurchaseFunding.itemRatio, what a craft step spends at).
+function fundRoot(state, itemId) {
+    return Life.upsertState({ ...state, stats: { ...state.stats,
+        money: [...state.stats.money.slice(0, 4), 1, 0, Number(itemId)] } }, 'native_craft_funded_root');
+}
 // MVP-1: money waits only behind a path with a step now, so a native review
 // reads the bot's prepared town routes, as the live worker does.
 function preparedRoutes(state) {
@@ -78,11 +84,11 @@ async function images(ids) {
 }
 // The worker's selection (ShotCraftPolicy.selectionFor) for a D-shot craft:
 // the seller's helmet line and the buyer's bid line, read now from the board,
-// at a funded root's money-queue ratio (r).
+// its root funded through the product's money-packet row (fundRoot).
 function shotCraft(supplierId, buyerId, batches = 7) {
     const ask = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === supplierId);
     const bid = Afk.offers(1463, Afk.BUY).find(row => Number(row.sourceId) === buyerId);
-    return { recipeId: 20, batches, r: 1, gear: [45, 0, ask.recordId, ask.lineId, ask.price, ask.expectedRevision].map(Number),
+    return { recipeId: 20, batches, gear: [45, 0, ask.recordId, ask.lineId, ask.price, ask.expectedRevision].map(Number),
         ...(bid ? { exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) } : {}) };
 }
 (async() => {
@@ -115,7 +121,7 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         await Database.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 1 }, crafter.characterId);
         // The learned Crystallize reaches the worker's view as the live refresh puts it there.
         crafter = { ...crafter, stats: { ...crafter.stats, coldCombat: Profile.legacySnapshot(crafter, await Database.fetchSkills(crafter.characterId), now) } };
-        crafter = await measuredEconomy(crafter, now);
+        crafter = await fundRoot(await measuredEconomy(crafter, now), 1463);
         const recipe = Recipes.resolveByRecipeId(20);
         assert.equal(crafter.stats.money[0], 77000, 'labour uses three measured native hunting rounds');
         assert(crafter.stats.money[1] >= 1 / crafter.stats.money[0]);
@@ -194,7 +200,7 @@ function shotCraft(supplierId, buyerId, batches = 7) {
         // The learner breaks bought gear with its own Crystallize (248).
         await Database.setSkill({ selfId: 248, name: 'Crystallize', passive: false, level: 1 }, recipeBuyer.characterId);
         recipeBuyer = { ...recipeBuyer, stats: { ...recipeBuyer.stats, coldCombat: Profile.legacySnapshot(recipeBuyer, await Database.fetchSkills(recipeBuyer.characterId), now) } };
-        recipeBuyer = await measuredEconomy(recipeBuyer, now);
+        recipeBuyer = await fundRoot(await measuredEconomy(recipeBuyer, now), 1463);
         assert(Shots.recheck(recipeBuyer, shotCraft(supplier.characterId, buyer.characterId)),
             'the requested recipe has a profitable native route');
         // An expensive scroll is refused before acquisition. A later cheap
@@ -292,12 +298,12 @@ function shotCraft(supplierId, buyerId, batches = 7) {
             { selfId: 1459, amount: 1 },
             { selfId: 1463, amount: 1000 }, { selfId: 129, amount: 1, equipped: true, slot: 7 }],
         { classId: 57, level: 55, name: 'CLearner' });
-        cCrafter = await measuredEconomy(cCrafter, now);
+        cCrafter = await fundRoot(await measuredEconomy(cCrafter, now), 1464);
         // The worker's selection for a C-shot craft: crystals bought in Giran
         // (gear source -3) and the consumer's bid line, read now from the board.
         const cSelection = (batches = 5) => {
             const bid = Afk.offers(cRecipe.productId, Afk.BUY).find(row => Number(row.sourceId) === cConsumer.characterId);
-            return { recipeId: 21, batches, r: 1, gear: [1459, -3, Policy.townCode('Giran'), 0, 100, 0],
+            return { recipeId: 21, batches, gear: [1459, -3, Policy.townCode('Giran'), 0, 100, 0],
                 exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) };
         };
         const cTarget = Shots.recheck(cCrafter, cSelection());

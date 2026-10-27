@@ -33,7 +33,9 @@ const active = new Set();
 // Recheck only the published physical quantity, exit and crystal source. The
 // shared immutable NPC adjacency is initialised once; dynamic reads touch at
 // most five indexed raw rows for each selected ingredient.
-function recheck(state, selected) {
+// refusal: filled with reason 'mp_changed' when the bot's MP no longer pays
+// the batches (ColdWealthCraftService.rejectAccepted then holds the step).
+function recheck(state, selected, refusal = null) {
     const recipe = Recipes.resolveByRecipeId(Number(selected?.recipeId)), batches = Number(selected?.batches);
     const packet = state.stats?.money;
     if (!recipe || !Policy.SHOT_RECIPE_IDS.includes(Number(recipe.recipeId)) || !CraftShopService.canCraft(state, recipe)
@@ -54,6 +56,11 @@ function recheck(state, selected) {
     const hint = selected.gear;
     const gearId = Number(hint?.[0] || 0), sourceCode = Number(hint?.[1] || 0), hintedTown = Policy.townForCode(hint?.[2]);
     const scrap = sourceCode > 0 ? Recipes.resolveByRecipeId(sourceCode) : null;
+    // The craft's MP, with a gear piece it crafts for its crystals first.
+    if (WealthCraft.mpChanged(state, recipe, batches, scrap?.mpCost)) {
+        if (refusal) refusal.reason = 'mp_changed';
+        return null;
+    }
     if (scrap) for (const material of scrap.materials || []) neededIds.add(Number(material.selfId));
     if (sourceCode === -1) neededIds.add(gearId);
     const reserved = ItemDisposition.reservedEquipmentAmounts(state);
@@ -153,9 +160,9 @@ function recheck(state, selected) {
         ? { ...personal, target: Math.max(Number(personal.target || 0), Number(selected.ownReserve)) } : null;
     if (stock) ownStock.get(Number(recipe.productId)).count = Math.max(0,
         Number(state.inventory?.[recipe.productId]?.amount || 0) + Number(state.acceptedIncoming?.[recipe.productId] || 0) - stock.target);
-    // The step's root ratio (WealthCraftDecision.producerStep; 0: held inputs
-    // only): the worker sized the step at it, main spends at it.
-    const options = { ownStock, ownLines, stock, ownIncludesIncoming: true, r: Number(selected.r || 0),
+    // A producer root's step: its root's ratio, as the worker sized it
+    // (ShotCraftPolicy.recipeShotSearch rooted).
+    const options = { ownStock, ownLines, stock, ownIncludesIncoming: true, rooted: true,
         knownRecipes: scrap ? [{ recipeId: scrap.recipeId }] : [],
         itemTemplate: id => ItemIndex.find(DataCache.items, Number(id)), gearRowsFor: () => gear ? [gear] : [],
         prepareTrip: function* (town) { yield 'trip'; return trip.details?.(town) || { known: false }; },
@@ -412,13 +419,11 @@ async function execute(state, step, now = Date.now()) {
     if (Array.isArray(selected.gear) && Number(selected.gear[1]) > 0
         && !(await Database.execute(['SELECT recipeId FROM character_recipes WHERE characterId=? AND recipeId=? LIMIT 1',
             [Number(state.characterId), Number(selected.gear[1])]])).length) return state;
-    const candidate = recheck(state, selected);
-    if (!candidate) {
-        // A refused step goes back to the worker as a wealth step does
-        // (ColdWealthCraftService.rejectAccepted); one waiting for MP holds.
-        if (Number(state.vitals?.mp || 0) < Number(recipe.mpCost || 0) * Number(selected.batches || 1)) return state;
-        return WealthCraft.rejectAccepted(state);
-    }
+    // A refused step goes back to the worker as a wealth step does; one
+    // waiting for MP holds (ColdWealthCraftService.rejectAccepted).
+    const refusal = {};
+    const candidate = recheck(state, selected, refusal);
+    if (!candidate) return WealthCraft.rejectAccepted(state, state, refusal);
     if (step?.recipeTarget) {
         if (known) return state;
         const board = AfkTrade.boardIndex(), scrollId = Number(recipe.recipeItemId);

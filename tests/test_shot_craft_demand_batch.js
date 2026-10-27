@@ -71,7 +71,6 @@ Market.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure())
     assert.equal(own?.step.craft?.recipeId, 20, 'the own-use row is a shot craft step');
     assert.equal(own.step.craft.exit[0], -1, 'the step crafts for the bot\'s own use');
     assert.equal(step([-1, 100], { amount: 100 })?.step.craft?.batches, 1, 'a shortfall under one batch (156 shots) still crafts');
-    assert.equal(step([-1, 1000], { r: .002 })?.step.craft?.r, .002, 'the step carries its root\'s ratio for main\'s recheck');
     assert.equal(step([-2, Policy.townCode('Giran')]), null, 'a listing the root chose but no exit offers is no craft');
     console.log('PASS the network\'s own-use row crafts the bot\'s shots');
 }

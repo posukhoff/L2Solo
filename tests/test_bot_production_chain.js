@@ -154,8 +154,9 @@ async function run() {
     // The worker's selection (ShotCraftPolicy.selectionFor): this helmet line and this bid line.
     const ask = Afk.offers(45, Afk.SELL).find(row => Number(row.sourceId) === seller.characterId);
     const bid = Afk.offers(1463, Afk.BUY).find(row => Number(row.sourceId) === buyer.characterId);
-    // At a funded root's money-queue ratio (r), as the worker's step carries it.
-    const step = { craft: { recipeId: 20, batches: 7, r: 1,
+    // Its root funded: the product's money-packet row (PurchaseFunding.itemRatio).
+    crafter = { ...crafter, stats: { ...crafter.stats, money: [...crafter.stats.money.slice(0, 4), 1, 0, 1463] } };
+    const step = { craft: { recipeId: 20, batches: 7,
         gear: [45, 0, ask.recordId, ask.lineId, ask.price, ask.expectedRevision].map(Number),
         exit: [bid.recordId, bid.lineId, bid.price, bid.expectedRevision].map(Number) } };
     const candidate = Shots.recheck(crafter, step.craft);
