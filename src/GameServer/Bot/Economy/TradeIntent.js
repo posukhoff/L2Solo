@@ -167,7 +167,7 @@ function purchaseWorth(intent, moneyPrice) {
 // A quantitative network already owns allocation and batch rounding. Readers
 // only project that result; they never subtract physical stock a second time.
 // A row's worth is one unit's share of its root in adena (its valueHours over
-// its amount at the network's money price): what a buy ad of the intent may
+// its amount at its root's money price, WishNetwork.rootMoneyPrice): what a buy ad of the intent may
 // pay (BuyAdPolicy.bidFor, MarketPricing.look) and a meeting purchase's
 // consent (meetingPurchase), 0 without a money price.
 // A buyer's-line producer (bidsInputs: the line in adena) splits that line,
@@ -213,8 +213,8 @@ function preparedProject(network, limit, onCut = null) {
 // root's own quantity at consent, which the deduplication may have dropped).
 function rootRows(network, wish, onCut = null) {
     // lazy: cycle WishNetwork requires TradeIntent at load.
-    const { shortOf, MAX_DEPTH } = Network ||= require('./WishNetwork');
-    const step = network.activity, moneyPrice = Number(network.moneyPrice);
+    const { shortOf, MAX_DEPTH, rootMoneyPrice } = Network ||= require('./WishNetwork');
+    const step = network.activity, moneyPrice = rootMoneyPrice(network, wish);
     const rows = new Map(), farms = new Map();
     const line = lineOf(wish);
     const cash = line ? lineCash(new Map()) : rowCash;
@@ -293,7 +293,8 @@ function rootRows(network, wish, onCut = null) {
 function meetingPurchase(network, intents, { selfId, count, price, town, enchant = 0 }, state = null) {
     if (!network?.quantityPrepared) return null;
     const ordinary = intents?.find(row => row.itemId === selfId && row.amount >= count
-        && purchaseWorth(row, network?.moneyPrice) >= price);
+        && purchaseWorth(row, (Network ||= require('./WishNetwork')).rootMoneyPrice(network,
+            network.queue?.find(wish => wish.key === row.key))) >= price);
     const leaf = network.activity;
     const nativeQuote = nativePurchase(leaf) && Number(leaf.valueHours) > 0;
     const actual = (network.queue || []).filter(wish => wish.funded === true)

@@ -1,7 +1,7 @@
 'use strict';
 const ItemSources = require('../Items/ItemAcquisitionCatalog');
 
-const { WishNetwork, fundable: fundableWish, cashCharge, committedKeys, activePriority, pinned } = require('../Bot/Economy/WishNetwork');
+const { WishNetwork, fundable: fundableWish, cashCharge, committedKeys, activePriority, pinned, rootMoneyPrice } = require('../Bot/Economy/WishNetwork');
 const HallPolicy = require('../ClanHall/Policy');
 const Rules = require('./ClanRules');
 const Contributions = invoke('GameServer/Clan/ClanContributionPolicy');
@@ -117,7 +117,9 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
     if (chosenHall) eligible.push(chosenHall);
     const inputKey = JSON.stringify([wallet, reserve, level, persona, eligible, strategy?.objective, strategy?.target,
         memberContexts.map(context => context.inputKey), clan.state?.goal?.economy?.focus]);
-    const network = engine.build({ actorKey: `clan:${clan.id}`, inputKey, nodes: eligible, roots: eligible.map(node => node.key),
+    // A clan's purse is priced at its income rate whatever it holds (the
+    // author's; WishNetwork.moneyQueue heldMoney).
+    const network = engine.build({ actorKey: `clan:${clan.id}`, inputKey, heldMoney: false, nodes: eligible, roots: eligible.map(node => node.key),
         wallet, survivalReserve: reserve, persona, hourAdena: income,
         playedHours: mean(members.map(member => member.stats?.playedHours)),
         previous,
@@ -141,7 +143,8 @@ function build(clan, { warehouse = [], memberContexts = [], equipment = [], hall
         const value = hallValues.get(Number(hall.id));
         if (!wish || !value) return 0;
         const purse = Math.max(0, budgetFor('hall', hall.id) - value.maintenance);
-        const worth = network.moneyPrice > 0 ? wish.valueHours / network.moneyPrice : purse;
+        const moneyPrice = rootMoneyPrice(network, wish);
+        const worth = moneyPrice > 0 ? wish.valueHours / moneyPrice : purse;
         return Math.max(0, Math.floor(Math.min(purse, worth)));
     }
     return { actorKey: `clan:${clan.id}`, inputKey, wallet, reserve, incomePerHour: income, network, proofOffer,
