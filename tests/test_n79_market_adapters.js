@@ -8,7 +8,8 @@ isolated.assertConfigured(options.default);
 const DataCache = invoke('GameServer/DataCache');
 const Counters = invoke('GameServer/Bot/Economy/MarketCounters');
 const Listings = invoke('GameServer/Bot/Economy/MarketListingPolicy');
-const BuyStore = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService');
+// The one bid owner (BuyAdPolicy.bidFor); the cold store no longer re-exports it.
+const BuyAd = invoke('GameServer/Bot/Economy/BuyAdPolicy');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
 const BotMarket = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const { BoardIndex, SELL, BUY } = require('../src/GameServer/AfkTrade/BoardIndex');
@@ -73,8 +74,13 @@ async function contract(name, work) {
                 * Learning.errorOf(persona?.understanding ?? .3, 0, key) : 0;
         const ownWorth = Math.exp(centre + Math.log1p(bias));
         assert(Number.isFinite(ownWorth) && ownWorth > 0);
-        const bid = BuyStore.bidFor(state, { type: 'buy_craft_material', id: 99,
-            target: { itemId: 1864, amount: 20, adena: 4000 }, plan: { estimatedCost: 4000, priceSource: 'board' } }, { now, board });
+        const goal = { type: 'buy_craft_material', id: 99,
+            target: { itemId: 1864, amount: 20, adena: 4000 }, plan: { estimatedCost: 4000, priceSource: 'board' } };
+        // Only the chosen path bids (docs/game-decisions.md, 10-24): an item of
+        // no known use authors no bid; a buy intent (the chosen path) bids at
+        // its own worth (BuyAdPolicy.bidFor, as BuyAdPolicy.linesFor passes it).
+        assert.strictEqual(BuyAd.bidFor(state, goal, { now, board }), null, 'an unknown use authors no bid');
+        const bid = BuyAd.bidFor(state, { ...goal, intent: { key: 'test:1864', itemId: 1864, amount: 20, worth: ownWorth } }, { now, board });
         assert(bid && bid.price > 0, 'the affordable bid exists');
         assert(bid.pricing, 'BUY quote carries pricing state');
         assert.strictEqual(bid.pricing.price, bid.price);
