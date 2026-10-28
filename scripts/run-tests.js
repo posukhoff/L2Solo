@@ -667,6 +667,7 @@ const tests = [
     'tests/test_cast_interrupt.js',
     'tests/test_character_write_queue.js',
     'tests/test_hot_bag_trade_race.js',
+    'tests/test_live_bag_job_merges.js',
     'tests/test_database_checkpoint_worker.js',
     'tests/test_database_checkpoint_barrier.js',
     'tests/test_bot_life_events.js',

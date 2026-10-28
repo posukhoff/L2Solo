@@ -2,6 +2,7 @@ const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 const { randomBytes } = require('node:crypto');
 const Catalog = require('./C4WeaponSAExchange');
 const NpcIndex = require('../World/NpcObjectIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const Data = invoke('GameServer/DataCache');
 const Database = invoke('Database');
 const Response = invoke('GameServer/Network/Response');
@@ -86,11 +87,7 @@ async function exchange(session, token) {
     try {
         const result = await Database.exchangeWeaponSA(actor.fetchId(), { npcId, recipeId,
             sourceObjectId: item.fetchId(), expectedSelfId: sourceId, expectedEnchant: enchant, validate });
-        for (const row of result.consumed) {
-            const material = actor.backpack.fetchItemRaw(row.id);
-            if (row.remaining) material.setAmount(row.remaining);
-            else actor.backpack.items = actor.backpack.items.filter(entry => entry.fetchId() !== row.id);
-        }
+        LiveBag.applyAmounts(actor, result.consumed);
         // Replace template stats, retaining the very same inventory object and
         // all persisted instance fields, including enchant and shortcut id.
         item.model = { ...utils.crushOb(template(result.weapon.selfId)), ...result.weapon, equipped: false };

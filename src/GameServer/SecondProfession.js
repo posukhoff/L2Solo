@@ -3,6 +3,7 @@
 const Catalog = require('./SecondProfessionCatalog');
 const routes = Catalog.routes;
 const ClassTransfer = require('./ClassTransfer');
+const LiveBag = require('./Inventory/LiveBag');
 const Response = invoke('GameServer/Network/Response');
 const Database = invoke('Database');
 const World = invoke('GameServer/World/World');
@@ -61,10 +62,7 @@ async function transfer(session, targetClassId) {
     // The committed class and marks belong to the original character. A new
     // selection will load that result when this character logs in again.
     if (session.actor !== actor) return { ok: true, targetClassId, refreshPending: true };
-    for (const row of changed) {
-        if (row.amount) actor.backpack.fetchItemRaw(row.id)?.setAmount(row.amount);
-        else actor.backpack.items = actor.backpack.items.filter(item => item.fetchId() !== row.id);
-    }
+    LiveBag.applyAmounts(actor, changed);
     actor.setClassId(targetClassId);
     session.dataSendToMe(Response.itemsList(actor.backpack.fetchItems()));
     try {

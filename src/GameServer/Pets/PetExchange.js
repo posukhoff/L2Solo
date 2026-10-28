@@ -2,6 +2,7 @@ const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 const { randomBytes } = require('crypto');
 const { managers, tickets } = require('./PetExchangeData');
 const NpcIndex = require('../World/NpcObjectIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const World = invoke('GameServer/World/World');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
@@ -39,8 +40,7 @@ async function exchange(session, token, ticketId) {
     const ticket = actor.backpack.fetchItemFromSelfId(Number(ticketId));
     if (!ticket || ticket.fetchAmount() < 1) throw new Error('You do not have the matching Pet Exchange Ticket.');
     const result = await Database.exchangePetTicket(actor.fetchId(), ticket.fetchId());
-    if (result.remaining) ticket.setAmount(result.remaining);
-    else actor.backpack.items = actor.backpack.items.filter(item => item.fetchId() !== ticket.fetchId());
+    LiveBag.applyRow(actor, result.ticket);
     actor.backpack.insertItem(result.id, result.selfId, { amount: 1 });
     if (session.actor === actor) {
         session.dataSendToMe(Response.itemsList(actor.backpack.fetchItems()));

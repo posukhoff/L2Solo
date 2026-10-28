@@ -13,6 +13,7 @@ const DuesPolicy = invoke('GameServer/Clan/ClanContributionPolicy');
 const ExchangePolicy = invoke('GameServer/Clan/ClanWarehouseEquipmentPolicy');
 const HallPolicy = invoke('GameServer/ClanHall/Policy');
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const DataCache = invoke('GameServer/DataCache');
 
 const HOUR = 60 * 60 * 1000;
@@ -71,16 +72,7 @@ async function depositHot(member, clan, rows, demand, limit, goalKey, supplyGoal
                 && Number(actor.fetchClanId?.()) === Number(clan.id),
             resolveKey: `${clan.id}:hot-supplies:${member.characterId}:${candidate.id}:${Date.now()}` });
         if (!result.ok) { recordReason(result.code); continue; }
-        const item = items.find(item => Number(item.fetchId()) === candidate.id);
-        if (!item) continue;
-        const remaining = item.fetchAmount() - result.amount;
-        if (remaining > 0) item.setAmount(remaining);
-        else actor.backpack.items = actor.backpack.items.filter(entry => entry !== item);
-        if (result.reward > 0) {
-            const cash = (await Database.fetchItems(member.characterId)).find(row => Number(row.selfId) === 57);
-            actor.backpack.items = actor.backpack.items.filter(entry => entry.fetchSelfId() !== 57);
-            if (cash) actor.backpack.insertItem(cash.id, 57, cash);
-        }
+        if (session.actor === actor) LiveBag.applyAmounts(actor, result.rows);
         LifeState.acceptNewerLifecycleRow(result.state);
         moved.push(candidate);
     }

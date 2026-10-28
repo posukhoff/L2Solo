@@ -118,11 +118,11 @@ async function main() {
         // The visible bot uses its real backpack and the native warehouse transaction.
         await add(ids[2], 1865, 11);
         await query("UPDATE bot_life_state SET phase = 'hot', partyId = NULL WHERE characterId = ?", [ids[2]]);
-        const Item = invoke('GameServer/Item/Item');
+        const Backpack = invoke('GameServer/Actor/Backpack');
         const manager = invoke('GameServer/Bot/BotManager');
         const findSession = manager.findSessionById;
-        const hotItems = (await Database.fetchItems(ids[2])).map(row => new Item(row.id, { ...row, kind: 'Other.Material' }));
-        const hotSession = { actor: { fetchClanId: () => clanId, backpack: { items: hotItems, fetchItems() { return this.items; } } } };
+        const hotSession = { actor: { fetchId: () => ids[2], fetchClanId: () => clanId,
+            backpack: new Backpack({ paperdoll: {}, items: await Database.fetchItems(ids[2]) }) } };
         manager.findSessionById = id => Number(id) === ids[2] ? hotSession : null;
         try {
             await Warehouse.resolveClan(await projection(), { batchSize: 8 });

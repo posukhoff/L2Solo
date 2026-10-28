@@ -3,6 +3,7 @@ const Station = require('../World/GiranCrystallizationStation');
 const NpcIndex = require('../World/NpcObjectIndex');
 const Rules = require('./C4EnchantRules');
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const Data = invoke('GameServer/DataCache');
 const Database = invoke('Database');
 const Response = invoke('GameServer/Network/Response');
@@ -100,10 +101,7 @@ async function crystallize(session, token) {
             sourceId: item.fetchId(), sourceSelfId: selfId, expectedEnchant: enchant,
             crystalId: reward.crystalId, crystalName: reward.crystalName, crystalAmount: reward.net, validate
         });
-        actor.backpack.items = actor.backpack.items.filter(entry => entry !== item);
-        const existing = actor.backpack.fetchItemRaw(result.id);
-        if (existing) existing.setAmount(result.amount);
-        else actor.backpack.insertItem(result.id, reward.crystalId, { amount: result.amount, equipped: false, slot: 0 });
+        LiveBag.applyAmounts(actor, result.rows);
         if (session.actor === actor) {
             session.dataSendToMe(Response.itemsList(actor.backpack.fetchItems()));
             const params = [{ kind: ConsoleText.kind.item, value: reward.crystalId }];

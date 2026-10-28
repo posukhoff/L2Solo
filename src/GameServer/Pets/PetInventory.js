@@ -1,5 +1,6 @@
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 const Rules = require('./PetRules');
+const LiveBag = require('../Inventory/LiveBag');
 const { gear } = require('../../../data/Pets/c4-gear.json');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
@@ -51,13 +52,7 @@ async function apply(pet, command) {
     const result = await Database.transferPetInventory(actor.fetchId(), pet.fetchPetControlItemObjectId(), command);
     pet.petData.inventory = result.inventory;
     if (result.currentFeed !== undefined) pet.setCurrentFeed(result.currentFeed);
-    const row = result.playerItem;
-    if (row) {
-        const existing = actor.backpack.fetchItemRaw(row.id);
-        if (!row.amount) actor.backpack.items = actor.backpack.items.filter(item => item.fetchId() !== row.id);
-        else if (existing) existing.setAmount(row.amount);
-        else actor.backpack.insertItem(row.id, row.selfId, row);
-    }
+    LiveBag.applyRow(actor, result.playerItem);
     actor.backpack.fetchItemRaw(pet.fetchPetControlItemObjectId())?.setPetData(runtime().snapshot(pet));
     runtime().applyStats(pet);
     pet.setHp(Math.min(pet.fetchHp(), pet.fetchMaxHp()));
@@ -125,8 +120,7 @@ function autoFeedMounted(pet) {
         if (!food || pet.ownerSession.persistenceMode === 'ephemeral') return;
         await runtime().persist(pet);
         const result = await Database.feedMountedPet(actor.fetchId(),pet.fetchPetControlItemObjectId(),food.fetchId(),foodValue(food.fetchSelfId()));
-        if (result.remaining) food.setAmount(result.remaining);
-        else actor.backpack.items = actor.backpack.items.filter(item=>item!==food);
+        LiveBag.applyRow(actor, result.food);
         pet.setCurrentFeed(result.currentFeed);
         pet.ownerSession.dataSendToMe(Response.itemsList(actor.backpack.fetchItems()));
     });

@@ -52,79 +52,71 @@ for (const protectedItem of [questItem, questClassItem, petLocked]) {
     assert(!session.activeNpcSellShop.items.has(protectedItem.fetchId()), 'protected items must not enter the server offer snapshot');
 }
 
-const amount = { value: 12 };
-const adenaAmount = { value: 500 };
-const mutableItem = {
-    ...item(1001, 1539, amount.value, 40),
-    fetchAmount: () => amount.value,
-    setAmount: (value) => { amount.value = value; }
-};
-const mutableAdena = {
-    ...item(1003, 57, adenaAmount.value, 1),
-    fetchAmount: () => adenaAmount.value,
-    setAmount: (value) => { adenaAmount.value = value; }
-};
-const sellPackets = [];
-const sellSession = {
-    activeNpcSellShop: { items: new Map([[1001, { selfId: 1539, price: 20 }]]) },
-    actor: {
-        fetchId: () => 42,
-        backpack: {
-            items: [mutableItem, mutableAdena, questItem, questClassItem, petLocked],
-            fetchItems() { return this.items; },
-            fetchItemFromSelfId: (selfId) => selfId === 57 ? mutableAdena : mutableItem,
-            fetchTotalAdena: () => adenaAmount.value
-        }
-    },
-    dataSendToMe(packet) { sellPackets.push(packet); }
-};
-const originalSell = Database.sellItemsToNpc;
+// The sale itself commits in a real database: the live bag takes the
+// committed rows (LiveBag), and a refused sale writes nothing.
+const fixture = require('./helpers/liveBagRows')('npc-sell-shop');
+const Backpack = invoke('GameServer/Actor/Backpack');
+const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const characterId = 42;
 const originalUserInfo = ServerResponse.userInfo;
 const originalItemsList = ServerResponse.itemsList;
-const writes = [];
-Database.sellItemsToNpc = async (characterId, lines, validate) => {
-    validate();
-    writes.push([characterId, lines]);
-    return {
-        sold: lines.map(line => ({ objectId: line.objectId, amount: line.expectedAmount - line.amount })),
-        adena: { id: mutableAdena.fetchId(), amount: adenaAmount.value + lines.reduce((sum, line) => sum + line.price * line.amount, 0) }
-    };
-};
 ServerResponse.userInfo = () => Buffer.from([0x04]);
 ServerResponse.itemsList = () => Buffer.from([0x1b]);
 const request = Buffer.alloc(21);
-request.writeInt32LE(0, 1);
-request.writeInt32LE(1, 5);
-request.writeInt32LE(1001, 9);
-request.writeInt32LE(1539, 13);
-request.writeInt32LE(5, 17);
 
-Sell(sellSession, request).then(async () => {
-    assert.strictEqual(amount.value, 7, 'NPC sale should remove only the amount selected in the native window');
-    assert.strictEqual(adenaAmount.value, 600, 'NPC sale should credit the advertised half-reference price');
+(async () => {
+    invoke('GameServer/DataCache').init();
+    fixture.open();
+    await fixture.character(characterId, 'SellShopTester');
+    for (const [selfId, amount] of [[1539, 12], [57, 500], [1160, 13], [7573, 1], [2375, 1]]) {
+        await Database.setItem(characterId, { selfId, name: `Item ${selfId}`, amount });
+    }
+    const backpack = new Backpack({ paperdoll: {}, items: await Database.fetchItems(characterId) });
+    const held = selfId => backpack.fetchItemFromSelfId(selfId);
+    held(2375).petInUse = true;
+    const sellPackets = [];
+    const sellSession = {
+        actor: { fetchId: () => characterId, backpack },
+        dataSendToMe(packet) { sellPackets.push(packet); }
+    };
+    sellSession.activeNpcSellShop = { items: new Map(NpcSellRules.rows(sellSession.actor).map(row =>
+        [row.item.fetchId(), { selfId: row.item.fetchSelfId(), price: row.price }])) };
+    const price = sellSession.activeNpcSellShop.items.get(held(1539).fetchId()).price;
+    assert.strictEqual(price, NpcSellRules.npcBuyPrice(held(1539).fetchPrice()), 'the offer is the C4 half-reference price');
+    request.writeInt32LE(0, 1);
+    request.writeInt32LE(1, 5);
+    request.writeInt32LE(held(1539).fetchId(), 9);
+    request.writeInt32LE(1539, 13);
+    request.writeInt32LE(5, 17);
+
+    await Sell(sellSession, request);
+    assert.strictEqual(held(1539).fetchAmount(), 7, 'NPC sale should remove only the amount selected in the native window');
+    assert.strictEqual(held(57).fetchAmount(), 500 + 5 * price, 'NPC sale should credit the advertised half-reference price');
+    const rows = await Database.fetchItems(characterId);
+    assert.strictEqual(rows.find(row => row.selfId === 1539).amount, 7, 'the database holds the potions left');
+    assert.strictEqual(rows.find(row => row.selfId === 57).amount, 500 + 5 * price, 'the database holds the payout');
     assert.strictEqual(sellPackets[0][0], 0x04, 'NPC sale should refresh UserInfo after the transaction');
     assert.strictEqual(sellPackets[2][0], 0x10, 'NPC sale should keep the native SellList open with the remaining items');
     assert.strictEqual(sellPackets[2].readInt16LE(9), 1, 'refreshed offers must still exclude quest and pet-locked items');
-    for (const protectedItem of [questItem, questClassItem, petLocked]) {
+    for (const protectedItem of [held(1160), held(7573), held(2375)]) {
         // Simulate an offer retained from before the fix, plus a forged packet.
         sellSession.activeNpcSellShop.items.set(protectedItem.fetchId(), { selfId: protectedItem.fetchSelfId(), price: 1 });
         const forged = Buffer.from(request);
         forged.writeInt32LE(protectedItem.fetchId(), 9);
         forged.writeInt32LE(protectedItem.fetchSelfId(), 13);
         forged.writeInt32LE(protectedItem.fetchAmount(), 17);
-        const beforeWrites = writes.length;
         await Sell(sellSession, forged);
-        assert.strictEqual(writes.length, beforeWrites, 'rejected sales must not write items or Adena');
-        assert(sellSession.actor.backpack.items.includes(protectedItem), 'rejected sales must retain the inventory item');
-        assert.strictEqual(adenaAmount.value, 600, 'quest items must never pay the one-Adena minimum');
+        assert.deepStrictEqual(await Database.fetchItems(characterId), rows, 'rejected sales must not write items or Adena');
+        assert(backpack.fetchItems().includes(protectedItem), 'rejected sales must retain the inventory item');
+        assert.strictEqual(held(57).fetchAmount(), 500 + 5 * price, 'quest items must never pay the one-Adena minimum');
         assert(!sellSession.activeNpcSellShop.items.has(protectedItem.fetchId()), 'refresh must remove a stale protected offer');
     }
     console.log('NPC sell offers, normal payout and forged quest-item sale rejection passed');
-}).catch((error) => {
+})().catch((error) => {
     console.error(error);
     process.exitCode = 1;
-}).finally(() => {
-    Database.sellItemsToNpc = originalSell;
+}).finally(async () => {
     ServerResponse.userInfo = originalUserInfo;
     ServerResponse.itemsList = originalItemsList;
+    await fixture.close();
 });

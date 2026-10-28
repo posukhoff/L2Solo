@@ -7,7 +7,7 @@ const MarketTelemetry = invoke('GameServer/Bot/Economy/MarketTelemetry');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
 const Mutations = require('../../Inventory/InventoryMutationQueue');
 const InventoryLimits = require('../../Inventory/InventoryLimits');
-const Item = invoke('GameServer/Item/Item');
+const LiveBag = require('../../Inventory/LiveBag');
 
 // Invalid or stale client requests are normal refusals; persistence failures
 // still need an error in the server log.
@@ -198,21 +198,9 @@ function sellToNpcShop(session, list) {
                 }
             };
             const result = await Database.sellItemsToNpc(actor.fetchId(), requested.map(({ objectId, selfId, amount, price, expectedAmount }) => ({ objectId, selfId, amount, price, expectedAmount })), validate);
-            // The transaction committed the entire batch and its payout. Publish
-            // only those committed amounts, never a pre-await balance plus price.
-            for (const sold of result.sold) {
-                const item = requested.find(line => line.objectId === sold.objectId).item;
-                if (sold.amount) item.setAmount(sold.amount);
-                else backpack.items = backpack.items.filter(candidate => candidate !== item);
-                backpack.onInventoryChange?.(item.fetchSelfId());
-            }
-            if (result.adena) {
-                const adena = backpack.fetchItems().find(item => item.fetchId() === Number(result.adena.id));
-                if (adena) adena.setAmount(Number(result.adena.amount));
-                else backpack.insertItem(Number(result.adena.id), 57, { amount: Number(result.adena.amount) });
-            }
-            backpack.inventoryRevision = Number(backpack.inventoryRevision || 0) + 1;
-            Item.bindInventory(backpack);
+            // The transaction committed the entire batch and its payout: its
+            // rows plus what the bag changed since (a shot used meanwhile).
+            LiveBag.applyAmounts(actor, result.rows);
         } catch (err) {
             if (!(err instanceof NpcSaleRejected)) utils.infoWarn('Sell', 'NPC shop sell error: %s', err.message || err);
             if (session.actor === actor) session.dataSendToMe(ServerResponse.actionFailed());

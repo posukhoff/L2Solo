@@ -1,7 +1,6 @@
 const assert = require('assert');
 require('../src/Global');
 
-const Database = invoke('Database');
 const BotNegotiationService = invoke('GameServer/Bot/Economy/BotNegotiationService');
 const BotTradeService = invoke('GameServer/Bot/BotTradeService');
 const BotSocialMemory = invoke('GameServer/Bot/AI/BotSocialMemory');
@@ -41,16 +40,17 @@ const packets = [];
 const player = { accountId: 'player_neg_flow', dataSendToMe: (packet) => packets.push(packet), actor: actor(920, 'FlowPlayer', playerBackpack) };
 const bot = { accountId: 'bot_neg_flow', plan: 'following', actor: actor(921, 'FlowMerchant', botBackpack) };
 const originalSnapshot = BotSocialMemory.getSnapshot;
-const originalTransfer = Database.transferInventoryBetweenCharacters;
+// The trade commits in a real database holding both bags' rows.
+const fixture = require('./helpers/liveBagRows')('bot-negotiation-flow');
 
 (async () => {
 try {
+    fixture.open();
+    await fixture.character(920, 'FlowPlayer');
+    await fixture.character(921, 'FlowMerchant');
+    await fixture.stored(920, playerItem);
+    await fixture.stored(921, botItem);
     BotSocialMemory.getSnapshot = () => ({ trust: 3, familiarity: 5 });
-    Database.transferInventoryBetweenCharacters = async (entries) => entries.map((entry, index) => ({
-        ...entry,
-        targetItemId: 9300 + index,
-        remaining: entry.sourceItemId === 922 ? 1 : Number(entry.sourceItemId === 921 ? 5000 - entry.amount : 0)
-    }));
 
     const quoted = BotNegotiationService.quoteItem(bot, player, 922, 1);
     assert.strictEqual(quoted.ok, true);
@@ -103,8 +103,8 @@ try {
     console.log('Bot negotiation flow checks passed');
 } finally {
     BotSocialMemory.getSnapshot = originalSnapshot;
-    Database.transferInventoryBetweenCharacters = originalTransfer;
     BotNegotiationService.reset();
+    await fixture.close();
 }
 })().catch((error) => {
     console.error(error);

@@ -8,6 +8,7 @@ const ItemSlot = invoke('GameServer/Item/ItemSlot');
 const World = invoke('GameServer/World/World');
 const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const Limits = require('./PersonalWarehouseLimits');
+const LiveBag = require('../Inventory/LiveBag');
 
 const MAX_LINES = 100;
 const INTERACTION_RADIUS = 300;
@@ -61,21 +62,9 @@ async function playerTransfer(session, lines, mode) {
             stackable: source.fetchStackable?.() === true };
     });
     const results = await Database.transferPlayerWarehouseBatch(actor.fetchId(), session.accountId, transfers, mode);
-    // Publish to the live backpack only after the entire selected batch commits.
-    for (const result of results) {
-        if (mode === 'deposit') {
-            const source = backpack.fetchItems().find(item => Number(item.fetchId()) === result.sourceItemId);
-            if (result.inventoryAmount === 0) backpack.items = backpack.items.filter(item => item !== source);
-            else source.setAmount(result.inventoryAmount);
-        } else {
-            const target = backpack.fetchItems().find(item => Number(item.fetchId()) === result.inventoryId);
-            if (target) target.setAmount(result.inventoryAmount);
-            else {
-                const added = warehouseItem({ ...result, id: result.inventoryId, amount: result.inventoryAmount });
-                if (added) backpack.items.push(added);
-            }
-        }
-    }
+    // Publish to the live backpack only after the entire selected batch
+    // commits: its rows plus what the bag changed since.
+    LiveBag.applyAmounts(actor, results.rows);
     return list(session);
 }
 
@@ -121,11 +110,7 @@ async function deposit(session, lines) {
             if (added) stored.push(added);
         }
 
-        if (transferred.inventoryAmount === 0) {
-            backpack.items = backpack.items.filter((item) => item !== source);
-        } else {
-            source.setAmount(transferred.inventoryAmount);
-        }
+        LiveBag.applyAmounts(actor, transferred.rows);
     }
     return stored;
 }
@@ -134,7 +119,6 @@ async function withdraw(session, lines) {
     if (!isWarehouseNpc(session)) throw new Error('warehouse NPC is no longer active');
     if (Limits.isPlayer(session)) return playerTransfer(session, lines, 'withdraw');
     const actor = session.actor;
-    const backpack = actor.backpack;
     await CharacterWriteQueue.flushCharacter(actor.fetchId());
     const stored = await list(actor.fetchId());
     if (!validateLines(lines, stored)) throw new Error('invalid warehouse withdrawal');
@@ -142,23 +126,12 @@ async function withdraw(session, lines) {
     for (const line of lines) {
         const source = stored.find((item) => Number(item.fetchId()) === Number(line.objectId));
         const amount = Number(line.amount);
-        const target = source.fetchStackable?.() && backpack.fetchItems().find((item) => (
-            item.fetchStackable?.() && Number(item.fetchSelfId()) === Number(source.fetchSelfId())
-        ));
-
         const transferred = await Database.transferWarehouseToInventory(actor.fetchId(), {
             id: source.fetchId(), selfId: source.fetchSelfId(), name: source.fetchName?.(), amount,
             stackable: source.fetchStackable?.()
         });
-        if (target) {
-            target.setAmount(transferred.inventoryAmount);
-        } else {
-            const added = warehouseItem({
-                id: transferred.inventoryId, selfId: source.fetchSelfId(), amount,
-                petData: transferred.petData, enchant: transferred.enchant
-            });
-            if (added) backpack.items.push(added);
-        }
+        // The stack the database credited (its inventoryId), plus what the bag changed since.
+        LiveBag.applyAmounts(actor, transferred.rows);
 
         if (transferred.warehouseAmount === 0) {
             stored.splice(stored.indexOf(source), 1);

@@ -8,6 +8,7 @@ const vm = require('vm');
 const { createRequire } = require('module');
 const { DatabaseSync } = require('node:sqlite');
 require('../src/Global');
+invoke('GameServer/DataCache').init();
 const Database = invoke('Database');
 const BotAI = invoke('GameServer/Bot/BotAI');
 const Rules = require('../src/GameServer/Clan/ClanAllianceRules');
@@ -46,10 +47,8 @@ function actor(id, selfId, x) {
             fetchHits() { return this.hits; }, setHits(v) { this.hits = v; },
             fetchSeated() { return this.seated; }, setSeated(v) { this.seated = v; } },
         attack: { abortCast() {}, clearTimers() {} }, automation: { abortAll() {}, stopReplenish() {} }, unselect() {},
-        backpack: { items: [], fetchItems() { return this.items; },
-            fetchItemFromSelfId(id) { return this.items.find(i => i.fetchSelfId() === id); },
-            insertItem(id, selfId, { amount }) { this.items.push({ amount, fetchId: () => id,
-                fetchSelfId: () => selfId, setAmount(v) { this.amount = v; } }); } }
+        // The real bag: database rows merge into it (LiveBag).
+        backpack: new (invoke('GameServer/Actor/Backpack'))({ paperdoll: {}, items: [] })
     };
 }
 const sessions = ids.map((id, index) => ({ actor: actor(id, 0, 20000), accountId: index ? `bot_flow_${id}` : 'player',

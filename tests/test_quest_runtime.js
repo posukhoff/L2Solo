@@ -855,35 +855,22 @@ async function main() {
     QuestService.awardFirstProfession = originalAwardFirstProfession;
   }
 
-  const deleted = [];
-  const allStackItem = {
-    fetchId: () => 41,
-    fetchAmount: () => 7,
-  };
-  const allStackSession = {
-    actor: {
-      fetchId: () => 8,
-      backpack: {
-        items: [allStackItem],
-        fetchItemFromSelfId: () => allStackItem,
-        fetchItems: () => [],
-      },
-    },
-    dataSendToMe: () => {},
-  };
-  const originalDeleteItem = invoke("Database").deleteItem;
-  invoke("Database").deleteItem = async (...args) => deleted.push(args);
-  try {
-    assert.strictEqual(
-      await QuestService.takeItem(allStackSession, 1094, -1),
-      true,
-      "takeItem(-1) must consume an existing quest-item stack",
-    );
-    assert.deepStrictEqual(deleted, [[8, 41]]);
-    assert.deepStrictEqual(allStackSession.actor.backpack.items, []);
-  } finally {
-    invoke("Database").deleteItem = originalDeleteItem;
-  }
+  // takeItem(-1) takes the whole stack: the bag drops it and the stack's
+  // delta (-7) waits in the live bag's write queue (LiveBag.add).
+  invoke("GameServer/DataCache").init();
+  const Backpack = invoke("GameServer/Actor/Backpack");
+  const WriteQueue = invoke("GameServer/Persistence/CharacterWriteQueue");
+  const allStackActor = { fetchId: () => 8,
+    backpack: new Backpack({ items: [{ id: 41, selfId: 1094, amount: 7 }], paperdoll: {} }) };
+  const allStackSession = { actor: allStackActor, dataSendToMe: () => {} };
+  allStackActor.session = allStackSession;
+  assert.strictEqual(
+    await QuestService.takeItem(allStackSession, 1094, -1),
+    true,
+    "takeItem(-1) must consume an existing quest-item stack",
+  );
+  assert.strictEqual(WriteQueue.unread(8).get(41), -7);
+  assert.deepStrictEqual(allStackActor.backpack.fetchItems(), []);
 }
 
 main()

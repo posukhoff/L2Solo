@@ -106,18 +106,24 @@ async function run() {
         await Database.execute(["UPDATE bot_life_state SET phase='hot' WHERE characterId=?", [id]]);
         const hotRequest = { ...request, item: { id: jamadhr.insertId, selfId: 259, kind: 'Weapon.DualFist', stackable: false },
             goalKey: hotGoal.goalKey, rewardUnitPrice: 322000, expectedPhase: 'hot', validateLive: () => true, resolveKey: 'hot-owned-item' };
-        await Database.execute([`CREATE TEMP TRIGGER fail_owned_reward BEFORE DELETE ON items
+        // The payout credits the member's Adena row; a failed credit write aborts the delivery.
+        await Database.execute([`CREATE TEMP TRIGGER fail_owned_reward BEFORE UPDATE ON items
             WHEN OLD.characterId=${id} AND OLD.selfId=57 BEGIN SELECT RAISE(ABORT,'reward rollback'); END`, []]);
         await assert.rejects(Database.transferInventoryToClanWarehouse(hotRequest), /reward rollback/);
         assert((await Database.fetchItems(id)).some(row => row.id === jamadhr.insertId), 'a failed payout rolls back the delivery');
         assert.equal((await Database.fetchClanWarehouseItems(actualClan)).find(row => row.selfId === 57).amount, 322000);
         await Database.execute(['DROP TRIGGER fail_owned_reward', []]);
+        // A live bag's Adena change queued before the delivery (a pickup)
+        // stays: the reward credits the member's Adena row, it does not
+        // rebuild it from the life summary.
+        const purse = (await Database.fetchItems(id)).find(row => row.selfId === 57);
+        invoke('GameServer/Persistence/CharacterWriteQueue').itemDelta(id, purse.id, 40);
         const hotPaid = await Database.transferInventoryToClanWarehouse(hotRequest);
         assert.equal(hotPaid.ok, true, hotPaid.code);
-        assert.equal(hotPaid.state.adena, 536500);
+        assert.equal(hotPaid.state.adena, 536540, 'the life state follows the Adena row');
         assert(!(await Database.fetchClanWarehouseItems(actualClan)).some(row => row.selfId === 57), 'an exact reward consumes the treasury row');
         assert(!(await Database.fetchItems(id)).some(row => row.id === jamadhr.insertId));
-        assert.equal((await Database.fetchItems(id)).find(row => row.selfId === 57).amount, 536500);
+        assert.equal((await Database.fetchItems(id)).find(row => row.selfId === 57).amount, 536540, 'the queued pickup and the reward both land');
         await Database.execute(['UPDATE clans SET level=0 WHERE id=?', [actualClan]]);
         const noWarehouse = await Database.transferInventoryToClanWarehouse({ ...request, rewardUnitPrice: 0, resolveKey: 'no-warehouse' });
         assert.equal(noWarehouse.code, 'warehouse_level_unavailable');

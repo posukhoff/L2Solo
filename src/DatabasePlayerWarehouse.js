@@ -18,7 +18,7 @@ function migrate(connection) {
     `);
 }
 
-function create({ one, all, write, inTransaction, withCharacterFlush }) {
+function create({ one, all, write, inTransaction, withCharacterFlush, markedRows }) {
     function owner(characterId, accountId) {
         const row = one(`SELECT account.username FROM characters c
             JOIN accounts account ON account.username = c.username COLLATE NOCASE
@@ -57,7 +57,9 @@ function create({ one, all, write, inTransaction, withCharacterFlush }) {
             if (!['deposit', 'withdraw'].includes(mode)) throw Error('invalid player warehouse mode');
             return withCharacterFlush(characterId, () => inTransaction(() => {
                 const account = owner(characterId, accountId);
-                const results = [];
+                // The character's item rows the batch wrote, in order (a later
+                // line on the same stack carries its newer amount).
+                const results = [], rows = [];
                 for (const item of lines) {
                     if (mode === 'deposit') {
                         const source = one('SELECT * FROM items WHERE id = ? AND characterId = ?', [item.id, characterId]);
@@ -78,6 +80,7 @@ function create({ one, all, write, inTransaction, withCharacterFlush }) {
                         if (inventoryAmount) write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [inventoryAmount, source.id, characterId]);
                         else write('DELETE FROM items WHERE id = ? AND characterId = ?', [source.id, characterId]);
                         results.push({ sourceItemId: item.id, warehouseId: Number(warehouseId), warehouseAmount, inventoryAmount });
+                        rows.push({ id: Number(source.id), amount: inventoryAmount });
                     } else {
                         const source = one('SELECT * FROM account_warehouse_items WHERE id = ? AND accountName = ?', [item.id, account]);
                         if (!source || Number(source.selfId) !== item.selfId || Number(source.amount) < item.amount) throw Error('warehouse item changed');
@@ -94,8 +97,12 @@ function create({ one, all, write, inTransaction, withCharacterFlush }) {
                         else write('DELETE FROM account_warehouse_items WHERE id = ?', [source.id]);
                         results.push({ sourceItemId: item.id, inventoryId: Number(inventoryId), inventoryAmount, warehouseAmount,
                             selfId: Number(source.selfId), enchant: Number(source.enchant), petData: source.petData });
+                        rows.push({ id: Number(inventoryId), amount: inventoryAmount, selfId: Number(source.selfId),
+                            enchant: Number(source.enchant), petData: source.petData, equipped: 0, slot: 0 });
                     }
                 }
+                // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+                results.rows = markedRows(characterId, rows);
                 return results;
             }, `warehouse:player-${mode}`));
         }

@@ -1,4 +1,5 @@
 const ItemTemplateIndex = require('./Item/ItemTemplateIndex');
+const LiveBag = require('./Inventory/LiveBag');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const ServerResponse = invoke('GameServer/Network/Response');
@@ -46,29 +47,6 @@ function removeFromMemory(backpack, item) {
         item.setEquipped(false);
     }
     backpack.items = backpack.fetchItems().filter((entry) => entry.fetchId() !== item.fetchId());
-}
-
-function updateScrollMemory(backpack, scroll, amount) {
-    if (amount > 0) {
-        scroll.setAmount(amount);
-    } else {
-        backpack.items = backpack.fetchItems().filter((entry) => entry.fetchId() !== scroll.fetchId());
-    }
-}
-
-function updateCrystalMemory(backpack, result) {
-    const existing = backpack.fetchItemRaw(result.crystalItemId)
-        || backpack.fetchItemFromSelfId(result.crystalId);
-    if (existing) {
-        existing.setAmount(result.crystalTotal);
-        return;
-    }
-    backpack.insertItem(result.crystalItemId, result.crystalId, {
-        amount: result.crystalTotal,
-        equipped: false,
-        slot: 0,
-        enchant: 0
-    });
 }
 
 function refresh(session) {
@@ -155,7 +133,8 @@ async function enchant(session, objectId, options = {}) {
             crystalAmount
         });
 
-        updateScrollMemory(backpack, scroll, persisted.scrollAmount);
+        // The scroll's (and a break's crystal) rows plus what the bag changed since.
+        LiveBag.applyAmounts(actor, persisted.rows);
         if (result === 'success') {
             target.setEnchantLevel(nextLevel);
             backpack.visibleLook = null; // the weapon glow may change
@@ -173,7 +152,6 @@ async function enchant(session, objectId, options = {}) {
                 { kind: ConsoleText.kind.item, value: crystalId },
                 { kind: ConsoleText.kind.number, value: crystalAmount }
             ]);
-            updateCrystalMemory(backpack, persisted);
             send(session, ServerResponse.enchantResult(1));
         }
 

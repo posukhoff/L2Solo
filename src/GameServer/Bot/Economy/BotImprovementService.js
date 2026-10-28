@@ -3,6 +3,7 @@ const DiagnosticConfig = require('../Population/PopulationConfig');
 const { partyIdOf } = require('../Population/PartyId');
 const Policy = require('./BotImprovementPolicy');
 const DecisionEvents = require('../AI/DecisionEvents');
+const LiveBag = require('../../Inventory/LiveBag');
 const Approach = invoke('GameServer/Bot/AI/TownNpcApproach');
 const pendingCold = new Map(), pendingHot = new WeakMap();
 let improvementDeferred = 0;
@@ -103,19 +104,23 @@ function reviewHot(session) {
         if (!current()) throw Error('improvement_actor_retired');
     }}).then(result => {
         if (!current()) return result;
-        const backpack = actor.backpack, before = new Map(backpack.fetchItems().map(item => [item.fetchId(),item]));
-        const ids = new Set(result.changedIds || []);
-        const after = new Map(result.items.map(item => [item.id,item]));
-        for (const [id,item] of before) {
-            if (!ids.has(item.fetchSelfId())) continue;
-            const row = after.get(id);
-            if (!row || row.selfId !== item.fetchSelfId()) {
-                backpack.items = backpack.fetchItems().filter(candidate => candidate !== item);
-                if (item.fetchEquipped()) backpack.unequipPaperdoll(item.fetchSlot());
-                if (row) { backpack.insertItem(row.id,row.selfId,row); if (row.equipped) backpack.equipPaperdoll(row.slot,row.id,row.selfId); }
-            } else { item.setAmount(row.amount); item.setEnchantLevel(row.enchant); }
+        // The committed bag plus what the body changed since (LiveBag.applyRows);
+        // worn gear the improvement removed or swapped (an SA) leaves or
+        // takes its paperdoll slot. Enchanted worn gear (a new item object:
+        // LiveBag compares selfId and enchant) stays worn in its slot.
+        const backpack = actor.backpack, before = backpack.fetchItems().slice();
+        LiveBag.applyRows(actor, result.items);
+        const after = new Map(backpack.fetchItems().map(item => [Number(item.fetchId()), item]));
+        for (const item of before) {
+            if (!item.fetchEquipped()) continue;
+            const now = after.get(Number(item.fetchId()));
+            if (now && Number(now.fetchSelfId()) === Number(item.fetchSelfId())) {
+                if (now !== item) { now.setEquipped(true); now.setSlot(item.fetchSlot()); }
+                continue;
+            }
+            backpack.unequipPaperdoll(item.fetchSlot());
+            if (now?.fetchEquipped()) backpack.equipPaperdoll(now.fetchSlot(), now.fetchId(), now.fetchSelfId());
         }
-        for (const row of result.items) if (ids.has(row.selfId) && !before.has(row.id)) backpack.insertItem(row.id,row.selfId,row);
         if (result.questStarted) {
             const quest = invoke('GameServer/Quest/QuestService').stateFor(session, invoke('GameServer/Quest/quests/Q350_EnhanceYourWeapon'));
             quest.state = 'started'; quest.variables = {cond:'1'};

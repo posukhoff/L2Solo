@@ -213,14 +213,25 @@ async function run() {
         fetchStackable() { return this.stackable; }
     });
     const saber = { selfId: 123, name: 'Saber', amount: 1, kind: 'Weapon.Sword', rank: 'd', stackable: false };
-    const liveItems = [
-        liveItem(41, { ...material, stackable: true }),
-        liveItem(42, { ...trash, stackable: false }),
-        liveItem(43, saber, true),
-        liveItem(44, saber),
-        liveItem(45, saber)
-    ];
-    const liveBackpack = { items: liveItems, fetchItems() { return this.items; } };
+    // A hot bot's real bag over a real database: its deposit commits there and
+    // the bag takes the committed rows (LiveBag). The warehouse already holds
+    // two sabers.
+    const fixture = require('./helpers/liveBagRows')('bot-warehouse');
+    const stubbed = { fetchItems: Database.fetchItems, fetchWarehouseItems: Database.fetchWarehouseItems,
+        transferInventoryToWarehouse: Database.transferInventoryToWarehouse };
+    Object.assign(Database, { fetchItems: originals.fetchItems, fetchWarehouseItems: originals.fetchWarehouseItems,
+        transferInventoryToWarehouse: originals.transferInventoryToWarehouse });
+    fixture.open();
+    await fixture.character(56, 'LiveDepositor');
+    for (const [id, selfId, amount, equipped] of [[41, 1870, 20, 0], [42, 1, 1, 0], [43, 123, 1, 1], [44, 123, 1, 0], [45, 123, 1, 0]]) {
+        await Database.execute(['INSERT INTO items (id, selfId, name, amount, enchant, equipped, slot, characterId) VALUES (?, ?, ?, ?, 0, ?, 0, 56)',
+            [id, selfId, `Item ${selfId}`, amount, equipped]], 'test:bot-warehouse-row');
+    }
+    for (const id of [68, 69]) {
+        await Database.execute(["INSERT INTO warehouse_items (id, selfId, name, amount, enchant, characterId) VALUES (?, 123, 'Saber', 1, 0, 56)", [id]],
+            'test:bot-warehouse-stock');
+    }
+    const liveBackpack = new (invoke('GameServer/Actor/Backpack'))({ paperdoll: {}, items: await Database.fetchItems(56) });
     const liveState = {
         stats: { craftStationId: 1,
             equipmentPlan: {
@@ -273,10 +284,6 @@ async function run() {
         /warehouse NPC is no longer active/,
         'changing only the target role must not turn a seller into a warehouse keeper'
     );
-    Database.fetchWarehouseItems = () => Promise.resolve([
-        { id: 68, selfId: 123, amount: 1 },
-        { id: 69, selfId: 123, amount: 1 }
-    ]);
     const preview = TradeService.previewSaleToStore(liveActor, {
         storeType: 3,
         items: [{ selfId: 123, count: 3, price: 1000 }]
@@ -285,8 +292,13 @@ async function run() {
 
     const live = await BotWarehouse.depositActorAtWarehouse(liveActor, liveState, null, warehouseTarget);
     assert.strictEqual(live.count, 20, 'active bots must store materials without adding a third warehouse gear copy');
-    assert.deepStrictEqual(liveBackpack.items.map((item) => item.selfId), [1, 123, 123, 123],
+    assert.deepStrictEqual(liveBackpack.items.map((item) => item.fetchSelfId()), [1, 123, 123, 123],
         'equipped, reserved, and warehouse-overflow swords must survive until the existing NPC sell step');
+    assert.strictEqual((await Database.fetchWarehouseItems(56)).find(row => row.selfId === 1870).amount, 20,
+        'the warehouse holds the stored materials');
+    assert.strictEqual((await Database.fetchItems(56)).some(row => row.selfId === 1870), false, 'the bag row left the database');
+    await fixture.close();
+    Object.assign(Database, stubbed);
 
     let warehouseRows = [{ id: 71, selfId: 5220, name: 'Metal Hardener', amount: 60 }];
     const withdrawals = [];

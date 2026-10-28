@@ -1,4 +1,5 @@
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const Response = invoke('GameServer/Network/Response');
@@ -13,12 +14,7 @@ async function step(state, variables, takes = [], gives = [], status = 'started'
     });
     const rows = await Database.applyPetQuestStep(actor.fetchId(), state.quest.id,
         { state: state.state, variables: state.variables }, next, takes.map(([selfId,amount]) => ({selfId,amount})), rewards);
-    for (const row of rows) {
-        const item = actor.backpack.fetchItemRaw(row.id);
-        if (!row.amount) actor.backpack.items = actor.backpack.items.filter(item => item.fetchId() !== row.id);
-        else if (item) item.setAmount(row.amount);
-        else actor.backpack.insertItem(row.id, row.selfId, row);
-    }
+    LiveBag.applyAmounts(actor, rows);
     state.state = next.state;
     state.variables = next.variables;
     state.session.dataSendToMe(Response.itemsList(actor.backpack.fetchItems()));

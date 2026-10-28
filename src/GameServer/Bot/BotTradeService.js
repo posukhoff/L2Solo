@@ -1,4 +1,5 @@
 const BeginnerShots = require('../Items/C4BeginnerShots');
+const LiveBag = require('../Inventory/LiveBag');
 require('../Item/ItemTemplateIndex');
 invoke('GameServer/DataCache');
 const Database = invoke('Database');
@@ -490,38 +491,16 @@ function transferEntries(trade) {
 // character: a replaced actor is never saved again (item writes are keyed by
 // the session's current actor and a reselected character loads from the
 // database), and a new actor must not receive another character's items.
+// Each side takes its committed rows plus what its bag changed since.
 function applyLocalTransfers(moved, entries) {
-    const byKey = new Map(entries.map((entry) => [`${entry.fromActor.fetchId()}:${entry.line.objectId}`, entry]));
-    moved.forEach((record) => {
-        const entry = byKey.get(`${record.fromCharacterId}:${record.sourceItemId}`);
-        if (!entry) return;
-        if (entry.fromSession.actor === entry.fromActor) {
-            const sourceBackpack = entry.fromActor.backpack;
-            const sourceItems = sourceBackpack.items || sourceBackpack.fetchItems();
-            const sourceItem = sourceItems.find((item) => Number(item.fetchId()) === Number(record.sourceItemId));
-            if (sourceItem) {
-                if (Number(record.remaining) > 0) sourceItem.setAmount(Number(record.remaining));
-                else sourceBackpack.items = sourceItems.filter((item) => Number(item.fetchId()) !== Number(record.sourceItemId));
-            }
-        }
-
-        if (entry.toSession.actor !== entry.toActor) return;
-        const targetBackpack = entry.toActor.backpack;
-        const existing = entry.line.stackable
-            ? targetBackpack.fetchItemFromSelfId?.(entry.line.selfId)
-            : null;
-        if (existing) existing.setAmount(Number(existing.fetchAmount()) + Number(entry.line.count));
-        else if (targetBackpack.insertItem) {
-            targetBackpack.insertItem(Number(record.targetItemId), entry.line.selfId, {
-                name: entry.line.name,
-                amount: entry.line.count,
-                equipped: false,
-                slot: entry.line.slot,
-                enchant: entry.line.enchant,
-                petData: entry.line.petData
-            });
-        }
-    });
+    const sides = new Map();
+    for (const entry of entries) {
+        sides.set(Number(entry.fromActor.fetchId()), [entry.fromSession, entry.fromActor]);
+        sides.set(Number(entry.toActor.fetchId()), [entry.toSession, entry.toActor]);
+    }
+    for (const [id, [session, actor]] of sides) {
+        if (session.actor === actor) LiveBag.applyAmounts(actor, moved.rows?.get(id));
+    }
 }
 
 function publicMoved(entries) {

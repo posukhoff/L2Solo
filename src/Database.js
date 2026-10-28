@@ -517,14 +517,12 @@ function performTransaction(work, operation) {
         }
         pendingSettlementUndo = new Map();
         nativeDiagnosticFacts = null; nativeDiagnosticCounts = null; nativeDiagnosticOverflow = 0;
-        let phase = 'work';
+        let phase = 'work', result;
         try {
-            const result = work();
+            result = work();
             phase = 'commit';
             connection.exec('COMMIT');
-            ClanReviewInputs.commitCandidateInputs();
-            publishNativeDiagnostics();
-            return result;
+            phase = 'committed';
         } catch (error) {
             reportTransactionSqliteFailure(operation, phase, error);
             try {
@@ -541,9 +539,20 @@ function performTransaction(work, operation) {
             }
             throw error;
         } finally {
-            nativeDiagnosticFacts = null; nativeDiagnosticCounts = null; nativeDiagnosticOverflow = 0;
+            if (phase !== 'committed') { nativeDiagnosticFacts = null; nativeDiagnosticCounts = null; nativeDiagnosticOverflow = 0; }
             pendingSettlementUndo = null;
         }
+        // The job committed: what observes the commit cannot reject it (the
+        // caller would treat it as failed, and CharacterWriteQueue.restore
+        // would queue again the item deltas the commit applied).
+        afterCommit(operation, 'clan review inputs', () => ClanReviewInputs.commitCandidateInputs());
+        afterCommit(operation, 'native diagnostics', () => publishNativeDiagnostics());
+        return result;
+}
+
+function afterCommit(operation, step, observe) {
+    try { observe(); }
+    catch (error) { utils.infoWarn('DB', '%s committed; %s failed: %s', operation, step, error?.message || error); }
 }
 
 async function inTransaction(work, operation = 'transaction') {
@@ -4460,7 +4469,7 @@ const Database = {
     // BotLifeState.save builds its upsert with it.
     MOVE_FAR_REVISION,
 
-    ...PlayerWarehouse.create({ one, all, write, inTransaction, withCharacterFlush }),
+    ...PlayerWarehouse.create({ one, all, write, inTransaction, withCharacterFlush, markedRows }),
     openClanRaidPartyAtImpact(request) {
         // The offensive callback cannot await our queue: its registered roster
         // could change meanwhile. Abort this native action when another write
@@ -4630,19 +4639,25 @@ const Database = {
                     return { ok: false, reason: 'spot_or_activity_changed' };
                 }
             }
-            const balance = afkTradeAdenaRowsUnsafe(payer)
-                .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+            const paying = afkTradeAdenaRowsUnsafe(payer);
+            const balance = paying.reduce((sum, row) => sum + Number(row.amount || 0), 0);
             if (balance < price) return { ok: false, reason: 'not_enough_adena' };
             afkTradeDebitAdenaUnsafe(payer, price);
             const providerAdenaId = afkTradeCreditAdenaUnsafe(provider, price);
             const payerRows = afkTradeAdenaRowsUnsafe(payer);
             const payerBalance = payerRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-            const providerBalance = afkTradeAdenaRowsUnsafe(provider)
-                .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+            const providerRows = afkTradeAdenaRowsUnsafe(provider);
+            const providerBalance = providerRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
             if (payerState) syncAdenaSnapshotUnsafe(payer, payerBalance);
             if (providerState) syncAdenaSnapshotUnsafe(provider, providerBalance);
+            // Each side's Adena rows the payment wrote (a spent row at 0),
+            // read-marked: a live body adds what it changed since (LiveBag.applyAmounts).
+            const left = new Map(payerRows.map(row => [Number(row.id), Number(row.amount)]));
+            const credited = providerRows.find(row => Number(row.id) === Number(providerAdenaId));
             return { ok: true, payerBalance, providerBalance,
-                payerAdenaId: Number(payerRows[0]?.id || 0), providerAdenaId };
+                payerAdenaId: Number(payerRows[0]?.id || 0), providerAdenaId,
+                payerRows: markedRows(payer, paying.map(row => ({ id: Number(row.id), amount: left.get(Number(row.id)) || 0, selfId: 57 }))),
+                providerRows: markedRows(provider, [{ id: Number(providerAdenaId), amount: Number(credited?.amount || 0), selfId: 57 }]) };
         }, 'buff-service:payment')));
     },
 
@@ -6923,6 +6938,13 @@ const Database = {
             });
 
             const moved = [];
+            // Each character's item rows the transfer wrote, in order (a later
+            // write to the same row carries its newer amount).
+            const rows = new Map();
+            const touched = (characterId, row) => {
+                if (!rows.has(characterId)) rows.set(characterId, []);
+                rows.get(characterId).push(row);
+            };
             sources.forEach(({ entry, source }) => {
                 const remaining = Number(source.amount) - entry.amount;
                 if (remaining <= 0) write('DELETE FROM items WHERE id = ? AND characterId = ?', [entry.sourceItemId, entry.fromCharacterId]);
@@ -6933,21 +6955,28 @@ const Database = {
                     target = one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [entry.toCharacterId, entry.selfId]);
                 }
                 let targetItemId;
+                const targetAmount = Number(target?.amount || 0) + entry.amount;
                 if (target) {
                     targetItemId = Number(target.id);
-                    write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [Number(target.amount) + entry.amount, targetItemId, entry.toCharacterId]);
+                    write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [targetAmount, targetItemId, entry.toCharacterId]);
                 } else {
                     targetItemId = write(
                         'INSERT INTO items (selfId, name, amount, enchant, equipped, slot, petData, characterId) VALUES (?, ?, ?, ?, 0, ?, ?, ?)',
                         [entry.selfId, entry.name || source.name || `Item ${entry.selfId}`, entry.amount, Number(source.enchant || 0), entry.slot, entry.petData || source.petData || null, entry.toCharacterId]
                     ).insertId;
                 }
+                touched(entry.fromCharacterId, { id: entry.sourceItemId, amount: Math.max(0, remaining) });
+                touched(entry.toCharacterId, { id: Number(targetItemId), amount: targetAmount, selfId: entry.selfId,
+                    name: entry.name || source.name, enchant: Number(source.enchant || 0), equipped: 0, slot: entry.slot,
+                    petData: entry.petData || source.petData || null });
                 moved.push({
                     ...entry,
                     targetItemId: Number(targetItemId),
                     remaining
                 });
             });
+            // Read-marked per character: a live body adds what it changed since (LiveBag.applyAmounts).
+            moved.rows = new Map([...rows].map(([characterId, list]) => [characterId, markedRows(characterId, list)]));
             return moved;
         }, 'trade:inventory-transfer'));
     },
@@ -7152,7 +7181,10 @@ const Database = {
             }
             const adenaId = afkTradeCreditAdenaUnsafe(characterId, payout);
             const adena = adenaId ? one('SELECT id, amount FROM items WHERE id = ? AND characterId = ?', [adenaId, characterId]) : null;
-            return { sold, adena };
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            const rows = sold.map(item => ({ id: item.objectId, amount: item.amount }));
+            if (adena) rows.push({ id: Number(adena.id), amount: Number(adena.amount), selfId: 57 });
+            return { sold, adena, rows: markedRows(characterId, rows) };
         }, 'npc-shop:sell'));
     },
     fetchWarehouseItems(characterId) {
@@ -7193,7 +7225,9 @@ const Database = {
             if (inventoryAmount <= 0) write('DELETE FROM items WHERE id = ? AND characterId = ?', [item.id, characterId]);
             else write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [inventoryAmount, item.id, characterId]);
             const coldLifeRow = syncEconomySnapshotUnsafe(characterId, coldState, [item.selfId]);
+            // Read-marked rows: a live body adds what it changed since (LiveBag.applyAmounts).
             return { warehouseId: Number(warehouseId), warehouseAmount, inventoryAmount, enchant: sourceEnchant,
+                rows: markedRows(characterId, [{ id: Number(item.id), amount: Math.max(0, inventoryAmount) }]),
                 ...(coldLifeRow ? { coldLifeRow } : {}) };
         }, 'warehouse:deposit')).then(result => {
             invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').changed(characterId); return result;
@@ -7250,8 +7284,11 @@ const Database = {
             if (warehouseAmount <= 0) write('DELETE FROM warehouse_items WHERE id = ? AND characterId = ?', [item.id, characterId]);
             else write('UPDATE warehouse_items SET amount = ? WHERE id = ? AND characterId = ?', [warehouseAmount, item.id, characterId]);
             const coldLifeRow = syncEconomySnapshotUnsafe(characterId, coldState, [item.selfId]);
+            // Read-marked rows: a live body adds what it changed since (LiveBag.applyAmounts).
+            const rows = markedRows(characterId, [{ id: Number(inventoryId), amount: inventoryAmount, selfId: Number(item.selfId),
+                enchant: sourceEnchant, petData: source.petData, equipped: 0, slot: 0 }]);
             return { inventoryId: Number(inventoryId), inventoryAmount, warehouseAmount, petData: source.petData, enchant: sourceEnchant,
-                ...(coldLifeRow ? { coldLifeRow } : {}) };
+                rows, ...(coldLifeRow ? { coldLifeRow } : {}) };
         }, 'warehouse:withdraw')).then(result => {
             invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').changed(characterId); return result;
         });
@@ -7351,6 +7388,9 @@ const Database = {
                 state.warehouseRevision = warehouseRevision;
                 write('UPDATE clan_simulation_clans SET updatedAt = ?, stateJson = ? WHERE clanId = ?', [timestamp, JSON.stringify(state), clan]);
             }
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            results.rows = markedRows(character, results.map(result => ({ id: Number(result.sourceItemId),
+                amount: Math.max(0, Number(result.inventoryAmount)) })));
             return results;
         }, 'clan-warehouse:player-deposit')).then(results => {
             if (normalized.some(transfer => transfer.selfId === 57)) require('./GameServer/Clan/ClanReviewEvents').changed(clan, 'warehouse');
@@ -7420,7 +7460,10 @@ const Database = {
                 VALUES (?, ?, ?, ?, 'withdraw', ?, ?, ?)`, [clan, character, selfId, requested, key, nextRevision, timestamp]);
             return {
                 inventoryId, inventoryAmount, warehouseAmount, enchant: sourceEnchant,
-                petData: source.petData, warehouseRevision: nextRevision, ledgerId: Number(ledger.insertId)
+                petData: source.petData, warehouseRevision: nextRevision, ledgerId: Number(ledger.insertId),
+                // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+                rows: markedRows(character, [{ id: inventoryId, amount: inventoryAmount, selfId, enchant: sourceEnchant,
+                    petData: source.petData || null, equipped: 0, slot: 0 }])
             };
         }, 'clan-warehouse:player-withdraw')).then(result => {
             if (selfId === 57) require('./GameServer/Clan/ClanReviewEvents').changed(clan, 'warehouse');
@@ -7455,7 +7498,8 @@ const Database = {
             if (food.amount === 1) write('DELETE FROM items WHERE id = ? AND characterId = ?', [foodId, characterId]);
             else write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [food.amount-1, foodId, characterId]);
             write('UPDATE items SET petData = ? WHERE id = ? AND characterId = ?', [JSON.stringify({...state,currentFeed,starvingSince:0}),controlId,characterId]);
-            return { currentFeed, remaining:food.amount-1 };
+            // Read-marked row: the live body adds what it changed since (LiveBag.applyRow).
+            return { currentFeed, remaining:food.amount-1, food: markedRows(characterId, { id: Number(foodId), amount: food.amount - 1 }) };
         }, 'pet:mount-food'));
     },
     exchangeDimensionalDiamond(characterId, itemId) {
@@ -7479,7 +7523,8 @@ const Database = {
             const scroll = one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? AND equipped = 0 ORDER BY id LIMIT 1', [characterId, itemId]);
             if (scroll) { write('UPDATE items SET amount = amount + 1 WHERE id = ?', [scroll.id]); changed.add(scroll.id); }
             else changed.add(Number(write('INSERT INTO items(selfId, name, amount, characterId) VALUES (?, ?, 1, ?)', [itemId, template.template.name, characterId]).insertId));
-            return [...changed].map(id => one('SELECT * FROM items WHERE id = ? AND characterId = ?', [id, characterId]) || { id, amount: 0 });
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            return markedRows(characterId, [...changed].map(id => one('SELECT * FROM items WHERE id = ? AND characterId = ?', [id, characterId]) || { id, amount: 0 }));
         }, 'quest:diamond-exchange'));
     },
     completeSecondProfession(characterId, expectedClassId, targetClassId) {
@@ -7499,7 +7544,8 @@ const Database = {
                 changed.push({ id: mark.id, amount: mark.amount - 1 });
             }
             write('UPDATE characters SET classId = ? WHERE id = ? AND classId = ?', [targetClassId, characterId, expectedClassId]);
-            return changed;
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            return markedRows(characterId, changed);
         }, 'quest:second-profession'));
     },
     applyQuestStep(characterId, questId, expected, next, takes, gives, experience = null, beginner = null, pk = null, removeRecipes = []) {
@@ -7537,7 +7583,8 @@ const Database = {
                 write('DELETE FROM character_recipes WHERE characterId = ? AND recipeId = ?', [characterId, recipeId]);
             }
             write(UPSERT_CHARACTER_QUEST, [characterId, questId, next.state, JSON.stringify(next.variables)]);
-            const rows = [...changed].map(id => one('SELECT * FROM items WHERE id = ? AND characterId = ?', [id, characterId]) || { id, amount: 0 });
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            const rows = markedRows(characterId, [...changed].map(id => one('SELECT * FROM items WHERE id = ? AND characterId = ?', [id, characterId]) || { id, amount: 0 }));
             if (experience) {
                 if (![experience.exp, experience.sp].every(n => Number.isSafeInteger(n) && n >= 0)) throw new Error('Invalid quest experience');
                 const actor = one('SELECT exp, sp, level FROM characters WHERE id = ?', [characterId]);
@@ -7598,7 +7645,8 @@ const Database = {
                 else changed.add(Number(write('INSERT INTO items(selfId, name, amount, characterId) VALUES (?, ?, ?, ?)', [give.selfId, give.name, give.amount, characterId]).insertId));
             }
             write(UPSERT_CHARACTER_QUEST, [characterId, questId, next.state, JSON.stringify(next.variables)]);
-            return [...changed].map(id => one('SELECT * FROM items WHERE id = ? AND characterId = ?', [id, characterId]) || { id, amount: 0 });
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            return markedRows(characterId, [...changed].map(id => one('SELECT * FROM items WHERE id = ? AND characterId = ?', [id, characterId]) || { id, amount: 0 }));
         }, 'pet:quest-step'));
     },
     evolveHatchling(characterId, controlId) {
@@ -7643,7 +7691,8 @@ const Database = {
             if (remaining) write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [remaining, ticketId, characterId]);
             else write('DELETE FROM items WHERE id = ? AND characterId = ?', [ticketId, characterId]);
             const id = Number(write('INSERT INTO items(selfId, name, amount, characterId) VALUES (?, ?, 1, ?)', [output.itemId, output.name, characterId]).insertId);
-            return { id, selfId: output.itemId, remaining };
+            // Read-marked row: the live body adds what it changed since (LiveBag.applyRow).
+            return { id, selfId: output.itemId, remaining, ticket: markedRows(characterId, { id: Number(ticketId), amount: remaining }) };
         }, 'pet:ticket-exchange'));
     },
     completeWolfQuest(characterId) {
@@ -7656,7 +7705,8 @@ const Database = {
             write('DELETE FROM items WHERE id = ? AND characterId = ?', [list.id, characterId]);
             const id = Number(write("INSERT INTO items(selfId, name, amount, characterId) VALUES (2375, 'Wolf Collar', 1, ?)", [characterId]).insertId);
             write("UPDATE character_quests SET state = 'created', variables = '{}' WHERE characterId = ? AND questId = 419", [characterId]);
-            return { id, removedItemId: list.id };
+            // Read-marked row: the live body adds what it changed since (LiveBag.applyRow).
+            return { id, removedItemId: list.id, removed: markedRows(characterId, { id: Number(list.id), amount: 0 }) };
         }, 'pet:wolf-quest-reward'));
     },
     // After the character's buffered bag deltas: a quest step never lands
@@ -7996,7 +8046,7 @@ const Database = {
                 for (const row of rows) {
                     if (remaining <= 0) break;
                     const amount = Math.min(remaining, row.amount);
-                    consumed.push({ id: row.id, selfId: row.selfId, remaining: row.amount - amount });
+                    consumed.push({ id: row.id, selfId: row.selfId, remaining: row.amount - amount, amount: row.amount - amount });
                     remaining -= amount;
                 }
                 if (remaining) throw Error('weapon_sa_missing_materials');
@@ -8009,7 +8059,9 @@ const Database = {
             // removal preserve the selected instance rather than creating +0 gear.
             write('UPDATE items SET selfId = ?, name = ?, slot = ? WHERE id = ? AND characterId = ?',
                 [target.selfId, target.template.name, target.etc.slot, sourceObjectId, characterId]);
-            return { weapon: { ...weapon, selfId: target.selfId, name: target.template.name, slot: target.etc.slot }, consumed };
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            return { weapon: { ...weapon, selfId: target.selfId, name: target.template.name, slot: target.etc.slot },
+                consumed: markedRows(characterId, consumed) };
         }, 'item:weapon-sa'));
     },
 
@@ -8047,7 +8099,7 @@ const Database = {
                 for (const row of rows) {
                     if (!remaining) break;
                     const take = Math.min(remaining, row.amount);
-                    consumed.push({ id: row.id, selfId: row.selfId, remaining: row.amount - take });
+                    consumed.push({ id: row.id, selfId: row.selfId, remaining: row.amount - take, amount: row.amount - take });
                     remaining -= take;
                 }
                 if (remaining) throw Error('multisell_missing_materials');
@@ -8066,7 +8118,8 @@ const Database = {
                     [product.selfId, product.template.name, product.etc.slot, characterId]).insertId);
                 products.push({ id, selfId: product.selfId, amount: 1, equipped: false, slot: product.etc.slot });
             }
-            return { consumed, products };
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            return { consumed, products, rows: markedRows(characterId, [...consumed, ...products]) };
         }, 'item:luxury-exchange'));
     },
 
@@ -8115,9 +8168,12 @@ const Database = {
                 Number(product.slot || 0),
                 characterId
             ]).insertId;
+            const made = { id: Number(productId), selfId: Number(product.selfId), amount: Math.max(1, Number(product.amount || 1)) };
             return {
                 sources,
-                product: { id: Number(productId), selfId: Number(product.selfId), amount: Math.max(1, Number(product.amount || 1)) }
+                product: made,
+                // Read-marked rows: a live body adds what it changed since (LiveBag.applyAmounts).
+                rows: markedRows(characterId, [...sources.map(source => ({ id: source.id, amount: Math.max(0, source.remaining) })), made])
             };
         }, 'item:combine'));
     },
@@ -8137,7 +8193,10 @@ const Database = {
             if (target) write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [amount, id, characterId]);
             else id = write('INSERT INTO items (selfId, name, amount, equipped, slot, characterId) VALUES (?, ?, ?, 0, 0, ?)', [crystalId, crystalName || '', crystalAmount, characterId]).insertId;
             const coldLifeRow = syncEconomySnapshotUnsafe(characterId, coldState, [sourceSelfId, crystalId]);
-            return { crystalId, id, amount, ...(coldLifeRow ? { coldLifeRow } : {}) };
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            const rows = markedRows(characterId, [{ id: Number(sourceId), amount: 0 },
+                { id: Number(id), amount, selfId: Number(crystalId) }]);
+            return { crystalId, id, amount, rows, ...(coldLifeRow ? { coldLifeRow } : {}) };
         }, 'crystalize'));
     },
 
@@ -8368,7 +8427,8 @@ const Database = {
                 mutate('UPDATE bot_life_state SET statsJson = ?, mindJson = ? WHERE characterId = ?', [columns.statsJson, columns.mindJson, characterId]);
             }
             const coldLifeRow = syncEconomySnapshotUnsafe(characterId, state, changedIds);
-            return { result, coldLifeRow, hennas, questStarted: result === 'crystal_quest', changedIds, items: all('SELECT * FROM items WHERE characterId = ? ORDER BY id', [characterId]) };
+            // The whole bag, read-marked: a live body merges it (LiveBag.applyRows).
+            return { result, coldLifeRow, hennas, questStarted: result === 'crystal_quest', changedIds, items: afkTradeInventoryUnsafe(characterId) };
         }, 'bot:improvement'));
     },
 
@@ -8403,10 +8463,13 @@ const Database = {
             } else {
                 write('DELETE FROM items WHERE id = ? AND characterId = ?', [scrollId, characterId]);
             }
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
+            const rows = [{ id: Number(scrollId), amount: remainingScrolls }];
 
             if (result === 'success' || result === 'blessed-fail') {
                 write('UPDATE items SET enchant = ? WHERE id = ? AND characterId = ?', [normalizedEnchantLevel, targetId, characterId]);
-                return { result, scrollId: Number(scrollId), scrollAmount: remainingScrolls, targetId: Number(targetId), enchant: normalizedEnchantLevel };
+                return { result, scrollId: Number(scrollId), scrollAmount: remainingScrolls, targetId: Number(targetId), enchant: normalizedEnchantLevel,
+                    rows: markedRows(characterId, rows) };
             }
 
             if (result !== 'break') throw new Error('invalid enchant result');
@@ -8420,7 +8483,9 @@ const Database = {
             } else {
                 crystalItemId = write('INSERT INTO items (selfId, name, amount, enchant, equipped, slot, characterId) VALUES (?, ?, ?, 0, 0, 0, ?)', [crystalId, crystalName || `Crystal ${crystalId}`, crystalAmount, characterId]).insertId;
             }
+            rows.push({ id: Number(crystalItemId), amount, selfId: Number(crystalId) });
             return {
+                rows: markedRows(characterId, rows),
                 result,
                 scrollId: Number(scrollId),
                 scrollAmount: remainingScrolls,
@@ -8709,7 +8774,8 @@ const Database = {
             }
             let nextCrafterAdena = null;
             if (fee > 0) {
-                write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [Number(customerAdena.amount) - fee, customerAdena.id, customerId]);
+                // The first Adena row covers the fee (checked above); at 0 it goes.
+                afkTradeDebitAdenaUnsafe(customerId, fee);
                 if (crafterAdena) {
                     nextCrafterAdena = Number(crafterAdena.amount) + fee;
                     if (!Number.isSafeInteger(nextCrafterAdena)) throw Error('craft_fee_overflow');
@@ -8844,7 +8910,8 @@ const Database = {
             state.inventory = inventory.filter(item => item.amount > 0);
             if (currentFeed !== undefined) Object.assign(state, { currentFeed, starvingSince: 0 });
             write('UPDATE items SET petData = ? WHERE id = ? AND characterId = ?', [JSON.stringify(state), controlId, characterId]);
-            return { inventory: state.inventory, playerItem, currentFeed };
+            // Read-marked row: the live body adds what it changed since (LiveBag.applyRow).
+            return { inventory: state.inventory, playerItem: playerItem && markedRows(characterId, playerItem), currentFeed };
         }, 'pet:inventory'));
     },
 
@@ -10361,6 +10428,8 @@ const Database = {
             const sourceAfter = Number(source.amount || 0) - requested;
             if (sourceAfter <= 0) write('DELETE FROM items WHERE id = ? AND characterId = ?', [source.id, character]);
             else write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [sourceAfter, source.id, character]);
+            // The member's item rows this deposit wrote (LiveBag.applyAmounts).
+            const rows = [{ id: Number(source.id), amount: Math.max(0, sourceAfter) }];
 
             const event = {
                 clanId: clan,
@@ -10388,8 +10457,11 @@ const Database = {
                 const wallet = Number(expectedPhase === 'hot' ? inventory[57]?.amount || 0 : life.adena) + reward;
                 inventory[57] = { ...(inventory[57] || {}), selfId: 57, name: 'Adena', amount: wallet };
                 write('UPDATE bot_life_state SET adena = ?, inventorySummary = ? WHERE characterId = ?', [wallet, JSON.stringify(inventory), character]);
-                write('DELETE FROM items WHERE characterId = ? AND selfId = 57', [character]);
-                write("INSERT INTO items(selfId, name, amount, enchant, equipped, slot, characterId) VALUES(57, 'Adena', ?, 0, 0, 0, ?)", [wallet, character]);
+                // The reward credits the member's Adena row: a live bag's
+                // queued Adena deltas still apply to it (a rewrite from the
+                // summary would drop them).
+                const adenaId = afkTradeCreditAdenaUnsafe(character, reward);
+                rows.push({ id: adenaId, amount: Number(one('SELECT amount FROM items WHERE id = ?', [adenaId]).amount), selfId: 57 });
                 recordClanGoalEventUnsafe({ clanId: clan, eventType: 'member_item_reward', goalType: deliveryGoal.type,
                     plan: 'owned_item', reasonCode: 'owned_item_to_clan_warehouse',
                     payloadJson: JSON.stringify({ characterId: character, selfId, amount: requested, reward }), occurredAt: timestamp });
@@ -10420,7 +10492,9 @@ const Database = {
                 warehouseRevision: nextWarehouseRevision,
                 simulationRevision: lifeUpdate.simulationRevision,
                 state: normalizeRow(one('SELECT * FROM bot_life_state WHERE characterId = ?', [character])),
-                ledgerId: Number(ledger.insertId)
+                ledgerId: Number(ledger.insertId),
+                // Read-marked rows: a live body adds what it changed since.
+                rows: markedRows(character, rows)
             };
         }, 'clan-warehouse:deposit')).then(result => {
             if (result.ok) require('./GameServer/Clan/ClanReviewEvents').changed(clan, 'warehouse');

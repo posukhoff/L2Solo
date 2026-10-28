@@ -5,6 +5,7 @@ const Profession = invoke('GameServer/SecondProfession');
 const Database = invoke('Database');
 const Response = invoke('GameServer/Network/Response');
 const H = require('../../../Quest/SecondProfessionQuest');
+const LiveBag = require('../../../Inventory/LiveBag');
 
 function render(session, message = '') {
     const links = data.recipes.map(row => `${H.itemName(row.itemId)} - ${row.cost} Dimensional Diamonds `
@@ -34,11 +35,7 @@ module.exports = function diamondExchange(session, parts) {
         // A new selection loads its own inventory. Keep an accepted exchange
         // on the original character without refreshing its detached actor.
         if (session.actor !== actor) return;
-        for (const row of rows) {
-            if (!row.amount) actor.backpack.items = actor.backpack.items.filter(item => item.fetchId() !== row.id);
-            else if (actor.backpack.fetchItemRaw(row.id)) actor.backpack.fetchItemRaw(row.id).setAmount(row.amount);
-            else actor.backpack.insertItem(row.id, row.selfId, row);
-        }
+        LiveBag.applyAmounts(actor, rows);
         session.dataSendToMe(Response.itemsList(actor.backpack.fetchItems()));
         Service.transmitItemReceived(session, itemId, 1);
         if (current()) return render(session, `Received ${H.itemName(itemId)}.`);

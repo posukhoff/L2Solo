@@ -1,5 +1,6 @@
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const refreshPartyMemberships = require('../../World/PartyMembershipPublication');
+const LiveBag = require('../../Inventory/LiveBag');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const Recipes = invoke('GameServer/Items/C4DualSwordCombinations');
@@ -9,7 +10,6 @@ const Compatibility = invoke('GameServer/Bot/AI/BotEquipmentCompatibility');
 const Warehouse = invoke('GameServer/Warehouse/PersonalWarehouse');
 const Services = invoke('GameServer/Bot/Economy/TownServiceCatalog');
 const Life = invoke('GameServer/Bot/Population/BotLifeState');
-const Item = invoke('GameServer/Item/Item');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 const CACHE_MS = 30000;
@@ -150,21 +150,18 @@ async function execute(session,bot,errand) {
                 ingredients:recipe.materials,product:{selfId:recipe.productId,name:template.template.name,amount:1,slot:14},
                 validate:() => validate(session,bot,errand)
             });
+            // Worn sources the combination used up come off first; then the
+            // rows (sources and the new product) plus what the bag changed since.
             for (const source of result.sources) {
                 const item = bot.backpack.fetchItemRaw(source.id);
-                if (!item) continue;
-                if (source.remaining > 0) item.setAmount(source.remaining);
-                else {
-                    if (item.fetchEquipped()) bot.backpack.unequipPaperdoll(item.fetchSlot());
-                    bot.backpack.items = bot.backpack.items.filter(i=>i!==item);
-                }
+                if (source.remaining <= 0 && item?.fetchEquipped()) bot.backpack.unequipPaperdoll(item.fetchSlot());
             }
-            product = new Item(result.product.id,{...utils.crushOb(template),amount:1,equipped:false});
-            bot.backpack.items.push(product);
+            LiveBag.applyAmounts(bot, result.rows);
+            product = bot.backpack.fetchItemRaw(result.product.id);
         }
         invoke('GameServer/Bot/AI/BotEquipmentUpgrade').applyBestUpgrades(session,{force:true});
         refreshState(session,bot);
-        const completed = product.fetchEquipped();
+        const completed = product?.fetchEquipped() === true;
         if (completed) session.coldLifeState.stats = {...session.coldLifeState.stats,equipmentPlan:{
             ...session.coldLifeState.stats.equipmentPlan,status:'complete',completedAt:Date.now(),reason:'dual_sword_equipped'
         }};

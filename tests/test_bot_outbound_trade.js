@@ -1,7 +1,6 @@
 const assert = require('assert');
 require('../src/Global');
 
-const Database = invoke('Database');
 const BotTradeService = invoke('GameServer/Bot/BotTradeService');
 const Item = invoke('GameServer/Item/Item');
 
@@ -49,15 +48,16 @@ const botBackpack = backpack([botItem]);
 const player = { accountId: 'player_trade', dataSendToMe: (packet) => playerPackets.push(packet), actor: actor(100, 'TradeLeader', playerBackpack) };
 const bot = { accountId: 'bot_trade', partyCompanion: true, followPlayerSession: player, actor: actor(200, 'TradeCompanion', botBackpack) };
 
-const originalTransfer = Database.transferInventoryBetweenCharacters;
-Database.transferInventoryBetweenCharacters = async (entries) => entries.map((entry, index) => ({
-    ...entry,
-    targetItemId: 900 + index,
-    remaining: entry.selfId === 2001 ? 3 : 0
-}));
+// The trade commits in a real database holding both bags' rows.
+const fixture = require('./helpers/liveBagRows')('bot-outbound-trade');
 
 (async () => {
 try {
+    fixture.open();
+    await fixture.character(100, 'TradeLeader');
+    await fixture.character(200, 'TradeCompanion');
+    await fixture.stored(100, playerItem);
+    await fixture.stored(200, botItem);
     const opened = BotTradeService.startBotTrade(bot, player);
     assert.strictEqual(opened.ok, true);
     assert.strictEqual(playerPackets[0][0], 0x1e, 'outbound bot trade must use native TradeStart');
@@ -73,12 +73,15 @@ try {
     assert.strictEqual(botItem.fetchAmount(), 3, 'confirmed trade must deduct the bot resource');
     assert.strictEqual(playerBackpack.fetchItemFromSelfId(2001).fetchAmount(), 3, 'confirmed trade must add the resource to player inventory');
     assert.strictEqual(playerBackpack.fetchItemFromSelfId(2001).fetchEnchantLevel(), 5, 'confirmed trade must preserve enchant in live recipient inventory');
+    assert.strictEqual(Number((await fixture.row(200, 201)).amount), 3, 'the database holds the bot\'s rest');
+    assert.strictEqual(Number((await fixture.row(100, playerBackpack.fetchItemFromSelfId(2001).fetchId())).amount), 3,
+        'the player\'s received row is the one in the bag');
     const replay = await BotTradeService.commit(player);
     assert.strictEqual(replay.idempotent, true, 'double confirmation must be idempotent');
     assert.doesNotThrow(() => JSON.stringify(replay), 'idempotent replay must not retain live session cycles');
     console.log('Bot outbound trade checks passed');
 } finally {
-    Database.transferInventoryBetweenCharacters = originalTransfer;
+    await fixture.close();
 }
 })().catch((error) => {
     console.error(error);

@@ -1,4 +1,5 @@
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const Response = invoke('GameServer/Network/Response');
@@ -25,18 +26,17 @@ async function apply(state, { takes: wanted = [], gives = [], variables = state.
     const rows = await Database.applyQuestStep(actor.fetchId(), state.quest.id,
         { state: state.state, variables: state.variables }, next,
         takes.map(([selfId, amount]) => ({ selfId, amount })), rewards, experience, beginner, pk, removeRecipes);
+    // Worn gear the step took comes off first; then the rows plus what the
+    // bag changed since (a shot used while the step committed).
     let equipmentChanged = false;
     for (const row of rows) {
         const item = actor.backpack.fetchItemRaw(row.id);
-        if (!row.amount) {
-            if (item?.fetchEquipped()) {
-                actor.backpack.unequipPaperdoll(item.fetchSlot());
-                equipmentChanged = true;
-            }
-            actor.backpack.items = actor.backpack.items.filter(i => i.fetchId() !== row.id);
-        } else if (item) item.setAmount(row.amount);
-        else actor.backpack.insertItem(row.id, row.selfId, row);
+        if (!row.amount && item?.fetchEquipped()) {
+            actor.backpack.unequipPaperdoll(item.fetchSlot());
+            equipmentChanged = true;
+        }
     }
+    LiveBag.applyAmounts(actor, rows);
     state.state = next.state;
     state.variables = next.variables;
     if (removeRecipes.length) {

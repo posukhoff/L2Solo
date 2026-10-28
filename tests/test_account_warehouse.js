@@ -32,7 +32,7 @@ function session(id, accountId) {
         dataSendToMe(packet) { this.sent.push(packet); } };
     result.actor = { session: result, fetchId: () => id, fetchRace: () => id === 2 ? 4 : 0,
         fetchLocX: () => 0, fetchLocY: () => 0,
-        backpack: { items: [], fetchItems() { return this.items; }, fetchTotalAdena: () => 0 } };
+        backpack: new (invoke('GameServer/Actor/Backpack'))({ paperdoll: {}, items: [] }) };
     return result;
 }
 async function reload(current) {

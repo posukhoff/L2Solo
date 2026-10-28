@@ -4,7 +4,6 @@ require('../src/Global');
 
 const Backpack = invoke('GameServer/Actor/Backpack');
 const Item = invoke('GameServer/Item/Item');
-const Database = invoke('Database');
 const Enchant = invoke('GameServer/Enchant');
 const EnchantRules = invoke('GameServer/Items/C4EnchantRules');
 const Opcodes = invoke('GameServer/Network/Opcodes');
@@ -152,22 +151,31 @@ assert.strictEqual(EnchantRules.crystalCount(item(3, { selfId: 3, kind: 'Armor.C
 assert.strictEqual(typeof Opcodes.table[0x58], 'function', 'C4 RequestEnchantItem opcode 0x58 should be routed');
 assert.strictEqual(ServerResponse.enchantResult(1)[0], 0x81, 'C4 EnchantResult should use opcode 0x81');
 
-const originalEnchant = Database.enchantInventoryItem;
+// The bag's items are rows of a real database (the enchant transaction reads
+// and writes them); the live bag holds the same items.
+const fixture = require('./helpers/liveBagRows')('enchant-runtime');
+const characterId = 900001;
+const stored = (...items) => fixture.stored(characterId, ...items);
+const rowOf = id => fixture.row(characterId, id);
 
 async function run() {
+    fixture.open();
+    await fixture.character(characterId, 'EnchantTester');
     try {
         {
             const scroll = item(101, { selfId: 729, amount: 2, stackable: true });
             const weapon = item(102, { selfId: 1001, kind: 'Weapon.Sword', rank: 'a', pAtk: 100 });
+            await stored(scroll, weapon);
             const backpack = backpackWith(scroll, weapon);
             const session = sessionFor(backpack);
             session.activeEnchantItem = { itemId: 101, selfId: 729, enchantScroll: { grade: 'A', target: 'weapon', scrollType: 'normal' } };
-            Database.enchantInventoryItem = async () => ({ result: 'success', scrollAmount: 1, targetId: 102, enchant: 1 });
 
             const result = await Enchant.enchant(session, 102, { rng: () => 0 });
             assert.strictEqual(result.result, 'success', 'successful enchant should report success');
             assert.strictEqual(weapon.fetchEnchantLevel(), 1, 'successful enchant should increment item enchant');
             assert.strictEqual(scroll.fetchAmount(), 1, 'successful enchant should consume exactly one scroll');
+            assert.strictEqual(Number((await rowOf(101)).amount), 1, 'the database holds the one scroll left');
+            assert.strictEqual(Number((await rowOf(102)).enchant), 1, 'the database holds the +1 weapon');
             assert.strictEqual(session.activeEnchantItem, null, 'successful enchant should clear active scroll');
             assert.strictEqual(session.packets.some((packet) => packet[0] === 0x81 && packet.readInt32LE(1) === 0), true, 'success should send EnchantResult(0)');
             assert.strictEqual(session.packets.some((packet) => packet[0] === 0x03), true, 'success should refresh CharInfo for visible observers');
@@ -176,10 +184,10 @@ async function run() {
         {
             const scroll = item(201, { selfId: 6570, amount: 1, stackable: true });
             const armor = item(202, { selfId: 1002, kind: 'Armor.Chain', rank: 'a', pDef: 100, enchant: 3 });
+            await stored(scroll, armor);
             const backpack = backpackWith(scroll, armor);
             const session = sessionFor(backpack);
             session.activeEnchantItem = { itemId: 201, selfId: 6570, enchantScroll: { grade: 'A', target: 'armor', scrollType: 'blessed' } };
-            Database.enchantInventoryItem = async () => ({ result: 'blessed-fail', scrollAmount: 0, targetId: 202, enchant: 0 });
 
             const result = await Enchant.enchant(session, 202, { rng: () => 0.99 });
             assert.strictEqual(result.result, 'blessed-fail', 'blessed failure should preserve the item');
@@ -192,26 +200,29 @@ async function run() {
             const scroll = item(301, { selfId: 954, amount: 1, stackable: true });
             const armor = item(302, { selfId: 1003, kind: 'Armor.Chain', rank: 'c', pDef: 100, cristals: 10, enchant: 3, equipped: true, slot: 10 });
             const crystals = item(303, { selfId: 1459, amount: 100, stackable: true });
+            await stored(scroll, armor, crystals);
             const backpack = backpackWith(scroll, armor, crystals);
             backpack.paperdoll[10] = { id: 302, selfId: 1003 };
             const session = sessionFor(backpack);
             session.activeEnchantItem = { itemId: 301, selfId: 954, enchantScroll: { grade: 'C', target: 'armor', scrollType: 'crystal' } };
-            Database.enchantInventoryItem = async () => ({
-                result: 'break', scrollAmount: 0, targetId: 302, crystalId: 1459,
-                crystalItemId: 303, crystalAmount: 23, crystalTotal: 123
-            });
 
             const result = await Enchant.enchant(session, 302, { rng: () => 0.99, safeMax: 0, safeMaxFull: 0 });
             assert.strictEqual(result.result, 'break', 'failed normal enchant should break the item');
             assert.strictEqual(backpack.fetchItemRaw(302), undefined, 'broken item should leave inventory');
             assert.strictEqual(backpack.fetchItemRaw(301), undefined, 'break should consume the scroll');
-            assert.strictEqual(crystals.fetchAmount(), 123, 'break should award the C4 crystal return');
+            assert.ok(result.crystalAmount > 0);
+            assert.strictEqual(crystals.fetchAmount(), 100 + result.crystalAmount, 'break should award the C4 crystal return');
+            assert.strictEqual(Number((await rowOf(303)).amount), 100 + result.crystalAmount, 'the database holds the crystals');
+            assert.strictEqual(await rowOf(302), undefined, 'the broken item left the database');
             assert.strictEqual(backpack.paperdoll[10].id, undefined, 'broken equipped item should be unequipped');
             assert.strictEqual(session.packets.some((packet) => packet[0] === 0x81 && packet.readInt32LE(1) === 1), true, 'break should send EnchantResult(1)');
         }
     } finally {
-        Database.enchantInventoryItem = originalEnchant;
+        await fixture.close();
     }
 }
 
-run().then(() => console.log('Enchant runtime checks passed'));
+run().then(() => console.log('Enchant runtime checks passed')).catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+});

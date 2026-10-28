@@ -1,7 +1,7 @@
 const ItemTemplateIndex = require('./Item/ItemTemplateIndex');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
-const Item = invoke('GameServer/Item/Item');
+const LiveBag = require('./Inventory/LiveBag');
 const ServerResponse = invoke('GameServer/Network/Response');
 const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const GRADES = { d: { level: 1, crystalId: 1458 }, c: { level: 2, crystalId: 1459 }, b: { level: 3, crystalId: 1460 }, a: { level: 4, crystalId: 1461 }, s: { level: 5, crystalId: 1462 } };
@@ -13,8 +13,7 @@ async function crystallize(session, objectId, count) {
     try {
         await CharacterWriteQueue.flushCharacter(actor.fetchId());
         const result = await Database.crystallizeInventoryItem(actor.fetchId(), { sourceId: item.fetchId(), sourceSelfId: item.fetchSelfId(), crystalId: grade.crystalId, crystalName: crystal.template?.name || '', crystalAmount: amount });
-        actor.backpack.items = actor.backpack.items.filter((entry) => entry !== item);
-        const existing = actor.backpack.fetchItemRaw(result.id); if (existing) existing.setAmount(result.amount); else actor.backpack.items.push(new Item(result.id, { ...utils.crushOb(crystal), amount: result.amount, equipped: false, slot: 0 }));
+        LiveBag.applyAmounts(actor, result.rows);
         session.dataSendToMe(ServerResponse.itemsList(actor.backpack.fetchItems()));
         return true;
     } catch (error) { utils.infoWarn('Crystallize', 'rejected %s: %s', actor.fetchName(), error.message); session.dataSendToMe(ServerResponse.actionFailed()); return false; }

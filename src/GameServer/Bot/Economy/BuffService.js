@@ -5,6 +5,7 @@ const Social = invoke('GameServer/Bot/AI/BotSocialMemory');
 const Effects = invoke('GameServer/Skills/C4SkillEffects');
 const Town = invoke('GameServer/Bot/AI/TownPathfinder');
 const ServerResponse = invoke('GameServer/Network/Response');
+const LiveBag = require('../../Inventory/LiveBag');
 
 const QUOTE_MS = 2 * 60 * 1000;
 const MAX_DISTANCE = 900;
@@ -214,40 +215,36 @@ async function completeNativeTrade(trade, { wait = waitForCast } = {}) {
     return { ok: applied > 0, applied, charged };
 }
 
-function syncAdena(actor, itemId, balance) {
-    if (!actor?.backpack) return;
-    const item = actor.backpack.fetchItemFromSelfId(57);
-    if (item) {
-        if (balance > 0) item.setAmount(balance);
-        else actor.backpack.items = actor.backpack.fetchItems().filter(entry => entry !== item);
-    } else if (balance > 0 && itemId) {
-        actor.backpack.insertItem(itemId, 57, { name: 'Adena', amount: balance });
-    }
+// Each side's committed Adena rows plus what its bag changed since.
+function syncAdena(actor, rows) {
+    if (actor?.backpack) LiveBag.applyAmounts(actor, rows);
 }
-function syncPayment(payerSession, providerSession, result) {
-    syncAdena(payerSession.actor, result.payerAdenaId, result.payerBalance);
-    syncAdena(providerSession.actor, result.providerAdenaId, result.providerBalance);
-    for (const session of [payerSession, providerSession]) {
-        if (session.actor?.backpack?.fetchItems && session.dataSendToMe) {
-            session.dataSendToMe(ServerResponse.itemsList(session.actor.backpack.fetchItems()));
-        }
-    }
+// actors: each session's actor before the transfer awaited; a session that
+// switched character meanwhile is left alone (the rows are not its bag's).
+function syncPayment(payerSession, providerSession, result, actors) {
+    [[payerSession, result.payerRows, actors[0]], [providerSession, result.providerRows, actors[1]]].forEach(([session, rows, actor]) => {
+        if (!actor || session.actor !== actor) return;
+        syncAdena(actor, rows);
+        if (actor.backpack?.fetchItems && session.dataSendToMe) session.dataSendToMe(ServerResponse.itemsList(actor.backpack.fetchItems()));
+    });
 }
 
 async function pay(playerSession, providerSession, amount) {
     if (amount === 0) return { ok: true };
+    const actors = [playerSession?.actor, providerSession?.actor];
     const result = await Database.transferBuffServiceAdena({
         payerId: id(playerSession), providerId: id(providerSession), amount
     });
-    if (result.ok) syncPayment(playerSession, providerSession, result);
+    if (result.ok) syncPayment(playerSession, providerSession, result, actors);
     return result;
 }
 async function refund(playerSession, providerSession, amount) {
     if (amount <= 0) return true;
+    const actors = [providerSession?.actor, playerSession?.actor];
     const result = await Database.transferBuffServiceAdena({
         payerId: id(providerSession), providerId: id(playerSession), amount
     });
-    if (result.ok) syncPayment(providerSession, playerSession, result);
+    if (result.ok) syncPayment(providerSession, playerSession, result, actors);
     return result.ok;
 }
 

@@ -33,13 +33,20 @@ function amountOf(actor, row, marked = row) {
 }
 
 // One row ({ id, amount }) a database job committed for the bag: the item
-// takes the amount plus the bag's changes since, leaves at 0, or (absent,
-// with data: the new item's fields, or a function giving them) comes in.
+// takes the amount plus the bag's changes since, leaves at 0, or (absent)
+// comes in: with data (the new item's fields, or a function giving them), or
+// else from the row's selfId and its template (Backpack.insertItem).
 function applyRow(actor, row, marked = row, data = null) {
     if (!row) return;
-    const amount = amountOf(actor, row, marked);
+    // A row the job left at 0 is gone from the database: a delta queued
+    // meanwhile lands on no row, so the bag drops the item too.
+    const amount = Number(row.amount) > 0 ? amountOf(actor, row, marked) : 0;
     const item = actor.backpack.fetchItems().find(entry => Number(entry.fetchId()) === Number(row.id));
     if (!item) {
+        if (amount > 0 && !data && row.selfId) {
+            actor.backpack.insertItem(Number(row.id), Number(row.selfId), { ...row, amount });
+            return;
+        }
         const fields = amount > 0 && (typeof data === 'function' ? data() : data);
         if (!fields) return;
         const added = new (items())(row.id, { ...fields, amount });

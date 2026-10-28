@@ -52,7 +52,15 @@ const original = {
 };
 const followUps = [];
 
-function fixture(tag) {
+// The transfers commit in a real database: each trade starts from the bot's
+// six herbs and an empty player bag.
+const rows = require('./helpers/liveBagRows')(require('path').basename(__filename, '.js'));
+rows.restock = async () => {
+    await Database.execute(['DELETE FROM items WHERE characterId IN (100, 200)', []], 'test:trade-reset');
+    await rows.stored(200, item(201, 2001, 6, 'Bot Herb'));
+};
+
+async function fixture(tag) {
     const packets = [];
     const player = { accountId: `player_${tag}`, dataSendToMe: (packet) => packets.push(packet), actor: actor(100, `Leader${tag}`) };
     const bot = {
@@ -61,6 +69,7 @@ function fixture(tag) {
         followPlayerSession: player,
         actor: actor(200, `Companion${tag}`, [item(201, 2001, 6, 'Bot Herb')])
     };
+    await rows.restock();
     assert.strictEqual(BotTradeService.startBotTrade(bot, player).ok, true);
     assert.strictEqual(BotTradeService.offerBotItem(bot, 201, 3).ok, true);
     packets.length = 0;
@@ -69,13 +78,13 @@ function fixture(tag) {
 
 (async () => {
     try {
+        rows.open();
+        await rows.character(100, 'TradeLeader');
+        await rows.character(200, 'TradeCompanion');
         Database.transferInventoryBetweenCharacters = (entries) => {
             writes.push(entries);
-            return new Promise((resolve) => held.push(() => resolve(entries.map((entry, index) => ({
-                ...entry,
-                targetItemId: 900 + writes.length * 10 + index,
-                remaining: 3
-            })))));
+            // The real transfer, once the test releases it.
+            return new Promise((resolve) => held.push(resolve)).then(() => original.transfer(entries));
         };
         BotSocialMemory.recordEvent = () => { followUps.push('social'); return Promise.resolve(); };
         BotLootEtiquette.resolveTrade = () => null;
@@ -84,7 +93,7 @@ function fixture(tag) {
         BotManager.botTell = () => followUps.push('tell');
 
         // The player picks another character while the transfer waits.
-        const a = fixture('A');
+        const a = await fixture('A');
         const oldPlayerActor = a.player.actor;
         const pending = BotTradeService.commit(a.player);
         a.player.actor = actor(101, 'OtherCharacter');
@@ -98,7 +107,7 @@ function fixture(tag) {
         assert.strictEqual(a.player.activeTrade, null);
 
         // The bot cools down (its actor is dropped) while the transfer waits.
-        const b = fixture('B');
+        const b = await fixture('B');
         const pendingCold = BotTradeService.commit(b.player);
         b.bot.actor = null;
         held.shift()();
@@ -108,7 +117,7 @@ function fixture(tag) {
         assert.strictEqual(b.bot.activeTrade, null);
 
         // A character change before the confirmation ends the trade.
-        const c = fixture('C');
+        const c = await fixture('C');
         c.player.actor = actor(101, 'OtherCharacter');
         const writesBefore = writes.length;
         const rejected = BotTradeService.confirmPlayerTrade(c.player);
@@ -121,7 +130,7 @@ function fixture(tag) {
 
         // Through the packet handler: the new character gets no trade packets
         // and no follow-ups addressed to the old character.
-        const d = fixture('D');
+        const d = await fixture('D');
         const handled = tradeDone(d.player, Buffer.from([0x17, 1, 0, 0, 0]));
         d.player.actor = actor(101, 'OtherCharacter');
         held.shift()();
@@ -131,6 +140,7 @@ function fixture(tag) {
         console.log('Bot trade actor identity checks passed');
     } finally {
         Database.transferInventoryBetweenCharacters = original.transfer;
+        await rows.close();
         BotSocialMemory.recordEvent = original.recordEvent;
         BotLootEtiquette.resolveTrade = original.resolveTrade;
         BotEquipmentUpgrade.applyBestUpgrades = original.applyBestUpgrades;

@@ -11,6 +11,7 @@ const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const depositQueues = new Map();
 const { MAX_GEAR_COPIES_PER_TYPE } = require('./WarehouseRules');
+const LiveBag = require('../../Inventory/LiveBag');
 
 function serializeDeposit(characterId, work) {
     const key = Number(characterId);
@@ -130,12 +131,11 @@ async function depositActorUnlocked(actor, state = null, session = null) {
     const learned = await learnActorRecipes(actor, state, session);
     const retained = storedAmounts(await Database.fetchWarehouseItems(actor.fetchId()));
     const stored = [];
-    for (const { source, item, storable } of storableActorItems(actor, state, session?.shoppingNpcSale)) {
+    for (const { item, storable } of storableActorItems(actor, state, session?.shoppingNpcSale)) {
         const amount = retentionAmount({ ...item, amount: storable }, retained.get(item.selfId));
         if (amount <= 0) continue;
         const result = await Database.transferInventoryToWarehouse(actor.fetchId(), { ...item, amount });
-        if (Number(result.inventoryAmount) === 0) backpack.items = backpack.items.filter((entry) => entry !== source);
-        else source.setAmount(result.inventoryAmount);
+        LiveBag.applyAmounts(actor, result.rows);
         retained.set(item.selfId, Number(retained.get(item.selfId) || 0) + amount);
         stored.push({ selfId: item.selfId, name: item.name, amount });
     }
@@ -209,10 +209,7 @@ async function releaseActorAtWarehouse(actor, state, session, target) {
             const item = { ...row, amount: Math.min(left, Number(row.amount)), stackable: templateFor(row.selfId)?.etc?.stackable === true };
             validate();
             const moved = await Database.transferWarehouseToInventory(id, item, { validate });
-            const held = actor.backpack.fetchItemRaw(moved.inventoryId);
-            if (held) held.setAmount(moved.inventoryAmount);
-            else actor.backpack.insertItem(moved.inventoryId, row.selfId, { amount: moved.inventoryAmount,
-                enchant: moved.enchant, petData: moved.petData, equipped: false, slot: 0 });
+            LiveBag.applyAmounts(actor, moved.rows);
             row.amount -= item.amount; left -= item.amount;
             released.push({ selfId: row.selfId, amount: item.amount, reason: 'market' });
         }

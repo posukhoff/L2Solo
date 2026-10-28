@@ -238,9 +238,9 @@ async function giveItem(session, selfId, amount) {
 
 async function completeWolfQuest(state) {
   const session = state.session;
-  const backpack = session.actor.backpack;
-  const result = await Database.completeWolfQuest(session.actor.fetchId());
-  backpack.items = backpack.items.filter(item => item.fetchId() !== result.removedItemId);
+  const actor = session.actor, backpack = actor.backpack;
+  const result = await Database.completeWolfQuest(actor.fetchId());
+  LiveBag.applyRow(actor, result.removed);
   backpack.insertItem(result.id, 2375, { amount: 1 });
   state.state = 'created';
   state.variables = {};

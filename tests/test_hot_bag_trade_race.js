@@ -15,6 +15,7 @@ const World = invoke('GameServer/World/World');
 const AfkTrade = invoke('GameServer/AfkTrade/AfkTradeService');
 const ConsumableRestock = invoke('GameServer/Inventory/ConsumableRestock');
 const ManufactureShop = invoke('GameServer/Crafting/ManufactureShop');
+const LiveBag = invoke('GameServer/Inventory/LiveBag');
 const databasePath = path.join(process.cwd(), 'tmp', 'test-hot-bag-trade-race.sqlite');
 const SHOT = 1835, POTION = 1060, ADENA = 57;
 
@@ -179,6 +180,15 @@ async function race(name, { timerFlush }) {
     AfkTrade.syncOnlineInventory(newestOwner, listed.ownerInventory);
     assert.strictEqual(held(lister.actor, SHOT), 0, 'the newest stack, listed whole, left the bag');
     assert.strictEqual(held(lister.actor, ADENA), 1000);
+
+    // A job's row at 0 is gone from the database: the bag drops the item even
+    // with a gain queued meanwhile (that delta finds no row).
+    const gone = lister.actor.backpack.fetchItemFromSelfId(ADENA);
+    LiveBag.add(lister.actor, gone, 5);
+    const goneRow = WriteQueue.markRead(newestOwner, { id: gone.fetchId(), amount: 0 });
+    LiveBag.applyRow(lister.actor, goneRow);
+    assert.strictEqual(held(lister.actor, ADENA), 0, 'a row the job removed leaves the bag');
+    await WriteQueue.flushAll();
     console.log('hot bag trade race ok');
 })().catch((error) => {
     console.error(error);

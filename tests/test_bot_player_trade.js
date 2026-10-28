@@ -2,7 +2,6 @@ const assert = require('assert');
 
 require('../src/Global');
 
-const Database = invoke('Database');
 const Item = invoke('GameServer/Item/Item');
 const BotTradeService = invoke('GameServer/Bot/BotTradeService');
 const BotSocialMemory = invoke('GameServer/Bot/AI/BotSocialMemory');
@@ -66,8 +65,9 @@ const bot = {
     actor: actor(200, 'TradeCompanion', backpack([]))
 };
 
+// The trade commits in a real database holding both bags' rows.
+const fixture = require('./helpers/liveBagRows')('bot-player-trade');
 const original = {
-    transfer: Database.transferInventoryBetweenCharacters,
     recordEvent: BotSocialMemory.recordEvent,
     resolveTrade: BotLootEtiquette.resolveTrade,
     applyBestUpgrades: BotEquipmentUpgrade.applyBestUpgrades,
@@ -79,11 +79,10 @@ const botTellCalls = [];
 
 (async () => {
     try {
-        Database.transferInventoryBetweenCharacters = async (entries) => entries.map((entry) => ({
-            ...entry,
-            targetItemId: 201,
-            remaining: entry.fromCharacterId === 100 ? 1 : 0
-        }));
+        fixture.open();
+        await fixture.character(100, 'NativeTrader');
+        await fixture.character(200, 'TradeCompanion');
+        await fixture.stored(100, playerItem);
         BotSocialMemory.recordEvent = () => Promise.resolve();
         BotLootEtiquette.resolveTrade = () => null;
         BotEquipmentUpgrade.applyBestUpgrades = () => [];
@@ -112,6 +111,7 @@ const botTellCalls = [];
         assert.strictEqual(playerItem.fetchAmount(), 1, 'confirmed trade must deduct the player item');
         assert.strictEqual(player.actor.backpack.fetchItemFromSelfId(1001).fetchAmount(), 1);
         assert.strictEqual(bot.actor.backpack.fetchItemFromSelfId(1001).fetchEnchantLevel(), 7, 'confirmed trade must preserve enchant in the bot live inventory');
+        assert.strictEqual(Number((await fixture.row(100, 101)).amount), 1, 'the database holds the player\'s rest');
         assert(playerPackets.some((packet) => packet[0] === 0x22 && packet[1] === 1), 'client must receive successful TradeDone');
 
         bot.actor.backpack.items = Array.from({ length: 81 }, (_, index) => item(1000 + index, 2000 + index, 1, `Full Slot ${index + 1}`));
@@ -131,7 +131,7 @@ const botTellCalls = [];
         assert.strictEqual(botTellCalls.at(-1).text, 'You need more inventory space to receive these items.');
         console.log('Bot player trade packet checks passed');
     } finally {
-        Database.transferInventoryBetweenCharacters = original.transfer;
+        await fixture.close();
         BotSocialMemory.recordEvent = original.recordEvent;
         BotLootEtiquette.resolveTrade = original.resolveTrade;
         BotEquipmentUpgrade.applyBestUpgrades = original.applyBestUpgrades;

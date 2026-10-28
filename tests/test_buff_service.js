@@ -129,19 +129,18 @@ async function persistState(current) {
         fetchSemantic: () => ({ effectType: 'buff', target: 'friendly', effect: 'shield' }),
         fetchTargetKind: () => 'friendly'
     };
-    function hotActor(id, name, initialAdena = 20000) {
-        const adena = { fetchSelfId: () => 57, fetchAmount() { return this.amount; }, setAmount(amount) { this.amount = amount; }, amount: initialAdena };
-        const backpack = { items: [adena], fetchItemFromSelfId: () => backpack.items.find(item => item.fetchSelfId() === 57),
-            fetchItems: () => backpack.items, insertItem: (_id, _selfId, data) => backpack.items.push({ ...adena, amount: data.amount }) };
+    // A live body's real bag, loaded from its rows (payments merge into it).
+    async function hotActor(id, name) {
+        const backpack = new (invoke('GameServer/Actor/Backpack'))({ paperdoll: {}, items: await Database.fetchItems(id) });
         return { backpack, fetchId: () => id, fetchName: () => name, fetchLevel: () => 55,
             fetchClanId: () => 0, fetchLocX: () => 0, fetchLocY: () => 0, fetchLocZ: () => 0,
             isDead: () => false, state: { fetchCombats: () => false },
             fetchMaxMp: () => 2000, mp: 2000, fetchMp() { return this.mp; }, setMp(mp) { this.mp = mp; },
             statusUpdateVitals: () => {} };
     }
-    const hotProvider = hotActor(hotProviderId, 'HotBuffSeller', initialProviderAdena);
+    const hotProvider = await hotActor(hotProviderId, 'HotBuffSeller');
     hotProvider.skillset = { fetchSkill: () => skill };
-    const hotPlayer = hotActor(playerId, 'HotBuffBuyer', initialBuyerAdena);
+    const hotPlayer = await hotActor(playerId, 'HotBuffBuyer');
     let inventoryPackets = 0;
     const providerSession = { actor: hotProvider, dataSendToMeAndOthers: () => {}, dataSendToMe: () => { inventoryPackets += 1; } };
     const playerSession = { actor: hotPlayer, dataSendToMe: () => { inventoryPackets += 1; } };
@@ -380,11 +379,11 @@ async function persistState(current) {
         const learned = definition.levels.find(entry => Number(entry.level) === level);
         return new SkillModel({ ...utils.crushOb(definition), ...learned });
     });
-    const fullProvider = hotActor(9001, 'FullProphet');
+    const fullProvider = await hotActor(9001, 'FullProphet');
     fullProvider.fetchClassId = () => 17;
     fullProvider.skillset = { fetchSkills: () => prophetSkills,
         fetchSkill: skillId => prophetSkills.find(entry => entry.fetchSelfId() === skillId) };
-    const fullPlayer = hotActor(9002, 'FullArcher');
+    const fullPlayer = await hotActor(9002, 'FullArcher');
     fullPlayer.fetchClassId = () => 24;
     fullPlayer.effects = {};
     const fullProviderSession = { actor: fullProvider, dataSendToMeAndOthers() {} };
@@ -413,7 +412,7 @@ async function persistState(current) {
         assert.strictEqual(EffectStore.list(fullPlayer).length, 11);
         assert(EffectStore.list(fullPlayer).some(entry => entry.key === 'berserker_spirit'));
 
-        const stagedPlayer = hotActor(9003, 'StagedArcher');
+        const stagedPlayer = await hotActor(9003, 'StagedArcher');
         stagedPlayer.fetchClassId = () => 24;
         stagedPlayer.effects = {};
         const starts = [], castWaits = [];

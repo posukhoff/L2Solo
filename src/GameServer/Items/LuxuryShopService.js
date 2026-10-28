@@ -2,6 +2,7 @@ const Catalog = require('../World/Generics/NpcExchangeShopLists');
 const NpcIndex = require('../World/NpcObjectIndex');
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 const InventoryLimits = require('../Inventory/InventoryLimits');
+const LiveBag = require('../Inventory/LiveBag');
 const Data = invoke('GameServer/DataCache');
 const Database = invoke('Database');
 const Response = invoke('GameServer/Network/Response');
@@ -60,11 +61,7 @@ async function exchange(session, listId, entryId, amount) {
     session.multiSellPending = true;
     try {
         const result = await Database.exchangeLuxuryItems(actor.fetchId(), { listId, entryId, amount, validate });
-        for (const row of result.consumed) {
-            if (row.remaining) actor.backpack.updateAmount(row.id, row.remaining);
-            else actor.backpack.items = actor.backpack.items.filter(item => item.fetchId() !== row.id);
-        }
-        for (const row of result.products) actor.backpack.insertItem(row.id, row.selfId, row);
+        LiveBag.applyAmounts(actor, result.rows);
         if (session.actor === actor) {
             actor.statusUpdateVitals?.();
             session.dataSendToMe(Response.userInfo(actor));

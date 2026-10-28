@@ -1,5 +1,7 @@
 const Rules = require('./ClanAllianceRules');
+const LiveBag = require('../Inventory/LiveBag');
 const Database = invoke('Database');
+const Response = invoke('GameServer/Network/Response');
 const records = new Map();
 const tails = new Map();
 const processedKills = new WeakSet();
@@ -115,16 +117,11 @@ async function snapshot(session) {
 }
 async function syncInventory(session) {
     if (!online(session)) return;
+    const actor = session.actor;
     const rows = await Database.fetchItems(idOf(session), 'clan_alliance_sync');
-    const bag = session.actor.backpack;
-    const managed = new Set(Object.keys(Rules.ITEMS).map(Number));
-    bag.items = bag.items.filter(item => !managed.has(Number(item.fetchSelfId())));
-    for (const row of rows.filter(row => managed.has(Number(row.selfId)))) bag.insertItem(Number(row.id), Number(row.selfId), { amount: Number(row.amount) });
-    const adena = bag.fetchItemFromSelfId(57);
-    const savedAdena = rows.find(row => Number(row.id) === Number(adena?.fetchId()));
-    if (adena && savedAdena) adena.setAmount(Number(savedAdena.amount));
-    else if (adena) bag.items = bag.items.filter(item => item !== adena);
-    session.dataSendToMe(invoke('GameServer/Network/Response').itemsList(bag.fetchItems()));
+    if (session.actor !== actor) return;
+    LiveBag.applyRows(actor, rows);
+    session.dataSendToMe(Response.itemsList(actor.backpack.fetchItems()));
 }
 function stopPoison(session) {
     const actor = session?.actor;
@@ -223,7 +220,7 @@ async function transition(session, event, extra = {}) {
         if (event === 'blood' || event === 'chest_kill' && state.chests?.bingo >= 4) clearChests(state);
         if (event === 'finish') {
             session.actor.setSp(result.sp);
-            session.dataSendToMe(invoke('GameServer/Network/Response').userInfo(session.actor));
+            session.dataSendToMe(Response.userInfo(session.actor));
         }
         return result;
     });

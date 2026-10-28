@@ -59,30 +59,9 @@ for (const type of [1, 2]) {
     }
 }
 
-const original = {
-    fetchWarehouseItems: Database.fetchWarehouseItems,
-    transferInventoryToWarehouse: Database.transferInventoryToWarehouse,
-    transferWarehouseToInventory: Database.transferWarehouseToInventory
-};
-
-const persistedWarehouse = [];
-const calls = [];
-Database.fetchWarehouseItems = () => Promise.resolve(persistedWarehouse.map((row) => ({ ...row })));
-Database.transferInventoryToWarehouse = (_characterId, row) => {
-    calls.push('warehouse-insert');
-    const saved = { ...row, id: 500 + persistedWarehouse.length };
-    persistedWarehouse.push(saved);
-    calls.push('inventory-delete');
-    return Promise.resolve({ warehouseId: saved.id, warehouseAmount: row.amount, inventoryAmount: 0 });
-};
-Database.transferWarehouseToInventory = (_characterId, row) => {
-    calls.push('inventory-insert');
-    const source = persistedWarehouse.find((entry) => entry.id === row.id);
-    persistedWarehouse.splice(persistedWarehouse.indexOf(source), 1);
-    calls.push('warehouse-delete');
-    return Promise.resolve({ inventoryId: 42, inventoryAmount: row.amount, warehouseAmount: 0, petData: source.petData });
-};
-
+// Deposits and withdrawals commit in a real database; the live bag takes the
+// rows they committed (LiveBag).
+const fixture = require('./helpers/liveBagRows')('personal-warehouse');
 const source = item(10, 7);
 assert.strictEqual(source.fetchPetData(), null, 'ordinary items must not synthesize an empty pet payload');
 const session = {
@@ -91,12 +70,13 @@ const session = {
         fetchId: () => 123,
         fetchLocX: () => 0,
         fetchLocY: () => 0,
-        backpack: {
-            items: [source],
-            fetchItems() { return this.items; }
-        }
+        backpack: new (invoke('GameServer/Actor/Backpack'))({ paperdoll: {}, items: [] })
     }
 };
+session.actor.backpack.items = [source];
+const stock = () => Database.fetchWarehouseItems(123);
+const storeRow = (id, selfId, name) => Database.execute([`INSERT INTO warehouse_items (id, selfId, name, amount, enchant, characterId)
+    VALUES (?, ?, ?, 1, 0, 123)`, [id, selfId, name]], 'test:warehouse-row');
 
 World.npc = { spawns: [] };
 World.npc.spawns.push({
@@ -108,27 +88,31 @@ World.npc.spawns.push({
 });
 
 (async () => {
+    fixture.open();
+    await fixture.character(123, 'WarehouseTester');
+    await fixture.stored(123, source);
     session.actor.backpack.items.push(questItem);
     await assert.rejects(Warehouse.deposit(session, [
         { objectId: 10, amount: 1 }, { objectId: 88, amount: 1 }
     ]), /invalid warehouse deposit/);
-    assert.deepStrictEqual(calls, [], 'mixed quest-item batches must not partially transfer');
+    assert.deepStrictEqual(await stock(), [], 'mixed quest-item batches must not partially transfer');
     assert.equal(source.fetchAmount(), 7);
     session.actor.backpack.items.pop();
     await Warehouse.deposit(session, [{ objectId: 10, amount: 7 }]);
-})().then(async () => {
-    assert.deepStrictEqual(calls, ['warehouse-insert', 'inventory-delete'], 'deposit must persist warehouse before removing the inventory item');
-    assert.strictEqual(session.actor.backpack.items.length, 0, 'deposit should remove transferred inventory items only after persistence');
-    assert.strictEqual(persistedWarehouse[0].amount, 7, 'deposit must persist the warehouse amount immediately');
-    assert.strictEqual(persistedWarehouse[0].petData, null, 'ordinary warehouse deposits must not persist empty pet metadata');
 
-    calls.length = 0;
-    await Warehouse.withdraw(session, [{ objectId: 500, amount: 7 }]);
-    assert.deepStrictEqual(calls, ['inventory-insert', 'warehouse-delete'], 'withdraw must persist destination inventory before deleting warehouse state');
-    assert.strictEqual(persistedWarehouse.length, 0, 'withdraw must persist warehouse removal immediately');
+    assert.strictEqual(session.actor.backpack.items.length, 0, 'deposit should remove transferred inventory items after persistence');
+    assert.strictEqual(await fixture.row(123, 10), undefined, 'the deposited row left the inventory');
+    const [stored] = await stock();
+    assert.strictEqual(stored.amount, 7, 'deposit must persist the warehouse amount immediately');
+    assert.strictEqual(stored.petData, null, 'ordinary warehouse deposits must not persist empty pet metadata');
+
+    await Warehouse.withdraw(session, [{ objectId: stored.id, amount: 7 }]);
+    assert.deepStrictEqual(await stock(), [], 'withdraw must persist warehouse removal immediately');
     assert.strictEqual(session.actor.backpack.items[0].fetchAmount(), 7, 'withdraw should materialize the stored item in inventory');
+    assert.strictEqual(Number((await fixture.row(123, session.actor.backpack.items[0].fetchId())).amount), 7,
+        'the bag holds the inventory row the withdrawal wrote');
 
-    persistedWarehouse.push({ id: 501, selfId: 627, name: 'Aspis', amount: 1, enchant: 0, petData: null });
+    await storeRow(501, 627, 'Aspis');
     const listedAspis = (await Warehouse.list(123)).find((entry) => entry.fetchSelfId() === 627);
     assert.strictEqual(listedAspis.fetchSlot(), 8, 'warehouse gear should use its canonical equipment slot in memory');
     await Warehouse.withdraw(session, [{ objectId: 501, amount: 1 }]);
@@ -137,7 +121,7 @@ World.npc.spawns.push({
 
     DataCache.items.push({ selfId: 1252, kind: 'Other.Quest', name: 'Iron Heart',
         class1: 4, class2: 3, mass: 0, stackable: true });
-    persistedWarehouse.push({ id: 502, selfId: 1252, amount: 1 });
+    await storeRow(502, 1252, 'Iron Heart');
     await Warehouse.withdraw(session, [{ objectId: 502, amount: 1 }]);
     assert(session.actor.backpack.items.some(item => item.fetchSelfId() === 1252),
         'quest items already stored by older versions remain withdrawable');
@@ -148,9 +132,8 @@ World.npc.spawns.push({
         /warehouse NPC/,
         'warehouse requests must remain bound to a warehouse NPC'
     );
-}).finally(() => {
-    Object.assign(Database, original);
-}).catch((error) => {
-    Object.assign(Database, original);
-    throw error;
-});
+    console.log('Personal warehouse checks passed');
+})().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+}).finally(() => fixture.close());

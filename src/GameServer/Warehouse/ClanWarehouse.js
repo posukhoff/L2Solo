@@ -1,5 +1,6 @@
 const { canDeposit } = require('./WarehouseItemRules');
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const Item = invoke('GameServer/Item/Item');
@@ -108,15 +109,7 @@ async function deposit(session, lines) {
         characterId: actor.fetchId(),
         transfers
     });
-    results.forEach((transferred) => {
-        const source = inventory.find((item) => Number(item.fetchId()) === Number(transferred.sourceItemId));
-        if (!source) return;
-        if (Number(transferred.inventoryAmount) <= 0) {
-            backpack.items = backpack.items.filter((item) => item !== source);
-        } else {
-            source.setAmount(transferred.inventoryAmount);
-        }
-    });
+    LiveBag.applyAmounts(actor, results.rows);
     await invoke('GameServer/Clan/ClanWarehouseEquipmentService').resolveClan(clan.id, {
         preferredIds: results.flatMap((result) => result.warehouseIds || [result.warehouseId])
     }).catch((error) => utils.infoWarn('ClanGear', 'exchange deferred: %s', error.message));
@@ -127,7 +120,6 @@ async function withdraw(session, lines) {
     const clan = assertActive(session, 'withdraw');
     if (!canWithdraw(session, clan)) throw new Error('only the clan leader may withdraw');
     const actor = session.actor;
-    const backpack = actor.backpack;
     await CharacterWriteQueue.flushCharacter(actor.fetchId());
     const stored = await list(clan.id);
     if (!validateLines(lines, stored)) throw new Error('invalid clan warehouse withdrawal');
@@ -135,11 +127,6 @@ async function withdraw(session, lines) {
     for (const line of lines) {
         const source = stored.find((item) => Number(item.fetchId()) === Number(line.objectId));
         const amount = Number(line.amount);
-        const target = source.fetchStackable?.() && backpack.fetchItems().find((item) => (
-            item.fetchStackable?.()
-            && Number(item.fetchSelfId()) === Number(source.fetchSelfId())
-            && Number(item.fetchEnchantLevel?.() || 0) === Number(source.fetchEnchantLevel?.() || 0)
-        ));
         const transferred = await Database.transferClanWarehouseToPlayerInventory({
             clanId: clan.id,
             characterId: actor.fetchId(),
@@ -152,18 +139,8 @@ async function withdraw(session, lines) {
             amount,
             resolveKey: resolveKey(clan.id, actor.fetchId(), 'withdraw')
         });
-        if (target) {
-            target.setAmount(transferred.inventoryAmount);
-        } else {
-            const added = warehouseItem({
-                id: transferred.inventoryId,
-                selfId: source.fetchSelfId(),
-                amount,
-                petData: transferred.petData,
-                enchant: transferred.enchant
-            });
-            if (added) backpack.items.push(added);
-        }
+        // The stack the database credited (its inventoryId), plus what the bag changed since.
+        LiveBag.applyAmounts(actor, transferred.rows);
     }
     return list(clan.id);
 }
