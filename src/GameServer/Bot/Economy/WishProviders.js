@@ -937,12 +937,13 @@ function buildProjection(state, ctx, deps) {
                 const sale = Price.listingSale({ units: count * batches, oldUnits, applicableUnits: offer.applicableUnits,
                     willingUnits: offer.willingUnits, cheaperUnits: offer.cheaperUnits, price: offer.price,
                     delayHours: offer.delayHours, horizonHours: horizon });
-                return sale.known && sale.receipts > 0 ? { gross: sale.receipts, trip, delayHours: sale.delayHours } : null;
+                if (sale.known && sale.residual > 0 && Diagnostics.active()) Diagnostics.count('provider', 'listing', 'past_horizon');
+                return sale.known && sale.receipts > 0 ? { gross: sale.receipts, trip, delayHours: sale.delayHours, units: sale.sold } : null;
             }
             const sale = Price.bidSale(state, offer, { board: ctx.board, timestamp, asks,
                 oldUnits, units: count * batches, residualUnitValue: residual, producer: Number(state.characterId) });
             if (sale.status !== 'ready' || sale.exit.trial && !(sale.after.sold > sale.before.sold)) return null;
-            return sale.gross > 0 ? { gross: sale.gross, trip, delayHours: offer.delayHours } : null;
+            return sale.gross > 0 ? { gross: sale.gross, trip, delayHours: offer.delayHours, units: count * batches } : null;
         };
         const exitCeiling = (offers, ownSales, best) => {
             for (let at = 0; at < offers.length && at < 5; at++)
@@ -1035,7 +1036,7 @@ function buildProjection(state, ctx, deps) {
             // An investment recipe and a product with demand root first
             // (primaryEarning); progression funding stays shots-only.
             const earningPreference = Number(recipe.recipeItemId) === investmentId ? 2 : demand ? 1 : 0;
-            admitted.push({ recipe, count, id, ownSales, oldUnits, shot, demand: Boolean(demand), earningPreference,
+            admitted.push({ recipe, count, id, ownSales, oldUnits, shot, demand: Boolean(demand), forecastOnly, earningPreference,
                 known, ready, inputPrice, margin: ProductionIndex.margin(recipe, listed, inputPrice), learningPrice: 0, net,
                 netAt: ready ? null : netAt });
         }
@@ -1094,19 +1095,23 @@ function buildProjection(state, ctx, deps) {
         // takes now (exitLots sizes every other lot).
         const heldSetups = [ItemDisposition.productionSetup(state, timestamp, investment || null),
             ItemDisposition.productionSetup(state, timestamp)];
-        for (const { recipe, count, id, ownSales, oldUnits, shot, demand, earningPreference, ready, inputPrice: batchInputs, margin, learningPrice } of priced) {
+        for (const { recipe, count, id, ownSales, oldUnits, shot, demand, forecastOnly, earningPreference, ready, inputPrice: batchInputs, margin, learningPrice } of priced) {
         const asks = ctx.board.list(id, SELL);
         // A census product's bids are no exit (admission's forecastOnly).
-        const publicOffers = MarketDemand.hasCensusSource(id) ? [] : ctx.board.list(id, 3).slice(0, 5);
+        const publicOffers = forecastOnly ? [] : ctx.board.list(id, 3).slice(0, 5);
         const listingOffers = demand ? need('./WealthCraftPolicy').drain(need('./ShotSalePolicy').exits(state, recipe, {
             board: ctx.board, timestamp, trip: ctx.trip, npcOffersFor: ctx.npcOffersFor, existing: oldUnits })) : [];
         const heldLot = heldSetups.find(setup => Number(setup?.recipe.recipeId) === Number(recipe.recipeId))?.batches || 0;
         for (const source of [...publicOffers, ...listingOffers]) {
             const offer = heldLot && source.forQuantity ? source.forQuantity(heldLot) : source;
             if (!offer) continue;
-            const batches = heldLot || exitLots(offer, count, oldUnits, need('./WealthCraftPolicy').MAX_BATCHES, asks);
-            const sold = batches && exitGross(offer, count, batches, oldUnits, ownSales, asks, ctx.buyback(id));
+            const lots = heldLot || exitLots(offer, count, oldUnits, need('./WealthCraftPolicy').MAX_BATCHES, asks);
+            const sold = lots && exitGross(offer, count, lots, oldUnits, ownSales, asks, ctx.buyback(id));
             if (!sold) continue;
+            // A free lot is the lots its sale sells within the horizon
+            // (a listing's units past it count nothing: no inputs for them).
+            const batches = heldLot || Math.floor(sold.units / count);
+            if (!batches) continue;
             const { gross, trip, delayHours } = sold;
             const inputPrice = batchInputs * batches;
             // A learned recipe is kept: a listing exit's sale carries its share

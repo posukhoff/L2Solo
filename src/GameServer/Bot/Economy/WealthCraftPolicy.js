@@ -172,10 +172,11 @@ function* evaluatePrepared({ state, recipe, batches = 1, basket, exit, ownedFor 
     // Those units give their own use benefit, never external sale receipts.
     const reservedOutput = exit.type === 'use' ? 0 : Math.min(productCount, count(context.outputReserve ?? 0));
     if (!Number.isFinite(reservedOutput)) return null;
-    // The batch's units past the old ones: a listing sells them all over the
+    // The batch's units past the old ones: a listing sells them over the
     // forecast's time (Price.listingSale, the producer root's reading; the
-    // root's lot already fits its horizon, WishProviders exitGross), any
-    // other exit what one sale takes beyond the old units.
+    // root cut its lot to the units sold within its horizon and the exit's
+    // maxBatches bounds a shot lot by one window), any other exit what one
+    // sale takes beyond the old units.
     const newUnits = productCount - reservedOutput;
     let sale;
     if (exit.type === 'listing') {

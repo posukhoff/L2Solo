@@ -100,10 +100,10 @@ function saleOutcome({ units, applicableUnits, willingUnits, cheaperUnits, price
 
 // The one value of goods made to list (T74, user 10-28): a listing sells
 // every unit at its ask over the time the forecast's buyers take, not only
-// what one window of `delayHours` takes. A window's buyers at the ask take
-// min(applicable, willing) past the cheaper asks; the seller's `oldUnits`
-// sell first, so the new units' last one sells after (oldUnits + units)
-// windows' share. A unit whose sale ends past `horizonHours`
+// what one window of `delayHours` takes. A window's buyers at the ask are
+// min(applicable, willing); the cheaper asks' units sell first, then the
+// seller's `oldUnits`, then the new ones: the k-th unit of that queue sells
+// after k windows' share. A unit whose sale ends past `horizonHours`
 // (EconomicValuation.withinHorizon) is not sold: it stays at
 // `residualUnitValue`. delayHours of the result: when the last sold unit sells.
 function listingSale({ units, oldUnits = 0, applicableUnits, willingUnits, cheaperUnits, price,
@@ -113,13 +113,13 @@ function listingSale({ units, oldUnits = 0, applicableUnits, willingUnits, cheap
         || !Number.isSafeInteger(cheaperUnits) || cheaperUnits < 0 || !(delayHours > 0)
         || ![applicableUnits, willingUnits, price, residualUnitValue].every(value => Number.isFinite(value) && value >= 0))
         return none;
-    const perWindow = Math.max(0, Math.min(applicableUnits, willingUnits) - cheaperUnits);
-    const unitHours = perWindow > 0 ? delayHours / perWindow : Infinity;
-    const sold = Math.max(0, Math.min(units, horizonUnits(unitHours, horizonHours) - oldUnits));
+    const perWindow = Math.min(applicableUnits, willingUnits), ahead = cheaperUnits + oldUnits;
+    const unitHours = delayHours / perWindow;
+    const sold = perWindow > 0 ? Math.max(0, Math.min(units, horizonUnits(unitHours, horizonHours) - ahead)) : 0;
     const receipts = sold * price, residualValue = (units - sold) * residualUnitValue;
     return Number.isFinite(receipts) && Number.isFinite(residualValue)
         ? { known: true, sold, residual: units - sold, receipts, residualValue,
-            delayHours: sold > 0 ? Math.max(delayHours, (oldUnits + sold) * unitHours) : delayHours }
+            delayHours: sold > 0 ? Math.max(delayHours, (ahead + sold) * unitHours) : delayHours }
         : none;
 }
 
