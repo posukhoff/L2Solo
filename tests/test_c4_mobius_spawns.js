@@ -57,15 +57,15 @@ const mithrilIds = new Set(mithrilMines.spawns.map((row) => Number(row.selfId)))
 
 // Mobius points against our geodata (fixed points keep their file Z): the converter moves a point
 // that is off every floor onto a floor only when the mob can walk to its group from there. Mithril
-// Mines keeps 79 of its 511 points more than 300 Z off (our geodata is not built from the C4
-// client there, T49). Pinned so a change shows.
+// Mines keeps 26 of its 511 points more than 300 Z off on the C4 client geodata (T49; 79 on the
+// old pack). Pinned so a change shows.
 const mithrilPoints = mithrilMines.spawns.flatMap((row) => row.coords);
 const mithrilRegions = [...new Set(mithrilPoints.map((point) => GeodataEngine.getRegionKey(point.locX, point.locY)))]
     .map((key) => key.split('_').map(Number));
 verifyGeodataWhenAvailable(GeodataEngine, mithrilRegions, 'Mithril Mines', () => {
     const off = mithrilPoints.filter((point) =>
         Math.abs(GeodataEngine.getHeight(point.locX, point.locY, point.locZ) - point.locZ) > 300);
-    assert.strictEqual(off.length, 79, 'Mithril Mines points off the geodata');
+    assert.strictEqual(off.length, 26, 'Mithril Mines points off the geodata');
 });
 
 // Pet quest monsters (Maille Lizardmen, Fairy Trees) come from Mobius too.

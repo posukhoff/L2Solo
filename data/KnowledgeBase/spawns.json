@@ -5264,7 +5264,7 @@
     }
   },
   {
-    "id": "spawn-26-34925de1f455",
+    "id": "spawn-26-d29730316116",
     "mobId": 26,
     "period": "always",
     "possibleLocations": [
@@ -5296,7 +5296,7 @@
         "head": 0,
         "locX": -49439,
         "locY": 105280,
-        "locZ": -3136
+        "locZ": -3552
       },
       {
         "head": 31358,
@@ -5470,7 +5470,7 @@
     }
   },
   {
-    "id": "spawn-29-8ee223d133cb",
+    "id": "spawn-29-368e032591f1",
     "mobId": 29,
     "period": "always",
     "possibleLocations": [
@@ -5586,7 +5586,7 @@
         "head": 0,
         "locX": -49339,
         "locY": 105458,
-        "locZ": -3144
+        "locZ": -3552
       },
       {
         "head": 4715,
@@ -6642,7 +6642,7 @@
     }
   },
   {
-    "id": "spawn-35-898542b32ed2",
+    "id": "spawn-35-464900024e6a",
     "mobId": 35,
     "period": "always",
     "possibleLocations": [
@@ -6800,7 +6800,7 @@
         "head": 0,
         "locX": -49702,
         "locY": 121490,
-        "locZ": -2896
+        "locZ": -2888
       },
       {
         "head": 4527,
@@ -8228,7 +8228,7 @@
     }
   },
   {
-    "id": "spawn-42-42cf47a9e033",
+    "id": "spawn-42-9e27716df351",
     "mobId": 42,
     "period": "always",
     "possibleLocations": [
@@ -8416,7 +8416,7 @@
         "head": 0,
         "locX": -49238,
         "locY": 105280,
-        "locZ": -3160
+        "locZ": -3152
       },
       {
         "head": 31187,
@@ -8548,7 +8548,7 @@
         "head": 0,
         "locX": -40093,
         "locY": 109074,
-        "locZ": -3484
+        "locZ": -2760
       },
       {
         "head": 57876,
@@ -9592,7 +9592,7 @@
     }
   },
   {
-    "id": "spawn-45-9b06dd160cac",
+    "id": "spawn-45-2cd959b82271",
     "mobId": 45,
     "period": "always",
     "possibleLocations": [
@@ -9732,13 +9732,13 @@
         "head": 0,
         "locX": -51871,
         "locY": 115366,
-        "locZ": -3264
+        "locZ": -3272
       },
       {
         "head": 0,
         "locX": -51772,
         "locY": 116256,
-        "locZ": -3144
+        "locZ": -3136
       },
       {
         "head": 61366,
@@ -10980,7 +10980,7 @@
     }
   },
   {
-    "id": "spawn-54-0b7ed9215cb4",
+    "id": "spawn-54-a139583eb0ca",
     "mobId": 54,
     "period": "always",
     "possibleLocations": [
@@ -11090,7 +11090,7 @@
         "head": 0,
         "locX": -50664,
         "locY": 115722,
-        "locZ": -3248
+        "locZ": -3256
       },
       {
         "head": 0,
@@ -11108,7 +11108,7 @@
         "head": 0,
         "locX": -49640,
         "locY": 105280,
-        "locZ": -3064
+        "locZ": -3072
       },
       {
         "head": 0,
@@ -11328,7 +11328,7 @@
     }
   },
   {
-    "id": "spawn-55-4b5362b9f7ee",
+    "id": "spawn-55-34baa41f74ec",
     "mobId": 55,
     "period": "always",
     "possibleLocations": [
@@ -11390,7 +11390,7 @@
         "head": 0,
         "locX": -36458,
         "locY": 136158,
-        "locZ": -3224
+        "locZ": -3232
       },
       {
         "head": 0,
@@ -11762,7 +11762,7 @@
     }
   },
   {
-    "id": "spawn-58-bcc5e621205d",
+    "id": "spawn-58-546eb02f376e",
     "mobId": 58,
     "period": "always",
     "possibleLocations": [
@@ -11890,7 +11890,7 @@
         "head": 0,
         "locX": -49656,
         "locY": 148600,
-        "locZ": -2736
+        "locZ": -2744
       },
       {
         "head": 25321,
@@ -11920,7 +11920,7 @@
         "head": 0,
         "locX": -47464,
         "locY": 146218,
-        "locZ": -2912
+        "locZ": -29200
       },
       {
         "head": 63224,
@@ -13558,7 +13558,59 @@
     }
   },
   {
-    "id": "spawn-63-be2bc701e5b9",
+    "id": "spawn-63-e93354d3191d",
+    "mobId": 63,
+    "period": "always",
+    "possibleLocations": [
+      {
+        "head": 12660,
+        "locX": -56875,
+        "locY": 137665,
+        "locZ": -2778
+      },
+      {
+        "head": 62693,
+        "locX": -56283,
+        "locY": 135048,
+        "locZ": -2434
+      },
+      {
+        "head": 21403,
+        "locX": -55973,
+        "locY": 139307,
+        "locZ": -2504
+      },
+      {
+        "head": 0,
+        "locX": -54473,
+        "locY": 139440,
+        "locZ": -2864
+      },
+      {
+        "head": 36011,
+        "locX": -53723,
+        "locY": 136861,
+        "locZ": -2773
+      },
+      {
+        "head": 31190,
+        "locX": -35374,
+        "locY": 163836,
+        "locZ": -2818
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 60,
+    "sourceIndex": 8,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/18_22#18_22",
+      "sourceIndex": 3014
+    }
+  },
+  {
+    "id": "spawn-63-ea26adbcf4d6",
     "mobId": 63,
     "period": "always",
     "possibleLocations": [
@@ -13620,7 +13672,7 @@
         "head": 0,
         "locX": -10660,
         "locY": 166097,
-        "locZ": -2664
+        "locZ": -2656
       },
       {
         "head": 0,
@@ -13643,58 +13695,6 @@
       "bounds": [],
       "id": "mobius:Others/19_23#19_23",
       "sourceIndex": 3022
-    }
-  },
-  {
-    "id": "spawn-63-e93354d3191d",
-    "mobId": 63,
-    "period": "always",
-    "possibleLocations": [
-      {
-        "head": 12660,
-        "locX": -56875,
-        "locY": 137665,
-        "locZ": -2778
-      },
-      {
-        "head": 62693,
-        "locX": -56283,
-        "locY": 135048,
-        "locZ": -2434
-      },
-      {
-        "head": 21403,
-        "locX": -55973,
-        "locY": 139307,
-        "locZ": -2504
-      },
-      {
-        "head": 0,
-        "locX": -54473,
-        "locY": 139440,
-        "locZ": -2864
-      },
-      {
-        "head": 36011,
-        "locX": -53723,
-        "locY": 136861,
-        "locZ": -2773
-      },
-      {
-        "head": 31190,
-        "locX": -35374,
-        "locY": 163836,
-        "locZ": -2818
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 60,
-    "sourceIndex": 8,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/18_22#18_22",
-      "sourceIndex": 3014
     }
   },
   {
@@ -13868,7 +13868,7 @@
     }
   },
   {
-    "id": "spawn-66-5b7da2d6eac0",
+    "id": "spawn-66-9742a2d4ff96",
     "mobId": 66,
     "period": "always",
     "possibleLocations": [
@@ -13918,7 +13918,7 @@
         "head": 0,
         "locX": -18411,
         "locY": 165073,
-        "locZ": -2800
+        "locZ": -2792
       },
       {
         "head": 0,
@@ -19050,7 +19050,7 @@
     }
   },
   {
-    "id": "spawn-78-422ad1294820",
+    "id": "spawn-78-465fe6304fe3",
     "mobId": 78,
     "period": "always",
     "possibleLocations": [
@@ -19076,7 +19076,7 @@
         "head": 0,
         "locX": -85789,
         "locY": 77771,
-        "locZ": -3080
+        "locZ": -3072
       },
       {
         "head": 0,
@@ -71800,7 +71800,7 @@
     }
   },
   {
-    "id": "spawn-338-45652cd148c5",
+    "id": "spawn-338-2d9bab568b17",
     "mobId": 338,
     "period": "always",
     "possibleLocations": [
@@ -71850,7 +71850,7 @@
         "head": 0,
         "locX": 176807,
         "locY": -174325,
-        "locZ": 1344
+        "locZ": 3036
       },
       {
         "head": 0,
@@ -73368,7 +73368,125 @@
     }
   },
   {
-    "id": "spawn-357-7a12ee0100b0",
+    "id": "spawn-357-a2f6eb58ce9e",
+    "mobId": 357,
+    "period": "always",
+    "possibleLocations": [
+      {
+        "head": 0,
+        "locX": -31823,
+        "locY": 210182,
+        "locZ": -3368
+      },
+      {
+        "head": 0,
+        "locX": -31723,
+        "locY": 210360,
+        "locZ": -3720
+      },
+      {
+        "head": 2724,
+        "locX": -30062,
+        "locY": 212953,
+        "locZ": -3723
+      },
+      {
+        "head": 4675,
+        "locX": -27841,
+        "locY": 213972,
+        "locZ": -3723
+      },
+      {
+        "head": 0,
+        "locX": -27283,
+        "locY": 211578,
+        "locZ": -3720
+      },
+      {
+        "head": 0,
+        "locX": -27182,
+        "locY": 211756,
+        "locZ": -3720
+      },
+      {
+        "head": 0,
+        "locX": -27082,
+        "locY": 211222,
+        "locZ": -3720
+      },
+      {
+        "head": 0,
+        "locX": -26880,
+        "locY": 211578,
+        "locZ": -3720
+      },
+      {
+        "head": 0,
+        "locX": -26378,
+        "locY": 211044,
+        "locZ": -3720
+      },
+      {
+        "head": 8072,
+        "locX": -25322,
+        "locY": 215468,
+        "locZ": -3704
+      },
+      {
+        "head": 61801,
+        "locX": -23520,
+        "locY": 214836,
+        "locZ": -3723
+      },
+      {
+        "head": 0,
+        "locX": -23153,
+        "locY": 212030,
+        "locZ": -3347
+      },
+      {
+        "head": 55978,
+        "locX": -21692,
+        "locY": 211867,
+        "locZ": -3285
+      },
+      {
+        "head": 22,
+        "locX": -21632,
+        "locY": 214767,
+        "locZ": -3708
+      },
+      {
+        "head": 5549,
+        "locX": -19511,
+        "locY": 215314,
+        "locZ": -3704
+      },
+      {
+        "head": 64533,
+        "locX": -16601,
+        "locY": 213921,
+        "locZ": -3704
+      },
+      {
+        "head": 52388,
+        "locX": -15149,
+        "locY": 213639,
+        "locZ": -3704
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 20,
+    "sourceIndex": 3,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/19_24#19_24",
+      "sourceIndex": 3023
+    }
+  },
+  {
+    "id": "spawn-357-dc1dc3defc51",
     "mobId": 357,
     "period": "always",
     "possibleLocations": [
@@ -73376,7 +73494,7 @@
         "head": 0,
         "locX": -53512,
         "locY": 210477,
-        "locZ": -2576
+        "locZ": -2584
       },
       {
         "head": 64912,
@@ -73532,7 +73650,7 @@
         "head": 0,
         "locX": -39590,
         "locY": 207870,
-        "locZ": -3376
+        "locZ": -3368
       },
       {
         "head": 0,
@@ -73570,261 +73688,7 @@
     }
   },
   {
-    "id": "spawn-357-a2f6eb58ce9e",
-    "mobId": 357,
-    "period": "always",
-    "possibleLocations": [
-      {
-        "head": 0,
-        "locX": -31823,
-        "locY": 210182,
-        "locZ": -3368
-      },
-      {
-        "head": 0,
-        "locX": -31723,
-        "locY": 210360,
-        "locZ": -3720
-      },
-      {
-        "head": 2724,
-        "locX": -30062,
-        "locY": 212953,
-        "locZ": -3723
-      },
-      {
-        "head": 4675,
-        "locX": -27841,
-        "locY": 213972,
-        "locZ": -3723
-      },
-      {
-        "head": 0,
-        "locX": -27283,
-        "locY": 211578,
-        "locZ": -3720
-      },
-      {
-        "head": 0,
-        "locX": -27182,
-        "locY": 211756,
-        "locZ": -3720
-      },
-      {
-        "head": 0,
-        "locX": -27082,
-        "locY": 211222,
-        "locZ": -3720
-      },
-      {
-        "head": 0,
-        "locX": -26880,
-        "locY": 211578,
-        "locZ": -3720
-      },
-      {
-        "head": 0,
-        "locX": -26378,
-        "locY": 211044,
-        "locZ": -3720
-      },
-      {
-        "head": 8072,
-        "locX": -25322,
-        "locY": 215468,
-        "locZ": -3704
-      },
-      {
-        "head": 61801,
-        "locX": -23520,
-        "locY": 214836,
-        "locZ": -3723
-      },
-      {
-        "head": 0,
-        "locX": -23153,
-        "locY": 212030,
-        "locZ": -3347
-      },
-      {
-        "head": 55978,
-        "locX": -21692,
-        "locY": 211867,
-        "locZ": -3285
-      },
-      {
-        "head": 22,
-        "locX": -21632,
-        "locY": 214767,
-        "locZ": -3708
-      },
-      {
-        "head": 5549,
-        "locX": -19511,
-        "locY": 215314,
-        "locZ": -3704
-      },
-      {
-        "head": 64533,
-        "locX": -16601,
-        "locY": 213921,
-        "locZ": -3704
-      },
-      {
-        "head": 52388,
-        "locX": -15149,
-        "locY": 213639,
-        "locZ": -3704
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 20,
-    "sourceIndex": 3,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/19_24#19_24",
-      "sourceIndex": 3023
-    }
-  },
-  {
-    "id": "spawn-358-45a945e58489",
-    "mobId": 358,
-    "period": "always",
-    "possibleLocations": [
-      {
-        "head": 23955,
-        "locX": -85018,
-        "locY": 107753,
-        "locZ": -3554
-      },
-      {
-        "head": 30735,
-        "locX": -83758,
-        "locY": 106431,
-        "locZ": -3711
-      },
-      {
-        "head": 54085,
-        "locX": -81991,
-        "locY": 107952,
-        "locZ": -3301
-      },
-      {
-        "head": 3108,
-        "locX": -81062,
-        "locY": 106609,
-        "locZ": -3678
-      },
-      {
-        "head": 61927,
-        "locX": -80886,
-        "locY": 105531,
-        "locZ": -3811
-      },
-      {
-        "head": 22713,
-        "locX": -79606,
-        "locY": 105646,
-        "locZ": -3747
-      },
-      {
-        "head": 0,
-        "locX": -78570,
-        "locY": 101240,
-        "locZ": -3530
-      },
-      {
-        "head": 0,
-        "locX": -78470,
-        "locY": 100706,
-        "locZ": -3448
-      },
-      {
-        "head": 0,
-        "locX": -78168,
-        "locY": 100172,
-        "locZ": -3561
-      },
-      {
-        "head": 0,
-        "locX": -77765,
-        "locY": 101240,
-        "locZ": -3667
-      },
-      {
-        "head": 0,
-        "locX": -77563,
-        "locY": 101596,
-        "locZ": -3747
-      },
-      {
-        "head": 0,
-        "locX": -77462,
-        "locY": 100350,
-        "locZ": -3568
-      },
-      {
-        "head": 0,
-        "locX": -76959,
-        "locY": 100884,
-        "locZ": -3635
-      },
-      {
-        "head": 34536,
-        "locX": -71944,
-        "locY": 104618,
-        "locZ": -3780
-      },
-      {
-        "head": 42146,
-        "locX": -69995,
-        "locY": 104584,
-        "locZ": -3858
-      },
-      {
-        "head": 52282,
-        "locX": -68460,
-        "locY": 103518,
-        "locZ": -3824
-      },
-      {
-        "head": 45955,
-        "locX": -68134,
-        "locY": 102114,
-        "locZ": -3810
-      },
-      {
-        "head": 0,
-        "locX": -67108,
-        "locY": 107304,
-        "locZ": -3948
-      },
-      {
-        "head": 0,
-        "locX": -66707,
-        "locY": 105880,
-        "locZ": -3948
-      },
-      {
-        "head": 0,
-        "locX": -66404,
-        "locY": 106414,
-        "locZ": -3948
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 30,
-    "sourceIndex": 9,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/17_21#17_21",
-      "sourceIndex": 3007
-    }
-  },
-  {
-    "id": "spawn-358-eaf27d81f722",
+    "id": "spawn-358-0d19b2cb93f8",
     "mobId": 358,
     "period": "always",
     "possibleLocations": [
@@ -73850,7 +73714,7 @@
         "head": 0,
         "locX": -6742,
         "locY": 108744,
-        "locZ": -3080
+        "locZ": -3088
       },
       {
         "head": 13314,
@@ -73996,6 +73860,142 @@
     }
   },
   {
+    "id": "spawn-358-45a945e58489",
+    "mobId": 358,
+    "period": "always",
+    "possibleLocations": [
+      {
+        "head": 23955,
+        "locX": -85018,
+        "locY": 107753,
+        "locZ": -3554
+      },
+      {
+        "head": 30735,
+        "locX": -83758,
+        "locY": 106431,
+        "locZ": -3711
+      },
+      {
+        "head": 54085,
+        "locX": -81991,
+        "locY": 107952,
+        "locZ": -3301
+      },
+      {
+        "head": 3108,
+        "locX": -81062,
+        "locY": 106609,
+        "locZ": -3678
+      },
+      {
+        "head": 61927,
+        "locX": -80886,
+        "locY": 105531,
+        "locZ": -3811
+      },
+      {
+        "head": 22713,
+        "locX": -79606,
+        "locY": 105646,
+        "locZ": -3747
+      },
+      {
+        "head": 0,
+        "locX": -78570,
+        "locY": 101240,
+        "locZ": -3530
+      },
+      {
+        "head": 0,
+        "locX": -78470,
+        "locY": 100706,
+        "locZ": -3448
+      },
+      {
+        "head": 0,
+        "locX": -78168,
+        "locY": 100172,
+        "locZ": -3561
+      },
+      {
+        "head": 0,
+        "locX": -77765,
+        "locY": 101240,
+        "locZ": -3667
+      },
+      {
+        "head": 0,
+        "locX": -77563,
+        "locY": 101596,
+        "locZ": -3747
+      },
+      {
+        "head": 0,
+        "locX": -77462,
+        "locY": 100350,
+        "locZ": -3568
+      },
+      {
+        "head": 0,
+        "locX": -76959,
+        "locY": 100884,
+        "locZ": -3635
+      },
+      {
+        "head": 34536,
+        "locX": -71944,
+        "locY": 104618,
+        "locZ": -3780
+      },
+      {
+        "head": 42146,
+        "locX": -69995,
+        "locY": 104584,
+        "locZ": -3858
+      },
+      {
+        "head": 52282,
+        "locX": -68460,
+        "locY": 103518,
+        "locZ": -3824
+      },
+      {
+        "head": 45955,
+        "locX": -68134,
+        "locY": 102114,
+        "locZ": -3810
+      },
+      {
+        "head": 0,
+        "locX": -67108,
+        "locY": 107304,
+        "locZ": -3948
+      },
+      {
+        "head": 0,
+        "locX": -66707,
+        "locY": 105880,
+        "locZ": -3948
+      },
+      {
+        "head": 0,
+        "locX": -66404,
+        "locY": 106414,
+        "locZ": -3948
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 30,
+    "sourceIndex": 9,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/17_21#17_21",
+      "sourceIndex": 3007
+    }
+  },
+  {
     "id": "spawn-358-fbf5cf4d7933",
     "mobId": 358,
     "period": "always",
@@ -74067,112 +74067,6 @@
       "bounds": [],
       "id": "mobius:Others/18_22#18_22",
       "sourceIndex": 3014
-    }
-  },
-  {
-    "id": "spawn-359-3d46cbd36d4d",
-    "mobId": 359,
-    "period": "always",
-    "possibleLocations": [
-      {
-        "head": 0,
-        "locX": -55012,
-        "locY": 127844,
-        "locZ": -3192
-      },
-      {
-        "head": 0,
-        "locX": -54509,
-        "locY": 127666,
-        "locZ": -3192
-      },
-      {
-        "head": 0,
-        "locX": -54106,
-        "locY": 128022,
-        "locZ": -3192
-      },
-      {
-        "head": 57260,
-        "locX": -53427,
-        "locY": 128994,
-        "locZ": -3073
-      },
-      {
-        "head": 0,
-        "locX": -51889,
-        "locY": 125954,
-        "locZ": -3236
-      },
-      {
-        "head": 42656,
-        "locX": -50926,
-        "locY": 125315,
-        "locZ": -3007
-      },
-      {
-        "head": 10528,
-        "locX": -50406,
-        "locY": 127457,
-        "locZ": -2993
-      },
-      {
-        "head": 0,
-        "locX": -49716,
-        "locY": 128867,
-        "locZ": -2712
-      },
-      {
-        "head": 5021,
-        "locX": -49531,
-        "locY": 125430,
-        "locZ": -2963
-      },
-      {
-        "head": 0,
-        "locX": -49314,
-        "locY": 129223,
-        "locZ": -2744
-      },
-      {
-        "head": 54184,
-        "locX": -48112,
-        "locY": 123165,
-        "locZ": -2843
-      },
-      {
-        "head": 62926,
-        "locX": -47999,
-        "locY": 128412,
-        "locZ": -2544
-      },
-      {
-        "head": 0,
-        "locX": -43741,
-        "locY": 127604,
-        "locZ": -2976
-      },
-      {
-        "head": 3682,
-        "locX": -43223,
-        "locY": 128901,
-        "locZ": -2838
-      },
-      {
-        "head": 65446,
-        "locX": -41229,
-        "locY": 128177,
-        "locZ": -2882
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 20,
-    "sourceIndex": 18,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/18_21#18_21",
-      "sourceIndex": 3013
     }
   },
   {
@@ -74283,6 +74177,112 @@
       "bounds": [],
       "id": "mobius:Others/19_22#19_22",
       "sourceIndex": 3021
+    }
+  },
+  {
+    "id": "spawn-359-fafee431671d",
+    "mobId": 359,
+    "period": "always",
+    "possibleLocations": [
+      {
+        "head": 0,
+        "locX": -55012,
+        "locY": 127844,
+        "locZ": -3192
+      },
+      {
+        "head": 0,
+        "locX": -54509,
+        "locY": 127666,
+        "locZ": -3192
+      },
+      {
+        "head": 0,
+        "locX": -54106,
+        "locY": 128022,
+        "locZ": -3192
+      },
+      {
+        "head": 57260,
+        "locX": -53427,
+        "locY": 128994,
+        "locZ": -3073
+      },
+      {
+        "head": 0,
+        "locX": -51889,
+        "locY": 125954,
+        "locZ": -3236
+      },
+      {
+        "head": 42656,
+        "locX": -50926,
+        "locY": 125315,
+        "locZ": -3007
+      },
+      {
+        "head": 10528,
+        "locX": -50406,
+        "locY": 127457,
+        "locZ": -2993
+      },
+      {
+        "head": 0,
+        "locX": -49716,
+        "locY": 128867,
+        "locZ": -2712
+      },
+      {
+        "head": 5021,
+        "locX": -49531,
+        "locY": 125430,
+        "locZ": -2963
+      },
+      {
+        "head": 0,
+        "locX": -49314,
+        "locY": 129223,
+        "locZ": -2736
+      },
+      {
+        "head": 54184,
+        "locX": -48112,
+        "locY": 123165,
+        "locZ": -2843
+      },
+      {
+        "head": 62926,
+        "locX": -47999,
+        "locY": 128412,
+        "locZ": -2544
+      },
+      {
+        "head": 0,
+        "locX": -43741,
+        "locY": 127604,
+        "locZ": -2976
+      },
+      {
+        "head": 3682,
+        "locX": -43223,
+        "locY": 128901,
+        "locZ": -2838
+      },
+      {
+        "head": 65446,
+        "locX": -41229,
+        "locY": 128177,
+        "locZ": -2882
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 20,
+    "sourceIndex": 18,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/18_21#18_21",
+      "sourceIndex": 3013
     }
   },
   {
@@ -80624,7 +80624,7 @@
     }
   },
   {
-    "id": "spawn-402-685947d685fb",
+    "id": "spawn-402-eb06cc315e96",
     "mobId": 402,
     "period": "always",
     "possibleLocations": [
@@ -80638,7 +80638,7 @@
         "head": 0,
         "locX": -12848,
         "locY": 137772,
-        "locZ": -3568
+        "locZ": -3560
       },
       {
         "head": 0,
@@ -86706,7 +86706,7 @@
     }
   },
   {
-    "id": "spawn-457-7648440a14c7",
+    "id": "spawn-457-22bcbac55996",
     "mobId": 457,
     "period": "always",
     "possibleLocations": [
@@ -86906,7 +86906,7 @@
         "head": 0,
         "locX": -7358,
         "locY": 142747,
-        "locZ": -3432
+        "locZ": -3440
       },
       {
         "head": 6600,
@@ -101346,7 +101346,7 @@
     }
   },
   {
-    "id": "spawn-506-b186b5ca3650",
+    "id": "spawn-506-e1a469eb0d90",
     "mobId": 506,
     "period": "always",
     "possibleLocations": [
@@ -101438,7 +101438,7 @@
         "head": 0,
         "locX": -13518,
         "locY": 148535,
-        "locZ": -3032
+        "locZ": -3040
       },
       {
         "head": 0,
@@ -103364,7 +103364,7 @@
     }
   },
   {
-    "id": "spawn-514-d60859cbb6d1",
+    "id": "spawn-514-c0465211fb34",
     "mobId": 514,
     "period": "always",
     "possibleLocations": [
@@ -103420,7 +103420,7 @@
         "head": 0,
         "locX": -24474,
         "locY": 140908,
-        "locZ": -3592
+        "locZ": -3584
       },
       {
         "head": 0,
@@ -139936,7 +139936,7 @@
     }
   },
   {
-    "id": "spawn-600-5d3890420886",
+    "id": "spawn-600-5254886e17c1",
     "mobId": 600,
     "period": "always",
     "possibleLocations": [
@@ -139944,7 +139944,7 @@
         "head": 0,
         "locX": 104228,
         "locY": 81860,
-        "locZ": -2600
+        "locZ": -2608
       },
       {
         "head": 29974,
@@ -139962,7 +139962,7 @@
         "head": 0,
         "locX": 104933,
         "locY": 83818,
-        "locZ": -2608
+        "locZ": -2640
       },
       {
         "head": 20924,
@@ -139974,7 +139974,7 @@
         "head": 0,
         "locX": 105135,
         "locY": 82750,
-        "locZ": -2696
+        "locZ": -2704
       },
       {
         "head": 57567,
@@ -140100,7 +140100,7 @@
         "head": 0,
         "locX": 125942,
         "locY": 79668,
-        "locZ": -2280
+        "locZ": -2240
       },
       {
         "head": 16448,
@@ -140358,7 +140358,7 @@
     }
   },
   {
-    "id": "spawn-602-956b97105051",
+    "id": "spawn-602-e34eb783c880",
     "mobId": 602,
     "period": "always",
     "possibleLocations": [
@@ -140456,7 +140456,7 @@
         "head": 0,
         "locX": 125744,
         "locY": 81920,
-        "locZ": -2280
+        "locZ": -2248
       },
       {
         "head": 0,
@@ -140494,7 +140494,7 @@
     }
   },
   {
-    "id": "spawn-603-e638f6877a02",
+    "id": "spawn-603-6b69101cb455",
     "mobId": 603,
     "period": "always",
     "possibleLocations": [
@@ -140622,13 +140622,13 @@
         "head": 0,
         "locX": 126548,
         "locY": 88012,
-        "locZ": -2176
+        "locZ": -2128
       },
       {
         "head": 0,
         "locX": 126850,
         "locY": 88190,
-        "locZ": -1952
+        "locZ": -1976
       }
     ],
     "randomBiasSeconds": 0,
@@ -140642,7 +140642,7 @@
     }
   },
   {
-    "id": "spawn-604-9a1755ba9fa2",
+    "id": "spawn-604-a575726d1a5b",
     "mobId": 604,
     "period": "always",
     "possibleLocations": [
@@ -140656,13 +140656,13 @@
         "head": 0,
         "locX": 110240,
         "locY": 87242,
-        "locZ": -2856
+        "locZ": -3236
       },
       {
         "head": 0,
         "locX": 110341,
         "locY": 87064,
-        "locZ": -2864
+        "locZ": -3236
       },
       {
         "head": 33786,
@@ -140808,7 +140808,7 @@
     }
   },
   {
-    "id": "spawn-605-251d379080f7",
+    "id": "spawn-605-193d21230f52",
     "mobId": 605,
     "period": "always",
     "possibleLocations": [
@@ -140954,7 +140954,7 @@
         "head": 0,
         "locX": 127052,
         "locY": 88902,
-        "locZ": -2112
+        "locZ": -2064
       }
     ],
     "randomBiasSeconds": 0,
@@ -148542,7 +148542,7 @@
     }
   },
   {
-    "id": "spawn-638-be0a17137f0e",
+    "id": "spawn-638-0ce6b105a9f1",
     "mobId": 638,
     "period": "always",
     "possibleLocations": [
@@ -148604,7 +148604,7 @@
         "head": 0,
         "locX": 156560,
         "locY": 65648,
-        "locZ": -3472
+        "locZ": -3464
       },
       {
         "head": 49414,
@@ -161846,7 +161846,7 @@
     }
   },
   {
-    "id": "spawn-679-a8c91a949ee2",
+    "id": "spawn-679-97501bc6dba2",
     "mobId": 679,
     "period": "always",
     "possibleLocations": [
@@ -161866,7 +161866,7 @@
         "head": 0,
         "locX": 165042,
         "locY": 44228,
-        "locZ": -3544
+        "locZ": -3536
       },
       {
         "head": 44425,
@@ -205944,35 +205944,7 @@
     }
   },
   {
-    "id": "spawn-922-18ba845122bb",
-    "mobId": 922,
-    "period": "always",
-    "possibleLocations": [
-      {
-        "head": 28278,
-        "locX": -25452,
-        "locY": 98175,
-        "locZ": -3727
-      },
-      {
-        "head": 39366,
-        "locX": -23848,
-        "locY": 98139,
-        "locZ": -3727
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 32,
-    "sourceIndex": 11,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/19_20#19_20",
-      "sourceIndex": 3019
-    }
-  },
-  {
-    "id": "spawn-922-6b8c75a05d26",
+    "id": "spawn-922-1505240e7a76",
     "mobId": 922,
     "period": "always",
     "possibleLocations": [
@@ -206064,7 +206036,7 @@
         "head": 0,
         "locX": -30752,
         "locY": 104756,
-        "locZ": -3192
+        "locZ": -3184
       },
       {
         "head": 0,
@@ -206258,6 +206230,34 @@
     }
   },
   {
+    "id": "spawn-922-18ba845122bb",
+    "mobId": 922,
+    "period": "always",
+    "possibleLocations": [
+      {
+        "head": 28278,
+        "locX": -25452,
+        "locY": 98175,
+        "locZ": -3727
+      },
+      {
+        "head": 39366,
+        "locX": -23848,
+        "locY": 98139,
+        "locZ": -3727
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 32,
+    "sourceIndex": 11,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/19_20#19_20",
+      "sourceIndex": 3019
+    }
+  },
+  {
     "id": "spawn-922-acb2049ed9a3",
     "mobId": 922,
     "period": "always",
@@ -206286,53 +206286,7 @@
     }
   },
   {
-    "id": "spawn-923-c7ea6a414359",
-    "mobId": 923,
-    "period": "always",
-    "possibleLocations": [
-      {
-        "head": 0,
-        "locX": -31864,
-        "locY": 97218,
-        "locZ": -3872
-      },
-      {
-        "head": 36822,
-        "locX": -29984,
-        "locY": 97980,
-        "locZ": -3727
-      },
-      {
-        "head": 57150,
-        "locX": -29422,
-        "locY": 97322,
-        "locZ": -3703
-      },
-      {
-        "head": 34254,
-        "locX": -29210,
-        "locY": 98297,
-        "locZ": -3727
-      },
-      {
-        "head": 37761,
-        "locX": -25769,
-        "locY": 97651,
-        "locZ": -3711
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 32,
-    "sourceIndex": 12,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/19_20#19_20",
-      "sourceIndex": 3019
-    }
-  },
-  {
-    "id": "spawn-923-f76f43d0c626",
+    "id": "spawn-923-4f615b7907a3",
     "mobId": 923,
     "period": "always",
     "possibleLocations": [
@@ -206346,13 +206300,13 @@
         "head": 0,
         "locX": -31815,
         "locY": 102134,
-        "locZ": -3168
+        "locZ": -3160
       },
       {
         "head": 0,
         "locX": -31660,
         "locY": 103510,
-        "locZ": -3008
+        "locZ": -3000
       },
       {
         "head": 0,
@@ -206579,6 +206533,52 @@
       "bounds": [],
       "id": "mobius:Others/19_21#19_21",
       "sourceIndex": 3020
+    }
+  },
+  {
+    "id": "spawn-923-c7ea6a414359",
+    "mobId": 923,
+    "period": "always",
+    "possibleLocations": [
+      {
+        "head": 0,
+        "locX": -31864,
+        "locY": 97218,
+        "locZ": -3872
+      },
+      {
+        "head": 36822,
+        "locX": -29984,
+        "locY": 97980,
+        "locZ": -3727
+      },
+      {
+        "head": 57150,
+        "locX": -29422,
+        "locY": 97322,
+        "locZ": -3703
+      },
+      {
+        "head": 34254,
+        "locX": -29210,
+        "locY": 98297,
+        "locZ": -3727
+      },
+      {
+        "head": 37761,
+        "locX": -25769,
+        "locY": 97651,
+        "locZ": -3711
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 32,
+    "sourceIndex": 12,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/19_20#19_20",
+      "sourceIndex": 3019
     }
   },
   {
@@ -206876,7 +206876,7 @@
     }
   },
   {
-    "id": "spawn-925-659ebb472949",
+    "id": "spawn-925-505f1202a2e8",
     "mobId": 925,
     "period": "always",
     "possibleLocations": [
@@ -206920,7 +206920,7 @@
         "head": 0,
         "locX": -31222,
         "locY": 117672,
-        "locZ": -3032
+        "locZ": -3702
       },
       {
         "head": 0,
@@ -207184,7 +207184,7 @@
     }
   },
   {
-    "id": "spawn-926-71c55cd74900",
+    "id": "spawn-926-8cdac723fbf9",
     "mobId": 926,
     "period": "always",
     "possibleLocations": [
@@ -207258,7 +207258,7 @@
         "head": 0,
         "locX": -30329,
         "locY": 112610,
-        "locZ": -3024
+        "locZ": -2984
       },
       {
         "head": 19232,
@@ -213124,7 +213124,7 @@
     }
   },
   {
-    "id": "spawn-956-694a8f4004e2",
+    "id": "spawn-956-94660c692c2a",
     "mobId": 956,
     "period": "always",
     "possibleLocations": [
@@ -213174,7 +213174,7 @@
         "head": 0,
         "locX": 113524,
         "locY": -5166,
-        "locZ": -3224
+        "locZ": -3216
       },
       {
         "head": 26346,
@@ -213234,7 +213234,7 @@
         "head": 0,
         "locX": 119750,
         "locY": -9600,
-        "locZ": -2960
+        "locZ": -2952
       },
       {
         "head": 0,
@@ -213272,7 +213272,7 @@
     }
   },
   {
-    "id": "spawn-956-fc2630c7894a",
+    "id": "spawn-956-9abafc657b28",
     "mobId": 956,
     "period": "always",
     "possibleLocations": [
@@ -213280,7 +213280,7 @@
         "head": 0,
         "locX": 105236,
         "locY": 420,
-        "locZ": -3392
+        "locZ": -3400
       },
       {
         "head": 14309,
@@ -213402,7 +213402,7 @@
     }
   },
   {
-    "id": "spawn-959-92962d5b1639",
+    "id": "spawn-959-7aa1043b25aa",
     "mobId": 959,
     "period": "always",
     "possibleLocations": [
@@ -213410,7 +213410,7 @@
         "head": 0,
         "locX": 124862,
         "locY": -10414,
-        "locZ": -3392
+        "locZ": -3384
       },
       {
         "head": 18529,
@@ -213484,7 +213484,7 @@
     }
   },
   {
-    "id": "spawn-963-c6507ee6f51e",
+    "id": "spawn-963-62090d6d5bb6",
     "mobId": 963,
     "period": "always",
     "possibleLocations": [
@@ -213504,7 +213504,7 @@
         "head": 0,
         "locX": 115167,
         "locY": -8048,
-        "locZ": -3160
+        "locZ": -3152
       },
       {
         "head": 0,
@@ -213552,13 +213552,13 @@
         "head": 0,
         "locX": 121815,
         "locY": -4858,
-        "locZ": -3520
+        "locZ": -3512
       },
       {
         "head": 0,
         "locX": 122017,
         "locY": -5214,
-        "locZ": -3876
+        "locZ": -3568
       },
       {
         "head": 0,
@@ -213582,7 +213582,7 @@
         "head": 0,
         "locX": 125609,
         "locY": -2492,
-        "locZ": -2400
+        "locZ": -2392
       },
       {
         "head": 28063,
@@ -222838,7 +222838,7 @@
     }
   },
   {
-    "id": "spawn-1018-a61bdc713094",
+    "id": "spawn-1018-c63d7603ae93",
     "mobId": 1018,
     "period": "always",
     "possibleLocations": [
@@ -222846,7 +222846,7 @@
         "head": 0,
         "locX": 165713,
         "locY": 50008,
-        "locZ": -3808
+        "locZ": -3800
       },
       {
         "head": 19650,
@@ -223464,7 +223464,7 @@
     }
   },
   {
-    "id": "spawn-1023-923c3f0110f8",
+    "id": "spawn-1023-e1571089e7b2",
     "mobId": 1023,
     "period": "always",
     "possibleLocations": [
@@ -223484,19 +223484,19 @@
         "head": 0,
         "locX": -93216,
         "locY": 91901,
-        "locZ": -3240
+        "locZ": -3232
       },
       {
         "head": 0,
         "locX": -92713,
         "locY": 91367,
-        "locZ": -3224
+        "locZ": -3216
       },
       {
         "head": 0,
         "locX": -92310,
         "locY": 91011,
-        "locZ": -3248
+        "locZ": -3240
       },
       {
         "head": 0,
@@ -223914,7 +223914,7 @@
     }
   },
   {
-    "id": "spawn-1025-7cbf7fc5ee6c",
+    "id": "spawn-1025-a139571d4ec8",
     "mobId": 1025,
     "period": "always",
     "possibleLocations": [
@@ -223952,7 +223952,7 @@
         "head": 0,
         "locX": -92014,
         "locY": 88767,
-        "locZ": -3344
+        "locZ": -3336
       },
       {
         "head": 42585,
@@ -224066,7 +224066,7 @@
         "head": 0,
         "locX": -85757,
         "locY": 80140,
-        "locZ": -2992
+        "locZ": -3000
       },
       {
         "head": 12127,
@@ -224222,7 +224222,7 @@
     }
   },
   {
-    "id": "spawn-1026-57ffc17928ca",
+    "id": "spawn-1026-74781fc256d9",
     "mobId": 1026,
     "period": "always",
     "possibleLocations": [
@@ -224308,7 +224308,7 @@
         "head": 0,
         "locX": -85956,
         "locY": 81564,
-        "locZ": -3064
+        "locZ": -3072
       },
       {
         "head": 36123,
@@ -234522,7 +234522,7 @@
     }
   },
   {
-    "id": "spawn-1095-a0bbc4e3c38a",
+    "id": "spawn-1095-4d2252f14d50",
     "mobId": 1095,
     "period": "always",
     "possibleLocations": [
@@ -234656,7 +234656,7 @@
         "head": 0,
         "locX": -71616,
         "locY": 111878,
-        "locZ": -3640
+        "locZ": -3632
       },
       {
         "head": 63768,
@@ -236172,7 +236172,65 @@
     }
   },
   {
-    "id": "spawn-1105-55a963e39ba6",
+    "id": "spawn-1105-7506e21b33bd",
+    "mobId": 1105,
+    "period": "always",
+    "possibleLocations": [
+      {
+        "head": 0,
+        "locX": 12203,
+        "locY": 164516,
+        "locZ": -3711
+      },
+      {
+        "head": 25769,
+        "locX": 17001,
+        "locY": 168098,
+        "locZ": -3485
+      },
+      {
+        "head": 0,
+        "locX": 18953,
+        "locY": 165943,
+        "locZ": -3608
+      },
+      {
+        "head": 22540,
+        "locX": 19542,
+        "locY": 166059,
+        "locZ": -3424
+      },
+      {
+        "head": 64271,
+        "locX": 22401,
+        "locY": 166097,
+        "locZ": -3364
+      },
+      {
+        "head": 58654,
+        "locX": 22742,
+        "locY": 169716,
+        "locZ": -3414
+      },
+      {
+        "head": 53744,
+        "locX": 23203,
+        "locY": 168555,
+        "locZ": -3345
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 30,
+    "sourceIndex": 4,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/20_23#20_23",
+      "sourceIndex": 3029
+    }
+  },
+  {
+    "id": "spawn-1105-b2b9b68429af",
     "mobId": 1105,
     "period": "always",
     "possibleLocations": [
@@ -236180,7 +236238,7 @@
         "head": 46434,
         "locX": 6941,
         "locY": 155159,
-        "locZ": -3920
+        "locZ": -3235
       },
       {
         "head": 10150,
@@ -236275,64 +236333,6 @@
       "bounds": [],
       "id": "mobius:Others/20_22#20_22",
       "sourceIndex": 3028
-    }
-  },
-  {
-    "id": "spawn-1105-7506e21b33bd",
-    "mobId": 1105,
-    "period": "always",
-    "possibleLocations": [
-      {
-        "head": 0,
-        "locX": 12203,
-        "locY": 164516,
-        "locZ": -3711
-      },
-      {
-        "head": 25769,
-        "locX": 17001,
-        "locY": 168098,
-        "locZ": -3485
-      },
-      {
-        "head": 0,
-        "locX": 18953,
-        "locY": 165943,
-        "locZ": -3608
-      },
-      {
-        "head": 22540,
-        "locX": 19542,
-        "locY": 166059,
-        "locZ": -3424
-      },
-      {
-        "head": 64271,
-        "locX": 22401,
-        "locY": 166097,
-        "locZ": -3364
-      },
-      {
-        "head": 58654,
-        "locX": 22742,
-        "locY": 169716,
-        "locZ": -3414
-      },
-      {
-        "head": 53744,
-        "locX": 23203,
-        "locY": 168555,
-        "locZ": -3345
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 30,
-    "sourceIndex": 4,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/20_23#20_23",
-      "sourceIndex": 3029
     }
   },
   {
@@ -253662,7 +253662,7 @@
     }
   },
   {
-    "id": "spawn-1134-da8175baac2d",
+    "id": "spawn-1134-6ab5eecc8282",
     "mobId": 1134,
     "period": "always",
     "possibleLocations": [
@@ -253796,7 +253796,7 @@
         "head": 0,
         "locX": 179696,
         "locY": -178588,
-        "locZ": 248
+        "locZ": -920
       },
       {
         "head": 46905,
@@ -253942,7 +253942,7 @@
     }
   },
   {
-    "id": "spawn-1135-5a3421874b03",
+    "id": "spawn-1135-5b868543c01f",
     "mobId": 1135,
     "period": "always",
     "possibleLocations": [
@@ -254106,7 +254106,7 @@
         "head": 0,
         "locX": 180099,
         "locY": -178588,
-        "locZ": 248
+        "locZ": -920
       },
       {
         "head": 52253,
@@ -254246,7 +254246,7 @@
     }
   },
   {
-    "id": "spawn-1136-4dd3c4caa69d",
+    "id": "spawn-1136-f880d77d0800",
     "mobId": 1136,
     "period": "always",
     "possibleLocations": [
@@ -254326,7 +254326,7 @@
         "head": 0,
         "locX": 186996,
         "locY": -176038,
-        "locZ": -3584
+        "locZ": -3928
       },
       {
         "head": 22273,
@@ -254416,13 +254416,13 @@
         "head": 0,
         "locX": 185855,
         "locY": -182178,
-        "locZ": -3240
+        "locZ": -3692
       },
       {
         "head": 0,
         "locX": 187063,
         "locY": -182178,
-        "locZ": -3296
+        "locZ": -3692
       },
       {
         "head": 0,
@@ -254434,7 +254434,7 @@
         "head": 0,
         "locX": 186963,
         "locY": -182000,
-        "locZ": -3336
+        "locZ": -3692
       },
       {
         "head": 17301,
@@ -254568,7 +254568,7 @@
     }
   },
   {
-    "id": "spawn-1137-36f42988f003",
+    "id": "spawn-1137-301ded48f93d",
     "mobId": 1137,
     "period": "always",
     "possibleLocations": [
@@ -254768,19 +254768,19 @@
         "head": 0,
         "locX": 186762,
         "locY": -182356,
-        "locZ": -3296
+        "locZ": -3692
       },
       {
         "head": 0,
         "locX": 186057,
         "locY": -181466,
-        "locZ": -3384
+        "locZ": -3692
       },
       {
         "head": 0,
         "locX": 186057,
         "locY": -181822,
-        "locZ": -3320
+        "locZ": -3692
       },
       {
         "head": 46043,
@@ -254932,7 +254932,7 @@
     }
   },
   {
-    "id": "spawn-1138-bedd17f517d2",
+    "id": "spawn-1138-e29d60915068",
     "mobId": 1138,
     "period": "always",
     "possibleLocations": [
@@ -255144,25 +255144,25 @@
         "head": 0,
         "locX": 186661,
         "locY": -182178,
-        "locZ": -3304
+        "locZ": -3692
       },
       {
         "head": 0,
         "locX": 185956,
         "locY": -181644,
-        "locZ": -3352
+        "locZ": -3692
       },
       {
         "head": 0,
         "locX": 185653,
         "locY": -181822,
-        "locZ": -3272
+        "locZ": -3692
       },
       {
         "head": 0,
         "locX": 186459,
         "locY": -181822,
-        "locZ": -3344
+        "locZ": -3692
       },
       {
         "head": 47671,
@@ -313746,7 +313746,7 @@
     }
   },
   {
-    "id": "spawn-1256-75fce46d29fc",
+    "id": "spawn-1256-c96336857bce",
     "mobId": 1256,
     "period": "always",
     "possibleLocations": [
@@ -314036,7 +314036,7 @@
         "head": 0,
         "locX": 175390,
         "locY": -178856,
-        "locZ": 1040
+        "locZ": -564
       }
     ],
     "randomBiasSeconds": 0,
@@ -411550,35 +411550,7 @@
     }
   },
   {
-    "id": "spawn-1547-c1ff51954905",
-    "mobId": 1547,
-    "period": "day",
-    "possibleLocations": [
-      {
-        "head": 0,
-        "locX": 48027,
-        "locY": -56062,
-        "locZ": -2532
-      },
-      {
-        "head": 0,
-        "locX": 48536,
-        "locY": -55831,
-        "locZ": -2607
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 240,
-    "sourceIndex": 3,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/21_16#21_16",
-      "sourceIndex": 3030
-    }
-  },
-  {
-    "id": "spawn-1547-f1715237019b",
+    "id": "spawn-1547-6ebdd3933003",
     "mobId": 1547,
     "period": "night",
     "possibleLocations": [
@@ -411640,12 +411612,40 @@
         "head": 0,
         "locX": 51271,
         "locY": -56433,
-        "locZ": -2760
+        "locZ": -2752
       }
     ],
     "randomBiasSeconds": 0,
     "respawnSeconds": 30,
     "sourceIndex": 2,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/21_16#21_16",
+      "sourceIndex": 3030
+    }
+  },
+  {
+    "id": "spawn-1547-c1ff51954905",
+    "mobId": 1547,
+    "period": "day",
+    "possibleLocations": [
+      {
+        "head": 0,
+        "locX": 48027,
+        "locY": -56062,
+        "locZ": -2532
+      },
+      {
+        "head": 0,
+        "locX": 48536,
+        "locY": -55831,
+        "locZ": -2607
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 240,
+    "sourceIndex": 3,
     "total": 1,
     "zone": {
       "bounds": [],
@@ -411730,7 +411730,7 @@
     }
   },
   {
-    "id": "spawn-1549-be96080bc967",
+    "id": "spawn-1549-dbac76e3449d",
     "mobId": 1549,
     "period": "night",
     "possibleLocations": [
@@ -411816,7 +411816,7 @@
         "head": 0,
         "locX": 54408,
         "locY": -59942,
-        "locZ": -3080
+        "locZ": -3072
       },
       {
         "head": 45247,
@@ -411836,7 +411836,7 @@
     }
   },
   {
-    "id": "spawn-1550-12d7bf02867e",
+    "id": "spawn-1550-1947251cb493",
     "mobId": 1550,
     "period": "night",
     "possibleLocations": [
@@ -411892,7 +411892,7 @@
         "head": 0,
         "locX": 55313,
         "locY": -59408,
-        "locZ": -3352
+        "locZ": -3344
       }
     ],
     "randomBiasSeconds": 0,
@@ -411906,7 +411906,7 @@
     }
   },
   {
-    "id": "spawn-1551-fc2084477eab",
+    "id": "spawn-1551-f6daaa5df28b",
     "mobId": 1551,
     "period": "night",
     "possibleLocations": [
@@ -411914,7 +411914,7 @@
         "head": 0,
         "locX": 51035,
         "locY": -53627,
-        "locZ": -2816
+        "locZ": -3195
       },
       {
         "head": 22954,
@@ -412752,7 +412752,7 @@
     }
   },
   {
-    "id": "spawn-1562-d93893dd94f7",
+    "id": "spawn-1562-972770f23d30",
     "mobId": 1562,
     "period": "night",
     "possibleLocations": [
@@ -412820,7 +412820,7 @@
         "head": 0,
         "locX": 60032,
         "locY": -51703,
-        "locZ": -2984
+        "locZ": -2992
       },
       {
         "head": 39205,
@@ -412904,7 +412904,7 @@
     }
   },
   {
-    "id": "spawn-1564-f6651b04900a",
+    "id": "spawn-1564-ab4e80aec62b",
     "mobId": 1564,
     "period": "night",
     "possibleLocations": [
@@ -412954,7 +412954,7 @@
         "head": 0,
         "locX": 54188,
         "locY": -55515,
-        "locZ": -3128
+        "locZ": -3622
       },
       {
         "head": 51335,
@@ -413140,7 +413140,7 @@
     }
   },
   {
-    "id": "spawn-1566-ce9682978fba",
+    "id": "spawn-1566-7670555959c9",
     "mobId": 1566,
     "period": "night",
     "possibleLocations": [
@@ -413160,7 +413160,7 @@
         "head": 0,
         "locX": 54590,
         "locY": -55871,
-        "locZ": -3248
+        "locZ": -3256
       },
       {
         "head": 5271,
@@ -413346,7 +413346,7 @@
     }
   },
   {
-    "id": "spawn-1568-333bab321b6b",
+    "id": "spawn-1568-69bdea5d1b2b",
     "mobId": 1568,
     "period": "night",
     "possibleLocations": [
@@ -413378,7 +413378,7 @@
         "head": 0,
         "locX": 51136,
         "locY": -53805,
-        "locZ": -2872
+        "locZ": -3195
       },
       {
         "head": 0,
@@ -413408,7 +413408,7 @@
         "head": 0,
         "locX": 52998,
         "locY": -52408,
-        "locZ": -3024
+        "locZ": -3016
       },
       {
         "head": 56268,
@@ -413676,7 +413676,7 @@
     }
   },
   {
-    "id": "spawn-1571-4795c3c3c0fc",
+    "id": "spawn-1571-f9a856c9ee4b",
     "mobId": 1571,
     "period": "night",
     "possibleLocations": [
@@ -413792,7 +413792,7 @@
         "head": 0,
         "locX": 54866,
         "locY": -50062,
-        "locZ": -3008
+        "locZ": -3000
       },
       {
         "head": 57261,
@@ -413942,7 +413942,7 @@
     }
   },
   {
-    "id": "spawn-1573-1679e1e6c646",
+    "id": "spawn-1573-2763b891b292",
     "mobId": 1573,
     "period": "night",
     "possibleLocations": [
@@ -413980,7 +413980,7 @@
         "head": 0,
         "locX": 49559,
         "locY": -41630,
-        "locZ": -2272
+        "locZ": -2256
       },
       {
         "head": 15860,
@@ -414130,7 +414130,7 @@
         "head": 0,
         "locX": 59875,
         "locY": -47568,
-        "locZ": -2712
+        "locZ": -2720
       },
       {
         "head": 4025,
@@ -414274,7 +414274,7 @@
     }
   },
   {
-    "id": "spawn-1576-d807860047f4",
+    "id": "spawn-1576-5accfb4cad6b",
     "mobId": 1576,
     "period": "night",
     "possibleLocations": [
@@ -414366,7 +414366,7 @@
         "head": 0,
         "locX": 52252,
         "locY": -43866,
-        "locZ": -2728
+        "locZ": -2720
       },
       {
         "head": 0,
@@ -414414,7 +414414,7 @@
         "head": 0,
         "locX": 56174,
         "locY": -51308,
-        "locZ": -3072
+        "locZ": -3762
       },
       {
         "head": 5509,
@@ -414452,7 +414452,7 @@
     }
   },
   {
-    "id": "spawn-1577-03ec6549b538",
+    "id": "spawn-1577-dd39cb3b528d",
     "mobId": 1577,
     "period": "night",
     "possibleLocations": [
@@ -414460,7 +414460,7 @@
         "head": 0,
         "locX": 48226,
         "locY": -44998,
-        "locZ": -3365
+        "locZ": -2440
       },
       {
         "head": 0,
@@ -414514,7 +414514,7 @@
         "head": 0,
         "locX": 54967,
         "locY": -50240,
-        "locZ": -3048
+        "locZ": -3040
       },
       {
         "head": 32025,
@@ -414670,7 +414670,7 @@
     }
   },
   {
-    "id": "spawn-1579-68942d14da73",
+    "id": "spawn-1579-5c0e7bf0fe38",
     "mobId": 1579,
     "period": "night",
     "possibleLocations": [
@@ -414690,7 +414690,7 @@
         "head": 0,
         "locX": 48404,
         "locY": -41766,
-        "locZ": -2088
+        "locZ": -2080
       },
       {
         "head": 15959,
@@ -414952,7 +414952,7 @@
     }
   },
   {
-    "id": "spawn-1582-9670ec5cd8fb",
+    "id": "spawn-1582-5a709658afe3",
     "mobId": 1582,
     "period": "night",
     "possibleLocations": [
@@ -414978,7 +414978,7 @@
         "head": 0,
         "locX": 48325,
         "locY": -44464,
-        "locZ": -2416
+        "locZ": -3365
       },
       {
         "head": 0,
@@ -415104,13 +415104,13 @@
         "head": 0,
         "locX": 59976,
         "locY": -47390,
-        "locZ": -2712
+        "locZ": -2720
       },
       {
         "head": 0,
         "locX": 60077,
         "locY": -47212,
-        "locZ": -2712
+        "locZ": -2720
       },
       {
         "head": 39621,
@@ -415230,7 +415230,7 @@
     }
   },
   {
-    "id": "spawn-1585-4ed303c9b05d",
+    "id": "spawn-1585-9754d47f0ff4",
     "mobId": 1585,
     "period": "night",
     "possibleLocations": [
@@ -415268,7 +415268,7 @@
         "head": 0,
         "locX": 53771,
         "locY": -40821,
-        "locZ": -2440
+        "locZ": -3105
       },
       {
         "head": 61825,
@@ -415476,7 +415476,7 @@
     }
   },
   {
-    "id": "spawn-1588-b59b69b2c783",
+    "id": "spawn-1588-5839cc533f41",
     "mobId": 1588,
     "period": "night",
     "possibleLocations": [
@@ -415508,7 +415508,7 @@
         "head": 0,
         "locX": 49705,
         "locY": -37056,
-        "locZ": -1680
+        "locZ": -2047
       },
       {
         "head": 0,
@@ -415520,7 +415520,7 @@
         "head": 0,
         "locX": 54073,
         "locY": -40643,
-        "locZ": -2368
+        "locZ": -2352
       },
       {
         "head": 0,
@@ -415546,7 +415546,7 @@
     }
   },
   {
-    "id": "spawn-1589-02bbc62ac56e",
+    "id": "spawn-1589-b0c55b00d035",
     "mobId": 1589,
     "period": "night",
     "possibleLocations": [
@@ -415590,7 +415590,7 @@
         "head": 0,
         "locX": 57068,
         "locY": -47074,
-        "locZ": -2904
+        "locZ": -2896
       },
       {
         "head": 45082,
@@ -415644,7 +415644,7 @@
     }
   },
   {
-    "id": "spawn-1591-94bfd3776abe",
+    "id": "spawn-1591-e5f3d9574af8",
     "mobId": 1591,
     "period": "night",
     "possibleLocations": [
@@ -415664,7 +415664,7 @@
         "head": 0,
         "locX": 53670,
         "locY": -40643,
-        "locZ": -2376
+        "locZ": -3105
       },
       {
         "head": 0,
@@ -415846,7 +415846,7 @@
     }
   },
   {
-    "id": "spawn-1595-212492cbafc0",
+    "id": "spawn-1595-e3b6b63845bd",
     "mobId": 1595,
     "period": "night",
     "possibleLocations": [
@@ -415872,7 +415872,7 @@
         "head": 0,
         "locX": 57873,
         "locY": -43448,
-        "locZ": -3216
+        "locZ": -2904
       },
       {
         "head": 5776,
@@ -416044,7 +416044,7 @@
     }
   },
   {
-    "id": "spawn-1599-a76ec3371985",
+    "id": "spawn-1599-c814caca5f7e",
     "mobId": 1599,
     "period": "night",
     "possibleLocations": [
@@ -416064,7 +416064,7 @@
         "head": 0,
         "locX": 54765,
         "locY": -49172,
-        "locZ": -3160
+        "locZ": -3152
       },
       {
         "head": 62721,
@@ -416112,7 +416112,7 @@
         "head": 0,
         "locX": 58968,
         "locY": -47746,
-        "locZ": -2544
+        "locZ": -3247
       },
       {
         "head": 33511,
@@ -439776,77 +439776,7 @@
     }
   },
   {
-    "id": "spawn-12789-94ac872a290c",
-    "mobId": 12789,
-    "period": "day",
-    "possibleLocations": [
-      {
-        "head": 0,
-        "locX": 54614,
-        "locY": -48491,
-        "locZ": -3280
-      },
-      {
-        "head": 0,
-        "locX": 54899,
-        "locY": -49706,
-        "locZ": -2955
-      },
-      {
-        "head": 0,
-        "locX": 55995,
-        "locY": -49507,
-        "locZ": -3121
-      },
-      {
-        "head": 0,
-        "locX": 59338,
-        "locY": -47119,
-        "locZ": -2553
-      },
-      {
-        "head": 0,
-        "locX": 60084,
-        "locY": -46497,
-        "locZ": -2521
-      },
-      {
-        "head": 0,
-        "locX": 60362,
-        "locY": -45743,
-        "locZ": -2532
-      },
-      {
-        "head": 0,
-        "locX": 61044,
-        "locY": -46919,
-        "locZ": -2646
-      },
-      {
-        "head": 0,
-        "locX": 61124,
-        "locY": -45712,
-        "locZ": -2563
-      },
-      {
-        "head": 0,
-        "locX": 61586,
-        "locY": -46424,
-        "locZ": -2561
-      }
-    ],
-    "randomBiasSeconds": 0,
-    "respawnSeconds": 240,
-    "sourceIndex": 1,
-    "total": 1,
-    "zone": {
-      "bounds": [],
-      "id": "mobius:Others/21_16#21_16",
-      "sourceIndex": 3030
-    }
-  },
-  {
-    "id": "spawn-12789-a00e4b9e589b",
+    "id": "spawn-12789-76b710f458f4",
     "mobId": 12789,
     "period": "night",
     "possibleLocations": [
@@ -439914,7 +439844,7 @@
         "head": 0,
         "locX": 50613,
         "locY": -48591,
-        "locZ": -3072
+        "locZ": -3064
       },
       {
         "head": 0,
@@ -439950,7 +439880,7 @@
         "head": 0,
         "locX": 51641,
         "locY": -53627,
-        "locZ": -2856
+        "locZ": -3195
       },
       {
         "head": 0,
@@ -440004,7 +439934,7 @@
         "head": 0,
         "locX": 53099,
         "locY": -51874,
-        "locZ": -2976
+        "locZ": -2968
       },
       {
         "head": 35834,
@@ -440016,7 +439946,7 @@
         "head": 0,
         "locX": 53483,
         "locY": -56405,
-        "locZ": -3096
+        "locZ": -3088
       },
       {
         "head": 0,
@@ -440040,19 +439970,19 @@
         "head": 0,
         "locX": 54060,
         "locY": -48638,
-        "locZ": -3304
+        "locZ": -3312
       },
       {
         "head": 0,
         "locX": 54161,
         "locY": -50952,
-        "locZ": -3384
+        "locZ": -3376
       },
       {
         "head": 0,
         "locX": 54206,
         "locY": -52052,
-        "locZ": -3080
+        "locZ": -3072
       },
       {
         "head": 0,
@@ -440064,7 +439994,7 @@
         "head": 0,
         "locX": 54308,
         "locY": -51518,
-        "locZ": -3064
+        "locZ": -3056
       },
       {
         "head": 50361,
@@ -440076,7 +440006,7 @@
         "head": 0,
         "locX": 54389,
         "locY": -57295,
-        "locZ": -3304
+        "locZ": -3312
       },
       {
         "head": 42972,
@@ -440112,7 +440042,7 @@
         "head": 0,
         "locX": 55168,
         "locY": -50240,
-        "locZ": -3762
+        "locZ": -3016
       },
       {
         "head": 7741,
@@ -440136,7 +440066,7 @@
         "head": 0,
         "locX": 55470,
         "locY": -50062,
-        "locZ": -3072
+        "locZ": -3064
       },
       {
         "head": 0,
@@ -440172,7 +440102,7 @@
         "head": 0,
         "locX": 55772,
         "locY": -49884,
-        "locZ": -3112
+        "locZ": -3104
       },
       {
         "head": 32137,
@@ -440298,6 +440228,76 @@
     "randomBiasSeconds": 0,
     "respawnSeconds": 60,
     "sourceIndex": 0,
+    "total": 1,
+    "zone": {
+      "bounds": [],
+      "id": "mobius:Others/21_16#21_16",
+      "sourceIndex": 3030
+    }
+  },
+  {
+    "id": "spawn-12789-94ac872a290c",
+    "mobId": 12789,
+    "period": "day",
+    "possibleLocations": [
+      {
+        "head": 0,
+        "locX": 54614,
+        "locY": -48491,
+        "locZ": -3280
+      },
+      {
+        "head": 0,
+        "locX": 54899,
+        "locY": -49706,
+        "locZ": -2955
+      },
+      {
+        "head": 0,
+        "locX": 55995,
+        "locY": -49507,
+        "locZ": -3121
+      },
+      {
+        "head": 0,
+        "locX": 59338,
+        "locY": -47119,
+        "locZ": -2553
+      },
+      {
+        "head": 0,
+        "locX": 60084,
+        "locY": -46497,
+        "locZ": -2521
+      },
+      {
+        "head": 0,
+        "locX": 60362,
+        "locY": -45743,
+        "locZ": -2532
+      },
+      {
+        "head": 0,
+        "locX": 61044,
+        "locY": -46919,
+        "locZ": -2646
+      },
+      {
+        "head": 0,
+        "locX": 61124,
+        "locY": -45712,
+        "locZ": -2563
+      },
+      {
+        "head": 0,
+        "locX": 61586,
+        "locY": -46424,
+        "locZ": -2561
+      }
+    ],
+    "randomBiasSeconds": 0,
+    "respawnSeconds": 240,
+    "sourceIndex": 1,
     "total": 1,
     "zone": {
       "bounds": [],
