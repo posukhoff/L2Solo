@@ -172,25 +172,40 @@ function* evaluatePrepared({ state, recipe, batches = 1, basket, exit, ownedFor 
     // Those units give their own use benefit, never external sale receipts.
     const reservedOutput = exit.type === 'use' ? 0 : Math.min(productCount, count(context.outputReserve ?? 0));
     if (!Number.isFinite(reservedOutput)) return null;
-    const without = Price.saleOutcome(saleInput(exit, oldCount, context));
-    yield 'without';
-    if (!without.known) return null;
-    const full = Price.saleOutcome(saleInput(exit, oldCount + productCount - reservedOutput, context));
-    yield 'success';
-    if (!full.known) return null;
-    if (exit.trial === true && !(full.sold > without.sold)) return null;
+    // The batch's units past the old ones: a listing sells them all over the
+    // forecast's time (Price.listingSale, the producer root's reading; the
+    // root's lot already fits its horizon, WishProviders exitGross), any
+    // other exit what one sale takes beyond the old units.
+    const newUnits = productCount - reservedOutput;
+    let sale;
+    if (exit.type === 'listing') {
+        sale = Price.listingSale({ ...saleInput(exit, oldCount, context), units: newUnits, oldUnits: oldCount,
+            delayHours: Number(exit.delayHours) });
+        yield 'success';
+        if (!sale.known) return null;
+    } else {
+        const without = Price.saleOutcome(saleInput(exit, oldCount, context));
+        yield 'without';
+        if (!without.known) return null;
+        const full = Price.saleOutcome(saleInput(exit, oldCount + newUnits, context));
+        yield 'success';
+        if (!full.known) return null;
+        if (exit.trial === true && !(full.sold > without.sold)) return null;
+        sale = { receipts: full.receipts - without.receipts, residualValue: full.residualValue - without.residualValue,
+            residual: full.residual - without.residual, sold: full.sold - without.sold, delayHours: Number(exit.delayHours || 0) };
+    }
     // One native command draws once, including a multi-batch command. Cap each
     // physical outcome before mixing, so 100 output at 60% against 10 sells 6.
-    const receipts = full.receipts - without.receipts;
-    const residual = full.residualValue - without.residualValue;
-    const ownUse = Math.min(Math.max(0, full.residual - without.residual), Math.max(0, Number(exit.ownUseUnits || 0)));
+    const receipts = sale.receipts;
+    const residual = sale.residualValue;
+    const ownUse = Math.min(Math.max(0, sale.residual), Math.max(0, Number(exit.ownUseUnits || 0)));
     const ownBenefit = ownUse * Number(exit.ownUseUnitHours || 0)
         + reservedOutput * Number(context.reservedOutputUnitHours || 0);
     const base = { cashNow: basket.cashCost, ownInputOpportunityValue: basket.ownedValue,
         actualCashFees: basket.actualCashFees + exitFees,
         foregoneBenefitHours: mpHours + activeHours + basket.travelHours + exitHours
             + (exit.concurrentAlternative === true ? 0 : shopHours),
-        riskHours: Number(context.riskHours || 0), delayHours: Number(exit.delayHours || 0), cycleHours };
+        riskHours: Number(context.riskHours || 0), delayHours: sale.delayHours, cycleHours };
     const monetaryResidual = residual - ownUse * Number(exit.residualUnitValue ?? context.residualUnitValue ?? 0)
         + Number(basket.residualValue || 0);
     const outcomes = [{ ...base, probability: successRate, receipts, monetaryResidual,
@@ -210,7 +225,7 @@ function* evaluatePrepared({ state, recipe, batches = 1, basket, exit, ownedFor 
     const labour = (mpHours + activeHours + basket.travelHours + exitHours + shopHours) / moneyPrice;
     return { recipe, basket, exit, batches, revenue: Number(exit.price) * productCount,
         expectedProfit, successRate, hours: cycleHours, valueHours: value.valueHours, valuation: value,
-        expectedSold: successRate * (full.sold - without.sold),
+        expectedSold: successRate * sale.sold,
         margin: { expectedRevenue, inputs: basket.cost, labour, hours: cycleHours, profit: expectedProfit, cycleHours } };
 }
 function evaluateBasket(args, recipe, planFor, exit, ownedFor, context, batches = 1) {

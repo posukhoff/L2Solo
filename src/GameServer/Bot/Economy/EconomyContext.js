@@ -1020,6 +1020,8 @@ function soldLinesOf(network) {
     }
     return lines;
 }
+// The crafter's indexed recipes at its craft level: the one producer source
+// of both threads.
 function defaultProducerSource(state, board) {
     const index = OccupationSources.recipeIndex(board);
     const level = CraftEligibility.craftLevelFor(state), scope = index.scopeFor(level);

@@ -119,8 +119,10 @@ Market.useSpots(() => invoke('GameServer/Bot/Population/SpotProfiles').ensure())
             const native = Shots.recheck(state, selected.craft);
             assert(native && native.expectedSold > 0, 'the selected larger quantity passes the native sale and craft recheck');
             assert(native.batches * recipe.mpCost <= state.vitals.mp, 'production remains within actual mana');
-            assert(native.expectedSold <= Demand.forecast(recipe.productId, 'Giran', timestamp).applicableUnits,
-                'output sales stay bounded by observed demand');
+            // A listing sells its lot over the forecast's time (T74): the lot
+            // is what one forecast window takes, rounded up to a whole craft.
+            assert(native.expectedSold <= Demand.forecast(recipe.productId, 'Giran', timestamp).applicableUnits
+                + Number(recipe.productCount), 'output stays within the lots one window of observed demand takes');
             if (quantity === 10000) {
                 assert.equal(Shots.recheck({ ...state, vitals: { ...state.vitals, mp: recipe.mpCost } }, selected.craft), null,
                     'the larger command is refused when its mana is no longer available');

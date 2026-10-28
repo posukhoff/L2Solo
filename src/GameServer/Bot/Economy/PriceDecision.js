@@ -21,6 +21,7 @@ const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
 const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const PriceBelief = invoke('GameServer/Bot/Economy/PriceBelief');
 const CommittedExits = require('./CommittedExits');
+const { horizonUnits } = require('./EconomicValuation');
 
 // 19 prices from 2 widths under the centre to 2.5 over it.
 const GRID = Object.freeze(Array.from({ length: 19 }, (_, at) => -2 + at * 0.25));
@@ -95,6 +96,31 @@ function saleOutcome({ units, applicableUnits, willingUnits, cheaperUnits, price
     return Number.isFinite(receipts) && Number.isFinite(residualValue)
         ? { known: true, sold, residual, receipts, residualValue }
         : { known: false, sold: NaN, residual: NaN, receipts: NaN, residualValue: NaN };
+}
+
+// The one value of goods made to list (T74, user 10-28): a listing sells
+// every unit at its ask over the time the forecast's buyers take, not only
+// what one window of `delayHours` takes. A window's buyers at the ask take
+// min(applicable, willing) past the cheaper asks; the seller's `oldUnits`
+// sell first, so the new units' last one sells after (oldUnits + units)
+// windows' share. A unit whose sale ends past `horizonHours`
+// (EconomicValuation.withinHorizon) is not sold: it stays at
+// `residualUnitValue`. delayHours of the result: when the last sold unit sells.
+function listingSale({ units, oldUnits = 0, applicableUnits, willingUnits, cheaperUnits, price,
+    residualUnitValue = 0, delayHours, horizonHours = Infinity } = {}) {
+    const none = { known: false, sold: NaN, residual: NaN, receipts: NaN, residualValue: NaN, delayHours: NaN };
+    if (!Number.isSafeInteger(units) || units < 0 || !Number.isSafeInteger(oldUnits) || oldUnits < 0
+        || !Number.isSafeInteger(cheaperUnits) || cheaperUnits < 0 || !(delayHours > 0)
+        || ![applicableUnits, willingUnits, price, residualUnitValue].every(value => Number.isFinite(value) && value >= 0))
+        return none;
+    const perWindow = Math.max(0, Math.min(applicableUnits, willingUnits) - cheaperUnits);
+    const unitHours = perWindow > 0 ? delayHours / perWindow : Infinity;
+    const sold = Math.max(0, Math.min(units, horizonUnits(unitHours, horizonHours) - oldUnits));
+    const receipts = sold * price, residualValue = (units - sold) * residualUnitValue;
+    return Number.isFinite(receipts) && Number.isFinite(residualValue)
+        ? { known: true, sold, residual: units - sold, receipts, residualValue,
+            delayHours: sold > 0 ? Math.max(delayHours, (oldUnits + sold) * unitHours) : delayHours }
+        : none;
 }
 
 // The finite willingness of an ask's buyers (a bid states its own count: prospectiveExit).
@@ -473,5 +499,5 @@ function chooseByWeight(options, rollKey) {
     return valid[valid.length - 1];
 }
 
-module.exports = { GRID, NEAR_BEST, PERCEPTION, waitRate, traderOf, phi, saleUtility, purchaseCost, marketFor, saleOutcome, willingUnitsAt, prospectiveExit, QUOTE_DEPTH, cheaperAsks, exitCompetition, bidSale, bidLots, heldUnits, plainSale,
+module.exports = { GRID, NEAR_BEST, PERCEPTION, waitRate, traderOf, phi, saleUtility, purchaseCost, marketFor, saleOutcome, listingSale, willingUnitsAt, prospectiveExit, QUOTE_DEPTH, cheaperAsks, exitCompetition, bidSale, bidLots, heldUnits, plainSale,
     buyback, chooseAsk, chooseBid, aboveBuyback, heldBid, chooseByWeight };

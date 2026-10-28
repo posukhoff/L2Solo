@@ -118,25 +118,13 @@ const Demand = require('../src/GameServer/Bot/Economy/MarketDemand');
         ];
         for (const row of records) board.put(row);
         Afk.boardIndex = () => board;
-        // No known recipe: the producer root takes the offered grade's
-        // recipe for the buyer line and acts on its scroll (WishProviders);
-        // the craft step buys no scroll of its own.
+        // A shot's buyers are its census and trades (MarketDemand): a buyer
+        // line alone is no producer signal (T74, docs/market-picture.md
+        // link 2), so no root crafts for it or buys its recipe.
         const offered = await probe(state, { nativeRoutes: true, recipes: { recipeBook: Codec.pack([]) },
             boardRows: records.map(row => [row.id, rowOf(row)]) });
-        assert(offered.queue.some(row => row.key === `resale:${recipe.productId}`), `the producer root takes the offered grade recipe ${recipeId}`);
-        assert(offered.tradeIntents.some(row => row.itemId === recipe.recipeItemId), `the root acts on its recipe scroll for ${recipeId}`);
-        if (recipeId === 20 || recipeId === 21) {
-            const competitors = [317, 323, recipeId === 20 ? 21 : 20].map((id, at) => ({
-                id: 911000 + at, ownerId: 912000 + at, storeType: 3, kind: 'buy_ad', custodyPolicy: 1,
-                town: 'Giran', status: 'active', revision: 1, lines: [{ lineId: 913000 + at,
-                    selfId: Recipes.resolveByRecipeId(id).productId, count: 100000, price: 10000, enchant: 0 }] }));
-            const investing = { ...state, level: 52, stats: { ...state.stats,
-                shotRecipeDemand: { itemId: recipe.recipeItemId, at: Date.now(), amount: 1, maxSpend: 1000 } } };
-            const wishes = await probe(investing, { nativeRoutes: true, recipes: { recipeBook: Codec.pack([]) },
-                boardRows: [...records, ...competitors].map(row => [row.id, rowOf(row)]) });
-            assert(wishes.queue.some(row => row.key === `resale:${recipe.productId}`), 'recipe investment has a native earning root');
-            assert(wishes.tradeIntents.some(row => row.itemId === recipe.recipeItemId && row.worth >= 1), 'a meeting can certify the recipe purchase through the shared wish graph');
-        }
+        assert(!offered.queue.some(row => row.key === `resale:${recipe.productId}`), `a buyer line alone roots no producer for recipe ${recipeId}`);
+        assert(!offered.tradeIntents.some(row => row.itemId === recipe.recipeItemId), `no scroll is bought for a buyer line alone (${recipeId})`);
     }
-    console.log('PASS producer root shot income and recipe scroll, worker-to-executor storefront craft for D/C/B/A/S');
+    console.log('PASS producer root shot income and recipe scroll, worker-to-executor storefront craft for D/C/B/A/S, no root for a buyer line alone');
 })().catch(error => { console.error(error.stack); process.exitCode = 1; }).finally(() => { Afk.boardIndex = originalBoard; });
