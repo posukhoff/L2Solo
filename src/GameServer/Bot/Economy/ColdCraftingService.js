@@ -53,7 +53,7 @@ function stationForRecipe(recipeId, state = null) {
             loc: { ...selected.place.loc }, townName: selected.place.town, workshop: true,
             recipeId: Number(recipeId), price: selected.price, entryPrice: selected.entryPrice,
             revision: Number(selected.state.simulation?.revision || 0),
-            capacityBatches: Profit.mpBatches(selected.state.vitals?.mp, selected.recipe) };
+            capacityBatches: Profit.mpBatches(Workshops.crafterMp(selected.state), selected.recipe) };
     }
     if (provider && state.stats.equipmentPlan.clanGoal?.clanId
         && (!Production.buyersDisabled() || state.stats.equipmentPlan.clanGoal.orderId)) return {
@@ -313,7 +313,11 @@ async function craft(state, random = Math.random) {
     // The provider is a clan crafter or a bot workshop (stationForRecipe).
     const crafter = { id: station.characterId };
     const crafterState = await LifeState.findByCharacterId(crafter.id);
-    if (!crafterState || crafterState.phase !== 'cold') return { state, crafted: false, reason: 'station_busy' };
+    // A workshop serves while its owner is hot too (its body hunts near a
+    // player); a clan crafter crafts beside the customer, cold only.
+    if (!crafterState || (station.workshop ? !Workshops.serving(crafterState) : crafterState.phase !== 'cold')) {
+        return { state, crafted: false, reason: 'station_busy' };
+    }
 
     let learning = false;
     if (station.clan) {
@@ -343,7 +347,7 @@ async function craft(state, random = Math.random) {
     }
     const entry = station.workshop ? Workshops.quote(crafterState, state, recipe.recipeId) : { price: 0 };
     const template = ItemTemplateIndex.find(DataCache.items, recipe.productId);
-    const crafterMp = Number(crafterState.vitals?.mp || 0);
+    const crafterMp = Workshops.crafterMp(crafterState);
     if (!entry || !template || Profit.mpBatches(crafterMp, recipe) < 1) {
         return { state, crafted: false, reason: 'station_unavailable' };
     }
@@ -423,7 +427,8 @@ async function craft(state, random = Math.random) {
     }
     if (station.clan && learning) invoke('GameServer/Bot/Economy/CraftWorkshopService').recipesChanged(crafter.id);
     if (station.workshop) {
-        LifeState.acceptLifecycleRow(result.crafterState);
+        // A hot crafter's row stays its body's (CraftWorkshopService.craft).
+        if (result.crafterState?.phase === 'cold') LifeState.acceptLifecycleRow(result.crafterState);
         const committed = LifeState.acceptLifecycleRow(result.customerState);
         state = { ...committed, stats: { ...state.stats, ...committed.stats } };
     } else {

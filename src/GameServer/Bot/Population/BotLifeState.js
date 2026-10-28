@@ -125,6 +125,10 @@ function notifyNearFacts(session, reason) {
             if (!actor) return;
             const current = cache.get(Number(actor.fetchId()));
             if (current?.phase !== 'hot') return;
+            // A hot crafter's workshop capacity reads its body (its MP); its
+            // failure must not drop the near post below.
+            try { CraftWorkshopService.bodyChanged(current.characterId); }
+            catch (error) { utils.infoWarn('BotLife', 'workshop body refresh of %d failed: %s', current.characterId, error.message); }
             const row = mergeSessionIntoLifeState(session, session.coldLifeState || current, 'hot', reason,
                 { physicalLocation: true });
             // The cached row owns the revision (the handoff moved it);
@@ -137,6 +141,9 @@ function notifyNearFacts(session, reason) {
             // Not saved: the number of this post and the raise it carries.
             session.nearSeq = Number(session.nearSeq || 0) + 1;
             row.nearSeq = session.nearSeq;
+            // Not saved: when the body began to wait for a decision on its
+            // facts (the coordinator's near reply ms).
+            session.nearWaitFrom ||= row.updatedAt;
             if (session.nearRaise) row.raise = { ...session.nearRaise };
             // lazy: cycle the coordinator requires this module at its top.
             invoke('GameServer/Bot/Population/ColdSimulationCoordinator').markDirty(row,

@@ -57,6 +57,9 @@ function applyItem(actor, id, amount, data) {
     else actor.backpack.items.push(new Item(id, data));
 }
 
+// A crafter's or customer's body takes the Adena row a craft committed
+// (id, amount): the one bag write of a workshop fee (also a hot bot's
+// workshop, CraftWorkshopService.craft).
 function applyAdena(actor, result) {
     if (!result) return;
     const item = actor.backpack.fetchItems().find((entry) => Number(entry.fetchSelfId()) === 57);
@@ -247,4 +250,4 @@ async function craft(session, crafterId, recipeId, random = Math.random, order =
     }
 }
 
-module.exports = { MANUFACTURE, MANUFACTURE_MANAGE, shop, open, title, publish, makeInfo, previous, craft };
+module.exports = { MANUFACTURE, MANUFACTURE_MANAGE, shop, open, title, publish, makeInfo, previous, craft, applyAdena };

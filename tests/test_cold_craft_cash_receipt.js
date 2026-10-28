@@ -116,14 +116,15 @@ async function verifyAuthoredPhysicalCraft() {
         customer = await Life.upsertState({ ...customer, activity: 'crafting',
             inventory: Life.inventorySummaryFromItems(await Database.fetchItems(customer.characterId)) },
         'native_gear_all_inputs_acquired');
-        // A workshop owner gone hot leaves the board: the plan waits, nothing
-        // is exchanged.
+        // A workshop owner gone hot still serves through its body (T93); a hot
+        // row with no body in the world has no MP to craft: the plan waits,
+        // nothing is exchanged.
         const coldCrafter = Life.cachedState(crafter.characterId);
         await Life.upsertState({ ...coldCrafter, phase: 'hot' }, 'native_gear_station_hot');
         const unavailableBefore = await image(ids);
         const unavailableInput = structuredClone(customer);
         const unavailable = await ColdCraftingService.craft(customer, () => 0);
-        assert.strictEqual(unavailable.reason, 'not_ready', 'a hot owner is away for now, not gone');
+        assert.strictEqual(unavailable.reason, 'not_ready', 'a hot owner with no body is away for now, not gone');
         assert.strictEqual(unavailable.crafted, false);
         assert.deepStrictEqual(customer, unavailableInput, 'an away crafter cannot mutate caller state');
         assert.deepStrictEqual(await image(ids), unavailableBefore, 'an away crafter changes no SQL/cache rows');

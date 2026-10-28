@@ -5,6 +5,7 @@ const Diagnostics = require('./EconomyDiagnostics');
 const TwinCluster = require('./TwinCluster');
 const { isMainThread } = require('node:worker_threads');
 const TableChannel = require('../Population/ColdTableChannel').shared;
+const Mutations = require('../../Inventory/InventoryMutationQueue');
 const recipes = () => invoke('GameServer/Items/C4RecipeItems');
 const life = () => invoke('GameServer/Bot/Population/BotLifeState');
 // lazy: worker AfkTradeService is main-thread; the worker loads this module
@@ -21,6 +22,27 @@ function inWorkshopRange(place, loc) {
 // store, AfkTradeService.findOwnerProjection). Main only.
 function placeFor(state) {
     return state ? TwinCluster.placeOf(state, afk().findOwnerProjection(Number(state.characterId))?.shop) : null;
+}
+// A workshop serves while its owner is in the world's population, cold or
+// hot: a hot owner's body hunts near a player, its workshop still stands at
+// its place (T93: hot is only the body).
+function serving(state) {
+    return state?.phase === 'cold' || state?.phase === 'hot';
+}
+// The live body of a hot owner (main only): its MP is the crafter's MP; the
+// saved row's lags it.
+function bodyOf(state) {
+    if (state?.phase !== 'hot') return null;
+    // lazy: worker World is main-thread; the worker loads this module
+    const actor = invoke('GameServer/World/World').registeredActorById?.(Number(state.characterId))?.session?.actor;
+    return actor && !actor.isDead?.() && actor.fetchIsOnline?.() !== false ? actor : null;
+}
+// The crafter's MP, the one reader (board capacity, the cold customer's batch,
+// the order's commit): a hot owner's body, else its saved vitals; a hot owner
+// with no live body has none.
+function crafterMp(state) {
+    if (state?.phase !== 'hot') return Number(state?.vitals?.mp || 0);
+    return Number(bodyOf(state)?.fetchMp?.() || 0);
 }
 function samePlace(a, b) {
     return a === b || !!a && !!b && a.town === b.town && a.loc.locX === b.loc.locX
@@ -140,14 +162,14 @@ function remove(id, { recipes: dropRecipes = true, publish = true } = {}) {
 }
 function register(state) {
     const id = Number(state?.characterId);
-    if (state && state.phase === 'cold' && registeredStates.get(id) === state) {
+    if (serving(state) && registeredStates.get(id) === state) {
         if (!crafters.has(id)) recipesChanged(id);
         if (Diagnostics.active()) Diagnostics.count('workshop_register', 'skipped', 'same_state');
         return;
     }
     if (Diagnostics.active()) Diagnostics.count('workshop_register', 'rebuilt');
     indexState(id, state);
-    if (state?.phase === 'cold') registeredStates.set(id, state);
+    if (serving(state)) registeredStates.set(id, state);
 }
 // The owner's public rows leave the digest and the candidate index.
 function dropPublicRows(id) {
@@ -171,14 +193,14 @@ function publishRows(id, previousRows) {
 }
 function indexState(id, state) {
     const previousRows = publicRecipeRows(id);
-    remove(id, { recipes: state?.phase !== 'cold', publish: false });
-    if (!state || state.phase !== 'cold') { publishRows(id, previousRows); return; }
+    remove(id, { recipes: !serving(state), publish: false });
+    if (!serving(state)) { publishRows(id, previousRows); return; }
     if (invoke('GameServer/Bot/Economy/CraftShopService').isServiceCrafter(state)) crafters.set(id, state);
     else recipesChanged(id);
-    // A cold twin's workshop stands at its place (placeFor) wherever its
-    // body hunts; a hot owner is away.
+    // A twin's workshop stands at its place (placeFor) wherever its body
+    // hunts, cold or hot.
     const entries = TwinCluster.entriesOf(state);
-    if (!entries?.length || state.phase !== 'cold') { publishRows(id, previousRows); return; }
+    if (!entries?.length) { publishRows(id, previousRows); return; }
     const ids = [];
     for (const entry of entries) {
         const recipeId = Number(entry.recipeId);
@@ -221,6 +243,23 @@ function reindex(ids) {
         publishRows(id, previousRows);
     }
 }
+// A hot owner's body posted its facts (BotLifeState.notifyNearFacts: it came
+// into the world, looted, died, revived): the capacity its rows publish reads
+// the body's MP again (a hot row is not replaced on MP drift; markHot indexes
+// the owner before its body is in the world). Rows move only when a bucket
+// changed.
+function bodyChanged(id) {
+    id = Number(id);
+    const held = owners.get(id);
+    // A dead or gone body publishes no capacity (crafterMp 0).
+    if (!held || life().cachedState(id)?.phase !== 'hot') return;
+    const previousRows = publicRecipeRows(id);
+    const rows = buildPublicRecipeRows(id);
+    if (rows.length === previousRows.length && rows.every((row, at) => row[7] === previousRows[at][7])) return;
+    dropPublicRows(id);
+    setPublicRows(id, held.place);
+    publishRows(id, previousRows);
+}
 function discount(crafter, customer, trust = 0) {
     const clan = Number(crafter.clanId || crafter.stats?.clanId || 0);
     if (!clan || clan !== Number(customer.clanId || customer.stats?.clanId || 0)) return 0;
@@ -237,6 +276,10 @@ function quote(crafter, customer, recipeId) {
     const price = Math.max(0, Math.floor(Number(entry.price) * (1 - discount(crafter, customer, relation?.trust))));
     return { price, entryPrice: Number(entry.price) };
 }
+// Orders at a hot crafter's workshop since start: asked (a body was there)
+// and served (committed); the live read of T93 move 1 (PopulationStatus).
+const hotOrders = { asked: 0, served: 0 };
+function hotOrderStats() { return { ...hotOrders }; }
 async function craft(ownerId, recipeId, customerId, { expectedPrice = null, expectedRevision = null,
     batches = 1, original = null, random = Math.random, funding = { r: 1 } } = {}) {
     const database = invoke('Database');
@@ -249,10 +292,16 @@ async function craft(ownerId, recipeId, customerId, { expectedPrice = null, expe
         if (original) {
             if (!customer) throw Error('workshop customer unavailable');
             admitted = await Commit.admit(customer, Commit.KINDS.craft, original);
-            const result = await database.craftForCustomer(Number(ownerId), Number(customerId), {
+            const body = bodyOf(life().cachedState(ownerId));
+            const replay = () => database.craftForCustomer(Number(ownerId), Number(customerId), {
                 economyCommand: admitted.command });
+            const result = body ? await Mutations.run(body.backpack, async () => {
+                const done = await replay();
+                afk().syncOnlineInventory(ownerId, await database.fetchItems(Number(ownerId)));
+                return done;
+            }) : await replay();
             if (result.customerState) Commit.acceptRow(result.customerState);
-            if (result.crafterState) Commit.acceptRow(result.crafterState);
+            if (result.crafterState?.phase === 'cold') Commit.acceptRow(result.crafterState);
             return result;
         }
         const player = playerLookup(ownerId, recipeId, customer);
@@ -294,13 +343,36 @@ async function craft(ownerId, recipeId, customerId, { expectedPrice = null, expe
         }
         const product = { selfId: recipe.productId, amount: recipe.productCount * batches,
             name: template.template.name, stackable: !!template.etc?.stackable, slot: Number(template.etc?.slot || 0) };
-        const result = await database.craftForCustomer(Number(ownerId), Number(customerId), {
+        // A hot crafter's body spends the MP: the commit reads it there
+        // (validate, in the transaction) and the body takes the rest. The
+        // crafter side changes only its Adena row: the body takes that row
+        // (ManufactureShop.applyAdena), its other items stay as they are. The
+        // commit and that write run in the body's inventory queue, so a loot
+        // pickup (PurchaseItem) never writes an Adena amount read before the
+        // fee.
+        const body = bodyOf(crafter), mpCost = Number(recipe.mpCost) * batches;
+        if (crafter.phase === 'hot' && !body) throw new Error('workshop unavailable');
+        if (body) hotOrders.asked++;
+        const validate = body ? () => {
+            if (bodyOf(life().cachedState(ownerId)) !== body || Number(body.fetchMp()) < mpCost) throw new Error('workshop unavailable');
+            return { crafterMp: Number(body.fetchMp()) - mpCost };
+        } : null;
+        const commit = () => database.craftForCustomer(Number(ownerId), Number(customerId), {
             materials, product: admitted || Profit.succeeds(recipe, random) ? product : null,
-            price: quoteValue.price * batches, crafterMp: Number(crafter.vitals.mp) - Number(recipe.mpCost) * batches,
+            price: quoteValue.price * batches, crafterMp: crafterMp(crafter) - mpCost, validate,
             adena: { name: 'Adena' }, economyCommand: admitted?.command, funding, random,
             workshop: { recipeId, batches, entryPrice: quoteValue.entryPrice, fee: quoteValue.price * batches,
                 crafterRevision: crafter.simulation?.revision || 0, customerRevision: customer.simulation?.revision || 0 }
         });
+        const result = body ? await Mutations.run(body.backpack, async () => {
+            const done = await commit();
+            body.setMp?.(Math.max(0, Number(body.fetchMp()) - mpCost));
+            // lazy: worker ManufactureShop is main-thread; the worker loads this module
+            invoke('GameServer/Crafting/ManufactureShop').applyAdena(body, done.crafterAdena);
+            body.statusUpdateVitals?.(body);
+            hotOrders.served++;
+            return done;
+        }) : await commit();
         if (result.crafterState) Commit.acceptRow(result.crafterState);
         if (result.customerState) Commit.acceptRow(result.customerState);
         return result;
@@ -347,23 +419,26 @@ const recipeRow = id => ({ characterId: Number(id), ...knowledgeFor(id) });
 if (isMainThread) TableChannel.register('recipes', { key: row => row.characterId,
     allRows: () => [...knownRecipes.keys()].map(recipeRow) });
 
-// A workshop that no longer offers this recipe for good: its cold owner's
-// saved workshop (its twin) leaves it out.
-// A hot owner, one outside the cache or with no place yet is away for now:
-// lookup misses it until it is back.
+// A workshop that no longer offers this recipe for good: its owner's saved
+// workshop (its twin) leaves it out.
+// An owner outside the cache or with no place yet is away for now: lookup
+// misses it until it is back.
 function withdrawn(ownerId, recipeId) {
     const owner = life().cachedState(ownerId);
-    return owner?.phase === 'cold'
+    return serving(owner)
         && !(TwinCluster.entriesOf(owner) || []).some(entry => Number(entry.recipeId) === Number(recipeId));
 }
 function lookup(ownerId, recipeId, customer) {
     const player = playerLookup(ownerId, recipeId, customer);
     if (player) return player;
-    const state = byRecipe.get(Number(recipeId))?.get(Number(ownerId));
-    if (!state || life().cachedState(ownerId) !== state) return null;
+    // The index holds the owner's rows; the offer is read from its current
+    // state (a hot owner's cached row is replaced with no change event: an
+    // AFK sale, a hot merge), and quote misses a recipe it no longer lists.
+    const state = life().cachedState(ownerId);
+    if (!byRecipe.get(Number(recipeId))?.has(Number(ownerId)) || !serving(state)) return null;
     const place = owners.get(Number(ownerId))?.place;
-    if (!place) return null;
-    return { state, place, recipe: recipes().resolveByRecipeId(recipeId), ...quote(state, customer, recipeId) };
+    const offer = place && quote(state, customer, recipeId);
+    return offer ? { state, place, recipe: recipes().resolveByRecipeId(recipeId), ...offer } : null;
 }
 // Existing public recipe index is the source; only its published fee, place
 // and present physical capacity cross the worker boundary. No foreign book.
@@ -383,12 +458,13 @@ function capacityBucket(batches) {
 function buildPublicRecipeRows(ownerId) {
     const id = Number(ownerId), result = [], place = owners.get(id)?.place;
     if (!place) return result;
+    let mp = null;
     for (const recipeId of owners.get(id) || []) {
         const state = byRecipe.get(recipeId)?.get(id);
         const entry = TwinCluster.entriesOf(state)?.find(row => Number(row.recipeId) === recipeId);
         const recipe = recipes().resolveByRecipeId(recipeId);
         if (!state || !entry || !recipe) continue;
-        const capacity = Profit.mpBatches(state.vitals?.mp, recipe);
+        const capacity = Profit.mpBatches(mp ??= crafterMp(state), recipe);
         result.push([id, recipeId, Number(entry.price),
             place.town, place.loc.locX, place.loc.locY, place.loc.locZ, capacityBucket(capacity)]);
     }
@@ -408,10 +484,10 @@ function boardRecords() {
         const state = life().cachedState(id);
         const entries = TwinCluster.entriesOf(state);
         const place = owners.get(id).place;
-        if (!entries?.length || state.phase !== 'cold' || !place) return [];
+        if (!entries?.length || !serving(state) || !place) return [];
         return [{ id: `workshop_${id}`, kind: 'workshop', ownerId: id, ownerName: state.name,
             town: place.town, loc: { ...place.loc }, title: `${state.name}'s workshop`,
             entries, revision: state.simulation?.revision || 0 }];
     });
 }
-module.exports = { init, register, registerPlayer, remove, recipesChanged, knownFor, cachedRecipes, bookFor, knowledgeFor, publicForRecipe, publicRecipeRows, publicRows, publicScopeDigest, quote, discount, boardRecords, lookup, placeFor, inWorkshopRange, withdrawn, craft };
+module.exports = { init, register, serving, crafterMp, bodyChanged, hotOrderStats, registerPlayer, remove, recipesChanged, knownFor, cachedRecipes, bookFor, knowledgeFor, publicForRecipe, publicRecipeRows, publicRows, publicScopeDigest, quote, discount, boardRecords, lookup, placeFor, inWorkshopRange, withdrawn, craft };

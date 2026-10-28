@@ -17,6 +17,7 @@ const BackgroundWorkGovernor = invoke('GameServer/Bot/Population/BackgroundWorkG
 const BackgroundJobRegistry = invoke('GameServer/Bot/Population/BackgroundJobRegistry');
 const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const NpcDecay = invoke('GameServer/World/Generics/NpcDecay');
+const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
 const Npc = invoke('GameServer/Npc/Npc');
 const PvpEncounterRuntime = invoke('GameServer/Bot/Population/PvpEncounterRuntime');
 const { heapRecord, heapsLine } = require('./WorkerHeapTelemetry');
@@ -121,14 +122,22 @@ const PopulationStatus = {
     // the worker's party rule flips since start (a seller joined or left a
     // party: PartyAdmission.admissionWrite) and the items they gave a new
     // admission revision (PartyAdmission.admissionEventCounts, heartbeat);
+    // nearReplyMs=<p50>/<max>, the ms of the last 256 near replies, from a
+    // body's first unanswered fact post to the decision it took (the hot
+    // count is the summary's hot=); hotWorkshop=<asked>/<served>, orders at
+    // a hot crafter's workshop since start (CraftWorkshopService.hotOrderStats);
     // spoil=<units> spoilTop=<item>:<units>,.., spoil units cold steps
     // landed since start and its 3 largest items
     // (ColdSimulationKernel.countSpoil, heartbeat; hot bots' spoil not counted).
     nearText(coordinator) {
         const nearFacts = coordinator?.snapshots?.nearFacts || {}, decisions = coordinator?.nearDecisions || {};
+        const replies = (coordinator?.nearReplyMs || []).slice().sort((a, b) => a - b);
+        const workshop = Workshops.hotOrderStats();
         const raises = Object.entries(nearFacts).reduce((sum, [reason, count]) => NEAR_FACTS.includes(reason) ? sum : sum + count, 0);
         return `nearFacts=${NEAR_FACTS.map(reason => nearFacts[reason] || 0).join('/')} nearRaises=${raises}`
             + ` nearDecisions=${decisions.accepted || 0}/${decisions.refused || 0}/${decisions.dropped || 0}`
+            + ` nearReplyMs=${replies.length ? `${replies[replies.length >> 1]}/${replies[replies.length - 1]}` : '-'}`
+            + ` hotWorkshop=${workshop.asked}/${workshop.served}`
             + ` occupationInvalidations=${coordinator?.worker?.occupationInvalidations || 0}`
             + ` censusCrossings=${coordinator?.worker?.censusCrossings || 0}`
             + ` committedExits=${coordinator?.worker?.committedExits?.entries || 0}/${coordinator?.worker?.committedExits?.refused || 0}/${coordinator?.worker?.committedExits?.takers || 0}`

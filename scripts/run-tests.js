@@ -406,6 +406,7 @@ const tests = [
     'tests/test_player_board_window.js',
     'tests/test_player_board_meeting.js',
     'tests/test_player_board_crafting.js',
+    'tests/test_hot_workshop_service.js',
     'tests/test_player_board_sale.js',
     'tests/test_generated_population_appearance.js',
     'tests/test_bot_name_migration.js',

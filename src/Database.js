@@ -8499,11 +8499,14 @@ const Database = {
                     WHERE members.id IN (?, ?)`, [crafterId, customerId]);
                 workshopCrafter = rows.find(row => Number(row.characterId) === Number(crafterId));
                 const customer = rows.find(row => Number(row.characterId) === Number(customerId));
-                // A cold crafter's workshop stands at its place whatever its
-                // body does (CraftWorkshopService.placeFor); the customer
+                // A crafter's workshop stands at its place whatever its body
+                // does (CraftWorkshopService.placeFor), cold or hot; a hot
+                // crafter's MP is its body's (validate: live). The customer
                 // stands there, alive and free.
-                if (!workshopCrafter || workshopCrafter.phase !== 'cold'
+                const hotCrafter = workshopCrafter?.phase === 'hot';
+                if (!workshopCrafter || !(workshopCrafter.phase === 'cold' || hotCrafter && live?.crafterMp != null)
                     || Number(workshopCrafter.simulationRevision) !== Number(workshop.crafterRevision)) throw new Error('workshop ownership changed');
+                const mpLeft = hotCrafter ? crafterMp : Number(workshopCrafter.mp) - Number(recipe.mpCost) * batches;
                 if (customer && !customer.phase) {
                     if (Number(customer.physicalHp) <= 0) throw new Error('customer unavailable');
                 } else if (!customer || (step ? customer.phase !== step.row.phase : customer.phase !== 'cold')
@@ -8522,7 +8525,7 @@ const Database = {
                 if (!quote || Number(quote.entryPrice) !== Number(workshop.entryPrice)
                     || !rules.canCraft({ classId: workshopCrafter.classId, level: workshopCrafter.characterLevel }, recipe)
                     || !one('SELECT recipeId FROM character_recipes WHERE characterId = ? AND recipeId = ?', [crafterId, recipe.recipeId])
-                    || Number(workshopCrafter.mp) < Number(recipe.mpCost) * batches
+                    || !(mpLeft >= 0)
                     || !Workshops.inWorkshopRange(Workshops.placeFor(crafterState), customer.phase === 'cold'
                         ? { locX: customer.locX, locY: customer.locY } : { locX: customer.physicalX, locY: customer.physicalY })) {
                     throw new Error('workshop unavailable');
@@ -8552,7 +8555,7 @@ const Database = {
                     if (!product || !template || !!product.stackable !== !!template.etc?.stackable
                         || Number(product.slot || 0) !== Number(template.etc?.slot || 0)) throw Error('craft_product_template_changed');
                 }
-                crafterMp = Number(workshopCrafter.mp) - Number(recipe.mpCost) * batches;
+                crafterMp = mpLeft;
             }
             let manualOrder = null;
             if (clanOrder) {
@@ -8684,9 +8687,14 @@ const Database = {
             }
             write('UPDATE characters SET mp = ? WHERE id = ?', [crafterMp, crafterId]);
             let clanStates = {};
+            // A hot crafter's row belongs to its body (BotLifeState.save): the
+            // body takes its Adena row (crafterAdena) and MP
+            // (CraftWorkshopService.craft).
+            const hotWorkshopCrafter = !!workshop && workshopCrafter.phase === 'hot';
             if (clanCraft || workshop) {
                 const lifeState = invoke('GameServer/Bot/Population/BotLifeState');
                 for (const id of new Set([Number(crafterId), Number(customerId)])) {
+                    if (hotWorkshopCrafter && id === Number(crafterId)) continue;
                     // A bag rebuilt from the item rows carries its Adena into the
                     // wallet column; a clan crafter's JSON bag keeps the column.
                     const fromItems = id === Number(customerId) || !!workshop;
@@ -8699,7 +8707,7 @@ const Database = {
                         mp = CASE WHEN characterId = ? THEN ? ELSE mp END, updatedAt = ? WHERE characterId = ?`,
                     [JSON.stringify(inventory), fromItems ? 1 : 0, Number(inventory['57']?.amount || 0), crafterId, crafterMp, now(), id]);
                 }
-                if (workshop) {
+                if (workshop && !hotWorkshopCrafter) {
                     const production = { ...jsonObject(workshopCrafter.statsJson).production };
                     production.crafts = Number(production.crafts || 0) + Number(workshop.batches);
                     production.customers = Number(production.customers || 0) + 1;
@@ -8709,7 +8717,9 @@ const Database = {
                     write("UPDATE bot_life_state SET statsJson = json_set(statsJson, '$.production', json(?)) WHERE characterId = ?",
                         [JSON.stringify(production), crafterId]);
                 }
-                clanStates = {
+                clanStates = hotWorkshopCrafter ? {
+                    customerState: normalizeRow(one('SELECT * FROM bot_life_state WHERE characterId = ?', [customerId]))
+                } : {
                     crafterState: normalizeRow(one('SELECT * FROM bot_life_state WHERE characterId = ?', [crafterId])),
                     customerState: normalizeRow(one('SELECT * FROM bot_life_state WHERE characterId = ?', [customerId]))
                 };

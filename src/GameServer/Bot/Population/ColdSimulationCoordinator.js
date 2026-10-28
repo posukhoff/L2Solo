@@ -135,6 +135,9 @@ class ColdSimulationCoordinator {
         // took, refused as older than the held one, or dropped (the bot cooled
         // or has no body before its decision arrived).
         this.nearDecisions = { accepted: 0, refused: 0, dropped: 0 };
+        // The last near replies' ms, from a body's first unanswered fact post
+        // to the decision it took (PopulationStatus nearReplyMs p50/max).
+        this.nearReplyMs = [];
         this.workerMaxInFlight = null;
         this.restartCount = 0;
         this.loadedAt = 0;
@@ -811,6 +814,11 @@ class ColdSimulationCoordinator {
                 }
                 if (Number(payload.near.nearSeq || 0) < Number(session.heldNearSeq || 0)) { this.nearDecisions.refused++; break; }
                 this.nearDecisions.accepted++;
+                if (session.nearWaitFrom) {
+                    if (this.nearReplyMs.length >= 256) this.nearReplyMs.shift();
+                    this.nearReplyMs.push(Date.now() - session.nearWaitFrom);
+                    session.nearWaitFrom = 0;
+                }
                 // The held card is the one compact (accept) the body's view reads.
                 const decision = this.economyDecisions.accept(id, payload.economyDecision);
                 DecisionEvents.receive(session, decision, payload.near);
@@ -2346,6 +2354,7 @@ class ColdSimulationCoordinator {
             ackState: { ...this.ackState },
             soloHolds: invoke('GameServer/Bot/Population/PartyIncomeComparison').soloHoldStats(),
             nearDecisions: { ...this.nearDecisions },
+            nearReplyMs: this.nearReplyMs.slice(),
             competitionActions: Config.developerDiagnostics ? this.competitionActions.snapshot() : null,
             economyDecisions: Config.developerDiagnostics ? { hits: this.economyDecisions.hits, misses: this.economyDecisions.misses, held: this.economyDecisions.byId.size } : null,
             partyReviews: Config.developerDiagnostics ? this.partyReviews : null,
