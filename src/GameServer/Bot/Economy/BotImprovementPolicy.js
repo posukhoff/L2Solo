@@ -7,6 +7,7 @@ const Tendency = require('../AI/TendencyRoll');
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Rewards = require('./SpotRewardExpectation');
 const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
+const MarketDemand = require('./MarketDemand');
 const positive = value => Math.max(0, Number(value) || 0);
 function template(id) { return ItemIndex.find(invoke('GameServer/DataCache').items, id); }
 function instances(state) {
@@ -102,7 +103,11 @@ function opportunities(state, ctx) {
         let stuck = null;
         const stuckOnce = () => stuck ?? (stuck = stuckCost(state, item, ctx, read(), cycleOnce()));
         const equipped = item.equipped;
-        const buyer = !equipped && ctx.board?.first(item.selfId, 3, { excludeOwner: state.characterId });
+        // A spare piece is enchanted for sale where its market shows: an ask,
+        // or a bid for an item that is no wished gear (a gear bid is no
+        // producer signal, MarketDemand.forecastOnly; T76).
+        const buyer = !equipped && !MarketDemand.forecastOnly(item.selfId)
+            && ctx.board?.first(item.selfId, 3, { excludeOwner: state.characterId });
         if (!equipped && !buyer && !ctx.board?.first(item.selfId, 1, { excludeOwner: state.characterId })) continue;
         const from = positive(item.enchant), cap = Rules.maxFor(category, config);
         const slot = slotOf(item), free = worn => worn === slot;

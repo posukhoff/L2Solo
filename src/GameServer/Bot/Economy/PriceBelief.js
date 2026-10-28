@@ -11,6 +11,7 @@ const Diagnostics = require('./EconomyDiagnostics');
 const MIXTURE_LIMIT = 1024;
 const mixtures = new Map();
 const RecipeProduction = invoke('GameServer/Bot/Economy/RecipeProductionIndex');
+const MarketDemand = invoke('GameServer/Bot/Economy/MarketDemand');
 
 const S0 = 0.6;
 const K_MAX = 60;
@@ -177,7 +178,9 @@ function learn(belief, observations) {
 // Exact own fills belong to this line, not the bounded item-deal tail.
 // Other item deals and the current rival already enter the fresh prior.
 // Every other deal of its counter passed this line; competing listings do
-// not divide that evidence.
+// not divide that evidence. A gear bid is never passed (supply-driven
+// market, docs/game-decisions.md 10-27, T76): its buyer may wait at its
+// price, the bid does not climb while unfilled (MarketDemand.forecastOnly).
 function lineObservations(line, belief, ctx) {
     const previous = line.pricing;
     const counter = MarketCounters.counter(MarketCounters.counterOf(line.selfId), ctx.timestamp);
@@ -185,8 +188,8 @@ function lineObservations(line, belief, ctx) {
     // A line nobody took, seen on a town look, passed once even with no deal
     // on the board, like a deal that went to someone else.
     const unanswered = ctx.visit && fills === 0 ? 1 : 0;
-    const passed = Math.min(PASSED_MAX, Math.max(unanswered,
-        counter.deals - previous.seenCounter - fills));
+    const passed = line.storeType === BUY && MarketDemand.forecastOnly(line.selfId) ? 0
+        : Math.min(PASSED_MAX, Math.max(unanswered, counter.deals - previous.seenCounter - fills));
     const price = Number(previous.price);
     const observations = [];
     if (price > 0) {

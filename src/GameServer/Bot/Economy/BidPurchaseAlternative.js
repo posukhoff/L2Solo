@@ -3,7 +3,7 @@
 const { SELL } = require('../../AfkTrade/BoardIndex');
 const { personalOfferAllowed } = require('../Population/PartyAdmission');
 const { fill } = require('./OfferQuery');
-const { MAX_INSPECTED, meetingAd, preparedLeaf } = require('./ReadyTradeChoice');
+const { MAX_INSPECTED, preparedLeaf } = require('./ReadyTradeChoice');
 const FixedShots = require('./FixedShotOffers');
 const { heldBid } = require('./PriceDecision');
 
@@ -12,14 +12,14 @@ const { heldBid } = require('./PriceDecision');
 // (meeting-only, custody 1) needs the buyer's already prepared executable
 // purchase to be an outside purchase (`ceiling`); an advertised count alone
 // cannot promise another owner's stock or consent.
-// Apart, the least unit price whose whole bid funds the lot asked in the
-// meeting town itself (`own`, no NPC units): a bid at or over it stands
-// crossed. The lot is filled the way the wish buy fills it (OfferQuery.fill
-// in board order, as the quote: WishPurchaseEvidence sizedQuote): shops and
-// meeting-only ads (ReadyTradeChoice.meetingAd) across lines, the ads taken
-// ad by ad (ReadyTradeChoice.purchase). The meeting town's lines (and the
-// unplaced ones) are read in order until a fill holds the lot; other towns
-// within the first MAX_INSPECTED lines of the item.
+// Apart, the least unit price whose whole bid funds the lot its shops ask in
+// the meeting town itself (`own`, no NPC units, no meeting-only ad: a bid
+// does not yield to a meeting, supply-driven market 10-27, T76): a bid at or
+// over it stands crossed. The lot is filled the way the wish buy fills it
+// (OfferQuery.fill in board order, as the quote: WishPurchaseEvidence
+// sizedQuote). The meeting town's lines (and the unplaced ones) are read in
+// order until a fill holds the lot; other towns within the first
+// MAX_INSPECTED lines of the item.
 const NONE = Object.freeze({ ceiling: Infinity, own: Infinity });
 function outside(selfId, ctx, { units = 1, town, money, enchant = 0 } = {}) {
     if (!Number.isSafeInteger(units) || units < 1 || !(money >= 0)
@@ -65,7 +65,7 @@ function outside(selfId, ctx, { units = 1, town, money, enchant = 0 } = {}) {
         if (!route || route.fees > money) continue;
         const terms = { npcPrice: entry.npcPrice, money: money - route.fees, ordered: true };
         if (where === town) {
-            const lot = fill(here(), units, { ...terms, accept: line => line.custodyPolicy !== 1 || meetingAd(line) });
+            const lot = fill(here(), units, { ...terms, accept: line => line.custodyPolicy !== 1 });
             if (lot.units === units && !lot.npc) own = Math.ceil(lot.cost / units);
         }
         const purchase = fill(where === town ? here() : entry.lines, units, { ...terms, accept: backed });
@@ -79,11 +79,10 @@ function outside(selfId, ctx, { units = 1, town, money, enchant = 0 } = {}) {
     return { ceiling, own };
 }
 // A bid's ceiling. 0 (withdraw) only for a standing bid whose unit `price`
-// is at or over the whole lot its own town asks (its shops and meeting-only
-// ads, outside's `own`); a new bid (no `price`) is never withdrawn
-// here. Else the least whole purchase, kept under that ask so a reprice never
-// lands on it. After a withdraw the wish still buys a meeting-only ask
-// (ReadyTradeChoice.purchase). The wish's source choice (TradeIntent,
+// is at or over the whole lot its own town's shops ask (outside's `own`); a
+// new bid (no `price`) is never withdrawn here. Else the least whole
+// purchase, kept under that ask so a reprice never lands on it. The wish's
+// source choice (TradeIntent,
 // canTradeRemotely) is another question. A partial cross (the town asks
 // fewer units than the bid): when that buy is the bot's chosen step, it buys
 // the units on sale and its bid holds only the rest (TradeIntent
@@ -92,9 +91,8 @@ function outside(selfId, ctx, { units = 1, town, money, enchant = 0 } = {}) {
 function cap(selfId, ctx, { price, ...terms }) {
     const { ceiling, own } = outside(selfId, ctx, terms);
     if (!Number.isFinite(own)) return ceiling;
-    return crosses(price, own) ? 0 : Math.min(ceiling, own - 1);
+    return price >= own ? 0 : Math.min(ceiling, own - 1);
 }
-const crosses = (price, own) => price >= own;
 
 const moneyForLine = (line, ctx) => ctx.adena + (line.custodyPolicy === 1 ? 0 : line.price * line.count);
 function cashCap(line, ctx) {
@@ -106,16 +104,6 @@ const lineTerms = (line, ctx) => ({ units: line.count, town: line.town, enchant:
     money: moneyForLine(line, ctx), price: line.price });
 function forLine(line, ctx) {
     return cap(line.selfId, ctx, lineTerms(line, ctx));
-}
-// Is this withdrawal (a cap of 0 its site decided) the crossed rule: the bid
-// at or over its own outside purchase. outside() runs again only for a cap of
-// 0 (crossed, or no affordable trip: not crossed). The withdraw site marks
-// its move with it; main counts it where the withdrawal is applied
-// (AfkTradeService.repriceBotLines, crossedBids= on the summary line).
-function crossed(line, ctx, lineCap) {
-    if (lineCap !== 0) return false;
-    const { price, ...terms } = lineTerms(line, ctx);
-    return crosses(price, outside(line.selfId, ctx, terms).own);
 }
 // An own standing bid now (PriceDecision.heldBid under the outside purchase
 // and the cash): null = it stands, 0 = withdraw, else the lower price. A
@@ -149,4 +137,4 @@ function assertMeetingPurchase(lines, payer, town, ctx, money = ctx.adena) {
         if (purchase.cost > ceiling * purchase.units) throw Error('trade_meeting_purchase_price_changed');
     }
 }
-module.exports = { cap, forLine, cashCap, lineLimit, crossed, assertMeetingPurchase };
+module.exports = { cap, forLine, cashCap, lineLimit, assertMeetingPurchase };

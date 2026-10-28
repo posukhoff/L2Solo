@@ -103,6 +103,13 @@ assert(PriceBelief.lineObservations(bid(1), belief, { timestamp: at, visit: true
     'a filled bid gets no pass from the visit');
 assert.strictEqual(PriceBelief.lineObservations(bid(), belief, { timestamp: at }).length, 0,
     'no visit, no deal: no evidence');
+// A gear bid (ITEM, wished kit gear) is never passed (T76): the buyer waits
+// at its price, the bid does not climb; its fills still learn.
+const gearBid = (fills = 0) => ({ ...bid(fills), selfId: ITEM });
+assert.strictEqual(PriceBelief.lineObservations(gearBid(), belief, { timestamp: at, visit: true }).length, 0,
+    'an unanswered gear bid learns nothing on a visit');
+const gearFilled = PriceBelief.lineObservations(gearBid(1), belief, { timestamp: at, visit: true });
+assert(gearFilled.length === 1 && gearFilled[0][0] < Math.log(20), 'a filled gear bid still learns it paid enough');
 
 // A finished market visit stamps the state: the count of the town looks.
 const state = { characterId: 1, activity: 'shopping', stats: {}, timing: {}, loc: { x: 0, y: 0, z: 0 } };

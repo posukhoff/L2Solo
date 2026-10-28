@@ -175,6 +175,25 @@ function verifyFarmHold() {
     assert.equal(lineOf([`resale:${potion}`]), 1, 'a committed line counts the units on its own sell line');
     assert.equal(lineOf([]), 1, 'an uncommitted line counts them alike');
 }
+// A gear bid is no farm goal (supply-driven market, T76): a line for
+// Bronze Breastplate (26, a drop of the farm spot) paying more per kill
+// than Thread's, within a horizon long enough to farm it, leaves Thread
+// the farm root.
+function verifyGearBidFarm() {
+    const farmer = bot(1, 22, inventoryFor(Gear.planFor({ classId: 1, level: 20 }).items));
+    const farmSpot = rewardSpot('28_-33', 19, 23, { locX: 82000, locY: 149000, locZ: -3466 });
+    const thread = 1868, gear = 26, board = new BoardIndex();
+    Economy.reset();
+    const context = Economy.forState(farmer, { board, timestamp, spots: [], npcOffersFor: () => [],
+        routeRows: Array.from({ length: Trip.towns.length }, () => [true, 0, 0]) });
+    board.put({ id: 299, ownerId: 990199, storeType: 3, kind: 'buy_ad', town: 'Giran',
+        lines: [{ lineId: 299, selfId: thread, count: 50, enchant: 0, price: context.buyback(thread) + 10000 }] });
+    board.put({ id: 500, ownerId: 990500, storeType: 3, kind: 'buy_ad', town: 'Giran',
+        lines: [{ lineId: 500, selfId: gear, count: 1, enchant: 0, price: context.buyback(gear) + 10000000 }] });
+    const roots = Providers.build(farmer, { ...context, horizonHours: 1e6 }, { spots: [farmSpot] });
+    assert.deepEqual(roots.nodes.filter(row => roots.roots.includes(row.key) && row.paths[0]?.kind === 'farm_sale')
+        .map(row => row.key), [`resale:${thread}`], 'a gear bid is no farm root; the material line is');
+}
 function verify() {
     const starter = inventoryFor(Data.newbieItems.find(row => row.classId === 0).items.filter(row => row.equipped)
         .map(row => ({ ...row, slot: Data.items.find(item => item.selfId === row.selfId).etc.slot })));
@@ -630,6 +649,7 @@ function verify() {
 }
 verifyHeldInputs();
 verifyFarmHold();
+verifyGearBidFarm();
 verify();
 if (isMainThread) {
     const worker = new Worker(__filename);

@@ -201,7 +201,10 @@ function* prepare(state, { board, timestamp, read = () => {}, stock = null, econ
         // lazy: cycle ReadyTradeChoice loads this module through BotImprovementService
         const Ready = require('../Economy/ReadyTradeChoice');
         const result = []; read(recipe.productId); let count = 0;
-        for (const line of board?.list(recipe.productId, 3) || []) {
+        // A gear product's buyer line is no exit (MarketDemand.forecastOnly,
+        // T74): its root's exit is a listing, so its lines are not read.
+        const lines = MarketDemand.forecastOnly(recipe.productId) ? EMPTY : board?.list(recipe.productId, 3) || [];
+        for (const line of lines) {
             if (count++ === QUOTE_DEPTH) break;
             if (!Ready.buyerExitOpen(line, owner)) { yield 'quote'; continue; }
             const details = yield* ensureTrip(line.town);

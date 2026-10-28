@@ -183,7 +183,7 @@ do { plan = iterator.next(); } while (!plan.done);
 assert.deepEqual(plan.value.take, [SELL, ITEM, 1, 11, 11, 1, 80000]);
 assert.deepEqual(require('../src/GameServer/Bot/Population/ColdEconomyPlan').bidLimits({ ...buyer, level: 30, phase: 'cold',
     adena: 1000000, inventory: {}, vitals: { hp: 1000, mp: 1000 }, stats: { classId: 0 } }, planEconomy,
-{ now, board: tradeBoard, persona: { traits: {} }, tripCost: partialTrip, npcOffersFor: () => [] }).map(row => row.slice(0, 6)), [[10, 10, 1, 1, 188565, 0]],
+{ now, board: tradeBoard, persona: { traits: {} }, tripCost: partialTrip, npcOffersFor: () => [] }), [[10, 10, 1, 1, 188565, 0]],
 'a lifecycle command withdraws the owner\'s old bid as crossed: its own town sells the whole lot');
 const smallWallet = Pricing.bid(ITEM, { ...ctx, adena: 100000 }, { units: 2, worth: 34454032, cap: 100000,
     town: 'Dion', money: 100000, rollKey: ['short-wallet'] });
@@ -242,36 +242,16 @@ assert.equal(Alternative.lineLimit({ ...standing, count: 2, price: 90000 }, ctx)
     'one shop unit and one NPC unit cap the bid, not withdraw it');
 npc = [];
 
-// A meeting-only ad of the bid's own town crosses it like a shop's ask; a
-// dearer one or another town's keeps the bid.
+// A bid does not yield to a meeting (T76, supply-driven market): a cheaper
+// meeting-only ad of its own town neither withdraws nor caps it; a shop's
+// ask at the same price does.
 board.clear();
 shop(1, 74000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
-assert.equal(Alternative.lineLimit(standing, ctx), 0, 'a bid at its own town\'s meeting-only ask withdraws');
-assert.equal(Alternative.lineLimit({ ...standing, price: 90000 }, ctx), 0, 'a bid over it withdraws too');
-const underAd = Pricing.bid(ITEM, ctx, { units: 1, worth: 34454032, cap: 1000000, town: 'Dion',
-    money: 1000000, rollKey: ['own-ad'] });
-assert(underAd?.price > 0 && underAd.price <= 73999, 'a new bid opens under the own town\'s meeting-only ask');
+assert.equal(Alternative.lineLimit(standing, ctx), null, 'a bid at its own town\'s meeting-only ask stands');
+assert.equal(Alternative.lineLimit({ ...standing, price: 90000 }, ctx), null, 'a bid over it stands too');
 board.clear();
-shop(1, 100000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
-assert.equal(Alternative.lineLimit(standing, ctx), null, 'a dearer meeting-only ask keeps the bid');
-board.clear();
-away(1, 60000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
-assert.equal(Alternative.lineLimit({ ...standing, price: 90000 }, ctx), null,
-    'another town\'s meeting-only ask neither withdraws nor caps the bid');
-// The buy after a withdraw takes meeting-only ads ad by ad: two ads that
-// together cover the bid's units at a mean at or under its price cross it.
-board.clear();
-shop(1, 70000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
-shop(2, 76000, 1, { custodyPolicy: 1, kind: 'sell_ad' });
-assert.equal(Alternative.lineLimit({ ...standing, count: 2, price: 73000 }, ctx), 0,
-    'two meeting-only ads that together cover the lot at a mean of 73000 withdraw a bid at it');
-assert.equal(Alternative.lineLimit({ ...standing, count: 2, price: 72999 }, ctx), null,
-    'and a bid under that mean stands');
-// The buy never takes an enchanted meeting-only ad, so one does not cross a bid.
-board.clear();
-shop(1, 70000, 1, { custodyPolicy: 1, kind: 'sell_ad', enchant: 1 });
-assert.equal(Alternative.lineLimit({ ...standing, enchant: 1, price: 75000 }, ctx), null,
-    'an enchanted meeting-only ad below an enchanted bid keeps the bid');
+shop(1, 74000);
+assert.equal(Alternative.lineLimit(standing, ctx), 0, 'a shop\'s ask at the bid still crosses it');
 // Cheaper lines of other towns do not hide the own town's ask.
 board.clear();
 for (let id = 100; id <= 120; id++) away(id, 70000);

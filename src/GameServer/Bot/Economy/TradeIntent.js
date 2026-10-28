@@ -270,7 +270,7 @@ function rootRows(network, wish, onCut = null) {
             // buys those units) bids only the units the town lacks, at the
             // same unit worth (partialcross 2026-10-25). Any other buy, a
             // whole lot or a waiting one, bids every missing unit:
-            // BidPurchaseAlternative.cap holds it under the town's asks.
+            // BidPurchaseAlternative.cap holds it under the town's shop asks.
             const short = step?.rootKey === wish.key && step.nodeKey === key && step.activity === command.activity
                 ? shortOf(command, plan.missingAmount) : 0;
             const amount = short > 0 ? short : plan.missingAmount;

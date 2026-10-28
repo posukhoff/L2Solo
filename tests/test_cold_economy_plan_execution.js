@@ -186,7 +186,7 @@ function stub(object, key, value) { const previous = object[key]; restores.push(
         };
         const beforeLife = Afk.ownerRecords(id).find(row => row.id === standing.id);
         const lifeRow = [beforeLife.lines[0].id, beforeLife.id, beforeLife.revision,
-            beforeLife.lines[0].count, beforeLife.lines[0].price, 80, 0];
+            beforeLife.lines[0].count, beforeLife.lines[0].price, 80];
         const Meeting = invoke('GameServer/AfkTrade/TradeMeetingService'), preparation = Meeting.hasPreparation;
         let lifeResult;
         try {
@@ -234,7 +234,7 @@ function stub(object, key, value) { const previous = object[key]; restores.push(
             buyAds: [[1867, 5, 100, 1, 76, 7, 0, 1, .001], [1868, 5, 100, 1, 76, 7, 0, 1, .001]], buyTown: 'Giran', travel: null }, { step: work => work() });
         const pair = Afk.ownerRecords(id).filter(row => row.kind === 'buy_ad');
         assert.equal(pair.length, 2, 'two bids stand on two records');
-        const rowOf = (ad, ceiling) => [ad.lines[0].id, ad.id, ad.revision, ad.lines[0].count, ad.lines[0].price, ceiling, 0];
+        const rowOf = (ad, ceiling) => [ad.lines[0].id, ad.id, ad.revision, ad.lines[0].count, ad.lines[0].price, ceiling];
         const pairRows = [rowOf(pair[0], 80), rowOf(pair[1], 80)];
         await Afk.repriceBot(id, pair[0].lines[0].id, 99, pair[0].revision);
         const oneMoved = await lifecycle('life:one-moved', pairRows);

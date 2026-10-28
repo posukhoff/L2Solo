@@ -518,7 +518,7 @@ async function listSellAds(ownerId, state, listings, shop, inventory, options = 
 }
 
 // A lifecycle command's bid limits (ColdEconomyPlan.bidLimits), applied once:
-// each row [lineId, recordId, revision, count, price, ceiling, crossed] is a certificate of
+// each row [lineId, recordId, revision, count, price, ceiling] is a certificate of
 // the line the worker read, applied on its own. A row whose record or line
 // is gone (withdrawn on a market trip) or moved (a fill, a reprice) is
 // skipped, here or inside the writer's transaction: nothing is written for
@@ -534,12 +534,11 @@ async function applyBidLimits(state, rows, { beforeWrite = null } = {}) {
     const reprices = [], withdrawals = [], seen = new Set(), ads = buyAds(ownerId);
     let moved = 0;
     for (const row of rows) {
-        if (!Array.isArray(row) || row.length !== 7 || !row.every(Number.isSafeInteger)
-            || row.slice(0, 5).some(value => value < 1) || row[5] < 0 || row[5] >= row[4]
-            || row[6] !== 0 && row[6] !== 1 || seen.has(row[0]))
+        if (!Array.isArray(row) || row.length !== 6 || !row.every(Number.isSafeInteger)
+            || row.slice(0, 5).some(value => value < 1) || row[5] < 0 || row[5] >= row[4] || seen.has(row[0]))
             throw Error('economy_plan_bid_cap');
         seen.add(row[0]);
-        const [lineId, recordId, revision, count, price, ceiling, crossed] = row;
+        const [lineId, recordId, revision, count, price, ceiling] = row;
         const ad = ads.find(record => record.id === recordId);
         const line = ad?.lines.find(candidate => candidate.id === lineId);
         if (!line?.pricing || ad.revision !== revision || line.count !== count || line.price !== price) {
@@ -548,7 +547,7 @@ async function applyBidLimits(state, rows, { beforeWrite = null } = {}) {
         }
         const move = { lineId, recordId, selfId: line.selfId, expectedRevision: revision,
             previousPricing: { ...line.pricing } };
-        if (!ceiling) withdrawals.push(crossed ? { ...move, crossed } : move);
+        if (!ceiling) withdrawals.push(move);
         else reprices.push({ ...move, price: ceiling, pricing: { ...line.pricing, price: ceiling } });
     }
     if (!reprices.length && !withdrawals.length) return { changed: 0, skipped: moved };

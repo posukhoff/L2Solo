@@ -392,7 +392,7 @@ function look(state, lines, ctx) {
             // No price prior: no reprice, but the bid cap needs none; a bid
             // over its outside purchase or its cash still withdraws.
             if (line.storeType === BUY && BidPurchaseAlternative.lineLimit(line, ctx, purchaseCap) === 0)
-                withdrawals.push(BidPurchaseAlternative.crossed(line, ctx, purchaseCap) ? { ...move, crossed: 1 } : move);
+                withdrawals.push(move);
             continue;
         }
         const learned = PriceBelief.learn(belief, PriceBelief.lineObservations(line, belief, ctx));
@@ -426,7 +426,7 @@ function look(state, lines, ctx) {
                 chosen = PriceDecision.chooseBid(belief, market, ctx.trader, { worth, cap }, rollKey, line.price);
             }
             if (!chosen) {
-                withdrawals.push(BidPurchaseAlternative.crossed(line, ctx, market.purchaseCap) ? { ...move, crossed: 1 } : move);
+                withdrawals.push(move);
                 continue;
             }
         }

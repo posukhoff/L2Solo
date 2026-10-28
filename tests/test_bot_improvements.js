@@ -19,6 +19,7 @@ const Crystals = invoke('GameServer/Bot/Population/ColdSoulCrystal');
 const NativeCrystals = invoke('GameServer/Items/SoulCrystalProgression');
 const Owner = invoke('GameServer/Bot/Population/ColdSimulationOwner');
 const InventorySummary = invoke('GameServer/Bot/Population/InventorySummary');
+const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
 const location = {locX:83396,locY:147904,locZ:-3400};
 let serial = 0;
 const cash = {selfId:57,name:'Adena',amount:10000000};
@@ -120,6 +121,18 @@ async function main() {
         const index=invoke('GameServer/Bot/Economy/BotImprovementService').Policy;
         const values=index.enchantedPrice({selfId:weapon.selfId,amount:1},4,context.economy);
         assert(values>context.economy.price(weapon.selfId));
+        // A spare gear piece is enchanted for sale against a foreign ask, never
+        // against a foreign bid alone (a gear bid is no producer signal, T76).
+        const lineBoard = storeType => {
+            const board = new BoardIndex();
+            board.put({ id: 900, ownerId: 990900, storeType, kind: storeType === 3 ? 'buy_ad' : 'shop', town: 'Giran',
+                lines: [{ lineId: 900, selfId: weapon.selfId, count: 1, enchant: 0, price: 2 * context.economy.price(weapon.selfId) }] });
+            return board;
+        };
+        const forSale = board => Policy.opportunities(state, { ...context.economy, board, deathHours: 1 })
+            .filter(row => row.kind === 'enchant' && row.itemId === weapon.selfId).length;
+        assert(forSale(lineBoard(1)) > 0, 'fixture: a foreign ask opens an enchant for sale');
+        assert.equal(forSale(lineBoard(3)), 0, 'a foreign gear bid alone opens none');
         console.log('PASS mixed native instance/enchant sale projection and full-chain enchanted price');
 
         const recipe=SA.options(7300,undefined,'install').find(row=>row.station==='blacksmith');

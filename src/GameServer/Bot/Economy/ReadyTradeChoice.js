@@ -50,7 +50,7 @@ function encode(side, line, count, state) {
     return [SELL, BUY].includes(side) && tuple.every(positive) && executable(side, line, state) ? tuple : null;
 }
 // The one rule for "a wish buy takes this meeting-only ad" (the meeting
-// executor, its resolve, a bid's crossing ask): a plain ad, taken ad by ad
+// executor, its resolve, a bid's outside purchase): a plain ad, taken ad by ad
 // for what it holds, as the quote's fill counts it (WishPurchaseEvidence).
 function meetingAd(line) {
     return line.custodyPolicy === 1 && !line.enchant;

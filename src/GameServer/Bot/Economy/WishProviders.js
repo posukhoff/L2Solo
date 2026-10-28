@@ -1300,7 +1300,8 @@ function buildProjection(state, ctx, deps) {
     }
     // Any farmer can earn by supplying finite public demand for recipes,
     // parts and resources a buyer bids above NPC buy-back for (user
-    // 2026-10-24): the item's cheapest ready source, drop or spoil
+    // 2026-10-24); a gear bid is no farm goal (MarketDemand.forecastOnly:
+    // supply-driven market 10-27, T76): the item's cheapest ready source, drop or spoil
     // (sourcePath), at a spot it may leave its route for. No buyer means no
     // speculative farm goal. The value is the line's gain over buy-back,
     // the effort the farm hours at their net cost plus the trip (WishNetwork
@@ -1331,13 +1332,13 @@ function buildProjection(state, ctx, deps) {
         // units it already farmed are its sale's old units, so its first
         // unit in the bag never ends the goal (another line's held item is
         // sold, not farmed).
-        const demand = [], pinnedLines = [];
+        const demand = [], pinnedLines = [], { forecastOnly } = need('./MarketDemand');
         // The band at sourcePath's economicLower, read once at the first
         // record that reaches it (a spoiler's band is never narrower here
         // than its source path's).
         let levelRefusal = null;
         for (const id of ctx.board.itemIds(3)) {
-            if (!sourceIndex.has(Number(id))) continue;
+            if (!sourceIndex.has(Number(id)) || forecastOnly(id)) continue;
             const pinned = committed.has(`resale:${id}`);
             if (!pinned && present(id) || nodeKeys.has(`resale:${id}`)) continue;
             const offer = farmLine(ctx.board, id, state.characterId);

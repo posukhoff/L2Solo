@@ -1244,8 +1244,8 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
         // A plan that is never ready (a buy no unit comes for: no step now,
         // unresolved, so no money) keeps the root at its full value, as a
         // root no seller offers: its buy bid stands at that value
-        // (TradeIntent.preparedProject), the visible demand that brings a
-        // seller or a crafter; a bid filled is the item for this wish.
+        // (TradeIntent.preparedProject), a line a holder may sell into (a
+        // crafter reads no gear bid, T76); a bid filled is the item for this wish.
         if (plan?.never) { wish.readyHours = Infinity; wish.valueHours = fullValue(wish, node); return; }
         const delay = plan ? Valuation.fundingDelay({ requiredCash: wish.price, spendableCash: spendable, incomePerHour: hourAdena }) : null;
         wish.readyHours = delay === null ? Infinity : delay + nonnegative(plan.hours);

@@ -632,14 +632,13 @@ const reserve = NativeEconomy.survivalReserve(buyer(0));
 const leafCheck = adena => NativeEconomy.leafCheck(buyer(adena), leaf45,
     { board: meetBoard, tripCost: dionTrip, npcOffersFor: () => [] }, { heldUnits: undefined });
 assert.equal(leafCheck(reserve + 120), '', 'the leaf holds while its town sells 45 at most at 3 and the money pays their mean 115 (not 45 x 3)');
-// A standing bid for the same lot in Dion is crossed at the quote's mean
-// (the town sells 45 at 115, a unit 3 rounded up), as the buy fills it.
+// A standing bid for the same lot in Dion is not crossed by the town's
+// meeting-only ads (T76: a bid does not yield to a meeting).
 const Alternative = require('../src/GameServer/Bot/Economy/BidPurchaseAlternative');
 const bidCtx = { travelDetails: dionTrip.details, hour: 0, board: meetBoard, characterId: 1, state: { characterId: 1 },
     npcOffersFor: () => [] };
 const bidCap = price => Alternative.cap(202, bidCtx, { units: 45, town: 'Dion', money: 1000000, price });
-assert.equal(bidCap(Math.ceil(quote45.price)), 0, 'a bid at the mean of the town\'s 45 is crossed');
-assert.equal(bidCap(Math.ceil(quote45.price) - 1), Math.ceil(quote45.price) - 1, 'a bid under it stands under that ask');
+assert.notEqual(bidCap(Math.ceil(quote45.price)), 0, 'a bid at the mean of the town\'s 45 meeting-only ads stands');
 // Twenty cheaper lines the buy never takes (enchanted) leave the town's
 // ads to the buy the quote counted.
 const hiddenBoard = new BoardIndex();

@@ -137,9 +137,8 @@ function* measured(iterator) {
 // A lifecycle command's standing bids above what the owner may now pay
 // (BidPurchaseAlternative.lineLimit; a step decides them in its look,
 // MarketPricing.look): rows [lineId, recordId, revision, count, price,
-// ceiling, crossed], each a certificate main applies once
-// (BotAfkMarketService.applyBidLimits); crossed = 1 marks a withdrawal by the
-// crossed rule (BidPurchaseAlternative.crossed). Worker only; the trader
+// ceiling], each a certificate main applies once
+// (BotAfkMarketService.applyBidLimits). Worker only; the trader
 // context is built only when a priced bid stands.
 function bidLimits(state, economy, options) {
     const bids = (options.board?.ownerLines(Number(state.characterId)) || [])
@@ -149,10 +148,8 @@ function bidLimits(state, economy, options) {
     const bidCtx = economy?.trip?.details ? { ...ctx, travelDetails: economy.trip.details } : ctx;
     const limits = [];
     for (const line of bids) {
-        const lineCap = Alternative.forLine(line, bidCtx);
-        const ceiling = Alternative.lineLimit(line, bidCtx, lineCap);
-        if (ceiling !== null) limits.push([line.lineId, line.recordId, line.revision, line.count, line.price, ceiling,
-            Number(ceiling === 0 && Alternative.crossed(line, bidCtx, lineCap))]);
+        const ceiling = Alternative.lineLimit(line, bidCtx);
+        if (ceiling !== null) limits.push([line.lineId, line.recordId, line.revision, line.count, line.price, ceiling]);
     }
     return limits;
 }
