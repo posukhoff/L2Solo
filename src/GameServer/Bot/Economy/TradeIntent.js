@@ -151,6 +151,15 @@ function inputValue(value, cap, scale) {
 function rootValue(wish) {
     return wish.ownValueHours ?? wish.valueHours;
 }
+// What a root's input bids split (rootRows): its rootValue, but a producer
+// for sale off focus its whole value (earningValueHours, WishNetwork build),
+// never the focus weight (1 - loyalty): its value is money at the hunt rate,
+// as a buyer's line's is (lineOf), and a part bid cut under the part's NPC
+// buy-back never fills, so the looter sells it to the NPC
+// (docs/game-decisions.md, pricefloor 10-25; T74 live 10-28: Saber Blade).
+function bidValue(wish) {
+    return wish.earningValueHours ?? rootValue(wish);
+}
 // A buyer's-line producer root's line in adena (WishProviders bidsInputs:
 // the lot's gross), 0 for any other root.
 function lineOf(root) {
@@ -272,8 +281,8 @@ function rootRows(network, wish, onCut = null) {
             // costs (waitValueHours, at the money price): no money price,
             // however cheap, bids above it. An unpriced step has no cap.
             const belief = nonnegative(plan.basePrice) / plan.missingAmount;
-            const saved = Number(network.moneyPrice) > 0 && rootValue(wish) > 0
-                ? nonnegative(wish.waitValueHours) * value / rootValue(wish) / Number(network.moneyPrice) : 0;
+            const saved = Number(network.moneyPrice) > 0 && bidValue(wish) > 0
+                ? nonnegative(wish.waitValueHours) * value / bidValue(wish) / Number(network.moneyPrice) : 0;
             const capCash = belief > 0 ? belief * amount + saved : Infinity;
             const previous = rows.get(id);
             const quote = plan.kind === 'buy' && plan.sourceType === 'afk' && plan.quoted === true
@@ -297,7 +306,7 @@ function rootRows(network, wish, onCut = null) {
         for (const row of requirements) if (!scrollOnly || row.once) visit(row.key, row.plan, value * share * inputShare(row, split),
             plan.recipeId || recipeId, depth + 1, !!row.once);
     };
-    visit(wish.key, wish.plan, line || rootValue(wish));
+    visit(wish.key, wish.plan, line || bidValue(wish));
     for (const row of rows.values()) {
         if (line) { row.worth = row.valueHours / row.amount; row.valueHours *= moneyPrice > 0 ? moneyPrice : 0; row.line = true; }
         else {

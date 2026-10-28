@@ -1912,6 +1912,7 @@ function compactNetwork(network) {
         supported: wish.supported, resolved: wish.resolved, progressionPriority: wish.progressionPriority,
         ...(wish.scrollCash !== undefined ? { scrollCash: wish.scrollCash } : {}),
         ...(wish.ownValueHours !== undefined ? { ownValueHours: wish.ownValueHours } : {}),
+        ...(wish.earningValueHours !== undefined ? { earningValueHours: wish.earningValueHours } : {}),
         ...(wish.bidsInputs > 0 ? { bidsInputs: wish.bidsInputs } : {}), plan: trim(wish.plan) });
     const queue = (network.queue || []).map(row);
     const at = network.gap ? (network.queue || []).indexOf(network.gap) : -1;

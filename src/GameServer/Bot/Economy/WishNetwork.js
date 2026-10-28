@@ -1544,8 +1544,13 @@ class WishNetwork {
         // Off focus a root weighs (1 - loyalty); a never root keeps its whole
         // value: unfundable, its row only bids, and a loyalty of 1 must not
         // drop it from the queue (no bid, no SELL/TAKERS wake).
-        const weighted = wishes.map(wish => ({ ...wish,
-            valueHours: wish.valueHours * (wish === focused || neverReady(wish) ? 1 : 1 - loyalty) }));
+        // A producer for sale keeps its whole value for its input bids
+        // (TradeIntent.bidValue): its rank and funding read the weight.
+        const weighted = wishes.map(wish => {
+            const weight = wish === focused || neverReady(wish) ? 1 : 1 - loyalty;
+            return { ...wish, valueHours: wish.valueHours * weight,
+                ...(weight < 1 && resale(wish) ? { earningValueHours: wish.valueHours } : {}) };
+        });
         const { queue, moneyPrice, heldPrice: queueHeldPrice, available, gap } = moneyQueue(weighted, wallet, survivalReserve, floor, heldPrice, heldMoney);
         const fundingReason = wish => wish.funded ? 'funded' : wish === gap ? 'first_funding_gap'
             : wish.supported === false ? 'unsupported_path' : wish.resolved === false ? 'unresolved_path'
