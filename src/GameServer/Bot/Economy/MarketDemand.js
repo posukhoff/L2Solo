@@ -323,6 +323,12 @@ function hasCensusSource(id) {
     }
     return kitItems.has(id);
 }
+// Whether a product sells to its census forecast only (T74; docs/game-decisions.md:
+// a gear bid is no crafter signal): wished kit gear, not a shot (a shot's
+// buyer lines still count) nor a material (its buyers are its bid lines).
+function forecastOnly(id) {
+    return !ShotStock.gradedShopShot(Number(id)) && hasCensusSource(id);
+}
 // The exact census rate of an item per hour over every town; null while no
 // cell of it was ever put (main has not published since a restart), 0 once
 // its last wearer left.
@@ -439,4 +445,4 @@ function towns(id, timestamp = Date.now()) {
 // The board's replay reloads trade evidence; census rows stay with their owner.
 function reset() { history.clear(); mirror = null; censusChanged(); }
 module.exports = { DELAY_HOURS, deal, putCensus, censusChanged, rows, forecast, perHour, supplyPerHour, towns, reset, wornCell,
-    censusOf, demandedCount, censusBuys, hasCensusSource, warmUse, useTable: source => { mirror = source; censusChanged(); } };
+    censusOf, demandedCount, censusBuys, hasCensusSource, forecastOnly, warmUse, useTable: source => { mirror = source; censusChanged(); } };

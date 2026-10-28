@@ -10,6 +10,8 @@ const PriceBelief = () => invoke('GameServer/Bot/Economy/PriceBelief');
 const MarketCounters = () => invoke('GameServer/Bot/Economy/MarketCounters');
 // lazy: cycle FirstPrice -> GearAcquisitionPlanner -> SpotEconomics -> this module
 const FirstPrice = () => invoke('GameServer/Bot/Economy/FirstPrice');
+// lazy: cycle MarketDemand -> this module (recipeCatalog)
+const MarketDemand = () => invoke('GameServer/Bot/Economy/MarketDemand');
 
 // Public candidate admission (rows per craft level) and the shared market
 // facts of each recipe (marketFacts: product price, input cost, margin per
@@ -146,7 +148,11 @@ class RecipeProductionIndex {
         return this.rows[Math.max(0, Math.min(9, Math.floor(Number(level) || 0)))].values(); }
     refresh(recipe, changed = new Set()) {
         if (!this.accept(recipe)) return changed;
-        const available = this.board.list(Number(recipe.productId), 3).length > 0 || this.censusBuyer(recipe);
+        // Buyers: the census, and bids for a product not sold to its
+        // forecast only (MarketDemand.forecastOnly: a gear bid is no signal).
+        const id = Number(recipe.productId);
+        const available = this.censusBuyer(recipe)
+            || !MarketDemand().forecastOnly(id) && this.board.list(id, 3).length > 0;
         for (let level = Number(recipe.level); level <= 9; level++) {
             const rows = this.rows[level];
             if (available === rows.has(recipe)) continue;

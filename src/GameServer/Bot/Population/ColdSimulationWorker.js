@@ -1735,13 +1735,6 @@ function startKernel(config = {}) {
     EconomyContext.configure({
         board: boardReady,
         knownRecipes: id => RecipeBookCodec.unpack(recipeKnowledgeOf(kernel.states.get(Number(id))?.state).recipeBook) ?? undefined,
-        producerSource: (state, board) => {
-            if (!board) return null;
-            const index = OccupationSources.recipeIndex(board);
-            const level = invoke('GameServer/Bot/Economy/CraftShopService').craftLevelFor(state);
-            const scope = index.scopeFor(level);
-            return { recipes: index.rowsFor(level), scope, revision: index.revision(scope) };
-        },
         workshops: workshopsFor,
         npcOffersFor: OccupationSources.npcOffersFor,
         buyOrderEscrow: escrowFor,
