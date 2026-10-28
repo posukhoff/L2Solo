@@ -4,7 +4,7 @@ const ServerResponse = invoke('GameServer/Network/Response');
 const Database = invoke('Database');
 const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const DataCache = invoke('GameServer/DataCache');
-const Item = invoke('GameServer/Item/Item');
+const LiveBag = require('../Inventory/LiveBag');
 const { materialPlan } = invoke('GameServer/Crafting/CraftMaterials');
 
 // The C4 client can repeat a craft packet while the recipe result dialog is
@@ -40,33 +40,6 @@ function fail(session, recipe = null) {
 
 function productTemplate(recipe) {
     return ItemTemplateIndex.find(DataCache.items, recipe.productId) || null;
-}
-
-function applyCommittedMaterials(actor, consumed, sources) {
-    sources.forEach((source) => {
-        const item = consumed.find((entry) => Number(entry.item.fetchId()) === Number(source.id))?.item;
-        if (!item) return;
-        if (source.amount === 0) {
-            actor.backpack.items = actor.backpack.fetchItems().filter((entry) => entry !== item);
-        } else {
-            item.setAmount(source.amount);
-        }
-    });
-}
-
-function applyCommittedCraft(actor, consumed, product, template, result) {
-    applyCommittedMaterials(actor, consumed, result.sources);
-    const existing = actor.backpack.fetchItems().find((item) => Number(item.fetchId()) === Number(result.product.id));
-    if (existing) {
-        existing.setAmount(result.product.amount);
-    } else {
-        actor.backpack.items.push(new Item(result.product.id, {
-            ...utils.crushOb(template),
-            amount: product.amount,
-            equipped: false,
-            slot: product.slot
-        }));
-    }
 }
 
 async function craftSelf(session, recipeId, random = Math.random, options = {}) {
@@ -127,13 +100,13 @@ async function craftSelf(session, recipeId, random = Math.random, options = {}) 
         if (result.coldLifeRow) Commit.acceptRow(result.coldLifeRow);
         if (result.replayed) {
             const rows = await Database.fetchItems(actorId, 'recipe_craft_self');
-            actor.backpack.items = rows.map(row => {
-                const data = ItemTemplateIndex.find(DataCache.items, Number(row.selfId));
-                return new Item(row.id, { ...utils.crushOb(data || {}), amount: row.amount,
-                    enchant: row.enchant, equipped: !!row.equipped, slot: row.slot });
+            LiveBag.applyRows(actor, rows);
+        } else {
+            LiveBag.applyAmounts(actor, result.sources);
+            if (success) LiveBag.applyRow(actor, result.product, result.product, {
+                ...utils.crushOb(template), equipped: false, slot: product.slot
             });
-        } else if (success) applyCommittedCraft(actor, consumed, product, template, result);
-        else applyCommittedMaterials(actor, consumed, result.sources);
+        }
         if (!result.replayed) actor.setMp?.(Number(result.mp ?? mp));
         actor.statusUpdateVitals?.(actor);
         actor.automation?.replenishVitals?.(actor);

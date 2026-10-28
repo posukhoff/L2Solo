@@ -1,5 +1,6 @@
 const BeginnerShots = require('../Items/C4BeginnerShots');
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const DataCache = invoke('GameServer/DataCache');
 const Database  = invoke('Database');
 const BotEconomyPricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
@@ -161,18 +162,8 @@ function deductAdena(actor, amount) {
             return reject("Not enough Adena.");
         }
 
-        const total = adenaItem.fetchAmount() - amount;
-        if (total > 0) {
-            Database.updateItemAmount(actor.fetchId(), adenaItem.fetchId(), total).then(() => {
-                adenaItem.setAmount(total);
-                resolve();
-            }).catch(reject);
-        } else {
-            Database.deleteItem(actor.fetchId(), adenaItem.fetchId()).then(() => {
-                actor.backpack.items = actor.backpack.items.filter((ob) => ob.fetchId() !== adenaItem.fetchId());
-                resolve();
-            }).catch(reject);
-        }
+        LiveBag.add(actor, adenaItem, -amount);
+        resolve();
     });
 }
 
@@ -180,11 +171,8 @@ function giveAdena(actor, amount) {
     return new Promise((resolve, reject) => {
         const adenaItem = fetchAdena(actor);
         if (adenaItem) {
-            const total = adenaItem.fetchAmount() + amount;
-            Database.updateItemAmount(actor.fetchId(), adenaItem.fetchId(), total).then(() => {
-                adenaItem.setAmount(total);
-                resolve();
-            }).catch(reject);
+            LiveBag.add(actor, adenaItem, amount);
+            resolve();
             return;
         }
 
@@ -211,11 +199,8 @@ function insertedRow(id, amount) {
 function giveItem(actor, selfId, amount) {
     return new Promise((resolve, reject) => {
         actor.backpack.stackableExists(selfId).then((item) => {
-            const total = item.fetchAmount() + amount;
-            Database.updateItemAmount(actor.fetchId(), item.fetchId(), total).then(() => {
-                actor.backpack.updateAmount(item.fetchId(), total);
-                resolve(item);
-            }).catch(reject);
+            LiveBag.add(actor, item, amount);
+            resolve(item);
         }).catch(() => {
             const itemDetails = itemTemplate(selfId);
             if (!itemDetails) {
@@ -256,18 +241,8 @@ function takeItem(actor, selfId, amount, item = actor.backpack.fetchItemFromSelf
             return reject("Not enough items.");
         }
 
-        const total = item.fetchAmount() - amount;
-        if (total > 0) {
-            Database.updateItemAmount(actor.fetchId(), item.fetchId(), total).then(() => {
-                item.setAmount(total);
-                resolve();
-            }).catch(reject);
-        } else {
-            Database.deleteItem(actor.fetchId(), item.fetchId()).then(() => {
-                actor.backpack.items = actor.backpack.items.filter((ob) => ob.fetchId() !== item.fetchId());
-                resolve();
-            }).catch(reject);
-        }
+        LiveBag.add(actor, item, -amount);
+        resolve();
     });
 }
 

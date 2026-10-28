@@ -139,7 +139,7 @@ async function run() {
 
     // A buffered crystal-stack amount is flushed before atomically adding the reward.
     const crystals = a.actor.backpack.fetchItemFromSelfId(1458);
-    crystals.setAmount(50); WriteQueue.itemAmount(1, crystals.fetchId(), 50);
+    WriteQueue.itemDelta(1, crystals.fetchId(), 50 - crystals.fetchAmount()); crystals.setAmount(50);
     const second = await add(a, 40);
     await Bypass(a, ['crystallization-station', 'preview', String(second.fetchId())]);
     await Bypass(a, ['crystallization-station', 'apply', a.activeCrystallization.token]);

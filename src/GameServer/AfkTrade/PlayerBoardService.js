@@ -3,6 +3,7 @@
 // Server contract for the player board. Each answer resolves the current
 // canonical record; a displayed quote never becomes a remote purchase.
 const { SELL, BUY } = require('./BoardIndex');
+const LiveBag = require('../Inventory/LiveBag');
 const SHOP_RANGE = 200;
 const TRADE_TYPES = Object.freeze(['all', 'meeting', 'shop']);
 const matchesType = (line, type = 'all') => type === 'all' || (type === 'meeting' ? line.custodyPolicy === 1
@@ -138,8 +139,7 @@ function create({ afk = () => invoke('GameServer/AfkTrade/AfkTradeService'),
                     expectedPrice: Number(request.price), expectedRevision: Number(request.revision) });
                 const rows = await database().fetchItems(playerId, 'player_board_craft');
                 if (!current()) return { ok: false, reason: 'player_unavailable' };
-                session.actor.backpack.items = [];
-                for (const row of rows) session.actor.backpack.insertItem(row.id, row.selfId, row);
+                LiveBag.applyRows(session.actor, rows);
                 session.dataSendToMe(response().itemsList(session.actor.backpack.fetchItems()));
                 session.dataSendToMe(response().userInfo(session.actor));
                 return { ok: true, action: result.product ? 'crafted' : 'craft_failed', product: result.product || null,

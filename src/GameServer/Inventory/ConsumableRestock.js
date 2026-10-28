@@ -6,6 +6,7 @@
 // only for the existing paid actor write, retaining its refusal ordering.
 let database;
 const persistenceDatabase = () => database ||= invoke('Database');
+const LiveBag = require('./LiveBag');
 
 function coldPatch(state, line) {
     const inventory = { ...(state.inventory || {}) };
@@ -36,24 +37,19 @@ function coldPatch(state, line) {
     };
 }
 
+// The bag's own change (LiveBag.add): a DB trade for the same body keeps its.
 function ensureActorStock(actor, line) {
     const current = actor.backpack.fetchItemFromSelfId(line.selfId);
-    const nextAmount = line.currentAmount + line.amount;
-    if (current) {
-        return persistenceDatabase().updateItemAmount(actor.fetchId(), current.fetchId(), nextAmount).then(() => {
-            current.setAmount(nextAmount);
-            return nextAmount;
-        });
-    }
+    if (current) return Promise.resolve(LiveBag.add(actor, current, line.amount));
     return persistenceDatabase().setItem(actor.fetchId(), {
         selfId: line.selfId,
         name: line.name,
-        amount: nextAmount,
+        amount: line.amount,
         equipped: false,
         slot: 0
     }).then((packet) => {
-        actor.backpack.insertItem(Number(packet.insertId), line.selfId, { amount: nextAmount });
-        return nextAmount;
+        actor.backpack.insertItem(Number(packet.insertId), line.selfId, { amount: line.amount });
+        return line.amount;
     });
 }
 
@@ -74,13 +70,9 @@ function buyForActor(actor, line) {
             nextAdena: Number(actor.backpack.fetchItemFromSelfId(57)?.fetchAmount?.() || 0),
             nextAmount: Number(actor.backpack.fetchItemFromSelfId(line.selfId)?.fetchAmount?.() || 0) }));
     }
-    const nextAdena = line.adena - line.cost;
-    return persistenceDatabase().updateItemAmount(actor.fetchId(), adenaItem.fetchId(), nextAdena)
-        .then(() => {
-            adenaItem.setAmount(nextAdena);
-            return ensureActorStock(actor, line);
-        })
-        .then((nextAmount) => ({ ok: true, nextAdena, nextAmount }));
+    if (Number(adenaItem.fetchAmount()) < line.cost) return Promise.resolve({ ok: false, reason: 'not_enough_adena' });
+    const nextAdena = LiveBag.add(actor, adenaItem, -line.cost);
+    return ensureActorStock(actor, line).then((nextAmount) => ({ ok: true, nextAdena, nextAmount }));
 }
 
 module.exports = { coldPatch, buyForActor };

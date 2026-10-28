@@ -193,8 +193,9 @@ async function main() {
 
         const lineSeller = actor(20, 0);
         lineSeller.backpack.items.push(item(2001, 1864, 1, 'Varnish'));
+        // No Adena stack: its payout is a new stack, a database write that can fail.
         const failingLineSeller = actor(21, 0);
-        failingLineSeller.backpack.items.push(item(2101, 1865, 1, 'Suede'));
+        failingLineSeller.backpack.items = [item(2101, 1865, 1, 'Suede')];
         const multiLineStore = {
             storeType: 3,
             items: [
@@ -202,15 +203,16 @@ async function main() {
                 { selfId: 1865, price: 10, count: 1 }
             ]
         };
-        const workingUpdateItemAmount = Database.updateItemAmount;
-        Database.updateItemAmount = async (characterId) => {
-            if (Number(characterId) === 21) throw new Error('forced second-line payout failure');
+        const workingSetItem = Database.setItem;
+        Database.setItem = async (characterId, row) => {
+            if (Number(characterId) === 21 && Number(row?.selfId) === 57) throw new Error('forced second-line payout failure');
+            return { insertId: ++nextObjectId };
         };
         const concurrentLines = await Promise.allSettled([
             TradeService.sellToStore(lineSeller, multiLineStore, 1864, 1),
             TradeService.sellToStore(failingLineSeller, multiLineStore, 1865, 1)
         ]);
-        Database.updateItemAmount = workingUpdateItemAmount;
+        Database.setItem = workingSetItem;
         assert.strictEqual(concurrentLines.filter((result) => result.status === 'fulfilled').length, 1);
         assert.strictEqual(concurrentLines.filter((result) => result.status === 'rejected').length, 1);
         assert.strictEqual(multiLineStore.items.length, 1, 'a successful line must not remove another in-flight WTB line');

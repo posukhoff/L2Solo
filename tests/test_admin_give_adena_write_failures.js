@@ -2,11 +2,12 @@ const assert = require('assert');
 
 require('../src/Global');
 
-// The admin panel's "Send Adena" (NpcBypasses/AdminGiveAdena) writes the new
-// Adena amount for an online or offline character. A failed write must reach
-// the NPC dialog dispatcher's log, not reject unhandled (Node 22 ends the
-// server on an unhandled rejection). An existing stack whose update fails is
-// not paid again through a new stack.
+// The admin panel's "Send Adena" (NpcBypasses/AdminGiveAdena) pays an online
+// or offline character. An online existing stack takes a bag delta
+// (LiveBag -> CharacterWriteQueue, no write the caller waits on) and gets no
+// second stack; a new online stack and the offline writes are database
+// writes whose failure must reach the NPC dialog dispatcher's log, not reject
+// unhandled (Node 22 ends the server on an unhandled rejection).
 const NpcTalkResponse = invoke('GameServer/World/Generics/NpcTalkResponse');
 const Database = invoke('Database');
 const ServerResponse = invoke('GameServer/Network/Response');
@@ -77,13 +78,6 @@ async function main() {
     const fail = (message) => () => Promise.reject(new Error(message));
     const offlineRow = () => Promise.resolve([{ id: 4800002, name: 'Offline' }]);
     try {
-        const online = await scenario('admin-give-adena Online 50', { updateItemAmount: fail('injected online update failure') });
-        assert.deepStrictEqual(online.unhandled, [], 'a failed online Adena update must not reject unhandled');
-        assert.strictEqual(online.logged, 1, 'a failed online Adena update is logged by the dispatcher');
-        assert.strictEqual(online.setItemCalls, 0, 'a failed update of an existing stack must not insert a second stack');
-        assert.strictEqual(online.cash, 100, 'memory keeps the old Adena when its write fails, as before');
-        assert(!online.said.some((text) => text.startsWith('Received')), 'no grant message for a failed write');
-
         const newStack = await scenario('admin-give-adena Online 50', { setItem: fail('injected online new stack failure') }, { withAdena: false });
         assert.deepStrictEqual(newStack.unhandled, [], 'a failed new online stack must not reject unhandled');
         assert.strictEqual(newStack.setItemCalls, 1, 'without a stack the grant creates one, as before');
@@ -112,6 +106,7 @@ async function main() {
         const ok = await scenario('admin-give-adena Online 50', {});
         assert.deepStrictEqual(ok.unhandled, []);
         assert.strictEqual(ok.logged, 0);
+        assert.strictEqual(ok.setItemCalls, 0, 'an existing stack gets no second stack');
         assert.strictEqual(ok.cash, 150, 'a successful grant is unchanged');
         assert(ok.said.includes('Received 50 Adena from Admin.'));
 
@@ -122,14 +117,14 @@ async function main() {
         assert.deepStrictEqual(offlineOk.unhandled, []);
         assert.strictEqual(offlineOk.logged, 0);
         assert(offlineOk.said.includes('Successfully gave 50 Adena to offline character Offline.'));
-        // E256: the write is held while the connection selects another character.
-        // The Adena stays the first character's; no grant message reaches the other one.
-        const held = onlineFixture();
+        // E256: the new stack's write is held while the connection selects another
+        // character. The Adena is the first character's; no grant message reaches the other one.
+        const held = onlineFixture({ withAdena: false });
         const writes = [];
         let releaseWrite;
-        Database.updateItemAmount = (characterId, itemId, total) => new Promise((resolve) => {
-            writes.push([characterId, itemId, total]);
-            releaseWrite = resolve;
+        Database.setItem = (characterId, item) => new Promise((resolve) => {
+            writes.push([characterId, item.amount]);
+            releaseWrite = () => resolve({ insertId: 5002 });
         });
         utils.infoWarn = () => {};
         NpcTalkResponse(held.session, { link: 'admin-give-adena Online 50' });
@@ -137,8 +132,7 @@ async function main() {
         held.session.actor = { fetchId: () => 4800009, fetchName: () => 'Other', backpack: { fetchItems: () => [] } };
         releaseWrite();
         await ticks();
-        assert.deepStrictEqual(writes, [[4800001, 5001, 150]], 'the write is for the character that was granted');
-        assert.strictEqual(held.cash.value, 150, 'the granted character keeps the Adena in memory');
+        assert.deepStrictEqual(writes, [[4800001, 50]], 'the write is for the character that was granted');
         assert.deepStrictEqual(held.said, [], 'no grant message reaches the session of another character');
         console.log('admin give-adena write failure checks passed');
     } finally {

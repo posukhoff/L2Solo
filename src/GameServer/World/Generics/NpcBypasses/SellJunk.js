@@ -5,6 +5,7 @@ const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
 const BotWarehouse = invoke('GameServer/Bot/Economy/BotWarehouseService');
 const MarketListingPolicy = invoke('GameServer/Bot/Economy/MarketListingPolicy');
+const LiveBag = require('../../../Inventory/LiveBag');
 
 // The player's "sell unequipped junk": everything unequipped the NPC buys,
 // except shots and what a pending warehouse visit will store.
@@ -51,10 +52,9 @@ async function sellJunk(session) {
     let totalAdenaPayout = 0;
     let soldDetails = [];
 
-    // Every write is kept so that its failure reaches the handler's log below
-    // instead of rejecting unhandled; the writes still start in the same order.
+    // Item and payout changes are bag deltas (LiveBag.add); only a new Adena
+    // stack is a write the handler waits on, kept so its failure is logged.
     const writes = [];
-    const soldItemIds = new Set();
     sales.forEach(({ item, amount }) => {
         const price = item.fetchPrice();
         const sellPrice = NpcSellRules.npcBuyPrice(price);
@@ -63,17 +63,9 @@ async function sellJunk(session) {
         totalAdenaPayout += payout;
         soldDetails.push(`${amount}x ${item.fetchName()} (+${payout} Adena)`);
         
-        const left = item.fetchAmount() - amount;
-        if (left > 0) {
-            writes.push(Database.updateItemAmount(session.actor.fetchId(), item.fetchId(), left));
-            item.setAmount(left);
-            return;
-        }
-        writes.push(Database.deleteItem(session.actor.fetchId(), item.fetchId()));
-        soldItemIds.add(Number(item.fetchId()));
+        // Deltas: a DB trade for this body meanwhile keeps its change.
+        LiveBag.add(session.actor, item, -amount);
     });
-
-    backpack.items = backpack.items.filter((item) => !soldItemIds.has(Number(item.fetchId())));
 
     const announceSale = () => {
         session.dataSendToMe(ServerResponse.itemsList(backpack.fetchItems()));
@@ -85,11 +77,8 @@ async function sellJunk(session) {
     // An existing Adena stack is updated; only a missing one gets a new stack
     // (a failed update must not fall through to a second, new stack).
     writes.push(backpack.stackableExists(57).then((adenaItem) => {
-        const total = adenaItem.fetchAmount() + totalAdenaPayout;
-        return Database.updateItemAmount(session.actor.fetchId(), adenaItem.fetchId(), total).then(() => {
-            adenaItem.setAmount(total);
-            announceSale();
-        });
+        LiveBag.add(session.actor, adenaItem, totalAdenaPayout);
+        announceSale();
     }, () => {
         return Database.setItem(session.actor.fetchId(), {
             selfId: 57,

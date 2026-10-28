@@ -1,5 +1,6 @@
 const ServerResponse = invoke('GameServer/Network/Response');
 const Database       = invoke('Database');
+const LiveBag = require('../../../Inventory/LiveBag');
 
 module.exports = function(session, parts) {
     const targetName = parts[1];
@@ -28,15 +29,12 @@ module.exports = function(session, parts) {
                 session.dataSendToMe(ServerResponse.speak(actor, { kind: 0, text: `Successfully gave ${amount} Adena to ${target.fetchName()}.` }));
             }
         };
-        // The writes are returned so that a failure reaches the NPC dialog's
-        // log; only a missing stack gets a new one (a failed update of an
-        // existing stack must not fall through to a second stack).
+        // An existing stack takes a bag delta (LiveBag.add); only a missing one
+        // gets a new stack, whose write is returned so a failure reaches the
+        // NPC dialog's log.
         return backpack.stackableExists(57).then((item) => {
-            const total = item.fetchAmount() + amount;
-            return Database.updateItemAmount(target.fetchId(), item.fetchId(), total).then(() => {
-                backpack.updateAmount(item.fetchId(), total);
-                notify();
-            });
+            LiveBag.add(target, item, amount);
+            notify();
         }, () => {
             return Database.setItem(target.fetchId(), {
                 selfId: 57,

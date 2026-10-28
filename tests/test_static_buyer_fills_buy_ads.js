@@ -13,6 +13,7 @@ process.env.L2NODE_CONFIG_FILE = config;
 delete process.env.L2NODE_SHARED_CONFIG_FILE;
 require('../src/Global');
 const Database = invoke('Database');
+const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const Data = invoke('GameServer/DataCache');
 const Actor = invoke('GameServer/Actor/Actor');
 const World = invoke('GameServer/World/World');
@@ -83,6 +84,7 @@ function privateSale(player, amount, price) {
     return PrivateSell(player, packet);
 }
 async function worldAdena() {
+    await CharacterWriteQueue.flushAll();
     const [row] = await Database.execute([`SELECT
         COALESCE((SELECT SUM(amount) FROM items WHERE selfId = 57), 0)
         + COALESCE((SELECT SUM(escrowAdena) FROM afk_trade_shops), 0) AS total`]);

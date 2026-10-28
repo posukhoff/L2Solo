@@ -2,6 +2,7 @@ const ServerResponse = invoke('GameServer/Network/Response');
 const DataCache      = invoke('GameServer/DataCache');
 const Database       = invoke('Database');
 const Mutations = require('../../Inventory/InventoryMutationQueue');
+const LiveBag = require('../../Inventory/LiveBag');
 
 function purchaseItem(session, selfId, amount, metadata = {}) {
     const actor = session?.actor;
@@ -21,13 +22,9 @@ function awardItem(session, actor, selfId, amount, metadata) {
     };
 
     return backpack.stackableExists(selfId).then((item) => { // Stackable item exists
-        const itemId = item.fetchId();
-        const total  = item.fetchAmount() + amount;
-
-        return Database.updateItemAmount(actor.fetchId(), itemId, total).then(() => {
-            backpack.updateAmount(itemId, total);
-            refreshInventory();
-        });
+        // A delta: a DB trade for this body meanwhile keeps its change.
+        LiveBag.add(actor, item, amount);
+        refreshInventory();
     }, () => new Promise((resolve, reject) => { // New item
         DataCache.fetchItemFromSelfId(selfId, (item) => {
             Database.setItem(actor.fetchId(), {

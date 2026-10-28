@@ -425,7 +425,8 @@ const HotBotLoadTest = {
                     CharacterWriteQueue.vitals(actor.fetchId(), actor.fetchHp(), actor.fetchMaxHp(), actor.fetchMp(), actor.fetchMaxMp());
                     CharacterWriteQueue.experience(actor.fetchId(), actor.fetchLevel(), actor.fetchExp(), actor.fetchSp());
                     const item = itemByCharacter.get(actor.fetchId());
-                    if (item) CharacterWriteQueue.itemAmount(actor.fetchId(), item.id, item.amount);
+                    // The cost of one item write per tick (a delta of 0).
+                    if (item) CharacterWriteQueue.itemDelta(actor.fetchId(), item.id, 0);
                     persistenceDurations.push(performance.now() - persistenceStartedAt);
                     persistenceWrites += item ? 4 : 3;
                     totalTicks += 1;

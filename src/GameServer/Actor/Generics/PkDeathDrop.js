@@ -16,7 +16,7 @@ function drop(session, actor, rng = Math.random) {
         backpack.items = backpack.items.filter(candidate => candidate !== item);
         backpack.inventoryRevision = Number(backpack.inventoryRevision || 0) + 1;
         if (store?.items) store.items = store.items.filter(line => Number(line.objectId ?? line.id) !== item.fetchId());
-        if (session.persistenceMode !== 'ephemeral') Queue.itemAmount(actor.fetchId(), item.fetchId(), 0);
+        if (session.persistenceMode !== 'ephemeral') Queue.itemDelta(actor.fetchId(), item.fetchId(), -item.fetchAmount());
         World.spawnItem(session, item.fetchSelfId(), item.fetchAmount(), {
             locX: actor.fetchLocX(), locY: actor.fetchLocY(), locZ: actor.fetchLocZ(),
             enchant: item.fetchEnchantLevel(), ...(item.fetchPetData?.() ? { petData: item.fetchPetData() } : {})

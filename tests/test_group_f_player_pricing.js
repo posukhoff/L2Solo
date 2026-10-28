@@ -307,25 +307,6 @@ test('bot shots retain authored price after player refresh; other static purchas
     assert.strictEqual((await TradeService.buyFromStore(session.actor, ordinary, MATERIAL, 1)).totalAdena, 7);
 });
 
-test('a failing player write to a static buyer restores stock and money', async () => {
-    const session = await player('FRollback');
-    const store = staticStore(Configs['4manda']);
-    line(60, 3, 888);
-    const item = session.actor.backpack.fetchItemFromSelfId(MATERIAL);
-    TradeService.refreshStorePrices(store);
-    const count = store.items[0].count;
-    const money = wallet(session);
-    Database.updateItemAmount = async (characterId, objectId, value) => {
-        if (objectId === item.fetchId()) throw new Error('forced player write failure');
-        return originals.update(characterId, objectId, value);
-    };
-    try { await assert.rejects(TradeService.sellToStore(session.actor, store, MATERIAL, 1), /forced player write failure/); }
-    finally { Database.updateItemAmount = originals.update; }
-    assert.strictEqual(wallet(session), money);
-    assert.strictEqual(item.fetchAmount(), 20);
-    assert.strictEqual(store.items[0].count, count);
-});
-
 test('fixed supply is cached by configuration/rate without world session reads', () => {
     const configModule = require.cache[require.resolve('../src/GameServer/Bot/MerchantStoreConfigs')];
     const config = configModule.exports;

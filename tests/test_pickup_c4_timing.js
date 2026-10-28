@@ -8,8 +8,10 @@ const Purchase = invoke('GameServer/World/Generics/PurchaseItem');
 const Database = invoke('Database');
 const Data = invoke('GameServer/DataCache');
 const Response = invoke('GameServer/Network/Response');
+const Backpack = invoke('GameServer/Actor/Backpack');
 
 async function main() {
+    Data.init();
     const saved = [];
     const replace = (obj, key, value) => {
         const old = obj[key]; saved.push(() => obj[key] = old); obj[key] = value;
@@ -91,25 +93,22 @@ async function main() {
         // Burst awards must retain every stack, including an initially absent item.
         replace(Response, 'userInfo', () => Buffer.alloc(0));
         replace(Response, 'itemsList', () => Buffer.alloc(0));
-        replace(Data, 'fetchItemFromSelfId', (id, cb) => cb({ selfId: id, template: { name: 'Adena' }, etc: {} }));
         for (const initial of [0, 100]) {
-            let count = initial, inserts = 0;
+            let inserts = 0;
             const writes = [];
-            const owner = { fetchId: () => 2, backpack: {
-                stackableExists: () => count ? Promise.resolve({ fetchId: () => 99, fetchAmount: () => count }) : Promise.reject(),
-                updateAmount(_id, amount) { count = amount; },
-                insertItem(_id, _selfId, data) { count = data.amount; }, fetchItems: () => []
-            } };
+            const owner = { fetchId: () => 2, backpack: new Backpack({
+                items: initial ? [{ id: 99, selfId: 57, amount: initial }] : [], paperdoll: {}
+            }) };
             const recipient = { actor: owner, dataSendToMe() {} };
-            replace(Database, 'updateItemAmount', (_id, _item, total) => new Promise(resolve => writes.push(() => { resolve(); })));
             replace(Database, 'setItem', () => new Promise(resolve => writes.push(() => { inserts++; resolve({ insertId: 99 }); })));
             const pending = [Purchase(recipient, 57, 3), Purchase(recipient, 57, 7), Purchase(recipient, 57, 11)];
-            for (let i = 0; i < 3; i++) {
-                await flush(); assert.strictEqual(writes.length, 1, 'only one inventory write may be in flight');
-                writes.shift()();
-            }
+            await flush();
+            assert.strictEqual(writes.length, initial ? 0 : 1, 'only a new stack waits on a write');
+            if (writes.length) writes.shift()();
+            await flush();
+            assert.strictEqual(writes.length, 0, 'the stacked awards wait on no write');
             await Promise.all(pending);
-            assert.strictEqual(count, initial + 21);
+            assert.strictEqual(owner.backpack.fetchTotalAdena(), initial + 21);
             assert.strictEqual(inserts, initial ? 0 : 1);
         }
         console.log('C4 pickup timing, retargeting, walking and burst inventory awards passed');

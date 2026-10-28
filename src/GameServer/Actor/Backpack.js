@@ -72,6 +72,8 @@ class Backpack extends BackpackModel {
 
     insertItem(id, selfId, item = {}) { // TODO: Price still 0 with admin shop
         DataCache.fetchItemFromSelfId(selfId, (itemDetails) => {
+            // A row a merge already took in (LiveBag.applyRows) is not added twice.
+            if (this.items.some(entry => Number(entry.fetchId()) === Number(id))) return;
             if (item.slot) delete itemDetails.etc.slot; this.items.push(new Item(id, {
                 ...item, ...utils.crushOb(itemDetails)
             }));
@@ -99,7 +101,7 @@ class Backpack extends BackpackModel {
                 callback(item.fetchSelfId());
 
                 if (session?.persistenceMode !== 'ephemeral') {
-                    CharacterWriteQueue.itemAmount(session.actor.fetchId(), item.fetchId(), total);
+                    CharacterWriteQueue.itemDelta(session.actor.fetchId(), item.fetchId(), -amount);
                 }
             }
             else {
@@ -126,7 +128,7 @@ class Backpack extends BackpackModel {
                 callback(item.fetchSelfId());
 
                 if (session?.persistenceMode !== 'ephemeral') {
-                    CharacterWriteQueue.itemAmount(session.actor.fetchId(), item.fetchId(), 0);
+                    CharacterWriteQueue.itemDelta(session.actor.fetchId(), item.fetchId(), -(total + amount));
                 }
             }
         });

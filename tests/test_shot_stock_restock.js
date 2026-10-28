@@ -7,9 +7,16 @@ const Database = invoke('Database');
 const Shot = invoke('GameServer/Inventory/ShotStock');
 const Potions = invoke('GameServer/Bot/AI/HealingPotionStock');
 const Afk = invoke('GameServer/AfkTrade/AfkTradeService');
-const originals = { update: Database.updateItemAmount, fetch: Database.fetchItems,
-    offers: Afk.offers, buy: Afk.buyFromShop };
-const updates = [], purchases = [];
+const WriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
+const originals = { fetch: Database.fetchItems, offers: Afk.offers, buy: Afk.buyFromShop };
+const purchases = [];
+// A live bag's writes are deltas (LiveBag.add) queued for the database: the
+// deltas queued for character 100 since the last reset().
+let base = new Map();
+const reset = () => { base = new Map(WriteQueue.unread(100)); };
+const updates = () => [...WriteQueue.unread(100)]
+    .map(([itemId, total]) => ({ characterId: 100, itemId, delta: total - (base.get(itemId) || 0) }))
+    .filter(row => row.delta !== 0);
 let offers = [], current;
 const failed = new Set();
 const plan = Shot.planForKind('soulshot', 'none');
@@ -29,7 +36,7 @@ function actor(shots, adena, reserve = 0) {
 const buy = value => { current = value; return Shot.purchaseActorRestock(value,
     { plan, targetAmount: 3000, unitPrice: 7, potionUnitPrice: 0, town: 'Giran' }); };
 async function run() {
-    Database.updateItemAmount = async (characterId, itemId, amount) => { updates.push({ characterId, itemId, amount }); };
+    reset();
     Afk.offers = () => offers;
     Afk.buyFromShop = async (_id, store, selfId, amount, options) => {
         if (failed.has(store)) throw Error('afk_trade_stock_changed');
@@ -42,18 +49,18 @@ async function run() {
     const funded = actor(999, 20000, 2000), result = await buy(funded);
     assert.equal(result.delta, 2001); assert.equal(result.cost, 14007);
     assert.equal(funded.backpack.fetchItemFromSelfId(57).fetchAmount(), 5993);
-    assert.deepEqual(updates, [{ characterId: 100, itemId: 1, amount: 5993 }, { characterId: 100, itemId: 2, amount: 3000 }]);
-    updates.length = 0;
+    assert.deepEqual(updates(), [{ characterId: 100, itemId: 1, delta: -14007 }, { characterId: 100, itemId: 2, delta: 2001 }]);
+    reset();
     assert.equal((await buy(actor(3000, 20000, 2000))).changed, false);
-    assert.deepEqual(updates, []);
+    assert.deepEqual(updates(), []);
     const partial = actor(0, 7000, 700);
     assert.equal((await buy(partial)).delta, 900);
     assert.equal(partial.backpack.fetchItemFromSelfId(57).fetchAmount(), 700);
-    updates.length = 0;
+    reset();
     const empty = actor(100, 500, 500);
     assert.equal((await buy(empty)).changed, false);
     assert.equal(empty.backpack.fetchItemFromSelfId(1835).fetchAmount(), 100);
-    assert.deepEqual(updates, []);
+    assert.deepEqual(updates(), []);
 
     offers = [{ store: 'b', price: 6, count: 500 }, { store: 'a', price: 5, count: 1000 },
         { store: 'c', price: 7, count: 5000 }, { store: 'd', price: 6, count: 600 }];
@@ -106,14 +113,14 @@ async function run() {
     assert.equal(coldPlan.needed, false, 'an unequipped native bot has no funded D-shot wish');
     assert.equal(coldPlan.amount, 0); assert.deepEqual(coldPlan.shops, []);
 
-    updates.length = 0;
+    reset();
     Database.fetchItems = async () => [{ id: 2, selfId: 1835, amount: 3000, equipped: 0, slot: 0 }];
     const retained = await Shot.ensureCharacterStock(100, { plan, targetAmount: Shot.DEFAULT_TARGET_AMOUNT });
-    assert.equal(retained.changed, false); assert.equal(retained.amount, 3000); assert.deepEqual(updates, []);
+    assert.equal(retained.changed, false); assert.equal(retained.amount, 3000); assert.deepEqual(updates(), []);
     assert.equal(Database.isReady(), false);
     console.log('Paid shot restock: packet funding, ordered shops, NPC fallback, potion allowance, hot/cold parity and restart preservation passed');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
-    Database.updateItemAmount = originals.update; Database.fetchItems = originals.fetch;
+    Database.fetchItems = originals.fetch;
     Afk.offers = originals.offers; Afk.buyFromShop = originals.buy;
 });

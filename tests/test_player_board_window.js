@@ -9,8 +9,7 @@ const packets = [];
 let x = 0, selects = 0, crafts = 0, visits = 0, adena = 5000;
 const actor = { fetchId: () => 8, fetchHp: () => 100, fetchClanId: () => 0,
     fetchLocX: () => x, fetchLocY: () => 0, fetchLocZ: () => 0,
-    select: () => { selects++; }, backpack: { items: [], insertItem(id, selfId, row) { this.items.push(row); },
-        fetchItems() { return this.items; } } };
+    select: () => { selects++; }, backpack: new (invoke('GameServer/Actor/Backpack'))({ items: [], paperdoll: {} }) };
 const session = { actor, accountId: 'player_board_window', dataSendToMe: packet => packets.push(packet) };
 const merchant = { fetchId: () => 900045, fetchLocX: () => 1000, fetchLocY: () => 0, fetchLocZ: () => 0 };
 const names = new Map([[1459, 'Soulshot: C-grade'], [1835, 'Soulshot: No Grade'], [1864, 'Coal']]);
@@ -154,7 +153,7 @@ async function main() {
     assert.equal((await window.answer(session, { ...order, confirmed: true })).reason, 'record_changed'); assert.equal(crafts, 0); assert.equal(adena, 5000);
     craftPrice = 1200;
     await window.handle(session, ['board', 'craft', '55', '17', '1200', '2']);
-    assert.equal(crafts, 1); assert.equal(adena, 3800); assert.equal(actor.backpack.items[0].selfId, 1459);
+    assert.equal(crafts, 1); assert.equal(adena, 3800); assert.equal(actor.backpack.items[0].fetchSelfId(), 1459);
     craftSucceeded = false;
     assert.equal((await window.answer(session, { ...order, confirmed: true })).action, 'craft_failed');
     assert.equal(crafts, 2); assert.equal(adena, 2600);

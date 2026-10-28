@@ -55,12 +55,12 @@ async function rejects(promise, message) {
     CharacterWriteQueue.vitals(51, 10, 20, 30, 40);
     failures.push(true);
     await rejects(CharacterWriteQueue.flushCharacter(51));
-    CharacterWriteQueue.itemAmount(52, 700, 3);
+    CharacterWriteQueue.itemDelta(52, 700, 3);
     let dependentRan = false;
     await CharacterWriteQueue.flushCharacter(52).then(() => { dependentRan = true; });
     assert.strictEqual(dependentRan, true, 'work waiting on a later flush must start');
     assert.deepStrictEqual(writes.pop(), {
-        characterId: 52, state: { character: {}, items: { 700: { id: 700, amount: 3, delete: false } } }
+        characterId: 52, state: { character: {}, items: { 700: { id: 700, delta: 3 } } }
     });
     await CharacterWriteQueue.flushAll();
     assert.deepStrictEqual(writes.pop(), {
@@ -105,7 +105,7 @@ async function rejects(promise, message) {
     // before the direct write, so the timer does not overwrite the newer value.
     gate = new Promise((resolve) => { release = resolve; });
     failures.push(true);
-    CharacterWriteQueue.itemAmount(56, 7, 1000);
+    CharacterWriteQueue.itemDelta(56, 7, 1000);
     const timerBatch = CharacterWriteQueue.flushAll();
     const sell = CharacterWriteQueue.flushCharacter(56).then(() => { writes.push({ direct: 56, amount: 1500 }); });
     release();
@@ -113,7 +113,7 @@ async function rejects(promise, message) {
     await sell;
     await CharacterWriteQueue.flushAll(); // the next flush timer tick
     assert.deepStrictEqual(writes.slice(-2), [
-        { characterId: 56, state: { character: {}, items: { 7: { id: 7, amount: 1000, delete: false } } } },
+        { characterId: 56, state: { character: {}, items: { 7: { id: 7, delta: 1000 } } } },
         { direct: 56, amount: 1500 }
     ], 'the failed snapshot is retried before the dependent direct write, and not after it');
     assert.strictEqual(CharacterWriteQueue.pendingCount(), 0, 'no older snapshot is left to overwrite the direct write');
@@ -122,7 +122,7 @@ async function rejects(promise, message) {
     // dependent work is refused, as when the flush itself fails.
     gate = new Promise((resolve) => { release = resolve; });
     failures.push(true, true);
-    CharacterWriteQueue.itemAmount(57, 8, 10);
+    CharacterWriteQueue.itemDelta(57, 8, 10);
     const failingBatch = CharacterWriteQueue.flushAll();
     let refusedRan = false;
     const refused = CharacterWriteQueue.flushCharacter(57).then(() => { refusedRan = true; });

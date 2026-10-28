@@ -4,6 +4,7 @@ const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 let database;
 const persistenceDatabase = () => database ||= invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
+const LiveBag = require('./LiveBag');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const BotWeaponCompatibility = invoke('GameServer/Bot/AI/BotWeaponCompatibility');
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
@@ -358,10 +359,8 @@ function ensureActorStock(actor, options = {}) {
 
     if (current) {
         const delta = targetAmount - currentAmount;
-        return persistenceDatabase().updateItemAmount(actor.fetchId(), current.fetchId(), targetAmount).then(() => {
-            current.setAmount(targetAmount);
-            return { changed: true, plan, amount: targetAmount, delta };
-        });
+        LiveBag.add(actor, current, delta);
+        return Promise.resolve({ changed: true, plan, amount: targetAmount, delta });
     }
 
     return persistenceDatabase().setItem(actor.fetchId(), {
@@ -590,10 +589,8 @@ async function purchaseActorRestock(actor, options = {}) {
 
     // Non-bot character adapters retain their existing owner; the player's
     // purchase interface is outside the NPC bot basket contract.
-    const nextAdena = adena - npcCost;
+    const nextAdena = LiveBag.add(actor, adenaItem, -npcCost);
     const nextAmount = shotAmount(actor, plan) + npcAmount;
-    await persistenceDatabase().updateItemAmount(actor.fetchId(), adenaItem.fetchId(), nextAdena);
-    adenaItem.setAmount(nextAdena);
     const result = await ensureActorStock(actor, { targetAmount: nextAmount, plan });
     return { ok: true, ...result, delta: delta + npcAmount, cost: cost + npcCost, adena: nextAdena };
 }

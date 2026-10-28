@@ -7,6 +7,19 @@ const pending = new Map();
 const queued = new Map();
 let timer = null;
 let flushing = Promise.resolve();
+// A live bag's item writes are deltas (UPDATE amount = amount + ?), so a DB
+// trade committed meanwhile is never overwritten. Per character and item:
+// the deltas queued and those the database has applied (Database calls
+// applied() inside the write). Rows read from the database carry the applied
+// sums at their read (markRead), so unread() names the bag's changes missing
+// from those rows (LiveBag.applyRows).
+const ledger = new Map();
+// A settled entry (all its deltas applied) unchanged this long leaves the
+// ledger: a read mark lives for one database job's wait, never this long.
+const LEDGER_SETTLED_MS = 10 * 60 * 1000;
+let ledgerPrunedAt = 0;
+const appliedStates = new WeakSet();
+const readMarks = new WeakMap();
 
 function stateFor(characterId) {
     const id = Number(characterId || 0);
@@ -31,11 +44,77 @@ function merge(characterId, fields) {
     schedule();
 }
 
-function queueItemAmount(characterId, id, amount) {
+function ledgerEntry(characterId, id) {
+    if (!ledger.has(characterId)) ledger.set(characterId, new Map());
+    const items = ledger.get(characterId);
+    if (!items.has(id)) items.set(id, { queued: 0, applied: 0, at: 0 });
+    const entry = items.get(id);
+    entry.at = Date.now();
+    return entry;
+}
+
+// At most once a minute, at a flush.
+function pruneLedger(now = Date.now()) {
+    if (now - ledgerPrunedAt < 60 * 1000) return;
+    ledgerPrunedAt = now;
+    for (const [characterId, items] of ledger) {
+        for (const [id, entry] of items) {
+            if (entry.queued === entry.applied && now - entry.at > LEDGER_SETTLED_MS) items.delete(id);
+        }
+        if (!items.size) ledger.delete(characterId);
+    }
+}
+
+function queueItemDelta(characterId, id, delta) {
     const state = stateFor(characterId);
-    if (!state || !id) return;
-    state.items[id] = { id: Number(id), amount: Number(amount), delete: Number(amount) <= 0 };
+    if (!state || !id || !Number.isFinite(Number(delta))) return;
+    const itemId = Number(id);
+    state.items[itemId] = { id: itemId, delta: Number(state.items[itemId]?.delta || 0) + Number(delta) };
+    ledgerEntry(Number(characterId), itemId).queued += Number(delta);
     schedule();
+}
+
+// Database, inside the transaction that wrote the state's item deltas.
+function applied(characterId, state) {
+    const items = Object.values(state?.items || {});
+    if (!items.length || appliedStates.has(state)) return;
+    appliedStates.add(state);
+    for (const item of items) ledgerEntry(Number(characterId), Number(item.id)).applied += Number(item.delta || 0);
+}
+
+// Database, in the synchronous read of a character's item rows. newest: the
+// highest item id in the database at the read (a whole-bag read passes it).
+function markRead(characterId, rows, newest = null) {
+    if (!rows || typeof rows !== 'object') return rows;
+    const items = ledger.get(Number(characterId));
+    const applied = new Map(), now = Date.now();
+    // A marked entry stays (pruneLedger) while its mark may still be merged.
+    for (const [id, entry] of items || []) {
+        applied.set(id, entry.applied);
+        entry.at = now;
+    }
+    readMarks.set(rows, { applied, newest });
+    return rows;
+}
+
+// itemId -> the bag's deltas missing from `rows` (a read without a mark:
+// those not yet applied).
+function unread(characterId, rows) {
+    const items = ledger.get(Number(characterId));
+    const result = new Map();
+    if (!items) return result;
+    const mark = rows && typeof rows === 'object' ? readMarks.get(rows) : null;
+    for (const [id, entry] of items) {
+        const missing = entry.queued - (mark ? (mark.applied.get(id) || 0) : entry.applied);
+        if (missing) result.set(id, missing);
+    }
+    return result;
+}
+
+// The highest item id at the read of `rows`: an id above it was inserted
+// after the read; null when the read did not record it.
+function newestAtRead(rows) {
+    return (rows && typeof rows === 'object' ? readMarks.get(rows)?.newest : null) ?? null;
 }
 
 function take(characterId) {
@@ -56,6 +135,10 @@ function databaseReady() {
 function restore(entries) {
     let requeued = false;
     for (const [id, state] of entries) {
+        // Applied inside a transaction that then rolled back.
+        if (appliedStates.delete(state)) {
+            for (const item of Object.values(state.items || {})) ledgerEntry(Number(id), Number(item.id)).applied -= Number(item.delta || 0);
+        }
         const later = queued.get(id);
         const target = later && later !== state ? later : pending.get(id);
         if (!target) {
@@ -64,7 +147,11 @@ function restore(entries) {
             continue;
         }
         target.character = { ...state.character, ...target.character };
-        target.items = { ...state.items, ...target.items };
+        const items = { ...state.items };
+        for (const [itemId, item] of Object.entries(target.items)) {
+            items[itemId] = { id: item.id, delta: Number(items[itemId]?.delta || 0) + Number(item.delta || 0) };
+        }
+        target.items = items;
         if (target === pending.get(id)) requeued = true;
     }
     if (requeued) schedule();
@@ -107,6 +194,7 @@ function flushAll() {
         schedule();
         return flushing;
     }
+    pruneLedger();
     const entries = [...pending.keys()]
         .map((id) => [id, take(id)])
         .filter(([, state]) => state);
@@ -114,19 +202,32 @@ function flushAll() {
     return write(entries, () => Database.applyBufferedCharacterStates(entries));
 }
 
+function ledgerSize() {
+    let size = 0;
+    for (const items of ledger.values()) size += items.size;
+    return size;
+}
+
 function pendingCount() {
     return pending.size;
 }
 
 Database.registerCharacterWriteFlush?.(flushCharacter);
+Database.registerItemLedger?.({ applied, markRead });
 
 module.exports = {
-    itemAmount: queueItemAmount,
+    itemDelta: queueItemDelta,
+    applied,
+    markRead,
+    unread,
+    newestAtRead,
     experience(characterId, level, exp, sp) { merge(characterId, { level, exp, sp }); },
     location(characterId, coords = {}) { merge(characterId, { locX: coords.locX, locY: coords.locY, locZ: coords.locZ, head: coords.head ?? -1 }); },
     vitals(characterId, hp, maxHp, mp, maxMp) { merge(characterId, { hp, maxHp, mp, maxMp }); },
     karma(characterId, pvp, pk, karma) { merge(characterId, { pvp, pk, karma }); },
     flushCharacter,
     flushAll,
-    pendingCount
+    pendingCount,
+    pruneLedger,
+    ledgerSize
 };

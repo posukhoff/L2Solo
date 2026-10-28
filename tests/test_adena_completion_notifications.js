@@ -7,6 +7,7 @@ require('../src/Global');
 const SellJunk = invoke('GameServer/World/Generics/NpcBypasses/SellJunk');
 const AdminGiveAdena = invoke('GameServer/World/Generics/NpcBypasses/AdminGiveAdena');
 const Database = invoke('Database');
+const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const ServerResponse = invoke('GameServer/Network/Response');
 const World = invoke('GameServer/World/World');
 
@@ -71,7 +72,8 @@ async function main() {
             ];
             assert(payout > 0);
             assert.deepStrictEqual(f.log, expected, `SellJunk withAdena=${withAdena}`);
-            assert.strictEqual(calls.at(-1)[0], withAdena ? 'update' : 'set');
+            if (withAdena) assert.strictEqual(CharacterWriteQueue.unread(42).get(1002), payout);
+            else assert.strictEqual(calls.at(-1)[0], 'set');
         }
 
         // AdminGiveAdena online: target and admin on different connections, and the same connection.

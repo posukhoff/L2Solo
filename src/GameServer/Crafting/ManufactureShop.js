@@ -4,7 +4,7 @@ const ServerResponse = invoke('GameServer/Network/Response');
 const Database = invoke('Database');
 const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const DataCache = invoke('GameServer/DataCache');
-const Item = invoke('GameServer/Item/Item');
+const LiveBag = require('../Inventory/LiveBag');
 const { materialPlan } = invoke('GameServer/Crafting/CraftMaterials');
 const CraftWorkshopService = invoke('GameServer/Bot/Economy/CraftWorkshopService');
 const World = invoke('GameServer/World/World');
@@ -42,35 +42,14 @@ function productTemplate(recipe) {
     return ItemTemplateIndex.find(DataCache.items, recipe.productId) || null;
 }
 
-function applyMaterials(actor, consumed, sources) {
-    sources.forEach((source) => {
-        const item = consumed.find((entry) => Number(entry.item.fetchId()) === Number(source.id))?.item;
-        if (!item) return;
-        if (source.amount === 0) actor.backpack.items = actor.backpack.fetchItems().filter((entry) => entry !== item);
-        else item.setAmount(source.amount);
-    });
-}
-
-function applyItem(actor, id, amount, data) {
-    const item = actor.backpack.fetchItems().find((entry) => Number(entry.fetchId()) === Number(id));
-    if (item) item.setAmount(amount);
-    else actor.backpack.items.push(new Item(id, data));
-}
-
 // A crafter's or customer's body takes the Adena row a craft committed
 // (id, amount): the one bag write of a workshop fee (also a hot bot's
 // workshop, CraftWorkshopService.craft).
 function applyAdena(actor, result) {
-    if (!result) return;
-    const item = actor.backpack.fetchItems().find((entry) => Number(entry.fetchSelfId()) === 57);
-    if (item) {
-        item.setAmount(result.amount);
-        return;
-    }
-    const template = ItemTemplateIndex.find(DataCache.items, 57);
-    if (template) actor.backpack.items.push(new Item(result.id, {
-        ...utils.crushOb(template), amount: result.amount, equipped: false, slot: 0
-    }));
+    LiveBag.applyRow(actor, result, result, () => {
+        const template = ItemTemplateIndex.find(DataCache.items, 57);
+        return template ? { ...utils.crushOb(template), equipped: false, slot: 0 } : null;
+    });
 }
 
 function distanceAllows(customer, crafter) {
@@ -221,9 +200,9 @@ async function craft(session, crafterId, recipeId, random = Math.random, order =
         });
         committed = { ...result, committed: true, success: result.success ?? success };
         crafter.setMp?.(result.crafterMp ?? crafterMp);
-        applyMaterials(customer, consumed, result.sources);
-        if (committed.success) applyItem(customer, result.product.id, result.product.amount, {
-            ...utils.crushOb(template), amount: product.amount, equipped: false, slot: product.slot
+        LiveBag.applyAmounts(customer, result.sources);
+        if (committed.success) LiveBag.applyRow(customer, result.product, result.product, {
+            ...utils.crushOb(template), equipped: false, slot: product.slot
         });
         applyAdena(customer, result.customerAdena);
         applyAdena(crafter, result.crafterAdena);

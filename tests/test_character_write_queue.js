@@ -23,9 +23,9 @@ Database.isReady = () => true;
 (async () => {
     CharacterWriteQueue.experience(42, 20, 1234, 567);
     CharacterWriteQueue.location(42, { locX: 10, locY: 20, locZ: 30, head: 40 });
-    CharacterWriteQueue.itemAmount(42, 100, 7);
-    CharacterWriteQueue.itemAmount(42, 100, 3);
-    CharacterWriteQueue.itemAmount(42, 101, 0);
+    CharacterWriteQueue.itemDelta(42, 100, -2);
+    CharacterWriteQueue.itemDelta(42, 100, -4);
+    CharacterWriteQueue.itemDelta(42, 101, -1);
 
     await CharacterWriteQueue.flushCharacter(42);
 
@@ -35,8 +35,8 @@ Database.isReady = () => true;
         state: {
             character: { level: 20, exp: 1234, sp: 567, locX: 10, locY: 20, locZ: 30, head: 40 },
             items: {
-                100: { id: 100, amount: 3, delete: false },
-                101: { id: 101, amount: 0, delete: true }
+                100: { id: 100, delta: -6 },
+                101: { id: 101, delta: -1 }
             }
         }
     });

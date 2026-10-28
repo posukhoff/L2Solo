@@ -113,6 +113,13 @@ let historyPath;
 let boardDealCountsReady = false;
 let boardCounterCountsReady = false;
 let flushPendingCharacterWrites = null;
+// CharacterWriteQueue's item ledger: applied(characterId, state) inside a
+// buffered write, markRead(characterId, rows, newest) at a read of a bag's rows.
+let itemLedger = null;
+// Live bag deltas the database could not take whole (logged): overdraw, the
+// row held less than the bag spent (a DB trade spent it meanwhile; the row
+// goes to 0, as the bag holds it); missing, the row is gone (the delta drops).
+const bagDeltaFaults = { overdraw: 0, missing: 0 };
 const MARKET_TRADE_RETENTION_MS = HistoryStore.MARKET_TRADE_RETENTION_MS;
 const cooperative = {
     depth: 0,
@@ -2755,13 +2762,21 @@ function applyBufferedCharacterStateUnsafe(characterId, state = {}) {
         const sql = `UPDATE characters SET ${fields.map(([key]) => `${escapeIdentifier(key)} = ?`).join(', ')} WHERE id = ?`;
         write(sql, [...fields.map(([, value]) => value), characterId]);
     }
+    // Deltas: a trade committed since the bag changed keeps its own change.
+    // A delta never fails the write (CHECK amount >= 0 would roll back and
+    // retry the whole batch forever): a fault is counted and logged.
     Object.values(state.items || {}).forEach((item) => {
-        if (item.delete || Number(item.amount) <= 0) {
-            write('DELETE FROM items WHERE id = ? AND characterId = ?', [item.id, characterId]);
-        } else {
-            write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [item.amount, item.id, characterId]);
-        }
+        const delta = Number(item.delta || 0);
+        const params = [item.id, characterId];
+        const row = one('UPDATE items SET amount = amount + ? WHERE id = ? AND characterId = ? AND amount + ? >= 0 RETURNING amount', [delta, ...params, delta]);
+        if (row && Number(row.amount) > 0) return;
+        if (!row && delta) {
+            const fault = Number(write('DELETE FROM items WHERE id = ? AND characterId = ?', params).affectedRows || 0) ? 'overdraw' : 'missing';
+            bagDeltaFaults[fault] += 1;
+            utils.infoWarn('DB', 'live bag delta %s: character %s item %s delta %s (total %s)', fault, characterId, item.id, delta, bagDeltaFaults[fault]);
+        } else if (row) write('DELETE FROM items WHERE id = ? AND characterId = ?', params);
     });
+    itemLedger?.applied(characterId, state);
     return { characterId, fields: fields.length, items: Object.keys(state.items || {}).length };
 }
 
@@ -3482,8 +3497,20 @@ function afkTradeShopUnsafe(shopId) {
     };
 }
 
+// Item rows (an array or one row) a job read or wrote for a character,
+// marked for its live bag (CharacterWriteQueue.markRead).
+function markedRows(characterId, rows) {
+    return itemLedger ? itemLedger.markRead(characterId, rows) : rows;
+}
+
 function afkTradeInventoryUnsafe(characterId) {
-    return all('SELECT * FROM items WHERE characterId = ? AND amount > 0 ORDER BY id', [characterId]);
+    const rows = all('SELECT * FROM items WHERE characterId = ? AND amount > 0 ORDER BY id', [characterId]);
+    // The highest id the table ever gave (AUTOINCREMENT: MAX(id) drops when
+    // the newest row goes): a live bag's item not in rows at or below it was
+    // removed by the database (LiveBag.applyRows). MAX: the live table holds
+    // more than one 'items' row.
+    return itemLedger ? itemLedger.markRead(characterId, rows,
+        one("SELECT MAX(seq) AS seq FROM sqlite_sequence WHERE name = 'items'")?.seq ?? null) : rows;
 }
 
 function afkTradeAdenaRowsUnsafe(characterId) {
@@ -6575,6 +6602,10 @@ const Database = {
         flushPendingCharacterWrites = typeof flush === 'function' ? flush : null;
     },
 
+    registerItemLedger(ledger) {
+        itemLedger = ledger && typeof ledger.markRead === 'function' ? ledger : null;
+    },
+
     admitEconomyCommand(characterId, kind, { authority, original = null, acknowledged = null, reconcilePending = false } = {}) {
         const beforeWrite = mutationAdmission.getStore();
         // Admission metadata is saved BEFORE the concrete physical step is
@@ -7068,7 +7099,7 @@ const Database = {
     // caller: a static tag of the call site, counted for developer diagnostics only.
     fetchItems(characterId, caller = 'untagged') {
         DiagnosticConfig.developerDiagnostics && Diagnostics.count('item_list', 'call', caller);
-        return withCharacterFlush(characterId, () => select('items', ['*'], 'characterId = ? AND amount > 0', [characterId], 'item:list'));
+        return withCharacterFlush(characterId, () => enqueue(() => afkTradeInventoryUnsafe(characterId), { operation: 'item:list', read: true }));
     },
     updateItemAmount(characterId, id, amount) {
         return withCharacterFlush(characterId, () => {
@@ -7628,8 +7659,10 @@ const Database = {
             return { id, removedItemId: list.id };
         }, 'pet:wolf-quest-reward'));
     },
-    setCharacterQuest(characterId, questId, state, variables) { return run(UPSERT_CHARACTER_QUEST, [characterId, questId, state, JSON.stringify(variables || {})], 'quest:upsert'); },
-    deleteCharacterQuest(characterId, questId) { return remove('character_quests', 'characterId = ? AND questId = ?', [characterId, questId], 'quest:delete'); },
+    // After the character's buffered bag deltas: a quest step never lands
+    // without the item it gave or took (QuestService, LiveBag.add).
+    setCharacterQuest(characterId, questId, state, variables) { return withCharacterFlush(characterId, () => run(UPSERT_CHARACTER_QUEST, [characterId, questId, state, JSON.stringify(variables || {})], 'quest:upsert')); },
+    deleteCharacterQuest(characterId, questId) { return withCharacterFlush(characterId, () => remove('character_quests', 'characterId = ? AND questId = ?', [characterId, questId], 'quest:delete')); },
     fetchCharacterRecipes(characterId) { return run('SELECT recipeId, type FROM character_recipes WHERE characterId = ?', [characterId], 'recipe:list'); },
     setCharacterRecipe(characterId, recipeId, type) { return run(UPSERT_RECIPE, [characterId, recipeId, type], 'recipe:upsert'); },
 
@@ -7939,7 +7972,9 @@ const Database = {
             const result = { success, units: Number(product?.amount || 0), nativeId: Number(recipeId || 0), mp };
             const coldLifeRow = step ? completeEconomyStepUnsafe(characterId, step, result, changedIds, mp)
                 : syncEconomySnapshotUnsafe(characterId, coldState, changedIds, mp);
-            return { ...result, committed: true, sources, product: product ? { id: productId, amount: productAmount } : null,
+            // Read-marked rows: the live body adds what it changed since (LiveBag.applyRow).
+            return { ...result, committed: true, sources: markedRows(characterId, sources),
+                product: product ? markedRows(characterId, { id: productId, amount: productAmount }) : null,
                 ...(coldLifeRow ? { coldLifeRow, economyCommit: jsonObject(coldLifeRow.statsJson).economyCommit } : {}) };
         }, 'craft:self'));
     },
@@ -8734,7 +8769,11 @@ const Database = {
                     [...materials.map(row => Number(row.selfId)), ...(product ? [Number(product.selfId)] : [])]);
                 receipt.economyCommit = jsonObject(clanStates.customerState.statsJson).economyCommit;
             }
-            return { ...clanStates, ...receipt, crafterMp, sources, product: product ? { id: productId, amount: productAmount } : null, customerAdena: fee > 0 ? { id: Number(customerAdena.id), amount: Number(customerAdena.amount) - fee } : null, crafterAdena: fee > 0 ? { id: Number(crafterAdena.id), amount: nextCrafterAdena } : null };
+            // Read-marked rows: a live body adds what it changed since (LiveBag.applyRow).
+            return { ...clanStates, ...receipt, crafterMp, sources: markedRows(customerId, sources),
+                product: product ? markedRows(customerId, { id: productId, amount: productAmount }) : null,
+                customerAdena: fee > 0 ? markedRows(customerId, { id: Number(customerAdena.id), amount: Number(customerAdena.amount) - fee }) : null,
+                crafterAdena: fee > 0 ? markedRows(crafterId, { id: Number(crafterAdena.id), amount: nextCrafterAdena }) : null };
         }, 'craft:customer'));
     },
 

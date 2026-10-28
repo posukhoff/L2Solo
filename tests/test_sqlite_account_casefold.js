@@ -27,7 +27,7 @@ Database.init();
     assert.strictEqual(character.username, 'PlayerOne', 'new character must reference the canonical account name');
 
     const inserted = await Database.setItem(character.id, { selfId: 57, name: 'Adena', amount: 10 });
-    CharacterWriteQueue.itemAmount(character.id, inserted.insertId, 9);
+    CharacterWriteQueue.itemDelta(character.id, inserted.insertId, -1);
     await Database.updateItemAmount(character.id, inserted.insertId, 4);
     const item = (await Database.fetchItems(character.id))[0];
     assert.strictEqual(item.amount, 4, 'a direct inventory update must run after pending buffered writes');

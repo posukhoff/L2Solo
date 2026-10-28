@@ -4,6 +4,7 @@ const BoardRules = require('./BoardRules');
 const { BoardIndex, offerFields, rowOf, recordOf } = require('./BoardIndex');
 const TableChannel = require('../Bot/Population/ColdTableChannel');
 const EconomyCommit = require('../Bot/Economy/EconomyCommit');
+const LiveBag = require('../Inventory/LiveBag');
 const Actor = invoke('GameServer/Actor/Actor');
 const Database = invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
@@ -537,16 +538,10 @@ function refreshVisibility(session, actor = session?.actor) {
     return visible.size;
 }
 
-function refreshActorInventory(actor, rows) {
-    if (!actor?.backpack || !Array.isArray(rows)) return;
-    actor.backpack.items = [];
-    rows.forEach((row) => actor.backpack.insertItem(Number(row.id), Number(row.selfId), { ...row }));
-}
-
 function syncOnlineInventory(characterId, rows) {
     const session = onlineSession(characterId);
     if (!session?.actor) return null;
-    refreshActorInventory(session.actor, rows);
+    LiveBag.applyRows(session.actor, rows);
     if (!isBotSession(session)) {
         session.dataSendToMe?.(ServerResponse.itemsList(session.actor.backpack.fetchItems()));
         session.dataSendToMe?.(ServerResponse.userInfo(session.actor));

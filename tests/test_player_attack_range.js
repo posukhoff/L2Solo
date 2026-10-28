@@ -191,20 +191,20 @@ try {
         assert(blocked.packets.some(packet => packet[0] === 0x25), 'rejected shot sends ActionFailed');
     }
     const WriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
-    const originalItemAmount = WriteQueue.itemAmount;
+    const originalItemDelta = WriteQueue.itemDelta;
     const writes = [];
     try {
-        WriteQueue.itemAmount = (...args) => writes.push(args);
+        WriteQueue.itemDelta = (...args) => writes.push(args);
         const persistent = fixture('Weapon.Bow', 600);
         persistent.session.persistenceMode = undefined;
         persistent.attack.meleeHit(persistent.session, persistent.target);
-        assert.deepStrictEqual(writes, [[2000001, 2, 1]], 'remaining arrows are queued for persistence');
+        assert.deepStrictEqual(writes, [[2000001, 2, -1]], 'the used arrow is queued for persistence');
         const last = fixture('Weapon.Bow', 600);
         last.session.persistenceMode = undefined;
         last.actor.backpack.items[1].setAmount(1);
         last.attack.meleeHit(last.session, last.target);
-        assert.deepStrictEqual(writes.at(-1), [2000001, 2, 0], 'last arrow deletion is queued for persistence');
-    } finally { WriteQueue.itemAmount = originalItemAmount; }
+        assert.deepStrictEqual(writes.at(-1), [2000001, 2, -1], 'last arrow deletion is queued for persistence');
+    } finally { WriteQueue.itemDelta = originalItemDelta; }
 
     for (const [rank, arrow] of [['none', 17], ['d', 1341], ['c', 1342], ['b', 1343], ['a', 1344], ['s', 1345]]) {
         const graded = fixture('Weapon.Bow', 600);

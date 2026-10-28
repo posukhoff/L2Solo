@@ -8,6 +8,7 @@ const ConsoleText = invoke("GameServer/ConsoleText");
 const World = invoke("GameServer/World/World");
 const ClassTransfer = invoke("GameServer/ClassTransfer");
 const QuestRegistry = require("./QuestRegistry");
+const LiveBag = require("../Inventory/LiveBag");
 
 const quests = QuestRegistry.activeQuests();
 const byId = new Map(quests.map((quest) => [quest.id, quest]));
@@ -215,13 +216,7 @@ async function giveItem(session, selfId, amount) {
   const backpack = session.actor.backpack;
   const existing = backpack.fetchItemFromSelfId(selfId);
   if (existing?.fetchStackable?.()) {
-    const total = existing.fetchAmount() + amount;
-    await Database.updateItemAmount(
-      session.actor.fetchId(),
-      existing.fetchId(),
-      total,
-    );
-    existing.setAmount(total);
+    LiveBag.add(session.actor, existing, amount);
   } else {
     // Cache lookup is synchronous and does not call back for unknown IDs.
     // Reject instead of leaving the entire session's quest queue pending.
@@ -262,20 +257,7 @@ async function takeItem(session, selfId, amount = 1) {
   const requested = Number(amount) === -1 ? item.fetchAmount() : Number(amount);
   if (!Number.isFinite(requested) || requested <= 0 || item.fetchAmount() < requested)
     return false;
-  const remaining = item.fetchAmount() - requested;
-  if (remaining > 0) {
-    await Database.updateItemAmount(
-      session.actor.fetchId(),
-      item.fetchId(),
-      remaining,
-    );
-    item.setAmount(remaining);
-  } else {
-    await Database.deleteItem(session.actor.fetchId(), item.fetchId());
-    session.actor.backpack.items = session.actor.backpack.items.filter(
-      (entry) => entry !== item,
-    );
-  }
+  LiveBag.add(session.actor, item, -requested);
   session.dataSendToMe(
     ServerResponse.itemsList(session.actor.backpack.fetchItems()),
   );

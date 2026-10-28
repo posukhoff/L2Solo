@@ -5,10 +5,13 @@ const Response = invoke('GameServer/Network/Response');
 const pickupExec = invoke('GameServer/Actor/Generics/PickupExec');
 const purchaseItem = invoke('GameServer/World/Generics/PurchaseItem');
 const Database = invoke('Database');
+const DataCache = invoke('GameServer/DataCache');
+const Backpack = invoke('GameServer/Actor/Backpack');
 
 async function main() {
+    DataCache.init();
     const original = { fetchItem: World.fetchItem, pickupItem: World.pickupItem,
-        packet: Response.pickupItem, timer: global.setTimeout, update: Database.updateItemAmount };
+        packet: Response.pickupItem, timer: global.setTimeout, setItem: Database.setItem };
     try {
         for (const change of ['disconnect', 'replace', 'death', 'offline', 'none']) {
             let arrive;
@@ -41,27 +44,28 @@ async function main() {
         assert.deepStrictEqual(rejectedPackets, [0x25], 'rejected approach must also release client Action');
         assert.strictEqual(rejectedComplete, 1);
         assert.strictEqual(purchaseItem({ actor: null }, 57, 1), false);
+        // A new stack (setTimeout is stubbed to throw above, so not the stack
+        // path, whose delta schedules the queue's flush timer).
         let finishWrite;
-        let updated = 0, sent = 0;
-        Database.updateItemAmount = () => new Promise(resolve => { finishWrite = resolve; });
-        const actor = { fetchId: () => 1, fetchLocX: () => 0, fetchLocY: () => 0, fetchLocZ: () => 0, fetchHead: () => 0, backpack: {
-            stackableExists: () => Promise.resolve({ fetchId: () => 2, fetchAmount: () => 10 }),
-            updateAmount(_id, amount) { updated = amount; }
-        } };
+        let sent = 0;
+        Database.setItem = () => new Promise(resolve => { finishWrite = () => resolve({ insertId: 2 }); });
+        const actor = { fetchId: () => 1, fetchLocX: () => 0, fetchLocY: () => 0, fetchLocZ: () => 0, fetchHead: () => 0,
+            backpack: new Backpack({ items: [], paperdoll: {} }) };
         const session = { actor, dataSendToMe() { sent++; } };
         purchaseItem(session, 57, 5);
-        await Promise.resolve();
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        assert.strictEqual(typeof finishWrite, 'function');
         session.actor = null;
         finishWrite();
-        await Promise.resolve();
-        assert.strictEqual(updated, 15, 'an accepted write must finish for the original actor');
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        assert.strictEqual(actor.backpack.fetchTotalAdena(), 5, 'an accepted write must finish for the original actor');
         assert.strictEqual(sent, 0, 'a completed write must not render a disconnected actor');
     } finally {
         World.fetchItem = original.fetchItem;
         World.pickupItem = original.pickupItem;
         Response.pickupItem = original.packet;
         global.setTimeout = original.timer;
-        Database.updateItemAmount = original.update;
+        Database.setItem = original.setItem;
     }
     console.log('Pickup session lifecycle checks passed');
 }

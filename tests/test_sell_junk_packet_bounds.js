@@ -3,7 +3,7 @@ const assert = require('assert');
 require('../src/Global');
 
 const SellJunk = invoke('GameServer/World/Generics/NpcBypasses/SellJunk');
-const Database = invoke('Database');
+const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const ServerResponse = invoke('GameServer/Network/Response');
 
 function item(id, selfId, amount, price, name) {
@@ -43,13 +43,8 @@ const session = {
     dataSendToMe(packet) { packets.push(packet); }
 };
 
-const originalDelete = Database.deleteItem;
-const originalUpdate = Database.updateItemAmount;
 const originalUserInfo = ServerResponse.userInfo;
 const originalSpeak = ServerResponse.speak;
-const deleted = [];
-Database.deleteItem = async (characterId, objectId) => { deleted.push(objectId); };
-Database.updateItemAmount = () => Promise.resolve();
 ServerResponse.userInfo = () => Buffer.from([0x04]);
 ServerResponse.speak = () => Buffer.from([0x0a]);
 
@@ -58,7 +53,8 @@ SellJunk(session, ['sell-junk']);
 setImmediate(() => {
     try {
         assert.strictEqual(adenaAmount.value, 111614128261, 'sell-junk should preserve the server-side payout');
-        assert.deepStrictEqual(deleted, [1001], 'bulk sale must not delete quest items from persistence');
+        assert.deepStrictEqual([...CharacterWriteQueue.unread(42)].sort((a, b) => a[0] - b[0]), [[1001, -1], [1002, 111614128261]],
+            'bulk sale must not delete quest items from persistence');
         assert(backpack.items.includes(questItem) && backpack.items.includes(questClassItem), 'bulk sale must retain all quest items');
         assert.strictEqual(packets[0][0], 0x1b, 'sell-junk should refresh ItemsList after the sale');
         assert.strictEqual(packets[0].readUInt32LE(15), 0xffffffff,
@@ -68,8 +64,6 @@ setImmediate(() => {
         console.error(error);
         process.exitCode = 1;
     } finally {
-        Database.deleteItem = originalDelete;
-        Database.updateItemAmount = originalUpdate;
         ServerResponse.userInfo = originalUserInfo;
         ServerResponse.speak = originalSpeak;
     }

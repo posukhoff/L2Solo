@@ -3,6 +3,7 @@
 const Commit = require('./EconomyCommit');
 const Diagnostics = require('./EconomyDiagnostics');
 const SavedStats = require('../SavedStats');
+const LiveBag = require('../../Inventory/LiveBag');
 const MAX_LINES = 12;
 
 // No result history: bounded observations use the admission and returned receipt.
@@ -131,10 +132,9 @@ async function purchaseForActor(actor, options = {}) {
             if (Diagnostics.active()) diagnostic(result.state, result.economyCommand, 'npc_delivery', 'actor_changed', resultFields(result, requestSeller));
             return result;
         }
-        actor.backpack.items = [];
-        for (const row of rows) actor.backpack.insertItem(Number(row.id), Number(row.selfId), { ...row });
-        session.coldLifeState = { ...result.state, adena: Number(rows.filter(row => Number(row.selfId) === 57)
-            .reduce((sum, row) => sum + Number(row.amount), 0)), inventory: Life.inventorySummaryFromItems(rows) };
+        const held = LiveBag.applyRows(actor, rows);
+        session.coldLifeState = { ...result.state, adena: Number(held.filter(row => Number(row.selfId) === 57)
+            .reduce((sum, row) => sum + Number(row.amount), 0)), inventory: Life.inventorySummaryFromItems(held) };
         result.state = session.coldLifeState;
         invoke('GameServer/World/PartyMembershipPublication')([session], invoke);
         if (Diagnostics.active()) diagnostic(result.state, result.economyCommand, 'npc_delivery', 'actor_accepted', resultFields(result, requestSeller));

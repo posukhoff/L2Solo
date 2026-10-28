@@ -9,6 +9,7 @@ const EconomyContext = invoke('GameServer/Bot/Economy/EconomyContext');
 const TownTransitPolicy = invoke('GameServer/Bot/AI/TownTransitPolicy');
 const PrivateStore = invoke('GameServer/PrivateStore');
 const refreshPartyMemberships = require('./World/PartyMembershipPublication');
+const LiveBag = require('./Inventory/LiveBag');
 
 const INTERACTION_DISTANCE = 300;
 
@@ -17,16 +18,9 @@ function inRange(buyer, seller) {
         buyer.fetchLocY?.() - seller.fetchLocY?.(), buyer.fetchLocZ?.() - seller.fetchLocZ?.()) <= INTERACTION_DISTANCE;
 }
 
-function syncInventory(session, actor, rows, spent = 0, funding = {}) {
+function syncInventory(session, actor, read, spent = 0, funding = {}) {
     if (session?.actor !== actor) return;
-    const byId = new Map(rows.map(row => [Number(row.id), row]));
-    for (const item of [...actor.backpack.fetchItems()]) {
-        const row = byId.get(Number(item.fetchId()));
-        if (!row) actor.backpack.items = actor.backpack.items.filter(other => other !== item);
-        else { item.setAmount(row.amount); byId.delete(Number(row.id)); }
-    }
-    for (const row of byId.values()) actor.backpack.insertItem(row.id, row.selfId, row);
-    actor.backpack.inventoryRevision = Number(actor.backpack.inventoryRevision || 0) + 1;
+    const rows = LiveBag.applyRows(actor, read);
     if (session.coldLifeState) {
         session.coldLifeState = { ...session.coldLifeState,
             adena: rows.filter(row => Number(row.selfId) === 57).reduce((sum, row) => sum + Number(row.amount), 0),

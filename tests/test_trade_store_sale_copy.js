@@ -3,6 +3,7 @@ require('../src/Global');
 
 const DataCache = invoke('GameServer/DataCache');
 const Database = invoke('Database');
+const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const TradeService = invoke('GameServer/Bot/TradeService');
 const Item = invoke('GameServer/Item/Item');
 
@@ -43,16 +44,20 @@ function seller(items, id = 9001) {
 
 async function main() {
     const originalItems = DataCache.items;
-    const originals = { updateItemAmount: Database.updateItemAmount, deleteItem: Database.deleteItem };
-    const deleted = [];
+    const originals = { setItem: Database.setItem };
+    // A sold copy leaves the live bag as a queued delta (LiveBag -> CharacterWriteQueue).
+    const taken = (characterId, id) => CharacterWriteQueue.unread(characterId).get(id);
+    // The seller has no Adena stack: its payout is a new row, whose write fails.
+    const failSellerPayout = (insertId) => async (characterId, row) => {
+        if (Number(characterId) === 9001 && Number(row?.selfId) === 57) throw new Error('seller_adena_write_failed');
+        return { insertId: insertId() };
+    };
     try {
         DataCache.items = [
             { selfId: RING, template: { name: 'Elven Ring' }, etc: { stackable: false } },
             { selfId: 57, template: { name: 'Adena' }, etc: { stackable: true } },
             { selfId: ARROW, template: { name: 'Wooden Arrow' }, etc: { stackable: true } }
         ];
-        Database.updateItemAmount = async () => {};
-        Database.deleteItem = async (characterId, objectId) => { deleted.push(Number(objectId)); };
 
         // Two worn rings (older rows first, as the backpack loads them) and a spare.
         const hotBot = seller([
@@ -66,13 +71,13 @@ async function main() {
         assert.deepStrictEqual(preview.lines.map((line) => line.objectId), [103], 'the preview offers only the spare');
         const sale = await TradeService.sellInventoryToStore(hotBot, store);
         assert.strictEqual(sale.itemsSold, 1);
-        assert.deepStrictEqual(deleted, [103], 'the sold row is the spare, not a worn ring');
+        assert.strictEqual(taken(9001, 103), -1, 'the sold row is the spare, not a worn ring');
+        assert(!CharacterWriteQueue.unread(9001).has(101) && !CharacterWriteQueue.unread(9001).has(102), 'no worn ring is written');
         assert.deepStrictEqual(hotBot.backpack.items.filter((entry) => entry.fetchSelfId() === RING)
             .map((entry) => [entry.fetchId(), entry.fetchEquipped()]), [[101, true], [102, true]]);
         assert.strictEqual(hotBot.backpack.fetchItemFromSelfId(57).fetchAmount(), 5000 + 116501);
 
         // The player's sale names the exact copy it offers.
-        deleted.length = 0;
         const player = seller([
             item(201, RING, 1, false, 'Elven Ring'),
             item(202, RING, 1, false, 'Elven Ring'),
@@ -80,7 +85,8 @@ async function main() {
         ]);
         await TradeService.sellToStore(player, { storeType: 3, items: [{ selfId: RING, price: 100, count: 1 }] },
             RING, 1, { objectId: 202 });
-        assert.deepStrictEqual(deleted, [202], 'the chosen copy is sold, not the first one');
+        assert.strictEqual(taken(9001, 202), -1, 'the chosen copy is sold');
+        assert(!CharacterWriteQueue.unread(9001).has(201), 'not the first one');
 
         // Only worn copies left: nothing to sell.
         const wornOnly = seller([item(301, RING, 1, true, 'Elven Ring'), item(302, 57, 10, false, 'Adena')]);
@@ -90,18 +96,15 @@ async function main() {
 
         // A budget-backed sale that fails after the buyer got the item takes
         // back that copy, not the ring the buyer wears.
-        deleted.length = 0;
         const buyer = seller([item(401, RING, 1, true, 'Elven Ring'), item(403, RING, 1, false, 'Elven Ring'),
             item(402, 57, 5000, false, 'Adena')], 9002);
-        const failing = seller([item(501, RING, 1, false, 'Elven Ring'), item(502, 57, 10, false, 'Adena')]);
+        const failing = seller([item(501, RING, 1, false, 'Elven Ring')]);
         const setItem = Database.setItem;
-        Database.setItem = async () => ({ insertId: 499 + deleted.length });
-        Database.updateItemAmount = async (characterId, objectId) => {
-            if (Number(characterId) === 9001 && Number(objectId) === 502) throw new Error('seller_adena_write_failed');
-        };
+        let nextInsertId = 450;
+        Database.setItem = failSellerPayout(() => nextInsertId++);
         // The given amount went onto a stack the buyer wears (arrows): it comes back from that stack.
         const archer = seller([item(601, ARROW, 10, true, 'Wooden Arrow'), item(602, 57, 5000, false, 'Adena')], 9002);
-        const fletcher = seller([item(701, ARROW, 5, false, 'Wooden Arrow'), item(502, 57, 10, false, 'Adena')]);
+        const fletcher = seller([item(701, ARROW, 5, false, 'Wooden Arrow')]);
         try {
             await assert.rejects(TradeService.sellToStore(failing,
                 { storeType: 3, budgetBacked: true, items: [{ selfId: RING, price: 100, count: 1 }] }, RING, 1,
@@ -126,9 +129,8 @@ async function main() {
         // row (no duplicate), never the ring the buyer wears.
         const blind = seller([item(801, RING, 1, true, 'Elven Ring'), item(802, 57, 5000, false, 'Adena')], 9002);
         blind.backpack.insertItem = () => {};
-        const failingAgain = seller([item(901, RING, 1, false, 'Elven Ring'), item(502, 57, 10, false, 'Adena')]);
-        Database.setItem = async () => ({ insertId: 999 });
-        deleted.length = 0;
+        const failingAgain = seller([item(901, RING, 1, false, 'Elven Ring')]);
+        Database.setItem = failSellerPayout(() => 999);
         try {
             await assert.rejects(TradeService.sellToStore(failingAgain,
                 { storeType: 3, budgetBacked: true, items: [{ selfId: RING, price: 100, count: 1 }] }, RING, 1,
@@ -136,7 +138,7 @@ async function main() {
         } finally {
             Database.setItem = setItem;
         }
-        assert(deleted.includes(999), 'the row given to the buyer is deleted');
+        assert.strictEqual(taken(9002, 999), -1, 'the row given to the buyer is taken back');
         assert.deepStrictEqual(blind.backpack.items.filter((entry) => entry.fetchSelfId() === RING)
             .map((entry) => [entry.fetchId(), entry.fetchEquipped()]), [[801, true]], 'the worn ring is never taken back in its place');
         assert.strictEqual(blind.backpack.fetchItemFromSelfId(57).fetchAmount(), 5000, 'the buyer is refunded');

@@ -64,14 +64,14 @@ function ownerEquipment(session, slot, display = true) {
     return packet.readInt32LE(equipmentOffset(packet) + (slot + (display ? 16 : 0)) * 4);
 }
 
-const originals = [Database.updateItemEquipState, WriteQueue.itemAmount, World.spawnItem];
+const originals = [Database.updateItemEquipState, WriteQueue.itemDelta, World.spawnItem];
 const writes = [];
 const equipmentWrites = [];
 Database.updateItemEquipState = (...args) => {
     equipmentWrites.push(args);
     return Promise.resolve();
 };
-WriteQueue.itemAmount = (...args) => writes.push(args);
+WriteQueue.itemDelta = (...args) => writes.push(args);
 try {
     const session = createSession();
     const armor = addItem(session, 6373, true);
@@ -99,7 +99,7 @@ try {
     const status = session.packets.findLast(packet => packet[0] === 0xf3);
     assert.equal(status.readInt32LE(17), 0, 'the client immediately receives a cleared grade-penalty flag');
     assert.equal(session.actor.model.load, starter.fetchMass(), 'removed equipment no longer contributes to load');
-    assert(writes.some(row => row[0] === 9101 && row[1] === boots.fetchId() && row[2] === 0),
+    assert(writes.some(row => row[0] === 9101 && row[1] === boots.fetchId() && row[2] === -1),
         'equipment destruction still queues durable item deletion');
 
     Request.trashItem(session, request(0x59, starter.fetchId(), 1));
@@ -164,7 +164,7 @@ try {
                 'a surviving but disarmed high-grade duplicate imposes no penalty');
             assert(equipmentWrites.some(row => row[1] === survivor.fetchId() && row[2] === false && row[3] === 0),
                 'the surviving duplicate is durably unequipped');
-            assert(writes.some(row => row[1] === removed.fetchId() && row[2] === 0));
+            assert(writes.some(row => row[1] === removed.fetchId() && row[2] < 0));
             assert(!writes.some(row => row[1] === survivor.fetchId()), 'the surviving item is not deleted');
         }
     }
@@ -178,5 +178,5 @@ try {
 
     console.log('Equipment removal sync: native trash, grade penalty, empty-hand duals, unequip and ground drop passed');
 } finally {
-    [Database.updateItemEquipState, WriteQueue.itemAmount, World.spawnItem] = originals;
+    [Database.updateItemEquipState, WriteQueue.itemDelta, World.spawnItem] = originals;
 }

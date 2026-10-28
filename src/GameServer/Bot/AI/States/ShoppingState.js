@@ -1,4 +1,5 @@
 const refreshPartyMemberships = require('../../../World/PartyMembershipPublication');
+const LiveBag = require('../../../Inventory/LiveBag');
 const { raiseDecision, held, acceptedOf, rejectSession } = require('../DecisionEvents');
 const Speech = invoke('GameServer/Bot/AI/BotSpeechTemplates');
 const SpeckMath      = invoke('GameServer/SpeckMath');
@@ -398,15 +399,8 @@ async function craftAtWorkshop(session, bot, target) {
         session.workshopOriginal = undefined;
         if (session.actor !== bot || bot.fetchIsOnline?.() === false) return;
         const items = await invoke('Database').fetchItems(bot.fetchId(), 'shopping_workshop');
-        const byId = new Map(items.map(row => [Number(row.id), row]));
+        LiveBag.applyRows(bot, items);
         const backpack = bot.backpack;
-        for (const item of [...backpack.fetchItems()]) {
-            const row = byId.get(Number(item.fetchId()));
-            if (!row) backpack.items = backpack.fetchItems().filter(other => other !== item);
-            else { item.setAmount(row.amount); byId.delete(Number(row.id)); }
-        }
-        for (const row of byId.values()) backpack.insertItem(row.id, row.selfId, row);
-        backpack.inventoryRevision = Number(backpack.inventoryRevision || 0) + 1;
         session.coldLifeState = LifeState.cachedState(bot.fetchId()) || result.customerState;
         session.dataSendToMe?.(ServerResponse.itemsList(backpack.fetchItems()));
         EconomyContext.forget(bot.fetchId());
