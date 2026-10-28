@@ -1226,12 +1226,12 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     const rootAmount = node => resale(node)
         && node.paths?.some(path => path.kind === 'craft' && path.trial === true && path.repeatable === false)
         && Number.isSafeInteger(node.object.amount) && node.object.amount > 0 ? node.object.amount : 1;
-    // keptHours (a learned recipe's unspent price or later crafts' margin,
-    // WishProviders producer roots, CraftProfitPolicy.keptRecipeValue) is
+    // keptHours (a learned recipe's shared worth past this lot,
+    // WishProviders producer roots, CraftProfitPolicy.learning) is
     // capital the bot holds whatever this lot's craft rolls give: credited
     // outside the plan's success chance (a producer root's plan draws once
     // per native command, p^commands, WN solve; the later crafts' success
-    // is already in their margin, RecipeProductionIndex.margin). In value()
+    // is already in their margin, DemandPrice's recipe worth). In value()
     // its later sales (keptPerHour over the horizon) start only when the
     // root is ready, as a benefit per hour does (readyBenefit).
     // readyHours: when every root is ready (its funding delay, then its

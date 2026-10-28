@@ -37,10 +37,8 @@ function spotList(state, { price } = {}) {
 }
 
 // list: the search's spotList, when the caller reads it too.
-// board, read: the market the spot rows' recipe scrolls are priced at and the
-// build's input hook (SpotEconomics.create).
 function select(state, { spots = [], timestamp = Date.now(), price, required = false, mode,
-    maxChecks = 32, list = null, board, read } = {}) {
+    maxChecks = 32, list = null } = {}) {
     if (!spots.length || state.party?.partyId || ['party', 'duo'].includes(mode)
         || !invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state)) return null;
     const minGap = -15;
@@ -51,7 +49,7 @@ function select(state, { spots = [], timestamp = Date.now(), price, required = f
     const Match = invoke('GameServer/Bot/AI/BotTargetMatchup');
     const Index = invoke('GameServer/Bot/AI/SpotIndex');
     const Risk = invoke('GameServer/Bot/Population/SpotRiskPolicy');
-    const evaluate = SpotEconomics.create(state, { timestamp, price, moneyWeight: 1, board, read });
+    const evaluate = SpotEconomics.create(state, { timestamp, price, moneyWeight: 1 });
     const excluded = Risk.excludedSpotIdsForStates([state], timestamp);
     const options = { timestamp, mode: 'solo', matchupProfiles: Match.stateProfiles(state, { timestamp }) };
     const survives = Match.soloSpotUpperBound(options.matchupProfiles);

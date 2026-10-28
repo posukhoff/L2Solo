@@ -49,22 +49,18 @@ async function contract(name, work) {
         // FX-E1/E3: a caller's requested4000 is not the bot's own worth.
         // Independently combine the public observations and its personal error;
         // never read the bid/pricing/context quote to manufacture the oracle.
-        const Belief = invoke('GameServer/Bot/Economy/PriceBelief');
         const Learning = invoke('GameServer/Bot/Economy/PriceLearning');
         const Tendency = invoke('GameServer/Bot/AI/TendencyRoll');
         const persona = invoke('GameServer/Bot/AI/BotPersona').of(state);
         const key = Counters.counterOf(1864);
         const first = Counters.firstPrice(1864, now);
         const index = Counters.counter(key, now).index;
-        const demand = Belief.demandValue(1864, {});
-        assert.strictEqual(demand, null, 'unprepared owner craft willingness is unknown');
         // The original board is empty and all60 authored deals are3000.
         assert.strictEqual(board.list(1864, SELL).length, 0);
         assert.strictEqual(board.list(1864, BUY).length, 0);
         assert.deepStrictEqual(Counters.itemDeals(1864).prices, Array(21).fill(3000));
         const observations = [[Math.log(3000), 10]];
         if (first > 0 && index !== null) observations.push([Math.log(first) + index, .5]);
-        if (demand > 0) observations.push([Math.log(demand), .3]);
         if (first > 0) observations.push([Math.log(first), .3]);
         const weight = observations.reduce((sum, row) => sum + row[1], 0);
         const centre = observations.reduce((sum, row) => sum + row[0] * row[1], 0) / weight;

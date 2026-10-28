@@ -503,6 +503,11 @@ function buildProjection(state, ctx, deps) {
     const price = id => ctx.price(id);
     // A context without market evidence (a test's own price table) knows no sold price.
     const soldPriceOf = id => ctx.soldPrice ? ctx.soldPrice(id) : 0;
+    // The floor of a piece's exit to this bot: NPC buy-back or its crystals
+    // at their traded price (BotCrystallization.exitFloor: a bot that roots
+    // the crystal sale; soldPrice: untraded crystals are no exit, as the
+    // crystal root counts crystals no exit takes at 0).
+    const exitFloor = (id, enchant = 0) => need('./BotCrystallization').exitFloor(id, soldPriceOf, state, enchant);
     const horizon = decisionHorizon(state, ctx);
     const progression = Progression.assess(state);
     // Every reader but the gear root choice keeps the author's acquisition kit.
@@ -960,6 +965,11 @@ function buildProjection(state, ctx, deps) {
         // still buys or farms each input by its cheapest path (WishNetwork).
         const netRate = (recipe, gross, inputPrice, scrollShare, delayHours) =>
             MarketDemand.perHour(gross * Number(recipe.successRate ?? 100) / 100 - inputPrice - scrollShare, delayHours);
+        // The same with a scroll to find bought at learningPrice: the lot
+        // carries what the recipe's shared worth does not keep for later
+        // crafts (Profit.learning; worth 0 for a ready recipe or no unmet craft).
+        const learnedRate = (recipe, gross, inputPrice, learningPrice, worth, delayHours) => netRate(recipe, gross, inputPrice,
+            Profit.learning(learningPrice, worth, gross * Number(recipe.successRate ?? 100) / 100 - inputPrice).carried, delayHours);
         // Admission: per candidate at most 5 head bids of the indexed sorted
         // list (no copy) and the forecast's price belief, the exits the
         // priced stage prices (NPC buyback is the residual value of the units
@@ -972,8 +982,8 @@ function buildProjection(state, ctx, deps) {
         // down (scrollSource). The rest rank by net
         // rate: the head bid within the half-hour floor (a material only) or
         // the believed price over the hours the forecast takes to sell the
-        // lot (Price.listingSale, the scroll shared over its sales as
-        // the priced stage shares it); the known book only breaks ties, so
+        // lot (Price.listingSale, a scroll to find carried as the priced
+        // stage carries it, Profit.learning); the known book only breaks ties, so
         // known and unknown recipes compete by the same outcome.
         const admitted = [];
         // The bot's price of an item a shared fact holds (PriceBelief.reader
@@ -994,12 +1004,12 @@ function buildProjection(state, ctx, deps) {
             // Gear sells to its forecast only (MarketDemand.forecastOnly): a
             // bid for it is no signal and no exit.
             const forecastOnly = MarketDemand.forecastOnly(id);
-            // A head bid at or under the NPC buy-back is no buyer: the
-            // seller's NPC exit beats it (PriceDecision.aboveBuyback, the
-            // price floor). Units beyond the line still count at the buy-back
+            // A head bid at or under the exit floor is no buyer: the
+            // seller's NPC sale or crystals beat it (PriceDecision.aboveBuyback
+            // at exitFloor). Units beyond the line still count at the floor
             // in the priced stage (exitGross residual, Price.bidSale).
             const head = forecastOnly ? 0 : exitCeiling(ctx.board.list(id, 3), ownSales, 0);
-            const bid = Price.aboveBuyback(head, ctx.buyback(id)) ? head : 0;
+            const bid = head > 0 && Price.aboveBuyback(head, exitFloor(id)) ? head : 0;
             const listed = demand ? positive(price(id)) : 0;
             // At the bot's own price every forecast buyer is willing and no
             // ask is known yet: the lot's sale over the forecast's time
@@ -1025,17 +1035,19 @@ function buildProjection(state, ctx, deps) {
             // net(learningPrice) falls as the price rises, so net(0) bounds a
             // scroll row's net before its scroll is priced (below).
             const known = knownRecipes.has(Number(recipe.recipeId)), ready = readiness.ready;
-            const netAt = learningPrice => Math.max(bid > 0 ? netRate(recipe, count * bid, inputPrice, learningPrice) : -Infinity,
-                listedGross > 0 ? netRate(recipe, listedGross, inputPrice,
-                    Profit.learningShare(learningPrice, count, demand.applicableUnits / demand.delayHours, horizon),
-                    listing.delayHours) : -Infinity);
+            // The recipe's shared worth to this learner (null: the table
+            // does not price its product, no cap and nothing kept).
+            const worthCap = ready ? null : need('./DemandPrice').recipeWorth(recipe.recipeItemId, state.characterId);
+            const worth = worthCap || 0;
+            const netAt = learningPrice => Math.max(bid > 0 ? learnedRate(recipe, count * bid, inputPrice, learningPrice, worth) : -Infinity,
+                listedGross > 0 ? learnedRate(recipe, listedGross, inputPrice, learningPrice, worth, listing.delayHours) : -Infinity);
             const net = netAt(0);
             if (!(net > 0)) continue;
             // An investment recipe and a product with demand root first
             // (primaryEarning); progression funding stays shots-only.
             const earningPreference = Number(recipe.recipeItemId) === investmentId ? 2 : demand ? 1 : 0;
             admitted.push({ recipe, count, id, ownSales, oldUnits, shot, demand: Boolean(demand), forecastOnly, earningPreference,
-                known, ready, inputPrice, margin: ProductionIndex.margin(recipe, listed, inputPrice), learningPrice: 0, net,
+                known, ready, inputPrice, learningPrice: 0, worth, worthCap, net,
                 netAt: ready ? null : netAt });
         }
         // E303: the priced producers cap of 12 counts the rows that can run
@@ -1075,7 +1087,7 @@ function buildProjection(state, ctx, deps) {
             ItemDisposition.productionSetup(state, timestamp)];
         // One admitted row's exits priced: its best entry by rate, null when
         // no exit sells within the horizon.
-        const priceRow = ({ recipe, count, id, ownSales, oldUnits, shot, demand, forecastOnly, earningPreference, ready, inputPrice: batchInputs, margin, learningPrice }) => {
+        const priceRow = ({ recipe, count, id, ownSales, oldUnits, shot, demand, forecastOnly, earningPreference, ready, inputPrice: batchInputs, learningPrice, worth }) => {
         let best = null;
         const asks = ctx.board.list(id, SELL);
         // A census product's bids are no exit (admission's forecastOnly).
@@ -1087,42 +1099,24 @@ function buildProjection(state, ctx, deps) {
             const offer = heldLot && source.forQuantity ? source.forQuantity(heldLot) : source;
             if (!offer) continue;
             const lots = heldLot || exitLots(offer, count, oldUnits, need('./WealthCraftPolicy').MAX_BATCHES, asks);
-            let sold = lots && exitGross(offer, count, lots, oldUnits, ownSales, asks, ctx.buyback(id));
+            let sold = lots && exitGross(offer, count, lots, oldUnits, ownSales, asks, exitFloor(id));
             if (!sold) continue;
             // A free lot is the whole lots its sale sells within the horizon
             // (a listing's units past it count nothing: no inputs for them),
             // its gross and delay read again for that lot.
             const batches = heldLot || Math.floor(sold.units / count);
             if (!batches) continue;
-            if (batches < lots) sold = exitGross(offer, count, batches, oldUnits, ownSales, asks, ctx.buyback(id));
+            if (batches < lots) sold = exitGross(offer, count, batches, oldUnits, ownSales, asks, exitFloor(id));
             if (!sold) continue;
             const { gross, trip, delayHours } = sold;
             const inputPrice = batchInputs * batches;
-            // A learned recipe is kept: a listing exit's sale carries its share
-            // of the price over the units the forecast sells (its rate, already
-            // without the units rivals' plans in flight commit) in the horizon.
-            // A bid exit is one sale and carries the whole price.
-            const learningShare = offer.type === 'listing'
-                ? Profit.learningShare(learningPrice, count * batches, offer.applicableUnits / offer.delayHours, horizon) : learningPrice;
-            if (learningShare < learningPrice && Diagnostics.active()) Diagnostics.count('provider', 'learning', 'shared');
-            const rate = netRate(recipe, gross, inputPrice, learningShare, delayHours);
-            // The scroll to find is worth to this crafter the crafts the
-            // forecast's units (without rivals' committed units,
-            // MarketDemand.forecast) sell past this lot in the horizon at the
-            // recipe's margin at its own prices (the inputs it pays, the
-            // product's listed price), less the trip (Profit.keptRecipeValue);
-            // the root's kept value carries it into the scroll's bid.
-            // Not a copy of RecipeProductionIndex.scrollValue: both take one
-            // craft's margin from ProductionIndex.margin, but scrollValue
-            // answers what the scroll is worth to any buyer (one craft of its
-            // best recipe at the market's shared prices, the scroll's derived
-            // demand in PriceBelief), this what this recipe keeps for this
-            // crafter (its own prices under its own error, times the crafts
-            // its demand sells in its horizon).
-            const keptLearning = !ready && offer.type === 'listing' ? Profit.keptRecipeValue({ price: learningPrice,
-                share: learningShare, margin, perCraft: count, units: count * batches,
-                ratePerHour: offer.applicableUnits / offer.delayHours, horizonHours: horizon,
-                tripCost: trip.fees + trip.hours * ctx.hourAdena }) : learningPrice - learningShare;
+            // A scroll to find: the learned recipe keeps its shared worth
+            // past this lot (Profit.learning; the root's kept value,
+            // WishNetwork value()); the lot carries what it leaves unpaid.
+            const { kept: keptLearning, carried } = Profit.learning(learningPrice, worth,
+                gross * Number(recipe.successRate ?? 100) / 100 - inputPrice);
+            if (carried < learningPrice && Diagnostics.active()) Diagnostics.count('provider', 'learning', 'kept');
+            const rate = netRate(recipe, gross, inputPrice, carried, delayHours);
             if (!best || rate > best.rate)
                 best = { recipe, ready, gross, rate, shot, earningPreference, inputPrice: inputPrice + learningPrice,
                     keptLearning, town: offer.town, trip, batches, exit: offer };
@@ -1148,8 +1142,13 @@ function buildProjection(state, ctx, deps) {
         // A row with its scroll at the bot's price, null when it nets
         // nothing; its priced entry, once per recipe (the committed loop
         // reads the walk's).
-        const scrollRow = bound => {
-            const learningPrice = positive(price(bound.recipe.recipeItemId));
+        // A scroll only a bid brings (bidOnly) costs at most the recipe's
+        // worth, its bid's cap (BidPurchaseAlternative.cap); worth 0 refuses
+        // the bid, so no row.
+        const scrollRow = (bound, bidOnly) => {
+            if (bidOnly && bound.worthCap === 0) return null;
+            const believed = positive(price(bound.recipe.recipeItemId));
+            const learningPrice = bidOnly && bound.worthCap !== null ? Math.min(believed, bound.worthCap) : believed;
             const row = { ...bound, learningPrice, net: bound.netAt(learningPrice) };
             return row.net > 0 ? row : null;
         };
@@ -1171,7 +1170,7 @@ function buildProjection(state, ctx, deps) {
             if (!scrollSource(bound.recipe, SCROLL_SOURCE)) continue;
             const kind = purchaseFor(Number(bound.recipe.recipeItemId)) ? 0 : 1;
             if (done(kind, bound) || kind && Number(best[0]?.recipe.productId) === bound.id) continue;
-            const row = scrollRow(bound);
+            const row = scrollRow(bound, kind === 1);
             if (!row) continue;
             places[kind]--;
             const entry = scrollEntry(row);
@@ -1187,7 +1186,8 @@ function buildProjection(state, ctx, deps) {
             for (const bound of toFind) {
                 if (bound.id !== id) continue;
                 if (kept && !(bound.net > kept.rate)) break;
-                const row = scrollSource(bound.recipe, SCROLL_SOURCE) && scrollRow(bound);
+                const row = scrollSource(bound.recipe, SCROLL_SOURCE)
+                    && scrollRow(bound, !purchaseFor(Number(bound.recipe.recipeItemId)));
                 const entry = row && scrollEntry(row);
                 if (entry && (!kept || entry.rate > kept.rate)) kept = entry;
             }
@@ -1269,10 +1269,10 @@ function buildProjection(state, ctx, deps) {
             // a recipe seller whose meeting has no surviving need certificate.
             progressionPriority: row.shot && acquisitionKit.required ? 3 : 0,
             progressionFunding: acquisitionKit.required,
-            // The cash price pays the whole recipe; the part later sales
-            // carry (for a scroll to find, at least the later crafts' margin,
-            // Profit.keptRecipeValue) stays as the kept recipe's value, earned
-            // over the horizon (keptPerHour) once the root is ready (WishNetwork value()).
+            // The cash price pays the whole recipe; the part its shared worth
+            // keeps for later crafts (Profit.learning) stays as the kept
+            // recipe's value, earned over the horizon (keptPerHour) once the
+            // root is ready (WishNetwork value()).
             valueHours: row.gross / ctx.hourAdena, keptHours: row.keptLearning / ctx.hourAdena,
             keptPerHour: horizon > 0 && Number.isFinite(horizon) ? row.keptLearning / horizon / ctx.hourAdena : 0, price: row.inputPrice,
             // The one exit decision of a craft for sale: the cold step sizes
@@ -1470,6 +1470,8 @@ function buildProjection(state, ctx, deps) {
         }
         return Sources.hasNonRaidSource(id) || present(id) || !!purchaseFor(id);
     };
+    // The worn piece's exit, once per slot.
+    const wornExits = new Map();
     for (const [slot, items] of gearCandidates(planningState, ctx, wornFor, acquisitionAllowed, luxury)) for (const item of items) {
         if (!Planner.considerable(item, planningState)) continue;
         const current = replacementWorn(wornFor, slot);
@@ -1478,18 +1480,24 @@ function buildProjection(state, ctx, deps) {
         const gain = early ? (futureGain ||= gearGainReader(preparation, timestamp,
             { preparation: true }, ctx))(item, slot) : gainFor(item, slot);
         const benefitHorizon = early ? futureHorizon : horizon;
-        const currentPrice = current ? price(current.selfId) : 0;
+        // The worn piece counts at its exit, not its full price (decision
+        // 10-28): its traded price (PriceBelief soldPrice) or its floor
+        // (buy-back, crystals), the better.
+        if (current && !wornExits.has(slot)) wornExits.set(slot,
+            Math.max(exitFloor(current.selfId, Number(current.enchant) || 0), soldPriceOf(current.selfId)));
+        const currentExit = current ? wornExits.get(slot) : 0;
         const future = resale(price(item.selfId), { trend: MarketCounters.moveOf(MarketCounters.counterOf(item.selfId)),
             hours: benefitHorizon, understanding: ctx.persona.understanding, assertiveness: trait(ctx.persona, 'assertiveness'),
             caution: trait(ctx.persona, 'caution'), nextBuyerUse: price(item.selfId) * Math.min(1, gain),
-            npcFloor: ctx.buyback(item.selfId) });
+            npcFloor: exitFloor(item.selfId) });
         // One valuation for every gear step, at any grade: its benefit (the
         // hunt hours it adds per hour, HuntCycle) over the stage's hours (the
-        // level weights the horizon only) plus resale. A step into a kit gap
+        // level weights the horizon only) plus its resale over the worn
+        // piece's exit. A step into a kit gap
         // carries the gap's priority to stand among the kit roots; its value
         // decides whether it is worth taking.
         const value = gain * benefitHorizon
-            + (ctx.hunt.perHour > 0 ? (future - currentPrice) / ctx.hunt.perHour : 0);
+            + (ctx.hunt.perHour > 0 ? (future - currentExit) / ctx.hunt.perHour : 0);
         if (!(value > 0) || !(price(item.selfId) > 0)) continue;
         candidates.push({ item, slot, value, gain, notBeforeHours: early ? horizon : 0,
             horizonHours: early ? horizon + futureHorizon : horizon,

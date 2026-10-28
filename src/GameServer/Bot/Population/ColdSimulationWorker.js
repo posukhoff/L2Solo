@@ -139,6 +139,7 @@ const { MarketBuyerWaiters } = require('../Economy/MarketBuyerWaiters');
 const SpotIndex = require('../AI/SpotIndex');
 const SpotService = require('../AI/SpotService');
 const SpotValueTable = require('../AI/SpotValueTable');
+const DemandPrice = invoke('GameServer/Bot/Economy/DemandPrice');
 const ColdCombatProfile = require('./ColdCombatProfile');
 const EconomyContext = invoke('GameServer/Bot/Economy/EconomyContext');
 const MarketDemand = invoke('GameServer/Bot/Economy/MarketDemand');
@@ -209,6 +210,15 @@ let boardReplacing = false, marketReplacing = false, censusMoved = false;
 // its id; the planner runs it in slot -id.
 const routeRequests = new Map();
 const publicWorkshopIndex = new (require('../Economy/PublicWorkshopIndex').PublicWorkshopIndex)();
+// recipeId -> the mirrored workshops offering it, whatever their capacity now
+// (the index drops a row below one batch): the worker's demand price holders
+// (main: CraftWorkshopService's records).
+const workshopHolders = new Map();
+const countHolder = (recipeId, step) => {
+    const count = (workshopHolders.get(recipeId) || 0) + step;
+    if (count > 0) workshopHolders.set(recipeId, count); else workshopHolders.delete(recipeId);
+};
+DemandPrice.useHolders(recipeId => workshopHolders.get(Number(recipeId)) || 0);
 const publicWorkshopKeys = new Map(), workshopRevisions = new Map(), workshopScopeDigests = new Map();
 const digestToken = value => value ? `${value.xor}:${value.sum}:${value.count}` : '0:0:0';
 // A known empty workshop in the one shape the context key and the decision
@@ -219,11 +229,11 @@ function changeWorkshop(key, row) {
     const previous = publicWorkshopKeys.get(key);
     const recipeId = Number(row?.[1] || previous?.recipeId);
     if (!(recipeId > 0)) return;
-    if (previous) { publicWorkshopKeys.delete(key); publicWorkshopIndex.remove(key); }
+    if (previous) { publicWorkshopKeys.delete(key); publicWorkshopIndex.remove(key); countHolder(previous.recipeId, -1); }
     if (row) {
         const value = { characterId: row[0], recipeId, price: row[2], entryPrice: row[2], townName: row[3],
             loc: { locX: row[4], locY: row[5], locZ: row[6] }, capacityBatches: row[7] };
-        publicWorkshopKeys.set(key, value); publicWorkshopIndex.put(key, value);
+        publicWorkshopKeys.set(key, value); publicWorkshopIndex.put(key, value); countHolder(recipeId, 1);
     }
     const productId = Number(C4RecipeItems.resolveByRecipeId(recipeId)?.productId || 0);
     if (productId) {
@@ -708,7 +718,7 @@ function nearEvents(id, previous, entry, applied) {
 const goalRevision = characterId => tables.ready('goals')
     ? (tables.rows('goals').get(Number(characterId))?.revision ?? 0) : undefined;
 tables.watch('board', {
-    reset: () => { escrowByRecord.clear(); escrowByOwner.clear(); publicWorkshopIndex.clear(); publicWorkshopKeys.clear(); workshopRevisions.clear(); workshopScopeDigests.clear(); boardReplacing = true; boardFollower.reset(); OccupationSources.recipeIndex(boardIndex).reset(); kernel?.lookSeen.clear(); },
+    reset: () => { escrowByRecord.clear(); escrowByOwner.clear(); publicWorkshopIndex.clear(); publicWorkshopKeys.clear(); workshopHolders.clear(); workshopRevisions.clear(); workshopScopeDigests.clear(); boardReplacing = true; boardFollower.reset(); OccupationSources.recipeIndex(boardIndex).reset(); kernel?.lookSeen.clear(); },
     put: (key, row) => {
         if (String(key).startsWith('w:')) { changeWorkshop(key, row.length === 9 ? row.slice(1) : row); return; }
         const previous = boardIndex.records.get(Number(key)) || [];
@@ -1782,6 +1792,7 @@ function startKernel(config = {}) {
                     committedExits: { entries: large, takers: large, refused: large },
                     admissionFlips: { flips: large, items: large },
                     recipeFacts: { computes: large, reads: large },
+                    demandPrices: { builds: large, moves: large, ms: large, capped: large, spotSums: large, spotRanks: large },
                     // Forecast cooldowns can make a decision alarm the new
                     // head. Include both optional shapes before those effects.
                     queueHead: { ...kernelReport.queueHead, kind: 'normal', alarmKind: 'decision',
@@ -1829,6 +1840,7 @@ function startKernel(config = {}) {
             censusCrossings: DecisionSections.censusCrossings(),
             rebuilds: EconomyContext.rebuildStats(),
             recipeFacts: { ...RecipeProduction.factStats },
+            demandPrices: { ...DemandPrice.stats, spotSums: SpotValueTable.cacheStats().marketSums, spotRanks: SpotValueTable.cacheStats().marketRanks },
             committedExits: CommittedExits.stats(),
             admissionFlips: PartyAdmission.admissionEventCounts(),
             ...(Config.developerDiagnostics ? { occupationPlanning: occupationPlanner.snapshot() } : {}),

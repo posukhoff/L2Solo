@@ -18,6 +18,8 @@ const BackgroundJobRegistry = invoke('GameServer/Bot/Population/BackgroundJobReg
 const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const NpcDecay = invoke('GameServer/World/Generics/NpcDecay');
 const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
+const DemandPrice = invoke('GameServer/Bot/Economy/DemandPrice');
+const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
 const Npc = invoke('GameServer/Npc/Npc');
 const PvpEncounterRuntime = invoke('GameServer/Bot/Population/PvpEncounterRuntime');
 const { heapRecord, heapsLine } = require('./WorkerHeapTelemetry');
@@ -32,6 +34,12 @@ const lineMarks = new Map(), statusStart = Date.now();
 // previous line and the seconds since; `next` becomes the mark. A restarted
 // worker starts its tables again: a row gone or its count (row[column])
 // down means the deltas start from an empty table.
+// One thread's demand price counters (nearText demandPrices=).
+function demandPricesText(stats) {
+    if (!stats) return '-';
+    const text = `${stats.builds || 0}/${stats.moves || 0}/${Math.round(stats.ms || 0)}`;
+    return stats.spotSums === undefined ? text : `${text}/${stats.capped || 0}/${stats.spotSums}/${stats.spotRanks || 0}`;
+}
 function sinceLastLine(key, next, column = 0) {
     const now = Date.now(), mark = lineMarks.get(key);
     let previous = mark?.table || new Map();
@@ -128,7 +136,13 @@ const PopulationStatus = {
     // a hot crafter's workshop since start (CraftWorkshopService.hotOrderStats);
     // spoil=<units> spoilTop=<item>:<units>,.., spoil units cold steps
     // landed since start and its 3 largest items
-    // (ColdSimulationKernel.countSpoil, heartbeat; hot bots' spoil not counted).
+    // (ColdSimulationKernel.countSpoil, heartbeat; hot bots' spoil not counted);
+    // demandPrices=<builds>/<moves>/<ms>/<capped>/<spotSums>/<spotRanks> on main
+    // (hot bots) + the same in the worker (heartbeat): the demand price table's
+    // builds, the builds that moved a price and their ms since start
+    // (DemandPrice.stats), the bid caps the recipe worth lowered, the spot loot
+    // sums and the money spot ranks a premium entered (SpotValueTable
+    // marketSums/marketRanks).
     nearText(coordinator) {
         const nearFacts = coordinator?.snapshots?.nearFacts || {}, decisions = coordinator?.nearDecisions || {};
         const replies = (coordinator?.nearReplyMs || []).slice().sort((a, b) => a - b);
@@ -143,7 +157,9 @@ const PopulationStatus = {
             + ` committedExits=${coordinator?.worker?.committedExits?.entries || 0}/${coordinator?.worker?.committedExits?.refused || 0}/${coordinator?.worker?.committedExits?.takers || 0}`
             + ` admissionFlips=${coordinator?.worker?.admissionFlips?.flips || 0}/${coordinator?.worker?.admissionFlips?.items || 0}`
             + ` spoil=${coordinator?.worker?.spoil?.units || 0}`
-            + ` spoilTop=${(coordinator?.worker?.spoil?.top || []).map(([id, units]) => `${id}:${units}`).join(',') || '-'}`;
+            + ` spoilTop=${(coordinator?.worker?.spoil?.top || []).map(([id, units]) => `${id}:${units}`).join(',') || '-'}`
+            + ` demandPrices=${demandPricesText({ ...DemandPrice.stats, spotSums: SpotValueTable.cacheStats().marketSums,
+                spotRanks: SpotValueTable.cacheStats().marketRanks })}+${demandPricesText(coordinator?.worker?.demandPrices)}`;
     },
 
     // The goal's numbers without diagnostics, in the full line's names: cold queue due now and the oldest wait,

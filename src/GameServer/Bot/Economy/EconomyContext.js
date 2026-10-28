@@ -1206,14 +1206,11 @@ function leafFit(state, deps, timestamp) {
 // the network, and both give the same numbers.
 // keepRoute receives the income route search's result (forState reads its
 // matchup profiles).
-// market: the build's watched board and input hook ({ board, read }), so the
-// income route's recipe scroll values are build reads; basics read the
-// resolved board with no hook.
-function foundation(state, deps, persona, timestamp, price, keepRoute = null, market = {}) {
+function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
     const tableRole = Roles.tableRoleFor(state);
-    const incomeRoute = IncomeRoute.select(state, { ...deps, ...market, timestamp, required: GearProgression.assess(state).milestone.required, price });
+    const incomeRoute = IncomeRoute.select(state, { ...deps, timestamp, required: GearProgression.assess(state).milestone.required, price });
     keepRoute?.(incomeRoute);
     let hunt;
     if (incomeRoute) {
@@ -1587,7 +1584,7 @@ function forState(state = {}, deps = {}) {
     // serve the providers' source route reader.
     let incomeRoute = null;
     const base = keptBase ? foundationFromPlan(state, keptBase, deps, price)
-        : foundation(state, deps, persona, timestamp, price, route => { incomeRoute = route; }, { board, read });
+        : foundation(state, deps, persona, timestamp, price, route => { incomeRoute = route; });
     // These facts still belong to the reused foundation: its items stay read.
     if (keptBase) for (const id of held.readIds) read(id);
     const quantityInputs = createQuantityInputs();
@@ -1626,7 +1623,7 @@ function forState(state = {}, deps = {}) {
     context.routeKey = Trip.key(state); context.routeRows = Trip.fullRows(deps.routeRows) ? deps.routeRows : null;
     const tripHour = context.hourAdena;
     context.trip = deps.tripCost || Trip.preparedReader(context.routeRows || [], { hourAdena: tripHour });
-    context.spotValue = SpotEconomics.create(state, { ...deps, board, read, timestamp, persona, price, deathHours: context.deathHours,
+    context.spotValue = SpotEconomics.create(state, { ...deps, timestamp, persona, price, deathHours: context.deathHours,
         hunt: buildHunt(base.hunt) });
     if (state.incomingPending) {
         // ARCH-NOTE: an oversized incoming projection waits on the existing
@@ -2017,11 +2014,11 @@ function buildHunt(hunt) {
     return hunt?.source === 'route' ? undefined : hunt;
 }
 // Spot values are read inside a build (providers); a later view makes its
-// reader only when asked, over the view's board and read hook.
-function lazySpotValue(state, plan, deps, built = {}) {
+// reader only when asked.
+function lazySpotValue(state, plan, deps) {
     let reader;
     return (...args) => (reader ||= SpotEconomics.create(state,
-        { ...deps, ...(built.board ? { board: built.board } : {}), read: built.read, timestamp: plan.timestamp,
+        { ...deps, timestamp: plan.timestamp,
             persona: plan.persona, deathHours: plan.deathHours, hunt: buildHunt(plan.hunt) }))(...args);
 }
 // One reader's context over a plan. `built` carries the building call's own
@@ -2053,7 +2050,7 @@ function view(state, plan, deps, built = {}) {
         expectedDeathHours: plan.expectedDeathHours, stock, survivalReserve: plan.survivalReserve, kitCost,
         hourAdena: plan.hourAdena, workshop: plan.workshop, routeKey: plan.routeKey, routeRows: plan.routeRows,
         trip: built.trip || deps.tripCost || Trip.preparedReader(plan.routeRows || [], { hourAdena: plan.tripHour }),
-        spotValue: built.spotValue || lazySpotValue(state, plan, deps, built),
+        spotValue: built.spotValue || lazySpotValue(state, plan, deps),
         network, moneyPrice: network.moneyPrice, gapHorizonHours: plan.gapHorizonHours, watchList: plan.watchList,
         intentPending: plan.intentPending, statsPacket };
     // The plan is the identity of one decision for memos kept beside it

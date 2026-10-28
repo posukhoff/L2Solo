@@ -150,7 +150,8 @@ function putCensus(key, towns) {
 // A `d:` row was put or removed (main: putCensus; worker: its mirror of the
 // 'market' table; no key = the whole table was replaced): every held rate
 // goes, as gear rates sum cells of many classes.
-function censusChanged() { held.clear(); gearHeld = null; demandedNow = null; }
+let censusGeneration = 0;
+function censusChanged() { held.clear(); gearHeld = null; demandedNow = null; censusGeneration++; }
 // Gear rates read the class kits (game items, their sources) and the exp per
 // hour (rate profile): a move of any drops every held rate and share.
 function kitsMoved() {
@@ -222,20 +223,23 @@ function gearRates() {
         for (const rank of [level + 1, level > 0 && LEVEL_GRADES.indexOf(worn) < level ? level : 0]) {
             if (rank < 1 || rank >= LEVEL_GRADES.length) continue;
             let flow = flows.get(`${classId}:${rank}`);
-            if (!flow) flows.set(`${classId}:${rank}`, flow = { classId, rank, byTown: new Map() });
+            if (!flow) flows.set(`${classId}:${rank}`, flow = { classId, rank, byTown: new Map(), wearers: 0 });
             for (let at = 2; at + 1 < value.length; at += 2) {
                 const town = value[at + 1] > 0 && itemTown(LEVEL_GRADES[rank], value[at]);
-                if (town) flow.byTown.set(town, (flow.byTown.get(town) || 0) + value[at + 1] / hours);
+                if (!town) continue;
+                flow.byTown.set(town, (flow.byTown.get(town) || 0) + value[at + 1] / hours);
+                flow.wearers += value[at + 1];
             }
         }
     }
-    for (const { classId, rank, byTown } of flows.values()) {
+    for (const { classId, rank, byTown, wearers } of flows.values()) {
         if (!byTown.size) continue;
         for (const [itemId, itemRank, units] of classShare(classId)) {
             if (itemRank !== rank) continue;
             let sums = gearHeld.get(itemId);
-            if (!sums) gearHeld.set(itemId, sums = { byTown: new Map(), revision });
+            if (!sums) gearHeld.set(itemId, sums = { byTown: new Map(), revision, needed: 0 });
             for (const [town, rate] of byTown) sums.byTown.set(town, (sums.byTown.get(town) || 0) + rate * units);
+            sums.needed += wearers * units;
         }
     }
     return gearHeld;
@@ -281,6 +285,20 @@ function sumCensus(id) {
     }
     return { byTown, revision };
 }
+// Every wished gear item's units needed now: the wearers of its flows (the
+// ones who reach its grade's band or sit in it below its grade) x the
+// class's kit share, the gear rates' walk without the band hours: the
+// pieces the census asks for over one wear time (DemandPrice). item id ->
+// units; read only.
+function neededGear() {
+    kitsMoved();
+    const needed = new Map();
+    for (const [id, sums] of gearRates()) if (sums.needed > 0) needed.set(id, sums.needed);
+    return needed;
+}
+// Moves with every census change (censusChanged): a reader holding values
+// made of the census compares it.
+function censusRevision() { kitsMoved(); return censusGeneration; }
 // The dwarven products a craft level makes (their recipe's level at most
 // it) that the census counts now: the crafter's wake row (EconomyContext)
 // wakes when the count rises; the recipe index admits them (censusBuys).
@@ -445,4 +463,4 @@ function towns(id, timestamp = Date.now()) {
 // The board's replay reloads trade evidence; census rows stay with their owner.
 function reset() { history.clear(); mirror = null; censusChanged(); }
 module.exports = { DELAY_HOURS, deal, putCensus, censusChanged, rows, forecast, perHour, supplyPerHour, towns, reset, wornCell,
-    censusOf, demandedCount, censusBuys, hasCensusSource, forecastOnly, warmUse, useTable: source => { mirror = source; censusChanged(); } };
+    censusOf, neededGear, censusRevision, demandedCount, censusBuys, hasCensusSource, forecastOnly, warmUse, useTable: source => { mirror = source; censusChanged(); } };

@@ -6,6 +6,7 @@ const { fill } = require('./OfferQuery');
 const { MAX_INSPECTED, preparedLeaf } = require('./ReadyTradeChoice');
 const FixedShots = require('./FixedShotOffers');
 const { heldBid } = require('./PriceDecision');
+const DemandPrice = invoke('GameServer/Bot/Economy/DemandPrice');
 
 // A quote is an outside option only for a whole, affordable purchase over a
 // known route. Reserved shop stock is public authority. A conditional ad
@@ -88,10 +89,16 @@ function outside(selfId, ctx, { units = 1, town, money, enchant = 0 } = {}) {
 // the units on sale and its bid holds only the rest (TradeIntent
 // .preparedProject), so this whole-lot rule judges that rest (partialcross
 // 2026-10-25).
+// A recipe scroll's bid also stays at or under the recipe's shared worth to
+// its learner (DemandPrice.recipeWorth, decisions 10-28): a new bid, a
+// standing line's look and reprice and the worker's line limits read it here.
 function cap(selfId, ctx, { price, ...terms }) {
     const { ceiling, own } = outside(selfId, ctx, terms);
-    if (!Number.isFinite(own)) return ceiling;
-    return price >= own ? 0 : Math.min(ceiling, own - 1);
+    const limit = !Number.isFinite(own) ? ceiling : price >= own ? 0 : Math.min(ceiling, own - 1);
+    const worth = DemandPrice.recipeWorth(selfId, ctx.characterId);
+    if (worth === null || !(worth < limit)) return limit;
+    DemandPrice.stats.capped++;
+    return worth;
 }
 
 const moneyForLine = (line, ctx) => ctx.adena + (line.custodyPolicy === 1 ? 0 : line.price * line.count);

@@ -120,6 +120,46 @@ try {
         assert.strictEqual(sold().soldPrice(ITEM), 0, 'a first price alone is no market price');
         assert(sold().price(ITEM) > 0, 'though the bot still believes a price');
     });
+
+    // T84 under T89's one market price: a wished piece's bid is its buyer's
+    // tool, no source of the shared price a crafter prices its product by
+    // (RecipeProductionIndex marketFacts read marketPrice); a material's bid
+    // still is one.
+    contract('a gear bid leaves the shared price, a material bid moves it', () => {
+        const MarketDemand = invoke('GameServer/Bot/Economy/MarketDemand');
+        const gear = invoke('GameServer/DataCache').items.find(item => MarketDemand.forecastOnly(item.selfId))?.selfId;
+        assert(gear, 'some kit piece is census gear');
+        recent = [800, 1000, 1200]; ask = 1100;
+        const shared = (id, at) => { bid = at; return PriceBelief.marketPrice(id, { board: ctx().board, timestamp: now }); };
+        near(shared(gear, 5000), shared(gear, 900), 'a gear bid does not move the shared price');
+        near(PriceBelief.prior(gear, ctx({ knowledgeEnabled: false })).K, 5 + 1 + 0.5 + 0.3, 'nor weigh in a bot\'s prior');
+        assert(shared(ITEM, 5000) > shared(ITEM, 900), 'a material bid moves it');
+        bid = 900;
+    });
+
+    // The same rule for a seller's belief of an enchanted piece
+    // (MarketPricing.beliefFor): the foreign bid at that enchant is no
+    // source; the ask at that enchant still is.
+    contract('a +N gear bid leaves a seller\'s belief, its ask moves it', () => {
+        const Pricing = invoke('GameServer/Bot/Economy/MarketPricing');
+        const MarketDemand = invoke('GameServer/Bot/Economy/MarketDemand');
+        const Improvement = invoke('GameServer/Bot/Economy/BotImprovementPolicy');
+        const gear = invoke('GameServer/DataCache').items.find(item => MarketDemand.forecastOnly(item.selfId)
+            && Number.isFinite(Improvement.enchantedPrice({ selfId: item.selfId, amount: 1, enchant: 3 }, 3, { price: () => 1000 })))?.selfId;
+        assert(gear, 'some wished piece takes an enchant scroll');
+        const quotes = { [SELL]: 0, [BUY]: 0 };
+        const seller = () => ctx({ knowledgeEnabled: false, economy: { price: () => 1000 },
+            board: { first: (selfId, side, options = {}) => ({ price: options.enchant ? quotes[side] : side === SELL ? ask : side === BUY ? bid : 0 }) } });
+        const mu = () => Pricing.beliefFor(gear, seller(), 3)?.mu;
+        recent = [800, 1000, 1200]; ask = 1100; bid = 900;
+        quotes[BUY] = 900;
+        const low = mu();
+        assert(Number.isFinite(low), 'the +3 piece has a belief');
+        quotes[BUY] = 50000;
+        near(mu(), low, 'a +3 gear bid does not move it');
+        quotes[SELL] = 50000;
+        assert(mu() > low, 'a +3 ask does');
+    });
 }
 finally {
     for (const key of ['itemPriceEvidence', 'counter', 'counterOf', 'firstPrice']) MarketCounters[key] = original[key];

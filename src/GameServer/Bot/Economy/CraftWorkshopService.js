@@ -49,6 +49,9 @@ function samePlace(a, b) {
         && a.loc.locY === b.loc.locY && a.loc.locZ === b.loc.locZ;
 }
 const byRecipe = new Map();
+// Main's demand price holders: the workshops offering a recipe, whatever
+// their MP now (the worker counts its mirror's).
+if (isMainThread) invoke('GameServer/Bot/Economy/DemandPrice').useHolders(recipeId => byRecipe.get(Number(recipeId))?.size || 0);
 const owners = new Map();
 const publicScopeDigests = new Map();
 const publicCandidates = new (require('./PublicWorkshopIndex').PublicWorkshopIndex)();

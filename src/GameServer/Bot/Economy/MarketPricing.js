@@ -163,9 +163,11 @@ function beliefFor(selfId, ctx, enchant = 0) {
     const cost = invoke('GameServer/Bot/Economy/BotImprovementPolicy').enchantedPrice(item,enchant,ctx.economy);
     if (!(cost > 0) || !Number.isFinite(cost)) return null;
     // The full replacement/scroll chain prices this actual enchant; ordinary
-    // NPC stock and +0 rivals are not interchangeable with it.
+    // NPC stock and +0 rivals are not interchangeable with it. A wished
+    // piece's bid is its buyer's tool, no source (PriceBelief.mixtureOf, T84).
     const quotes = [ctx.board?.first(selfId,SELL,{excludeOwner:ctx.characterId,enchant}),
-        ctx.board?.first(selfId,BUY,{excludeOwner:ctx.characterId,enchant})].filter(row => row?.price > 0);
+        MarketDemand.forecastOnly(selfId) ? null : ctx.board?.first(selfId,BUY,{excludeOwner:ctx.characterId,enchant})]
+        .filter(row => row?.price > 0);
     return { ...belief, mu:(Math.log(cost) * belief.K + quotes.reduce((n,row) => n + Math.log(row.price),0))
         / (belief.K + quotes.length), K:belief.K + quotes.length };
 }
@@ -282,6 +284,10 @@ function disposition(item, ctx, { town = null, room = 1, standingPrice = 0, answ
         if (result.known) options.push({ action, value: result.valueHours, answer });
     };
     const loss = (price, count) => Math.max(0, reference - price) * count * ctx.trader.caution * moneyPrice;
+    // The exit is the buy-back, not the exit floor (BotCrystallization.exitFloor):
+    // a held piece's crystal exit is the crystal root's question, whose claims
+    // keep the spares it breaks (T89 1a: a floor here sent every Artisan's
+    // gear to the NPC at the buy-back).
     add('npc', { receipts: market.buyback * units, riskHours: loss(market.buyback, units) });
     if (room > 0) add('keep', { monetaryResidual: units * (useful > 0 ? useful : market.buyback) });
     let gain = 0, quote = false;

@@ -10,7 +10,6 @@ const Diagnostics = require('./EconomyDiagnostics');
 // One scalar mixture per item: no owner, state, wallet or offer references.
 const MIXTURE_LIMIT = 1024;
 const mixtures = new Map();
-const RecipeProduction = invoke('GameServer/Bot/Economy/RecipeProductionIndex');
 const MarketDemand = invoke('GameServer/Bot/Economy/MarketDemand');
 
 const S0 = 0.6;
@@ -28,31 +27,25 @@ function counterIndex(selfId) {
     return MarketCounters.indexOf(MarketCounters.counterOf(selfId));
 }
 
-// A derived demand: for a recipe scroll the market facts' margin of one
-// craft as the reader sees them (RecipeProductionIndex.scrollValue: one
-// shared value per market change, the reader's own lines taken out, its
-// items joined to the reader's build reads), null for any other item.
-// Derived usefulness is not a trade.
-function demandValue(selfId, context = {}) {
-    return RecipeProduction.scrollValue(selfId, { board: context?.board || null, timestamp: context?.timestamp,
-        characterId: context?.characterId, read: context?.read });
-}
-
-// The one scalar mixture of an item's public sources (deals, the first ask
-// and bid, the first price on the counter's index, a derived demand, the
-// first price), kept per item while every source equals the kept one.
+// The one scalar mixture of an item's public sources (deals, the first ask,
+// the first bid but for wished gear, the first price on the counter's index,
+// the first price), kept per item while every source equals the kept one. A
+// recipe scroll mixes no derived worth: its shared worth
+// (DemandPrice.recipeWorth) only caps a learner's bid (decisions 10-28).
 // excludeOwner: the reader's own lines are no source of its belief.
-function mixtureOf(id, { board, timestamp, excludeOwner = undefined, demand = null }) {
+function mixtureOf(id, { board, timestamp, excludeOwner = undefined }) {
     const deals = MarketCounters.itemPriceEvidence(id);
     // Always re-read permitted sources and the owner's excluded offers. Only
     // their pure numeric combination is reusable, never a spending decision.
     const ask = board?.first(id, SELL, { excludeOwner, enchant: 0 });
-    const bid = board?.first(id, BUY, { excludeOwner, enchant: 0 });
+    // A wished piece's bid is its buyer's tool (T84, decisions 10-27 and
+    // 10-28): one bot's bid is never every bot's price.
+    const bid = board && !MarketDemand.forecastOnly(id) ? board.first(id, BUY, { excludeOwner, enchant: 0 }) : null;
     const first = MarketCounters.firstPrice(id, timestamp);
     const index = counterIndex(id);
     const inputs = [deals.logMedian, Math.min(DEALS_WEIGHT_MAX, deals.deals),
         ask?.price > 0 ? Number(ask.price) : 0, bid?.price > 0 ? Number(bid.price) : 0,
-        first, index, demand];
+        first, index];
     let mixture = mixtures.get(id);
     if (!mixture || !inputs.every((value, at) => Object.is(value, mixture.inputs[at]))) {
         const observations = [];
@@ -60,7 +53,6 @@ function mixtureOf(id, { board, timestamp, excludeOwner = undefined, demand = nu
         if (inputs[2] > 0) observations.push([Math.log(inputs[2]), 1]);
         if (inputs[3] > 0) observations.push([Math.log(inputs[3]), 1]);
         if (first > 0 && index !== null) observations.push([Math.log(first) + index, 0.5]);
-        if (demand > 0) observations.push([Math.log(demand), 0.3]);
         if (first > 0) observations.push([Math.log(first), 0.3]);
         let weight = 0, sum = 0;
         for (const [value, w] of observations) { weight += w; sum += value * w; }
@@ -76,13 +68,19 @@ function mixtureOf(id, { board, timestamp, excludeOwner = undefined, demand = nu
 }
 
 // The market's shared price of an item: the centre of its public sources,
-// no personal error and no derived demand, 0 when nothing is known. The
+// no personal error, 0 when nothing is known. The
 // recipe market facts (RecipeProductionIndex marketFacts) price products and
-// inputs by it, once per market change; excludeOwner: the same without one
-// reader's lines (RecipeProductionIndex.ownMargin).
-function marketPrice(selfId, { board = null, timestamp = Date.now(), excludeOwner = undefined } = {}) {
-    const mixture = mixtureOf(Number(selfId), { board, timestamp, excludeOwner });
+// inputs by it, once per market change.
+function marketPrice(selfId, { board = null, timestamp = Date.now() } = {}) {
+    const mixture = mixtureOf(Number(selfId), { board, timestamp });
     return mixture.known ? Math.exp(mixture.mu) : 0;
+}
+
+// The one "is it traded" question: the item has deal evidence. An item
+// known only by asks, bids or its first price has no market price a seller
+// can count on (reader soldPrice).
+function traded(selfId) {
+    return MarketCounters.itemPriceEvidence(Number(selfId)).logMedian !== null;
 }
 
 // The reader's own error on an item's centre: a signed fraction from its
@@ -100,8 +98,7 @@ function biasOf(id, ctx) {
 // bias is a signed fractional error, so the log centre gains log(1 + bias).
 function prior(selfId, ctx) {
     const id = Number(selfId);
-    const mixture = mixtureOf(id, { board: ctx.board, timestamp: ctx.timestamp, excludeOwner: ctx.characterId,
-        demand: demandValue(id, ctx) });
+    const mixture = mixtureOf(id, { board: ctx.board, timestamp: ctx.timestamp, excludeOwner: ctx.characterId });
     if (!mixture.known) return null;
     const bias = biasOf(id, ctx);
     return { selfId: id, mu: mixture.mu + Math.log1p(bias), K: mixture.K, bias };
@@ -114,8 +111,7 @@ function prior(selfId, ctx) {
 // reads it; a crafter's admission reads its inputs from the shared recipe
 // facts through fromShared, the same price. seed: a held build's own prices
 // (its plan.prices); read(id): the build's input hook, so a late read still
-// joins the build's inputs (a scroll's derived demand joins its recipe's
-// items too).
+// joins the build's inputs.
 // soldPrice(id): the item has a market price (the one question "is it
 // traded"): its price when deals were made (the deal evidence prior mixes),
 // 0 when only asks, bids or its first price know it. The input cap of a
@@ -142,7 +138,7 @@ function reader({ state, persona = null, board = null, timestamp = Date.now(), k
     // price(id) from the item's shared price (PriceBelief.marketPrice, held
     // in a recipe's market facts) with no source read: the shared centre
     // under the bot's own error (biasOf). own: the bot's centre differs (its
-    // own first ask or bid, a scroll's derived demand): price(id) reads it.
+    // own first ask or bid): price(id) reads it.
     const fromShared = (id, shared, own = false) => {
         id = Number(id);
         if (own || prices.has(id)) return price(id);
@@ -154,7 +150,7 @@ function reader({ state, persona = null, board = null, timestamp = Date.now(), k
     // price first: its read joins the item to the build's inputs either way.
     const soldPrice = id => {
         const value = price(id);
-        return MarketCounters.itemPriceEvidence(id).logMedian !== null ? value : 0;
+        return traded(id) ? value : 0;
     };
     return { prices, beliefs, beliefFor, price, fromShared, soldPrice };
 }
@@ -201,4 +197,4 @@ function lineObservations(line, belief, ctx) {
     return observations;
 }
 
-module.exports = { S0, K_MAX, sigma, errorOf, prior, marketPrice, reader, learn, lineObservations, demandValue };
+module.exports = { S0, K_MAX, sigma, errorOf, prior, marketPrice, traded, reader, learn, lineObservations };

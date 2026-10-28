@@ -5,7 +5,6 @@ const Rates = invoke('GameServer/ProgressionRates');
 const Index = require('../../Item/ItemTemplateIndex');
 const Drops = require('../Population/BackgroundDropResolver');
 const Kill = invoke('GameServer/Bot/Population/ColdCombatProfile');
-const RecipeItems = invoke('GameServer/Items/C4RecipeItems');
 const Formulas = invoke('GameServer/Formulas');
 const Diagnostics = require('./EconomyDiagnostics');
 
@@ -126,10 +125,16 @@ function spoilLanding(skillLevel, spoilerLevel, npcLevel) {
 }
 
 function itemPrice(itemId) {
-    const item = Index.find(Data.items, itemId);
-    return !item || item.template?.kind === 'Other.Quest' ? 0
+    return !sellable(itemId) ? 0
         // lazy: cycle PriceDecision's chain loads this module
         : invoke('GameServer/Bot/Economy/PriceDecision').buyback(itemId);
+}
+
+// An item a hunter can sell: known and no quest item (ItemDisposition.isQuestItem).
+function sellable(itemId) {
+    const item = Index.find(Data.items, itemId);
+    // lazy: cycle ItemDisposition's chain loads this module
+    return !!item && !invoke('GameServer/Bot/Economy/ItemDisposition').isQuestItem({ selfId: itemId }, item);
 }
 
 function groupsFor(reward) {
@@ -141,10 +146,10 @@ function groupsFor(reward) {
         const rate = Rates.groupRate(group, kind), items = group.items || [];
         const total = kind === 'drop' ? items.reduce((sum, item) =>
             sum + Rates.dropItemSelectionWeight(group, item, rate), 0) : 0;
-        // scrolls: the recipe scrolls a drop or spoil group yields, [id,
-        // units, NPC buy price] per landed roll (game data; their NPC price
-        // is in items).
-        const expected = { group, kind, adena: 0, items: 0, scrolls: null };
+        // rows: every item a drop or spoil group yields but adena and quest
+        // items, [id, units] per landed roll (game data; their NPC price is
+        // in items, the demand premium over it is lootPremium's).
+        const expected = { group, kind, adena: 0, items: 0, rows: null };
         for (const item of items) {
             let share, amount;
             if (kind === 'drop') {
@@ -158,8 +163,8 @@ function groupsFor(reward) {
             }
             if (kind === 'drop' && Number(item.selfId) === 57) expected.adena += share * amount;
             else expected.items += share * amount * itemPrice(item.selfId);
-            if (share > 0 && RecipeItems.resolve(item.selfId))
-                (expected.scrolls ||= []).push([Number(item.selfId), share * amount, itemPrice(item.selfId)]);
+            if (share > 0 && Number(item.selfId) !== 57 && sellable(item.selfId))
+                (expected.rows ||= []).push(Number(item.selfId), share * amount);
         }
         groups.push(expected);
     }
@@ -174,18 +179,19 @@ function npcValue(entry, killerLevel) {
     const key = `${entry.selfId}:${entry.reward?.selfId || 0}:${rule.active ? rule.penaltyPercent : 0}`;
     let held = npcValues.get(key);
     if (held) return held;
-    // drop / spoil scrolls: [id, units per kill, NPC price] per roll that
-    // lands (spoils before the spoiler's landing chance, heldValue).
-    held = { adena: 0, drop: 0, spoil: 0, dropScrolls: null, spoilScrolls: null };
+    // drop / spoil items: id, units per kill pairs per roll that lands
+    // (spoils before the spoiler's landing chance, heldValue).
+    held = { adena: 0, drop: 0, spoil: 0, dropItems: null, spoilItems: null };
     for (const expected of groupsFor(entry.reward)) {
         const roll = Rates.rewardGroupRoll(expected.group, expected.kind,
             { npcLevel: entry.level, killerLevel }, () => 0);
         const chance = roll.chance / 100;
         held.adena += chance * expected.adena;
         held[expected.kind] += chance * expected.items * (expected.kind === 'spoil' ? roll.amountMultiplier : 1);
-        const kept = expected.kind === 'spoil' ? 'spoilScrolls' : 'dropScrolls';
-        for (const [id, units, price] of expected.scrolls || [])
-            (held[kept] ||= []).push([id, chance * units * (expected.kind === 'spoil' ? roll.amountMultiplier : 1), price]);
+        const kept = expected.kind === 'spoil' ? 'spoilItems' : 'dropItems';
+        const rows = expected.rows || [];
+        for (let at = 0; at < rows.length; at += 2)
+            (held[kept] ||= []).push(rows[at], chance * rows[at + 1] * (expected.kind === 'spoil' ? roll.amountMultiplier : 1));
     }
     if (npcValues.size >= MAX_NPC_VALUES) npcValues.delete(npcValues.keys().next().value);
     npcValues.set(key, held);
@@ -198,9 +204,6 @@ function value(spot, killerLevel, options) {
     const held = heldValue(spot, killerLevel, options);
     return held ? { ...held } : null;
 }
-// held.scrolls: the recipe scrolls one kill yields, [scrollId, units, NPC
-// buy price] rows: its drops for every killer, its spoils by the spoiler's
-// landing chance; game data, no market value (SpotValueTable.recipeScrolls).
 function heldValue(spot, killerLevel, { spoilSkillLevel = 0, spoilerLevel = killerLevel } = {}) {
     if (!spot || typeof spot !== 'object') return null;
     const rates = Rates.profile();
@@ -210,27 +213,15 @@ function heldValue(spot, killerLevel, { spoilSkillLevel = 0, spoilerLevel = kill
     if (rows?.has(key)) return rows.get(key);
     const { entries } = heldComposition(spot);
     if (!entries.length) return null;
-    const held = { adena: 0, drop: 0, spoil: 0, scrolls: null };
-    let scrollUnits = null;
-    const addScroll = (id, units, price) => {
-        const row = (scrollUnits ||= new Map()).get(id) || [id, 0, price];
-        row[1] += units;
-        scrollUnits.set(id, row);
-    };
-    for (const entry of entries) {
-        const reward = npcValue(entry, killerLevel), share = entry.share;
+    const held = { adena: 0, drop: 0, spoil: 0 };
+    eachEntry(entries, killerLevel, spoilSkillLevel, spoilerLevel, (entry, reward, spoilShare) => {
         // Native ColdKillRewards uses this fallback only when no reward data
         // exists. It must not fabricate ordinary loot for that NPC.
-        held.adena += share * (entry.reward ? reward.adena
+        held.adena += entry.share * (entry.reward ? reward.adena
             : (Number(spot.rewards?.adenaMin || 0) + Number(spot.rewards?.adenaMax || 0)) / 2 * rates.adena);
-        held.drop += share * reward.drop;
-        for (const [id, units, price] of reward.dropScrolls || []) addScroll(id, share * units, price);
-        if (!(spoilSkillLevel > 0)) continue;
-        const chance = spoilLanding(spoilSkillLevel, spoilerLevel, entry.level);
-        held.spoil += share * reward.spoil * chance;
-        for (const [id, units, price] of reward.spoilScrolls || []) addScroll(id, share * units * chance, price);
-    }
-    if (scrollUnits) held.scrolls = Object.freeze([...scrollUnits.values()].map(row => Object.freeze(row)));
+        held.drop += entry.share * reward.drop;
+        held.spoil += spoilShare * reward.spoil;
+    });
     if (spotValueCount >= MAX_SPOT_VALUES) {
         // A ring: the slot of the oldest held row takes the new one.
         spotValueOrder[spotValueNext].delete(spotValueOrder[spotValueNext + 1]);
@@ -244,6 +235,37 @@ function heldValue(spot, killerLevel, { spoilSkillLevel = 0, spoilerLevel = kill
     spotValueOrder[spotValueNext + 1] = key;
     spotValueNext = (spotValueNext + 2) % (2 * MAX_SPOT_VALUES);
     return held;
+}
+
+// The spot's NPCs as a kill rolls them, for heldValue and lootPremium alike:
+// visit(entry, reward, spoilShare) with the entry's rewards at killerLevel
+// (npcValue) and the share of the spot's kills its spoil lands on (its share
+// x the spoiler's landing; 0 with no Spoil).
+function eachEntry(entries, killerLevel, spoilSkillLevel, spoilerLevel, visit) {
+    for (const entry of entries) visit(entry, npcValue(entry, killerLevel),
+        spoilSkillLevel > 0 ? entry.share * spoilLanding(spoilSkillLevel, spoilerLevel, entry.level) : 0);
+}
+
+// What one kill's items fetch over their NPC price, as value() rolls them:
+// each drop (and, by the spoiler's landing, spoil) item's units x
+// premiumOf(id) (DemandPrice: the demand price over the buy-back). The item
+// rows live per NPC (npcValue), none per spot key: the caller keeps the sum
+// (SpotValueTable.marketLoot).
+function lootPremium(spot, killerLevel, premiumOf, { spoilSkillLevel = 0, spoilerLevel = killerLevel } = {}) {
+    if (!spot || typeof spot !== 'object') return 0;
+    refresh();
+    let total = 0;
+    const add = (rows, scale) => {
+        for (let at = 0; rows && scale > 0 && at < rows.length; at += 2) {
+            const premium = premiumOf(rows[at]);
+            if (premium > 0) total += scale * rows[at + 1] * premium;
+        }
+    };
+    eachEntry(heldComposition(spot).entries, killerLevel, spoilSkillLevel, spoilerLevel, (entry, reward, spoilShare) => {
+        add(reward.dropItems, entry.share);
+        add(reward.spoilItems, spoilShare);
+    });
+    return total;
 }
 
 // One raid boss kill's expected adena and item value for the party (the boss
@@ -265,4 +287,4 @@ function spoilSkillLevel(state) {
         .find(skill => Number(skill.selfId) === 254)?.level || 0);
 }
 
-module.exports = { value, composition, killShare, spoilLanding, raidReward, spoilSkillLevel, revision(rates) { refresh(rates); return revisionId; }, MAX_NPC_VALUES, MAX_SPOT_VALUES };
+module.exports = { value, lootPremium, itemPrice, composition, killShare, spoilLanding, raidReward, spoilSkillLevel, revision(rates) { refresh(rates); return revisionId; }, MAX_NPC_VALUES, MAX_SPOT_VALUES };

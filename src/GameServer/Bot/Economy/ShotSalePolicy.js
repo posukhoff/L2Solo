@@ -42,6 +42,7 @@ function exit(state, id, { board, town, timestamp = Date.now(), trip, npcOffers 
     return { type: 'listing', town, price: ask.price, count: demand.applicableUnits,
         applicableUnits: demand.applicableUnits, willingUnits, cheaperUnits,
         maxBatches: Math.ceil((remaining + Math.max(0, Number(reserve) || 0)) / lot),
+        // A shot breaks into no crystal: its one exit is the buy-back.
         residualUnitValue: market.buyback, delayHours: demand.delayHours,
         forecast: demand, trip: trip(town), tripDetails: trip.details(town) };
 }

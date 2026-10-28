@@ -16,9 +16,8 @@ const MarketDemand = () => invoke('GameServer/Bot/Economy/MarketDemand');
 // Public candidate admission (rows per craft level) and the shared market
 // facts of each recipe (marketFacts: product price, input cost, margin per
 // craft at the market's shared prices), computed once per market change of
-// one of its items and read by every crafter's admission, the scroll's
-// derived demand (scrollValue). Each reader's own step goes on top of them
-// (inputCostFor: its own error; ownMargin: its own lines taken out).
+// one of its items and read by every crafter's admission. Each reader's own step goes on top of them
+// (inputCostFor: its own error, an item whose first line is its own read by its belief).
 // Ownership, funds, exits and the scroll's own price stay per bot.
 const boards = new WeakMap();
 // Layer-1 facts computed vs read since start (worker heartbeat recipeFacts).
@@ -60,17 +59,13 @@ function factItems(recipe) {
 function margin(recipe, productPrice, inputCost) {
     return Number(recipe.productCount || 1) * productPrice * Number(recipe.successRate ?? 100) / 100 - inputCost;
 }
-// One priced item of the facts: its shared price, the owners of its first ask
-// and bid (a reader owning one sees another centre: its own lines are no
-// source of its belief, PriceBelief.prior excludeOwner) and whether it is a
-// recipe scroll (its belief adds a derived demand the shared price leaves out).
+// One priced item of the facts: its shared price and the owners of its first
+// ask and bid (a reader owning one sees another centre: its own lines are no
+// source of its belief, PriceBelief.prior excludeOwner).
 function pricedItem(id, amount, price, board) {
-    return Object.freeze({ id, amount, price, scroll: isScroll(id),
+    return Object.freeze({ id, amount, price,
         owners: Object.freeze([Number(board?.first(id, SELL, { enchant: 0 })?.ownerId) || 0,
             Number(board?.first(id, BUY, { enchant: 0 })?.ownerId) || 0]) });
-}
-function isScroll(id) {
-    return (recipeCatalog().reverse.get(id) || []).some(recipe => Number(recipe.recipeItemId) === id);
 }
 // One recipe's market facts at the market's shared prices (PriceBelief
 // marketPrice: no reader's error, no own line excluded): one craft's
@@ -246,45 +241,14 @@ function marketFacts(recipe, { board = null, timestamp = Date.now() } = {}) {
 // Does `characterId` own a first ask or bid of a priced item: its centre
 // then differs from the shared one.
 const ownsFirst = (item, characterId) => characterId > 0 && item.owners.includes(characterId);
-// One craft's margin as a reader sees the market: the shared one, unless the
-// reader owns a first ask or bid of one of its items; that item is priced
-// again without the reader's lines (rare: a crafter's own input bid or
-// product ask), so a reader's own line never moves its own facts.
-function ownMargin(recipe, facts, { characterId = 0, board = null, timestamp = Date.now() } = {}) {
-    const owner = Number(characterId);
-    if (!ownsFirst(facts.product, owner) && !facts.inputs.some(item => ownsFirst(item, owner))) return facts.margin;
-    const priced = item => ownsFirst(item, owner)
-        ? PriceBelief().marketPrice(item.id, { board, timestamp, excludeOwner: owner }) : item.price;
-    let inputCost = 0;
-    for (const item of facts.inputs) inputCost += item.amount * priced(item);
-    return margin(recipe, priced(facts.product), inputCost);
-}
 // One batch's inputs at a reader's own prices: each input's shared price
 // under the reader's own error (PriceBelief.reader fromShared, the price its
 // network's input nodes read), O(inputs) with no source read; an input whose
-// first line is the reader's own or a recipe scroll is read by its belief.
+// first line is the reader's own is read by its belief.
 function inputCostFor(facts, characterId, fromShared) {
     const owner = Number(characterId);
     let cost = 0;
-    for (const item of facts.inputs) cost += item.amount * fromShared(item.id, item.price, item.scroll || ownsFirst(item, owner));
+    for (const item of facts.inputs) cost += item.amount * fromShared(item.id, item.price, ownsFirst(item, owner));
     return cost;
 }
-// A recipe scroll's derived demand: what one craft of its best recipe earns
-// over its inputs at market prices (a crafter that learns it crafts at least
-// once), null for no scroll or no margin. PriceBelief.demandValue's source
-// for scroll ids; the market facts read no scroll's demand, so no loop.
-// characterId: the reader's own lines are no source (ownMargin); read: the
-// reader's build input hook, every item of the facts joins its reads (a
-// held build rebuilds when one moves, as a node's inputs).
-function scrollValue(selfId, options = {}) {
-    let best = 0;
-    for (const recipe of recipeCatalog().reverse.get(Number(selfId)) || []) {
-        if (Number(recipe.recipeItemId) !== Number(selfId)) continue;
-        const facts = marketFacts(recipe, options);
-        if (options.read) for (const id of facts.items) options.read(id);
-        const value = ownMargin(recipe, facts, options);
-        if (value > best) best = value;
-    }
-    return best > 0 ? best : null;
-}
-module.exports = { forBoard, censusMoved, recipeCatalog, marketFacts, margin, ownMargin, inputCostFor, scrollValue, factStats };
+module.exports = { forBoard, censusMoved, recipeCatalog, marketFacts, margin, inputCostFor, factStats };

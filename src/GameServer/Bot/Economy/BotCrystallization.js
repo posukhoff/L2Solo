@@ -9,6 +9,7 @@ const Progression = invoke('GameServer/Bot/AI/PersonalGearProgression');
 const Counters = invoke('GameServer/Bot/Economy/MarketCounters');
 const CrystalCatalog = require('../../Knowledge/CrystalCatalog');
 const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
+const Price = invoke('GameServer/Bot/Economy/PriceDecision');
 // The Crystallize skill level a grade needs (C4).
 const SKILL_LEVEL = Object.freeze({ d: 1, c: 2, b: 3, a: 4, s: 5 });
 // Each grade's crystal id -> its grade (C4EnchantRules.CRYSTAL_IDS, D to S).
@@ -39,6 +40,22 @@ function reward(template, enchant = 0) {
         isWeapon: () => kind.startsWith('Weapon.'), isArmor: () => kind.startsWith('Armor.'),
         fetchKind: () => kind });
     return gross > 0 ? { gross, net: gross, crystalId } : null;
+}
+// The one floor of an item's exit (T89, decision 10-28): the better of the
+// NPC buy-back (PriceDecision.buyback) and breaking it into its grade's
+// crystals at priceOf (crystal id -> price). state: the holder, whose
+// crystals count only when it roots their sale itself (canRootSale: its own
+// skill, a roaming crafter; WishProviders' crystal root breaks its spares);
+// null = the market's view (a piece any crystallizer would pay its crystals
+// for). A sale on the board goes on top (the caller's listing or traded
+// price). O(skills); the crystal price is read only when the holder breaks
+// the piece.
+function exitFloor(id, priceOf, state = null, enchant = 0) {
+    const npc = Price.buyback(id);
+    const template = Index.find(Data.items, Number(id));
+    if (state && !canRootSale(state, template?.etc?.rank)) return npc;
+    const result = reward(template, enchant);
+    return result ? Math.max(npc, result.net * Math.max(0, Number(priceOf(result.crystalId)) || 0)) : npc;
 }
 // A held piece this bot can break itself: a reward and its skill level.
 function crystallizable(state, id) {
@@ -300,4 +317,4 @@ function completionKey(state, quantityInputs = null) {
     if (!priority || priority < Math.max(0, ...[...assessment.gaps.values()].map(row => row.priority))) return null;
     return `power:${exchange.itemId}:${Number(plan.target.slot)}`;
 }
-module.exports = { CRYSTAL_RANKS, canSelf, ownSkills, crystallizable, canRootSale, saleCrystal, reward, catalog, listed, choices, path, freeReader, inputAmount, preparation, ready, completionKey };
+module.exports = { CRYSTAL_RANKS, canSelf, exitFloor, ownSkills, crystallizable, canRootSale, saleCrystal, reward, catalog, listed, choices, path, freeReader, inputAmount, preparation, ready, completionKey };

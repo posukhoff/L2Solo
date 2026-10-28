@@ -7,7 +7,10 @@
 // main learns the recipe and crafts. Many more scroll rows are admitted, and
 // the best bound among them has no exit within the horizon: the scroll slot
 // goes to the best row its exits price, a listed scroll read apart from the
-// ones only a bid brings (WishProviders producer block).
+// ones only a bid brings (WishProviders producer block). A scroll dearer than
+// one lot nets is still bought while the recipe's shared worth (the census's
+// unmet G crafts x margin, DemandPrice) covers it, and not once the board
+// covers the census's G (CraftProfitPolicy.learning: no per-crafter value).
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 require('./helpers/databaseIsolation');
@@ -47,6 +50,8 @@ function ask(selfId, price, count) {
 }
 ask(SCROLL, 5300, 1);
 ask(1458, 372, 200);
+const setPrice = (at, price) => { board[at][1] = rowOf({ id: board[at][0], ownerId: board[at][0] + 100, storeType: 1, kind: 'shop',
+    status: 'active', town: 'Giran', revision: 2, lines: [{ id: board[at][0] * 10, selfId: SCROLL, count: 1, price, enchant: 0 }] }); };
 Census.start();
 const pages = () => [{ tables: [{ name: 'board', from: null, to: 0, full: true, rows: board, removed: [], last: true },
     { name: 'market', from: null, to: 0, full: true, rows: Census.rows(), removed: [], last: true }] }];
@@ -73,6 +78,22 @@ async function run() {
     assert.equal(bought.activity?.kind, 'buy', `the step is a buy (${JSON.stringify(bought.activity)})`);
     assert.equal(Number(bought.activity.itemId), SCROLL, 'it buys the scroll');
     assert.equal(bought.activity.price, 5300, 'at its listed price');
+
+    // Hop 1b: the scroll at 200000, far over the lot's net (~38k): the
+    // recipe's worth (its unmet crafts) keeps the root, the scroll is bought.
+    setPrice(0, 200000);
+    const dear = await probe(crafter, { tablePages: pages(), recipes: empty });
+    assert.equal(dear.activity?.kind, 'buy', `a dear scroll worth its recipe is bought (${JSON.stringify(dear.activity)})`);
+    assert.equal(Number(dear.activity.itemId), SCROLL, 'the dear scroll is the step');
+    // Hop 1c: G listed past the census's need at about the crafter's own
+    // sale price: nothing unmet, the recipe is worth 0 and one lot cannot pay
+    // the scroll.
+    ask(G, 87000, Math.ceil(Demand.neededGear().get(G)) + 1);
+    const covered = await probe(crafter, { tablePages: pages(), recipes: empty });
+    assert(!(covered.activity?.kind === 'buy' && Number(covered.activity.itemId) === SCROLL),
+        `no worth, no dear scroll (${JSON.stringify(covered.activity)})`);
+    board.pop();
+    setPrice(0, 5300);
 
     // Hop 2: holding the scroll, the craft step carries it; main learns the
     // recipe before it crafts G.

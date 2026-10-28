@@ -1,14 +1,13 @@
 'use strict';
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
-const Production = require('./RecipeProductionIndex');
-// Resolved at the first call (cycles); a require per call is a path lookup (L73).
-let SpotRewardExpectation = null;
-// Shared table evaluation: native facts, own samples and, for the recipe
-// scrolls a spot drops or spoils, the shared recipe market facts
-// (RecipeProductionIndex.scrollValue, which read no spot value). It never
-// reads Context or a bot's pricing, so route and wish readers cannot
-// recurse. The scroll gain is real income: it enters the row's loot, so the
-// income route (EquipmentIncomeRoute.select) and the hour value read it.
+const SpotRewardExpectation = require('./SpotRewardExpectation');
+// Shared table evaluation: native facts, own samples and the market's demand
+// price of the items a spot drops or spoils (SpotValueTable.marketLoot:
+// DemandPrice over the NPC price, decisions 10-28). It never reads Context,
+// a board or a bot's pricing, so route and wish readers cannot recurse, and
+// no build subscribes to an item's price. The premium is real income: it
+// enters the row's loot, so the income route (EquipmentIncomeRoute.select)
+// and the hour value read it.
 function moneyWeight(state) {
     const packet = state.stats?.money;
     if (Array.isArray(packet)) {
@@ -22,12 +21,7 @@ function moneyWeight(state) {
 
 // hunt: the build's own hunt (EconomyContext), so one build reads one hour;
 // a caller outside a build leaves it out and gets the bot's bare hunt.
-// board: the market recipe scrolls are priced at (a build's watched board,
-// a board or its getter; EconomyContext.marketBoard resolves an absent one);
-// read: the build's input hook, every item the scroll's facts read joins
-// its reads (as WishProviders admission keeps them), so a held build and
-// the hour value it priced rebuild when one moves.
-function create(state, { timestamp = Date.now(), mode, persona, deathHours, moneyWeight: weight = moneyWeight(state), price, hunt, board, read } = {}) {
+function create(state, { timestamp = Date.now(), mode, persona, deathHours, moneyWeight: weight = moneyWeight(state), price, hunt } = {}) {
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
     const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
     const Learning = invoke('GameServer/Bot/AI/KnowledgeLearning');
@@ -41,38 +35,7 @@ function create(state, { timestamp = Date.now(), mode, persona, deathHours, mone
     deathHours ??= Valuation.deathHours(state, hunt);
     const riskWeight = Valuation.riskWeight(state, persona);
     const costs = Hunt.consumablePrices(state, price);
-    const rewardOptions = { spoilSkillLevel: (SpotRewardExpectation ||= require('./SpotRewardExpectation')).spoilSkillLevel(state) };
-    // The recipe scrolls a kill yields (drops for every hunter, spoils by the
-    // spoil skill's landing; the table's units per kill, held with its row)
-    // are worth what one craft of their recipe earns at the market
-    // (RecipeProductionIndex.scrollValue: the board's held facts, the
-    // reader's own lines out) over the NPC price their loot already counts.
-    // One scrollValue per distinct scroll per evaluator (scrollValues: a
-    // spoiler's 64 spots carry 370-650 scroll rows of 50-100 scrolls; measured
-    // 0.4-0.8 ms per build uncached). Its key is the scroll id: board, clock,
-    // reader and read hook are this evaluator's constants. Each value keeps
-    // the facts items it read and reads them again on a hit: a gear
-    // candidate's scratch arena keeps only a surviving candidate's reads, so
-    // a value first read by a cut candidate still joins the kept one's (a
-    // move of one rebuilds the build and drops this evaluator with its values).
-    let market = null, filling = null;
-    const scrollValues = new Map();
-    const scrollLoot = (spot, shots) => {
-        let extra = 0;
-        for (const [id, units, npcPrice] of Table.recipeScrolls(spot.id, tableRole, state.level, shots, rewardOptions)) {
-            let entry = scrollValues.get(id);
-            if (entry === undefined) {
-                // lazy: cycle EconomyContext loads this module at its top
-                market ||= { board: invoke('GameServer/Bot/Economy/EconomyContext').marketBoard(board), timestamp,
-                    characterId: state.characterId, read: read && (item => { filling.push(item); read(item); }) };
-                filling = [];
-                scrollValues.set(id, entry = { value: Production.scrollValue(id, market) || 0, items: filling });
-                filling = null;
-            } else if (read) for (const item of entry.items) read(item);
-            extra += units * Math.max(0, entry.value - npcPrice);
-        }
-        return extra;
-    };
+    const rewardOptions = { spoilSkillLevel: SpotRewardExpectation.spoilSkillLevel(state) };
     const own = Hunt.sampledRows(state, timestamp, mode);
     const calibrations = own.flatMap(row => {
         const base = Table.value(row.spotId, tableRole, state.level, true, rewardOptions);
@@ -94,7 +57,7 @@ function create(state, { timestamp = Date.now(), mode, persona, deathHours, mone
         const bias = 1 + incomeError * (2 * Tendency.roll('spot-income', state.characterId, spot.id) - 1);
         const scale = observed ? 1 : calibration;
         // No crowd divisor: the bot's own observed row already carries the share it got (ARCH-08-b).
-        const loot = base.loot + base.kills * scrollLoot(spot, shots);
+        const loot = base.loot + base.kills * Table.marketLoot(spot.id, tableRole, state.level, shots, rewardOptions);
         const row = { ...base, useShots: shots, exp: base.exp * scale * bias,
             adena: base.adena * scale * bias, loot: loot * scale * bias,
             kills: base.kills * scale };
@@ -108,10 +71,32 @@ function create(state, { timestamp = Date.now(), mode, persona, deathHours, mone
         row.costs = observed ? Number(observed.costs || 0) * rate
             : (Number(base.shots || 0) * costs.shots + Number(base.potions || 0) * costs.potions) * calibration;
         row.income = row.adena + row.loot - row.costs;
+        // Value hours one adena of loot at the row's kills adds (valueHoursWithout).
+        row.lootHours = weight * bias / hourAdena;
         row.valueHours = row.exp / Math.max(1, hunt.expPerHour) * (1 - weight)
             + row.income / hourAdena * weight - row.riskHours;
         return row;
     };
     return value;
 }
-module.exports = { create, moneyWeight };
+// One item's own loot out of a spot row's hour value: a source farming that
+// item for a goal counts it once, as the goal, not also as the hour's income
+// (GearAcquisitionPlanner sourceFacts). The item as the row's loot counts it:
+// every NPC's drop and, by the bot's Spoil, spoil (SpotRewardExpectation
+// lootPremium's walk), a unit at its NPC price and its demand premium
+// (SpotValueTable.marketLoot). ownLoot(state, itemId): read once per caller;
+// it keeps the per-kill loot of each spot it is asked for.
+function ownLoot(state, itemId) {
+    const id = Number(itemId);
+    return { id, level: Number(state.level) || 1, skill: SpotRewardExpectation.spoilSkillLevel(state), perKill: new Map(),
+        // lazy: cycle DemandPrice -> FirstPrice -> SpotValueTable -> this module
+        price: SpotRewardExpectation.itemPrice(id) + invoke('GameServer/Bot/Economy/DemandPrice').premium(id) };
+}
+function valueHoursWithout(row, spot, own) {
+    if (!(own.price > 0) || !(row.lootHours > 0)) return row.valueHours;
+    let perKill = own.perKill.get(spot);
+    if (perKill === undefined) own.perKill.set(spot, perKill = SpotRewardExpectation.lootPremium(spot, own.level,
+        id => id === own.id ? own.price : 0, { spoilSkillLevel: own.skill }));
+    return row.valueHours - row.kills * perKill * row.lootHours;
+}
+module.exports = { create, moneyWeight, ownLoot, valueHoursWithout };

@@ -29,31 +29,16 @@ function labour(recipe, { hourAdena, mpPerHour } = {}) {
     return hours === null ? null : { hours, adena: hours * Number(hourAdena || 0) };
 }
 
-// The part of a recipe's price one sale carries: a learned recipe is kept,
-// so its price P spreads over the units the crafter can sell in its time in
-// grade (rate R units/h over H hours). One sale of `units` carries
-// P x units / (R x H), never more than P; an endless rate or horizon
-// carries nothing. Without a known (positive) rate or horizon the sale
-// carries the whole price.
-function learningShare(price, units, ratePerHour, horizonHours) {
-    const whole = Math.max(0, Number(price) || 0);
-    if (![units, ratePerHour, horizonHours].every(value => value > 0)) return whole;
-    const part = units / (ratePerHour * horizonHours);
-    return Number.isNaN(part) ? whole : whole * Math.min(1, part);
-}
-// What a learned recipe keeps for its crafter past one sale (the crafter's
-// own step over the shared one-craft margin every other reader values a
-// scroll at, RecipeProductionIndex.scrollValue): the crafts its open demand
-// sells in the horizon beyond this sale's `units` (rate R units/h over H
-// hours, `perCraft` units each), each worth the recipe's market margin, less
-// one sale trip in adena; at least the part of the price later sales carry
-// (price - share). O(1).
-function keptRecipeValue({ price, share, margin, perCraft, units, ratePerHour, horizonHours, tripCost = 0 }) {
-    const carried = Math.max(0, (Number(price) || 0) - (Number(share) || 0));
-    if (!(margin > 0) || !(perCraft > 0) || ![ratePerHour, horizonHours].every(value => value > 0 && Number.isFinite(value)))
-        return carried;
-    const crafts = Math.max(0, ratePerHour * horizonHours - (Number(units) || 0)) / perCraft;
-    return Math.max(carried, margin * crafts - Math.max(0, Number(tripCost) || 0));
+// A scroll to find, bought at `price` for one lot that nets `lotNet` over its
+// inputs: the learned recipe keeps for later crafts its shared worth
+// (DemandPrice.recipeWorth: its share of the world's unmet crafts) past this
+// lot, the bot's own value of no recipe (decisions 10-28); the lot carries
+// the part of the price that worth does not cover, so a scroll dearer than
+// its worth nets below the lot alone. O(1).
+function learning(price, worth, lotNet) {
+    const paid = Math.max(0, Number(price) || 0);
+    const kept = Math.max(0, (Number(worth) || 0) - Math.max(0, Number(lotNet) || 0));
+    return { kept, carried: Math.max(0, paid - kept) };
 }
 function contextFor(state, timestamp = Date.now()) {
     const context = require('../Population/ColdEconomyDecision').economyFor(state, { timestamp });
@@ -186,5 +171,5 @@ function materials(items, recipe, batches = 1) {
 function succeeds(recipe, random = Math.random) {
     return Number(recipe.successRate) >= 100 || Number(random()) * 100 < Number(recipe.successRate);
 }
-module.exports = { prepareCraftFacts, craftFacts, requirements, batchesFor, craftableBatches, labour, learningShare, keptRecipeValue, contextFor, tripFor, materials, succeeds,
+module.exports = { prepareCraftFacts, craftFacts, requirements, batchesFor, craftableBatches, labour, learning, contextFor, tripFor, materials, succeeds,
     mpHours, mpBatches };

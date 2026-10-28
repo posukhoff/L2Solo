@@ -2085,7 +2085,8 @@ function sourceYieldReaderFor(killerLevel) {
 // with the reason it is not. Hours for `units` come from the spot's kills
 // per hour (the same SpotEconomics row the bot chooses spots by) times the
 // yield and the NPC's share of the spot. An hour there costs the bot its own
-// hour (1, the hour measure) less what the spot gives back (valueHours);
+// hour (1, the hour measure) less what the spot gives back besides the item
+// itself (valueHours, SpotEconomics.valueHoursWithout);
 // travel to a spot other than the current one is a round trip to the
 // spot's regional town. Unknown is explicit, never free.
 // invoke(), not require(): a require() in the per-source loop re-resolved the
@@ -2262,6 +2263,8 @@ function* sourceFacts(state = {}, itemId, units = 1, options = {}) {
     const hourAdena = bestForWish?.hourAdena;
     const counts = options.counts || null, readyOnly = !!(counts || options.readyOnly || bestForWish);
     let spoiler = options.spoiler;
+    // The item's own loot at a spot (SpotEconomics.ownLoot), from the first ready record.
+    let own;
     // Most records the bot reaches are refused as party_needed. The verdict
     // reads one readiness per call and the record's level; the counts take
     // their tally once at the end (the key keeps its first-seen place).
@@ -2409,8 +2412,12 @@ function* sourceFacts(state = {}, itemId, units = 1, options = {}) {
                 if (!readyOnly) facts.push({ kind, spotId: spot.id, npcId, itemId: Number(itemId), units, expectedYield, status, reason });
                 continue;
             }
-            const hours = units / perHour, netHourCost = Math.max(0, 1 - row.valueHours);
-            const spotId = spot.id, factItemId = Number(itemId), valueHours = row.valueHours;
+            // The hour gives back its value but this item's own loot: the
+            // units are the goal, never also the hour's income.
+            own ??= SpotEconomics.ownLoot(state, itemId);
+            const valueHours = SpotEconomics.valueHoursWithout(row, spot, own);
+            const hours = units / perHour, netHourCost = Math.max(0, 1 - valueHours);
+            const spotId = spot.id, factItemId = Number(itemId);
             const tripHours = trip.hours, tripFees = trip.fees, costHours = hours * netHourCost + trip.hours;
             if (bestForWish) {
                 const cost = progressionRequired ? hours + tripHours + tripFees / Math.max(1, hourAdena) : costHours;
