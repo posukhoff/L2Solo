@@ -1039,16 +1039,21 @@ function buildProjection(state, ctx, deps) {
                 netAt: ready ? null : netAt });
         }
         // E303: the priced producers cap of 12 counts the rows that can run
-        // now (scrollSource ready); a scroll to find takes one more place, the
-        // best by net of a product no kept ready row makes (one root per
-        // product: a 100% variant's scroll on sale never displaces the known
-        // 70% recipe), so a scroll hunt never cuts a recipe the bot can craft.
+        // now (scrollSource ready); scrolls to find take up to two more places
+        // (one on sale, one to bid for, below), each the best priced row of a
+        // product no kept ready row makes (one root per product: a 100%
+        // variant's scroll on sale never displaces the known 70% recipe), so
+        // a scroll hunt never cuts a recipe the bot can craft.
         // A scroll row's net (scroll at its believed price, as every input:
         // the network then buys, farms or bids for it, its cheapest path) is
-        // at most its bound net(0): candidates go by bound, best first; each
-        // reads its source (scrollSource), then its price; the reads stop once
-        // no bound left can beat the best row found, the one row a full read
-        // would pick.
+        // at most its bound net(0); its exits are priced like a ready row's
+        // (priceRow), where a bound's forecast may find no exit within the
+        // horizon (T75: a dear piece no willing buyer takes in time). So
+        // candidates go by bound, best first; each reads its source
+        // (scrollSource), its price, then its exits; the reads stop once no
+        // bound left can beat the best priced rate (the bound is admission's
+        // reading: a bid exit's several lots or an ask above belief can price
+        // above it, so a later row may be missed) or at the places below.
         // A committed product (its resale root a committed goal) keeps its
         // rows past the cap and its scroll row beside the best one.
         const byNet = (a, b) => b.net - a.net || Number(b.known) - Number(a.known) || a.recipe.recipeId - b.recipe.recipeId;
@@ -1060,31 +1065,6 @@ function buildProjection(state, ctx, deps) {
             priced = priced.filter((row, at) => !capped(row, at));
         }
         const readyProducts = new Set(priced.map(row => row.id));
-        const bestScrollRow = bounds => {
-            let best = null;
-            for (const bound of bounds.sort(byNet)) {
-                if (best && byNet(bound, best) > 0) break;
-                if (!scrollSource(bound.recipe, SCROLL_SOURCE)) continue;
-                const learningPrice = positive(price(bound.recipe.recipeItemId));
-                const row = { ...bound, learningPrice, net: bound.netAt(learningPrice) };
-                if (row.net > 0 && (!best || byNet(row, best) < 0)) best = row;
-            }
-            return best;
-        };
-        const toFind = admitted.filter(row => !row.ready && !readyProducts.has(row.id));
-        const scrollRow = bestScrollRow(toFind);
-        if (scrollRow) priced.push(scrollRow);
-        for (const id of new Set(toFind.filter(row => committedProduct(row) && row.id !== scrollRow?.id).map(row => row.id))) {
-            const row = bestScrollRow(toFind.filter(bound => bound.id === id));
-            if (row) priced.push(row);
-        }
-        if (Diagnostics.active()) {
-            Diagnostics.count('cap', 'producers', 'check');
-            if (admitted.length > priced.length) {
-                Diagnostics.count('cap', 'producers', 'cut');
-                Diagnostics.count('cap', 'producers', 'dropped', admitted.length - priced.length);
-            }
-        }
         // A finite setup the executor holds while it buys the recipe or the
         // inputs (ItemDisposition.productionSetup: a recipe investment, a shot
         // craft preparing, a wealth craft buying) keeps its lot: its recipe's
@@ -1093,7 +1073,10 @@ function buildProjection(state, ctx, deps) {
         // takes now (exitLots sizes every other lot).
         const heldSetups = [ItemDisposition.productionSetup(state, timestamp, investment || null),
             ItemDisposition.productionSetup(state, timestamp)];
-        for (const { recipe, count, id, ownSales, oldUnits, shot, demand, forecastOnly, earningPreference, ready, inputPrice: batchInputs, margin, learningPrice } of priced) {
+        // One admitted row's exits priced: its best entry by rate, null when
+        // no exit sells within the horizon.
+        const priceRow = ({ recipe, count, id, ownSales, oldUnits, shot, demand, forecastOnly, earningPreference, ready, inputPrice: batchInputs, margin, learningPrice }) => {
+        let best = null;
         const asks = ctx.board.list(id, SELL);
         // A census product's bids are no exit (admission's forecastOnly).
         const publicOffers = forecastOnly ? [] : ctx.board.list(id, 3).slice(0, 5);
@@ -1140,11 +1123,84 @@ function buildProjection(state, ctx, deps) {
                 share: learningShare, margin, perCraft: count, units: count * batches,
                 ratePerHour: offer.applicableUnits / offer.delayHours, horizonHours: horizon,
                 tripCost: trip.fees + trip.hours * ctx.hourAdena }) : learningPrice - learningShare;
-            const previous = production.get(id);
-            if (!previous || rate > previous.rate || rate === previous.rate && recipe.recipeId < previous.recipe.recipeId)
-                production.set(id, { recipe, ready, gross, rate, shot, earningPreference, inputPrice: inputPrice + learningPrice,
-                    keptLearning, town: offer.town, trip, batches, exit: offer });
+            if (!best || rate > best.rate)
+                best = { recipe, ready, gross, rate, shot, earningPreference, inputPrice: inputPrice + learningPrice,
+                    keptLearning, town: offer.town, trip, batches, exit: offer };
         }
+        return best;
+        };
+        const keep = entry => {
+            if (!entry) return;
+            const id = Number(entry.recipe.productId), previous = production.get(id);
+            if (!previous || entry.rate > previous.rate || entry.rate === previous.rate && entry.recipe.recipeId < previous.recipe.recipeId)
+                production.set(id, entry);
+        };
+        for (const row of priced) keep(priceRow(row));
+        // A scroll on sale now (purchaseFor, the item node's buy reader) and a
+        // scroll only a bid brings (no seller: its root is unsupported and
+        // bids for it until one sells) are two actions: the best priced row
+        // of each kind takes a place, the network weighs them (funding,
+        // support). One walk by bound reads each row's kind once; a kind is
+        // done at its places or once no bound left can beat its best rate.
+        // A sale reads the places the ready rows leave (at least one; few
+        // scrolls are listed), a bid one place, as before T75. A bid row of
+        // a product a sale row already makes is passed (one root per product).
+        // A row with its scroll at the bot's price, null when it nets
+        // nothing; its priced entry, once per recipe (the committed loop
+        // reads the walk's).
+        const scrollRow = bound => {
+            const learningPrice = positive(price(bound.recipe.recipeItemId));
+            const row = { ...bound, learningPrice, net: bound.netAt(learningPrice) };
+            return row.net > 0 ? row : null;
+        };
+        const scrollEntries = new Map();
+        const scrollEntry = row => {
+            const id = Number(row.recipe.recipeId);
+            if (!scrollEntries.has(id)) {
+                const entry = priceRow(row);
+                if (Diagnostics.active()) Diagnostics.count('provider', 'scroll_row', entry?.rate > 0 ? 'priced' : 'no_exit');
+                scrollEntries.set(id, entry?.rate > 0 ? entry : null);
+            }
+            return scrollEntries.get(id);
+        };
+        const toFind = admitted.filter(row => !row.ready && !readyProducts.has(row.id)).sort(byNet);
+        const places = [Math.max(1, PRODUCER_PRICED - priced.length), 1], best = [null, null];
+        const done = (kind, bound) => places[kind] <= 0 || best[kind] && !(bound.net > best[kind].rate);
+        for (const bound of toFind) {
+            if (done(0, bound) && done(1, bound)) break;
+            if (!scrollSource(bound.recipe, SCROLL_SOURCE)) continue;
+            const kind = purchaseFor(Number(bound.recipe.recipeItemId)) ? 0 : 1;
+            if (done(kind, bound) || kind && Number(best[0]?.recipe.productId) === bound.id) continue;
+            const row = scrollRow(bound);
+            if (!row) continue;
+            places[kind]--;
+            const entry = scrollEntry(row);
+            if (entry && (!best[kind] || entry.rate > best[kind].rate)) best[kind] = entry;
+        }
+        // One scroll root, as before T75: the better rate of the two kinds.
+        const chosen = best[1] && !(best[0]?.rate >= best[1].rate) ? best[1] : best[0];
+        const scrollIds = new Set();
+        if (chosen) { keep(chosen); scrollIds.add(Number(chosen.recipe.productId)); }
+        // A committed product's scroll row beside them: its best row by bound
+        // (a row the walk priced is not priced again).
+        for (const id of new Set(toFind.filter(row => committedProduct(row) && !scrollIds.has(row.id)).map(row => row.id))) {
+            let kept = null;
+            for (const bound of toFind) {
+                if (bound.id !== id) continue;
+                if (kept && !(bound.net > kept.rate)) break;
+                const row = scrollSource(bound.recipe, SCROLL_SOURCE) && scrollRow(bound);
+                const entry = row && scrollEntry(row);
+                if (entry && (!kept || entry.rate > kept.rate)) kept = entry;
+            }
+            keep(kept);
+        }
+        if (Diagnostics.active()) {
+            Diagnostics.count('cap', 'producers', 'check');
+            const read = priced.length + scrollEntries.size;
+            if (admitted.length > read) {
+                Diagnostics.count('cap', 'producers', 'cut');
+                Diagnostics.count('cap', 'producers', 'dropped', admitted.length - read);
+            }
         }
         // Spare gear of any grade the bot's own Crystallize skill breaks
         // (canRootSale) yields crystals sold like any product: to the head buy
@@ -1189,7 +1245,7 @@ function buildProjection(state, ctx, deps) {
         }
     }
     // Finalists: the first 3 ready rows by rate that earn (netRate > 0) and
-    // have a craft path, plus the one scroll-to-find row admission kept; a
+    // have a craft path, plus the scroll-to-find rows admission kept; a
     // pathless row leaves its place to the next.
     const producerFinalists = [...production.values()].sort((a, b) => b.rate - a.rate
         || a.recipe.recipeId - b.recipe.recipeId);
