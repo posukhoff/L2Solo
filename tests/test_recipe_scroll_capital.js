@@ -6,8 +6,8 @@
 // at 5300, buys the scroll; holding it, its craft step carries the scroll and
 // main learns the recipe and crafts. Many more scroll rows are admitted, and
 // the best bound among them has no exit within the horizon: the scroll slot
-// goes to the best row its exits price, its scroll on sale beside the best
-// one only a bid brings (WishProviders bestScrollEntry).
+// goes to the best row its exits price, a listed scroll read apart from the
+// ones only a bid brings (WishProviders producer block).
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 require('./helpers/databaseIsolation');

@@ -1039,9 +1039,9 @@ function buildProjection(state, ctx, deps) {
                 netAt: ready ? null : netAt });
         }
         // E303: the priced producers cap of 12 counts the rows that can run
-        // now (scrollSource ready); scrolls to find take up to two more places
-        // (one on sale, one to bid for, below), each the best priced row of a
-        // product no kept ready row makes (one root per product: a 100%
+        // now (scrollSource ready); a scroll to find takes one more place (the
+        // better of the best on sale and the best to bid for, below), the best
+        // priced row of a product no kept ready row makes (one root per product: a 100%
         // variant's scroll on sale never displaces the known 70% recipe), so
         // a scroll hunt never cuts a recipe the bot can craft.
         // A scroll row's net (scroll at its believed price, as every input:
@@ -1138,13 +1138,13 @@ function buildProjection(state, ctx, deps) {
         for (const row of priced) keep(priceRow(row));
         // A scroll on sale now (purchaseFor, the item node's buy reader) and a
         // scroll only a bid brings (no seller: its root is unsupported and
-        // bids for it until one sells) are two actions: the best priced row
-        // of each kind takes a place, the network weighs them (funding,
-        // support). One walk by bound reads each row's kind once; a kind is
-        // done at its places or once no bound left can beat its best rate.
-        // A sale reads the places the ready rows leave (at least one; few
-        // scrolls are listed), a bid one place, as before T75. A bid row of
-        // a product a sale row already makes is passed (one root per product).
+        // bids for it until one sells) are read apart, so a dear bid row
+        // with no exit in the horizon never hides a listed scroll (T75). One
+        // walk by bound reads each row's kind once; a kind is done at its
+        // places or once no bound left can beat its best rate. A sale reads
+        // the places the ready rows leave (at least one; few scrolls are
+        // listed), a bid one place, as before T75. The root is the better
+        // rate of the two (a second root cost 2.4% of the cold step, T75).
         // A row with its scroll at the bot's price, null when it nets
         // nothing; its priced entry, once per recipe (the committed loop
         // reads the walk's).
@@ -1177,7 +1177,6 @@ function buildProjection(state, ctx, deps) {
             const entry = scrollEntry(row);
             if (entry && (!best[kind] || entry.rate > best[kind].rate)) best[kind] = entry;
         }
-        // One scroll root, as before T75: the better rate of the two kinds.
         const chosen = best[1] && !(best[0]?.rate >= best[1].rate) ? best[1] : best[0];
         const scrollIds = new Set();
         if (chosen) { keep(chosen); scrollIds.add(Number(chosen.recipe.productId)); }
