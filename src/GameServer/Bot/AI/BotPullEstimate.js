@@ -89,12 +89,37 @@ function entryPull(spot, selfId) {
     return Number(entry?.pull) > 1 ? Number(entry.pull) : 1;
 }
 
-// A pull of k as one mob: k times the HP, and the attack of the mobs still
-// standing on average while they fall one by one, (k + 1) / 2 of one mob.
-// The view keeps k for the area skills that hit every mob of it.
-function pullView(target, k) {
+// The mobs of a pull of k that hit the fighter, on average over the fight:
+// (k + 1) / 2 while single-target hits fell them one by one, all k while an
+// area skill wears them down together; areaShare: the share of the
+// fighter's damage dealt by area skills.
+function packFactor(k, areaShare = 0) {
+    const share = Math.min(1, Math.max(0, Number(areaShare) || 0));
+    return (k + 1) / 2 * (1 - share) + k * share;
+}
+
+// A pull of k as one mob: k times the HP, and the attack of its mobs still
+// standing on average (packFactor). The view keeps k for the area skills
+// that hit every mob of it, its pack for its skills' damage (coldMobAction)
+// and one mob's attack (unitPAtk) to be packed anew (repack).
+function pullView(target, k, areaShare = 0) {
     if (!(k > 1)) return target;
-    return { ...target, maxHp: target.maxHp * k, pAtk: target.pAtk * (k + 1) / 2, pull: k };
+    const pack = packFactor(k, areaShare);
+    return { ...target, maxHp: target.maxHp * k, pAtk: target.pAtk * pack, pull: k, pack, unitPAtk: target.pAtk };
+}
+
+// A pull view packed for another area share (the same one mob).
+function repack(view, areaShare = 0) {
+    if (!(Number(view?.pull) > 1) || !Number.isFinite(Number(view.unitPAtk))) return view;
+    const pack = packFactor(view.pull, areaShare);
+    return pack === view.pack ? view : { ...view, pAtk: view.unitPAtk * pack, pack };
+}
+
+// The mobs that hit as one of a view (1 for a lone mob; a saved encounter
+// of an older view: (k + 1) / 2).
+function packOf(view) {
+    if (Number(view?.pack) > 0) return Number(view.pack);
+    return Number(view?.pull) > 1 ? packFactor(Number(view.pull)) : 1;
 }
 
 // An entry's pulls by size, [[size, share], ...]: its measured ones, else the
@@ -119,4 +144,4 @@ function rollPulls(pulls, rng) {
     return pulls[pulls.length - 1][0];
 }
 
-module.exports = { record, pullSize, minionJoiners, annotate, entryPull, pullView, pullsOf, rollPulls };
+module.exports = { record, pullSize, minionJoiners, annotate, entryPull, packFactor, pullView, repack, packOf, pullsOf, rollPulls };

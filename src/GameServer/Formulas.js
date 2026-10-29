@@ -267,13 +267,28 @@ const Formulas = {
         return (Number(critical) || 0) > rng() * 1000;
     },
 
+    // The shield's block rate in percent (DEX and a bow's shot applied), 0
+    // without a shield or from behind: rollShieldUse rolls it, shieldChances
+    // gives its expected outcomes.
+    shieldBlockRate({ shieldRate = 0, dex = 0, facing = true, bow = false } = {}) {
+        if ((Number(shieldRate) || 0) <= 0 || !facing) return 0;
+        const rate = Number(shieldRate) * this.calcBaseMod.DEX(Math.max(0, Math.min(Math.round(Number(dex) || 0), 99)));
+        return bow ? rate * 1.3 : rate;
+    },
+
+    // The chances of rollShieldUse's outcomes: { perfect, succeed } (the rest fails).
+    shieldChances({ perfectBlockRate = this.DEFAULT_PERFECT_SHIELD_BLOCK_RATE, ...shield } = {}) {
+        const rate = this.shieldBlockRate(shield);
+        if (!(rate > 0)) return { perfect: 0, succeed: 0 };
+        const perfect = Math.min(1, Math.max(0, Number(perfectBlockRate || 0) / 100));
+        return { perfect, succeed: (1 - perfect) * Math.min(1, rate / 100) };
+    },
+
     rollShieldUse({ shieldRate = 0, dex = 0, facing = true, bow = false, perfectBlockRate = this.DEFAULT_PERFECT_SHIELD_BLOCK_RATE } = {}, rng = Math.random) {
-        if ((Number(shieldRate) || 0) <= 0 || !facing) return this.SHIELD_DEFENSE_FAILED;
+        const rate = this.shieldBlockRate({ shieldRate, dex, facing, bow });
+        if (rate <= 0) return this.SHIELD_DEFENSE_FAILED;
 
-        let rate = Number(shieldRate) * this.calcBaseMod.DEX(Math.max(0, Math.min(Math.round(Number(dex) || 0), 99)));
-        if (bow) rate *= 1.3;
-
-        if (rate > 0 && 100 - Number(perfectBlockRate || 0) < rng() * 100) {
+        if (100 - Number(perfectBlockRate || 0) < rng() * 100) {
             return this.SHIELD_DEFENSE_PERFECT_BLOCK;
         }
 

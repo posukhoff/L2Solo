@@ -18,6 +18,7 @@ const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const ColdRest = invoke('GameServer/Bot/Population/ColdRest');
 const Formulas = invoke('GameServer/Formulas');
 const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
+const Mob = invoke('GameServer/Bot/Population/ColdMobAction');
 const Enchant = invoke('GameServer/Items/C4EnchantRules');
 const ItemSkills = invoke('GameServer/Items/C4EquipmentItemSkills');
 const ArmorSets = invoke('GameServer/Items/C4ArmorSets');
@@ -200,7 +201,8 @@ function mobHour(bot, mob, correction = null) {
     const target = mob.combat;
     const { state, profiles } = matchupOf(bot);
     const pull = Math.max(1, Number(mob.pull) || 1);
-    const view = Pull.pullView(target, pull);
+    // A pull the rotation's area skills wear down together hits as more mobs.
+    const view = Pull.pullView(target, pull, Number(rot.areaShare) || 0);
     // The gate judges the pull the fight meets (BotTargetMatchup.npcVerdict).
     if (!Matchup.soloCanHunt(profiles, Pull.pullView(target, Math.round(pull))).eligible) return null;
     const terms = damageTerms(rot, profile, target.evasion);
@@ -212,11 +214,9 @@ function mobHour(bot, mob, correction = null) {
     const dry = terms.dry / Math.max(1, view.pDef) * shot;
     const manaRest = RestPolicy.restsForMana(state);
     const regen = regenOf(bot.classId, bot.level, profile);
-    // The mob's hits on the bot (resolveFight: melee only, at its attack speed).
-    const hitChance = Formulas.hitChance(view.accur, profile.evasion);
-    const perHit = 70 * view.pAtk / Math.max(1, profile.pDef);
-    const crit = Math.min(1, Math.max(0, view.critical) / 1000);
-    const hitsPerSec = 1000 / Math.max(250, Formulas.calcMeleeAtkTime(view.atkSpd));
+    // The mob's actions on the bot as the cold fight rolls them (ColdMobAction.actionMix:
+    // weapon hits, criticals, skills), in expectation.
+    const mix = Mob.actionMix(view, { profile });
     // The cold step (resolveSolo): a fight runs at most the step's combat
     // budget, then waits for the next step, which first adds the standing
     // regeneration of the whole elapsed step (applyStandingRegen).
@@ -239,7 +239,7 @@ function mobHour(bot, mob, correction = null) {
             const burst = openingAt(rot, rot.openDamage, fight);
             if (burst > 0) fight = view.maxHp / (dps * burst);
         }
-        taken = hitsPerSec * hitChance * perHit * (1 + crit) * fight;
+        taken = mix.perSecond * fight;
         const steps = Math.max(1, Math.ceil(fight / budget));
         wall = fight + (steps - 1) * (cycle - budget);
         // The most the fight's HP falls: its first step's damage, or all of it
@@ -251,12 +251,10 @@ function mobHour(bot, mob, correction = null) {
         if (manaRest || mpSpent <= 0 || !(wet > 0)) break;
         share = Math.min(1, (regen.mp / 3) * (rest + fight) / (rot.mpPerSec * fight));
     }
-    // Death: the fight's damage over the bot's HP, its spread from the hit
-    // roll, critical and damage spread (pAtkRnd %).
-    const attempts = hitsPerSec * fight;
-    const spread = 1 + Math.pow(Number(view.pAtkRnd) || 0, 2) / 3 / 10000;
-    const meanHit = perHit * (1 + crit), squareHit = perHit * perHit * (1 + 3 * crit) * spread;
-    const sigma = Math.sqrt(Math.max(1e-9, attempts * (hitChance * squareHit - Math.pow(hitChance * meanHit, 2))));
+    // Death: the fight's damage over the bot's HP, its spread from the
+    // actions' rolls (hit, critical, skill, damage spread).
+    const attempts = mix.actionsPerSecond * fight;
+    const sigma = Math.sqrt(Math.max(1e-9, attempts * (mix.squarePerAction - Math.pow(mix.perAction, 2))));
     // One healing potion a fight (BackgroundResolver.startColdPotion) when the
     // bot carries them (bot.potions; its heal over time counted whole).
     const potion = bot.potions === false ? 0 : Number(Potions.purchasePotionFor({ level: bot.level })?.heal) || 0;
