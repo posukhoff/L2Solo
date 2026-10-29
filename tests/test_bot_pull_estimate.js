@@ -55,8 +55,11 @@ assert.strictEqual(Pull.entryPull(spot, 30), 3);
 assert.strictEqual(Pull.entryPull(spot, 20), 1);
 assert.strictEqual(Pull.entryPull(null, 30), 1);
 
-// A pull of k is one mob with k times the HP and the mean attack of the mobs still standing.
-assert.deepStrictEqual(Pull.pullView({ maxHp: 100, pAtk: 10, pDef: 5 }, 3), { maxHp: 300, pAtk: 20, pDef: 5, pull: 3 });
+// A pull of k is one mob with k times the HP and the mean attack of the mobs still standing:
+// (k + 1) / 2 felled one by one, all k worn down together by area skills.
+assert.deepStrictEqual(Pull.pullView({ maxHp: 100, pAtk: 10, pDef: 5 }, 3), { maxHp: 300, pAtk: 20, pDef: 5, pull: 3, pack: 2, unitPAtk: 10 });
+assert.strictEqual(Pull.pullView({ maxHp: 100, pAtk: 10 }, 3, 1).pAtk, 30);
+assert.strictEqual(Pull.pullView({ maxHp: 100, pAtk: 10 }, 3, 0.5).pAtk, 25);
 const single = { maxHp: 100, pAtk: 10 };
 assert.strictEqual(Pull.pullView(single, 1), single);
 
@@ -144,12 +147,12 @@ try {
 const pack = hunt(3);
 assert.deepStrictEqual([pack.debug.pulls, pack.patch.stats.lastReason], [0, 'no_safe_solo_target'],
     'a weaponless level-10 hunter leaves a field of gremlin trios alone');
-// After a win the hunter's remaining HP meets the usual pull too: at 200 HP it takes a lone
-// gremlin but rests before a field of pairs.
-const hurt = { ...hunter(), vitals: { hp: 200, maxHp: 99999, mp: 99999, maxMp: 99999 } };
+// After a win the hunter's remaining HP meets the usual pull too: a level-11 hunter takes
+// gremlin trios at full HP (323), but at 200 HP it takes a lone gremlin and rests before a trio.
+const hurt = { ...hunter(), level: 11, vitals: { hp: 200, maxHp: 99999, mp: 99999, maxMp: 99999 } };
 const nextFight = pull => Resolver.resolveFight({ state: hurt, spot: gremlins(pull), rng: () => 0, timestamp: 1e12 });
 assert(!nextFight(0).avoided, 'a lone gremlin is fought at 200 HP');
-assert.strictEqual(nextFight(2).reason, 'solo_recovery_needed', 'a usual pair is rested for at 200 HP');
+assert.strictEqual(nextFight(3).reason, 'solo_recovery_needed', 'a usual trio is rested for at 200 HP');
 
 // Area and aura skills hit every mob of the pull (F20, plan 3.3(в)): a nuker whose
 // only spell strikes an area kills a pull of three about as fast as one mob, while
@@ -189,6 +192,8 @@ const caster = sourceTarget => [{ role: 'mage', maxHp: 1000, pDef: 100, mAtk: 40
 const packMob = { maxHp: 1000, pAtk: 50, atkSpd: 253, pDef: 100, mDef: 100, basePDef: 100, baseMDef: 100 };
 const margin = (sourceTarget, k) => Matchup.soloSurvival(caster(sourceTarget), Pull.pullView(packMob, k)).survivalRatio;
 assert.strictEqual(margin('area', 1), margin(null, 1), 'one mob: area and single-target are equal');
-assert(Math.abs(margin('aura', 3) / margin(null, 3) - 3) < 1e-9, 'a pull of three: the area spell counts three times');
+// A pull of three: the area spell counts three times, and the three mobs it
+// wears down together all hit (pack 3 instead of 2): 3 x 2 / 3.
+assert(Math.abs(margin('aura', 3) / margin(null, 3) - 2) < 1e-9, 'a pull of three: three hits, three mobs standing');
 
 console.log('Bot pull estimate checks passed');

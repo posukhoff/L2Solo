@@ -71,6 +71,44 @@ function magicSkill(attacker, defender, context = {}, rng = Math.random) {
     return { damage, critical, shield: Formulas.SHIELD_DEFENSE_FAILED };
 }
 
+// Expected damage of one hit, for planning (the solo gate: BotTargetMatchup):
+// the mean of the very rules above over their rolls, so the gate and the
+// fight read one formula. The shield's outcomes by Formulas.shieldChances,
+// a critical by its rate, the weapon spread at its mean; context as the
+// rolled rule's, plus hitChance (a normal attack's hit roll, the caller's:
+// Formulas.hitChance) and landChance (a blow's, in 0..1).
+const MEAN_ROLL = () => 0.5;
+function overShield(defender, context, hit) {
+    const { perfect, succeed } = Formulas.shieldChances({ shieldRate: defender.shieldRate, dex: defender.dex,
+        facing: context.facing ?? true, bow: context.bow === true });
+    return perfect * 1 + succeed * hit(guardedPDef(defender, Formulas.SHIELD_DEFENSE_SUCCEED))
+        + (1 - perfect - succeed) * hit(defender.pDef);
+}
+function expectedMelee(attacker, defender, context = {}) {
+    const critical = Math.min(1, Math.max(0, attacker.critRate) / 1000);
+    const damage = overShield(defender, context, pDef => {
+        const hit = crit => Formulas.calcMeleeDamage(attacker.pAtk, attacker.pAtkRnd, pDef, { critical: crit,
+            soulshot: context.soulshot === true, criticalDamageMultiplier: attacker.critDamageMul,
+            criticalDamageAdd: attacker.critDamageAdd, rng: MEAN_ROLL });
+        return (1 - critical) * hit(false) + critical * hit(true);
+    });
+    return damage * (context.modifier ?? 1) * (context.hitChance ?? 1);
+}
+function expectedPhysicalSkill(attacker, defender, context = {}) {
+    const formula = context.blow ? Formulas.calcBlowDamage : Formulas.calcPhysicalDamage;
+    const critical = Math.min(1, Math.max(0, Number(context.skillCritRate) || 0) / 1000);
+    const damage = overShield(defender, context, pDef => formula.call(Formulas, attacker.pAtk, attacker.pAtkRnd, pDef, context.power, {
+        soulshot: context.soulshot === true, criticalDamageMultiplier: attacker.critDamageMul,
+        criticalDamageAdd: attacker.critDamageAdd, rng: MEAN_ROLL }) * (1 + critical));
+    return damage * (context.modifier ?? 1) * (context.landChance ?? 1);
+}
+function expectedMagicSkill(attacker, defender, context = {}) {
+    const critical = Math.min(1, Math.max(0, attacker.mCritRate) / 1000);
+    const hit = magicCritical => Formulas.calcMagicDamage(attacker.mAtk, context.power, defender.mDef, {
+        spiritshot: context.spiritshot === true, blessedSpiritshot: context.blessedSpiritshot === true, magicCritical });
+    return ((1 - critical) * hit(false) + critical * hit(true)) * (context.modifier ?? 1);
+}
+
 // An effect's resistance stats by its trait (Lisvus: stun via shock, cancel
 // via the banes), and its land chance in percent (Lisvus calcSkillSuccess,
 // Formulas.calcSkillEffectSuccessRate): attacker { level, mAtk, soulshot,
@@ -121,5 +159,5 @@ function blowLands(semantic, position, rng = Math.random) {
     return (Number(semantic?.requires?.condition) & COND_CRIT) === 0 || chance >= rng() * 100;
 }
 
-module.exports = { melee, physicalSkill, magicSkill, physicalSkillCritRate, blowLandChance, blowLands, resistStats, traitResistModifier,
+module.exports = { melee, physicalSkill, magicSkill, expectedMelee, expectedPhysicalSkill, expectedMagicSkill, physicalSkillCritRate, blowLandChance, blowLands, resistStats, traitResistModifier,
     effectLandChance };

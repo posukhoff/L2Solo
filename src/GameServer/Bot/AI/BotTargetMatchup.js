@@ -2,9 +2,10 @@ const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Rules = invoke('GameServer/Skills/C4SkillRules');
 const Roles = invoke('GameServer/Bot/AI/BotRoles');
 const WeaponMask = invoke('GameServer/Skills/WeaponMask');
-const Formulas = invoke('GameServer/Formulas');
 const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
 const Pull = invoke('GameServer/Bot/AI/BotPullEstimate');
+const HitRules = invoke('GameServer/Combat/HitRules');
+const CombatantView = invoke('GameServer/Combat/CombatantView');
 
 const MIN_EFFICIENCY = 0.15;
 const ELEMENTS = ['fire', 'water', 'wind', 'earth', 'holy', 'dark'];
@@ -16,12 +17,14 @@ const number = (value, fallback = 1) => Number.isFinite(Number(value)) ? Number(
 const positive = value => Math.max(1, number(value));
 // Resolved on first use (the cold worker loads this module before them);
 // invoke() re-resolves the path on every call inside spot scans.
-let DataCacheModule, HuntingTargetPolicy, ColdCombatProfile;
+let DataCacheModule, HuntingTargetPolicy, ColdCombatProfile, ColdMobAction;
 const dataCache = () => DataCacheModule || (DataCacheModule = invoke('GameServer/DataCache'));
 const huntingTargetPolicy = () => HuntingTargetPolicy
     || (HuntingTargetPolicy = invoke('GameServer/Bot/AI/BotHuntingTargetPolicy'));
 const coldCombatProfile = () => ColdCombatProfile
     || (ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile'));
+const coldMobAction = () => ColdMobAction
+    || (ColdMobAction = invoke('GameServer/Bot/Population/ColdMobAction'));
 
 function npcTemplate(id) {
     return ItemTemplateIndex.findLastByLength(dataCache().npcs, id, npcTemplate);
@@ -67,15 +70,19 @@ function coldProfiles(profile, state = {}, timestamp = Date.now()) {
     })) }];
     const summon = state.stats?.coldCombat?.summon;
     if (summon?.active && number(summon.hp, summon.maxHp) > 0 && summon.expiresAt > timestamp) {
-        profiles.push({ ...summon, role: 'dps', skills: [], soloDamageReceiver: false });
+        profiles.push({ ...summon, role: 'dps', skills: [], soloDamageReceiver: false, servitor: true });
     } else if (Roles.isSummoner(profile.classId)) {
         const Cold = invoke('GameServer/Bot/Population/ColdCombatProfile');
         const skill = Cold.summonSkills(profile).find(s => s.reuseReady !== false
             && number(s.mp, 0) <= number(state.vitals?.mp, profile.maxMp)
             && number(state.stats?.coldCombat?.cooldowns?.[s.selfId], 0) <= timestamp);
+        // The servitor the fight raises first (BackgroundResolver.startColdSummon):
+        // it strikes, and its owner acts again, after the summon's cast.
         if (skill) profiles.push({ ...invoke('GameServer/Bot/Population/ColdSummonProfile')(profile, Cold.summonDetails(skill)),
-            role: 'dps', skills: [], soloDamageReceiver: false });
+            role: 'dps', skills: [], soloDamageReceiver: false, servitor: true, summonCastMs: Cold.actionDelayMs(profile, skill) });
     }
+    // The shot the fight loads from the bot's stock (ColdCombatProfile.shotSupply).
+    if (state.inventory) profiles[0].shot = coldCombatProfile().shotSupply(state, timestamp);
     if ((profile.role || Roles.combatRoleFor(profile)) === 'mage') {
         profiles[0].soloAttackScores = invoke('GameServer/Bot/Population/ColdClassPolicy')
             .soloAttackScores(profiles[0], { summon: profiles.length > 1 });
@@ -143,16 +150,13 @@ function skillModifier(actor, target, skill, view = targetView(target)) {
         actor.backpack?.fetchTotalWeaponKind?.() || '');
 }
 
-// The damage rates of the cold fight, one owner (channels, soloSurvival,
-// HuntCycle's kit ratio): a profile's auto-attack and a spell of `power`
-// against a target's defence, and a target's hits against a profile.
-// A bow shot lasts as long as the cold fight's (Formulas.normalAttackMs: it
-// draws and reloads); a swing keeps the gate's own 500 / atkSpd seconds.
+// The plain damage rates of a kit (HuntCycle's kit ratio, which applies the
+// hit roll itself): a profile's auto-attack at the cold fight's attack cycle
+// (ColdCombatProfile.normalAttackMs) and a spell of `power` against a
+// target's defence, and a target's hits against a profile. The solo gate
+// reads the fight's expected hits instead (channels, soloSurvival).
 function attackRate(profile, target) {
-    const speed = positive(profile.atkSpd || 300);
-    const perSecond = profile.equipment?.weaponKind === 'Weapon.Bow'
-        ? 1000 / Math.max(250, Formulas.normalAttackMs(speed, { bow: true, reuseDelay: profile.equipment?.attackReuseDelay }))
-        : speed / 500;
+    const perSecond = 1000 / coldCombatProfile().normalAttackMs(profile.atkSpd ? profile : { ...profile, atkSpd: 300 });
     return 70 * positive(profile.pAtk) / positive(target.basePDef || target.pDef) * perSecond;
 }
 function spellDamage(profile, target, power) {
@@ -165,13 +169,30 @@ function incomingRate(target, profile) {
     return 70 * target.pAtk / profile.pDef * positive(target.atkSpd || 253) / 500;
 }
 
+// A profile's attacks on a target, each as the cold fight strikes it: its
+// expected hit (HitRules.expected*: hit roll, critical, shield, the shot it
+// loads) over the action's time (ColdCombatProfile.actionDelayMs, a weapon
+// cycle, a servitor's swing), against the target's base defence (modifier:
+// its weaknesses and defence buffs). An area skill hits every mob of a pull.
+// weight: damage per second; survivalWeight: bounded by the skill's reuse;
+// damageBudget: what the MP bar pays for; area: an area skill on a pull.
 function channels(profile, target) {
+    const Cold = coldCombatProfile();
     const role = profile.role || Roles.combatRoleFor(profile);
     const kind = profile.equipment?.weaponKind || '';
+    const bow = kind === 'Weapon.Bow';
     const physical = role !== 'mage';
+    const attacker = Cold.attackerView(profile);
+    const defender = CombatantView.view({ pDef: positive(target.basePDef || target.pDef), mDef: positive(target.baseMDef || target.mDef),
+        dex: target.dex, shieldPDef: target.shieldPDef, shieldRate: target.shieldRate });
     const result = [];
-    if (physical) result.push({ weight: attackRate(profile, target),
-    modifier: modifier(target, {}, false, kind), magic: false, normal: true });
+    if (physical) {
+        const shot = Cold.actionShot(profile.shot, null);
+        const hit = HitRules.expectedMelee(attacker, defender, { soulshot: shot?.soulshot === true, bow,
+            hitChance: Cold.expectedHitChance(profile.accur, target.evasion) });
+        const swingMs = profile.servitor ? Cold.summonAttackMs(profile) : Cold.normalAttackMs(profile);
+        result.push({ weight: hit * 1000 / swingMs, modifier: modifier(target, {}, false, kind), magic: false, normal: true });
+    }
     for (const skill of profile.skills || []) {
         const semantic = skill.semantic || Rules.resolve(skill);
         const magic = skill.spell === true;
@@ -180,19 +201,23 @@ function channels(profile, target) {
             || (semantic.undeadOnly && target.undead !== true)
             || (number(profile.maxMp, 0) > 0 && number(skill.mp, 0) > profile.maxMp)
             || (semantic.requires?.weaponsAllowed && !(semantic.requires.weaponsAllowed & profile.weaponMask))
-            || (kind === 'Weapon.Bow' && number(semantic.castRange ?? skill.distance, 0) < 400)) continue;
+            || (bow && number(semantic.castRange ?? skill.distance, 0) < 400)) continue;
         const power = Math.max(0, number(skill.power ?? semantic.power, 0));
         if (!power) continue;
         // An area skill hits every mob of a pull (F20; BotPullEstimate.pullView).
-        const struck = Rules.hitsArea(semantic) ? Math.max(1, number(target.pull)) : 1;
-        const weight = struck * (magic
-            ? spellRate(profile, target, power, skill.hitTime)
-            : 70 * (positive(profile.pAtk) + power) / positive(target.basePDef || target.pDef)
-                / Math.max(1, number(skill.hitTime, 1500) / 1000));
+        const area = Rules.hitsArea(semantic) && number(target.pull, 1) > 1;
+        const struck = area ? number(target.pull) : 1;
+        const shot = Cold.actionShot(profile.shot, skill);
+        const blow = semantic.skillType === Rules.BLOW;
         const hitDamage = struck * (magic
-            ? spellDamage(profile, target, power)
-            : 70 * (positive(profile.pAtk) + power) / positive(target.basePDef || target.pDef));
-        result.push({ weight, modifier: modifier(target, semantic, magic, kind), magic,
+            ? HitRules.expectedMagicSkill(attacker, defender, { power, spiritshot: shot?.spiritshot === true,
+                blessedSpiritshot: shot?.blessedSpiritshot === true })
+            : HitRules.expectedPhysicalSkill(attacker, defender, { power, blow, bow, soulshot: shot?.soulshot === true,
+                skillCritRate: HitRules.physicalSkillCritRate(semantic, profile.str),
+                landChance: blow ? HitRules.blowLandChance(semantic, { dex: profile.dex, front: true,
+                    rateMul: Cold.statMultiplier(profile, 'blowRateMul', Date.now()) }) / 100 : 1 }));
+        const weight = hitDamage * 1000 / Cold.actionDelayMs(profile, skill, shot?.spiritshot === true);
+        result.push({ weight, modifier: modifier(target, semantic, magic, kind), magic, area,
             soloScore: profile.soloAttackScores?.[skill.selfId],
             survivalWeight: Math.min(weight, hitDamage / Math.max(0.25, number(skill.reuse, 0) / 1000)),
             damageBudget: number(skill.mp, 0) > 0
@@ -219,6 +244,14 @@ function evaluate(profiles, target, attacksOf = channels) {
 // Full-health readiness, not an estimate of the current injured fight. Keep
 // headroom for misses, interrupted casts and the retreat before zero HP.
 // Missing legacy projections remain neutral until real stats are available.
+// The fight the bot meets (BackgroundResolver.resolveFight), in expectation:
+// the bot lives its HP over the target's mean action damage
+// (ColdMobAction.incomingPerSecond: hits, criticals, skills), plus the
+// opening it strikes before a melee monster closes in
+// (ColdCombatProfile.openingMs); a servitor still to be raised strikes, and
+// its owner acts, only after the summon's cast. Each attacker deals its best
+// attack over that time; areaShare: the share of that damage by area
+// skills, which keeps a pull's mobs standing together (Pull.repack).
 function soloSurvival(profiles, target, minimum = 1.5, attacksOf = channels) {
     // The cold solo executor damages the owner; the summon only adds attacks.
     // Native actor profiles retain their ordinary tanking behavior.
@@ -227,12 +260,29 @@ function soloSurvival(profiles, target, minimum = 1.5, attacksOf = channels) {
         || receivers.some(profile => profile.survivalKnown === false || !(profile.maxHp > 0) || !(profile.pDef > 0))) {
         return { eligible: true, survivalRatio: null };
     }
-    const lifetime = Math.max(...receivers.map(profile => profile.maxHp / incomingRate(target, profile)));
-    const damage = profiles.reduce((sum, profile) => sum + Math.max(0, ...soloChannels(profile, target, attacksOf)
-        .map(attack => Math.min((attack.survivalWeight ?? attack.weight) * lifetime,
-            attack.damageBudget ?? Infinity) * attack.modifier)), 0);
-    const survivalRatio = damage / target.maxHp;
-    return { eligible: survivalRatio >= minimum, survivalRatio,
+    const Cold = coldCombatProfile(), Mob = coldMobAction();
+    const openingSeconds = Cold.openingMs(receivers[0], target) / 1000;
+    const castSeconds = Math.max(0, ...profiles.map(profile => number(profile.summonCastMs, 0))) / 1000;
+    const lists = profiles.map(profile => soloChannels(profile, target, attacksOf));
+    const plan = view => {
+        const lifetime = Math.max(...receivers.map(profile => profile.maxHp / Mob.incomingPerSecond(view, profile)));
+        const seconds = Math.max(0, lifetime + openingSeconds - castSeconds);
+        let damage = 0, area = 0;
+        for (const attacks of lists) {
+            let best = 0, bestArea = false;
+            for (const attack of attacks) {
+                const dealt = Math.min((attack.survivalWeight ?? attack.weight) * seconds, attack.damageBudget ?? Infinity) * attack.modifier;
+                if (dealt > best) { best = dealt; bestArea = attack.area === true; }
+            }
+            damage += best;
+            if (bestArea) area += best;
+        }
+        return { damage, areaShare: damage > 0 ? area / damage : 0 };
+    };
+    let result = plan(target);
+    if (result.areaShare > 0 && Number(target.pull) > 1) result = plan(Pull.repack(target, result.areaShare));
+    const survivalRatio = result.damage / target.maxHp;
+    return { eligible: survivalRatio >= minimum, survivalRatio, areaShare: result.areaShare,
         reason: survivalRatio >= minimum ? 'solo_survival_ready' : 'insufficient_survival_margin' };
 }
 
@@ -276,8 +326,6 @@ function soloSpotUpperBound(profiles) {
         || !Number.isFinite(p.maxHp) || !(p.maxHp > 0) || !Number.isFinite(p.pDef) || !(p.pDef > 0))) {
         return () => true;
     }
-    const lifetimeNumerator = Math.max(...receivers.map(p => p.maxHp * p.pDef)) * 500 / 70;
-    if (!Number.isFinite(lifetimeNumerator)) return () => true;
     const neutral = { basePDef: 1, pDef: 1, baseMDef: 1, mDef: 1, undead: true };
     const bounds = profiles.map(profile => {
         const bound = { continuous: 0, physicalRate: 0, physicalBudget: 0, magicRate: 0, magicBudget: 0 };
@@ -312,7 +360,10 @@ function soloSpotUpperBound(profiles) {
         const target = coldCombatProfile().npcCombatStats(npc);
         if (!(target?.maxHp > 0) || !(target.pAtk > 0)
             || !(target.basePDef > 0) || !(target.baseMDef > 0)) return true;
-        const seconds = lifetimeNumerator / (target.pAtk * positive(target.atkSpd || 253));
+        // The gate's own lifetime and opening (soloSurvival), no summon cast.
+        const Mob = coldMobAction();
+        const seconds = Math.max(...receivers.map(p => p.maxHp / Mob.incomingPerSecond(target, p)))
+            + coldCombatProfile().openingMs(receivers[0], target) / 1000;
         let vulnerability = 1;
         for (const stat in target.vulnerabilities) {
             vulnerability = Math.max(vulnerability, number(target.vulnerabilities[stat]));

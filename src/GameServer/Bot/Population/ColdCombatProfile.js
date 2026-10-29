@@ -4,6 +4,9 @@ const { fnv1a32 } = require('../Fnv1a');
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const DataCache = invoke('GameServer/DataCache');
 const Formulas = invoke('GameServer/Formulas');
+const CombatantView = invoke('GameServer/Combat/CombatantView');
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
+const AttackRange = invoke('GameServer/Actor/AttackRange');
 const { skillTreeEntries, learnedTreeRow, treeSkillLevel } = require('./ColdSkillTree');
 const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const SkillRequirements = invoke('GameServer/Skills/SkillRequirements');
@@ -285,6 +288,7 @@ function npcCombatStats(npc) {
     });
 
     const result = {
+        selfId: number(npc.selfId),
         level,
         maxHp: adjustedNpcStat(npc.vitals?.maxHp, actor, 'maxHp'),
         pAtk: adjustedNpcStat(npc.stats?.pAtk, actor, 'pAtk'),
@@ -312,6 +316,8 @@ function npcCombatStats(npc) {
         shieldRate: shield || number(shield?.stats?.pDef) > 0 ? Formulas.DEFAULT_SHIELD_RATE : 0,
         aiType: NpcCombatChoice.aiTypeOfModel(npc),
         atkRadius: number(npc.stats?.atkRadius),
+        // The speed it closes in at (openingMs).
+        runSpd: number(npc.speed?.run),
         weaponKind: String(weapon?.template?.kind || ''),
         race: String(npc.traits?.race || '').toLowerCase(),
         undead: npc.traits?.undead === true,
@@ -1237,6 +1243,134 @@ function kitHash(parts) {
 function kitEvents(state = {}) {
     return kitHash(combatView(state));
 }
+// The stat sources of a fighter (whose profile is the one read) at a hit's
+// time, held on the fighter for its fight (fightSources);
+// undefined without one, so statMultiplier builds them for that hit.
+function hitSources(fighter, timestamp) {
+    if (!fighter) return undefined;
+    fighter.statSources = fightSources(fighter.profile, timestamp, fighter.statSources || null);
+    return fighter.statSources.sources;
+}
+
+// Cold adapters of CombatantView (HitRules, the hot Attack's rules), the
+// cold fight's and the solo gate's (BotTargetMatchup): a fight
+// profile as attacker and as defender, a monster (npcCombatStats or a pull
+// view of it) likewise. One view per object: a profile is built per fight.
+const attackerViews = new WeakMap(), defenderViews = new WeakMap();
+function attackerView(subject, timestamp = Date.now(), fighter = null) {
+    let view = attackerViews.get(subject);
+    if (view) return view;
+    if (subject.equipment) {
+        const sources = hitSources(fighter, timestamp);
+        view = CombatantView.view({ pAtk: subject.pAtk, pAtkRnd: subject.equipment.pAtkRnd, mAtk: subject.mAtk,
+            critRate: subject.critical, mCritRate: subject.mCritRate, str: subject.str,
+            critDamageMul: multiplier(subject, 'pCritDamageMul', timestamp, sources),
+            critDamageAdd: add(subject, 'pCritDamageAdd', timestamp, sources) });
+    } else {
+        // A hot Npc's weapon hit has no spread (Attack.prepareNpcMeleeHit).
+        view = CombatantView.view({ pAtk: subject.pAtk, mAtk: subject.mAtk, critRate: subject.critical, mCritRate: subject.mCritRate });
+    }
+    attackerViews.set(subject, view);
+    return view;
+}
+function defenderView(subject, timestamp = Date.now(), fighter = null) {
+    let view = defenderViews.get(subject);
+    if (view) return view;
+    if (subject.equipment) {
+        const sources = hitSources(fighter, timestamp);
+        view = CombatantView.view({ pDef: subject.pDef, mDef: subject.mDef, dex: subject.dex,
+            shieldPDef: Number(subject.equipment.shieldPDef || 0) * multiplier(subject, 'sDefMul', timestamp, sources)
+                + (Number(subject.equipment.shieldPDef) > 0 ? add(subject, 'sDefAdd', timestamp, sources) : 0),
+            shieldRate: Number(subject.equipment.shieldRate || 0) * multiplier(subject, 'rShldMul', timestamp, sources) });
+    } else {
+        view = CombatantView.view({ pDef: subject.pDef, mDef: subject.mDef, dex: subject.dex,
+            shieldPDef: subject.shieldPDef, shieldRate: subject.shieldRate });
+    }
+    defenderViews.set(subject, view);
+    return view;
+}
+
+// A monster object whose numbers changed mid-fight (a self buff) is viewed anew.
+function forgetViews(subject) {
+    attackerViews.delete(subject);
+    defenderViews.delete(subject);
+}
+
+function hitSucceeds(accuracy, evasion, rng) {
+    return rng() < Formulas.hitChance(accuracy, evasion);
+}
+
+// A normal attack's hit chance for planning: Formulas.hitChance when both
+// numbers are known, else 1 (a native target view carries neither).
+function expectedHitChance(accuracy, evasion) {
+    const known = value => value !== null && value !== undefined && Number.isFinite(Number(value));
+    return known(accuracy) && known(evasion) ? Formulas.hitChance(accuracy, evasion) : 1;
+}
+
+// A skill takes its C4 cast time, cut by a loaded spiritshot; a skill row
+// without a cast time falls back to 1000 ms (spell) or 600 ms (physical).
+// A normal attack: normalAttackMs (a bow draws and reloads).
+function actionDelayMs(profile, skill = null, spiritshot = false) {
+    if (skill?.spell) {
+        return Formulas.calcSkillHitTime(Number(skill.hitTime) || 1000, profile.castSpd, { magic: true, spiritshot });
+    }
+    if (skill) {
+        return Formulas.calcSkillHitTime(Number(skill.hitTime) || 600, profile.atkSpd);
+    }
+    return normalAttackMs(profile);
+}
+
+// A servitor's time between hits (SummonControl: a monster's melee cycle).
+function summonAttackMs(summon) {
+    return Math.max(250, Formulas.calcMeleeAtkTime(Number(summon?.atkSpd) || 253));
+}
+
+// The shot a bot loads in one cold fight, decided once from its inventory:
+// the kind and grade hot auto shots load (ShotStock.planForState), how many
+// the weapon takes per charge and how many charges the stock still covers.
+// Null when the bot holds none of that shot or its weapon takes none.
+function shotSupply(state, timestamp) {
+    const plan = ShotStock.combatPlanForState(state);
+    const key = String(plan.selfId);
+    const left = plan.perAction > 0 ? Math.floor(Number(state.inventory?.[key]?.amount || 0) / plan.perAction) : 0;
+    if (left <= 0 || ShotStock.usePolicy(state, { timestamp, plan }).usePerHour <= 0) return null;
+    return { key, timestamp, perAction: plan.perAction, left, soulshot: plan.kind === 'soulshot',
+        spiritshot: plan.kind !== 'soulshot', blessedSpiritshot: plan.kind === 'blessedSpiritshot' };
+}
+
+// The shot an action loads from a supply (shotSupply), by the hot rule
+// (ShotStock.actionShotKind): a spell a spiritshot, a physical skill a
+// soulshot unless its ssBoost is 0, a normal attack (no skill) a soulshot.
+// The supply when it holds that kind, otherwise null.
+function actionShot(shot, skill = null) {
+    if (!shot) return null;
+    let kind = ShotStock.actionShotKind(false);
+    if (skill) {
+        const semantic = C4SkillRules.resolveCached(skill);
+        kind = ShotStock.actionShotKind(semantic.isMagic ?? skill.spell === true, semantic.ssBoost);
+    }
+    if (kind === 'soulshot') return shot.soulshot ? shot : null;
+    return kind && shot.spiritshot ? shot : null;
+}
+
+// How long a bot that pulls a melee-only monster (ColdMobAction.meleeOnly)
+// hits before the monster closes in: the bot's reach beyond the monster's
+// over the monster's run speed (C4: a bow shoots from 700, a caster nukes
+// from its spells' cast range). 0 without a run speed; a fight the monster
+// opens (an aggressive interruption) gives none (the caller's).
+function openingMs(profile = {}, mob = {}) {
+    const speed = number(mob.runSpd);
+    if (!(speed > 0) || !invoke('GameServer/Bot/Population/ColdMobAction').meleeOnly(mob)) return 0;
+    const kind = profile.equipment?.weaponKind || '';
+    let reach = AttackRange.kindRange(kind, kind === 'Weapon.Bow' ? add(profile, 'pAtkRangeAdd', Date.now()) : 0);
+    if (BotRoles.usesCasterWeaponCombat(profile)) {
+        for (const skill of offensiveSkills(profile)) {
+            if (skill.spell) reach = Math.max(reach, number(C4SkillRules.resolveCached(skill).castRange ?? skill.distance));
+        }
+    }
+    return Math.max(0, reach - number(mob.atkRadius)) / speed * 1000;
+}
+
 // Drops the bot's kit profiles (both slots).
 function forgetBuild(characterId) {
     kitProfiles.delete(Number(characterId));
@@ -1250,6 +1384,9 @@ module.exports = {
     isAttackSkill, offensiveSkills, summonDetails, summonSkills, corpseSummonSkills, activeMusicEffects, partyMusicSkills, partyMusicMpCost, partyMusicEffect, normalAttackMs,
     spotSpawns, npcForSpot, killDraw, killChances, npcCombatStats, skillSnapshotsFromRecords, skillRecordsFromTree, treeSkillLevel,
     statMultiplier: multiplier, statAdd: add,
+    // The cold fight's views, hit roll, action times, shots and opening (BackgroundResolver, the solo gate).
+    hitSources, attackerView, defenderView, forgetViews, hitSucceeds, expectedHitChance, actionDelayMs, summonAttackMs,
+    shotSupply, actionShot, openingMs,
     // The offline hunt tables (scripts/hunt-tables) sum a kit from their rows through the same numbers pass.
     profileNumbers, equipmentFromTemplates
 };
