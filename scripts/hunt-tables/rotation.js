@@ -30,6 +30,7 @@ const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const ClassProgression = invoke('GameServer/ClassProgression');
 const PveEncounter = require('../../src/GameServer/Bot/Population/ColdPveEncounter');
 const Formulas = invoke('GameServer/Formulas');
+const Formula = invoke('GameServer/Bot/Population/ColdHuntFormula');
 
 // The real solo step's shortest combat budget (resolveSolo: 12 s): a shorter
 // slice ends inside a summon's cast and loses the summon.
@@ -166,6 +167,64 @@ function openingActions(classId, level, perAction) {
     return { damage, mp, ms };
 }
 
+// The live formula kill (ColdHuntFormula) against the real fight on real
+// mobs the class meets (3 to 6 levels below it, alone, fresh at full HP and
+// MP): fixMs and fixTaken, the real fight's mean length and damage taken over
+// the formula's, from fights the formula took and no heal ran in. The
+// formula scales by them (its picks follow the mob's HP, T100, and its
+// incoming damage has no defensive effects; the real fight has both).
+const CALIBRATION_MOBS = 3;
+const CALIBRATION_FIGHTS = 12;
+let mobsByLevel = null;
+function calibrate(classId, level, row) {
+    if (!mobsByLevel) {
+        mobsByLevel = {};
+        const mobs = C.readTable('mobs');
+        for (const mob of mobs.mobs) (mobsByLevel[mobs.combats[mob[2]][0]] ||= []).push(mob[0]);
+    }
+    const ids = [];
+    for (let l = level - 6; l <= level - 3; l++) ids.push(...(mobsByLevel[l] || []));
+    ids.sort((a, b) => C.hash(`${classId}|${level}|${a}`) - C.hash(`${classId}|${level}|${b}`));
+    Formula.useTable({ bandLevels: 2, openingSeconds: OPENING_SECONDS, fields: FIELDS,
+        rows: { [classId]: { [Math.floor(level / 2)]: FIELDS.map(field => row[field]) } } });
+    const sum = { realMs: 0, formulaMs: 0, realTaken: 0, formulaTaken: 0, fights: 0 };
+    let used = 0;
+    const random = Math.random;
+    try {
+        for (const id of ids) {
+            if (used >= CALIBRATION_MOBS) break;
+            const spot = { id: `calibration-${id}`, avgLevel: level, npcEntries: [{ selfId: id, count: 1 }],
+                rewards: { exp: 0, sp: 0, adenaMin: 0, adenaMax: 0 } };
+            const pairs = [];
+            for (let i = 0; i < CALIBRATION_FIGHTS; i++) {
+                const fightOf = enabled => {
+                    const { state } = rotationBot(classId, level);
+                    Formula.enabled = enabled;
+                    Math.random = C.mulberry(C.hash(`${classId}|${level}|${id}|${i}|random`));
+                    return Resolver.resolveFight({ state, spot, pressure: {}, targetNpcId: id, timestamp: START,
+                        rng: C.mulberry(C.hash(`${classId}|${level}|${id}|${i}`)), fightLimitMs: 60000, maxActions: 400 });
+                };
+                const real = fightOf(false), formula = fightOf(true);
+                if (real.avoided || formula.avoided) break;
+                if (real.won && formula.debug?.formula && !(real.debug?.heals > 0)) pairs.push([real.debug, formula.debug]);
+            }
+            if (pairs.length < CALIBRATION_FIGHTS / 2) continue;
+            used += 1;
+            for (const [real, formula] of pairs) {
+                sum.realMs += real.durationMs; sum.formulaMs += formula.durationMs;
+                sum.realTaken += real.damageTaken; sum.formulaTaken += formula.damageTaken;
+                sum.fights += 1;
+            }
+        }
+    } finally {
+        Math.random = random;
+        Formula.enabled = false;
+        Formula.useTable(undefined);
+    }
+    return { fixMs: sum.formulaMs > 0 ? sum.realMs / sum.formulaMs : 1,
+        fixTaken: sum.formulaTaken > 0 ? sum.realTaken / sum.formulaTaken : 1, calibrationFights: sum.fights };
+}
+
 function perSecond(part) {
     return part.ms > 0 ? part.damage / (part.ms / 1000) : 0;
 }
@@ -206,7 +265,7 @@ function measure(classId, level) {
     const open = opening(classId, level);
     const actsPerSec = kit.phase.ms > 0 ? kit.phase.actions / (kit.phase.ms / 1000) : 0;
     const hits = openingActions(classId, level, actsPerSec > 0 ? d1 / actsPerSec : 0);
-    return { level, refPAtk: p1, refMAtk: kit.profile.mAtk, refAtkSpd: kit.profile.atkSpd, refCastSpd: kit.profile.castSpd,
+    const row = { level, refPAtk: p1, refMAtk: kit.profile.mAtk, refAtkSpd: kit.profile.atkSpd, refCastSpd: kit.profile.castSpd,
         A, B, M: mUnit, magicShare: d1 > 0 ? magic1 / d1 : 0, mpPerSec, mpPhaseSec: kit.phase.ms / 1000,
         dryUnit: physUnit(dry, kit.profile) / Math.max(1, p1), shotMul,
         areaShare: d1 > 0 ? Math.max(0, perSecond(pair.phase) * DEF / d1 - 1) : 0, d1,
@@ -216,11 +275,12 @@ function measure(classId, level) {
         // Bot actions per second, and the first actions of a fresh fight.
         actsPerSec, openHits: hits.damage, openHitMp: hits.mp, openHitMs: hits.ms,
         shotsPerAct: shot.phase.actions > 0 ? shot.phase.shots / shot.phase.actions : 0 };
+    return { ...row, ...calibrate(classId, level, row) };
 }
 
 const FIELDS = ['level', 'refPAtk', 'refMAtk', 'refAtkSpd', 'refCastSpd', 'A', 'B', 'M', 'magicShare', 'mpPerSec', 'mpPhaseSec',
     'dryUnit', 'shotMul', 'areaShare', 'd1', 'openDamage', 'openMp', 'shotsPerSec', 'actsPerSec', 'openHits', 'openHitMp',
-    'openHitMs', 'shotsPerAct'];
+    'openHitMs', 'shotsPerAct', 'fixMs', 'fixTaken', 'calibrationFights'];
 
 function bandsFor(classId) {
     const stage = Math.max(0, Math.min(2, ClassProgression.lineage(classId).length - 1));

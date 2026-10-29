@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const Formulas = invoke('GameServer/Formulas');
+const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 
 const ROTATION_FILE = path.join(__dirname, '../../../../data/Bots/hunt/rotation.json');
 
@@ -93,6 +94,25 @@ function rotationFor(classId, level) {
     return rotations.get(key);
 }
 
+// A bot that heals itself fight after fight (BackgroundResolver.chooseHeal's
+// heal kinds on itself, reuse up to HEAL_REUSE_MS; a minutes-long one such as
+// Battle Roar is rare). The rotation, measured on a dummy that never hits
+// back, holds no heal: such a bot's formula kill must stay above its heal
+// line (bot.floor), else the fight runs for real. Per skill list.
+const HEAL_REUSE_MS = 30000;
+const HEALS = [C4SkillRules.HEAL, C4SkillRules.HEAL_PERCENT, C4SkillRules.HEAL_HOT, C4SkillRules.HOT];
+const healers = new WeakMap();
+function healsInFight(profile) {
+    const skills = profile?.skills;
+    if (!Array.isArray(skills)) return false;
+    if (!healers.has(skills)) healers.set(skills, skills.some(skill => {
+        if (skill.passive || Number(skill.reuse) > HEAL_REUSE_MS) return false;
+        const semantic = C4SkillRules.resolveCached(skill);
+        return HEALS.includes(semantic.skillType) && ['self', 'party', 'ally', 'friendly'].includes(semantic.target);
+    }));
+    return healers.get(skills);
+}
+
 // The z of the worst case a formula kill may still take: past it the fight
 // runs for real (the bot may die, drink, heal; the steps decide).
 const WORST_Z = 3;
@@ -100,7 +120,8 @@ let enabled = true;
 
 // One kill by formula, or null when the fight must run for real.
 // bot { classId, level, profile (the fight profile), hp, mp, maxMp, shots
-// (loaded and paying), opens (a full bar: fresh from a rest, its cooldowns
+// (loaded and paying), floor (HP the fight must not fall to: a healer's
+// heal line), opens (a full bar: fresh from a rest, its cooldowns
 // ready, the fight opens with its burst) }, mob: the pull's view (BotPullEstimate.pullView),
 // mobHp, fightLimitMs, mod (the mob's weapon modifier on the bot), rng.
 // Returns { ms, taken, mp, shotActions, died }.
@@ -152,12 +173,15 @@ function kill(bot, mob, { mobHp = mob.maxHp, fightLimitMs, mod = 1, rng = Math.r
         n = actionsAt(dry / rate);
         mp = 0;
     }
-    const lasts = bot.opens ? (n <= head ? rot.openHitMs[n - 1] / 1000 : rot.openHitMs[head - 1] / 1000 + (n - head) / rate)
-        : (n - 1) / rate;
+    // The rotation build's calibration on real mobs (fixMs, fixTaken).
+    const fixMs = rot.fixMs > 0 ? rot.fixMs : 1, fixTaken = rot.fixTaken > 0 ? rot.fixTaken : 1;
+    const lasts = fixMs * (bot.opens ? (n <= head ? rot.openHitMs[n - 1] / 1000 : rot.openHitMs[head - 1] / 1000 + (n - head) / rate)
+        : (n - 1) / rate);
     if (lasts * 1000 > fightLimitMs) return null;
     // The mob strikes at once too, unless the first action fells it.
-    const hits = incoming(mob, profile, lasts, mod, n > 1 ? 1 : 0);
-    if (hits.mean + WORST_Z * hits.sigma >= bot.hp) return null;
+    const raw = incoming(mob, profile, lasts, mod, n > 1 ? 1 : 0);
+    const hits = { mean: raw.mean * fixTaken, sigma: raw.sigma * fixTaken };
+    if (hits.mean + WORST_Z * hits.sigma >= bot.hp - (Number(bot.floor) || 0)) return null;
     // A normal deviate of the fight's damage (Box-Muller on the fight's rng).
     const z = Math.sqrt(-2 * Math.log(Math.max(1e-12, rng()))) * Math.cos(2 * Math.PI * rng());
     const taken = Math.max(0, hits.mean + z * hits.sigma);
@@ -167,7 +191,7 @@ function kill(bot, mob, { mobHp = mob.maxHp, fightLimitMs, mod = 1, rng = Math.r
 }
 
 module.exports = {
-    rotationOf, openingAt, damageTerms, normalCdf, incoming, rotationFor, useTable, kill, WORST_Z,
+    rotationOf, openingAt, damageTerms, normalCdf, incoming, rotationFor, useTable, kill, healsInFight, WORST_Z,
     get enabled() { return enabled; },
     set enabled(value) { enabled = value === true; }
 };
