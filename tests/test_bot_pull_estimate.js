@@ -31,7 +31,8 @@ assert.strictEqual(joiners.get(520), 5);
 assert.strictEqual(joiners.get(445), 5, 'a hit minion alerts the leader and the rest of the group');
 assert.strictEqual(joiners.get(1), undefined);
 
-// The start-time table: one mean pull per spawn group (spot entry), set only where it is above one.
+// The start-time table: per spawn group (spot entry) the share of its spawns by pull size and their
+// mean, set only where a spawn pulls more than one (user 10-29: a spot mixes lone mobs, pairs and packs).
 const spot = {
     npcEntries: [{ selfId: 10, count: 2 }, { selfId: 20, count: 1 }, { selfId: 30, count: 1 }],
     records: [
@@ -45,6 +46,9 @@ const size = Pull.annotate([spot], rules, new Map([[30, 2]]));
 assert.strictEqual(spot.npcEntries[0].pull, 1.5, 'one of two ants has a clanmate in its help radius');
 assert.strictEqual(spot.npcEntries[1].pull, undefined, 'a mob without help radius pulls alone');
 assert.strictEqual(spot.npcEntries[2].pull, 3, 'a leader brings its minions');
+assert.deepStrictEqual(spot.npcEntries[0].pulls, [[1, 0.5], [2, 0.5]], 'one ant spawn pulls alone, one as a pair');
+assert.strictEqual(spot.npcEntries[1].pulls, undefined);
+assert.deepStrictEqual(spot.npcEntries[2].pulls, [[3, 1]]);
 assert.strictEqual(spot.records, undefined, 'the spawn records are dropped once the table is built');
 assert.deepStrictEqual(size, { entries: 3, pulls: 2 });
 assert.strictEqual(Pull.entryPull(spot, 30), 3);
@@ -56,11 +60,17 @@ assert.deepStrictEqual(Pull.pullView({ maxHp: 100, pAtk: 10, pDef: 5 }, 3), { ma
 const single = { maxHp: 100, pAtk: 10 };
 assert.strictEqual(Pull.pullView(single, 1), single);
 
-// The cold fight rolls a whole number of mobs from the mean once per new fight.
-assert.strictEqual(Pull.rollPull(1, () => assert.fail('a pull of one draws nothing')), 1);
-assert.strictEqual(Pull.rollPull(3, () => assert.fail('a whole pull draws nothing')), 3);
-assert.strictEqual(Pull.rollPull(2.4, () => 0.39), 3);
-assert.strictEqual(Pull.rollPull(2.4, () => 0.4), 2);
+// An entry's pulls: the measured mix, else the two whole sizes around its mean, else one mob.
+assert.deepStrictEqual(Pull.pullsOf(spot.npcEntries[0]), [[1, 0.5], [2, 0.5]]);
+assert.deepStrictEqual(Pull.pullsOf({ pull: 2.5 }), [[2, 0.5], [3, 0.5]]);
+assert.deepStrictEqual(Pull.pullsOf({ pull: 3 }), [[3, 1]]);
+assert.deepStrictEqual(Pull.pullsOf({}), [[1, 1]]);
+// The cold fight rolls one size of the mix once per new fight; shares need not sum to one.
+assert.strictEqual(Pull.rollPulls([[3, 1]], () => assert.fail('one size draws nothing')), 3);
+assert.strictEqual(Pull.rollPulls([[1, 0.7], [2, 0.25], [4, 0.05]], () => 0.69), 1);
+assert.strictEqual(Pull.rollPulls([[1, 0.7], [2, 0.25], [4, 0.05]], () => 0.7), 2);
+assert.strictEqual(Pull.rollPulls([[1, 0.7], [2, 0.25], [4, 0.05]], () => 0.99), 4);
+assert.strictEqual(Pull.rollPulls([[1, 0.2], [2, 0.2]], () => 0.5), 2);
 
 // Cold: the solo fight rolls its pull; the mob stays one mob for the readiness margin.
 const Data = invoke('GameServer/DataCache');
@@ -85,7 +95,7 @@ const gremlins = pull => ({ id: 'starter_gremlin', name: 'Gremlin field', avgLev
 const hunter = () => ({ characterId: 71, name: 'ColdHunter', level: 10, levelBand: '10-12', activity: 'hunting',
     vitals: { hp: 99999, maxHp: 99999, mp: 99999, maxMp: 99999 }, stats: {}, party: { role: 'dps' } });
 const hunt = pull => Resolver.resolveSolo({ state: hunter(), spot: gremlins(pull), elapsedMs: 60000, rng: () => 0 });
-const one = hunt(0), two = hunt(2), three = hunt(2.4);
+const one = hunt(0), two = hunt(2);
 assert.strictEqual(one.debug.wins, 1);
 assert.strictEqual(two.debug.wins, 1);
 assert.deepStrictEqual([one.debug.pulls, one.debug.pullMobs], [1, 1]);
@@ -93,10 +103,20 @@ assert.deepStrictEqual([two.debug.pulls, two.debug.pullMobs], [1, 2]);
 assert.strictEqual(two.materialize.exp, one.materialize.exp * 2, 'each mob of the pull gives its exp');
 assert.strictEqual(two.materialize.items.length, one.materialize.items.length * 2, 'each mob rolls its drops');
 assert(two.debug.combatMs > one.debug.combatMs, 'two mobs take longer to kill');
-// Helpers come regardless (design 13.5): the species verdict judges the spot's mean pull (two here), a rolled
-// pull of three still starts, it is not rested for.
-assert.deepStrictEqual([three.debug.pulls, three.debug.pullMobs], [1, 3]);
-assert.notStrictEqual(three.patch.stats.lastReason, 'solo_recovery_needed');
+// User 10-29: the bot fights only the pull sizes it survives. The weaponless level-10 hunter survives a
+// gremlin pair but not a trio; on a field of 70% pairs and 30% trios, a roll that would draw a trio
+// draws among the pairs, and the field is still hunted.
+const mixed = { ...gremlins(0), npcEntries: [{ selfId: 1, count: 3, pulls: [[2, 0.7], [3, 0.3]] }] };
+const mixedFight = Resolver.resolveFight({ state: hunter(), spot: mixed, rng: () => 0.99, timestamp: 1e12 });
+assert(!mixedFight.avoided, 'a field with survivable pairs is hunted');
+const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
+const hunterProfiles = Matchup.coldProfiles(Cold.fightProfile(hunter(), 1e12), hunter(), 1e12);
+const mixedPick = Cold.npcForSpot(mixed, () => 0.99, { soloSafety: true, pull: true, matchupProfiles: hunterProfiles });
+assert.deepStrictEqual([mixedPick.pull, mixedPick.usualPull], [2, 2], 'a trio roll becomes a pair');
+assert.deepStrictEqual(Matchup.speciesPulls(hunterProfiles, mixed.npcEntries[0], { soloSafety: true }),
+    { efficiency: Matchup.speciesPulls(hunterProfiles, mixed.npcEntries[0], { soloSafety: true }).efficiency,
+        canHunt: true, share: 0.7, allowed: [[2, 0.7]] });
+assert.strictEqual(Cold.npcForSpot(mixed, () => 0.99, { pull: true }).pull, 3, 'without safety the whole mix is rolled');
 // T106 (user 10-29): a species whose usual pull the hunter cannot survive is not hunted, as one mob it would be.
 const pack = hunt(3);
 assert.deepStrictEqual([pack.debug.pulls, pack.patch.stats.lastReason], [0, 'no_safe_solo_target'],
@@ -139,7 +159,6 @@ assert.strictEqual(singleThree.areaPullHits, 0);
 assert.strictEqual(areaOne.areaPullHits, 0, 'a lone mob takes no area hits');
 
 // The same rule in the matchup estimate a pull is judged by (hot target choice).
-const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
 const Rules = invoke('GameServer/Skills/C4SkillRules');
 const caster = sourceTarget => [{ role: 'mage', maxHp: 1000, pDef: 100, mAtk: 400, castSpd: 333, maxMp: 1000,
     skills: [{ selfId: 9001, spell: true, power: 50, mp: 10, hitTime: 2000, reuse: 1,

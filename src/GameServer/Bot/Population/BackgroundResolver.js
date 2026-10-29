@@ -1418,9 +1418,9 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
         accur: 1, evasion: 0, critical: 0, atkSpd: 253, mAtk: 1, castSpd: 333
     };
     if (picked.avoided) return { avoided: true, reason: picked.reason };
-    // Readiness keeps the margin the species verdict gave the usual pull
-    // (Social packs); a larger rolled pull, helpers, aggressive neighbours and
-    // minions come regardless (design 13.5).
+    // Readiness keeps the margin the spawn-group verdict gave the rolled pull
+    // (a size of the group's mix the hunter survives); helpers, aggressive
+    // neighbours and minions beyond it come regardless (design 13.5).
     if (!pending && !picked.aggressiveInterruption) {
         const readiness = EncounterReadiness.evaluate({
             hp: state.vitals?.hp ?? bot.maxHp, maxHp: bot.maxHp,

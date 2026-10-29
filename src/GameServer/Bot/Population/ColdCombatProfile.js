@@ -1085,9 +1085,11 @@ function killDraw(entries, encounterEntries, options = {}) {
 }
 
 // An entry's weight in a kill draw: its spawn count, times its squared
-// matchup efficiency for the hunters (1 without a matchup).
+// matchup efficiency for the hunters (1 without a matchup), times the share of
+// its spawns whose pull a solo hunter survives (BotTargetMatchup.speciesPulls).
 function killWeight(entry) {
-    return Math.max(1, number(entry.count, 1)) * Math.min(1, entry.match?.efficiency ?? 1) ** 2;
+    return Math.max(1, number(entry.count, 1)) * Math.min(1, entry.match?.efficiency ?? 1) ** 2
+        * (entry.match?.share ?? 1);
 }
 
 // Each entry's chance to be the kill of a draw (killDraw), as the roll
@@ -1120,12 +1122,14 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
     if (options.matchupProfiles?.length) {
         let resisted = 0;
         entries = entries.map(entry => {
-            // A solo pick reads the shared species verdict its route search
-            // read: the same evaluate and soloCanHunt for these profiles and
-            // safety options (resisted only names a pick without safety).
+            // A solo pick reads the shared spawn-group verdict its route search
+            // read: the same evaluate and soloCanHunt per pull size for these
+            // profiles and safety options; the pick takes only the pulls the
+            // hunter survives (resisted only names a pick without safety).
             if (options.soloSafety) {
-                const verdict = Matchup.speciesVerdict(options.matchupProfiles, entry.selfId, { ...options, pull: entry.pull });
-                return { ...entry, match: { eligible: verdict?.canHunt === true, efficiency: verdict?.efficiency } };
+                const verdict = Matchup.speciesPulls(options.matchupProfiles, entry, options);
+                return { ...entry, match: { eligible: verdict?.canHunt === true, efficiency: verdict?.efficiency,
+                    share: verdict?.share ?? 0, allowed: verdict?.allowed } };
             }
             const match = Matchup.evaluate(options.matchupProfiles, npcCombatStats(ItemTemplateIndex.find(DataCache.npcs, entry.selfId)));
             if (!match.eligible) resisted += 1;
@@ -1152,6 +1156,10 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
     if (!npc) return null;
     const combat = npcCombatStats(npc);
     const explicitRaid = options.allowRaid === true && spot.raidBoss === true;
+    // A solo fight takes the whole pull of its spawn group (F20): one size of
+    // the group's mix, among the sizes the hunter survives when safety judged it.
+    const pull = options.pull && !explicitRaid
+        ? BotPullEstimate.rollPulls(selected.match?.allowed || BotPullEstimate.pullsOf(selected), rng) : 0;
     const minionRows = explicitRaid
         ? RAID_MINIONS.filter((row) => number(row.bossId) === number(npc.selfId))
         : [];
@@ -1171,10 +1179,8 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
         selfId: number(npc.selfId),
         aggressiveInterruption: !!preferred && selected !== preferred,
         ...combat,
-        // A solo fight takes the whole pull of its spawn group (F20).
-        // usualPull: the mean pull the species verdict judged (readiness after a win judges it too).
-        ...(options.pull && !explicitRaid ? { pull: BotPullEstimate.rollPull(selected.pull, rng),
-            usualPull: Math.max(1, Math.round(Number(selected.pull) || 1)) } : {}),
+        // usualPull: the pull the verdict judged, the readiness after a win judges it too.
+        ...(pull ? { pull, usualPull: pull } : {}),
         ...(explicitRaid ? {
             // Cold mode represents the raid group as one bounded encounter.
             // Adds contribute part of their HP and incoming damage instead of

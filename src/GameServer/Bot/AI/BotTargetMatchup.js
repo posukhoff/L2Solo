@@ -406,14 +406,6 @@ function npcVerdict(verdicts, selfId, options, pull = 1) {
 // hundreds of spots against the same verdicts.
 const spotMatchups = new WeakMap();
 
-// One species' verdict ({ efficiency, canHunt } or null) for profiles under
-// safety options: the one a spot search with the same profiles and options
-// reads, so a solo fight's pick (ColdCombatProfile.npcForSpot) shares it.
-function speciesVerdict(profiles, selfId, options = {}) {
-    return npcVerdict(optionVerdicts(profiles, options), Number(selfId),
-        { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel }, options.pull);
-}
-
 // One spawn group's verdict over its pulls (BotPullEstimate.pullsOf): the
 // pulls the profiles survive (allowed, their shares as measured), their
 // share of the group, and the efficiency over all its pulls; null for a
@@ -434,8 +426,9 @@ function entryVerdict(verdicts, entry, verdictOptions) {
     return known ? { efficiency, canHunt: share > 0, share, allowed } : null;
 }
 
-// The spawn group's verdict for profiles under safety options, as a spot
-// search reads it (spotMatchup), for a solo fight's pick (npcForSpot).
+// The spawn group's verdict for profiles under safety options, the one a spot
+// search with the same profiles and options reads (spotMatchup), so a solo
+// fight's pick (ColdCombatProfile.npcForSpot) shares it.
 function speciesPulls(profiles, entry, options = {}) {
     return entryVerdict(optionVerdicts(profiles, options), entry,
         { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel });
@@ -476,4 +469,4 @@ function damageRate(profiles, target = {}) {
 }
 
 module.exports = { MIN_EFFICIENCY, actorProfiles, coldProfiles, profileKey, targetView, skillModifier, damageRate, attackRate, spellRate, incomingRate,
-    profileStats, skillStats, evaluate, soloSurvival, soloCanHunt, soloSpotUpperBound, stateProfiles, spotMatchup, speciesVerdict };
+    profileStats, skillStats, evaluate, soloSurvival, soloCanHunt, soloSpotUpperBound, stateProfiles, spotMatchup, speciesPulls };

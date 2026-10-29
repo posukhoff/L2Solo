@@ -98,7 +98,7 @@ function pullView(target, k) {
 }
 
 // An entry's pulls by size, [[size, share], ...]: its measured ones, else the
-// two whole sizes around its mean (rollPull's draw), else one mob.
+// two whole sizes around its mean, else one mob.
 function pullsOf(entry) {
     if (Array.isArray(entry?.pulls) && entry.pulls.length) return entry.pulls;
     const mean = Number(entry?.pull) || 1;
@@ -119,11 +119,4 @@ function rollPulls(pulls, rng) {
     return pulls[pulls.length - 1][0];
 }
 
-// A whole number of mobs for one new fight, from the spot's mean.
-function rollPull(mean, rng) {
-    const whole = Math.max(1, Math.floor(Number(mean) || 1));
-    const part = (Number(mean) || 1) - whole;
-    return part > 0 && rng() < part ? whole + 1 : whole;
-}
-
-module.exports = { record, pullSize, minionJoiners, annotate, entryPull, pullView, rollPull, pullsOf, rollPulls };
+module.exports = { record, pullSize, minionJoiners, annotate, entryPull, pullView, pullsOf, rollPulls };
