@@ -50,8 +50,9 @@ assert(reader.gain(before, sturdier) > 0, 'one more CON shortens the rest: it ad
 const symbol = invoke('GameServer/Henna/HennaRules').availableForClass(1).find(row => row.CON > 0 && row.STR < 0);
 assert(reader.gain(before, after({ hennas: [symbol.id] })) < 0, 'CON +1 STR -3 costs a fighter more than it saves');
 // Healing potions save the rest their heal would take, where the spot's
-// fights drink them (a level-50 gladiator's best spots).
-const drinker = bot(2, 50);
+// fights drink them (a level-70 gladiator's best spots; on the T106 tables
+// its level-50 spots no longer drink them).
+const drinker = bot(2, 70);
 const drinks = Profile.candidateProfiles(drinker, timestamp).before;
 assert(HuntCycle.reader(drinker, ctx).potionGain(drinks, 336) > 0, 'healing potions save rest');
 assert.equal(reader.potionGain(before, 336), 0, 'no potion worth where the fights drink none');

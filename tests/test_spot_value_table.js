@@ -111,10 +111,11 @@ assert(keltir && keltir.kills > 100 && keltir.kills <= 275.2 && keltir.exp > 0 &
 assert(Table.value('-15_42', 'dps', 5, false).kills <= keltir.kills, 'shots do not slow a dps');
 assert(Table.value('-15_42', 'dps', 12, true).kills >= keltir.kills, 'a higher dps kills at least as fast');
 assert(raw.roles.every((role) => Table.value('-15_42', role, 8, true)), 'every role hunts the newbie field');
-// Level 44 spot 7_34: the dps row was measured six levels up; far below the spot there is no solo hunt.
-assert.strictEqual(Table.referenceLevel('7_34', 'dps'), 50);
-assert(Table.value('7_34', 'dps', 50).exp > Table.value('-15_42', 'dps', 8).exp * 5, 'higher spots give much more exp');
-assert.strictEqual(Table.value('7_34', 'dps', 30), null, 'no solo hunt far below the spot\'s level');
+// Level 44 spot 11_6: the dps row was measured six levels up; far below the spot there is no solo hunt.
+// (7_34's pack is judged as one pull since T100: no solo row there.)
+assert.strictEqual(Table.referenceLevel('11_6', 'dps'), 50);
+assert(Table.value('11_6', 'dps', 50).exp > Table.value('-15_42', 'dps', 8).exp * 5, 'higher spots give much more exp');
+assert.strictEqual(Table.value('11_6', 'dps', 30), null, 'no solo hunt far below the spot\'s level');
 // Seven Signs catacombs are not solo hunting grounds in the author's rules.
 assert(raw.roles.every((role) => Table.value('8_23:catacomb_of_the_heretics', role, 50) === null), 'catacombs: no solo row');
 useRate('x10');

@@ -103,8 +103,9 @@ function checkDamageBonus() {
         'a soulshot doubles P.Atk, not the skill power');
     const nuke = { skill: { selfId: 1177, level: 1 }, magic: true, power: 50 };
     const plain = damage(nuke, null);
-    assert.strictEqual(plain, Formulas.calcMagicDamage(900, 50, 300), 'without a shot: the plain C4 spell damage');
-    assert.strictEqual(damage(nuke, spiritshot), Formulas.calcMagicDamage(900 * 2, 50, 300), 'a spiritshot doubles M.Atk');
+    // A hit lands whole damage, hot and cold (HitRules).
+    assert.strictEqual(plain, Math.round(Formulas.calcMagicDamage(900, 50, 300)), 'without a shot: the plain C4 spell damage');
+    assert.strictEqual(damage(nuke, spiritshot), Math.round(Formulas.calcMagicDamage(900 * 2, 50, 300)), 'a spiritshot doubles M.Atk');
     assert.strictEqual(damage(nuke, blessed), Formulas.calcMagicDamage(900 * 4, 50, 300), 'a blessed spiritshot: M.Atk x4');
     assert(Math.abs(damage(nuke, blessed) / plain - 2) < 1e-9, 'M.Atk x4 doubles a spell (damage grows with its root)');
 }
