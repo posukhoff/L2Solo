@@ -36,7 +36,7 @@ function adapter(profile) {
     if (adapters.has(profile)) return adapters.get(profile);
     const state={};
     const skills=(profile.skills||[]).map(skillModel);
-    let seatedMp=null;
+    let seatedMp=null,seatedHp=null;
     // The numbers BotCombatUtility's MP price reads (T100): the cold normal
     // attack time and the rate the cold rest (resolveRest) refills MP at.
     const actor={
@@ -44,6 +44,7 @@ function adapter(profile) {
         fetchPAtk:()=>profile.pAtk,fetchMAtk:()=>profile.mAtk,fetchAtkSpd:()=>profile.atkSpd,fetchCastSpd:()=>profile.castSpd,
         fetchNormalAttackMs:()=>ColdCombatProfile.normalAttackMs(profile),
         fetchSeatedMpPerMs:()=>seatedMp??=coldRestRegenPerTick({classId:profile.classId,level:profile.level}).mp/3000,
+        fetchSeatedHpPerMs:()=>seatedHp??=coldRestRegenPerTick({classId:profile.classId,level:profile.level}).hp/3000,
         fetchHp:()=>state.hp,fetchMaxHp:()=>profile.maxHp,
         fetchMp:()=>state.mp,fetchMaxMp:()=>profile.maxMp,
         fetchCharges:()=>state.charges,
@@ -92,4 +93,9 @@ function soloAttackScores(profile, { summon = false } = {}) {
         return rate > 0 && [skill.fetchSelfId(), 180 * Math.log2(rate)];
     }).filter(Boolean));
 }
-module.exports={select,soloAttackScores};
+// The profile as the hot actor the shared bot rules read (SoloSelfHeal), at
+// the fight's HP, MP, reuse and time.
+function actorFor(profile,{hp,mp,cooldowns,time,charges=0}){
+    const cached=adapter(profile);Object.assign(cached.state,{hp,mp,cooldowns,time,charges});return cached.actor;
+}
+module.exports={select,soloAttackScores,actorFor};

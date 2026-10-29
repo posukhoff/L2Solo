@@ -91,6 +91,17 @@ function seatedMpPerMs(bot) {
     return Math.max(0, Number(bot?.automation?.fetchRevMpAmount?.(bot, { seated: true })) || 0) / 3000;
 }
 
+function seatedHpPerMs(bot) {
+    if (bot?.fetchSeatedHpPerMs) return bot.fetchSeatedHpPerMs();
+    return Math.max(0, Number(bot?.automation?.fetchRevHpAmount?.(bot, { seated: true })) || 0) / 3000;
+}
+
+// The seated ms one spent MP costs a bot that rests for mana (T100), else 0.
+function restMsPerMp(bot, party = false) {
+    const seated = seatedMpPerMs(bot);
+    return seated > 0 && RestPolicy.restsForMana(bot, party) ? restShare(bot.fetchMp?.(), bot.fetchMaxMp?.()) / seated : 0;
+}
+
 // T100 (docs/game-decisions.md, Bot behaviour): MP is priced in rest time.
 // A damage skill's worth is its damage, capped at the target's HP, per ms of
 // its cast plus the seated rest that wins its MP back; the alternative is the
@@ -111,15 +122,12 @@ function priceContext(bot, target, policy = {}) {
     const pAtk = statOf(bot, 'PAtk'), pDef = statOf(target, 'PDef'), mDef = statOf(target, 'MDef');
     const targetHp = Number(target?.fetchHp?.());
     if (!(pAtk > 0 && pDef > 0 && mDef > 0 && targetHp > 0)) return null;
-    const seated = seatedMpPerMs(bot);
-    const mp = bot.fetchMp?.(), maxMp = bot.fetchMaxMp?.();
     const party = String(policy.classProfile?.mode || '').startsWith('party');
-    const rests = seated > 0 && RestPolicy.restsForMana(bot, party);
     const attackRate = Roles.usesCasterWeaponCombat(bot) ? 0
         : Math.min(targetHp, basicAttackDamageEstimate(bot, target)) / normalAttackMs(bot);
     return { pAtk, pDef, mDef, targetHp, attackRate, mAtk: statOf(bot, 'MAtk'),
         atkSpd: Math.max(1, statOf(bot, 'AtkSpd')), castSpd: Math.max(1, statOf(bot, 'CastSpd')),
-        restMsPerMp: rests ? restShare(mp, maxMp) / seated : 0 };
+        restMsPerMp: restMsPerMp(bot, party) };
 }
 
 // The share of a full rest a spent MP costs: the share of the bar spent.
@@ -404,6 +412,9 @@ module.exports = {
     priceContext,
     manaPrice,
     restShare,
+    restMsPerMp,
+    seatedHpPerMs,
+    statOf,
     skillHitMs,
     basicAttackDamageEstimate,
     mageMeleeFinishOpportunity

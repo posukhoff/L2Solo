@@ -8,6 +8,7 @@ const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const ColdKillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 const ColdClassPolicy = invoke('GameServer/Bot/Population/ColdClassPolicy');
+const SoloSelfHeal = invoke('GameServer/Bot/AI/SoloSelfHeal');
 const BotCombatUtility = invoke('GameServer/Bot/AI/BotCombatUtility');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
@@ -554,6 +555,37 @@ function effectiveSkillPower(profile, skill, hp) {
     return C4SkillRules.resolve(skill || {}).skillType === C4SkillRules.FATAL
         ? Formulas.calcFatalPower(basePower, hp, profile.maxHp)
         : basePower;
+}
+
+// The solo self-heal of a cold fighter in its fight (SoloSelfHeal.inFight):
+// the fight's pace from the fighter's first turn of the slice.
+function coldSoloHeal(fighter, mobHp, time, at) {
+    if (!fighter.pace) {
+        fighter.pace = { at: time, hp: fighter.vitals.hp, mobHp, healed: 0 };
+        return null;
+    }
+    const actor = ColdClassPolicy.actorFor(fighter.profile, { hp: fighter.vitals.hp, mp: fighter.vitals.mp,
+        cooldowns: fighter.cooldowns, time: at, charges: fighter.charges });
+    const skill = SoloSelfHeal.inFight(actor, { mobHp,
+        ...SoloSelfHeal.pace(fighter.pace, { at: time, hp: fighter.vitals.hp, mobHp }) });
+    return skill ? { skill: skill.coldRecord, target: fighter } : null;
+}
+
+// The self-heals a solo bot casts between fights instead of sitting
+// (SoloSelfHeal.betweenFights): vitals and cooldowns change in place.
+// Returns { casts, ms }.
+function coldHealBetweenFights(profile, vitals, cooldowns, at) {
+    let casts = 0, ms = 0;
+    for (;;) {
+        const actor = ColdClassPolicy.actorFor(profile, { hp: vitals.hp, mp: vitals.mp, cooldowns, time: at + ms });
+        const skill = SoloSelfHeal.betweenFights(actor);
+        if (!skill) return { casts, ms };
+        vitals.hp = Math.min(profile.maxHp, vitals.hp + SoloSelfHeal.healAmount(actor, skill, skill.fetchSemantic?.() || {}, true));
+        vitals.mp = Math.max(0, vitals.mp - skill.fetchConsumedMp());
+        cooldowns[skill.fetchSelfId()] = at + ms + Math.max(0, Number(skill.fetchReuseTime?.()) || 0);
+        ms += actionDelayMs(profile, skill.coldRecord);
+        casts += 1;
+    }
 }
 
 function chooseSkill(profile, hp, mp, cooldowns, time, charges = 0, rng, context = {}) {
@@ -1308,10 +1340,14 @@ function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false
         fighter.readyAt += 250;
         return null;
     }
-    const heal = chooseHeal(fighter.profile, allies, fighter.vitals.mp, fighter.cooldowns, at, fighter, mob);
+    // Alone, the bot heals itself by the solo rule (SoloSelfHeal, T107); in a party by the author's.
+    const heal = solo ? coldSoloHeal(fighter, mobHp, time, at)
+        : chooseHeal(fighter.profile, allies, fighter.vitals.mp, fighter.cooldowns, at, fighter, mob);
     if (heal) {
         const shot = loadColdShot(fighter, heal.skill);
+        const hpBefore = fighter.vitals.hp;
         const events = applyAllyHeal(fighter, allies, heal, shot);
+        if (fighter.pace) fighter.pace.healed += Math.max(0, fighter.vitals.hp - hpBefore);
         if (help) for (const event of events) help.set(`${event.sourceId}:${event.targetId}:${event.type}`, event);
         spendSkill(fighter, heal.skill, at);
         fighter.skillUses += 1;
@@ -1585,6 +1621,8 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
         adena: rewards.adena,
         loot: rewards.loot.flatMap(({ drops, spoil }) => [...drops, ...spoil]),
         cooldowns: soloFighter.cooldowns,
+        // The fight's profile, for the heals between fights (resolveSolo); not stored.
+        profile: bot,
         charges: soloFighter.charges,
         chargeExpiresAt: soloFighter.chargeExpiresAt,
         effects: soloFighter.profile.effects,
@@ -2262,6 +2300,14 @@ const BackgroundResolver = {
                     meta: { spotId: spot.id, fights: i + 1 }
                 });
                 break;
+            }
+            // A won fight's gap: the self-heals that beat sitting (SoloSelfHeal, T107).
+            if (result.won && result.profile) {
+                const healed = coldHealBetweenFights(result.profile, patch.vitals, patch.stats.coldCombat.cooldowns,
+                    timestamp + combatMs);
+                combatMs += healed.ms;
+                heals += healed.casts;
+                skillUses += healed.casts;
             }
 
             const hpPct = patch.vitals.hp / Math.max(1, patch.vitals.maxHp || patch.vitals.hp);

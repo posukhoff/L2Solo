@@ -102,12 +102,13 @@ class Automation extends SelectedModel {
         return { hp: minHp, mp: minMp, ...(hasCp ? { cp: minCp } : {}) };
     }
 
-    fetchRevHpAmount(creature) {
+    // options.seated: as fetchRevMpAmount's (a bot's solo self-heal, SoloSelfHeal).
+    fetchRevHpAmount(creature, options = {}) {
         const base = this.fetchPlayerRegenBase(creature, 'CON');
         return Math.max(0, (
             (base * EffectStats.multiplier(creature, 'regHp'))
             + EffectStats.add(creature, 'regHpAdd')
-        ) * this.fetchRegenStateMultiplier(creature));
+        ) * this.fetchRegenStateMultiplier(creature, options));
     }
 
     // options.seated: the amount a seated creature would regain (a bot's MP

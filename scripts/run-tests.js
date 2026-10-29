@@ -252,6 +252,7 @@ const tests = [
     'tests/test_market_economy_policy.js',
     'tests/test_attack_hit_flags.js',
     'tests/test_combat_core.js',
+    'tests/test_solo_self_heal.js',
     'tests/test_player_attack_range.js',
     'tests/test_player_attack_approach.js',
     'tests/test_player_approach_position_refresh.js',
