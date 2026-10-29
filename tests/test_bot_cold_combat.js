@@ -309,7 +309,8 @@ const coldNecromancerProfile = ColdCombatProfile.profileFor({
 }, timestamp);
 assert.strictEqual(BotRoles.isNecromancer(13), true, 'Necromancer must be recognized as a corpse-summoning class');
 assert.strictEqual(BotRoles.isNecromancer(95), true, 'Soultaker must inherit the Necromancer corpse-summoning role');
-assert(coldNecromancerProfile.maxMp > 1000, 'cold Necromancer profiles must use the spellcaster MP formula');
+const coldGladiatorProfile = ColdCombatProfile.profileFor({ classId: 2, level: 40, stats: { classId: 2 } }, timestamp);
+assert(coldNecromancerProfile.maxMp > 1.3 * coldGladiatorProfile.maxMp, 'cold Necromancer profiles must read the mystic class template MP');
 assert(ColdCombatProfile.corpseSummonSkills(coldNecromancerProfile).some((skill) => skill.selfId === 1154),
     'cold Necromancer profiles must retain corpse-target servitor skills');
 const coldNecromancer = {
