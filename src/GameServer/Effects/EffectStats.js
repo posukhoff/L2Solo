@@ -3,14 +3,16 @@ const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const GameTime = invoke('GameServer/World/GameTime');
 const SkillRequirements = invoke('GameServer/Skills/SkillRequirements');
 
-function multiplier(actor, stat, fallback = 1) {
-    return statValues(actor, stat)
+// posture: { seated } as if the actor sat or stood (a rest's choice,
+// Automation's regen amounts); unset, its own state.
+function multiplier(actor, stat, fallback = 1, posture = undefined) {
+    return statValues(actor, stat, posture)
         .filter((value) => Number.isFinite(value))
         .reduce((total, value) => total * value, fallback);
 }
 
-function add(actor, stat, fallback = 0) {
-    return statValues(actor, stat)
+function add(actor, stat, fallback = 0, posture = undefined) {
+    return statValues(actor, stat, posture)
         .filter((value) => Number.isFinite(value))
         .reduce((total, value) => total + value, fallback);
 }
@@ -31,10 +33,10 @@ function situationalMultiplier(actor, stat, context = {}, fallback = 1) {
 }
 
 // Gear and situation are read once per lookup, and only when a rule asks.
-function statValues(actor, stat) {
+function statValues(actor, stat, posture = undefined) {
     const effects = EffectStore.list(actor);
     const gear = gearOf(actor);
-    const situation = situationOf(actor);
+    const situation = situationOf(actor, posture);
     const values = effects.map((effect) => Number(effect.stats?.[stat]));
     for (const effect of effects) {
         for (const entry of effect.conditionalStats || []) {
@@ -67,8 +69,8 @@ function gearOf(actor) {
     return new GearContext(actor?.backpack);
 }
 
-function situationOf(actor) {
-    return new SituationContext(actor, actor?.state);
+function situationOf(actor, posture = undefined) {
+    return new SituationContext(actor, actor?.state, posture);
 }
 
 class GearContext {
@@ -86,16 +88,17 @@ class GearContext {
 }
 
 class SituationContext {
-    constructor(actor, state) {
+    constructor(actor, state, posture = undefined) {
         this.actor = actor;
         this.state = state;
+        this.posture = posture;
     }
 
     get hp() { return Number(this.actor?.fetchHp?.()) || 0; }
     get maxHp() { return Number(this.actor?.fetchMaxHp?.()) || 0; }
-    get moving() { return !!this.state?.inMotion?.(); }
-    get walking() { return !!this.state?.fetchWalkin?.(); }
-    get seated() { return !!this.state?.fetchSeated?.(); }
+    get moving() { return this.posture ? false : !!this.state?.inMotion?.(); }
+    get walking() { return this.posture ? false : !!this.state?.fetchWalkin?.(); }
+    get seated() { return this.posture ? this.posture.seated === true : !!this.state?.fetchSeated?.(); }
     get night() {
         const actor = this.actor;
         const clock = actor?.gameTime || actor?.world?.gameTime;

@@ -103,23 +103,31 @@ class Automation extends SelectedModel {
         return { hp: minHp, mp: minMp, ...(hasCp ? { cp: minCp } : {}) };
     }
 
-    // options.seated: as fetchRevMpAmount's (a bot's solo self-heal, SoloSelfHeal).
+    // options.seated / options.standing: as fetchRevMpAmount's (a bot's solo self-heal, SoloSelfHeal).
     fetchRevHpAmount(creature, options = {}) {
         const base = this.fetchPlayerRegenBase(creature, 'CON');
+        const posture = this.fetchRegenPosture(options);
         return Math.max(0, (
-            (base * EffectStats.multiplier(creature, 'regHp'))
-            + EffectStats.add(creature, 'regHpAdd')
+            (base * EffectStats.multiplier(creature, 'regHp', 1, posture))
+            + EffectStats.add(creature, 'regHpAdd', 0, posture)
         ) * this.fetchRegenStateMultiplier(creature, options));
     }
 
-    // options.seated: the amount a seated creature would regain (a bot's MP
-    // price, BotCombatUtility), whatever its current state.
+    // options.seated / options.standing: the amount a seated or standing
+    // creature would regain, its posture's passives included (a bot's rest
+    // posture and MP price, RestPolicy.sitsToRest, BotCombatUtility), whatever
+    // its current state.
     fetchRevMpAmount(creature, options = {}) {
         const base = this.fetchPlayerRegenBase(creature, 'MEN');
+        const posture = this.fetchRegenPosture(options);
         return Math.max(0, (
-            (base * EffectStats.multiplier(creature, 'regMp'))
-            + EffectStats.add(creature, 'regMpAdd')
+            (base * EffectStats.multiplier(creature, 'regMp', 1, posture))
+            + EffectStats.add(creature, 'regMpAdd', 0, posture)
         ) * this.fetchRegenStateMultiplier(creature, options));
+    }
+
+    fetchRegenPosture({ seated = false, standing = false } = {}) {
+        return seated ? { seated: true } : standing ? { seated: false } : undefined;
     }
 
     fetchRevCpAmount(creature) {
@@ -152,10 +160,11 @@ class Automation extends SelectedModel {
         return base * invoke('GameServer/Formulas').calcLevelMod(level) * statModifier;
     }
 
-    fetchRegenStateMultiplier(creature, { seated = false } = {}) {
+    fetchRegenStateMultiplier(creature, { seated = false, standing = false } = {}) {
         if (typeof creature?.fetchClassId !== 'function') return 1;
 
         const state = creature.state;
+        if (standing && !seated) return 1.1;
         return seated || state?.fetchSeated?.() === true
             ? 1.5
             : state?.inMotion?.() === true

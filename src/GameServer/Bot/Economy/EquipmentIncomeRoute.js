@@ -1,5 +1,4 @@
 'use strict';
-const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const ColdKillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
 const BotHuntEfficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
@@ -28,7 +27,7 @@ function economicHunt(state) {
 function spotList(state, { price } = {}) {
     let spoilSkillLevel, costs = null;
     return { ids: (shots, level = state.level, minGap = -7) => SpotValueTable.rankedSpotIds(
-        BotRoles.tableRoleFor(state), level,
+        SpotValueTable.roleFor(state), level,
         costs ||= BotHuntEfficiency.consumablePrices(state, price), minGap, shots,
         { spoilSkillLevel: spoilSkillLevel ??= ColdKillRewards.spoilLevelOf(state) }) };
 }

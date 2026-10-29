@@ -71,16 +71,17 @@ function reference(role, level) {
             // Only the numbers the model reads (a whole profile is ~8 KB).
             const numbers = {};
             for (const key of REFERENCE_NUMBERS) numbers[key] = profile[key];
-            held = { numbers, regen: regenOfKit(state, numbers) };
+            held = { numbers, regen: regenOfKit(state, numbers, profile) };
         }
         references.set(key, held);
     }
     return held;
 }
 
-// The seated regeneration tick of a kit (ColdRest, its CON and MEN).
-function regenOfKit(state, numbers) {
-    return ColdRest.coldRestRegenPerTick(state, { stats: { con: numbers.con, men: numbers.men } });
+// The seated regeneration tick of a kit (ColdRest, its CON and MEN; profile:
+// the kit's own, for its passives' armour conditions).
+function regenOfKit(state, numbers, profile = undefined) {
+    return ColdRest.coldRestRegenPerTick(state, { stats: { con: numbers.con, men: numbers.men }, profile });
 }
 
 // A kit's damage per second against the kills of a spot, up to the factors

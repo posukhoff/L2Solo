@@ -130,6 +130,14 @@ function cast(session, actor, summon, skill, Generics) {
     };
 }
 
+// The mob attacks the pet: the pet holds its most hate (Npc.fetchMostHated).
+// A target without a hate table (a player in PvP) has no tank to wait for.
+function petHoldsMob(target, summon) {
+    if (typeof target?.fetchMostHated !== 'function') return true;
+    const held = target.fetchMostHated();
+    return !!held && Number(held.fetchId?.()) === Number(summon.fetchId?.());
+}
+
 function combatAction(session, actor, target, Generics) {
     const isSummoner = BotRoles.isSummoner(actor);
     const isNecromancer = BotRoles.isNecromancer(actor);
@@ -176,11 +184,12 @@ function combatAction(session, actor, target, Generics) {
         if (summon.controlMode !== 'attack' || selectedId !== targetId) {
             actor.select?.({ id: targetId });
             SummonControl.attack(session, actor, summon);
-            // The summon keeps its own attack loop. Starting that loop must
-            // not consume the owner's combat tick: the summoner can cast an
-            // offensive spell while the servitor is moving into melee range.
-            return { handled: false, reason: 'summon_attack', summon, target };
         }
+        // The pet tanks, as in C4 (user 10-29): the owner adds its own damage
+        // only while the mob is on the pet (the pet holds its most hate), so
+        // its hits never draw the mob off; until then it waits, and the pet's
+        // hits take the mob (back). Its heals and buffs above stay free.
+        if (!petHoldsMob(target, summon)) return { handled: true, reason: 'summon_tanks', summon, target };
 
         // Pet maintenance must not steal a combat tick from the owner while
         // the servitor is already engaged. Let the normal combat selector
@@ -207,5 +216,6 @@ module.exports = {
     summonSkill,
     corpseSummonSkill,
     corpseTarget,
-    combatAction
+    combatAction,
+    petHoldsMob
 };

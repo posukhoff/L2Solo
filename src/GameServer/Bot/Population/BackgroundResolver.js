@@ -1,4 +1,4 @@
-const { coldRestRegenPerTick, requiresManaRecovery, estimateRestMs } = require('./ColdRest');
+const { coldRestRegenPerTick, restRegenPerTick, requiresManaRecovery, estimateRestMs } = require('./ColdRest');
 const PveEncounter = require('./ColdPveEncounter');
 const ColdSoulCrystal = require('./ColdSoulCrystal');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
@@ -166,12 +166,11 @@ function applyStandingRegen(state, sourceVitals, elapsedMs, timestamp = Date.now
         mp: Math.max(0, Number(sourceVitals?.mp ?? combat.maxMp)),
         maxMp: combat.maxMp
     };
-    const sitting = coldRestRegenPerTick(state);
+    // C4 regeneration continues on the bot's feet (x1.1, its standing passives).
+    const standing = coldRestRegenPerTick(state, { profile: combat, standing: true, timestamp });
     const ticks = Math.max(0, Number(elapsedMs) || 0) / Formulas.REGEN_TICK_MS;
-    // C4 base regeneration continues while standing. The 1.5 multiplier in
-    // coldRestRegenPerTick is the seated bonus, so remove it for hunt time.
-    vitals.hp = Math.min(vitals.maxHp, vitals.hp + (sitting.hp / 1.5) * ticks);
-    vitals.mp = Math.min(vitals.maxMp, vitals.mp + (sitting.mp / 1.5) * ticks);
+    vitals.hp = Math.min(vitals.maxHp, vitals.hp + standing.hp * ticks);
+    vitals.mp = Math.min(vitals.maxMp, vitals.mp + standing.mp * ticks);
     return vitals;
 }
 
@@ -183,7 +182,8 @@ function resolveRest(state, elapsedMs, timestamp, options = {}) {
         mp: Math.max(0, Number(state.vitals?.mp || 0)),
         maxMp: combat.maxMp
     };
-    const regen = coldRestRegenPerTick(state, options);
+    // Seated, or standing when that refills the rest faster (user 10-29).
+    const regen = restRegenPerTick(state, vitals.maxHp - vitals.hp, vitals.maxMp - vitals.mp, { profile: combat, timestamp, ...options });
     const ticks = Math.max(0, Number(elapsedMs) || 0) / Formulas.REGEN_TICK_MS;
     vitals.hp = Math.min(vitals.maxHp, vitals.hp + regen.hp * ticks);
     vitals.mp = Math.min(vitals.maxMp, vitals.mp + regen.mp * ticks);
@@ -208,7 +208,7 @@ function resolveRest(state, elapsedMs, timestamp, options = {}) {
         patch: {
             activity: resting ? 'resting' : 'hunting',
             vitals,
-            stats: { ...(state.stats || {}), restUntil }
+            stats: { ...(petRegen(state, elapsedMs).stats || {}), restUntil }
         },
         events: resting ? [] : [{
             type: 'recovered',
@@ -997,6 +997,45 @@ function persistedSummon(fighter, timestamp) {
     };
 }
 
+// The fighter's living pet as the mob's target (coldMobAction's { profile,
+// state }), one per summon; null without one.
+function petTarget(fighter) {
+    const summon = fighter.summon;
+    if (!summon?.active || !(Number(summon.hp) > 0)) return null;
+    if (fighter.petTarget?.profile !== summon) {
+        fighter.petTarget = { profile: summon, state: { characterId: `pet:${fighter.state?.characterId ?? ''}` }, readyAt: 0 };
+    }
+    return fighter.petTarget;
+}
+
+// One mob action on a fighter's side, solo and party alike: its living pet
+// takes it first, as in C4 (user 10-29), then the fighter. Returns
+// { action, pet } (pet: the summon took it; dead, it is gone and a new one is
+// a new cast, its MP and reuse, ensureColdSummon). The fighter's own HP is the
+// caller's to lower.
+function strikeSide(fighter, mob, mobFight, options) {
+    const pet = petTarget(fighter);
+    const action = coldMobAction(mob, mobFight, pet || fighter, options);
+    if (!pet) return { action, pet: false };
+    fighter.summon.hp = Math.max(0, Number(fighter.summon.hp) - Math.max(0, action.damage));
+    if (fighter.summon.hp <= 0) {
+        setPersistedSummon(fighter, null);
+        fighter.summon = null;
+        fighter.summonReadyAt = Number.POSITIVE_INFINITY;
+        fighter.summonDeaths = Number(fighter.summonDeaths || 0) + 1;
+    }
+    return { action, pet: true };
+}
+
+// A saved pet's HP after elapsedMs out of a fight (its template's revHp per
+// regen tick); the state unchanged without a wounded pet.
+function petRegen(state, elapsedMs) {
+    const summon = state.stats?.coldCombat?.summon;
+    if (!summon?.active || !(Number(summon.hp) > 0) || !(Number(summon.hp) < Number(summon.maxHp))) return state;
+    const hp = Math.min(Number(summon.maxHp), Number(summon.hp) + Number(summon.revHp || 0) * Math.max(0, elapsedMs) / Formulas.REGEN_TICK_MS);
+    return { ...state, stats: { ...state.stats, coldCombat: { ...state.stats.coldCombat, summon: { ...summon, hp } } } };
+}
+
 function setPersistedSummon(fighter, summon) {
     fighter.state = {
         ...fighter.state,
@@ -1020,8 +1059,10 @@ function startColdSummon(fighter, timestamp, cooldowns, skills = ColdCombatProfi
     const details = ColdCombatProfile.summonDetails(skill);
     fighter.vitals.mp = Math.max(0, fighter.vitals.mp - Number(skill.mp || 0));
     const totalLifeTime = Math.max(30000, Number(details.totalLifeTime || 1200000));
+    const stats = summonNpcStats(fighter, details);
     const summon = {
-        ...summonNpcStats(fighter, details),
+        ...stats,
+        hp: stats.maxHp,
         active: true,
         skillId: Number(skill.selfId),
         expiresAt: timestamp + totalLifeTime
@@ -1261,11 +1302,16 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
         // A full-health route verdict cannot admit the next mob after a win
         // depleted the owner. Keep the same damage margin with the HP/MP that
         // remain now; pending fights and aggressive interruptions still run.
-        const remaining = matchupProfiles.map(profile => profile.soloDamageReceiver === false ? profile : {
-            ...profile,
-            maxHp: Math.min(profile.maxHp, state.vitals?.hp ?? profile.maxHp),
-            maxMp: Math.min(profile.maxMp, state.vitals?.mp ?? profile.maxMp)
-        });
+        // The pet tanks with the HP it has left; a dead one is gone (a pet to
+        // be raised keeps its cast, summonCastMs).
+        const pet = state.stats?.coldCombat?.summon;
+        const remaining = matchupProfiles.flatMap(profile => profile.servitor === true
+            ? (profile.summonCastMs || !pet ? [profile] : pet.active && Number(pet.hp) > 0 ? [{ ...profile, hp: Number(pet.hp) }] : [])
+            : profile.soloDamageReceiver === false ? [profile] : [{
+                ...profile,
+                maxHp: Math.min(profile.maxHp, state.vitals?.hp ?? profile.maxHp),
+                maxMp: Math.min(profile.maxMp, state.vitals?.mp ?? profile.maxMp)
+            }]);
         // One mob carries no pull: channels count area skills by target.pull.
         const usual = BotPullEstimate.pullView({ ...picked, pull: 1 }, Number(picked.usualPull) || 1);
         const survival = TargetMatchup.soloSurvival(remaining, usual);
@@ -1322,7 +1368,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
     let actions = 0;
     let overhitContext = null;
     // The mob's damage to the bot before any heal (the spot table's damage taken per kill).
-    let taken = 0, spellTaken = 0;
+    let taken = 0, spellTaken = 0, petTaken = 0;
 
     // A resolve contains only a handful of fights, and a fight itself is
     // bounded by time and actions. This is deliberately cheaper than a live
@@ -1378,10 +1424,14 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
                 break;
             }
         } else {
-            const action = coldMobAction(mob, mobFight, soloFighter, { time, at: timestamp + time, rng, mobHp });
-            vitals.hp -= Math.max(0, action.damage);
-            taken += Math.max(0, action.damage);
-            if (action.spell) spellTaken += Math.max(0, action.damage);
+            const { action, pet } = strikeSide(soloFighter, mob, mobFight, { time, at: timestamp + time, rng, mobHp });
+            if (pet) {
+                petTaken += Math.max(0, action.damage);
+            } else {
+                vitals.hp -= Math.max(0, action.damage);
+                taken += Math.max(0, action.damage);
+                if (action.spell) spellTaken += Math.max(0, action.damage);
+            }
             mobReadyAt += action.delayMs;
         }
     }
@@ -1416,7 +1466,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             inventory: fightState.inventory,
             summon: soloFighter.summon || null,
             debug: { actions, durationMs: time, skillUses: soloFighter.skillUses, shotActions: soloFighter.shotActions, heals: soloFighter.heals,
-                musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
+                musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions, petTaken, summonDeaths: soloFighter.summonDeaths || 0,
                 potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
                 mobSelfId: mob.selfId || null, timedOut: !died, pullMobs, areaPullHits, damageTaken: taken, spellTaken }
         };
@@ -1465,7 +1515,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
         soulCrystals: soloFighter.soulCrystals || [],
         summon: soloFighter.summon || null,
         debug: { actions, durationMs: time, skillUses: soloFighter.skillUses, shotActions: soloFighter.shotActions, heals: soloFighter.heals,
-            musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
+            musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions, petTaken, summonDeaths: soloFighter.summonDeaths || 0,
             potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
             mobSelfId: mob.selfId || null, timedOut: false, overhit: kill.overhit, pullMobs, areaPullHits, killsPaid: pulled,
             damageTaken: taken, spellTaken }
@@ -1695,10 +1745,10 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
             const bossPAtk = Number(mob.raidBossPAtk || mob.pAtk);
             let delayMs = mobAttackMs(mob);
             if (target) {
-                const action = coldMobAction(mob, mobFight, target, { time, at: timestamp + time, rng, mobHp, pAtk: bossPAtk });
+                const { action, pet } = strikeSide(target, mob, mobFight, { time, at: timestamp + time, rng, mobHp, pAtk: bossPAtk });
                 delayMs = action.delayMs;
                 const before = target.vitals.hp;
-                target.vitals.hp = Math.max(0, before - action.damage);
+                if (!pet) target.vitals.hp = Math.max(0, before - action.damage);
                 if (target.vitals.hp < before) lastVictim = { fighter: target, at: time };
             }
             if (raidPressure.pAtk > 0) {
@@ -2086,7 +2136,8 @@ const BackgroundResolver = {
             activity: 'hunting',
             // A prior recovery deadline must not reschedule a new hunt in the
             // past. A fight that needs recovery below assigns a fresh deadline.
-            stats: { ...(state.stats || {}), restUntil: null, pveEncounter: continuing },
+            // The pet heals between fights as the owner does (petRegen).
+            stats: { ...((continuing ? state : petRegen(state, elapsedMs)).stats || {}), restUntil: null, pveEncounter: continuing },
             spotId: spot.id
         };
 

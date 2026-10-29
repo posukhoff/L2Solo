@@ -173,7 +173,8 @@ function spotTableCheck() {
     const corrections = C.readTable('corrections').corrections;
     const items = K.itemRows(tables.gear);
     const spotsById = new Map(tables.spots.spots.map(row => [row[0], row]));
-    const roleIndex = spotTable.roles.indexOf('dps'), shotIndex = spotTable.shots.indexOf(1);
+    const dpsKey = spotTable.header.inputs.roleLines?.dps || 'dps';
+    const roleIndex = spotTable.roles.indexOf(dpsKey), shotIndex = spotTable.shots.indexOf(1);
     const kph = spotTable.rowFields.indexOf('kph'), expField = spotTable.rowFields.indexOf('exp'), deathsField = spotTable.rowFields.indexOf('deaths'),
         refGap = spotTable.rowFields.indexOf('refGap'), capField = spotTable.rowFields.indexOf('cap');
     const out = [];
@@ -185,7 +186,7 @@ function spotTableCheck() {
         const spot = spotTable.spots[index];
         const row = spotTable.rows[index][roleIndex * 2 + shotIndex];
         const level = spot[1] + row[refGap];
-        const classId = spotTable.header.inputs.roleClasses.dps[level < 20 ? 0 : level < 40 ? 1 : 2];
+        const classId = spotTable.header.inputs.roleClasses[dpsKey][level < 20 ? 0 : level < 40 ? 1 : 2];
         const rot = M.rotationOf(tables.rotation, classId, level);
         const kit = { classId, level, rot, shots: true, profile: M.profileOf(HuntCycle.referenceState(classId, level)) };
         const gearClass = tables.gear.classes.find(cls => cls.classId === classId);

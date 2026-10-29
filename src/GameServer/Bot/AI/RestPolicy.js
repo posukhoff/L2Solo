@@ -69,4 +69,15 @@ function raidReady(subject, vitals = subject?.vitals || {}, paidCost = null) {
     return !needsRest(subject, hp / maxHp, mp / maxMp, { party: true, locked: true });
 }
 
-module.exports = { THRESHOLDS, restsForMana, sitsForMana, needsRest, raidReady };
+// The rest's posture (user 10-29, T106): a bot sits only when sitting
+// refills what it lacks faster than standing does (C4: a Sorcerer's Clear
+// Mind, 1297, regenerates MP standing only, past its seated rate from 48).
+// seated, standing: the two postures' { hp, mp } per regen tick; mana: the
+// bot rests for MP too (sitsForMana).
+function sitsToRest(seated, standing, missingHp, missingMp, mana) {
+    const ticks = (regen) => Math.max(Math.max(0, missingHp) / Math.max(0.01, Number(regen?.hp) || 0),
+        mana ? Math.max(0, missingMp) / Math.max(0.01, Number(regen?.mp) || 0) : 0);
+    return ticks(seated) <= ticks(standing);
+}
+
+module.exports = { THRESHOLDS, restsForMana, sitsForMana, needsRest, raidReady, sitsToRest };

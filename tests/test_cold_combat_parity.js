@@ -78,7 +78,7 @@ function fighter(id, classId, level, gear, extra = {}) {
     if (extra.shots) {
         const selfId = ShotStock.planForState(state).selfId;
         inventory[selfId] = { selfId, amount: extra.shots };
-        state.spotId = { 2: '17_-2', 12: '11_-13', 5: '15_-3' }[classId];
+        state.spotId = { 2: '23_3', 12: '11_-13', 5: '12_10' }[classId];
         assert(state.spotId, 'every shot fixture needs its verified native economic spot');
     }
     state.stats.coldCombat = ColdCombatProfile.legacySnapshot(state, ColdCombatProfile.skillRecordsFromTree(classId, level), TS);
@@ -173,10 +173,10 @@ const SOLO_GOLDEN = {
     'sorcerer wins without a futile self-heal': { won: true, died: false, hp: 1419, mp: 2127, charges: 0, actions: 11, durationMs: 6453, skillUses: 6, shotActions: 0, heals: 0, musicUses: 0, summonUses: 0, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
     'gladiator charges': { won: true, died: false, hp: 3131, mp: 564, charges: 0, actions: 18, durationMs: 11315, skillUses: 10, shotActions: 0, heals: 0, musicUses: 0, summonUses: 0, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
     'bishop': { won: true, died: false, hp: 1828, mp: 2213, charges: 0, actions: 22, durationMs: 22544, skillUses: 8, shotActions: 0, heals: 0, musicUses: 0, summonUses: 0, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
-    'warlock servitor, heals, potion': { won: true, died: false, hp: 991, mp: 2112, charges: 0, actions: 29, durationMs: 22724, skillUses: 6, shotActions: 0, heals: 0, musicUses: 0, summonUses: 1, summonActions: 8, potionsUsed: 0, mobHp: null, botReadyAt: null },
+    'warlock servitor, heals, potion': { won: true, died: false, hp: 2058, mp: 2112, charges: 0, actions: 29, durationMs: 22724, skillUses: 6, shotActions: 0, heals: 0, musicUses: 0, summonUses: 1, summonActions: 8, potionsUsed: 0, mobHp: null, botReadyAt: null },
     'necromancer corpse servitor': { won: true, died: false, hp: 1907, mp: 2171, charges: 0, actions: 3, durationMs: 1291, skillUses: 2, shotActions: 0, heals: 0, musicUses: 0, summonUses: 1, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
     // T106: a Swordsinger heals itself with MP, so it sits for MP and its skills pay their rest (one cast fewer).
-    'swordsinger songs': { won: true, died: false, hp: 2739, mp: 946, charges: 0, actions: 22, durationMs: 14811, skillUses: 1, shotActions: 0, heals: 0, musicUses: 1, summonUses: 0, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
+    'swordsinger songs': { won: true, died: false, hp: 2739, mp: 927, charges: 0, actions: 22, durationMs: 14559, skillUses: 2, shotActions: 0, heals: 0, musicUses: 1, summonUses: 0, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
     'tyrant': { won: true, died: false, hp: 3713, mp: 785, charges: 0, actions: 10, durationMs: 5134, skillUses: 6, shotActions: 0, heals: 0, musicUses: 0, summonUses: 0, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
     // T106: a Paladin heals itself with MP, so it sits for MP and its skills pay their rest (one cast fewer).
     'paladin': { won: true, died: false, hp: 2661, mp: 864, charges: 0, actions: 22, durationMs: 17647, skillUses: 5, shotActions: 0, heals: 0, musicUses: 0, summonUses: 0, summonActions: 0, potionsUsed: 0, mobHp: null, botReadyAt: null },
@@ -205,6 +205,20 @@ for (const [name, state, npcId, seed, limitMs, maxActions] of SOLO) {
     soloObserved.push([name, soloOutcome(state, npcId, seed, limitMs, maxActions)]);
 }
 for (const [name, actual] of soloObserved) assert.deepStrictEqual(actual, SOLO_GOLDEN[name], `solo: ${name}`);
+
+// The pet tanks, as in C4 (user 10-29): the warlock's servitor takes the
+// mob's blows; its owner takes none while the pet stands.
+{
+    const spot = spotFor(239);
+    const mob = ColdCombatProfile.npcForSpot(spot, () => 0.5, { preferredNpcId: 239 });
+    const encounter = PveEncounter.save(null, PveEncounter.key([warlock], spot, 239), mob, mob.maxHp, TS, { botReadyAt: 0, mobReadyAt: 0 });
+    const engaged = { ...warlock, stats: { ...warlock.stats, pveEncounter: encounter } };
+    const r = withSeed(4, (rng) => resolveFight({ state: engaged, spot, pressure: {}, targetNpcId: 239, rng, timestamp: TS,
+        fightLimitMs: 60000, maxActions: 400 }));
+    assert(r.debug.petTaken > 0, 'the mob strikes the pet');
+    if (!r.debug.summonDeaths) assert.equal(r.debug.damageTaken, 0, 'the owner is untouched while its pet stands');
+    assert(!r.summon || r.summon.hp < r.summon.maxHp, 'the pet keeps the HP it lost');
+}
 
 // ---------- party fights ----------
 function partyOutcome(members, npcId, seed) {

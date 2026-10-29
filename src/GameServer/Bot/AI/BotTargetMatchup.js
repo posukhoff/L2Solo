@@ -58,7 +58,8 @@ function actorProfiles(actors) {
     return actors.filter(Boolean).flatMap(actor => {
         const profile = actorProfile(actor);
         if (actor.summon && !actor.summon.isDead?.() && !actor.summon.state?.fetchDead?.()) {
-            return [profile, { ...actorProfile(actor.summon), role: 'dps' }];
+            return [profile, { ...actorProfile(actor.summon), role: 'dps', servitor: true,
+                hp: Number(actor.summon.fetchHp?.() ?? actor.summon.fetchMaxHp?.()) || undefined }];
         }
         return coldProfiles(profile, { vitals: { mp: actor.fetchMp?.() } });
     });
@@ -252,10 +253,29 @@ function evaluate(profiles, target, attacksOf = channels) {
 // its owner acts, only after the summon's cast. Each attacker deals its best
 // attack over that time; areaShare: the share of that damage by area
 // skills, which keeps a pull's mobs standing together (Pull.repack).
+// How long the bot's side outlives a mob view (user 10-29: the pet tanks, as
+// in C4): each servitor's HP over the damage it takes, then the owner's
+// (the longest of its receivers'). One rule for the gate, its bound and the
+// hot danger read.
+function sideLifetime(view, profiles, Mob = coldMobAction()) {
+    let pets = 0, owner = 0;
+    for (const profile of profiles) {
+        if (profile.servitor === true) {
+            if (profile.maxHp > 0 && profile.pDef > 0) pets += Math.min(profile.maxHp, number(profile.hp, profile.maxHp)) / Mob.incomingPerSecond(view, profile);
+        } else if (profile.soloDamageReceiver !== false) {
+            owner = Math.max(owner, profile.maxHp / Mob.incomingPerSecond(view, profile));
+        }
+    }
+    return pets + owner;
+}
+// The owners the mobs strike once the pets are down (sideLifetime).
+function ownerReceivers(profiles) {
+    return profiles?.filter(profile => profile.soloDamageReceiver !== false && profile.servitor !== true);
+}
+
 function soloSurvival(profiles, target, minimum = 1.5, attacksOf = channels) {
-    // The cold solo executor damages the owner; the summon only adds attacks.
-    // Native actor profiles retain their ordinary tanking behavior.
-    const receivers = profiles?.filter(profile => profile.soloDamageReceiver !== false);
+    // The mobs strike the pets first, then the owner (sideLifetime).
+    const receivers = ownerReceivers(profiles);
     if (!receivers?.length || !(target.maxHp > 0) || !(target.pAtk > 0)
         || receivers.some(profile => profile.survivalKnown === false || !(profile.maxHp > 0) || !(profile.pDef > 0))) {
         return { eligible: true, survivalRatio: null };
@@ -265,7 +285,7 @@ function soloSurvival(profiles, target, minimum = 1.5, attacksOf = channels) {
     const castSeconds = Math.max(0, ...profiles.map(profile => number(profile.summonCastMs, 0))) / 1000;
     const lists = profiles.map(profile => soloChannels(profile, target, attacksOf));
     const plan = view => {
-        const lifetime = Math.max(...receivers.map(profile => profile.maxHp / Mob.incomingPerSecond(view, profile)));
+        const lifetime = sideLifetime(view, profiles, Mob);
         const seconds = Math.max(0, lifetime + openingSeconds - castSeconds);
         let damage = 0, area = 0;
         for (const attacks of lists) {
@@ -321,7 +341,7 @@ function soloCanHunt(profiles, target, { maxTargetLevel, npcLevel, attacksOf = c
 // attack envelopes per profile. Separate maxima for rate/budget and the best
 // vulnerability can only increase damage, so an exact-safe mob stays eligible.
 function soloSpotUpperBound(profiles) {
-    const receivers = profiles?.filter(profile => profile.soloDamageReceiver !== false);
+    const receivers = ownerReceivers(profiles);
     if (!receivers?.length || receivers.some(p => p.survivalKnown === false
         || !Number.isFinite(p.maxHp) || !(p.maxHp > 0) || !Number.isFinite(p.pDef) || !(p.pDef > 0))) {
         return () => true;
@@ -362,7 +382,7 @@ function soloSpotUpperBound(profiles) {
             || !(target.basePDef > 0) || !(target.baseMDef > 0)) return true;
         // The gate's own lifetime and opening (soloSurvival), no summon cast.
         const Mob = coldMobAction();
-        const seconds = Math.max(...receivers.map(p => p.maxHp / Mob.incomingPerSecond(target, p)))
+        const seconds = sideLifetime(target, profiles, Mob)
             + coldCombatProfile().openingMs(receivers[0], target) / 1000;
         let vulnerability = 1;
         for (const stat in target.vulnerabilities) {

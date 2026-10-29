@@ -24,14 +24,17 @@ try {
     assert.strictEqual(one, two, 'the table does not depend on the number of workers');
     const table = JSON.parse(one);
     const roles = table.roles.length;
-    assert.strictEqual(roles, 10, 'eight combat roles, summoner and chanter');
+    // A key per C4 class line (its second profession), the author's role names as aliases (user 10-29).
+    assert.strictEqual(roles, 31, 'a key per second-profession class line');
+    assert.strictEqual(table.header.inputs.roleLines.dps, '2');
+    assert.deepStrictEqual(table.header.inputs.roleClasses['3'], [0, 1, 3], 'a line holds its classes by profession stage');
     assert.deepStrictEqual(table.shots, [1, 0, 2], 'shots, none, blessed spiritshot');
     assert.strictEqual(table.spots.length, 2);
     assert.strictEqual(table.header.counts.spots, 2);
     assert.strictEqual(table.header.counts.rows, 2 * roles * 3);
     assert.strictEqual(table.rows.length, 2);
     assert(table.rows.every((rows) => rows.length === roles * 3), 'a row per role and shots');
-    const dps = table.roles.indexOf('dps');
+    const dps = table.roles.indexOf(table.header.inputs.roleLines.dps);
     assert(table.rows.every((rows) => rows[dps * 3 + 2] === null), 'no blessed spiritshot row for a soulshot class');
     assert(table.rows.flat().every((row) => row === null || row.length === table.rowFields.length), 'complete rows');
     assert.strictEqual(table.rows.flat().filter(Boolean).length, table.header.counts.huntableRows);
@@ -56,6 +59,14 @@ try {
         const reference = gate[table.gaps.findLastIndex(gap => gap <= row[field('refGap')])];
         assert(reference > 0 && reference % 256 > 0 && reference % 256 < 1 << (mix.length / 2), 'the reference gap is open');
     }
+    // Gladiator and Warlord lines are one Warrior below 40: a row read there is measured once.
+    const gladiator = table.roles.indexOf('2'), warlord = table.roles.indexOf('3'), exp = field('exp');
+    table.rows.forEach((rows, spot) => {
+        const row = rows[gladiator * 3];
+        if (row && table.spots[spot][1] + row[field('refGap')] < 40) {
+            assert.strictEqual(rows[warlord * 3][exp], row[exp], 'lines of one class share its hunt');
+        }
+    });
     for (const role of Object.keys(table.curves)) {
         for (const curve of Object.values(table.curves[role])) {
             assert(table.curveFields.every((field) => curve[field].length === table.gaps.length), 'a curve value per gap');

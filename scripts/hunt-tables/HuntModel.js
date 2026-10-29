@@ -100,9 +100,11 @@ function hennaDelta(symbolIds) {
     return out;
 }
 
-// Seated regeneration per 3-second tick of a strength (ColdRest).
+// Seated regeneration per 3-second tick of a strength (ColdRest; a whole
+// profile also brings its passives and kit).
 function regenOf(classId, level, numbers) {
-    return ColdRest.coldRestRegenPerTick({ classId, level, stats: { classId } }, { stats: { con: numbers.con, men: numbers.men } });
+    return ColdRest.coldRestRegenPerTick({ classId, level, stats: { classId } },
+        { stats: { con: numbers.con, men: numbers.men }, profile: numbers.skills ? numbers : undefined });
 }
 
 module.exports = { BASE_STATS, ITEM_STATS, NUMBERS, kitState, profileOf, numbersOf, strength, hennaDelta, regenOf,
@@ -221,7 +223,7 @@ function mobHour(bot, mob, correction = null) {
     // budget, then waits for the next step, which first adds the standing
     // regeneration of the whole elapsed step (applyStandingRegen).
     const { budget, cycle } = stepTimes();
-    const standing = ColdRest.coldRestRegenPerTick(state).hp / 1.5 / 3;
+    const standing = ColdRest.coldRestRegenPerTick(state, { profile, standing: true }).hp / 3;
     let share = 1, fight = 0, rest = 0, taken = 0, mpSpent = 0, wall = 0, worst = 0;
     // Share of the fight on the rotation (MP) when the bot does not rest for
     // mana: what its rest refills of the MP the fight spends (two passes).

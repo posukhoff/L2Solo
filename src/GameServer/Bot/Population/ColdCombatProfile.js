@@ -193,8 +193,9 @@ function statSources(profile, timestamp, options = {}) {
         setKind: equipment.setKind || '',
         shield: number(equipment.shieldPDef) > 0
     };
+    // options.seated: a rest's sources (ColdRest); a fight's stand.
     const situation = {
-        hp: 1, maxHp: 1, moving: false, walking: false, seated: false,
+        hp: 1, maxHp: 1, moving: false, walking: false, seated: options.seated === true,
         get night() { return options.night ?? GameTime.isNight(timestamp); }
     };
     const sources = activeEffects(profile.effects, timestamp).map(effectStats);
@@ -1401,7 +1402,7 @@ module.exports = {
     fightProfile, currentCp, seedSnapshot, oldSeedRepair, candidateProfiles, fightSources, combatView, kitHash, skillsFor, forgetBuild, kitStoreSize,
     isAttackSkill, offensiveSkills, summonDetails, summonSkills, corpseSummonSkills, activeMusicEffects, partyMusicSkills, partyMusicMpCost, partyMusicEffect, normalAttackMs,
     spotSpawns, npcForSpot, killDraw, killChances, npcCombatStats, skillSnapshotsFromRecords, skillRecordsFromTree, treeSkillLevel,
-    statMultiplier: multiplier, statAdd: add,
+    statMultiplier: multiplier, statAdd: add, statSources,
     // The cold fight's views, hit roll, action times, shots and opening (BackgroundResolver, the solo gate).
     hitSources, attackerView, defenderView, forgetViews, hitSucceeds, expectedHitChance, actionDelayMs, summonAttackMs,
     shotSupply, actionShot, openingMs, attackReach,

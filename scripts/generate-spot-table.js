@@ -55,27 +55,37 @@ const CATALOGUE_SEED = 20261005;
 const PERIOD_MODE = 'day';
 const MAX_LEVEL = 78;
 const REF_GAP = 6;
-const GAPS = [-4, -2, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
+// Bot level minus spot level, every 2 levels from 4 below the mobs up to the
+// first deep-blue level (user 10-29: past it the C4 drop falls to 30% and
+// less, ProgressionRates.deepBlueRule), the last point at or above it.
+const GAPS = [];
+for (let gap = -4; GAPS[GAPS.length - 1] === undefined || GAPS[GAPS.length - 1] < ProgressionRates.DEEP_BLUE_LEVEL_GAP; gap += 2) GAPS.push(gap);
 const BAND_LEVELS = 2;
 const CURVE_SPOTS = 3;
-// Kit and skills of a role at a level: the class of the role's profession
-// stage (below 20, 20-39, 40+), one real class line each (T106). Roles with
-// no class below 20 use their first profession there; such rows only serve
-// higher bots on low spots. summoner and chanter are table roles of their
-// own (BotRoles.tableRoleFor): a pet, an orc chanter's line.
-const ROLE_CLASSES = {
-    dps: [0, 1, 2],
-    mage: [10, 11, 12],
-    tank: [4, 4, 5],
-    dagger: [7, 7, 8],
-    archer: [22, 22, 24],
-    healer: [15, 15, 16],
-    buffer: [15, 15, 17],
-    spoiler: [53, 54, 55],
-    summoner: [10, 11, 14],
-    chanter: [49, 50, 52]
-};
-const ROLES = Object.keys(ROLE_CLASSES);
+// The table's keys (user 10-29): one per C4 class line, its second
+// profession's id; the bot of a line at a level is that line's class of the
+// level's profession stage (below 20, 20-39, 40+), its kit and skills (one
+// row of identical classes over a spot's levels is measured once). The
+// author's role names stay as aliases of one line each (ROLE_LINES), read
+// by SpotValueTable for callers that ask by role.
+const ROLE_LINES = { dps: '2', mage: '12', tank: '5', dagger: '8', archer: '24', healer: '16', buffer: '17',
+    spoiler: '55', summoner: '14', chanter: '52' };
+let lineClasses = null;
+// { line: [base, first, second] } from ClassProgression (after Global loads).
+function roleClasses() {
+    if (lineClasses) return lineClasses;
+    require('../src/Global');
+    const ClassProgression = invoke('GameServer/ClassProgression');
+    lineClasses = {};
+    for (const seconds of Object.values(ClassProgression.secondProfMap)) {
+        for (const second of seconds) lineClasses[String(second)] = ClassProgression.lineage(second);
+    }
+    for (const classes of Object.values(lineClasses)) if (classes.length !== 3) throw new Error(`class line ${classes}`);
+    return lineClasses;
+}
+function roles() {
+    return Object.keys(roleClasses()).sort((a, b) => Number(a) - Number(b));
+}
 // 1: the weapon's shots, 0: none, 2: Blessed Spiritshot (a spiritshot class
 // only; null rows for the others): ShotStock chooses it by these rows.
 const SHOTS = [1, 0, 2];
@@ -89,7 +99,7 @@ const SHOTS = [1, 0, 2];
 // (the reader prices the kill and its level gap by it, user 10-29); gate:
 // per GAPS, cap x 256 + the bits of the mix species the bot of that level
 // may fight alone (0: none), so a row read below its reference keeps only
-// what that bot fights (rowGate).
+// what that bot fights (gapGate).
 const ROW_FIELDS = ['minGap', 'refGap', 'kph', 'busy', 'deaths', 'exp', 'sp', 'adena', 'loot', 'shots', 'potions', 'stacks',
     'fight', 'rest', 'taken', 'spellTaken', 'hpLost', 'mpLost', 'pull', 'cap', 'mix', 'gate'];
 const MIX_SPECIES = 8;
@@ -211,7 +221,7 @@ function round(value) {
 }
 
 function classFor(role, level) {
-    const classes = ROLE_CLASSES[role];
+    const classes = roleClasses()[ROLE_LINES[role] || role];
     return classes[level < 20 ? 0 : level < 40 ? 1 : 2];
 }
 
@@ -321,20 +331,14 @@ function atSpot(spot) {
     return spot;
 }
 
-// One resolve at full health: does the bot find a target it may fight alone?
+// At full health, may the bot fight any of the spot's spawns alone (the
+// solo gate the resolver picks its targets by, BackgroundResolver.admittedShares)?
+// A probe fight would miss a bot that spends its first round on its
+// self-buffs and the sit after them (a Warcryer, T106 audit).
 function canHunt(spot, role, level, shots) {
-    const { bot } = newBot(classFor(role, level), level, shots);
-    bot.spotId = spot.id;
-    bot.loc = { ...spot.center };
-    const random = Math.random;
-    Math.random = mulberry(hash(`${spot.id}|${role}|${shots}|${level}|probe`));
-    try {
-        const result = sim.BR.resolveSolo({ state: bot, spot: atSpot(spot), elapsedMs: 60000, timestamp: START,
-            rng: mulberry(hash(`${spot.id}|${role}|${level}|probe`)) });
-        return Number(result.debug?.attemptedFights || 0) > 0 || Number(result.debug?.wins || 0) > 0;
-    } finally {
-        Math.random = random;
-    }
+    const { bot, profiles } = gateBot(role, level, shots);
+    const shares = sim.BR.admittedShares({ ...bot, spotId: spot.id }, spot, START, profiles);
+    return !shares || [...shares.values()].some((share) => share > 0);
 }
 
 // Distinct stackable drops take a slot only once in this run; non-stackable
@@ -361,7 +365,9 @@ function countNewStacks(items, seen, definitions = invoke('GameServer/DataCache'
 // reference bot's worn gear before the hunt (scripts/hunt-cycle-check.js);
 // classId: another class than the role's (scripts/hunt-tables).
 function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, classId = classFor(role, level)) {
-    const seed = hash(`${spot.id}|${role}|${shots}|${level}`);
+    // One seed with and without shots: the two rows' difference is the shots'
+    // (common random numbers), not two draws' (T106 audit).
+    const seed = hash(`${spot.id}|${classId}|${level}`);
     const rng = mulberry(seed);
     const random = Math.random;
     Math.random = mulberry(seed ^ 0x9e3779b9);
@@ -455,7 +461,7 @@ function perKill(sum, hours) {
 // { bot, profiles } (BackgroundResolver.roundProfiles), shared by every spot.
 const gateBots = new Map();
 function gateBot(role, level, shots) {
-    const key = `${role}|${level}|${shots}`;
+    const key = `${classFor(role, level)}|${level}|${shots}`;
     let held = gateBots.get(key);
     if (!held) {
         const { bot, runSpd, reach } = newBot(classFor(role, level), level, shots);
@@ -464,25 +470,21 @@ function gateBot(role, level, shots) {
     return held;
 }
 
-// A row's gate per GAPS: the cap (fightCap of the spawns the bot of that
-// level may fight, times the row's pull) x 256 + the bits of the mix species
-// it may fight (BackgroundResolver.admittedShares); 0 where it may fight none.
-function rowGate(spot, role, shots, level, measured) {
-    const species = [];
-    for (let at = 0; at < measured.mix.length; at += 2) species.push(measured.mix[at]);
-    return GAPS.map((gap) => {
-        const botLevel = level + gap;
-        if (botLevel < 1 || botLevel > MAX_LEVEL) return 0;
-        const { bot, profiles, runSpd, reach } = gateBot(role, botLevel, shots);
-        const shares = sim.BR.admittedShares({ ...bot, spotId: spot.id }, spot, START, profiles);
-        const admitted = new Set();
-        for (const [entry, share] of shares || []) if (share > 0) admitted.add(Number(entry.selfId));
-        let mask = 0;
-        species.forEach((selfId, index) => { if (!shares || admitted.has(selfId)) mask |= 1 << index; });
-        const density = sim.BR.admittedDensity(spot, shares);
-        if (!mask || !(density > 0)) return 0;
-        return Math.max(1, Math.round(fightCap(density, runSpd || undefined, spot.spawnArea || undefined, reach) * measured.pull)) * 256 + mask;
-    });
+// A row's gate at one bot level: the cap (fightCap of the spawns the bot
+// of that level may fight, times the row's pull) x 256 + the bits of the mix
+// species it may fight (BackgroundResolver.admittedShares); 0 where it may
+// fight none.
+function gapGate(spot, role, shots, botLevel, species, pull) {
+    if (botLevel < 1 || botLevel > MAX_LEVEL) return 0;
+    const { bot, profiles, runSpd, reach } = gateBot(role, botLevel, shots);
+    const shares = sim.BR.admittedShares({ ...bot, spotId: spot.id }, spot, START, profiles);
+    const admitted = new Set();
+    for (const [entry, share] of shares || []) if (share > 0) admitted.add(Number(entry.selfId));
+    let mask = 0;
+    species.forEach((selfId, index) => { if (!shares || admitted.has(selfId)) mask |= 1 << index; });
+    const density = sim.BR.admittedDensity(spot, shares);
+    if (!mask || !(density > 0)) return 0;
+    return Math.max(1, Math.round(fightCap(density, runSpd || undefined, spot.spawnArea || undefined, reach) * pull)) * 256 + mask;
 }
 
 // A row: the lowest level gap at which the role finds a safe target, then the
@@ -491,27 +493,45 @@ function rowTask({ spotId, hours }) {
     const spot = sim.profiles.get(spotId);
     const level = Number(spot.avgLevel);
     const rows = [];
-    for (const role of ROLES) {
-        for (const shots of SHOTS) {
-            if (shots === 2 && !sim.ShotStock.planForState(gateBot(role, level, 0).bot, { blessed: true })) {
-                rows.push(null);
-                continue;
-            }
-            let minGap = null;
-            for (let gap = GAPS[0]; gap <= GAPS[GAPS.length - 1]; gap++) {
-                const botLevel = level + gap;
-                if (botLevel < 1) continue;
-                if (botLevel > MAX_LEVEL) break;
-                if (canHunt(spot, role, botLevel, shots)) { minGap = gap; break; }
-            }
-            if (minGap === null) { rows.push(null); continue; }
-            const refLevel = Math.min(MAX_LEVEL, level + Math.max(REF_GAP, minGap));
-            const measured = perKill(hunt(spot, role, refLevel, shots, hours), hours);
-            rows.push(measured ? { minGap, refGap: refLevel - level, ...measured,
-                gate: rowGate(spot, role, shots, level, measured) } : null);
-        }
+    // Every step reads only the class a line has at a level (its profession
+    // stage there), its level and shots: lines that share a class at a level
+    // (Warrior below 40 for Gladiator and Warlord) share that step's result,
+    // a spot whose gaps cross a profession level measures both classes.
+    const memo = new Map();
+    const once = (key, compute) => {
+        if (!memo.has(key)) memo.set(key, compute());
+        return memo.get(key);
+    };
+    for (const role of roles()) {
+        for (const shots of SHOTS) rows.push(lineRow(spot, role, level, shots, hours, once));
     }
     return rows;
+}
+
+// One line's row on a spot (rowTask; once: its memo by class, level and shots).
+function lineRow(spot, role, level, shots, hours, once) {
+    const at = (botLevel) => `${classFor(role, botLevel)}|${botLevel}|${shots}`;
+    if (shots === 2 && !once(`blessed|${at(level)}`,
+        () => !!sim.ShotStock.planForState(gateBot(role, level, 0).bot, { blessed: true }))) return null;
+    let minGap = null;
+    for (let gap = GAPS[0]; gap <= GAPS[GAPS.length - 1]; gap++) {
+        const botLevel = level + gap;
+        if (botLevel < 1) continue;
+        if (botLevel > MAX_LEVEL) break;
+        if (once(`probe|${at(botLevel)}`, () => canHunt(spot, role, botLevel, shots))) { minGap = gap; break; }
+    }
+    if (minGap === null) return null;
+    const refLevel = Math.min(MAX_LEVEL, level + Math.max(REF_GAP, minGap));
+    const measured = once(`hunt|${at(refLevel)}`, () => perKill(hunt(spot, role, refLevel, shots, hours), hours));
+    if (!measured) return null;
+    // A spoiler keeps its own loot (poolRowLoot).
+    const spoils = invoke('GameServer/Bot/Population/ColdKillRewards')
+        .spoilLevelOf({ level: refLevel, stats: { classId: classFor(role, refLevel) } }) > 0;
+    const species = [];
+    for (let i = 0; i < measured.mix.length; i += 2) species.push(measured.mix[i]);
+    const gate = GAPS.map((gap) => once(`gate|${at(level + gap)}|${species}|${measured.pull}`,
+        () => gapGate(spot, role, shots, level + gap, species, measured.pull)));
+    return { minGap, refGap: refLevel - level, ...measured, spoils, gate };
 }
 
 // A curve point: the role on one spot at one gap, shots on.
@@ -580,8 +600,8 @@ function runPool(catalogueFile, tasks, jobs) {
 // kill (weighted by kills); the spoiler keeps its own (its spoil).
 function poolRowLoot(rows) {
     const groups = new Map();
-    rows.forEach((row, index) => {
-        if (!row || ROLES[Math.floor(index / SHOTS.length)] === 'spoiler') return;
+    rows.forEach((row) => {
+        if (!row || row.spoils) return;
         if (!groups.has(row.refGap)) groups.set(row.refGap, []);
         groups.get(row.refGap).push(row);
     });
@@ -722,7 +742,7 @@ async function main() {
         const rowTasks = spots.map((spot) => ({ kind: 'row', spotId: spot.id, hours: options.hours }));
         const rowResults = await phaseResults('rows', rowTasks, options, catalogueFile);
         if (!rowResults) return;
-        if (rowResults.length !== spots.length || rowResults.some((rows) => rows.length !== ROLES.length * SHOTS.length)) {
+        if (rowResults.length !== spots.length || rowResults.some((rows) => rows.length !== roles().length * SHOTS.length)) {
             throw new Error('row results do not match the spots');
         }
 
@@ -734,7 +754,7 @@ async function main() {
         // and bends the whole band's curve, T43), then a fixed hashed order.
         const curveSpots = new Map(), minGaps = new Map();
         spots.forEach((spot, index) => {
-            ROLES.forEach((role, roleIndex) => {
+            roles().forEach((role, roleIndex) => {
                 const row = rowResults[index][roleIndex * SHOTS.length];
                 if (!row || row.refGap !== REF_GAP) return;
                 const key = `${role}|${bandOf(Number(spot.avgLevel))}`;
@@ -745,23 +765,35 @@ async function main() {
         });
         const spotById = new Map(spots.map((spot) => [spot.id, spot]));
         const spread = (id) => Number(spotById.get(id).maxLevel) - Number(spotById.get(id).minLevel);
-        const curveTasks = [];
+        const curveTasks = [], seenPoints = new Set();
+        // A curve point reads only the class at its level (rowTask).
+        const pointKey = (spot, role, gap) => `${spot.id}|${classFor(role, Number(spot.avgLevel) + gap)}|${gap}`;
         for (const [key, ids] of curveSpots) {
             const [role] = key.split('|');
             const low = (id) => minGaps.get(`${id}|${role}`);
-            const chosen = ids.sort((a, b) => low(a) - low(b) || spread(a) - spread(b) || hash(`${a}|${role}`) - hash(`${b}|${role}`)).slice(0, CURVE_SPOTS);
+            // Hashed by the class at the spot's level: lines of one class there
+            // pick the same spots and share their points (pointKey).
+            const tie = (id) => hash(`${id}|${classFor(role, Number(spotById.get(id).avgLevel))}`);
+            const chosen = ids.sort((a, b) => low(a) - low(b) || spread(a) - spread(b) || tie(a) - tie(b)).slice(0, CURVE_SPOTS);
             curveSpots.set(key, chosen);
-            for (const spotId of chosen) for (const gap of GAPS) curveTasks.push({ kind: 'curve', key, spotId, role, gap, hours: options.curveHours });
+            for (const spotId of chosen) {
+                for (const gap of GAPS) {
+                    const point = pointKey(spotById.get(spotId), role, gap);
+                    if (seenPoints.has(point)) continue;
+                    seenPoints.add(point);
+                    curveTasks.push({ kind: 'curve', point, spotId, role, gap, hours: options.curveHours });
+                }
+            }
         }
         const curveResults = await phaseResults('curves', curveTasks, options, catalogueFile);
         if (!curveResults) return;
 
-        const curveResult = new Map(curveTasks.map((task, index) => [`${task.key}|${task.spotId}|${task.gap}`, curveResults[index]]));
+        const curveResult = new Map(curveTasks.map((task, index) => [task.point, curveResults[index]]));
         const curves = {};
         let curveCount = 0;
         for (const [key, ids] of [...curveSpots].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
             const [role, band] = key.split('|');
-            const points = ids.map((spotId) => GAPS.map((gap) => curveResult.get(`${key}|${spotId}|${gap}`)));
+            const points = ids.map((spotId) => GAPS.map((gap) => curveResult.get(pointKey(spotById.get(spotId), role, gap))));
             curves[role] = curves[role] || {};
             curves[role][band] = curveFor(points);
             curveCount += 1;
@@ -774,14 +806,14 @@ async function main() {
                 revision,
                 inputs: { hours: options.hours, curveHours: options.curveHours, catalogueSeed: CATALOGUE_SEED,
                     periodMode: PERIOD_MODE, rate: 'x1', maxLevel: MAX_LEVEL, refGap: REF_GAP, bandLevels: BAND_LEVELS,
-                    curveSpots: CURVE_SPOTS, roleClasses: ROLE_CLASSES,
+                    curveSpots: CURVE_SPOTS, roleClasses: roleClasses(), roleLines: ROLE_LINES,
                     spotLimit: options.spots || null },
-                counts: { catalogueSpots, spots: spots.length, rows: spots.length * ROLES.length * SHOTS.length,
+                counts: { catalogueSpots, spots: spots.length, rows: spots.length * roles().length * SHOTS.length,
                     huntableRows: rowResults.flat().filter(Boolean).length, curves: curveCount,
                     simulatedHours: rowResults.flat().filter(Boolean).length * options.hours
                         + curveResults.filter(Boolean).length * options.curveHours }
             },
-            roles: ROLES,
+            roles: roles(),
             shots: SHOTS,
             gaps: GAPS,
             rowFields: ROW_FIELDS,

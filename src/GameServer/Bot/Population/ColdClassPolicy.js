@@ -7,7 +7,7 @@ const SkillModel = invoke('GameServer/Model/Skill');
 const DataCache = invoke('GameServer/DataCache');
 const Formulas = invoke('GameServer/Formulas');
 const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
-const { coldRestRegenPerTick } = require('./ColdRest');
+const { coldRestRegenPerTick, restMpPerTick } = require('./ColdRest');
 
 // A cold fight has no pathfinding geometry. Reuse class/skill validity and
 // intent while keeping its existing damage, time and outcome abstraction.
@@ -44,8 +44,8 @@ function adapter(profile) {
         fetchClassId:()=>profile.classId,fetchLevel:()=>profile.level,
         fetchPAtk:()=>profile.pAtk,fetchMAtk:()=>profile.mAtk,fetchAtkSpd:()=>profile.atkSpd,fetchCastSpd:()=>profile.castSpd,
         fetchNormalAttackMs:()=>ColdCombatProfile.normalAttackMs(profile),
-        fetchSeatedMpPerMs:()=>seatedMp??=coldRestRegenPerTick({classId:profile.classId,level:profile.level}).mp/Formulas.REGEN_TICK_MS,
-        fetchSeatedHpPerMs:()=>seatedHp??=coldRestRegenPerTick({classId:profile.classId,level:profile.level}).hp/Formulas.REGEN_TICK_MS,
+        fetchSeatedMpPerMs:()=>seatedMp??=restMpPerTick({classId:profile.classId,level:profile.level},{profile})/Formulas.REGEN_TICK_MS,
+        fetchSeatedHpPerMs:()=>seatedHp??=coldRestRegenPerTick({classId:profile.classId,level:profile.level},{profile}).hp/Formulas.REGEN_TICK_MS,
         fetchHp:()=>state.hp,fetchMaxHp:()=>profile.maxHp,
         fetchMp:()=>state.mp,fetchMaxMp:()=>profile.maxMp,
         fetchCharges:()=>state.charges,

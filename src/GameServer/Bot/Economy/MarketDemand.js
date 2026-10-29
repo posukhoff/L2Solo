@@ -16,7 +16,6 @@ const PriceLearning = invoke('GameServer/Bot/Economy/PriceLearning');
 const TownRespawn = require('../../World/TownRespawn');
 const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
-const BotRoles = require('../AI/BotRoles');
 const GearGradeRule = require('../AI/GearGradeRule');
 const { gradeForLevel, GRADE_SAMPLE_LEVEL } = GearGradeRule;
 const DataCache = invoke('GameServer/DataCache');
@@ -96,12 +95,13 @@ function cellsOf(id) {
 // Shots one wearer of the cell burns per hour: its class's table use at the
 // level grade's band level (SpotValueTable.shotsUse, warmed by warmUse).
 function cellUse(cell) {
-    return Math.max(0, SpotValueTable.shotsUse(BotRoles.tableRoleFor({ classId: cell.classId }), GRADE_SAMPLE_LEVEL[cell.levelGrade]));
+    const level = GRADE_SAMPLE_LEVEL[cell.levelGrade];
+    return Math.max(0, SpotValueTable.shotsUse(SpotValueTable.roleFor({ classId: cell.classId, level }), level));
 }
-// Reads every table role's use at every level grade once (a thread's start:
+// Reads every table key's use at every level grade once (a thread's start:
 // main before the census starts, the worker after it is ready), so no census
-// read pays a best-spot search. tableRoleFor of a class is always one of the
-// table's roles.
+// read pays a best-spot search. roleFor of a class is always one of the
+// table's keys.
 function warmUse() {
     const started = performance.now();
     let cells = 0;
@@ -184,9 +184,10 @@ function censusTowns(id) {
     return sums;
 }
 // Hours a wearer of the class spends in a level grade's band: the band's exp
-// over the exp per hour of its table role's best spot at the band level.
+// over the exp per hour of its table key's best spot at the band level.
 function bandHours(classId, levelGrade) {
-    const exp = SpotValueTable.bandUse(BotRoles.tableRoleFor({ classId }), GRADE_SAMPLE_LEVEL[levelGrade]).exp;
+    const level = GRADE_SAMPLE_LEVEL[levelGrade];
+    const exp = SpotValueTable.bandUse(SpotValueTable.roleFor({ classId, level }), level).exp;
     return exp > 0 ? bandExp(levelGrade) / exp : 0;
 }
 // Level grade -> exp from its band's first level to the next band (the last

@@ -32,11 +32,13 @@ const fragile = { ...mage, maxHp: 20 };
 const servitor = { role: 'dps', maxHp: 2000, pDef: 300, pAtk: 300, atkSpd: 300, skills: [] };
 assert(!Match.soloSurvival([fragile], target).eligible);
 assert(Match.soloSurvival([fragile, servitor], target).eligible, 'native profiles retain tanking allies');
-const withSummon = owner => Match.coldProfiles(owner, { stats: { coldCombat: {
-    summon: { ...servitor, active: true, hp: servitor.maxHp, expiresAt: at + 60000 }
+const withSummon = (owner, hp = servitor.maxHp) => Match.coldProfiles(owner, { stats: { coldCombat: {
+    summon: { ...servitor, active: true, hp, expiresAt: at + 60000 }
 } } }, at);
-assert(!Match.soloSurvival(withSummon(fragile), target).eligible,
-    'a cold summon cannot lend its HP and defense to a fragile owner');
+// The pet tanks first, as in C4 (user 10-29): a fragile owner hunts behind a
+// sound pet, not behind a pet with its HP nearly gone.
+assert(Match.soloSurvival(withSummon(fragile), target).eligible, 'a cold summon tanks for a fragile owner');
+assert(!Match.soloSurvival(withSummon(fragile, 1), target).eligible, 'a pet at 1 HP shields nothing');
 const durable = { ...mage, skills: [], maxHp: 150 };
 assert(!Match.soloSurvival([durable], target).eligible);
 assert(Match.soloSurvival(withSummon(durable), target).eligible,

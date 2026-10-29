@@ -32,10 +32,11 @@ assert.strictEqual(ref.stacks, null, 'an old table does not invent zero bag grow
 near(Table.value('S', 'dps', 18).kills, 100, 'at the spot\'s level the curve halves the kills');
 near(Table.value('S', 'dps', 18).deaths, 100 * (0.001 + 0.01), 'deaths per kill add the curve\'s difference');
 near(Table.value('S', 'dps', 19).kills, 200 * 0.625, 'between measured gaps the curve is linear');
-near(Table.value('S', 'dps', 30).kills, 240, 'higher levels follow the curve');
-near(Table.value('S', 'dps', 40).kills, 240, 'beyond the last gap the curve is flat');
-near(Table.value('S', 'dps', 29).adena, 0, 'an old reward curve cannot stand in for actual NPCs');
-near(Table.value('S', 'dps', 90).kills, Table.value('S', 'dps', 78).kills, 'levels above the maximum count as the maximum');
+near(Table.value('S', 'dps', 27).adena, 0, 'an old reward curve cannot stand in for actual NPCs');
+// Spots down to the first deep-blue level only (user 10-29: 9 levels below
+// the bot, past it the C4 drop is 30% and less).
+assert(Table.value('S', 'dps', 27), 'nine levels above the spot: read');
+assert.strictEqual(Table.value('S', 'dps', 28), null, 'ten levels above: not read');
 near(Table.value('T', 'dps', 24).kills, 48, 'kills never exceed what the spot\'s monster count allows');
 assert.strictEqual(Table.value('S', 'dps', 15), null, 'below the lowest level that finds a safe target: no solo hunt');
 assert.strictEqual(Table.value('S', 'dps', 24, false), null, 'no row: no value');
@@ -160,7 +161,13 @@ try {
     Table.useFile(write('walk.json', fixture.gaps.map(gap => gap < 0 ? 0 : gap < 6 ? 300 * 256 + 1 : 600 * 256 + 1)));
     near(Table.value('-10_12', 'dps', 24, true).kills, 200, 'at the reference the measured kills');
     near(Table.value('-10_12', 'dps', 20, true).kills, 3600 / (3600 / measured + 12 - 6), 'the longer walk of the gap');
+    // The spawns' respawns cap the read (E69 at the read, T106 audit): the
+    // row's species gives back 100 mobs an hour, another species 500 more.
+    Table.useSpots([{ id: '-10_12', npcEntries: [{ selfId: 380, count: 1, production: 100 }, { selfId: 999, count: 5, production: 500 }] }]);
+    near(Table.value('-10_12', 'dps', 24, true).kills, 100, 'no more kills than the species it fights gives back');
+    Table.useSpots([]);
 } finally {
+    Table.useSpots([]);
     Table.useFile();
     fs.rmSync(walkScratch, { recursive: true, force: true });
 }

@@ -55,6 +55,16 @@ function sitDown(session, bot) {
     return true;
 }
 
+// The rest's posture (RestPolicy.sitsToRest, user 10-29): seated unless
+// standing refills what the bot lacks faster (a Sorcerer's Clear Mind).
+function restsSeated(bot) {
+    const automation = bot.automation;
+    if (typeof automation?.fetchRevMpAmount !== 'function') return true;
+    const tick = (options) => ({ hp: automation.fetchRevHpAmount(bot, options), mp: automation.fetchRevMpAmount(bot, options) });
+    return RestPolicy.sitsToRest(tick({ seated: true }), tick({ standing: true }),
+        bot.fetchMaxHp() - bot.fetchHp(), bot.fetchMaxMp() - bot.fetchMp(), RestPolicy.sitsForMana(bot));
+}
+
 function maybeCastManaRegeneration(session, bot, Generics) {
     const mpRatio = bot.fetchMp() / Math.max(1, bot.fetchMaxMp());
     if (mpRatio >= 0.8 || Date.now() < Number(session.nextManaRegenAt || 0)) return false;
@@ -281,7 +291,8 @@ module.exports = {
             // on the next brain tick while the native self-cast is still live.
             if (bot.state.fetchHits?.() || bot.state.fetchCasts?.()) return;
             if (maybeCastManaRegeneration(session, bot, Generics)) return;
-            sitDown(session, bot);
+            if (restsSeated(bot)) sitDown(session, bot);
+            else standUp(session, bot);
             // 3% chance per tick to attempt conversation when resting near other bots
             if (Math.random() < 0.03) {
                 try {

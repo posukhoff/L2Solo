@@ -84,11 +84,13 @@ function normalAttackMs(bot) {
         reuseDelay: weapon?.fetchAttackReuseDelay?.(), reuseMul: bow ? EffectStats.multiplier(bot, 'atkReuseMul') : 1 }));
 }
 
-// MP a seated bot wins back per ms: the adapter's cold rest rate, else the
-// hot Automation's seated regeneration per its 3 s tick.
+// MP a resting bot wins back per ms: the adapter's cold rest rate, else the
+// hot Automation's regeneration per its 3 s tick in the faster posture
+// (seated, or standing: RestPolicy.sitsToRest, user 10-29).
 function seatedMpPerMs(bot) {
     if (bot?.fetchSeatedMpPerMs) return bot.fetchSeatedMpPerMs();
-    return Math.max(0, Number(bot?.automation?.fetchRevMpAmount?.(bot, { seated: true })) || 0) / Formulas.REGEN_TICK_MS;
+    const amount = (options) => Number(bot?.automation?.fetchRevMpAmount?.(bot, options)) || 0;
+    return Math.max(0, amount({ seated: true }), amount({ standing: true })) / Formulas.REGEN_TICK_MS;
 }
 
 function seatedHpPerMs(bot) {
