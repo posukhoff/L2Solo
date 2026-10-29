@@ -1212,5 +1212,7 @@ module.exports = {
     fightProfile, currentCp, seedSnapshot, oldSeedRepair, candidateProfiles, fightSources, combatView, kitHash, skillsFor, forgetBuild, kitStoreSize,
     isAttackSkill, offensiveSkills, summonDetails, summonSkills, corpseSummonSkills, activeMusicEffects, partyMusicSkills, partyMusicMpCost, partyMusicEffect,
     spotSpawns, npcForSpot, killDraw, killChances, npcCombatStats, skillSnapshotsFromRecords, skillRecordsFromTree, treeSkillLevel,
-    statMultiplier: multiplier, statAdd: add
+    statMultiplier: multiplier, statAdd: add,
+    // The offline hunt tables (scripts/hunt-tables) sum a kit from their rows through the same numbers pass.
+    profileNumbers, equipmentFromTemplates
 };
