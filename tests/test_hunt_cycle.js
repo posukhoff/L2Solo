@@ -22,12 +22,15 @@ function bot(classId, level, free = []) {
 }
 const ctx = { gearThreatMask: 1 };
 
-// A level-30 warrior without a helmet: the D helmet of its kit pays a
-// little of its hour, never most of it.
-const bare = bot(1, 30, [6]);
+// A level-32 warrior without a helmet: the D helmet of its kit pays a
+// little of its hour, never most of it. (On the T106 per-mob tables a
+// level-30 warrior's best spot is at its kill cap even bare-headed, so no
+// kit change pays there; at 32 its best spots are open.)
+const LEVEL = 32;
+const bare = bot(1, LEVEL, [6]);
 const helmet = Providers.gearGain(bare, template(47), ctx, timestamp);
 assert(helmet > 0 && helmet < 0.5, `a helmet for the empty head slot adds a sane share of the hour (${helmet})`);
-const chest = Providers.gearGain(bot(1, 30, [10]), template(58), ctx, timestamp);
+const chest = Providers.gearGain(bot(1, LEVEL, [10]), template(58), ctx, timestamp);
 assert(chest > helmet, `a breastplate adds more than a helmet (${chest} vs ${helmet})`);
 
 // A level-45 gladiator with no weapon: a C dual pays more than a D dual, both
@@ -42,7 +45,7 @@ assert.equal(Providers.gearGain(bot(2, 45), template(2554), ctx, timestamp), 0, 
 
 // CON reaches the seated rest: the same kit numbers with one more CON rest
 // shorter; a symbol that also takes 3 STR fights longer and earns less.
-const fighter = bot(1, 30);
+const fighter = bot(1, LEVEL);
 const { before, after } = Profile.candidateProfiles(fighter, timestamp);
 const reader = HuntCycle.reader(fighter, ctx);
 const sturdier = { ...before, con: before.con + 1 };

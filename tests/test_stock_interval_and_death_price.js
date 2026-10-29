@@ -19,17 +19,17 @@ const Routes = invoke('GameServer/Bot/Travel/TravelRoutes');
 const spots = invoke('GameServer/Bot/Population/SpotProfiles').ensure();
 const deps = { spots, knowledgeEnabled: false };
 // T43 table: shots no longer pay for a D-grade Warrior (L20-40, low loot); a C-grade Gladiator buys them
-// (T106 tables: at 48, no longer at 46).
-const warrior = { characterId: 718001, level: 48, phase: 'hot', activity: 'hunting', adena: 100000,
-    stats: { classId: 2, exp: Data.experience[47] + 1 }, inventory: {}, loc: {},
+// (T106 per-mob tables: at 45, where the shot gain is widest over its price; no longer at 48).
+const warrior = { characterId: 718001, level: 45, phase: 'hot', activity: 'hunting', adena: 100000,
+    stats: { classId: 2, exp: Data.experience[44] + 1 }, inventory: {}, loc: {},
     vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 } };
 for (const [, items] of Providers.gearCandidates(warrior)) {
     const item = items[0]; if (item) warrior.inventory[item.selfId] = { selfId: item.selfId,
         amount: 1, equipped: true, equippedCount: 1, slot: Number(item.etc.slot), enchant: 0 };
 }
 const native = Economy.basics(warrior, deps), stock = native.stock('shots');
-// ARCH-NOTE: the validated table yields 2253/h (T106 table); use its exact rate and ceil, rather than rounding the fixture to the prose example.
-assert.equal(Math.round(stock.usePerHour), 2253);
+// ARCH-NOTE: the validated table yields 810/h (T106 per-mob table); use its exact rate and ceil, rather than rounding the fixture to the prose example.
+assert.equal(Math.round(stock.usePerHour), 810);
 const use = stock.usePerHour;
 const withShots = Table.value(native.bestSpotId, native.tableRole, warrior.level, true);
 const withoutShots = Table.value(native.bestSpotId, native.tableRole, warrior.level, false);
@@ -153,7 +153,7 @@ try {
     assert.equal(calls, spots.length); assert(Walk.summary().buildMs < 1000);
     for (let i = 0; i < 100; i++) Economy.basics(warrior, deps);
     assert.equal(calls, spots.length);
-    console.log(`Stock/death: native 2253/h, profitable-shot gate, town clocks, cached ${spots.length} return routes in ${Walk.summary().buildMs.toFixed(1)} ms passed`);
+    console.log(`Stock/death: native 810/h, profitable-shot gate, town clocks, cached ${spots.length} return routes in ${Walk.summary().buildMs.toFixed(1)} ms passed`);
 } finally { Trip.spotPlan = plan; Config.coldHonestTravel = honest; Walk.reset(); }
 coldVisits().then(() => { assert.equal(invoke('Database').isReady(), false); console.log('Cold visit end interval writer passed'); })
     .catch(error => { console.error(error); process.exitCode = 1; });

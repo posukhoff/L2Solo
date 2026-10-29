@@ -78,7 +78,11 @@ check('preparation reuses unchanged sources and notices in-place hostile changes
 check('physical and magic threats give distinct necklace gains', () => {
     const necklace = Data.items.find(item => Number(item.selfId) === 118);
     assert.ok(necklace);
-    const bot = state();
+    // The tables measure the mobs' spells (spellTaken, T108): a level-19
+    // fighter's best spots cast a little, so M.Def earns there even against
+    // hits. At 14 the mobs of every spot its hour is read on only hit.
+    const bot = { ...state(), level: 14 };
+    bot.stats = { ...bot.stats, exp: Data.experience[13] + 1 };
     const values = new Map([1, 3].map(mask => [mask, Providers.gearGain(bot, necklace, { gearThreatMask: mask }, 1000)]));
     assert.equal(values.get(1), 0, 'M.Def earns nothing where the monsters only hit');
     assert.ok(values.get(3) > 0, 'M.Def earns where the monsters cast');
