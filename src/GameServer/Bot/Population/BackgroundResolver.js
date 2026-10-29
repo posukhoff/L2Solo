@@ -1718,6 +1718,8 @@ const BackgroundResolver = {
     prepareRaidParty,
     castHuntPartyBuffs,
     effectiveSkillPower,
+    // The offline hunt tables (scripts/hunt-tables) measure a rotation against a dummy target.
+    resolveFight,
     // spotHunters: the bots on the spot, from the caller's occupancy (E69).
     resolveSolo({ state, spot, pressure = {}, targetNpcId = 0, elapsedMs = 60000, spotHunters = 1, rng = Math.random, timestamp = Date.now() }) {
         if (!state) {

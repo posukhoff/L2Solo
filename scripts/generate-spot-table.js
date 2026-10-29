@@ -297,9 +297,9 @@ function countNewStacks(items, seen, definitions = invoke('GameServer/DataCache'
 // The author's cold combat for `hours` of game time. A death is counted and
 // the bot stands up at full health at once: the time a death costs belongs to
 // the price of death (step 3.5), not to the spot. kit(bot): changes the
-// reference bot's worn gear before the hunt (scripts/hunt-cycle-check.js).
-function hunt(spot, role, level, shots, hours, simulation = sim, kit = null) {
-    const classId = classFor(role, level);
+// reference bot's worn gear before the hunt (scripts/hunt-cycle-check.js);
+// classId: another class than the role's (scripts/hunt-tables).
+function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, classId = classFor(role, level)) {
     const seed = hash(`${spot.id}|${role}|${shots}|${level}`);
     const rng = mulberry(seed);
     const random = Math.random;
