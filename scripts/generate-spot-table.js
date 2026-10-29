@@ -77,10 +77,10 @@ const ROLE_CLASSES = {
 const ROLES = Object.keys(ROLE_CLASSES);
 const SHOTS = [1, 0];
 // The hunt cycle of a kill (HuntCycle): fight and rest seconds, the mob's
-// damage before heals (taken) and the HP and MP the bot ends short (hpLost,
-// mpLost: what its rest refills).
+// damage before heals (taken; spellTaken its part from spells, over M.Def)
+// and the HP and MP the bot ends short (hpLost, mpLost: what its rest refills).
 const ROW_FIELDS = ['minGap', 'refGap', 'kph', 'busy', 'deaths', 'exp', 'sp', 'adena', 'loot', 'shots', 'potions', 'stacks',
-    'fight', 'rest', 'taken', 'hpLost', 'mpLost'];
+    'fight', 'rest', 'taken', 'spellTaken', 'hpLost', 'mpLost'];
 // Loot has no curve of its own: one rare drop in an hour of a curve spot
 // would swing it; it follows the adena curve (same drop groups, same
 // deep-blue rule, same monsters). HP and MP lost follow taken and fight.
@@ -352,7 +352,7 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
     const random = Math.random;
     Math.random = mulberry(seed ^ 0x9e3779b9);
     const sum = { kills: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
-        fightMs: 0, restMs: 0, taken: 0, hpLost: 0, mpLost: 0 };
+        fightMs: 0, restMs: 0, taken: 0, spellTaken: 0, hpLost: 0, mpLost: 0 };
     try {
         const made = newBot(classId, level, shots, simulation, kit);
         const seen = new Set(Object.values(made.bot.inventory).filter(item => item.amount > 0).map(item => Number(item.selfId)));
@@ -380,6 +380,7 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
                 sum.fightMs += Number(debug.combatMs);
                 sum.restMs += restMs;
                 sum.taken += Number(debug.damageTaken || 0);
+                sum.spellTaken += Number(debug.spellTaken || 0);
                 sum.hpLost += Math.max(0, Number(state.vitals?.hp) - Number(patch.vitals?.hp ?? state.vitals?.hp));
                 sum.mpLost += Math.max(0, Number(state.vitals?.mp) - Number(patch.vitals?.mp ?? state.vitals?.mp));
             }
@@ -410,7 +411,7 @@ function perKill(sum, hours) {
     const k = sum.kills;
     return { kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
         adena: sum.adena / k, loot: sum.loot / k, shots: sum.shots / k, potions: sum.potions / k, stacks: sum.stacks / k,
-        fight: sum.fightMs / 1000 / k, rest: sum.restMs / 1000 / k, taken: sum.taken / k, hpLost: sum.hpLost / k,
+        fight: sum.fightMs / 1000 / k, rest: sum.restMs / 1000 / k, taken: sum.taken / k, spellTaken: sum.spellTaken / k, hpLost: sum.hpLost / k,
         mpLost: sum.mpLost / k };
 }
 

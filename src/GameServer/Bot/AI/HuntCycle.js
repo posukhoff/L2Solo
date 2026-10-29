@@ -20,8 +20,9 @@ const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
 // - fight time by the damage rate (physical: P.Atk x attack speed x hit
 //   chance against the kills' evasion x critical; magic: sqrt(M.Atk) x cast
 //   speed);
-// - damage taken by the fight time and the mob's damage per second (its hit
-//   chance against the bot's evasion over P.Def; spells over M.Def);
+// - damage taken by the fight time and the mob's damage per second: its hits
+//   (hit chance against the bot's evasion, over P.Def) and its spells (over
+//   M.Def) in the shares the table measured;
 // - rest by the HP and MP lost over the kit's seated regeneration (CON, MEN),
 //   beyond what the reference regenerates outside its rest;
 // - deaths by the damage of a kill over the bot's HP.
@@ -97,12 +98,15 @@ function damageRate(numbers, magic, row) {
 function hitsOn(numbers, row) {
     return Matchup.incomingRate(MOB, { pDef: Math.max(1, numbers.pDef) }) * Formulas.hitChance(row.mobAccur, numbers.evasion);
 }
-// The mob's damage per second to a kit over the reference's: hits, or spells
-// (M.Def) for magic. The cold fight's mobs only hit; hot ones and players
-// cast (reader gain). per: the row's reference numbers (build).
+// The mob's damage per second to a kit over the reference's: its hits over
+// P.Def and its spells over M.Def, in the row's measured shares (mobs cast in
+// cold fights too: NpcCombatChoice). spells: all of it from spells (players
+// and hot casters, reader gain). per: the row's reference numbers (build).
 function damageScale(numbers, ref, row, spells, per) {
-    if (spells) return Math.max(1, ref.mDef) / Math.max(1, numbers.mDef);
-    return hitsOn(numbers, row) / per.refHits;
+    const magic = Math.max(1, ref.mDef) / Math.max(1, numbers.mDef);
+    if (spells) return magic;
+    const spellShare = row.taken > 0 ? Math.min(1, Math.max(0, Number(row.spellTaken) || 0) / row.taken) : 0;
+    return (1 - spellShare) * hitsOn(numbers, row) / per.refHits + spellShare * magic;
 }
 
 // One kill of a kit at a spot row: fight and rest seconds, damage taken (and

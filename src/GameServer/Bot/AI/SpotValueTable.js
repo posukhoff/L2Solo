@@ -227,6 +227,7 @@ function load() {
             stacks: raw.rowFields.indexOf('stacks'),
             // The hunt cycle columns (cycle); a table before them has none.
             fight: raw.rowFields.indexOf('fight'), rest: raw.rowFields.indexOf('rest'), taken: raw.rowFields.indexOf('taken'),
+            spellTaken: raw.rowFields.indexOf('spellTaken'),
             hpLost: raw.rowFields.indexOf('hpLost'), mpLost: raw.rowFields.indexOf('mpLost')
         }
     };
@@ -402,7 +403,8 @@ function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLev
 
 // One kill of the reference bot (the role's class in the author's kit) at the
 // spot for the role at the level, the hunt cycle model's input (HuntCycle):
-// fight and rest seconds, the mob's damage before heals (taken), the HP and
+// fight and rest seconds, the mob's damage before heals (taken; spellTaken
+// its part from spells, 0 in a table before the column), the HP and
 // MP it ends short (hpLost, mpLost), deaths, money (adena and loot at the NPC
 // buy-back), shots and potions per kill, all at the bot's level gap (the
 // curves; HP lost follows taken, MP lost the fight); kph the kills per hour
@@ -425,7 +427,7 @@ function cycle(spotId, role, level, shots = true, rewardOptions = {}) {
     const fight = ratio(curve.fight, t.gaps, refGap, gap), taken = ratio(curve.taken, t.gaps, refGap, gap);
     return { spotId: spot[0], kph: row[f.kph] * ratio(curve.kph, t.gaps, refGap, gap), cap: spot[3], pull: spot[4],
         fight: row[f.fight] * fight, rest: row[f.rest] * ratio(curve.rest, t.gaps, refGap, gap),
-        taken: row[f.taken] * taken, hpLost: row[f.hpLost] * taken, mpLost: row[f.mpLost] * fight,
+        taken: row[f.taken] * taken, spellTaken: f.spellTaken < 0 ? 0 : row[f.spellTaken] * taken, hpLost: row[f.hpLost] * taken, mpLost: row[f.mpLost] * fight,
         deaths: n[at + 1] / kills, money: (n[at + ADENA] + n[at + LOOT]) / kills,
         shots: n[at + SHOTS] / kills, potions: n[at + POTIONS] / kills,
         mobAccur: Number(spot[7]) || 0, mobEvasion: Number(spot[8]) || 0 };

@@ -64,5 +64,21 @@ const basics = Economy.basics({ ...drinker, adena: 100000, vitals: { hp: 1000, m
 const potions = basics.stock('potions');
 assert(potions.usePerHour > 0 && potions.benefitPerUnit * potions.usePerHour > basics.expectedDeathHours,
     `the potions row counts the rest its heal saves (${potions.benefitPerUnit} x ${potions.usePerHour} vs ${basics.expectedDeathHours})`);
+// T108: mobs hit and cast; the table measures the part of the damage from
+// spells (spellTaken). On rows where all of it is spells M.Def saves rest and
+// P.Def nothing; where none of it is, the other way round.
+const Table = require('../src/GameServer/Bot/AI/SpotValueTable');
+const realCycle = Table.cycle;
+const withSpells = part => {
+    Table.cycle = (...args) => { const row = realCycle(...args); return row && { ...row, spellTaken: row.taken * part }; };
+    // A reader is kept per state: a copy of the fighter reads the patched rows.
+    try { return HuntCycle.reader({ ...fighter }, ctx); } finally { Table.cycle = realCycle; }
+};
+const thicker = key => ({ ...before, [key]: before[key] * 1.5 });
+const casters = withSpells(1), hitters = withSpells(0);
+assert(casters.gain(before, thicker('mDef')) > 0 && casters.gain(before, thicker('pDef')) === 0,
+    'against spells M.Def pays and P.Def does not');
+assert(hitters.gain(before, thicker('pDef')) > 0 && hitters.gain(before, thicker('mDef')) === 0,
+    'against hits P.Def pays and M.Def does not');
 for (const id of [bare, unarmed, fighter, drinker].map(state => state.characterId)) Profile.forgetBuild(id);
 console.log('PASS hunt cycle: empty-slot helmet, D vs C weapon, CON henna and potions valued by the hunt income they add');

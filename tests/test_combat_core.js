@@ -79,6 +79,28 @@ assert(coldMobAction(stunner, fight, fighter, { time, at: 0, rng: constant(0) })
 const resumed = coldMobFight(stunner, coldMobFightSave(fight, time));
 assert(coldMobAction(stunner, resumed, fighter, { time: 0, at: 0, rng: constant(0) }).damage > 0,
     'a resumed fight neither re-buffs nor re-stuns at once');
+// A damage spell is marked as one (the hunt tables split spell damage, over M.Def,
+// from hits, over P.Def: HuntCycle); a hit is not.
+const caster = (() => {
+    for (const npc of DataCache.npcs) {
+        if (npc.template?.type !== 'L2Monster' && npc.template?.type !== undefined) continue;
+        const skills = NpcSkills.combatSkillsFor({ fetchSelfId: () => npc.selfId });
+        if (skills.length && skills.every(skill => NpcCombatChoice.category(skill) === 'damage' && skill.fetchSpell?.() === true
+            && skill.fetchConsumedMp() <= 100)) {
+            return ColdCombatProfile.npcForSpot({ id: 'nuke_test', avgLevel: npc.template?.level || 1,
+                npcEntries: [{ selfId: npc.selfId, count: 1 }] }, constant(0));
+        }
+    }
+    return null;
+})();
+assert(caster, 'the datapack has a monster whose only skills are damage spells');
+const casterBot = HuntCycle.referenceState(1, Math.max(1, caster.level));
+const casterTarget = { state: casterBot, profile: ColdCombatProfile.profileFor(casterBot, 0, { store: false }), readyAt: 0 };
+const casterFight = coldMobFight(caster);
+const nuke = coldMobAction(caster, casterFight, casterTarget, { time: 0, at: 0, rng: constant(0) });
+assert(nuke.damage > 0 && nuke.spell === true, 'a damage spell is marked as one');
+casterFight.mp = 0;
+assert(!coldMobAction(caster, casterFight, casterTarget, { time: 5000, at: 0, rng: constant(0) }).spell, 'a hit is not a spell');
 
 // A blow that needs a critical lands by position and DEX; one that needs the rear never lands in front.
 const deadly = { requires: { condition: 0x10 } }, backstab = { requires: { condition: 0x08 } };
