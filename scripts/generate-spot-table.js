@@ -225,6 +225,27 @@ function classFor(role, level) {
     return classes[level < 20 ? 0 : level < 40 ? 1 : 2];
 }
 
+// The second class a line is named by: its first class fights for it (a
+// Rogue on line 9 with a bow, on line 8 with a dagger: HuntCycle.referenceId).
+function lineClassFor(role) {
+    return roleClasses()[ROLE_LINES[role] || role][2];
+}
+
+// The bot a line fights with at a level: its class there, and a split-kit
+// first class's future whose weapon it wields (BotRoles.kitClassId of the
+// reference's id), or null.
+function lineBot(role, level) {
+    const classId = classFor(role, level);
+    const characterId = invoke('GameServer/Bot/AI/HuntCycle').referenceId(classId, lineClassFor(role));
+    return { classId, future: invoke('GameServer/Bot/AI/BotRoles').kitClassId({ classId, characterId }) };
+}
+
+// The key of the steps lines share (7>9: a Rogue with the Hawkeye's bow).
+function botFor(role, level) {
+    const { classId, future } = lineBot(role, level);
+    return future === null ? `${classId}` : `${classId}>${future}`;
+}
+
 function bandOf(level) {
     return Math.floor(level / BAND_LEVELS);
 }
@@ -303,11 +324,12 @@ function loadSimulation(catalogueFile) {
 // A bot of the class and level in the author's kit for that level (BotGear),
 // with the shots of its weapon (or none) and the healing potions the author's
 // restock buys at that level, both never running out.
-// kit(bot): changes the worn gear before the shots are chosen (hunt).
-function newBot(classId, level, shots, simulation = sim, kit = null) {
+// kit(bot): changes the worn gear before the shots are chosen (hunt);
+// line: the table line's second class the bot fights for.
+function newBot(classId, level, shots, simulation = sim, kit = null, line = null) {
     // The reference bot the run time weighs kits against (HuntCycle).
     const bot = invoke('GameServer/Bot/AI/HuntCycle').referenceState(classId, level,
-        { gear: simulation.BotGear, profile: simulation.CCP });
+        { gear: simulation.BotGear, profile: simulation.CCP, line });
     if (kit) kit(bot);
     const inventory = bot.inventory;
     let shotId = 0;
@@ -374,7 +396,7 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
     const sum = { kills: 0, mobs: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
         fightMs: 0, restMs: 0, taken: 0, spellTaken: 0, hpLost: 0, mpLost: 0, mix: {}, density: 0, runSpd: 0 };
     try {
-        const made = newBot(classId, level, shots, simulation, kit);
+        const made = newBot(classId, level, shots, simulation, kit, lineClassFor(role));
         const seen = new Set(Object.values(made.bot.inventory).filter(item => item.amount > 0).map(item => Number(item.selfId)));
         let state = { ...made.bot, spotId: spot.id, loc: { ...spot.center } };
         // The monsters it may fight at full health: the cap of its kills (row cap).
@@ -461,10 +483,10 @@ function perKill(sum, hours) {
 // { bot, profiles } (BackgroundResolver.roundProfiles), shared by every spot.
 const gateBots = new Map();
 function gateBot(role, level, shots) {
-    const key = `${classFor(role, level)}|${level}|${shots}`;
+    const key = `${botFor(role, level)}|${level}|${shots}`;
     let held = gateBots.get(key);
     if (!held) {
-        const { bot, runSpd, reach } = newBot(classFor(role, level), level, shots);
+        const { bot, runSpd, reach } = newBot(classFor(role, level), level, shots, sim, null, lineClassFor(role));
         gateBots.set(key, held = { bot, runSpd, reach, profiles: sim.BR.roundProfiles(bot, START) });
     }
     return held;
@@ -510,7 +532,7 @@ function rowTask({ spotId, hours }) {
 
 // One line's row on a spot (rowTask; once: its memo by class, level and shots).
 function lineRow(spot, role, level, shots, hours, once) {
-    const at = (botLevel) => `${classFor(role, botLevel)}|${botLevel}|${shots}`;
+    const at = (botLevel) => `${botFor(role, botLevel)}|${botLevel}|${shots}`;
     if (shots === 2 && !once(`blessed|${at(level)}`,
         () => !!sim.ShotStock.planForState(gateBot(role, level, 0).bot, { blessed: true }))) return null;
     let minGap = null;
@@ -593,12 +615,12 @@ function kitTask({ spotId, role, level, kit, hours }) {
         bot.inventory = M.kitState(classId, level, worn.flatMap(({ id, enchant }) =>
             S.wear(gear().items.get(id)).map((entry) => ({ ...entry, enchant })))).inventory;
     });
-    const made = newBot(classId, level, 1, sim, dress);
+    const made = newBot(classId, level, 1, sim, dress, lineClassFor(role));
     const shares = sim.BR.admittedShares({ ...made.bot, spotId: spot.id }, spot, START);
     if (shares && ![...shares.values()].some((share) => share > 0)) return { gated: true };
     const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
     const numbers = sim.CCP.profileFor(made.bot, START);
-    const reference = sim.CCP.profileFor(newBot(classId, level, 1).bot, START);
+    const reference = sim.CCP.profileFor(newBot(classId, level, 1, sim, null, lineClassFor(role)).bot, START);
     const [mobAccur, mobEvasion] = spotMob(spot);
     const features = HuntCycle.kitFeatures(numbers, reference, { mobAccur, mobEvasion },
         invoke('GameServer/Bot/AI/BotRoles').usesCasterWeaponCombat({ classId, stats: { classId } }));
@@ -868,13 +890,13 @@ async function main() {
         const spread = (id) => Number(spotById.get(id).maxLevel) - Number(spotById.get(id).minLevel);
         const curveTasks = [], seenPoints = new Set();
         // A curve point reads only the class at its level (rowTask).
-        const pointKey = (spot, role, gap) => `${spot.id}|${classFor(role, Number(spot.avgLevel) + gap)}|${gap}`;
+        const pointKey = (spot, role, gap) => `${spot.id}|${botFor(role, Number(spot.avgLevel) + gap)}|${gap}`;
         for (const [key, ids] of curveSpots) {
             const [role] = key.split('|');
             const low = (id) => minGaps.get(`${id}|${role}`);
             // Hashed by the class at the spot's level: lines of one class there
             // pick the same spots and share their points (pointKey).
-            const tie = (id) => hash(`${id}|${classFor(role, Number(spotById.get(id).avgLevel))}`);
+            const tie = (id) => hash(`${id}|${botFor(role, Number(spotById.get(id).avgLevel))}`);
             const chosen = ids.sort((a, b) => low(a) - low(b) || spread(a) - spread(b) || tie(a) - tie(b)).slice(0, CURVE_SPOTS);
             curveSpots.set(key, chosen);
             for (const spotId of chosen) {
@@ -896,14 +918,15 @@ async function main() {
             for (const spotId of ids) {
                 const spot = spotById.get(spotId);
                 const level = Math.min(MAX_LEVEL, Number(spot.avgLevel) + REF_GAP);
-                const classId = classFor(role, level);
-                for (const kit of [null, ...kitGrid(classId, level)]) {
-                    const point = `${spotId}|${classId}|${level}|${kit?.name || 'ref'}`;
+                // A split-kit Rogue wears its future class's ladders (bows for line 9).
+                const { classId, future } = lineBot(role, level), bot = botFor(role, level);
+                for (const kit of [null, ...kitGrid(future ?? classId, level)]) {
+                    const point = `${spotId}|${bot}|${level}|${kit?.name || 'ref'}`;
                     if (!seenKits.has(point)) {
                         seenKits.set(point, curveTasks.length);
                         curveTasks.push({ kind: 'kit', point, spotId, role, level, kit, hours: options.curveHours });
                     }
-                    kitKeys.push({ role, band: bandOf(level), spotId, ref: `${spotId}|${classId}|${level}|ref`, point });
+                    kitKeys.push({ role, band: bandOf(level), spotId, ref: `${spotId}|${bot}|${level}|ref`, point });
                 }
             }
         }
@@ -986,4 +1009,4 @@ if (require.main === module) main().catch((error) => {
     process.exit(1);
 });
 
-module.exports = { hunt, perKill, countNewStacks, runPool, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor };
+module.exports = { hunt, perKill, countNewStacks, runPool, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor, lineClassFor };

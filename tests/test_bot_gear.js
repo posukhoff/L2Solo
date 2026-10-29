@@ -431,4 +431,9 @@ upgrades = BotEquipmentUpgrade.findBestUpgrades(upgradeSession({
 }));
 assert.strictEqual(upgrades.length, 0, 'low-level bot should not auto-equip gear above its grade band');
 
+// Placeholder rows (Flail 163, Heavy Flail 170, named '_': no C4 source) are never planned (T118).
+for (const classId of [0, 4, 5, 46]) for (const level of [62, 66, 70]) {
+    assert(!BotGear.planFor({ classId, level }).items.some(item => [163, 170].includes(Number(item.selfId))),
+        `no placeholder weapon in the class ${classId} level ${level} kit`);
+}
 console.log('Bot gear checks passed');

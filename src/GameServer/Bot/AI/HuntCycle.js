@@ -1,6 +1,7 @@
 'use strict';
 const Table = require('./SpotValueTable');
 const Roles = invoke('GameServer/Bot/AI/BotRoles');
+const ClassProgression = invoke('GameServer/ClassProgression');
 const BotGear = invoke('GameServer/Bot/AI/BotGear');
 const Formulas = invoke('GameServer/Formulas');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
@@ -30,20 +31,39 @@ const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
 // capped by the spot; income = kills x (money - shots - potions - deaths x
 // the death price).
 
+const REFERENCE_ID = 990001;
+// A guard of the search below: each id is a fair pick among two or three classes.
+const REFERENCE_ID_SEARCH = 1000;
+// The reference bot's character id. A split-kit first class fights with the
+// weapon of its future second class (BotRoles.kitClassId, a pick by its id):
+// the first id whose future is the line's second class, else one whose
+// future keeps the class's own role (a class-only reference).
+function referenceId(classId, line = null) {
+    const own = Roles.inferRole(classId);
+    const target = ClassProgression.secondProfMap[classId]?.includes(Number(line)) ? Number(line) : null;
+    for (let characterId = REFERENCE_ID; characterId < REFERENCE_ID + REFERENCE_ID_SEARCH; characterId++) {
+        const future = Roles.kitClassId({ classId, characterId });
+        if (future === null) return REFERENCE_ID;
+        if (target ? future === target : Roles.inferRole(future) === own) return characterId;
+    }
+    return REFERENCE_ID;
+}
+
 // The reference bot of a class at a level: the author's kit for the level
 // (BotGear), its whole learned skill tree. The spot table measures it
 // (scripts/generate-spot-table.js); deps replace the gear and profile owners
-// in the generator's tests.
-function referenceState(classId, level, { gear = BotGear, profile = Profile } = {}) {
+// in the generator's tests; line: the table line's second class it fights for.
+function referenceState(classId, level, { gear = BotGear, profile = Profile, line = null } = {}) {
+    const characterId = referenceId(classId, line);
     const inventory = {};
-    for (const entry of gear.planFor({ classId, level }).items) {
+    for (const entry of gear.planFor({ classId, level, characterId }).items) {
         const key = `kit-${entry.selfId}`;
         const prior = inventory[key];
         const amount = (prior?.amount || 0) + 1;
         inventory[key] = { selfId: Number(entry.selfId), amount, equipped: true, equippedCount: amount,
             equippedSlots: [...(prior?.equippedSlots || []), Number(entry.slot)], slot: Number(entry.slot) };
     }
-    const state = { characterId: 990001, name: 'SpotTable', classId, level, activity: 'hunting', phase: 'cold',
+    const state = { characterId, name: 'SpotTable', classId, level, activity: 'hunting', phase: 'cold',
         vitals: {}, stats: { classId }, inventory };
     // Cold combat reads only learned skills (113e17913): the bot has learned its whole tree
     // for the level, saved as a live bot's learned rows are.
@@ -66,7 +86,7 @@ function reference(role, level) {
         const classId = Table.roleClass(role, level);
         held = null;
         if (classId !== null) {
-            const state = referenceState(classId, level);
+            const state = referenceState(classId, level, { line: Table.lineClass(role) });
             const profile = Profile.profileFor(state, 0, { store: false });
             // Only the numbers the model reads (a whole profile is ~8 KB).
             const numbers = {};
@@ -287,4 +307,4 @@ function build(state, ctx) {
     };
 }
 
-module.exports = { reader, referenceState, kitFeatures, weighFeatures, KIT_FEATURES };
+module.exports = { reader, referenceState, referenceId, kitFeatures, weighFeatures, KIT_FEATURES };

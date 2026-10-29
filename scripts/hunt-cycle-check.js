@@ -47,7 +47,7 @@ function main() {
         const lines = [['role', 'level', 'kit', 'spot', 'kills/h model', 'sim', 'fight s model', 'sim', 'rest s model', 'sim',
             'income/h model', 'sim'].join('\t')];
         for (const [role, level, label, kit] of CASES) {
-            const state = HuntCycle.referenceState(Generator.classFor(role, level), level);
+            const state = HuntCycle.referenceState(Generator.classFor(role, level), level, { line: Generator.lineClassFor(role) });
             state.stats.role = role;
             if (kit) kit(state);
             const numbers = Profile.profileFor(state, 0, { store: false });

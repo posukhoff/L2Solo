@@ -1,6 +1,7 @@
 const ClassProgression = invoke('GameServer/ClassProgression');
 const DataCache = invoke('GameServer/DataCache');
 const BotWeaponCompatibility = invoke('GameServer/Bot/AI/BotWeaponCompatibility');
+const BotClassProgression = invoke('GameServer/Bot/BotClassProgression');
 
 const ROLE_CLASSES = {
     healer: [15, 16, 29, 30, 42, 43],
@@ -12,6 +13,13 @@ const ROLE_CLASSES = {
     spoiler: [53, 54, 55],
     crafter: [56, 57]
 };
+// The first classes whose second classes split between bow and dagger
+// (Rogue, Elven Scout, Assassin): they fight 20-39 with the weapon of their
+// own future second class (user 10-30, class kits by C4 masteries).
+const SPLIT_KIT_CLASSES = new Set(Object.entries(ClassProgression.secondProfMap)
+    .filter(([, next]) => next.some((id) => ROLE_CLASSES.archer.includes(id))
+        && next.some((id) => ROLE_CLASSES.dagger.includes(id)))
+    .map(([classId]) => Number(classId)));
 const DWARF_CLASS_IDS = new Set([53, 54, 55, 56, 57, 117, 118]);
 const SPOILER_CLASS_IDS = new Set([53, 54, 55, 117]);
 // The C4 craft classes: Artisan, Warsmith and Maestro. Spoiler dwarves learn
@@ -66,6 +74,28 @@ function roleClassId(value) {
     return Number(ClassProgression.getThirdClass(classId)?.parentClassId || classId);
 }
 
+// A bot's character id, null for a player: the future class is the bots' own
+// draw (BotClassProgression), a player picks its second class itself. A live
+// actor is a bot by its session; a state row by its bot_ account (a cold
+// state without one is a bot's).
+function botCharacterIdOf(value) {
+    if (!value || typeof value !== 'object') return null;
+    const actor = typeof value.fetchId === 'function';
+    if (actor ? value.session?.botSession !== true
+        : value.accountName && !String(value.accountName).startsWith('bot_')) return null;
+    const id = Number(actor ? value.fetchId() : value.characterId);
+    return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+// The future second class whose weapon a split-kit first class fights with,
+// or null (a class-only value, or any other class).
+function kitClassId(value) {
+    const classId = roleClassId(value);
+    if (!SPLIT_KIT_CLASSES.has(classId)) return null;
+    const id = botCharacterIdOf(value);
+    return id === null ? null : BotClassProgression.futureClass(classId, id);
+}
+
 function levelOf(value) {
     const raw = value && typeof value.fetchLevel === 'function'
         ? value.fetchLevel()
@@ -90,6 +120,8 @@ function isCrafterClass(value) {
 }
 
 function inferRole(value) {
+    const future = kitClassId(value);
+    if (future !== null) return inferRole(future);
     const classId = roleClassId(value);
     if (classId === null || classId === undefined) return 'dps';
 
@@ -112,7 +144,8 @@ const CHANTER_TABLE_CLASSES = new Set([49, 50, 51, 52]);
 // The game table's role of a bot (SpotValueTable roles): its party role, else
 // its own. crafter -> spoiler is the author's call (the table has no crafter).
 function tableRoleFor(state = {}) {
-    const role = state.party?.role || state.stats?.role || inferRole(state.stats?.classId || state.classId || 0);
+    const role = state.party?.role || state.stats?.role
+        || inferRole({ classId: state.stats?.classId || state.classId || 0, characterId: state.characterId });
     const tableRole = role === 'melee' ? 'dps' : role === 'nuker' ? 'mage' : role === 'crafter' ? 'spoiler' : role;
     const classId = roleClassId(state.stats?.classId ?? state.classId ?? null);
     if (tableRole === 'mage' && SUMMONER_TABLE_CLASSES.has(classId)) return 'summoner';
@@ -225,6 +258,7 @@ module.exports = {
     NECROMANCER_CLASSES,
     className,
     roleClassId,
+    kitClassId,
     isSpoiler,
     isCrafterClass,
     presentation,

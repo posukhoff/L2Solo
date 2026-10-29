@@ -190,12 +190,15 @@ function roleSlot(t, role) {
 // The table key of a bot. A table by class lines (header roleLines, user
 // 10-29): its class's line (a third class its second's; a base or first
 // class the line of its role's alias when that line holds the class, else
-// the first line that does). An older table by roles: BotRoles.tableRoleFor.
+// the first line that does; a split-kit first class its future second
+// class's line, user 10-30). An older table by roles: BotRoles.tableRoleFor.
 function roleFor(state = {}) {
     const role = BotRoles.tableRoleFor(state);
     const inputs = load().header.inputs;
     if (!inputs.roleLines) return role;
-    return lineOf(inputs, BotRoles.roleClassId(state.stats?.classId ?? state.classId ?? null), role);
+    const classId = state.stats?.classId ?? state.classId ?? null;
+    const future = BotRoles.kitClassId({ classId, characterId: state.characterId });
+    return lineOf(inputs, future ?? BotRoles.roleClassId(classId), role);
 }
 
 function lineOf(inputs, classId, role) {
@@ -638,9 +641,18 @@ function cycle(spotId, role, level, shots = true, rewardOptions = {}) {
 // roleClasses: below 20, 20-39, 40 and up; a role name its alias line's),
 // or null for an unknown role.
 function roleClass(role, level) {
-    const inputs = load().header.inputs, name = `${role}`;
-    const classes = inputs.roleClasses?.[name] || inputs.roleClasses?.[inputs.roleLines?.[name]];
+    const classes = lineClasses(role);
     return classes ? classes[level < 20 ? 0 : level < 40 ? 1 : 2] : null;
+}
+
+// The second class a role's line is named by (its fights from 40), or null.
+function lineClass(role) {
+    return lineClasses(role)?.[2] ?? null;
+}
+
+function lineClasses(role) {
+    const inputs = load().header.inputs, name = `${role}`;
+    return inputs.roleClasses?.[name] || inputs.roleClasses?.[inputs.roleLines?.[name]];
 }
 
 // The level of a spot in the table (its monsters' average), or null.
@@ -871,4 +883,4 @@ function useFile(next = DEFAULT_FILE) {
     clearIncomeBases();
 }
 
-module.exports = { value, cycle, production, kitSurface, roleClass, roleFor, marketLoot, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };
+module.exports = { value, cycle, production, kitSurface, roleClass, lineClass, roleFor, marketLoot, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };

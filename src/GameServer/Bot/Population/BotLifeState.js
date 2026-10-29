@@ -482,7 +482,7 @@ function hasEquippedTwoHandedWeapon(state = {}) {
 
 function hasIncompatibleShield(state = {}) {
     const classId = Number(state.stats?.classId || 0);
-    const role = state.stats?.role || BotRoles.inferRole(classId);
+    const role = state.stats?.role || BotRoles.inferRole({ classId, characterId: state.characterId });
     const twoHanded = hasEquippedTwoHandedWeapon(state);
     const incompatiblePlan = Number(state.stats?.equipmentPlan?.target?.slot || 0) === 8 && twoHanded;
     const incompatibleEquippedShield = Object.values(state.inventory || {}).some((item) => (
@@ -1230,7 +1230,7 @@ function applyClassProgression(state, profile = {}) {
         seed: state.characterId
     }).then((resolved) => {
         const classId = Number(resolved.classId || currentClassId);
-        const role = BotRoles.inferRole(classId);
+        const role = BotRoles.inferRole({ classId, characterId: state.characterId });
         const progressedState = {
             ...state,
             level,
@@ -2942,7 +2942,7 @@ const BotLifeState = {
 
         const prepared = progression.then((resolved) => {
             const classId = Number(resolved.classId || currentClassId);
-            const role = BotRoles.inferRole(classId);
+            const role = BotRoles.inferRole({ classId, characterId: nextState.characterId });
             const progressedState = {
                 ...nextState,
                 party: { ...(nextState.party || {}), role },

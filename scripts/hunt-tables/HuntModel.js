@@ -15,6 +15,7 @@ C.boot();
 const DataCache = invoke('GameServer/DataCache');
 const Index = require('../../src/GameServer/Item/ItemTemplateIndex');
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
+const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
 const ColdRest = invoke('GameServer/Bot/Population/ColdRest');
 const Formulas = invoke('GameServer/Formulas');
 const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
@@ -42,7 +43,8 @@ function kitState(classId, level, items = [], { hennas = [], skills = null } = {
         inventory[key] = { selfId: Number(item.selfId), amount, equipped: true, equippedCount: amount, enchant: Number(item.enchant) || 0,
             equippedSlots: [...(prior?.equippedSlots || []), Number(item.slot)], slot: Number(item.slot) };
     }
-    return { characterId: 990002, name: 'HuntTable', classId, level, activity: 'hunting', phase: 'cold', vitals: {},
+    // A class-only bot: a split-kit first class keeps its own role's weapon.
+    return { characterId: HuntCycle.referenceId(classId), name: 'HuntTable', classId, level, activity: 'hunting', phase: 'cold', vitals: {},
         stats: { classId, hennas: [...hennas], coldCombat: { skillSource: 'database',
             skills: skills || Profile.skillSnapshotsFromRecords(Profile.skillRecordsFromTree(classId, level)) } },
         inventory };

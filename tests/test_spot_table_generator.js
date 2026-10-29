@@ -73,7 +73,8 @@ try {
     const surfaces = Object.values(table.kitSurface.rows).flatMap((byBand) => Object.values(byBand));
     assert(surfaces.length > 0, 'a band has its kit surface');
     for (const [fight, taken, points] of surfaces) {
-        assert(fight.length === 4 && taken.length === 4 && points >= 8, 'four coefficients each, from enough kits');
+        // taken null: a line that kills before contact in every kit (a bow below 40 too).
+        assert(fight.length === 4 && (taken === null || taken.length === 4) && points >= 8, 'four coefficients each, from enough kits');
         assert(fight[0] < 0, `a stronger weapon shortens the fight: ${fight}`);
     }
     for (const role of Object.keys(table.curves)) {
