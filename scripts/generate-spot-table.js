@@ -76,11 +76,17 @@ const ROLE_CLASSES = {
 };
 const ROLES = Object.keys(ROLE_CLASSES);
 const SHOTS = [1, 0];
-// The hunt cycle of a kill (HuntCycle): fight and rest seconds, the mob's
-// damage before heals (taken; spellTaken its part from spells, over M.Def)
-// and the HP and MP the bot ends short (hpLost, mpLost: what its rest refills).
+// A row's fields are per mob killed (a fight of a pull kills several), kph
+// mobs per hour. The hunt cycle of a kill (HuntCycle): fight and rest
+// seconds, the mob's damage before heals (taken; spellTaken its part from
+// spells, over M.Def) and the HP and MP the bot ends short (hpLost, mpLost:
+// what its rest refills). pull: mobs per fight; cap: the mobs per hour the
+// spawns the bot may fight allow (BackgroundResolver.admittedDensity); mix:
+// the kills by species, [selfId, share, ...] by share, at most MIX_SPECIES
+// (the reader prices the kill and its level gap by it, user 10-29).
 const ROW_FIELDS = ['minGap', 'refGap', 'kph', 'busy', 'deaths', 'exp', 'sp', 'adena', 'loot', 'shots', 'potions', 'stacks',
-    'fight', 'rest', 'taken', 'spellTaken', 'hpLost', 'mpLost'];
+    'fight', 'rest', 'taken', 'spellTaken', 'hpLost', 'mpLost', 'pull', 'cap', 'mix'];
+const MIX_SPECIES = 8;
 // Loot has no curve of its own: one rare drop in an hour of a curve spot
 // would swing it; it follows the adena curve (same drop groups, same
 // deep-blue rule, same monsters). HP and MP lost follow taken and fight.
@@ -351,12 +357,14 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
     const rng = mulberry(seed);
     const random = Math.random;
     Math.random = mulberry(seed ^ 0x9e3779b9);
-    const sum = { kills: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
-        fightMs: 0, restMs: 0, taken: 0, spellTaken: 0, hpLost: 0, mpLost: 0 };
+    const sum = { kills: 0, mobs: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
+        fightMs: 0, restMs: 0, taken: 0, spellTaken: 0, hpLost: 0, mpLost: 0, mix: {}, density: 0 };
     try {
         const made = newBot(classId, level, shots, simulation, kit);
         const seen = new Set(Object.values(made.bot.inventory).filter(item => item.amount > 0).map(item => Number(item.selfId)));
         let state = { ...made.bot, spotId: spot.id, loc: { ...spot.center } };
+        // The monsters it may fight at full health: the cap of its kills (row cap).
+        sum.density = simulation.BR.admittedDensity(spot, simulation.BR.admittedShares(state, spot, START));
         const target = atSpot(spot);
         let t = START;
         const end = START + hours * 3600000;
@@ -367,6 +375,8 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
             const debug = result.debug || {};
             const patch = result.patch || {};
             sum.kills += Number(debug.wins || 0);
+            sum.mobs += Number(debug.mobsKilled || 0);
+            for (const [selfId, mobs] of Object.entries(debug.killedNpcs || {})) sum.mix[selfId] = (sum.mix[selfId] || 0) + mobs;
             sum.exp += Number(gained.exp || 0);
             sum.sp += Number(gained.sp || 0);
             sum.adena += Number(gained.adena || 0);
@@ -406,10 +416,30 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
     return sum;
 }
 
+// Kills per hour the spot's monsters allow a bot that may fight density of
+// them: the author's fights per hunt cycle over the author's cycle lengths.
+function fightCap(density) {
+    const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
+    let fights = 0;
+    let ms = 0;
+    for (let i = 0; i < 1000; i++) {
+        const delay = BR.huntCycleDelayMs((i + 0.5) / 1000);
+        fights += BR.soloFightCount({ density }, delay, density);
+        ms += delay;
+    }
+    return fights / ms * 3600000;
+}
+
+// The kills by species, [selfId, share, ...] by share (the first MIX_SPECIES).
+function killMix(mix, mobs) {
+    return Object.entries(mix).sort((a, b) => b[1] - a[1] || Number(a[0]) - Number(b[0])).slice(0, MIX_SPECIES)
+        .flatMap(([selfId, count]) => [Number(selfId), Math.round(count / mobs * 1000) / 1000]);
+}
+
 function perKill(sum, hours) {
-    if (sum.kills <= 0) return null;
-    const k = sum.kills;
-    return { kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
+    if (sum.kills <= 0 || sum.mobs <= 0) return null;
+    const k = sum.mobs, pull = sum.mobs / sum.kills;
+    return { pull, cap: fightCap(sum.density) * pull, mix: killMix(sum.mix, k), kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
         adena: sum.adena / k, loot: sum.loot / k, shots: sum.shots / k, potions: sum.potions / k, stacks: sum.stacks / k,
         fight: sum.fightMs / 1000 / k, rest: sum.restMs / 1000 / k, taken: sum.taken / k, spellTaken: sum.spellTaken / k, hpLost: sum.hpLost / k,
         mpLost: sum.mpLost / k };
@@ -519,7 +549,7 @@ function poolRowLoot(rows) {
 }
 
 function packRow(row) {
-    return row ? ROW_FIELDS.map((field) => round(row[field])) : null;
+    return row ? ROW_FIELDS.map((field) => field === 'mix' ? row.mix : round(row[field])) : null;
 }
 
 // Per role and band: for each gap the sum over the band's curve spots of the
@@ -688,19 +718,6 @@ async function main() {
             curveCount += 1;
         }
 
-        const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
-        // Kills per hour a spot's monster count allows: the author's fights per
-        // hunt cycle over the author's cycle lengths.
-        const spotCap = (spot) => {
-            let fights = 0;
-            let ms = 0;
-            for (let i = 0; i < 1000; i++) {
-                const delay = BR.huntCycleDelayMs((i + 0.5) / 1000);
-                fights += BR.soloFightCount(spot, delay);
-                ms += delay;
-            }
-            return fights / ms * 3600000;
-        };
         const table = {
             header: {
                 schema: SCHEMA_VERSION,
@@ -720,9 +737,10 @@ async function main() {
             gaps: GAPS,
             rowFields: ROW_FIELDS,
             curveFields: CURVE_FIELDS,
-            // [id, level, density, kills per hour the spot allows, monsters per pull,
+            // [id, level, density, kills per hour all its monsters allow (a row's cap
+            //  counts those its bot may fight), monsters per pull (rows: their own),
             //  loot at drop rate 10 and 50 over rate x loot at rate 1, the kills' mean accuracy and evasion]
-            spots: spots.map((spot) => [spot.id, Number(spot.avgLevel), Number(spot.density), round(spotCap(spot)), 1,
+            spots: spots.map((spot) => [spot.id, Number(spot.avgLevel), Number(spot.density), round(fightCap(Number(spot.density) || 1)), 1,
                 ...lootRateResponse(spot), ...spotMob(spot)]),
             rows: rowResults.map((rows) => poolRowLoot(rows).map(packRow)),
             curves

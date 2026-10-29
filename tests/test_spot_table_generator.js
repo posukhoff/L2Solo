@@ -40,6 +40,15 @@ try {
     assert(table.spots.every((spot) => spot.length === 9 && spot[3] > 0 && spot[4] === 1 && spot[5] > 0 && spot[6] > 0
         && spot[7] > 0 && spot[8] > 0),
         'every spot has its level, density, kill cap, a pull of one monster, its loot response to the rate and its kills\' accuracy and evasion');
+    // Per-mob rows (user 10-29): mobs per fight, the cap of the spawns the bot may fight, the kills by species.
+    const field = name => table.rowFields.indexOf(name);
+    for (const row of table.rows.flat().filter(Boolean)) {
+        assert(row[field('pull')] >= 1 && row[field('cap')] > 0, 'a row has its pull and its own cap');
+        const mix = row[field('mix')];
+        assert(Array.isArray(mix) && mix.length >= 2 && mix.length % 2 === 0, 'a row has its kill mix');
+        const shares = mix.filter((_, at) => at % 2 === 1);
+        assert(Math.abs(shares.reduce((sum, share) => sum + share, 0) - 1) < 0.01, 'the mix shares make the kills');
+    }
     for (const role of Object.keys(table.curves)) {
         for (const curve of Object.values(table.curves[role])) {
             assert(table.curveFields.every((field) => curve[field].length === table.gaps.length), 'a curve value per gap');

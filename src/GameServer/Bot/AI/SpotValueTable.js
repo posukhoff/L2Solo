@@ -228,6 +228,8 @@ function load() {
             // The hunt cycle columns (cycle); a table before them has none.
             fight: raw.rowFields.indexOf('fight'), rest: raw.rowFields.indexOf('rest'), taken: raw.rowFields.indexOf('taken'),
             spellTaken: raw.rowFields.indexOf('spellTaken'),
+            // Per-mob rows (pull, cap, mix); a table before them counts fights.
+            pull: raw.rowFields.indexOf('pull'), cap: raw.rowFields.indexOf('cap'), mix: raw.rowFields.indexOf('mix'),
             hpLost: raw.rowFields.indexOf('hpLost'), mpLost: raw.rowFields.indexOf('mpLost')
         }
     };
@@ -257,6 +259,8 @@ function lootRateFactor(spot, dropRate) {
 }
 
 const expGapFactor = require('../../Progression/MobExperience').gapFactor;
+const NpcIndex = require('../../Item/ItemTemplateIndex');
+const DataCache = invoke('GameServer/DataCache');
 
 // What one hour of solo hunting gives: kills, deaths, exp, SP, adena, loot at
 // the NPC buy-back, shots and potions used, and the share of the hour spent in
@@ -286,17 +290,17 @@ function marketLoot(spotId, role, level, shots = true, rewardOptions = {}) {
     refreshCatalog(rates);
     refreshValueMemo(t, rates);
     const skill = rewardOptions.spoilSkillLevel ?? roleSpoilLevel(role, level);
-    return slotMarket(t, memoValue(t, rates, spotId, role, level, shots, skill), spotId, level, skill, revision);
+    return slotMarket(t, memoValue(t, rates, spotId, role, level, shots, skill), spotId, role, shots, level, skill, revision);
 }
 // A memo slot's market loot per kill, summed again when the demand table
 // moved. revision: DemandPrice.revision() + 1, read before the slot (its
 // build may drop the memo).
-function slotMarket(t, slot, spotId, level, skill, revision) {
+function slotMarket(t, slot, spotId, role, shots, level, skill, revision) {
     if (memoFlags[slot] & NO_ROW) return 0;
     const at = slot * ROW_NUMBERS;
     if (memoNumbers[at + MARKET_AT] !== revision) {
         stats.marketSums += 1;
-        memoNumbers[at + MARKET] = Rewards.lootPremium(rewardSpot(spotId), Math.min(t.maxLevel, Number(level)),
+        memoNumbers[at + MARKET] = Rewards.lootPremium(killSpot(t, rowOf(t, spotId, role, shots), spotId), Math.min(t.maxLevel, Number(level)),
             Demand().heldPremium, { spoilSkillLevel: skill });
         memoNumbers[at + MARKET_AT] = revision;
     }
@@ -344,6 +348,65 @@ function memoValue(t, rates, spotId, role, level, shots, skill) {
     return slot;
 }
 
+// A role's measured row at a spot (null: none, or the spot is not in the table).
+function rowOf(t, spotId, role, shots) {
+    const s = t.spotIndex.get(String(spotId)), r = t.roleIndex.get(role);
+    return s === undefined || r === undefined ? null : t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(Boolean(shots))];
+}
+
+// A row's measured kills by species ([selfId, share, ...]), or null for a
+// table before the mix.
+function rowMix(t, row) {
+    const mix = t.f.mix < 0 ? null : row?.[t.f.mix];
+    return Array.isArray(mix) && mix.length ? mix : null;
+}
+
+// The spot a row's kills are priced on (Rewards): the species its bot killed
+// in their measured shares (an entry's count is its share: the kill draw
+// weighs by count), else the spot's spawns. One per row, so the reward
+// memos hold it. User 10-29: a bot kills only what it may fight alone, so a
+// spot's other mobs neither pay nor set the level gap.
+const killSpots = new WeakMap();
+function killSpot(t, row, spotId) {
+    const base = rewardSpot(spotId), mix = rowMix(t, row);
+    if (!mix || !base) return base;
+    let held = killSpots.get(row);
+    if (!held) {
+        const npcEntries = [];
+        for (let at = 0; at < mix.length; at += 2) npcEntries.push({ selfId: mix[at], count: Math.max(1, Math.round(mix[at + 1] * 1000)) });
+        killSpots.set(row, held = { ...base, npcEntries, npcSelfIds: undefined });
+    }
+    return held;
+}
+
+// The exp level-gap factor of a row's kills for a bot of level: the
+// species' own factors (MobExperience) in their measured shares, else the
+// spot's mean level's.
+const mixLevels = new WeakMap();
+function killGapFactor(t, row, level, spotLevel) {
+    const mix = rowMix(t, row);
+    if (!mix) return expGapFactor(level - spotLevel);
+    let levels = mixLevels.get(row);
+    if (!levels) {
+        levels = [];
+        for (let at = 0; at < mix.length; at += 2)
+            levels.push(Number(NpcIndex.find(DataCache.npcs, mix[at])?.template?.level) || spotLevel);
+        mixLevels.set(row, levels);
+    }
+    let factor = 0, weight = 0;
+    for (let at = 0; at < mix.length; at += 2) {
+        factor += mix[at + 1] * expGapFactor(level - levels[at / 2]);
+        weight += mix[at + 1];
+    }
+    return weight > 0 ? factor / weight : expGapFactor(level - spotLevel);
+}
+
+// The mobs per hour a row's kills may reach: its own cap (the spawns its bot
+// may fight), else the spot's for every monster.
+function rowCap(t, row, spot) {
+    return t.f.cap >= 0 ? row[t.f.cap] : spot[3] * spot[4];
+}
+
 // The table-only part of a spot's hour (no rewards): the measured row, the level curve and the kills, or
 // null when the bot finds no target it may fight alone there at this level. s, r: the spot's and role's
 // table indexes.
@@ -351,14 +414,15 @@ function combat(t, s, r, level, shots) {
     const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(Boolean(shots))];
     if (!row) return null;
     const spot = t.spots[s], spotLevel = spot[1];
-    const gap = Math.min(t.maxLevel, Number(level)) - spotLevel;
+    const botLevel = Math.min(t.maxLevel, Number(level));
+    const gap = botLevel - spotLevel;
     if (!(gap >= row[t.f.minGap])) return null;
     const curve = t.curves[r][Math.floor(spotLevel / t.bandLevels)];
     const refGap = row[t.f.refGap];
-    const kills = Math.min(row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap), spot[3]) * spot[4];
+    const kills = Math.min(row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap), rowCap(t, row, spot));
     if (!(kills > 0)) return null;
     return { row, curve, gap, refGap, kills, expRatio: ratio(curve.exp, t.gaps, refGap, gap),
-        busyRatio: ratio(curve.busy, t.gaps, refGap, gap), gapFactor: expGapFactor(gap) };
+        busyRatio: ratio(curve.busy, t.gaps, refGap, gap), gapFactor: killGapFactor(t, row, botLevel, spotLevel) };
 }
 // A curve's value at the bot's gap over its value at the row's reference gap.
 function ratio(values, gaps, refGap, gap) {
@@ -381,7 +445,7 @@ function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLev
     // reward groups at each defeated NPC's level and the current rates.
     // Keep the original multiplication order and return a fresh result.
     const lootFactor = lootRateFactor(t.spots[s], rates.drop);
-    const rewards = Rewards.value(rewardSpot(spotId), Math.min(t.maxLevel, Number(level)), { spoilSkillLevel: skill });
+    const rewards = Rewards.value(killSpot(t, row, spotId), Math.min(t.maxLevel, Number(level)), { spoilSkillLevel: skill });
     const busy = row[t.f.busy] * busyRatio;
     return {
         kills,
@@ -425,7 +489,7 @@ function cycle(spotId, role, level, shots = true, rewardOptions = {}) {
     const n = memoNumbers, at = slot * ROW_NUMBERS, kills = n[at];
     const { row, curve, gap, refGap } = c, f = t.f, spot = t.spots[s];
     const fight = ratio(curve.fight, t.gaps, refGap, gap), taken = ratio(curve.taken, t.gaps, refGap, gap);
-    return { spotId: spot[0], kph: row[f.kph] * ratio(curve.kph, t.gaps, refGap, gap), cap: spot[3], pull: spot[4],
+    return { spotId: spot[0], kph: row[f.kph] * ratio(curve.kph, t.gaps, refGap, gap), cap: rowCap(t, row, spot), pull: 1,
         fight: row[f.fight] * fight, rest: row[f.rest] * ratio(curve.rest, t.gaps, refGap, gap),
         taken: row[f.taken] * taken, spellTaken: f.spellTaken < 0 ? 0 : row[f.spellTaken] * taken, hpLost: row[f.hpLost] * taken, mpLost: row[f.mpLost] * fight,
         deaths: n[at + 1] / kills, money: (n[at + ADENA] + n[at + LOOT]) / kills,
@@ -589,7 +653,7 @@ function rankIncome(t, rates, role, level, costs, minGap, shots, skill, market =
         for (let index = 0; index < basis.indexes.length; index++) {
             const spotId = t.spots[basis.indexes[index]][0];
             const slot = memoValue(t, rates, spotId, role, level, shots, skill);
-            basis.market[index] = memoNumbers[slot * ROW_NUMBERS] * slotMarket(t, slot, spotId, level, skill, market);
+            basis.market[index] = memoNumbers[slot * ROW_NUMBERS] * slotMarket(t, slot, spotId, role, shots, level, skill, market);
             priced ||= basis.market[index] > 0;
         }
         basis.marketAt = market;

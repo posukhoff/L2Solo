@@ -189,11 +189,16 @@ function stepTimes() {
 // Returns null when the bot's solo gate refuses the mob (BotTargetMatchup
 // soloCanHunt on its cold profiles), else per kill fight, rest, taken,
 // death chance and per hour kills, deaths, exp, SP and drops by item.
+// A kit's state and matchup profiles as the cold fight builds them (resolveFight).
+function matchupOf(bot) {
+    const state = { classId: bot.classId, level: bot.level, stats: { classId: bot.classId }, vitals: { mp: bot.profile.maxMp } };
+    return { state, profiles: Matchup.coldProfiles({ ...bot.profile, role: invoke('GameServer/Bot/AI/BotRoles').combatRoleFor(state) }, state, 0) };
+}
+
 function mobHour(bot, mob, correction = null) {
     const { profile, rot } = bot;
     const target = mob.combat;
-    const state = { classId: bot.classId, level: bot.level, stats: { classId: bot.classId }, vitals: { mp: profile.maxMp } };
-    const profiles = Matchup.coldProfiles({ ...profile, role: invoke('GameServer/Bot/AI/BotRoles').combatRoleFor(state) }, state, 0);
+    const { state, profiles } = matchupOf(bot);
     const pull = Math.max(1, Number(mob.pull) || 1);
     const view = Pull.pullView(target, pull);
     // The gate judges the pull the fight meets (BotTargetMatchup.npcVerdict).
@@ -298,3 +303,4 @@ function mobHour(bot, mob, correction = null) {
 module.exports.rotationOf = rotationOf;
 module.exports.damageTerms = damageTerms;
 module.exports.mobHour = mobHour;
+module.exports.matchupOf = matchupOf;

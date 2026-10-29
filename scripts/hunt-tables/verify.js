@@ -135,23 +135,32 @@ function sizes() {
 
 // ------------------------------------------------------------ 4
 
-// A spot's hour by formula: the fight draws its mobs by spawn count among
-// those the gate admits (ColdCombatProfile.killWeight without the matchup
-// efficiency), kills per hour capped by the spot's own cap (spot-table).
+// A spot's hour by formula, its mobs drawn as the real solo pick draws them
+// (ColdCombatProfile.npcForSpot): a spawn group by its count x squared matchup
+// efficiency x the share of its spawns whose pull the kit survives
+// (BotTargetMatchup.speciesPulls), each allowed pull size in its share
+// (BotPullEstimate.pullsOf of the group's mean). Kills count mobs, per hour
+// capped by cap.
 function spotHour(bot, spotRow, tables, corrections, cap) {
+    const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
+    const { profiles } = M.matchupOf(bot);
     let weight = 0, cycle = 0, kills = 0, exp = 0, deaths = 0;
     for (const [npcId, count, pull] of spotRow[5]) {
-        const mob = K.mobInput(tables, npcId, pull);
-        const danger = pull > 1.05 ? 'crowd' : 'solo';
-        const row = corrections[`${K.rotKind(bot.rot)}|${danger}`];
-        const hour = M.mobHour(bot, mob, row ? { kph: row[0], deaths: row[1] } : null);
-        if (!hour) continue;
-        const seconds = 3600 / hour.fightsPerHour;
-        weight += count;
-        cycle += count * seconds;
-        kills += count * pull * (1 - hour.deathChance);
-        exp += count * pull * (1 - hour.deathChance) * mob.exp;
-        deaths += count * hour.deathChance;
+        const verdict = Matchup.speciesPulls(profiles, { selfId: npcId, pull }, { soloSafety: true });
+        if (!verdict?.canHunt) continue;
+        const entry = count * Math.min(1, verdict.efficiency) ** 2;
+        for (const [size, part] of verdict.allowed) {
+            const mob = K.mobInput(tables, npcId, size);
+            const row = corrections[`${K.rotKind(bot.rot)}|${size > 1 ? 'crowd' : 'solo'}`];
+            const hour = M.mobHour(bot, mob, row ? { kph: row[0], deaths: row[1] } : null);
+            if (!hour) continue;
+            const w = entry * part;
+            weight += w;
+            cycle += w * 3600 / hour.fightsPerHour;
+            kills += w * size * (1 - hour.deathChance);
+            exp += w * size * (1 - hour.deathChance) * mob.exp;
+            deaths += w * hour.deathChance;
+        }
     }
     if (!(weight > 0) || !(cycle > 0)) return null;
     const kph = Math.min(cap, 3600 * kills / cycle);
@@ -166,7 +175,7 @@ function spotTableCheck() {
     const spotsById = new Map(tables.spots.spots.map(row => [row[0], row]));
     const roleIndex = spotTable.roles.indexOf('dps'), shotIndex = spotTable.shots.indexOf(1);
     const kph = spotTable.rowFields.indexOf('kph'), expField = spotTable.rowFields.indexOf('exp'), deathsField = spotTable.rowFields.indexOf('deaths'),
-        refGap = spotTable.rowFields.indexOf('refGap');
+        refGap = spotTable.rowFields.indexOf('refGap'), capField = spotTable.rowFields.indexOf('cap');
     const out = [];
     // Spots of bands 25, 35, 45, 55 with the dps role huntable, a fixed pick.
     for (const want of [24, 34, 44, 54]) {
@@ -181,12 +190,14 @@ function spotTableCheck() {
         const kit = { classId, level, rot, shots: true, profile: M.profileOf(HuntCycle.referenceState(classId, level)) };
         const gearClass = tables.gear.classes.find(cls => cls.classId === classId);
         const live = K.gearOptions(gearClass, level).filter(([name]) => name !== 'kit');
+        // A per-mob table carries each row's cap; an older one the spot's fights.
+        const cap = capField >= 0 ? row[capField] : spot[3];
         const result = { spot: spot[0], spotLevel: spot[1], botLevel: level, classId,
             spotTable: { kph: row[kph], expPerKill: row[expField], deathsPerKill: row[deathsField] },
-            formulaKit: spotHour(kit, spotsById.get(spot[0]), tables, corrections, spot[3]) };
+            formulaKit: spotHour(kit, spotsById.get(spot[0]), tables, corrections, cap) };
         for (const [name, ids] of live) {
             const profile = M.profileOf(M.kitState(classId, level, K.wearList(ids, items)));
-            result[`formula ${name}`] = spotHour({ ...kit, profile }, spotsById.get(spot[0]), tables, corrections, spot[3]);
+            result[`formula ${name}`] = spotHour({ ...kit, profile }, spotsById.get(spot[0]), tables, corrections, cap);
         }
         out.push(result);
     }

@@ -117,6 +117,18 @@ assert.deepStrictEqual(Matchup.speciesPulls(hunterProfiles, mixed.npcEntries[0],
     { efficiency: Matchup.speciesPulls(hunterProfiles, mixed.npcEntries[0], { soloSafety: true }).efficiency,
         canHunt: true, share: 0.7, allowed: [[2, 0.7]] });
 assert.strictEqual(Cold.npcForSpot(mixed, () => 0.99, { pull: true }).pull, 3, 'without safety the whole mix is rolled');
+// User 10-29: a round counts only the spawns the bot may fight. One lone gremlin group
+// (production 6 a hour) beside 45 trio spawns it cannot survive feeds one kill in ten
+// minutes and one fight a round, not the trios' respawns.
+const lone = { ...gremlins(0), density: 46, npcEntries: [{ selfId: 1, count: 1, production: 6 },
+    { selfId: 1, count: 45, pulls: [[3, 1]], production: 270 }] };
+const shares = Resolver.admittedShares(hunter(), lone, 1e12);
+assert.deepStrictEqual([...shares.values()], [1, 0]);
+assert.strictEqual(Resolver.admittedDensity(lone, shares), 1);
+assert.strictEqual(Resolver.soloShareMobs(lone, 600000, 1, shares), 1);
+const loneRound = Resolver.resolveSolo({ state: hunter(), spot: lone, elapsedMs: 600000, rng: () => 0, timestamp: 1e12 });
+assert(loneRound.debug.mobsKilled <= 1, `the lone group feeds its own respawns (${loneRound.debug.mobsKilled})`);
+assert.deepStrictEqual(loneRound.debug.killedNpcs, loneRound.debug.mobsKilled ? { 1: loneRound.debug.mobsKilled } : {});
 // T106 (user 10-29): a species whose usual pull the hunter cannot survive is not hunted, as one mob it would be.
 const pack = hunt(3);
 assert.deepStrictEqual([pack.debug.pulls, pack.patch.stats.lastReason], [0, 'no_safe_solo_target'],

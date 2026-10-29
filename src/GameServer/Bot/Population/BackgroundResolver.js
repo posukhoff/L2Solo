@@ -16,6 +16,8 @@ const ChargeLifecycle = invoke('GameServer/Skills/ChargeLifecycle');
 const HealingPotionStock = invoke('GameServer/Bot/AI/HealingPotionStock');
 const BotHuntingGroundPolicy = invoke('GameServer/Bot/AI/BotHuntingGroundPolicy');
 const TargetMatchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
+const SpotRiskPolicy = invoke('GameServer/Bot/Population/SpotRiskPolicy');
+const LevelingRoutes = invoke('GameServer/Bot/AI/LevelingRoutes');
 const BotPullEstimate = invoke('GameServer/Bot/AI/BotPullEstimate');
 const EncounterReadiness = invoke('GameServer/Bot/AI/BotEncounterReadiness');
 const PartyBuffLoadout = invoke('GameServer/Bot/AI/PartyBuffLoadout');
@@ -1410,10 +1412,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
     const pending = PveEncounter.read(state.stats?.pveEncounter, encounterKey, timestamp);
     const matchupProfiles = pending ? null : TargetMatchup.coldProfiles(bot, fightState, timestamp);
     const picked = pending?.mob || ColdCombatProfile.npcForSpot(spot, rng, { preferredNpcId: targetNpcId,
-        soloSafety: true, pull: true,
-        maxTargetLevel: invoke('GameServer/Bot/Population/SpotRiskPolicy').recoveryFor(state)?.levelPenalty > 0
-            ? invoke('GameServer/Bot/AI/LevelingRoutes').targetLevelForState(state) : null,
-        matchupProfiles }) || {
+        ...soloPickOptions(state), pull: true, matchupProfiles }) || {
         level: Number(spot.avgLevel || bot.level), maxHp: Math.max(1, Number(spot.mob?.hp || 1)),
         pAtk: Math.max(1, Number(spot.mob?.damage || 1)), pAtkRnd: 0, pDef: 1, mDef: 1,
         accur: 1, evasion: 0, critical: 0, atkSpd: 253, mAtk: 1, castSpd: 333
@@ -1927,27 +1926,63 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
     };
 }
 
+// The safety options of a solo fight's pick (resolveFight): judged for the
+// bot alone and, while it recovers from deaths, up to the lower target level.
+function soloPickOptions(state) {
+    return { soloSafety: true,
+        maxTargetLevel: SpotRiskPolicy.recoveryFor(state)?.levelPenalty > 0 ? LevelingRoutes.targetLevelForState(state) : null };
+}
+
+// Each spawn group of the spot and the share of its spawns the bot may fight
+// alone (BotTargetMatchup.speciesPulls under the pick's options; 0 for one it
+// may not hunt), once per round: a solo hunter takes only the pulls it
+// survives (user 10-29), so a spot's other mobs neither feed its kills nor
+// widen its round. Null for a spot without spawn groups.
+function admittedShares(state, spot, timestamp) {
+    if (!spot?.npcEntries?.length) return null;
+    const profiles = TargetMatchup.coldProfiles(botCombatStats(state, timestamp), state, timestamp);
+    const options = soloPickOptions(state);
+    return new Map(spot.npcEntries.map(entry => [entry, TargetMatchup.speciesPulls(profiles, entry, options)?.share ?? 0]));
+}
+
+// The spot's monsters a solo bot may fight: its density times the admitted
+// share of its spawns (admittedShares; all of them without one).
+function admittedDensity(spot, shares) {
+    const density = Number(spot.density) || 1;
+    if (!shares) return density;
+    let total = 0, admitted = 0;
+    for (const [entry, share] of shares) {
+        const count = Math.max(1, Number(entry.count) || 1);
+        total += count;
+        admitted += count * share;
+    }
+    return total > 0 ? density * admitted / total : density;
+}
+
 // A solo hunt cycle holds one fight per 12 seconds of the cycle, at most a
-// third of the spot's monsters. The spot table generator reads the same rule.
-function soloFightCount(spot, elapsedMs) {
+// third of the monsters it may fight (density: admittedDensity). The spot
+// table generator reads the same rule.
+function soloFightCount(spot, elapsedMs, density = spot.density) {
     const maxFights = Math.max(1, Math.floor(elapsedMs / 12000));
-    return Math.min(maxFights, Math.max(1, Math.ceil((spot.density || 1) / 3)));
+    return Math.min(maxFights, Math.max(1, Math.ceil((Number(density) || 1) / 3)));
 }
 
 // E69: a cold solo bot kills at most its share of what the spot's spawns give
-// back during the round: the spot's mobs per hour (SpotService, from the
-// respawns) times the round's hours, split among the bots on the spot. Null
-// when the spot has no production table (raids, rooms, older profiles) or its
-// production is 0: a respawn of 0 means no respawn data, not an empty spot.
-function soloShareMobs(spot, elapsedMs, hunters) {
-    let rows = 0, production = 0;
+// back during the round: the mobs per hour (SpotService, from the respawns)
+// of the spawns it may fight (shares: admittedShares; all without) times the
+// round's hours, split among the bots on the spot. Null when the spot has no
+// production table (raids, rooms, older profiles) or its production is 0: a
+// respawn of 0 means no respawn data, not an empty spot.
+function soloShareMobs(spot, elapsedMs, hunters, shares = null) {
+    let rows = 0, production = 0, admitted = 0;
     for (const entry of spot?.npcEntries || []) {
         if (!Number.isFinite(entry.production)) continue;
         rows += 1;
         production += entry.production;
+        admitted += entry.production * (shares ? shares.get(entry) ?? 0 : 1);
     }
     if (!rows || spot.raidBoss === true || production <= 0) return null;
-    return production * elapsedMs / 3600000 / Math.max(1, Number(hunters) || 1);
+    return admitted * elapsedMs / 3600000 / Math.max(1, Number(hunters) || 1);
 }
 
 // The wait before the next solo hunt cycle, from a roll in [0, 1).
@@ -1958,6 +1993,8 @@ function huntCycleDelayMs(roll) {
 const BackgroundResolver = {
     soloFightCount,
     soloShareMobs,
+    admittedShares,
+    admittedDensity,
     travelRecord,
     huntCycleDelayMs,
     combat: { chooseSkill, chooseChargeSkill, coldChargeState, expireCharges, addCharges, consumeCharges,
@@ -2161,10 +2198,11 @@ const BackgroundResolver = {
             };
         }
 
-        const fights = soloFightCount(spot, elapsedMs);
+        const admitted = admittedShares(state, spot, timestamp);
+        const fights = soloFightCount(spot, elapsedMs, admittedDensity(spot, admitted));
         // The share's fraction left from the last round on this spot carries
         // over; a pull above it is owed (a negative carry).
-        const share = soloShareMobs(spot, elapsedMs, spotHunters);
+        const share = soloShareMobs(spot, elapsedMs, spotHunters, admitted);
         const shareCarry = share !== null && String(state.stats?.coldShare?.spotId) === String(spot.id)
             ? Number(state.stats.coldShare.carry) || 0 : 0;
         const shareMobs = share === null ? Infinity : share + shareCarry;
@@ -2201,6 +2239,8 @@ const BackgroundResolver = {
         let combatMs = 0;
         let damageTaken = 0, spellTaken = 0;
         const foughtNpcIds = [];
+        // The mobs killed by species (the spot table's measured kill mix).
+        const killedNpcs = {};
         const soulCrystals = [];
         let attemptedFights = 0;
         let completedFights = 0;
@@ -2287,8 +2327,12 @@ const BackgroundResolver = {
             if (result.won) {
                 wins += 1;
                 // The share pays the kills the fight paid, also for a pull begun last round.
-                mobsKilled += Math.max(1, Number(result.debug?.killsPaid) || 1);
-                if (Number(result.debug?.mobSelfId) > 0) foughtNpcIds.push(Number(result.debug.mobSelfId));
+                const paid = Math.max(1, Number(result.debug?.killsPaid) || 1);
+                mobsKilled += paid;
+                if (Number(result.debug?.mobSelfId) > 0) {
+                    foughtNpcIds.push(Number(result.debug.mobSelfId));
+                    killedNpcs[result.debug.mobSelfId] = (killedNpcs[result.debug.mobSelfId] || 0) + paid;
+                }
             }
             if (result.died) {
                 died = true;
@@ -2395,7 +2439,9 @@ const BackgroundResolver = {
                 shareCut,
                 targetNpcId: Number(targetNpcId) || null,
                 targetOnSpot: ColdCombatProfile.spotSpawns(spot, targetNpcId) ? 1 : 0,
-                foughtNpcIds
+                foughtNpcIds,
+                mobsKilled,
+                killedNpcs
             }
         };
     }

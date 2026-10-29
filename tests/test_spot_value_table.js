@@ -82,6 +82,36 @@ try {
     fs.rmSync(scratch, { recursive: true, force: true });
 }
 
+// A per-mob table (user 10-29): a row's kills reach its own cap (the spawns
+// its bot may fight), are priced by the species it killed, and take their
+// exp gap from those species' levels, not the spot's other mobs.
+const mixScratch = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'spot-mix-'));
+try {
+    const Rewards = require('../src/GameServer/Bot/Economy/SpotRewardExpectation');
+    const Index = require('../src/GameServer/Item/ItemTemplateIndex');
+    const gapFactor = require('../src/GameServer/Progression/MobExperience').gapFactor;
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spot_table.json'), 'utf8'));
+    // Spot -10_12 of the reward catalog holds NPCs 34, 38 and 380.
+    fixture.spots[0][0] = '-10_12';
+    fixture.rowFields.push('pull', 'cap', 'mix');
+    for (const rows of fixture.rows) for (const row of rows) if (row) row.push(1, 120, [380, 1]);
+    const file = path.join(mixScratch, 'table.json');
+    fs.writeFileSync(file, JSON.stringify(fixture));
+    Table.useFile(file);
+    const mixed = Table.value('-10_12', 'dps', 24, true);
+    near(mixed.kills, 120, 'the row\'s own cap holds the kills');
+    const level = Number(Index.find(DataCache.npcs, 380).template.level);
+    near(mixed.exp, 120 * 100 * gapFactor(24 - level), 'the exp gap is the killed species\' level');
+    const only = Rewards.value({ id: '-10_12', npcEntries: [{ selfId: 380, count: 1 }], rewards: { adenaMin: 34, adenaMax: 119 } }, 24);
+    near(mixed.adena, 120 * only.adena, 'the kills pay as the killed species does');
+    const all = Rewards.value({ id: '-10_12', npcEntries: [{ selfId: 34, count: 10 }, { selfId: 38, count: 9 }, { selfId: 380, count: 6 }],
+        rewards: { adenaMin: 34, adenaMax: 119 } }, 24);
+    assert.notStrictEqual(Math.round(only.adena), Math.round(all.adena), 'the fixture tells the mix from the spawns');
+} finally {
+    Table.useFile();
+    fs.rmSync(mixScratch, { recursive: true, force: true });
+}
+
 // ---------------------------------------------------------------- the committed table
 const raw = JSON.parse(fs.readFileSync(Table.DEFAULT_FILE, 'utf8'));
 assert.strictEqual(raw.rows.length, raw.spots.length, 'one row set per spot');
