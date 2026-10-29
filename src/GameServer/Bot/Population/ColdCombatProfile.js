@@ -274,6 +274,7 @@ function npcCombatStats(npc) {
     const level = Math.max(1, number(npc.template?.level, 1));
     const dex = number(npc.base?.dex, 1);
     const weapon = itemTemplate(npc.equipment?.weapon);
+    const shield = Number(npc.equipment?.shield) ? itemTemplate(npc.equipment.shield) : null;
     const vulnerabilities = {};
     [
         'bowWpnVuln', 'bluntWpnVuln', 'daggerWpnVuln',
@@ -299,6 +300,17 @@ function npcCombatStats(npc) {
             + npcPassiveAdd(actor, 'pEvasionRateAdd')),
         pAtkRnd: number(npc.stats?.pAtkRnd),
         critical: Math.max(0, number(npc.stats?.crit)),
+        // The hot Npc's numbers a hit and its skill choice read
+        // (CombatantView, NpcCombatChoice): MP, DEX, magic critical, shield,
+        // AI type and attack radius.
+        maxMp: Math.max(0, number(npc.vitals?.maxMp)),
+        dex,
+        // A hot Npc has no backpack: its magic critical reads no weapon.
+        mCritRate: Formulas.magicCriticalRate({ wit: number(npc.base?.wit), weapon: false }),
+        shieldPDef: number(shield?.stats?.pDef ?? shield?.pDef),
+        shieldRate: shield || number(shield?.stats?.pDef) > 0 ? Formulas.DEFAULT_SHIELD_RATE : 0,
+        aiType: String(npc.template?.ai || '').trim().toLowerCase(),
+        atkRadius: number(npc.stats?.atkRadius),
         weaponKind: String(weapon?.template?.kind || ''),
         race: String(npc.traits?.race || '').toLowerCase(),
         undead: npc.traits?.undead === true,
@@ -768,6 +780,7 @@ function numbersPass(kitPart, effects, timestamp, sourceOptions) {
         maxCp, cpRegen, maxHp: power.maxHp, maxMp: Math.max(1, maxMp), pAtk: power.pAtk, mAtk: power.mAtk,
         pDef: power.pDef, mDef: power.mDef, accur: power.accur, evasion: power.evasion,
         critical: power.critical, mCritRate, atkSpd: power.atkSpd, castSpd: power.castSpd, con: power.con, men: power.men,
+        str: stats.str, dex: stats.dex,
         weaponMask: (WEAPON_MASK_BY_KIND[equipment.weaponKind] || 0) | (number(equipment.shieldPDef) > 0 ? 1048576 : 0)
     } };
 }

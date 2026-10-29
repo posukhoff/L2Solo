@@ -3,7 +3,6 @@ const assert = require('assert');
 require('../src/Global');
 const DataCache = invoke('GameServer/DataCache');
 DataCache.init();
-const Formulas = invoke('GameServer/Formulas');
 const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
 const BotCombatUtility = invoke('GameServer/Bot/AI/BotCombatUtility');
