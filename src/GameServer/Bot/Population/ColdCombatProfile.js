@@ -397,6 +397,13 @@ function skillSnapshotsFromRecords(records = []) {
     }).filter(Boolean);
 }
 
+// A cold state's current class: the one main publishes (stats.classId, set on
+// every transfer, hot or cold), before the class its saved kit was captured
+// with; a class-only estimate carries just the kit's or the state's.
+function classIdOf(state = {}) {
+    return number(state.stats?.classId, number(state.stats?.coldCombat?.classId, number(state.classId)));
+}
+
 function legacySnapshot(state = {}, records = [], timestamp = Date.now()) {
     const existing = state.stats?.coldCombat || {};
     return {
@@ -404,7 +411,7 @@ function legacySnapshot(state = {}, records = [], timestamp = Date.now()) {
         version: PROFILE_VERSION,
         skillSource: 'database',
         capturedAt: number(existing.capturedAt, timestamp),
-        classId: number(existing.classId, number(state.stats?.classId, number(state.classId))),
+        classId: classIdOf(state),
         effects: existing.effects || [],
         skills: skillSnapshotsFromRecords(records)
     };
@@ -544,7 +551,7 @@ function savedSetEffects(state) {
 // The skills a cold profile carries, readable without building the profile.
 // An empty saved kit is still empty. Only class-only hypothetical estimates
 // (without a character owner) may use the eligibility tree.
-function skillsFor(state = {}, classId = number(state.stats?.coldCombat?.classId, number(state.stats?.classId, number(state.classId))),
+function skillsFor(state = {}, classId = classIdOf(state),
     level = Math.max(1, number(state.level, 1))) {
     const saved = state.stats?.coldCombat;
     return Array.isArray(saved?.skills) && saved.skillSource !== 'tree' && saved.skillSource !== 'unresolved' ? saved.skills
@@ -678,7 +685,7 @@ function kitSlot(state, timestamp, kit) {
 // with the henna delta, the henna totals (henna). No buff, no clock.
 function gatherKit(state, timestamp) {
     const saved = state.stats?.coldCombat;
-    const classId = number(saved?.classId, number(state.stats?.classId, number(state.classId)));
+    const classId = classIdOf(state);
     const template = classTemplate(classId);
     const level = Math.max(1, number(state.level, 1));
     const spellcaster = [10, 13, 14, 25, 26, 28, 38, 39, 40, 41, 49].includes(Formulas.getParentClassId(classId))
@@ -1201,7 +1208,7 @@ function forgetBuild(characterId) {
 function kitStoreSize() { return kitProfiles.size; }
 
 module.exports = {
-    PROFILE_VERSION, capture, legacySnapshot, treeSnapshot, needsDatabaseBackfill, profileFor, buildCount, buildMs, withBuildSite,
+    PROFILE_VERSION, classIdOf, capture, legacySnapshot, treeSnapshot, needsDatabaseBackfill, profileFor, buildCount, buildMs, withBuildSite,
     fightProfile, currentCp, seedSnapshot, oldSeedRepair, candidateProfiles, fightSources, combatView, kitHash, skillsFor, forgetBuild, kitStoreSize,
     isAttackSkill, offensiveSkills, summonDetails, summonSkills, corpseSummonSkills, activeMusicEffects, partyMusicSkills, partyMusicMpCost, partyMusicEffect,
     spotSpawns, npcForSpot, killDraw, killChances, npcCombatStats, skillSnapshotsFromRecords, skillRecordsFromTree, treeSkillLevel,

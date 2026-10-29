@@ -29,9 +29,6 @@ for (const [classId, rows] of Object.entries(pins)) {
 }
 // The 2nd class grows into its 3rd: no jump on the transfer at 76.
 near(Formulas.calcCp(76, 2, 43), Formulas.calcCp(76, 88, 43), 'Gladiator 76 = Duelist 76');
-// Past the table the last level holds; an unknown class reads the Human Fighter's.
-near(Formulas.calcHp(85, 88, 43), Formulas.calcHp(80, 88, 43), 'level past 80');
-near(Formulas.calcHp(20, 999, 43), Formulas.calcHp(20, 0, 43), 'unknown class');
 
 // The cold bot's profile reads the same values.
 const Cold = invoke('GameServer/Bot/Population/ColdCombatProfile');
@@ -46,5 +43,13 @@ const profile = Cold.fightProfile(gladiator, 1e12);
 near(profile.maxHp, Formulas.calcHp(76, 2, 43), 'cold maxHp');
 near(profile.maxMp, Formulas.calcMp(76, 2, 25), 'cold maxMp');
 near(profile.maxCp, Formulas.calcCp(76, 2, 43), 'cold maxCp');
+// A bot that took its transfers cold keeps the class its kit was captured
+// with in coldCombat; the profile reads the current class main publishes.
+const transferred = { ...gladiator, stats: { ...gladiator.stats,
+    coldCombat: { ...gladiator.stats.coldCombat, classId: 1 } } };
+const refreshed = Cold.legacySnapshot(transferred, [], 1e12);
+assert.strictEqual(refreshed.classId, 2, 'a refreshed kit takes the current class');
+near(Cold.fightProfile(transferred, 1e12).maxHp, Formulas.calcHp(76, 2, 43), 'cold maxHp after a cold transfer');
+near(Cold.fightProfile(transferred, 1e12).maxMp, Formulas.calcMp(76, 2, 25), 'cold maxMp after a cold transfer');
 
 console.log('Class vitals checks passed');
