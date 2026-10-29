@@ -6,7 +6,6 @@ const persistenceDatabase = () => database ||= invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const LiveBag = require('./LiveBag');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
-const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
 const BotWeaponCompatibility = invoke('GameServer/Bot/AI/BotWeaponCompatibility');
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 
@@ -152,7 +151,8 @@ function choosesBlessed(state, rank) {
 // before shots. One answer per table revision.
 const blessedChoices = new Map();
 function blessedPays(role, level, rank) {
-    const Table = SpotValueTable;
+    // lazy: cycle SpotValueTable's chain loads ColdCombatProfile, which loads this module
+    const Table = invoke('GameServer/Bot/AI/SpotValueTable');
     const key = `${Table.revision()}|${role}|${level}|${rank}`;
     if (blessedChoices.has(key)) return blessedChoices.get(key);
     const none = Table.best(role, level, false), spirit = Table.best(role, level, true), blessed = Table.best(role, level, 2);

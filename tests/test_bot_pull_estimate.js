@@ -20,6 +20,9 @@ assert.strictEqual(Pull.pullSize(ant, [mob(100, { clan: 'ant', z: 700 })], rules
 assert.strictEqual(Pull.pullSize(mob(0), [mob(450, { hostile: true }), mob(600, { hostile: true })], rules), 2);
 assert.strictEqual(Pull.pullSize(ant, [mob(100, { clan: 'ant', hostile: true })], rules), 2);
 assert.strictEqual(Pull.pullSize(mob(0), [mob(100, { hostile: true, z: 450 })], rules), 1, 'aggro stops at its height');
+// T114: an aggressive mob joins within its own C4 aggro range (Splinter Stakato 1508: 150).
+assert.strictEqual(Pull.pullSize(mob(0), [mob(300, { hostile: true, selfId: 1508 }), mob(140, { hostile: true, selfId: 1508 })], rules), 2,
+    'a short-sighted mob joins only from its own range');
 
 // A leader brings its minions; minion actors are counted through their group, not again as neighbours.
 assert.strictEqual(Pull.pullSize(mob(0), [mob(100, { hostile: true, minion: true })], rules, 3), 4);

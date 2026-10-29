@@ -230,6 +230,9 @@ const Formulas = {
     // Lisvus Formulas.calcBlowDamage: a blow applies the critical-damage
     // multiplier to P.Atk plus skill power, then adds the amplified flat
     // critical-damage bonus before the normal 70 / P.Def scaling.
+    // A soulshot doubles P.Atk as on every physical skill (T113: Lisvus
+    // Formulas.java:1196-1203, L2J 2007 calcBlowDamage; Mobius C4's 1.458
+    // belongs to its H5 formula with 77, marked unconfirmed by its author).
     calcBlowDamage(pAtk, pAtkRnd, pDef, power, { soulshot = false, criticalDamageMultiplier = 1, criticalDamageAdd = 0, rng = Math.random } = {}) {
         let damage = (pAtk * (soulshot ? 2 : 1)) + (Number(power) || 0);
         damage = (Math.max(0, Number(criticalDamageMultiplier) || 1) * damage)
@@ -353,7 +356,9 @@ const Formulas = {
         return Math.max(0, (Number(absorbAbs) || 0) + ((Number(absorbPart) || 0) * drainableDamage));
     },
 
-    // L2J-style Heal handler baseline: power with shot multipliers; stat bonuses need real effect stats first.
+    // C4 Heal handler (T112: L2J C4 2006 Heal.java:84-112, Lisvus Heal.java:89-139):
+    // power x1.5 with Blessed Spiritshot, x1.3 with Spiritshot; M.Atk does not
+    // enter (Mobius C4's sqrt(M.Atk) is its H5 handler). Stat bonuses need real effect stats first.
     calcHealAmount(power, { spiritshot = false, blessedSpiritshot = false } = {}) {
         let amount = Number(power) || 0;
         if (blessedSpiritshot) amount *= 1.5;

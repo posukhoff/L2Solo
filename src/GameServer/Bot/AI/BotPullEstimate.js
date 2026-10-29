@@ -6,6 +6,7 @@
 // their mean), computed once from the spawns at start; mobs of a neighbouring
 // spot cell are not counted.
 // Pure: the cold worker loads this module without the live world.
+const AggroRange = invoke('GameServer/Npc/NpcAggroRange');
 
 // The record of a live npc for pullSize.
 function record(npc) {
@@ -21,7 +22,9 @@ function record(npc) {
 }
 
 // Records: { selfId, clan, helpRadius, hostile, minion, x, y, z }.
-// rules: { assistZ, aggroRadius, aggroZ } from SocialAggro and NpcAggro.
+// rules: { assistZ, aggroRadius, aggroZ } from SocialAggro and NpcAggro;
+// an aggressive NPC joins within its own C4 range (NpcAggroRange, T114),
+// rules.aggroRadius for one without.
 function pullSize(target, neighbours = [], rules = {}, minions = 0) {
     const helpRadius = Number(target.helpRadius) || 0;
     let joiners = 0;
@@ -32,7 +35,8 @@ function pullSize(target, neighbours = [], rules = {}, minions = 0) {
         const distanceSq = dx * dx + dy * dy;
         const helps = !!target.clan && npc.clan === target.clan && helpRadius > 0
             && distanceSq <= helpRadius * helpRadius && dz <= rules.assistZ;
-        const aggro = npc.hostile === true && distanceSq <= rules.aggroRadius * rules.aggroRadius
+        const range = AggroRange.of(npc.selfId, rules.aggroRadius);
+        const aggro = npc.hostile === true && distanceSq <= range * range
             && dz <= rules.aggroZ;
         if (helps || aggro) joiners++;
     }

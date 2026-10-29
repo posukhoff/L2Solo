@@ -394,22 +394,30 @@ const ALL_SPECIES = 255;
 // weighs by count), else the spot's spawns. One per row, so the reward
 // memos hold it. User 10-29: a bot kills only what it may fight alone, so a
 // spot's other mobs neither pay nor set the level gap.
-// mask: the species of the mix the bot may fight at its gap (gateAt).
+// mask: the species of the mix the bot may fight at its gap (gateAt). Only
+// the measured species the spot spawns in this period count (a live spot of
+// other spawns than the table's prices by its own spawns).
 const killSpots = new WeakMap();
 function killSpot(t, row, spotId, mask = ALL_SPECIES) {
     const base = rewardSpot(spotId), mix = rowMix(t, row);
     if (!mix || !base) return base;
     let byMask = killSpots.get(row);
     if (!byMask) killSpots.set(row, byMask = new Map());
-    let held = byMask.get(mask);
-    if (!held) {
+    // Keyed by the live spot too: its spawns of the period decide which of
+    // the measured species are there now.
+    const key = `${mask}|${base.npcEntries?.length || 0}`;
+    let held = byMask.get(key);
+    if (!held || held.base !== base) {
+        const present = new Set((base.npcEntries || []).map(entry => Number(entry.selfId)));
         const npcEntries = [];
         for (let at = 0; at < mix.length; at += 2) {
-            if (mask & (1 << (at / 2))) npcEntries.push({ selfId: mix[at], count: Math.max(1, Math.round(mix[at + 1] * 1000)) });
+            if (!(mask & (1 << (at / 2))) || !present.has(Number(mix[at]))) continue;
+            npcEntries.push({ selfId: mix[at], count: Math.max(1, Math.round(mix[at + 1] * 1000)) });
         }
-        byMask.set(mask, held = npcEntries.length ? { ...base, npcEntries, npcSelfIds: undefined } : base);
+        held = { base, spot: npcEntries.length ? { ...base, npcEntries, npcSelfIds: undefined } : base };
+        byMask.set(key, held);
     }
-    return held;
+    return held.spot;
 }
 
 // The exp level-gap factor of a row's kills for a bot of level: the
