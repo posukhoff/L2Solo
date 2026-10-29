@@ -1815,9 +1815,11 @@ function admittedDensity(spot, shares) {
 // cover (SpotService spawnArea; without one the SPOT_CELL_SIZE square of the
 // spot, SpotService.spotIdAt), 1 / (2 sqrt(density / area)). The spot table
 // generator reads the same rule.
-function soloWalkMs(density, runSpd, area = SPOT_CELL_SIZE * SPOT_CELL_SIZE) {
-    const spacing = Math.sqrt(Math.max(1, Number(area) || SPOT_CELL_SIZE * SPOT_CELL_SIZE))
-        / (2 * Math.sqrt(Math.max(1, Number(density) || 1)));
+// reach: the bot walks only until the mob is in its range
+// (ColdCombatProfile.attackReach: a bow or a spell strikes from afar).
+function soloWalkMs(density, runSpd, area = SPOT_CELL_SIZE * SPOT_CELL_SIZE, reach = 0) {
+    const spacing = Math.max(0, Math.sqrt(Math.max(1, Number(area) || SPOT_CELL_SIZE * SPOT_CELL_SIZE))
+        / (2 * Math.sqrt(Math.max(1, Number(density) || 1))) - Math.max(0, Number(reach) || 0));
     return Math.round(spacing / Math.max(1, Number(runSpd) || 1) * 1000);
 }
 
@@ -2062,7 +2064,10 @@ const BackgroundResolver = {
         // most (CPU bound): a mob engaged before, one per walk that starts
         // within the elapsed time. A profile without a template run speed
         // walks at the cold trip's.
-        const walkMs = soloWalkMs(admittedDensity(spot, admitted), roundProfile.runSpd || RUN_SPEED, spot.spawnArea || undefined);
+        const walkMs = soloWalkMs(admittedDensity(spot, admitted), roundProfile.runSpd || RUN_SPEED, spot.spawnArea || undefined,
+            ColdCombatProfile.attackReach(roundProfile));
+        // A ranged bot on a dense spot may not walk: the round's action budget
+        // still bounds its fights.
         const fights = Math.ceil(elapsedMs / Math.max(1, walkMs)) + 1;
         // The share's fraction left from the last round on this spot carries
         // over; a pull above it is owed (a negative carry).

@@ -34,7 +34,8 @@ try {
     const runSpd = Cold.fightProfile(fighter, T).runSpd;
     assert(runSpd > 100, `a Human Fighter runs at its template speed (${runSpd})`);
     for (const density of [9, 36]) {
-        const walkMs = Resolver.soloWalkMs(density, runSpd);
+        // It stops at its weapon's reach from the mob.
+        const walkMs = Resolver.soloWalkMs(density, runSpd, undefined, Cold.attackReach(Cold.fightProfile(fighter, T)));
         const result = round(fighter, field(density));
         // Every walk begun in the minute ends in a kill, the last by its opening blow.
         assert.equal(result.debug.wins, Math.ceil(60000 / walkMs), `density ${density}: one kill per walk of ${walkMs} ms`);
@@ -88,4 +89,12 @@ try {
 } finally {
     Cold.npcForSpot = originalNpc;
 }
+// The walk spans the spot's spawn area, and a bow or a spell strikes from
+// afar: the bot walks only until its next mob is in its reach.
+assert.equal(Resolver.soloWalkMs(4, 100, 6000 * 6000), 15000, 'four mobs on the cell: 1500 apart');
+assert.equal(Resolver.soloWalkMs(4, 100, 3000 * 3000), 7500, 'on a quarter of it: half the walk');
+assert.equal(Resolver.soloWalkMs(4, 100, 6000 * 6000, 700), 8000, 'a reach of 700 walks 800');
+assert.equal(Resolver.soloWalkMs(400, 100, 6000 * 6000, 700), 0, 'a dense spot inside the reach: no walk');
+const archer = Cold.profileFor(HuntCycle.referenceState(22, 30), T), dagger = Cold.profileFor(HuntCycle.referenceState(7, 30), T);
+assert(Cold.attackReach(archer) > 3 * Cold.attackReach(dagger), 'a bow reaches far beyond a dagger');
 console.log('Solo round rules checks passed');

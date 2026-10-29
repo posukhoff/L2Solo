@@ -1,7 +1,6 @@
 'use strict';
 const ClassProgression = invoke('GameServer/ClassProgression');
 const DataCache = invoke('GameServer/DataCache');
-const Roles = require('../AI/BotRoles');
 const Knowledge = require('../AI/KnowledgeLearning');
 const Crystallization = require('./BotCrystallization');
 const Floor = require('../Population/SurvivalFloor');

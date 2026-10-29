@@ -312,7 +312,7 @@ function newBot(classId, level, shots, simulation = sim, kit = null) {
     if (potion?.selfId) inventory[String(potion.selfId)] = { selfId: Number(potion.selfId), amount: 1e9 };
     const profile = simulation.CCP.profileFor(bot, START);
     bot.vitals = { hp: profile.maxHp, maxHp: profile.maxHp, mp: profile.maxMp, maxMp: profile.maxMp };
-    return { bot, shotId, full: { ...bot.vitals }, runSpd: profile.runSpd };
+    return { bot, shotId, full: { ...bot.vitals }, runSpd: profile.runSpd, reach: simulation.CCP.attackReach(profile) };
 }
 
 // The spot as the bot meets it: its own density, so a row's kills pay the
@@ -374,6 +374,7 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
         // The monsters it may fight at full health: the cap of its kills (row cap).
         sum.density = simulation.BR.admittedDensity(spot, simulation.BR.admittedShares(state, spot, START));
         sum.runSpd = made.runSpd;
+        sum.reach = made.reach;
         sum.area = spot.spawnArea;
         const target = atSpot(spot);
         let t = START;
@@ -430,9 +431,9 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
 // them: one per walk to the next (BackgroundResolver.soloWalkMs, T106) at
 // the cold trip's run speed (the row's bot is not known here).
 // runSpd: the bot's (a spot's own cap, with no bot: the author's run speed).
-function fightCap(density, runSpd = invoke('GameServer/Bot/Population/ColdTrip').RUN_SPEED, area = undefined) {
+function fightCap(density, runSpd = invoke('GameServer/Bot/Population/ColdTrip').RUN_SPEED, area = undefined, reach = 0) {
     const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
-    return 3600000 / Math.max(1, BR.soloWalkMs(density, runSpd, area));
+    return 3600000 / Math.max(1, BR.soloWalkMs(density, runSpd, area, reach));
 }
 
 // The kills by species, [selfId, share, ...] by share (the first MIX_SPECIES).
@@ -444,7 +445,7 @@ function killMix(mix, mobs) {
 function perKill(sum, hours) {
     if (sum.kills <= 0 || sum.mobs <= 0) return null;
     const k = sum.mobs, pull = sum.mobs / sum.kills;
-    return { pull, cap: fightCap(sum.density, sum.runSpd || undefined, sum.area || undefined) * pull, mix: killMix(sum.mix, k), kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
+    return { pull, cap: fightCap(sum.density, sum.runSpd || undefined, sum.area || undefined, sum.reach) * pull, mix: killMix(sum.mix, k), kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
         adena: sum.adena / k, loot: sum.loot / k, shots: sum.shots / k, potions: sum.potions / k, stacks: sum.stacks / k,
         fight: sum.fightMs / 1000 / k, rest: sum.restMs / 1000 / k, taken: sum.taken / k, spellTaken: sum.spellTaken / k, hpLost: sum.hpLost / k,
         mpLost: sum.mpLost / k };
@@ -457,8 +458,8 @@ function gateBot(role, level, shots) {
     const key = `${role}|${level}|${shots}`;
     let held = gateBots.get(key);
     if (!held) {
-        const { bot, runSpd } = newBot(classFor(role, level), level, shots);
-        gateBots.set(key, held = { bot, runSpd, profiles: sim.BR.roundProfiles(bot, START) });
+        const { bot, runSpd, reach } = newBot(classFor(role, level), level, shots);
+        gateBots.set(key, held = { bot, runSpd, reach, profiles: sim.BR.roundProfiles(bot, START) });
     }
     return held;
 }
@@ -472,7 +473,7 @@ function rowGate(spot, role, shots, level, measured) {
     return GAPS.map((gap) => {
         const botLevel = level + gap;
         if (botLevel < 1 || botLevel > MAX_LEVEL) return 0;
-        const { bot, profiles, runSpd } = gateBot(role, botLevel, shots);
+        const { bot, profiles, runSpd, reach } = gateBot(role, botLevel, shots);
         const shares = sim.BR.admittedShares({ ...bot, spotId: spot.id }, spot, START, profiles);
         const admitted = new Set();
         for (const [entry, share] of shares || []) if (share > 0) admitted.add(Number(entry.selfId));
@@ -480,7 +481,7 @@ function rowGate(spot, role, shots, level, measured) {
         species.forEach((selfId, index) => { if (!shares || admitted.has(selfId)) mask |= 1 << index; });
         const density = sim.BR.admittedDensity(spot, shares);
         if (!mask || !(density > 0)) return 0;
-        return Math.max(1, Math.round(fightCap(density, runSpd || undefined, spot.spawnArea || undefined) * measured.pull)) * 256 + mask;
+        return Math.max(1, Math.round(fightCap(density, runSpd || undefined, spot.spawnArea || undefined, reach) * measured.pull)) * 256 + mask;
     });
 }
 

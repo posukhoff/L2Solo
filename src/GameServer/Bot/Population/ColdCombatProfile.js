@@ -1368,10 +1368,10 @@ function actionShot(shot, skill = null) {
 // over the monster's run speed (C4: a bow shoots from 700, a caster nukes
 // from its spells' cast range). 0 without a run speed; a fight the monster
 // opens (an aggressive interruption) gives none (the caller's).
-function openingMs(profile = {}, mob = {}) {
-    const speed = number(mob.runSpd);
-    // lazy: cycle ColdMobAction loads this module
-    if (!(speed > 0) || !invoke('GameServer/Bot/Population/ColdMobAction').meleeOnly(mob)) return 0;
+// How far the fighter strikes from: its weapon's range (a bow's with its
+// range bonus), a caster's longest spell. It opens a fight from there
+// (openingMs) and walks only that close to its next mob (soloWalkMs).
+function attackReach(profile = {}) {
     const kind = profile.equipment?.weaponKind || '';
     let reach = AttackRange.kindRange(kind, kind === 'Weapon.Bow' ? add(profile, 'pAtkRangeAdd', Date.now()) : 0);
     if (BotRoles.usesCasterWeaponCombat(profile)) {
@@ -1379,7 +1379,14 @@ function openingMs(profile = {}, mob = {}) {
             if (skill.spell) reach = Math.max(reach, number(C4SkillRules.resolveCached(skill).castRange ?? skill.distance));
         }
     }
-    return Math.max(0, reach - number(mob.atkRadius)) / speed * 1000;
+    return reach;
+}
+
+function openingMs(profile = {}, mob = {}) {
+    const speed = number(mob.runSpd);
+    // lazy: cycle ColdMobAction loads this module
+    if (!(speed > 0) || !invoke('GameServer/Bot/Population/ColdMobAction').meleeOnly(mob)) return 0;
+    return Math.max(0, attackReach(profile) - number(mob.atkRadius)) / speed * 1000;
 }
 
 // Drops the bot's kit profiles (both slots).
@@ -1397,7 +1404,7 @@ module.exports = {
     statMultiplier: multiplier, statAdd: add,
     // The cold fight's views, hit roll, action times, shots and opening (BackgroundResolver, the solo gate).
     hitSources, attackerView, defenderView, forgetViews, hitSucceeds, expectedHitChance, actionDelayMs, summonAttackMs,
-    shotSupply, actionShot, openingMs,
+    shotSupply, actionShot, openingMs, attackReach,
     // The offline hunt tables (scripts/hunt-tables) sum a kit from their rows through the same numbers pass.
     profileNumbers, equipmentFromTemplates
 };
