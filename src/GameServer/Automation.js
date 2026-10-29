@@ -110,12 +110,14 @@ class Automation extends SelectedModel {
         ) * this.fetchRegenStateMultiplier(creature));
     }
 
-    fetchRevMpAmount(creature) {
+    // options.seated: the amount a seated creature would regain (a bot's MP
+    // price, BotCombatUtility), whatever its current state.
+    fetchRevMpAmount(creature, options = {}) {
         const base = this.fetchPlayerRegenBase(creature, 'MEN');
         return Math.max(0, (
             (base * EffectStats.multiplier(creature, 'regMp'))
             + EffectStats.add(creature, 'regMpAdd')
-        ) * this.fetchRegenStateMultiplier(creature));
+        ) * this.fetchRegenStateMultiplier(creature, options));
     }
 
     fetchRevCpAmount(creature) {
@@ -148,11 +150,11 @@ class Automation extends SelectedModel {
         return base * invoke('GameServer/Formulas').calcLevelMod(level) * statModifier;
     }
 
-    fetchRegenStateMultiplier(creature) {
+    fetchRegenStateMultiplier(creature, { seated = false } = {}) {
         if (typeof creature?.fetchClassId !== 'function') return 1;
 
         const state = creature.state;
-        return state?.fetchSeated?.() === true
+        return seated || state?.fetchSeated?.() === true
             ? 1.5
             : state?.inMotion?.() === true
                 ? 0.7

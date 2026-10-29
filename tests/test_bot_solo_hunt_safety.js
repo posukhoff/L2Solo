@@ -41,8 +41,8 @@ const durable = { ...mage, skills: [], maxHp: 150 };
 assert(!Match.soloSurvival([durable], target).eligible);
 assert(Match.soloSurvival(withSummon(durable), target).eligible,
     'summon damage still helps an owner survive a fight');
-// KankaRes's native rotation prefers Death Spike to the faster Aura Burn.
-// Admission must use that chosen rotation rather than an imaginary best DPS.
+// Admission uses the skill the fight picks. With T100's MP price a fresh
+// fight from full MP picks the best damage rate: the faster Aura Burn.
 const necro = { classId: 13, level: 45, role: 'mage', maxHp: 932, maxMp: 1489,
     pDef: 202, pAtk: 75.8, mAtk: 167.5, castSpd: 376, atkSpd: 383, weaponMask: 4,
     equipment: { weaponKind: 'Weapon.Sword' }, skills: [
@@ -52,12 +52,15 @@ const necro = { classId: 13, level: 45, role: 'mage', maxHp: 932, maxMp: 1489,
 const lizard = Cold.npcCombatStats(Data.npcs.find(row => row.selfId === 784));
 const nativeChoice = invoke('GameServer/Bot/Population/ColdClassPolicy').select(necro,
     { hp: necro.maxHp, mp: necro.maxMp, cooldowns: {}, time: at, mob: lizard });
-assert.equal(nativeChoice.skill.selfId, 1148);
-assert(Match.soloSurvival([necro], lizard).eligible, 'fixture: imaginary Aura Burn DPS admits this fight');
+assert.equal(nativeChoice.skill.selfId, 1172);
 const realRotation = Match.coldProfiles(necro, {}, at);
-assert(!Match.soloSurvival(realRotation, lizard).eligible, 'the slower native rotation rejects this fight');
+assert.deepStrictEqual(Object.entries(realRotation[0].soloAttackScores).sort((a, b) => b[1] - a[1])[0][0], '1172',
+    'the gate ranks the fight\'s pick first');
+assert(Match.soloSurvival(realRotation, lizard).eligible, 'the picked Aura Burn admits this fight');
+const frail = Match.coldProfiles({ ...necro, maxHp: 150 }, {}, at);
+assert(!Match.soloSurvival(frail, lizard).eligible, 'a frail caster is still refused');
 assert(Cold.npcForSpot({ npcEntries: [{ selfId: 784, count: 1 }] }, () => 0.5,
-    { matchupProfiles: realRotation, soloSafety: true }).avoided, 'the executor refuses the unsafe voluntary target');
+    { matchupProfiles: frail, soloSafety: true }).avoided, 'the executor refuses the unsafe voluntary target');
 // The fight reads fightProfile, the route profileFor: both give the fixture.
 const savedProfile = Cold.profileFor, savedFight = Cold.fightProfile, savedSpots = Spots.cache;
 try {
@@ -76,10 +79,12 @@ try {
     const fight = invoke('GameServer/Bot/Population/BackgroundResolver').resolveSolo({
         state: fighter, spot: ground, elapsedMs: 60000, timestamp: at, rng: () => 0.5 });
     assert.equal(fight.debug.heals, 0, 'a heal weaker than damage during its cast cannot replace the finishing attack');
-    assert.equal(fight.debug.wins, 1, 'the native rotation finishes the lizard');
+    // T100: the priced pick (Aura Burn) kills fast enough for a second lizard
+    // within the minute; the remaining HP still admits it.
+    assert.equal(fight.debug.wins, 2, 'the native rotation finishes the lizards');
     assert.equal(fight.debug.died, false);
-    assert.equal(fight.debug.attemptedFights, 1, 'remaining HP must be checked before the next voluntary mob');
-    assert.equal(fight.patch.activity, 'resting');
+    assert.equal(fight.debug.attemptedFights, 2, 'remaining HP must be checked before the next voluntary mob');
+    assert.equal(fight.patch.activity, 'hunting', 'two quick kills leave enough HP to keep hunting');
 } finally { Cold.profileFor = savedProfile; Cold.fightProfile = savedFight; Spots.cache = savedSpots; }
 
 // A wealthy reward forecast or a future gear target cannot admit a lethal

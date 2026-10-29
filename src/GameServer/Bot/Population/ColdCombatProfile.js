@@ -936,6 +936,21 @@ function partyMusicSkills(profile = {}) {
     });
 }
 
+// One normal attack of a fight profile (Formulas.normalAttackMs, the hot
+// Attack.js cycle), its buffs read at timestamp. Kept per profile object: a
+// fight profile is rebuilt whenever its numbers change. The 250 ms floor is
+// cold's own.
+const attackTimes = new WeakMap();
+function normalAttackMs(profile = {}, timestamp = Date.now()) {
+    let ms = attackTimes.get(profile);
+    if (ms !== undefined) return ms;
+    const bow = profile.equipment?.weaponKind === 'Weapon.Bow';
+    ms = Math.max(250, Formulas.normalAttackMs(profile.atkSpd, { bow, reuseDelay: profile.equipment?.attackReuseDelay,
+        reuseMul: bow ? multiplier(profile, 'atkReuseMul', timestamp) : 1 }));
+    attackTimes.set(profile, ms);
+    return ms;
+}
+
 function partyMusicMpCost(profile, skill, timestamp = Date.now()) {
     const semantic = C4SkillRules.resolveCached(skill);
     let cost = Math.max(0, number(skill.mp));
@@ -1210,7 +1225,7 @@ function kitStoreSize() { return kitProfiles.size; }
 module.exports = {
     PROFILE_VERSION, classIdOf, capture, legacySnapshot, treeSnapshot, needsDatabaseBackfill, profileFor, buildCount, buildMs, withBuildSite,
     fightProfile, currentCp, seedSnapshot, oldSeedRepair, candidateProfiles, fightSources, combatView, kitHash, skillsFor, forgetBuild, kitStoreSize,
-    isAttackSkill, offensiveSkills, summonDetails, summonSkills, corpseSummonSkills, activeMusicEffects, partyMusicSkills, partyMusicMpCost, partyMusicEffect,
+    isAttackSkill, offensiveSkills, summonDetails, summonSkills, corpseSummonSkills, activeMusicEffects, partyMusicSkills, partyMusicMpCost, partyMusicEffect, normalAttackMs,
     spotSpawns, npcForSpot, killDraw, killChances, npcCombatStats, skillSnapshotsFromRecords, skillRecordsFromTree, treeSkillLevel,
     statMultiplier: multiplier, statAdd: add,
     // The offline hunt tables (scripts/hunt-tables) sum a kit from their rows through the same numbers pass.
