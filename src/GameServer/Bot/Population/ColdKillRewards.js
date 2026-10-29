@@ -15,10 +15,24 @@ function spoilSkillLevel(profile) {
     return Number(spoil?.level || 0);
 }
 
+
 // The spoiler of a cold fight, or null when nobody there can cast Spoil.
 function spoilerFor(state, profile) {
     const skillLevel = spoilSkillLevel(profile);
     return skillLevel > 0 ? { level: Number(state.level || 1), skillLevel } : null;
+}
+
+// The one 'does this bot spoil by its own skills' answer
+// (ColdCombatProfile.skillsFor): its spoiler, null without Spoil. The hunt
+// values, spot tables, source facts and material parties read it; a fight
+// with a resolved profile reads spoilerFor.
+function ownSpoiler(state) {
+    return spoilerFor(state, { skills: ColdCombatProfile.skillsFor(state) });
+}
+
+// The Spoil level a bot knows by its own skills, 0 without Spoil (ownSpoiler).
+function spoilLevelOf(state) {
+    return ownSpoiler(state)?.skillLevel || 0;
 }
 
 // Rewards of the kills one cold fighter or one cold party made in a resolve.
@@ -83,4 +97,4 @@ function scaledProgression({ exp, sp }, { expMultiplier, rates, profile, timesta
     };
 }
 
-module.exports = { roll, scaledProgression, spoilerFor };
+module.exports = { roll, scaledProgression, spoilerFor, ownSpoiler, spoilLevelOf };

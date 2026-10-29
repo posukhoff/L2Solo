@@ -1792,7 +1792,7 @@ function startKernel(config = {}) {
                     committedExits: { entries: large, takers: large, refused: large },
                     admissionFlips: { flips: large, items: large },
                     recipeFacts: { computes: large, reads: large },
-                    demandPrices: { builds: large, moves: large, ms: large, capped: large, spotSums: large, spotRanks: large },
+                    demandPrices: { builds: large, moves: large, ms: large, capped: large, spotSums: large, spotRanks: large, shots: large },
                     // Forecast cooldowns can make a decision alarm the new
                     // head. Include both optional shapes before those effects.
                     queueHead: { ...kernelReport.queueHead, kind: 'normal', alarmKind: 'decision',

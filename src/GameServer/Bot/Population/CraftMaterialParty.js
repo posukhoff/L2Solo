@@ -22,8 +22,7 @@ const requestOf = state => isObjective(state.stats?.partyRequest) ? state.stats.
 // and a class declaration cannot substitute for the learned Spoil skill.
 function partySpoiler(members) {
     const member = members.slice(0, MAX_MEMBERS).find(state => invoke('GameServer/Bot/AI/BotRoles').isSpoiler(state));
-    return member ? KillRewards.spoilerFor(member,
-        { skills: require('./ColdCombatProfile').skillsFor(member) }) : null;
+    return member ? KillRewards.ownSpoiler(member) : null;
 }
 
 // One indexed item lookup, never a scan of the hunting atlas. Bound both the
@@ -127,8 +126,7 @@ function request(state, plan, { spots = [], economy, memo = null, timestamp = Da
         if (memo) memo.materialMemo = { key: memoKey, seq, spots, until: timestamp + REVIEW_MS };
         return null;
     };
-    const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
-    const spoiler = KillRewards.spoilerFor(state, { skills: Profile.skillsFor(state) });
+    const spoiler = KillRewards.ownSpoiler(state);
     const camps = campsFor(state, material.selfId, spots, spoiler);
     if (!camps.length) return noRequest();
     const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');

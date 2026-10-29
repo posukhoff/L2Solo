@@ -1,6 +1,7 @@
 'use strict';
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const SpotRewardExpectation = require('./SpotRewardExpectation');
+const KillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 // Shared table evaluation: native facts, own samples and the market's demand
 // price of the items a spot drops or spoils (SpotValueTable.marketLoot:
 // DemandPrice over the NPC price, decisions 10-28). It never reads Context,
@@ -35,7 +36,7 @@ function create(state, { timestamp = Date.now(), mode, persona, deathHours, mone
     deathHours ??= Valuation.deathHours(state, hunt);
     const riskWeight = Valuation.riskWeight(state, persona);
     const costs = Hunt.consumablePrices(state, price);
-    const rewardOptions = { spoilSkillLevel: SpotRewardExpectation.spoilSkillLevel(state) };
+    const rewardOptions = { spoilSkillLevel: KillRewards.spoilLevelOf(state) };
     const own = Hunt.sampledRows(state, timestamp, mode);
     const calibrations = own.flatMap(row => {
         const base = Table.value(row.spotId, tableRole, state.level, true, rewardOptions);
@@ -88,7 +89,7 @@ function create(state, { timestamp = Date.now(), mode, persona, deathHours, mone
 // it keeps the per-kill loot of each spot it is asked for.
 function ownLoot(state, itemId) {
     const id = Number(itemId);
-    return { id, level: Number(state.level) || 1, skill: SpotRewardExpectation.spoilSkillLevel(state), perKill: new Map(),
+    return { id, level: Number(state.level) || 1, skill: KillRewards.spoilLevelOf(state), perKill: new Map(),
         // lazy: cycle DemandPrice -> FirstPrice -> SpotValueTable -> this module
         price: SpotRewardExpectation.itemPrice(id) + invoke('GameServer/Bot/Economy/DemandPrice').premium(id) };
 }

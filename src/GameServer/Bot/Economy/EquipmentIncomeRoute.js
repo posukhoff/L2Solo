@@ -1,7 +1,6 @@
 'use strict';
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const ColdKillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
-const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
 const BotHuntEfficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const SpotEconomics = require('./SpotEconomics');
@@ -22,18 +21,16 @@ function economicHunt(state) {
 
 // The game table's spot list for one bot (ARCH-08-b): its table role (a
 // spoiler reads the spoiler list) and its own price beliefs. One object per
-// search serves the income route and the spot search: spoiler() and the
+// search serves the income route and the spot search: the Spoil level and the
 // costs are read once, at their first use. ids(shots, level, minGap): spot
 // ids of the band level+minGap..level+8, best income first, ties to the spot
 // closest to level.
 function spotList(state, { price } = {}) {
-    let spoiler, costs = null;
-    const spoilerOf = () => spoiler !== undefined ? spoiler
-        : (spoiler = ColdKillRewards.spoilerFor(state, { skills: ColdCombatProfile.skillsFor(state) }) || null);
-    return { spoiler: spoilerOf, ids: (shots, level = state.level, minGap = -7) => SpotValueTable.rankedSpotIds(
-        spoilerOf() ? 'spoiler' : BotRoles.tableRoleFor(state), level,
+    let spoilSkillLevel, costs = null;
+    return { ids: (shots, level = state.level, minGap = -7) => SpotValueTable.rankedSpotIds(
+        BotRoles.tableRoleFor(state), level,
         costs ||= BotHuntEfficiency.consumablePrices(state, price), minGap, shots,
-        { spoilSkillLevel: spoilerOf()?.skillLevel || 0 }) };
+        { spoilSkillLevel: spoilSkillLevel ??= ColdKillRewards.spoilLevelOf(state) }) };
 }
 
 // list: the search's spotList, when the caller reads it too.
@@ -42,9 +39,9 @@ function select(state, { spots = [], timestamp = Date.now(), price, required = f
     if (!spots.length || state.party?.partyId || ['party', 'duo'].includes(mode)
         || !invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state)) return null;
     const minGap = -15;
+    // A spoiler searches the band every bot does (decisions 10-29).
+    if (!required && !economicHunt(state)) return null;
     list ||= spotList(state, { price });
-    const spoiler = list.spoiler();
-    if (!required && !economicHunt(state) && !spoiler) return null;
     const Routes = invoke('GameServer/Bot/AI/LevelingRoutes');
     const Match = invoke('GameServer/Bot/AI/BotTargetMatchup');
     const Index = invoke('GameServer/Bot/AI/SpotIndex');

@@ -6,7 +6,6 @@ const DataCache = invoke('GameServer/DataCache');
 const C4RecipeItems = invoke('GameServer/Items/C4RecipeItems');
 const C4DualSwordCombinations = invoke('GameServer/Items/C4DualSwordCombinations');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
-const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const LevelingRoutes = invoke('GameServer/Bot/AI/LevelingRoutes');
 const HuntEfficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
@@ -2108,8 +2107,7 @@ function* spotTown(spot) {
 // progressionRequired and hourAdena inputs; all rows are still read.
 const SOURCE_FACT_STEP = 64;
 function sourceSpoilerFor(state) {
-    return invoke('GameServer/Bot/Population/ColdKillRewards').spoilerFor(state,
-        { skills: ColdCombatProfile.skillsFor(state) }) || false;
+    return invoke('GameServer/Bot/Population/ColdKillRewards').ownSpoiler(state) || false;
 }
 function writeReadySourceFact(fact, kind, spotId, npcId, itemId, units, expectedYield,
     perHour, hours, valueHours, netHourCost, town, tripHours, tripFees, costHours) {
@@ -2179,8 +2177,8 @@ function sourceRouteReader(state, options = {}) {
     // matchup verdict (profiles, NPC verdicts) is the costly one. The solo
     // matchup's optimistic damage bound (BotTargetMatchup.soloSpotUpperBound,
     // as EquipmentIncomeRoute.select) refuses first a spot no exact verdict
-    // admits: the farm_sale pre-cut asks this reader for ~700 spots per build,
-    // most of them above the bot (R3 cost: 95 % refused by the bound).
+    // admits: most spots a source walk asks about are above the bot (R3
+    // cost: 95 % refused by the bound).
     let survives = null;
     const refusal = spot => {
         if (spot.raidBoss === true) return 'raid';
@@ -2238,15 +2236,6 @@ function sourceReadinessReader(state) {
 function sourceLevelRefusal(entry, killerLevel, minGap, readReadiness) {
     if (killerLevel && sourceRecordNpcLevel(entry) - killerLevel < minGap) return 'level_band';
     return soloSafeAtLevel(readReadiness(), sourceRecordTargetLevel(entry)) ? null : 'party_needed';
-}
-
-// sourceLevelRefusal for one bot, the band at economicLower as sourceFacts
-// takes it: the farm_sale pre-cut (WishProviders) skips such records before
-// its route reader is asked.
-function sourceLevelReader(state, economicLower) {
-    const killerLevel = Number(state.level || 0), minGap = sourceMinLevelGap(!!economicLower);
-    const readReadiness = sourceReadinessReader(state);
-    return entry => sourceLevelRefusal(entry, killerLevel, minGap, readReadiness);
 }
 
 function* sourceFacts(state = {}, itemId, units = 1, options = {}) {
@@ -2388,8 +2377,7 @@ function* sourceFacts(state = {}, itemId, units = 1, options = {}) {
                 row = spotValue(entry.spot);
                 // A wish's drop or spoil path runs aimed at the record's NPC: a
                 // direct-drop plan or a craft plan hunting this material
-                // (PartyHuntingTarget.planTargetNpcId). Limit: a farm_sale line
-                // aims only through its activity leaf (worker lifecycle).
+                // (PartyHuntingTarget.planTargetNpcId).
                 perHour = Number(row?.kills) * sourcePerKill(entry, expectedYield, kind === 'spoil' ? spoiler : null, true);
                 if (!(perHour > 0)) reason = 'yield';
                 else if (!Number.isFinite(row.valueHours)) reason = 'income';
@@ -2566,59 +2554,13 @@ function sourceFactRulesFor(entries, itemId, ratesKey) {
 // NPC. entry: { spot, reward, kind, npcLevel } (a source index record). The
 // one per-kill formula: sourceFacts' perHour (targeted: a wish's drop path),
 // CraftMaterialParty and PartyIncomeComparison (targeted: the party aims at
-// the material), the static ranking below and FirstPrice (untargeted: no
-// spoiler, before landing; the hunting that brings an item to market).
+// the material) and FirstPrice (untargeted: no spoiler, before landing; the
+// hunting that brings an item to market).
 function sourcePerKill(entry, expectedYield, spoiler = null, targeted = false) {
     const units = expectedYield * SpotRewardExpectation.killShare(entry.spot, entry.reward, { targeted });
     return entry.kind === 'spoil' && spoiler && units > 0
         ? units * SpotRewardExpectation.spoilLanding(spoiler.skillLevel, spoiler.level, sourceRecordNpcLevel(entry))
         : units;
-}
-
-// An item's usable index records (a chance at killer level 0, no raid, a
-// huntable NPC: no static refusal of sourceFactRulesFor), best units per
-// kill first (sourcePerKill), one record per spot and kind (the best; a
-// later one of the same spot and kind is never a bot's first pick).
-// Returns { entries, order, perKill }: `order` holds ordinals into
-// `entries` (the index row), `perKill` their yields, both ranked. The
-// per-bot clauses (route, spoil skill) are the reader's: the farm_sale
-// demand pre-cut (WishProviders) takes the first record the bot's route
-// reader admits. Static: the ranking reads only the index records (spot,
-// kind, reward), the spot's kill share (SpotRewardExpectation.killShare:
-// the spot's NPC entries and the NPC and reward tables, the same tables a
-// new index is built on), the item and the rates (dropYieldFor), so one
-// frozen ranking per item lives in its own map, dropped with the index
-// (its identity) or the rate profile (ratesKey); sourceNpcHuntable is
-// game data. At most one ranking per indexed item, 12 bytes per record.
-const NO_SOURCE_RANKING = Object.freeze({ entries: Object.freeze([]), order: new Uint32Array(0), perKill: new Float64Array(0) });
-let sourceRankings = { index: null, ratesKey: null, byItem: new Map() };
-function sourceRecordsByYield(spots, itemId) {
-    const index = sourceIndexFor(spots), key = Number(itemId), entries = index.get(key);
-    if (!entries?.length) return NO_SOURCE_RANKING;
-    const ratesKey = sourceYieldRatesKey();
-    if (sourceRankings.index !== index || sourceRankings.ratesKey !== ratesKey)
-        sourceRankings = { index, ratesKey, byItem: new Map() };
-    let ranking = sourceRankings.byItem.get(key);
-    if (ranking) return ranking;
-    const { expected, reasons } = sourceFactRulesFor(entries, key, ratesKey);
-    const usable = [];
-    for (let ordinal = 0; ordinal < entries.length; ordinal++) {
-        if (reasons[ordinal]) continue;
-        const perKill = sourcePerKill(entries[ordinal], expected[ordinal]);
-        if (perKill > 0) usable.push({ ordinal, perKill });
-    }
-    usable.sort((a, b) => b.perKill - a.perKill || a.ordinal - b.ordinal);
-    const dropSpots = new Set(), spoilSpots = new Set(), order = [], perKill = [];
-    for (const record of usable) {
-        const entry = entries[record.ordinal], seen = entry.kind === 'spoil' ? spoilSpots : dropSpots;
-        if (seen.has(entry.spot)) continue;
-        seen.add(entry.spot);
-        order.push(record.ordinal);
-        perKill.push(record.perKill);
-    }
-    ranking = Object.freeze({ entries, order: Uint32Array.from(order), perKill: Float64Array.from(perKill) });
-    sourceRankings.byItem.set(key, ranking);
-    return ranking;
 }
 
 function makeFactRuleRoom(cells) {
@@ -3209,10 +3151,8 @@ module.exports.acquisitionTargetAllowed = acquisitionTargetAllowed;
 module.exports.sourceCacheSize = sourceCacheSize;
 module.exports.sourceYieldReaderFor = sourceYieldReaderFor;
 module.exports.sourceFacts = sourceFacts;
-module.exports.sourceRecordsByYield = sourceRecordsByYield;
 module.exports.sourcePerKill = sourcePerKill;
 module.exports.sourceRouteReader = sourceRouteReader;
-module.exports.sourceLevelReader = sourceLevelReader;
 module.exports.sourceGround = sourceGround;
 
 // Only the exports that judge a bot against several sources share readiness.

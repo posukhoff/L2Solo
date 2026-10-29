@@ -538,7 +538,7 @@ function topScore(rows) {
     return best;
 }
 
-// A root that turns money into money (a craft, crystals or a farm for sale;
+// A root that turns money into money (a craft or crystals for sale;
 // its object's kind, also under a group's member-prefixed key): its value is
 // adena at the hunt rate, so its price stays at the hunt rate too.
 const resale = row => row?.object?.kind === 'resale';
@@ -680,15 +680,11 @@ function heldPriceAhead(rows, wallet, survivalReserve = 0, floor = 0) {
     return heldPriceOf(rows.filter(row => standsAt(row, active))
         .map(row => ({ ...row, progressionPriority: standingPriority(row, active) })), wallet, survivalReserve, floor);
 }
-// A farm for sale (its farm hours are committed, committedHours).
-const farmSale = node => !!node?.paths?.some(path => path.kind === 'farm_sale');
 // The rank effort of a root whose hours are committed: a progression
-// root, or a farm_sale root (its farm hours are hours the bot spends on
-// it even where the spot pays for them, so its score is its value per
-// farm hour). At least its elapsed hours plus its cash in hours. The one
-// floor of rootEffortAt; an activity leaf of such a root takes its root's
+// root. At least its elapsed hours plus its cash in hours. The one floor
+// of rootEffortAt; an activity leaf of such a root takes its root's
 // effort (build).
-const committedHours = node => nonnegative(node?.progressionPriority) > 0 || farmSale(node);
+const committedHours = node => nonnegative(node?.progressionPriority) > 0;
 // A root's effort from its plan's at the held money's price `rate` (T53):
 // a spending root's cash is priced as the bot pays it (cashHours), the
 // part the wallet holds at `rate`, the part it lacks at the hunt rate; its
@@ -1195,14 +1191,14 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
         }
         return best;
     };
-    // A root that crafts, farms or crystallizes a bounded lot for sale (a
+    // A root that crafts or crystallizes a bounded lot for sale (a
     // shot root's lot is its census remainder). It plans its cheapest future
     // inputs. An input no seller offers yet keeps the root's queue place and
     // becomes its buy ad without cash. The root stays only while its value
     // beats its effort (held inputs at their exit value).
     const finiteProduction = key => {
         const node = byKey.get(key);
-        return resale(node) && node.paths?.some(path => ['craft', 'farm_sale', 'crystallize'].includes(path.kind));
+        return resale(node) && node.paths?.some(path => ['craft', 'crystallize'].includes(path.kind));
     };
     // Whether a root stays (the one test of allocate and build): a producer
     // root only while its value beats its effort. A root with a buyer's line
@@ -1213,12 +1209,8 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
     // at its share of the line.
     const earns = wish => {
         if (!finiteProduction(wish.key)) return true;
-        // A farm_sale root pays its net effort (the plan's), not its rank
-        // floor (rootEffort): a farm the spot already pays for costs
-        // only its trip.
-        const node = byKey.get(wish.key), effort = farmSale(node) ? wish.plan?.effort ?? Infinity : wish.effort;
-        const plan = TradeIntent.lineOf(node) > 0 ? wish.plan : null, floor = nonnegative(plan?.bidFloor);
-        return wish.valueHours > effort - nonnegative(plan?.bidEffort) + (floor > 0 ? floor * adenaToHours : 0);
+        const plan = TradeIntent.lineOf(byKey.get(wish.key)) > 0 ? wish.plan : null, floor = nonnegative(plan?.bidFloor);
+        return wish.valueHours > wish.effort - nonnegative(plan?.bidEffort) + (floor > 0 ? floor * adenaToHours : 0);
     };
     // A direct production root is itself the craft path. Its finite output
     // quantity must enter allocation, just like an item requirement does;

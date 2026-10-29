@@ -240,7 +240,7 @@ const SpotProfiles = {
         // for established bots.
         const collectingGear = acquisitionPlan?.status === 'active' && acquisitionPlan.next?.spotId;
         // One list object for the income route and the list walk below: its
-        // spoiler and costs are read once, and only when one of them asks.
+        // Spoil level and costs are read once, and only when one of them asks.
         const list = EquipmentIncomeRoute.spotList(state);
         // hasRoom(spotId): a filter on every spot this search returns other
         // than the current one (ROUTE-ROOM, ROUTE-ROOM-2): the income route's

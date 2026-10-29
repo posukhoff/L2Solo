@@ -52,7 +52,7 @@ let sourceIndex = new Map([
 ]);
 replace(Planner, 'sourceIndexFor', () => sourceIndex);
 replace(Planner, 'itemDropYield', () => { checks++; return { expectedYield: 1 }; });
-replace(Rewards, 'spoilerFor', state => spoiler && state.characterId === 2 ? { level: Number(state.level),
+replace(Rewards, 'ownSpoiler', state => spoiler && state.characterId === 2 ? { level: Number(state.level),
     skillLevel: invoke('GameServer/Bot/AI/SpotValueTable').roleSpoilLevel('spoiler', Number(state.level)) } : null);
 replace(Matchup, 'stateProfiles', () => []);
 replace(Routes, 'isSpotAllowedForState', spot => spot.id !== 'unsafe-source');

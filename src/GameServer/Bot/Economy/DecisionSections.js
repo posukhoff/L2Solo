@@ -10,7 +10,6 @@ const { partyIdOf } = require('../Population/PartyId');
 const Karma = require('../../Karma');
 const Warehouse = require('./PersonalWarehouseIndex');
 const ClanSupply = require('../../Clan/ClanSupplyPolicy');
-const Providers = require('./WishProviders');
 const Floor = require('../Population/SurvivalFloor');
 const Diagnostics = require('./EconomyDiagnostics');
 const { SELL, BUY } = require('../../AfkTrade/BoardIndex');
@@ -326,15 +325,11 @@ const SOFT_SECTIONS = Object.freeze({ money: Object.freeze(['money']),
 // counted (censusCrossings, the heartbeat's line). A crafter's wake row
 // (DEMANDED: [craft level, DEMANDED, products counted, 0]) crosses when more
 // of its level's products have a census rate (MarketDemand.demandedCount)
-// than the build saw. A sold line's row (SOLD as its fifth field: the buy
-// line a farm_sale root sells to, EconomyContext.marketWatchRows; its
-// reference is that line's price) also crosses when the line closed or
-// fell by more than the error: the root's value is gone. Rows of another
-// shape (a baseline saved by an older build) are skipped.
+// than the build saw. Rows of another shape (a baseline saved by an older
+// build) are skipped.
 const MARKET_WATCH = 20;
 const CENSUS = 0;
 const DEMANDED = 2;
-const SOLD = 1;
 // A waiting buy's row ([itemId, TAKERS, free units, town code],
 // EconomyContext.marketWatchRows from the buy path's takers, WishProviders
 // buyWait): crosses when the rival takers on the town's asks
@@ -373,10 +368,7 @@ function marketCrossed(board, watch, ownerId) {
             continue;
         }
         if (!(itemId > 0) || !(price > 0) || !(error >= 0)) continue;
-        // A SOLD row reads the line the farm sells to (Providers.farmLine).
-        const sold = storeType === BUY && row[4] === SOLD;
-        const line = sold ? Providers.farmLine(board, itemId, ownerId) : board.first(itemId, storeType, exclude);
-        if (sold && !(line?.price >= price * (1 - error))) return true;
+        const line = board.first(itemId, storeType, exclude);
         if (!line) continue;
         if (storeType === SELL ? line.price < price * (1 - error) : storeType === BUY && line.price > price * (1 + error)) return true;
     }
@@ -550,4 +542,4 @@ function kitMoved(before, after) {
     return (before?.stats?.wishSections?.build ?? null) !== (after?.stats?.wishSections?.build ?? null);
 }
 module.exports = { SECTIONS, COMPUTED, FACT_SECTIONS, sectionBit, sectionMask, sectionNames, kit, kitMoved, moneyChanged, observationChanged, incomeError,
-    MARKET_WATCH, CENSUS, DEMANDED, SOLD, TAKERS, marketCrossed, censusCrossings: () => censusCrossings, softEvents, carrySectionBaseline, baselineIdentity, sample, sampleRows, packSample, observationBaselineValid, bounds, snapshot, semanticFacts, factsOf, events, factEvents, occupationPlanned, hash, isEmptyWishPlan, decisionRefusal };
+    MARKET_WATCH, CENSUS, DEMANDED, TAKERS, marketCrossed, censusCrossings: () => censusCrossings, softEvents, carrySectionBaseline, baselineIdentity, sample, sampleRows, packSample, observationBaselineValid, bounds, snapshot, semanticFacts, factsOf, events, factEvents, occupationPlanned, hash, isEmptyWishPlan, decisionRefusal };

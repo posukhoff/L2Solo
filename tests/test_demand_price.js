@@ -15,7 +15,6 @@ const Production = invoke('GameServer/Bot/Economy/RecipeProductionIndex');
 const Profit = invoke('GameServer/Bot/Economy/CraftProfitPolicy');
 const Price = invoke('GameServer/Bot/Economy/PriceDecision');
 const Table = invoke('GameServer/Bot/AI/SpotValueTable');
-const Rewards = invoke('GameServer/Bot/Economy/SpotRewardExpectation');
 const Config = invoke('GameServer/Bot/Population/PopulationConfig');
 const DataCache = invoke('GameServer/DataCache');
 const { BoardIndex, SELL, BUY } = require('../src/GameServer/AfkTrade/BoardIndex');
@@ -138,6 +137,30 @@ assert(twins.length > 0, 'a demanded C piece has two recipes');
 assert(twins.some(row => Number(row.successRate) < 100 && DemandPrice.premium(row.recipeItemId) > 0),
     'a demanded piece\'s second recipe is worth its share too');
 
+// Shots by their wearers' burn (cleanup 10-29: no farm root reads a shot
+// crafter's bid any more): a burnt shot's recipe scroll gets a premium and a
+// worth, the same table's two answers, and loses both with the burn. Its
+// crystals have gear demand too, so they prove nothing here.
+{
+    const Shots = invoke('GameServer/Inventory/ShotStock');
+    // D wearers in the D band who load their class's D shot (census cells
+    // d:<class>:w:<worn>:<level grade>:<shot>).
+    const shotCells = classes.map(classId => Number(Shots.planFor({ classId, rank: 'd' }).selfId))
+        .map((shot, at) => Shots.gradedShopShot(shot) ? `d:${classes[at]}:w:d:d:${shot}` : null).filter(Boolean);
+    const burnt = [...new Set(shotCells.map(key => Number(key.split(':').pop())))];
+    const scrolls = recipes.filter(row => burnt.includes(Number(row.productId))).map(row => Number(row.recipeItemId));
+    assert(scrolls.length > 0, 'a burnt D shot has a recipe');
+    assert(scrolls.every(id => DemandPrice.premium(id) === 0), 'no burn, no shot scroll premium');
+    for (const key of shotCells) Demand.putCensus(key, new Map([[town, 30]]));
+    assert(burnt.every(id => Demand.censusOf(id) > 0), 'the D wearers burn their shots');
+    assert(scrolls.some(id => DemandPrice.premium(id) > 0), 'a burnt shot\'s scroll is worth more than its buy-back');
+    assert(DemandPrice.stats.shots > 0, 'the build counts its rooted shots');
+    assert(scrolls.every(id => DemandPrice.recipeWorth(id, 0) !== null),
+        'a shot scroll the hunter values is one the learner worth prices too');
+    for (const key of shotCells) Demand.putCensus(key, new Map());
+    assert(scrolls.every(id => DemandPrice.premium(id) === 0), 'the burn gone, the premium goes');
+}
+
 // The hunter: a spot whose kills drop or spoil a demanded item is worth more
 // by it (marketLoot, summed again when the table moves); no demand, no premium.
 {
@@ -146,7 +169,7 @@ assert(twins.some(row => Number(row.successRate) < 100 && DemandPrice.premium(ro
     // Bounty Hunter (class 55) learns Spoil (skill 254) level 6 at level 49.
     const spoiler = { characterId: 990301, level: 50, adena: 3000, stats: { classId: 55, money: [3719, 0.0001, 1000, 900000],
         coldCombat: { classId: 55, skillSource: 'database', skills: [{ selfId: 254, level: 6 }] } } };
-    const skill = Rewards.spoilSkillLevel(spoiler);
+    const skill = invoke('GameServer/Bot/Population/ColdKillRewards').spoilLevelOf(spoiler);
     assert(skill > 0, 'a level 50 Bounty Hunter spoils');
     const role = invoke('GameServer/Bot/AI/BotRoles').tableRoleFor(hunter);
     const spots = JSON.parse(require('fs').readFileSync(require('path').resolve(__dirname, '../data/Bots/spot-reward-npcs.json'), 'utf8')).rows;

@@ -173,7 +173,7 @@ Spots.cache = originalCache;
     const saved = { spotList: IncomeRoute.spotList, evaluate: Ground.evaluate, cache: Spots.cache };
     try {
         Spots.cache = catalogue;
-        IncomeRoute.spotList = () => ({ spoiler: () => null, ids: () => ['cur', 'other'] });
+        IncomeRoute.spotList = () => ({ ids: () => ['cur', 'other'] });
         Ground.evaluate = (spot, actor, opts = {}) => ({
             allowed: spot.id !== 'cur' || Number(opts.level ?? actor.level) < actor.level });
         const search = { matchupProfiles: [mage], timestamp: at, profiles: catalogue };
@@ -200,7 +200,7 @@ Spots.cache = originalCache;
         Ground.evaluate = () => ({ allowed: true });
         const search = (catalogue, ids, hasRoom) => {
             Spots.cache = catalogue;
-            IncomeRoute.spotList = () => ({ spoiler: () => null, ids: () => ids });
+            IncomeRoute.spotList = () => ({ ids: () => ids });
             return { matchupProfiles: [mage], timestamp: at, profiles: catalogue, ...(hasRoom ? { hasRoom } : {}) };
         };
         const current = [thin('cur'), thin('other')];

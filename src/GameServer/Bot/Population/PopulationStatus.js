@@ -38,7 +38,7 @@ const lineMarks = new Map(), statusStart = Date.now();
 function demandPricesText(stats) {
     if (!stats) return '-';
     const text = `${stats.builds || 0}/${stats.moves || 0}/${Math.round(stats.ms || 0)}`;
-    return stats.spotSums === undefined ? text : `${text}/${stats.capped || 0}/${stats.spotSums}/${stats.spotRanks || 0}`;
+    return stats.spotSums === undefined ? text : `${text}/${stats.capped || 0}/${stats.spotSums}/${stats.spotRanks || 0}/${stats.shots || 0}`;
 }
 function sinceLastLine(key, next, column = 0) {
     const now = Date.now(), mark = lineMarks.get(key);

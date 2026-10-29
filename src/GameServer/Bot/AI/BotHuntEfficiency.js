@@ -4,6 +4,7 @@ const DataCache = invoke('GameServer/DataCache');
 const PriceDecision = require('../Economy/PriceDecision');
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
+const KillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 const MAX_SPOTS = 8;
 const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -211,7 +212,7 @@ function huntIncome(state, timestamp = Date.now(), mode, fits = null) {
         return { ...own, source: 'own' };
     }
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
-    const rewardOptions = { spoilSkillLevel: require('../Economy/SpotRewardExpectation').spoilSkillLevel(state) };
+    const rewardOptions = { spoilSkillLevel: KillRewards.spoilLevelOf(state) };
     const tableRole = Roles.tableRoleFor(state);
     const level = levelOf(state);
     const currentFits = !state.spotId || !fits || fits(state.spotId);
@@ -251,7 +252,7 @@ function huntHour(hunt, state = {}) {
     if (Number(hunt?.perHour) > 0) return Number(hunt.perHour);
     const tableRole = Roles.tableRoleFor(state);
     const costs = consumablePrices(state);
-    const rewardOptions = { spoilSkillLevel: require('../Economy/SpotRewardExpectation').spoilSkillLevel(state) };
+    const rewardOptions = { spoilSkillLevel: KillRewards.spoilLevelOf(state) };
     const table = invoke('GameServer/Bot/AI/SpotValueTable');
     const row = table.rankedIncome(tableRole, levelOf(state), costs, -7, true, rewardOptions)[0]
         || table.rankedIncome(tableRole, levelOf(state), costs, -7, false, rewardOptions)[0];

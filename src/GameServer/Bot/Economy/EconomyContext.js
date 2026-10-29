@@ -923,10 +923,10 @@ function watchedBoard(board, watch) {
     });
 }
 // One watch row (marketWatchRows): the reference price is the better of the
-// build's price and the board head (head: the caller's read of it), the
-// error the bot's own.
-function watchRow(board, exclude, id, storeType, value, errorOf, head = board?.first(id, storeType, exclude)?.price) {
+// build's price and the board head, the error the bot's own.
+function watchRow(board, exclude, id, storeType, value, errorOf) {
     if (!(id > 0) || !(value > 0)) return null;
+    const head = board?.first(id, storeType, exclude)?.price;
     const reference = !(head > 0) ? value : storeType === SELL ? Math.min(value, head) : Math.max(value, head);
     // Rounded: the baseline is saved with the bot (a few bytes per row).
     return [id, storeType, Math.round(reference), Math.round(errorOf(id) * 1000) / 1000];
@@ -958,15 +958,12 @@ function censusWakeRows(state) {
 // rebuild and would cross at every step; the decision already weighed it.
 // Only a newer, clearly better line crosses. wakeRows: the crafter's census
 // wake row (censusWakeRows), after the wishes, sales and resale censuses,
-// before the crystal rows. soldLines: the items whose buy line a farm_sale
-// root the bot works for sells to (soldLinesOf); each row's reference is
-// that line's head and it carries Sections.SOLD, so the line's close wakes
-// the farmer (Sections.marketCrossed); first, so the cap keeps them.
+// before the crystal rows.
 // planOf: the build's plan of an item node (network.plans); a wish whose
 // item buy waits for rival takers (its path's takers, WishProviders buyWait)
 // adds its TAKERS row [itemId, Sections.TAKERS, free units, town code] right
 // after its sell row, the waiter's one wake (Sections.softEvents).
-function marketWatchRows(queue, sales, board, ownerId, buyValue, sellValue, errorOf, wakeRows = [], crystalOf = () => 0, soldLines = [],
+function marketWatchRows(queue, sales, board, ownerId, buyValue, sellValue, errorOf, wakeRows = [], crystalOf = () => 0,
     planOf = () => null) {
     const rows = [], exclude = { excludeOwner: ownerId };
     const fits = (id, storeType) => rows.length < Sections.MARKET_WATCH && !rows.some(row => row[0] === id && row[1] === storeType);
@@ -975,14 +972,6 @@ function marketWatchRows(queue, sales, board, ownerId, buyValue, sellValue, erro
         const row = watchRow(board, exclude, id, storeType, value, errorOf);
         if (row) rows.push(row);
     };
-    // First, so the cap never drops them: a sold line's close is the
-    // farmer's one wake (no other row stands for it).
-    for (const id of soldLines) {
-        // The line sold to (Providers.farmLine) as value and head.
-        const price = fits(id, BUY) && Providers.farmLine(board, id, ownerId)?.price;
-        const row = price && watchRow(board, exclude, id, BUY, price, errorOf, price);
-        if (row) rows.push([...row, Sections.SOLD]);
-    }
     for (const wish of queue) {
         const id = Number(wish.object?.itemId);
         if (!(id > 0)) continue;
@@ -1009,16 +998,6 @@ function marketWatchRows(queue, sales, board, ownerId, buyValue, sellValue, erro
         if (crystal) add(crystal, BUY, sellValue(crystal));
     }
     return rows;
-}
-// The items whose buy line the bot's farm_sale root sells to: the root of
-// its activity and its focus (WishProviders writes the item on the path).
-function soldLinesOf(network) {
-    const lines = [];
-    for (const key of [network.activity?.rootKey, network.focus?.[0]]) {
-        const plan = key && network.plans?.get?.(key);
-        if (plan?.kind === 'farm_sale' && plan.itemId > 0 && !lines.includes(plan.itemId)) lines.push(plan.itemId);
-    }
-    return lines;
 }
 // The crafter's indexed recipes at its craft level: the one producer source
 // of both threads.
@@ -1760,7 +1739,7 @@ function forState(state = {}, deps = {}) {
     const sellValue = id => context.worth(id) || price(id);
     const watchRows = marketWatchRows(network.queue, context.liquidationInputs?.rows || [], sourceBoard,
         Number(state.characterId), price, sellValue, priceError, censusWakeRows(state),
-        id => Crystallization.saleCrystal(state, id), soldLinesOf(network), id => network.plans?.get?.(`item:${id}`));
+        id => Crystallization.saleCrystal(state, id), id => network.plans?.get?.(`item:${id}`));
     // That the workshop was asked, beside it (never on the workshop object):
     // a kept workshop carries the mark over; a build handed no ask (deps
     // workshopAsked: a near build's empty workshop) records none, so the next

@@ -282,9 +282,4 @@ function raidReward(spot, killerLevel) {
     return held.adena + held.drop;
 }
 
-function spoilSkillLevel(state) {
-    return Number(invoke('GameServer/Bot/Population/ColdCombatProfile').skillsFor(state)
-        .find(skill => Number(skill.selfId) === 254)?.level || 0);
-}
-
-module.exports = { value, lootPremium, itemPrice, composition, killShare, spoilLanding, raidReward, spoilSkillLevel, revision(rates) { refresh(rates); return revisionId; }, MAX_NPC_VALUES, MAX_SPOT_VALUES };
+module.exports = { value, lootPremium, itemPrice, composition, killShare, spoilLanding, raidReward, revision(rates) { refresh(rates); return revisionId; }, MAX_NPC_VALUES, MAX_SPOT_VALUES };

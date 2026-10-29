@@ -7,7 +7,7 @@ const Diagnostics = require('../Economy/EconomyDiagnostics');
 const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const ColdRest = invoke('GameServer/Bot/Population/ColdRest');
-const SpotRewardExpectation = require('../Economy/SpotRewardExpectation');
+const KillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
 
 // The hunt cycle model (T60): what an hour of a kit earns at a spot, the one
@@ -158,7 +158,7 @@ function build(state, ctx) {
     const shots = ctx.hunt?.useShots !== false;
     // Shots and potions at their NPC prices, as the bot's hour (BotHuntEfficiency.huntIncome).
     const costs = Hunt.consumablePrices(state);
-    const rewardOptions = { spoilSkillLevel: SpotRewardExpectation.spoilSkillLevel(state) };
+    const rewardOptions = { spoilSkillLevel: KillRewards.spoilLevelOf(state) };
     const ranked = Table.rankedIncome(role, level, costs, -7, shots, rewardOptions);
     const ids = new Set(ranked.slice(0, SPOTS).map(row => row.spotId));
     if (ctx.hunt?.spotId) ids.add(ctx.hunt.spotId);

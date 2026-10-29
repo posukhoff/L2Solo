@@ -1,6 +1,6 @@
 'use strict';
 
-const { trait, stageHours, decisionHorizon, withinHorizon, horizonUnits, resale } = require('./EconomicValuation');
+const { trait, stageHours, decisionHorizon, withinHorizon, resale } = require('./EconomicValuation');
 const { SELL, BUY } = require('../../AfkTrade/BoardIndex');
 const Sources = require('../../Items/ItemAcquisitionCatalog');
 const Diagnostics = require('./EconomyDiagnostics');
@@ -449,7 +449,7 @@ function buildProjection(state, ctx, deps) {
     // test is one lookup instead of a scan; `add` is the only writer of both
     // and `rollback` the only one that takes nodes back.
     // Only path builders (inputs, itemNode, craftPath) build within
-    // Network.MAX_NODES; roots, farm leaves and admitted gear join over it,
+    // Network.MAX_NODES; roots and admitted gear join over it,
     // and the one value cut (Network.admitRoots below) keeps roots by rank,
     // not by build order.
     let nodes = [], nodeKeys = new Set(), scratch = false;
@@ -587,8 +587,8 @@ function buildProjection(state, ctx, deps) {
     // .listed, the board's group list, never the catalogue), quoted by the
     // build's one buy reader (purchaseFor: an id an item node also reads is
     // quoted once); each quoted id is a build read (the watched board). The
-    // listed set is read like the farm roots' buy items (ctx.board.itemIds):
-    // a newly listed piece joins at the next build; the held build hears the
+    // listed set is the board's group list, no item read: a newly listed
+    // piece joins at the next build; the held build hears the
     // market through its watch list (EconomyContext watchedBoard). No Giran
     // NPC quote enters purchaseFor's entries. The rows die at return;
     // a later reader in another node scope gets the sweep's board reads again
@@ -613,11 +613,10 @@ function buildProjection(state, ctx, deps) {
     // The farm or spoil path reads GearAcquisitionPlanner.sourceFacts: the
     // hunt rules the bot hunts by (D4-D6), an hour at its net cost (D7). The
     // trip is one row per town in the network, never once per unit.
-    // Whether the bot spoils (KillRewards.spoilerFor), read once per
+    // Whether the bot spoils (KillRewards.ownSpoiler), read once per
     // build and only when a spoil record is in question.
     const isSpoiler = () => {
-        if (spoiler === undefined) spoiler = KillRewards.spoilerFor(state,
-            { skills: Profile.skillsFor(state) }) || false;
+        if (spoiler === undefined) spoiler = KillRewards.ownSpoiler(state) || false;
         return spoiler;
     };
     const sourcePath = id => {
@@ -633,7 +632,7 @@ function buildProjection(state, ctx, deps) {
             const diagnostic = Diagnostics.active(), reasons = diagnostic ? new Map() : null;
             const steps = Planner.sourceFacts(state, id, 1, { spots: deps.spots, spotValue,
                 trips: sourceTrips, trip: deps.tripCost || ctx.trip || { details: () => ({ known: false }) }, spoiler, timestamp,
-                economicLower: acquisitionKit.required || !!spoiler, readyOnly: true, counts: reasons, routeAllowed,
+                economicLower: acquisitionKit.required, readyOnly: true, counts: reasons, routeAllowed,
                 bestForWish: { progressionRequired: acquisitionKit.required, hourAdena: ctx.hourAdena } });
             let step;
             do step = steps.next(); while (!step.done);
@@ -696,11 +695,6 @@ function buildProjection(state, ctx, deps) {
         if (!Sources.allowsRecipe(recipe)) return null;
         const dual = recipe?.kind === 'dual_sword_combine';
         const ownCapable = recipe && (dual || invoke('GameServer/Bot/Economy/CraftShopService').canCraft(state, recipe));
-        const earlyCustomer = !ownCapable && state.level < 40 && Progression.personal(state) && !preparation;
-        // A visible early buyer can order consumables without changing the
-        // authored equipment progression or the cold executor's admission.
-        if (earlyCustomer && (state.phase !== 'hot'
-            || Number(need('../../Item/ItemTemplateIndex').find(DataCache.items, Number(id))?.etc?.slot) > 0)) return null;
         const own = ownCapable ? Profit.craftFacts(recipe, { batches: 1, ...craftLabour() }) : null;
         let workshop = !ownOnly && recipe && deps.workshops ? knownWorkshop(recipe, state, ctx, deps) : null;
         if (workshop && own?.status === 'ready' && knownRecipes.has(Number(recipe.recipeId))
@@ -891,7 +885,7 @@ function buildProjection(state, ctx, deps) {
     // (0: none): a listing exit the batches its demand remainder takes
     // (ShotSalePolicy.exit maxBatches), a buyer's line the lots it takes
     // beyond the `oldUnits` held, incoming or listed (Price.bidLots, the one
-    // owner). One sizing for the producer, crystal and farm roots, so the
+    // owner). One sizing for the producer and crystal roots, so the
     // network buys or farms inputs only for units the line takes.
     const exitLots = (offer, perLot, oldUnits, cap, asks = ctx.board.list(Number(offer.selfId), SELL)) => offer.type === 'listing'
         ? Math.max(1, Math.min(cap, Math.floor(Number(offer.maxBatches) || 1)))
@@ -900,7 +894,7 @@ function buildProjection(state, ctx, deps) {
     // The bot's own plain sell lines by item (Price.plainSale), grouped once
     // per build at the first read, not once per candidate; and the one count
     // of a sale exit's old units: free, incoming and on those lines
-    // (Price.heldUnits), for the producer, crystal and farm lines alike.
+    // (Price.heldUnits), for the producer and crystal lines alike.
     let ownSalesByItem = null;
     const ownSalesOf = id => {
         if (!ownSalesByItem) {
@@ -1298,108 +1292,6 @@ function buildProjection(state, ctx, deps) {
                 productCount: pieces * row.net, quoted: true, town, tripHours: trip.hours, tripFees: trip.fees,
                 grossRequirements: requirements }] });
     }
-    // Any farmer can earn by supplying finite public demand for recipes,
-    // parts and resources a buyer bids above NPC buy-back for (user
-    // 2026-10-24); a gear bid is no farm goal (MarketDemand.forecastOnly:
-    // supply-driven market 10-27, T76): the item's cheapest ready source, drop or spoil
-    // (sourcePath), at a spot it may leave its route for. No buyer means no
-    // speculative farm goal. The value is the line's gain over buy-back,
-    // the effort the farm hours at their net cost plus the trip (WishNetwork
-    // finiteProduction keeps the root only while the value beats it; its
-    // rank counts the farm hours, WishNetwork committedEffort).
-    // The loop over the board's buy items reads no depth, sale or path: the
-    // pre-cut keeps the 8 lines of the best gain per kill for this bot (the
-    // spread over buy-back times the units per kill of the item's best
-    // record at a spot its route reader admits, spoils only for a spoiler,
-    // never one sourceFacts refuses by the bot's level band or solo bound,
-    // Planner.sourceLevelReader, asked before the route reader;
-    // Planner.sourceRecordsByYield ranks the records once per item). The
-    // line's depth (exitLots), its source path (which sizes the lot) and
-    // its sale are read for those 8 only, in that order; the first ready
-    // one is the bot's one farm_sale root per build (a committed line,
-    // committedOf, beside it past the 8), ranked by the network
-    // score in the one root cut (no reserved slot, no crowd term: a closed
-    // line wakes its farmers, EconomyContext soldLinesOf).
-    // The farm's lot fits the horizon like a gear drop path (statusOf,
-    // E212, one verdict: EconomicValuation.withinHorizon): the units it
-    // farms for are at most those its source path delivers in the horizon
-    // at that path's hours per unit, after its trips (horizonUnits); a line
-    // whose first unit takes the whole horizon is a lottery, no farm plan,
-    // cut in the 8-line pre-cut already.
-    if (sourceIndex && ctx.board?.itemIds && ctx.hourAdena > 0 && Progression.personal(state)) {
-        // A committed line (its resale root a committed goal, committedOf)
-        // stays beside the 8, uncounted, while its own checks hold; the
-        // units it already farmed are its sale's old units, so its first
-        // unit in the bag never ends the goal (another line's held item is
-        // sold, not farmed).
-        const demand = [], pinnedLines = [], { forecastOnly } = need('./MarketDemand');
-        // The band at sourcePath's economicLower, read once at the first
-        // record that reaches it (a spoiler's band is never narrower here
-        // than its source path's).
-        let levelRefusal = null;
-        for (const id of ctx.board.itemIds(3)) {
-            if (!sourceIndex.has(Number(id)) || forecastOnly(id)) continue;
-            const pinned = committed.has(`resale:${id}`);
-            if (!pinned && present(id) || nodeKeys.has(`resale:${id}`)) continue;
-            const offer = farmLine(ctx.board, id, state.characterId);
-            if (!offer || !need('./PriceDecision').aboveBuyback(offer.price, ctx.buyback(id))) continue;
-            const { entries, order, perKill: yields } = Planner.sourceRecordsByYield(deps.spots, id);
-            // Ranked by per kill: the walk stops, with 8 kept, at the first
-            // record below the 8th line's gain.
-            const spread = offer.price - ctx.buyback(id), bar = !pinned && demand.length === 8 ? demand[7].gain : 0;
-            let perKill = 0;
-            for (let rank = 0; rank < order.length; rank++) {
-                if (spread * yields[rank] < bar) break;
-                const entry = entries[order[rank]];
-                if (entry.kind === 'spoil' && !isSpoiler()) continue;
-                levelRefusal ??= Planner.sourceLevelReader(state, acquisitionKit.required || isSpoiler());
-                if (levelRefusal(entry)) continue;
-                if (!routeAllowed(entry.spot)) continue;
-                // A record whose first unit takes the whole horizon at its
-                // spot's kill rate (the penalty-free yield and no trip: an
-                // upper bound, never cuts a line its source path delivers)
-                // keeps no slot: the walk goes on to the next record.
-                if (horizonUnits(1 / (positive(spotValue(entry.spot)?.kills) * yields[rank]), horizon) === 0) continue;
-                perKill = yields[rank];
-                break;
-            }
-            if (!(perKill > 0)) continue;
-            if (pinned) { pinnedLines.push({ id, offer, pinned }); continue; }
-            demand.push({ id, offer, gain: spread * perKill });
-            demand.sort((a, b) => b.gain - a.gain || a.id - b.id);
-            if (demand.length > 8) demand.pop();
-        }
-        for (const { id, offer, pinned } of [...pinnedLines, ...demand]) {
-            const asks = ctx.board.list(id, SELL);
-            // The units held (a committed line's), incoming or on the bot's own sell lines.
-            const oldUnits = oldUnitsOf(id);
-            let units = exitLots(offer, 1, oldUnits, 50, asks);
-            if (!units) continue;
-            const trip = ctx.trip?.details?.(offer.town);
-            if (!trip?.known) continue;
-            const source = sourcePath(id);
-            if (!source) continue;
-            // One measure of hours with the network's plan (statusOf): the
-            // source's trip and the sale's trip, when to another town, are
-            // elapsed hours of the lot too.
-            const tripHours = positive(source.tripHours) + (source.town !== offer.town ? positive(trip.hours) : 0);
-            units = Math.min(units, horizonUnits(source.readyHours, horizon - tripHours));
-            if (!units) continue;
-            const sale = need('./PriceDecision').bidSale(state, offer, { board: ctx.board,
-                timestamp, asks, units, oldUnits, residualUnitValue: ctx.buyback(id), producer: Number(state.characterId) });
-            if (sale.status !== 'ready' || !(sale.gross > 0)) continue;
-            const key = `farm:${id}`;
-            if (!add({ key, object: Number(id), price: 0, paths: [source] })) continue;
-            root({ key: `resale:${id}`, need: 'power', object: { itemId: Number(id), amount: units, kind: 'resale' },
-                progressionFunding: acquisitionKit.required,
-                valueHours: Math.max(0, sale.gross - units * ctx.buyback(id)) / ctx.hourAdena,
-                paths: [{ kind: 'farm_sale', itemId: Number(id), quoted: true,
-                    town: offer.town, tripHours: trip.hours, tripFees: trip.fees,
-                    requirements: [{ key, amount: units }] }] });
-            // The committed lines and the first ready other one.
-            if (!pinned) break;
-        }
-    }
     // Paid enchant, SA and henna are objects of the same power queue.
     // Missing materials inherit that value; only a genuinely ready leaf applies.
     blocks?.lap('sources');
@@ -1582,7 +1474,7 @@ function buildProjection(state, ctx, deps) {
     // savingPrice) over each family's best evaluated row (value per price,
     // a never row out: `reps`, family -> its row in the build's compact
     // form) and the roots built before admission (clan, producer, crystal,
-    // farm, improvement, stock: their node's value and price, no solve).
+    // improvement, stock: their node's value and price, no solve).
     // The build reads the reps of the families no admitted root stands for
     // (`ahead`) beside its own roots: one row set, so a wish a cap leaves
     // out still keeps held money dear (a poor bot saving for a coming
@@ -2090,11 +1982,4 @@ function unpackLiquidationInputs(read) {
     const rows = Object.freeze(read.list(() => Object.freeze([read.uint(), read.number()])));
     return Object.freeze({ basis: Object.freeze({ shots, potions, excluded }), rows });
 }
-// The buy line a farm_sale root sells to: the head plain (enchant 0) BUY
-// line of the item not the bot's own. The pre-cut reads it for the root, the
-// SOLD watch row for its reference and its close (DecisionSections.marketCrossed).
-function farmLine(board, id, ownerId) {
-    return board?.first(id, BUY, { excludeOwner: ownerId, enchant: 0 }) || null;
-}
-
-module.exports = { farmLine, GEAR_FINALISTS_PER_SLOT, committedOf, nominationBasis, quantityReaders, knownWorkshop, rootItemPlan, focusWish, personalCraftPlan, liquidationCandidates, liquidationInputs, packLiquidationInputs, unpackLiquidationInputs, build, gearCandidates, gearStepNets, gearGain, worn };
+module.exports = { GEAR_FINALISTS_PER_SLOT, committedOf, nominationBasis, quantityReaders, knownWorkshop, rootItemPlan, focusWish, personalCraftPlan, liquidationCandidates, liquidationInputs, packLiquidationInputs, unpackLiquidationInputs, build, gearCandidates, gearStepNets, gearGain, worn };

@@ -19,6 +19,10 @@
 //   at their first price, per unit), never above its own first price; its
 //   needed units are the product's unmet crafts x its amount. The tree is
 //   walked down from the pieces, every demander of a part before it.
+// - A shot: its wearers' burn over one forecast window (MarketDemand.censusOf
+//   x DELAY_HOURS) is its needed units; its parts and its recipe scrolls
+//   follow as a piece's do (an ore whose first price is its buy-back gets no
+//   premium).
 // - A recipe scroll: its product's shortage over (holders + learners + 1) x
 //   (the scroll's first price - buy-back) (holders: public workshops of the
 //   recipe; learners: the scroll's buyers on the board).
@@ -36,6 +40,7 @@ const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const FirstPrice = invoke('GameServer/Bot/Economy/FirstPrice');
 const Recipes = invoke('GameServer/Bot/Economy/RecipeProductionIndex');
 const EconomyContext = invoke('GameServer/Bot/Economy/EconomyContext');
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
 
 // The part tree is a few floors deep (FirstPrice's MAX_CRAFT_DEPTH); a deeper
 // or cyclic walk stops here.
@@ -54,7 +59,7 @@ let pots = new Map();
 let scrolls = null;
 // Builds, moved builds, the build time (ms) and the bid caps the recipe
 // worth lowered (BidPurchaseAlternative.cap) since start (worker heartbeat).
-const stats = { builds: 0, moves: 0, ms: 0, capped: 0 };
+const stats = { builds: 0, moves: 0, ms: 0, capped: 0, shots: 0 };
 // recipeId -> the workshops offering it on this thread, whatever their MP now
 // (CraftWorkshopService's records on main, ColdSimulationWorker's mirror in
 // the worker); none elsewhere.
@@ -117,13 +122,16 @@ function downTree(roots) {
     for (const id of roots) visit(Number(id), 0);
     return order;
 }
+// The shop shots the table roots (their wearers' burn): the graded ones.
+const rootedShots = () => [...ShotStock.SHOP_SHOT_RANK.keys()].filter(id => ShotStock.gradedShopShot(id)).map(Number);
 // The scrolls of the recipes the table can price: those whose product is a
-// wished kit piece (MarketDemand.forecastOnly) or a part down its tree. Shots
-// and arrows have no census piece demand yet: their scrolls are outside it.
-// Read again at every build (the kits move with the census revision).
+// wished kit piece (MarketDemand.forecastOnly), a rooted shot or a part down
+// their tree; arrows have no census demand yet. Read again at every build
+// (the kits move with the census revision).
 function priceableScrolls() {
     const catalog = Recipes.recipeCatalog();
-    const products = new Set(downTree(catalog.rows.map(recipe => Number(recipe.productId)).filter(id => MarketDemand.forecastOnly(id))));
+    const products = new Set(downTree([...catalog.rows.map(recipe => Number(recipe.productId))
+        .filter(id => MarketDemand.forecastOnly(id)), ...rootedShots()]));
     return new Set(catalog.rows.filter(recipe => products.has(Number(recipe.productId))).map(recipe => Number(recipe.recipeItemId)));
 }
 function build(board, timestamp) {
@@ -132,6 +140,13 @@ function build(board, timestamp) {
     // them pays per unit.
     const demand = new Map();
     for (const [id, needed] of MarketDemand.neededGear()) demand.set(id, { units: needed, pay: first(id, timestamp) });
+    // Shots by their wearers' burn over one forecast window (the census):
+    // their parts and scrolls follow as a piece's do.
+    stats.shots = 0;
+    for (const id of rootedShots()) {
+        const burn = Number(MarketDemand.censusOf(id));
+        if (burn > 0) { demand.set(id, { units: burn * MarketDemand.DELAY_HOURS, pay: first(id, timestamp) }); stats.shots++; }
+    }
     // Every demander of a part before the part: the walk down from the
     // pieces, reversed.
     const order = downTree(demand.keys());

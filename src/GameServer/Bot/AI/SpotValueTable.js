@@ -1,4 +1,5 @@
 const fs = require('fs');
+const KillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 const path = require('path');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
 const Rewards = require('../Economy/SpotRewardExpectation');
@@ -94,7 +95,7 @@ function dropRows() {
 
 function roleSpoilLevel(role, level) {
     if (role !== 'spoiler') return 0;
-    if (!spoilLevels.has(level)) spoilLevels.set(level, Rewards.spoilSkillLevel({ level,
+    if (!spoilLevels.has(level)) spoilLevels.set(level, KillRewards.spoilLevelOf({ level,
         stats: { classId: roleClass('spoiler', level) } }));
     return spoilLevels.get(level);
 }
