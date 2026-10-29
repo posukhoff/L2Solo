@@ -10,6 +10,7 @@ const AttackRange = invoke('GameServer/Actor/AttackRange');
 const { skillTreeEntries, learnedTreeRow, treeSkillLevel } = require('./ColdSkillTree');
 const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const SkillRequirements = invoke('GameServer/Skills/SkillRequirements');
+const WeaponMask = invoke('GameServer/Skills/WeaponMask');
 const GameTime = invoke('GameServer/World/GameTime');
 const EffectStore = invoke('GameServer/Effects/EffectStore');
 const C4ArmorSets = invoke('GameServer/Items/C4ArmorSets');
@@ -27,22 +28,10 @@ const HennaRules = invoke('GameServer/Henna/HennaRules');
 const C4WeaponSA = invoke('GameServer/Items/C4WeaponSA');
 
 // Rebuild persisted kits that could have been overwritten by an older resolve.
-const PROFILE_VERSION = 6;
+const PROFILE_VERSION = 7;
 const BASE_STATS = ['STR', 'DEX', 'CON', 'INT', 'WIT', 'MEN'];
 const npcCombatCache = new WeakMap();
 
-const WEAPON_MASK_BY_KIND = Object.freeze({
-    'Weapon.Sword': 4,
-    'Weapon.Blunt': 8,
-    'Weapon.Knife': 16,
-    'Weapon.Bow': 32,
-    'Weapon.Pole': 64,
-    'Weapon.Fist': 256,
-    'Weapon.Dual': 512,
-    'Weapon.DualFist': 1024,
-    'Weapon.GreatSword': 2048,
-    'Weapon.BigBlunt': 16384
-});
 
 function number(value, fallback = 0) {
     const resolved = Number(value);
@@ -146,7 +135,7 @@ function equipmentFromTemplates(items = [], spellcaster = false, fallback = {}) 
         : number(armorAt(10)?.stats?.pDef, spellcaster ? 15 : 31) + number(armorAt(11)?.stats?.pDef, spellcaster ? 8 : 18);
 
     return {
-        weaponKind: weapon?.template?.kind || fallback.weaponKind || '',
+        weaponKind: WeaponMask.weaponType(weapon?.template?.kind || fallback.weaponKind || '', weapon?.etc?.slot),
         // The MP of one bow shot (user 10-29: bots pay it as players do).
         bowMp: weapon?.template?.kind === 'Weapon.Bow' ? C4WeaponSA.expectedBowMp(weapon.selfId, weapon.etc?.mp) : 0,
         attackReuseDelay: number(weapon?.stats?.reuseDelay, 1500),
@@ -503,7 +492,7 @@ function capture(actor, timestamp = Date.now()) {
     const armors = backpack?.fetchEquippedArmors?.() || [];
     const armorKindAt = (slot) => armors.find((item) => Number(item.fetchSlot?.()) === slot)?.fetchKind?.();
     const equipment = {
-        weaponKind: backpack?.fetchTotalWeaponKind?.() || '',
+        weaponKind: WeaponMask.weaponType(backpack?.fetchTotalWeaponKind?.() || '', backpack?.fetchEquippedWeapon?.()?.fetchSlot?.()),
         bowMp: backpack?.fetchTotalWeaponKind?.() === 'Weapon.Bow' ? C4WeaponSA.expectedBowMp(
             backpack.fetchEquippedWeapon?.()?.fetchSelfId?.(), backpack.fetchEquippedWeapon?.()?.fetchConsumedMp?.()) : 0,
         attackReuseDelay: backpack?.fetchEquippedWeapon?.()?.fetchAttackReuseDelay?.() ?? 1500,
@@ -799,7 +788,7 @@ function numbersPass(kitPart, effects, timestamp, sourceOptions) {
         // 0 without a template run speed.
         runSpd: Math.max(0, number(classTemplate(classId).speed?.run) && (Formulas.calcSpeed(stats.dex, number(classTemplate(classId).speed.run))
             + add(profile, 'runSpdAdd', timestamp, sources)) * multiplier(profile, 'runSpdMul', timestamp, sources)),
-        weaponMask: (WEAPON_MASK_BY_KIND[equipment.weaponKind] || 0) | (number(equipment.shieldPDef) > 0 ? 1048576 : 0)
+        weaponMask: (WeaponMask.MASK_BY_KIND[equipment.weaponKind] || 0) | (number(equipment.shieldPDef) > 0 ? 1048576 : 0)
     } };
 }
 

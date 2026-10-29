@@ -2,6 +2,7 @@ const EffectStore = invoke('GameServer/Effects/EffectStore');
 const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const GameTime = invoke('GameServer/World/GameTime');
 const SkillRequirements = invoke('GameServer/Skills/SkillRequirements');
+const WeaponMask = invoke('GameServer/Skills/WeaponMask');
 
 // posture: { seated } as if the actor sat or stood (a rest's choice,
 // Automation's regen amounts); unset, its own state.
@@ -81,7 +82,10 @@ class GearContext {
 
     armors() { return this.cache.armors ??= this.backpack?.fetchEquippedArmors?.() || []; }
     kindAt(slot) { return this.armors().find((item) => Number(item?.fetchSlot?.()) === slot)?.fetchKind?.(); }
-    get weaponKind() { return this.cache.weaponKind ??= this.backpack?.fetchTotalWeaponKind?.() || ''; }
+    get weaponKind() {
+        return this.cache.weaponKind ??= WeaponMask.weaponType(this.backpack?.fetchTotalWeaponKind?.() || '',
+            this.backpack?.fetchEquippedWeapon?.()?.fetchSlot?.());
+    }
     get armorKinds() { return this.cache.armorKinds ??= this.armors().map((item) => item?.fetchKind?.()); }
     get setKind() { return this.cache.setKind ??= SkillRequirements.wornSetKind(this.kindAt(15), this.kindAt(10), this.kindAt(11)); }
     get shield() { return this.cache.shield ??= Number(this.backpack?.fetchTotalShieldPDef?.()) > 0; }
