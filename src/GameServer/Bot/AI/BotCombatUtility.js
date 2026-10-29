@@ -1,6 +1,7 @@
 const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const Attack = invoke('GameServer/Skills/WeaponMask');
 const Formulas = invoke('GameServer/Formulas');
+const Diagnostics = require('../Economy/EconomyDiagnostics');
 const ClassPolicy = invoke('GameServer/Bot/AI/BotClassPolicy');
 const Feedback = invoke('GameServer/Bot/AI/BotActionFeedback');
 const TargetMatchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
@@ -314,6 +315,7 @@ function select(bot, target, role, policy = {}) {
 
 // A rejected price joins the bot's rejected alternatives like any other gate.
 function rejectPrice(decision, policy) {
+    if (Diagnostics.active()) Diagnostics.count('mana_price', 'rejected', policy.classProfile?.role || 'unknown');
     if (policy.rejectedAlternatives && policy.rejectedAlternatives.length < 8) {
         policy.rejectedAlternatives.push({ skillId: decision.skill.fetchSelfId?.(), reason: 'mp_price' });
     }

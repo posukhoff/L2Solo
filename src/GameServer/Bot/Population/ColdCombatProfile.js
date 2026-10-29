@@ -15,6 +15,7 @@ const BotRaidSafety = invoke('GameServer/Bot/AI/BotRaidSafety');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const BotHuntingTargetPolicy = invoke('GameServer/Bot/AI/BotHuntingTargetPolicy');
 const BotPullEstimate = invoke('GameServer/Bot/AI/BotPullEstimate');
+const NpcCombatChoice = invoke('GameServer/Npc/NpcCombatChoice');
 const NpcSkills = invoke('GameServer/Npc/NpcSkills');
 const RAID_MINIONS = require('../../../../data/Npcs/Minions/c4_raid_bosses.json');
 const PopulationConfig = invoke('GameServer/Bot/Population/PopulationConfig');
@@ -309,7 +310,7 @@ function npcCombatStats(npc) {
         mCritRate: Formulas.magicCriticalRate({ wit: number(npc.base?.wit), weapon: false }),
         shieldPDef: number(shield?.stats?.pDef ?? shield?.pDef),
         shieldRate: shield || number(shield?.stats?.pDef) > 0 ? Formulas.DEFAULT_SHIELD_RATE : 0,
-        aiType: String(npc.template?.ai || '').trim().toLowerCase(),
+        aiType: NpcCombatChoice.aiTypeOfModel(npc),
         atkRadius: number(npc.stats?.atkRadius),
         weaponKind: String(weapon?.template?.kind || ''),
         race: String(npc.traits?.race || '').toLowerCase(),
@@ -1171,7 +1172,9 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
         aggressiveInterruption: !!preferred && selected !== preferred,
         ...combat,
         // A solo fight takes the whole pull of its spawn group (F20).
-        ...(options.pull && !explicitRaid ? { pull: BotPullEstimate.rollPull(selected.pull, rng) } : {}),
+        // usualPull: the mean pull the species verdict judged (readiness after a win judges it too).
+        ...(options.pull && !explicitRaid ? { pull: BotPullEstimate.rollPull(selected.pull, rng),
+            usualPull: Math.max(1, Math.round(Number(selected.pull) || 1)) } : {}),
         ...(explicitRaid ? {
             // Cold mode represents the raid group as one bounded encounter.
             // Adds contribute part of their HP and incoming damage instead of

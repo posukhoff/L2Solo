@@ -62,19 +62,39 @@ const stunner = mobWith('hard_control');
 assert(stunner, 'the datapack has a monster with a stun');
 const bot = HuntCycle.referenceState(1, Math.max(1, stunner.level));
 const fighter = { state: bot, profile: ColdCombatProfile.profileFor(bot, 0, { store: false }), readyAt: 0 };
-const fight = BackgroundResolver.combat.coldMobFight(stunner);
-assert(fight.skills.length > 0, 'the cold monster knows its skills');
+const { coldMobFight, coldMobAction, coldMobFightSave } = BackgroundResolver.combat;
+const fight = coldMobFight(stunner);
+const before = { pDef: stunner.pDef, pAtk: stunner.pAtk, mDef: stunner.mDef };
 let time = 0;
-for (let step = 0; step < 4 && !(fighter.controlledUntil > 0); step++) {
-    const action = BackgroundResolver.combat.coldMobAction(stunner, fight, fighter, { time, at: 0, rng: constant(0) });
+for (let step = 0; step < 4 && !(fighter.readyAt > time); step++) {
+    const action = coldMobAction(stunner, fight, fighter, { time, at: 0, rng: constant(0) });
     assert.strictEqual(action.damage, 0, 'a self buff or a stun deals no damage');
     time += action.delayMs;
 }
-assert(fight.buffs.size > 0, 'the monster buffs itself first');
-assert(fighter.controlledUntil > 0 && fighter.readyAt === fighter.controlledUntil, 'a landed stun holds the bot');
-assert(Object.values(fight.cooldowns).some(until => until > 0), 'the stun starts its reuse');
+assert(['pDef', 'pAtk', 'mDef'].some(stat => stunner[stat] !== before[stat]), 'the monster\'s self buff changes its numbers');
+assert(fighter.readyAt > time, 'a landed stun holds the bot');
 // A held bot is not stunned again: the monster hits it.
-const hit = BackgroundResolver.combat.coldMobAction(stunner, fight, fighter, { time, at: 0, rng: constant(0) });
-assert(hit.damage > 0, 'the monster strikes a held bot');
+assert(coldMobAction(stunner, fight, fighter, { time, at: 0, rng: constant(0) }).damage > 0, 'the monster strikes a held bot');
+// The next slice of the fight keeps the monster's buff, reuse and hold: it strikes again.
+const resumed = coldMobFight(stunner, coldMobFightSave(fight, time));
+assert(coldMobAction(stunner, resumed, fighter, { time: 0, at: 0, rng: constant(0) }).damage > 0,
+    'a resumed fight neither re-buffs nor re-stuns at once');
+
+// A blow that needs a critical lands by position and DEX; one that needs the rear never lands in front.
+const deadly = { requires: { condition: 0x10 } }, backstab = { requires: { condition: 0x08 } };
+assert.strictEqual(HitRules.blowLandChance(deadly, { dex: 20, front: true }), 50);
+assert.strictEqual(HitRules.blowLandChance(deadly, { dex: 20, behind: true }), 70);
+assert.strictEqual(HitRules.blowLands(deadly, { dex: 20, front: true }, constant(0.6)), false);
+assert.strictEqual(HitRules.blowLands(backstab, { dex: 40, front: true }, constant(0)), false);
+assert.strictEqual(HitRules.blowLands({}, {}, () => assert.fail('a plain blow does not roll')), true);
+// The cold fight strikes the mob's face: a Deadly Blow misses there when the roll is above its chance.
+const Rules = invoke('GameServer/Skills/C4SkillRules');
+assert.strictEqual(Rules.resolve({ selfId: 263, level: 1 }).skillType, Rules.BLOW);
+const dagger = { profile: { pAtk: 1000, mAtk: 100, accur: 100, critical: 0, mCritRate: 0, dex: 20, str: 20,
+    equipment: { pAtkRnd: 0 } }, charges: 0 };
+const strike = rng => BackgroundResolver.combat.attackDamage(dagger, { skill: { selfId: 263, level: 1 }, magic: false, power: 1000 },
+    { pDef: 500, mDef: 300, evasion: 0 }, constant(rng));
+assert.strictEqual(strike(0.6), 0, 'a frontal Deadly Blow above 50% misses');
+assert(strike(0.4) > 0, 'a frontal Deadly Blow below 50% lands');
 
 console.log('Combat core checks passed');

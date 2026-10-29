@@ -51,8 +51,8 @@ function physicalSkillCritRate(semantic, str) {
 function physicalSkill(attacker, defender, context = {}, rng = Math.random) {
     const shield = shieldRoll(defender, context, rng);
     if (shield === Formulas.SHIELD_DEFENSE_PERFECT_BLOCK) return { damage: 1, critical: false, shield };
-    const formula = context.blow ? Formulas.calcBlowDamage.bind(Formulas) : Formulas.calcPhysicalDamage.bind(Formulas);
-    let damage = Math.round(formula(attacker.pAtk, attacker.pAtkRnd, guardedPDef(defender, shield), context.power, {
+    const formula = context.blow ? Formulas.calcBlowDamage : Formulas.calcPhysicalDamage;
+    let damage = Math.round(formula.call(Formulas, attacker.pAtk, attacker.pAtkRnd, guardedPDef(defender, shield), context.power, {
         soulshot: context.soulshot === true,
         criticalDamageMultiplier: attacker.critDamageMul,
         criticalDamageAdd: attacker.critDamageAdd,
@@ -101,4 +101,25 @@ function effectLandChance(semantic, magic, attacker, target, resistModifier = 1)
     });
 }
 
-module.exports = { melee, physicalSkill, magicSkill, physicalSkillCritRate, resistStats, traitResistModifier, effectLandChance };
+// A blow's land chance in percent (L2J C4 Formulas.calcBlow): a blow that
+// needs the rear lands only from behind; one that needs a critical (Deadly
+// Blow, Mortal Blow) lands 70% from behind, 60% from the side, 50% from the
+// front, by DEX and blowRateMul (rateMul: the attacker's whole multiplier at
+// that position); any other lands.
+const COND_BEHIND = 0x0008, COND_CRIT = 0x0010;
+function blowLandChance(semantic, { dex = 20, rateMul = 1, behind = false, front = false } = {}) {
+    const condition = Number(semantic?.requires?.condition) || 0;
+    if ((condition & COND_BEHIND) !== 0 && !behind) return 0;
+    if ((condition & COND_CRIT) === 0) return 100;
+    const base = behind ? 70 : front ? 50 : 60;
+    return Math.max(0, base * (1 + ((Number(dex) || 20) - 20) / 100) * rateMul);
+}
+// Whether a blow lands: only one that needs a critical rolls (rng).
+function blowLands(semantic, position, rng = Math.random) {
+    const chance = blowLandChance(semantic, position);
+    if (chance <= 0) return false;
+    return (Number(semantic?.requires?.condition) & COND_CRIT) === 0 || chance >= rng() * 100;
+}
+
+module.exports = { melee, physicalSkill, magicSkill, physicalSkillCritRate, blowLandChance, blowLands, resistStats, traitResistModifier,
+    effectLandChance };

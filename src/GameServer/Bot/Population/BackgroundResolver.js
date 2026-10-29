@@ -167,22 +167,62 @@ function coldMobSkills(mob) {
     if (!mobSkillLists.has(id)) mobSkillLists.set(id, id ? NpcSkills.combatSkillsFor({ fetchSelfId: () => id }) : []);
     return mobSkillLists.get(id);
 }
-function coldMobFight(mob) {
+// saved: coldMobFightSave of the fight's last slice (its times relative to
+// that slice's end, as the encounter's other timers). held: per impairment,
+// characterId -> the time this monster's control on that fighter ends.
+const MOB_IMPAIRMENTS = { hard_control: 'disabled', sleep: 'disabled', root: 'rooted', mute: 'silenced' };
+function coldMobFight(mob, saved = null) {
     const skills = coldMobSkills(mob);
-    return { skills, mp: Number(mob.maxMp) || 0, cooldowns: {}, buffs: new Set(), lastDebuffAt: -Infinity,
+    return { skills, mp: saved ? Number(saved.mp) || 0 : Number(mob.maxMp) || 0,
+        cooldowns: { ...(saved?.cooldowns || {}) }, buffs: new Set(saved?.buffs || []),
+        lastDebuffAt: Number.isFinite(saved?.debuffAgo) ? -saved.debuffAgo : -Infinity,
+        held: { disabled: { ...(saved?.held?.disabled || {}) }, rooted: { ...(saved?.held?.rooted || {}) },
+            silenced: { ...(saved?.held?.silenced || {}) } },
         aiType: skills.length ? NpcCombatChoice.aiTypeFor(mob.aiType, skills, mob.atkRadius) : 'fighter' };
+}
+function coldMobFightSave(fight, time) {
+    if (!fight.skills.length) return null;
+    const after = (map) => Object.fromEntries(Object.entries(map).filter(([, until]) => until > time)
+        .map(([key, until]) => [key, until - time]));
+    return { mp: fight.mp, cooldowns: after(fight.cooldowns), buffs: [...fight.buffs],
+        held: { disabled: after(fight.held.disabled), rooted: after(fight.held.rooted), silenced: after(fight.held.silenced) },
+        debuffAgo: Number.isFinite(fight.lastDebuffAt) ? time - fight.lastDebuffAt : null };
+}
+
+// A self buff's stats on the cold monster, as the hot one gains them
+// (EffectStats); positional stats are not modelled. The monster object is
+// the fight's own (npcForSpot, pullView or the saved encounter), so a buff
+// cast in one slice stays on it in the next.
+const MOB_BUFF_MULS = { pAtkMul: 'pAtk', pDefMul: 'pDef', mAtkMul: 'mAtk', mDefMul: 'mDef', pAtkSpdMul: 'atkSpd',
+    castSpdMul: 'castSpd', mCritRateMul: 'mCritRate' };
+const MOB_BUFF_ADDS = { pEvasionRateAdd: 'evasion', pAccuracyCombatAdd: 'accur' };
+function buffColdMob(mob, semantic) {
+    for (const [stat, value] of Object.entries(semantic.stats || {})) {
+        if (MOB_BUFF_MULS[stat]) mob[MOB_BUFF_MULS[stat]] = Number(mob[MOB_BUFF_MULS[stat]] || 0) * Number(value);
+        else if (MOB_BUFF_ADDS[stat]) mob[MOB_BUFF_ADDS[stat]] = Number(mob[MOB_BUFF_ADDS[stat]] || 0) + Number(value);
+    }
+    attackerViews.delete(mob);
+    defenderViews.delete(mob);
+}
+
+// The time between a cold monster's weapon hits, as the hot Npc's (a bow
+// draws longer).
+function mobAttackMs(mob) {
+    return Math.max(250, Formulas.normalAttackMs(mob.atkSpd, { bow: mob.weaponKind === 'Weapon.Bow' }));
 }
 
 // One action of a cold monster on a fighter, as the hot Npc's: a self buff
 // it lacks, a control or damage skill by its rolled chances
-// (NpcCombatChoice), else its weapon hit (HitRules). A stun or sleep that
-// lands holds the fighter (controlledUntil, readyAt): a sleep until the
-// monster's next blow wakes it. pAtk: a raid's boss share. Returns
-// { damage, delayMs } (delayMs: to the monster's next action).
+// (NpcCombatChoice), else its weapon hit (HitRules). A control that lands
+// holds the fighter (fight.held; a stun or sleep also its readyAt): a sleep
+// until the monster's next blow wakes it. A pull's skills strike as its
+// weapon hits do (BotPullEstimate.pullView: x (k+1)/2). pAtk: a raid's boss
+// share. Returns { damage, delayMs } (delayMs: to the monster's next action).
 function coldMobAction(mob, fight, target, { time, at, rng, mobHp = mob.maxHp, pAtk = null }) {
     const profile = target.profile;
-    const meleeMs = Math.max(250, Formulas.calcMeleeAtkTime(mob.atkSpd));
-    const attacker = pAtk === null ? attackerView(mob) : CombatantView.view({ ...attackerView(mob), pAtk });
+    const id = target.state?.characterId;
+    const meleeMs = mobAttackMs(mob);
+    const attacker = pAtk === null || pAtk === mob.pAtk ? attackerView(mob) : CombatantView.view({ ...attackerView(mob), pAtk });
     const defender = defenderView(profile, at, target);
     const bow = mob.weaponKind === 'Weapon.Bow';
     const choice = fight.skills.length ? NpcCombatChoice.select({
@@ -190,7 +230,8 @@ function coldMobAction(mob, fight, target, { time, at, rng, mobHp = mob.maxHp, p
         usable: (skill) => fight.mp >= skill.fetchConsumedMp() && !(fight.cooldowns[skill.fetchSelfId()] > time),
         buffNeeded: (skill) => !fight.buffs.has(skill.fetchSemantic?.()?.effect)
             && (skill.fetchSkillType?.() !== 'hot' || mobHp < mob.maxHp),
-        impairments: { disabled: Number(target.controlledUntil) > time },
+        impairments: { disabled: fight.held.disabled[id] > time, rooted: fight.held.rooted[id] > time,
+            silenced: fight.held.silenced[id] > time },
         aiType: fight.aiType,
         // A hot player carries no AI type: the hot Npc reads 'fighter'.
         targetAiType: 'fighter',
@@ -205,27 +246,31 @@ function coldMobAction(mob, fight, target, { time, at, rng, mobHp = mob.maxHp, p
     }
     const skill = choice.skill, semantic = skill.fetchSemantic?.() || {};
     const spell = skill.fetchSpell?.() === true;
+    if (Diagnostics.active()) Diagnostics.count('cold_mob', 'skill', choice.category);
     fight.mp -= skill.fetchConsumedMp();
-    const reuse = Number(skill.fetchReuseTime?.()) || 0;
-    if (reuse > 0) fight.cooldowns[skill.fetchSelfId()] = time + reuse;
+    fight.cooldowns[skill.fetchSelfId()] = time + NpcCombatChoice.reuseMs(skill);
     const castMs = Math.max(250, Formulas.calcSkillHitTime(Number(skill.fetchHitTime?.()) || (spell ? 1000 : 600),
         spell ? mob.castSpd : mob.atkSpd, { magic: spell }));
     let damage = 0;
-    if (choice.category === 'buff') fight.buffs.add(semantic.effect);
-    else if (choice.category === 'damage') {
-        damage = spell
+    if (choice.category === 'buff') {
+        fight.buffs.add(semantic.effect);
+        buffColdMob(mob, semantic);
+    } else if (choice.category === 'damage') {
+        const pack = Number(mob.pull) > 1 ? (Number(mob.pull) + 1) / 2 : 1;
+        damage = pack * (spell
             ? HitRules.magicSkill(attacker, defender, { power: skill.fetchPower(),
                 modifier: ELEMENTAL_DAMAGE_TRAITS.has(semantic.trait)
                     ? ColdCombatProfile.statMultiplier(profile, `${semantic.trait}Vuln`, at, hitSources(target, at)) : 1 }, rng).damage
             : HitRules.physicalSkill(attacker, defender, { power: skill.fetchPower(), blow: semantic.skillType === C4SkillRules.BLOW,
-                bow, modifier: coldNpcWeaponModifier(mob, profile, at, target) }, rng).damage;
+                bow, modifier: coldNpcWeaponModifier(mob, profile, at, target) }, rng).damage);
     } else {
         if (choice.category === 'debuff') fight.lastDebuffAt = time;
-        // Root, mute and debuffs take the monster's action; their effect on
-        // a cold fighter's numbers is not modelled (no movement, the profile
-        // is fixed for the fight).
+        // Debuffs, root and mute take the monster's action; their effect on a
+        // cold fighter's numbers is not modelled (no movement, the profile is
+        // fixed for the fight), only that they hold until they end.
         const durationMs = Number(semantic.durationMs) || 0;
-        if ((choice.category === 'hard_control' || choice.category === 'sleep') && durationMs > 0) {
+        const impairment = MOB_IMPAIRMENTS[choice.category];
+        if (impairment && durationMs > 0) {
             const family = HitRules.resistStats(semantic.effectTrait || semantic.trait);
             const sources = hitSources(target, at);
             const resist = HitRules.traitResistModifier(ColdCombatProfile.statAdd(profile, family.resist, at, sources),
@@ -233,9 +278,11 @@ function coldMobAction(mob, fight, target, { time, at, rng, mobHp = mob.maxHp, p
             const chance = HitRules.effectLandChance(semantic, spell, { level: mob.level, mAtk: mob.mAtk },
                 { level: profile.level, mDef: profile.mDef }, resist);
             if (chance >= rng() * 100) {
-                const held = choice.category === 'sleep' ? Math.min(durationMs, castMs + meleeMs) : durationMs;
-                target.controlledUntil = time + castMs + held;
-                target.readyAt = Math.max(Number(target.readyAt) || 0, target.controlledUntil);
+                // A sleep ends at the monster's next weapon hit.
+                const until = time + castMs + (choice.category === 'sleep' ? Math.min(durationMs, meleeMs) : durationMs);
+                fight.held[impairment][id] = until;
+                if (Diagnostics.active()) Diagnostics.count('cold_mob', 'landed', choice.category);
+                if (impairment === 'disabled') target.readyAt = Math.max(Number(target.readyAt) || 0, until);
             }
         }
     }
@@ -1179,9 +1226,14 @@ function attackDamage(fighter, selected, target, rng, { vsMob = false, at = 0, s
             spiritshot: shot?.spiritshot === true, blessedSpiritshot: shot?.blessedSpiritshot === true,
             modifier: vsMob ? coldMagicTargetModifier(target, semantic) : 1 }, rng).damage;
     } else if (selected?.skill) {
-        // A physical skill never misses (the hot Attack rolls the hit only for a weapon hit).
+        // A physical skill never misses (the hot Attack rolls the hit only for
+        // a weapon hit); a blow lands by its own chance (HitRules.blowLandChance).
+        // The cold fight has no positions: the fighter strikes the mob's face.
+        const blow = semantic.skillType === C4SkillRules.BLOW;
+        if (blow && !HitRules.blowLands(semantic, { dex: profile.dex, front: true,
+            rateMul: ColdCombatProfile.statMultiplier(profile, 'blowRateMul', at, hitSources(fighter, at)) }, rng)) return 0;
         damage = HitRules.physicalSkill(attacker, defender, { power: selected.power || 0,
-            blow: semantic.skillType === C4SkillRules.BLOW, soulshot: shot?.soulshot === true, bow,
+            blow, soulshot: shot?.soulshot === true, bow,
             skillCritRate: HitRules.physicalSkillCritRate(semantic, profile.str),
             modifier: vsMob ? coldPhysicalTargetModifier(profile, target, semantic, at, fighter, true) : 1 }, rng).damage;
     } else if (hitSucceeds(profile.accur, target.evasion, rng)) {
@@ -1246,7 +1298,9 @@ function spendColdShot(fighter) {
 function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false, help = null }) {
     fighter.now = at;
     // Alone (no other living ally, a party of one too) the bot fights solo:
-    // its MP price and songs (T100) are a solo bot's.
+    // its class mode, MP price and songs (T100) are a solo bot's. ARCH-NOTE:
+    // a hot bot left alone in its party keeps the party mode (BotClassPolicy
+    // .modeFor reads actor.party); todo T108.
     const solo = !allies.some((ally) => ally !== fighter && ally.vitals.hp > 0);
     if (ensureColdSummon(fighter, at, fighter.cooldowns)) return null;
     expireCharges(fighter, at);
@@ -1332,8 +1386,9 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
         accur: 1, evasion: 0, critical: 0, atkSpd: 253, mAtk: 1, castSpd: 333
     };
     if (picked.avoided) return { avoided: true, reason: picked.reason };
-    // Readiness keeps the margin the route verdict gave one mob; the helpers,
-    // aggressive neighbours and minions come regardless (design 13.5).
+    // Readiness keeps the margin the species verdict gave the usual pull
+    // (Social packs); a larger rolled pull, helpers, aggressive neighbours and
+    // minions come regardless (design 13.5).
     if (!pending && !picked.aggressiveInterruption) {
         const readiness = EncounterReadiness.evaluate({
             hp: state.vitals?.hp ?? bot.maxHp, maxHp: bot.maxHp,
@@ -1348,7 +1403,9 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             maxHp: Math.min(profile.maxHp, state.vitals?.hp ?? profile.maxHp),
             maxMp: Math.min(profile.maxMp, state.vitals?.mp ?? profile.maxMp)
         });
-        const canSurvive = TargetMatchup.soloSurvival(remaining, picked).eligible;
+        // One mob carries no pull: channels count area skills by target.pull.
+        const usual = BotPullEstimate.pullView({ ...picked, pull: 1 }, Number(picked.usualPull) || 1);
+        const canSurvive = TargetMatchup.soloSurvival(remaining, usual).eligible;
         if (!readiness.ready || !canSurvive) {
             return { avoided: true, needsRest: true, reason: 'solo_recovery_needed' };
         }
@@ -1388,7 +1445,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
     // A pull is counted once, when its fight starts; a continued fight keeps its saved view.
     // A won fight reports the kills it paid (`killsPaid`) for the spot share.
     const mob = pending ? picked : BotPullEstimate.pullView(picked, picked.pull);
-    const mobFight = coldMobFight(mob);
+    const mobFight = coldMobFight(mob, pending?.mobFight);
     const pullMobs = pending ? 0 : Number(picked.pull || 1);
     let areaPullHits = 0;
     let mobHp = pending?.hp ?? mob.maxHp;
@@ -1469,7 +1526,8 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             won: false,
             encounter: !died ? PveEncounter.save(pending, encounterKey, mob, mobHp, timestamp, {
                 soulCrystalMark: soloFighter.soulCrystalMark || null,
-                botReadyAt: Math.max(0, soloFighter.readyAt - time), mobReadyAt: Math.max(0, mobReadyAt - time)
+                botReadyAt: Math.max(0, soloFighter.readyAt - time), mobReadyAt: Math.max(0, mobReadyAt - time),
+                mobFight: coldMobFightSave(mobFight, time)
             }) : null,
             died,
             hp: Math.max(0, Math.round(vitals.hp)),
@@ -1558,7 +1616,7 @@ function chooseHeal(profile, allies, mp, cooldowns, time, caster, mob) {
             const damage = 70 * Number(mob.pAtk || 0) / Math.max(1, profile.pDef)
                 * coldNpcWeaponModifier(mob, profile, time)
                 * actionDelayMs(profile, candidate, shot?.spiritshot === true)
-                / Math.max(250, Formulas.calcMeleeAtkTime(mob.atkSpd));
+                / mobAttackMs(mob);
             // A weak solo heal that loses more HP during its cast creates an
             // endless heal loop. Keep attacking or use a useful sustain skill.
             if (Math.min(profile.maxHp - caster.vitals.hp, amount) <= damage) return false;
@@ -1681,7 +1739,7 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
         accur: 1, evasion: 0, critical: 0, atkSpd: 253
     };
     if (mob.avoided) return { avoided: true, reason: mob.reason, members: fighters, won: false };
-    const mobFight = coldMobFight(mob);
+    const mobFight = coldMobFight(mob, pending?.mobFight);
     let mobHp = persistedRaid.mob
         ? (persistedRaid.hp ?? mob.maxHp)
         : (pending?.hp ?? mob.maxHp);
@@ -1764,7 +1822,7 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
             }
             const raidPressure = coldRaidMinionPressure(mob, mobHp, raidControlCapacity);
             const bossPAtk = Number(mob.raidBossPAtk || mob.pAtk);
-            let delayMs = Math.max(250, Formulas.calcMeleeAtkTime(mob.atkSpd));
+            let delayMs = mobAttackMs(mob);
             if (target) {
                 const action = coldMobAction(mob, mobFight, target, { time, at: timestamp + time, rng, mobHp, pAtk: bossPAtk });
                 delayMs = action.delayMs;
@@ -1808,6 +1866,7 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
         encounter: mobHp > 0 && (sharedEncounter || fighters.every(fighter => fighter.vitals.hp > 0))
             ? PveEncounter.save(pending, encounterKey, mob, mobHp, timestamp, {
                 mobReadyAt: Math.max(0, mobReadyAt - time),
+                mobFight: coldMobFightSave(mobFight, time),
                 soulCrystalMarks: Object.fromEntries(fighters.filter(f => f.soulCrystalMark).map(f => [f.state.characterId,f.soulCrystalMark])),
                 readyAt: Object.fromEntries(fighters.map(f => [f.state.characterId, Math.max(0, f.readyAt - time)])),
                 hate: Object.fromEntries(fighters.filter(f => f.vitals.hp > 0 && f.hate > 0).map(f => [f.state.characterId, f.hate]))
@@ -1868,7 +1927,7 @@ const BackgroundResolver = {
     combat: { chooseSkill, chooseChargeSkill, coldChargeState, expireCharges, addCharges, consumeCharges,
         spendSkill, settleCharges, attackDamage,
         chooseHeal, applyAllyHeal, applyPartyHotTicks, actionDelayMs, hitSucceeds, coldRaidControlCapacity, coldRaidMinionPressure,
-        coldRaidEncounterProfile, coldMobFight, coldMobAction },
+        coldRaidEncounterProfile, coldMobFight, coldMobFightSave, coldMobAction },
     resolveDeathRecovery,
     resolveRest,
     resolvePartyFight: options => countedBuilds('fight', 'party', resolvePartyFight, options),

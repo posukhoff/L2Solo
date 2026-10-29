@@ -665,7 +665,7 @@ class Npc extends NpcModel {
     }
 
     selectCombatSkill(actor, rng = Math.random) {
-        if (!EffectRestrictions.canCast(this)) return null;
+        if (!this.fetchCombatSkills().length || !EffectRestrictions.canCast(this)) return null;
         const now = Date.now();
         const picked = NpcCombatChoice.select({
             skills: this.fetchCombatSkills(),
@@ -693,18 +693,10 @@ class Npc extends NpcModel {
         return picked?.skill || null;
     }
 
-    isCombatSkillCategory(skill) {
-        return NpcCombatChoice.category(skill);
-    }
-
-    fetchCombatSkillChance(skill, category, aiType = 'fighter', targetAiType = 'fighter') {
-        return NpcCombatChoice.chance(skill, category, aiType, targetAiType);
-    }
-
     canUseCombatSkillOn(actor, skill) {
         if (!actor || actor === this) return true;
         const impairments = EffectStore.impairments(actor);
-        switch (this.isCombatSkillCategory(skill)) {
+        switch (NpcCombatChoice.category(skill)) {
             case 'hard_control':
             case 'sleep':
                 return !impairments.disabled;
@@ -724,7 +716,7 @@ class Npc extends NpcModel {
     markSkillReuse(skill, now = Date.now()) {
         this.skillReuseUntil.set(
             skill.fetchSelfId(),
-            now + Math.max(1000, Number(skill.fetchReuseTime()) || 0)
+            now + NpcCombatChoice.reuseMs(skill)
         );
     }
 

@@ -12,8 +12,6 @@ const Formulas = invoke('GameServer/Formulas');
 const HitRules = invoke('GameServer/Combat/HitRules');
 const ServerResponse = invoke('GameServer/Network/Response');
 
-const COND_BEHIND = 0x0008;
-const COND_CRIT = 0x0010;
 
 function isBotSummonActor(session, actor) {
     const candidate = session || actor?.session;
@@ -1100,26 +1098,11 @@ function calcAggroDamage(skill, target) {
 }
 
 function rollBlow(actor, target, semantic, attack, rng) {
-    const condition = Number(semantic.requires?.condition) || 0;
-    if ((condition & COND_BEHIND) !== 0 && !attack?.isBehindTarget?.(actor, target)) {
-        return false;
-    }
-
-    if (condition !== 0 && (condition & COND_CRIT) === 0) {
-        return true;
-    }
-
-    if (condition === 0) return true;
-
     const behind = attack?.isBehindTarget?.(actor, target) === true;
     const front = !behind && attack?.isFacing?.(target, actor, 120) === true;
-    const baseChance = behind ? 70 : front ? 50 : 60;
-    const dex = Number(actor?.fetchDex?.()) || 20;
-    const chance = baseChance
-        * (1 + ((dex - 20) / 100))
-        * EffectStats.multiplier(actor, 'blowRateMul')
-        * EffectStats.situationalMultiplier(actor, 'blowRateMul', { behind, front });
-    return Math.max(0, chance) >= rng() * 100;
+    return HitRules.blowLands(semantic, { dex: Number(actor?.fetchDex?.()) || 20, behind, front,
+        rateMul: EffectStats.multiplier(actor, 'blowRateMul')
+            * EffectStats.situationalMultiplier(actor, 'blowRateMul', { behind, front }) }, rng);
 }
 
 function applyNegate(session, target, semantic) {

@@ -101,6 +101,12 @@ assert.notStrictEqual(three.patch.stats.lastReason, 'solo_recovery_needed');
 const pack = hunt(3);
 assert.deepStrictEqual([pack.debug.pulls, pack.patch.stats.lastReason], [0, 'no_safe_solo_target'],
     'a weaponless level-10 hunter leaves a field of gremlin trios alone');
+// After a win the hunter's remaining HP meets the usual pull too: at 200 HP it takes a lone
+// gremlin but rests before a field of pairs.
+const hurt = { ...hunter(), vitals: { hp: 200, maxHp: 99999, mp: 99999, maxMp: 99999 } };
+const nextFight = pull => Resolver.resolveFight({ state: hurt, spot: gremlins(pull), rng: () => 0, timestamp: 1e12 });
+assert(!nextFight(0).avoided, 'a lone gremlin is fought at 200 HP');
+assert.strictEqual(nextFight(2).reason, 'solo_recovery_needed', 'a usual pair is rested for at 200 HP');
 
 // Area and aura skills hit every mob of the pull (F20, plan 3.3(в)): a nuker whose
 // only spell strikes an area kills a pull of three about as fast as one mob, while

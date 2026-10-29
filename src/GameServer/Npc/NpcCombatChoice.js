@@ -65,6 +65,16 @@ function chance(skill, kind, aiType = 'fighter', targetAiType = 'fighter') {
     return targetAiType === 'mage' ? 1 : 3;
 }
 
+// The AI enum a template names (any of its spellings), or null: corpse and
+// healer monsters fight as balanced ones.
+function aiTypeOfModel(model) {
+    const value = model?.ai ?? model?.AI ?? model?.aiType ?? model?.template?.ai ?? model?.template?.AI ?? model?.template?.aiType;
+    if (value === undefined || value === null) return null;
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === 'corpse' || normalized === 'healer') return 'balanced';
+    return AI_TYPES.has(normalized) ? normalized : null;
+}
+
 // Most imported C4 templates carry no AI enum: long-range magic damage reads
 // as a mage, a long attack radius as an archer; an explicit value wins.
 function aiTypeFor(explicit, skills, attackRadius) {
@@ -81,28 +91,47 @@ function aiTypeFor(explicit, skills, attackRadius) {
     return 'fighter';
 }
 
+// A skill's reuse as the monster keeps it: at least a second (L2J C4).
+function reuseMs(skill) {
+    return Math.max(1000, Number(skill?.fetchReuseTime?.()) || 0);
+}
+
+// The skills by what select() asks of them, once per skill list (a hot Npc
+// keeps its list, the cold fight one per species): self buffs, and enemy
+// skills by category in their order.
+const KINDS = ['hard_control', 'sleep', 'root', 'mute', 'debuff', 'damage'];
+const indexes = new WeakMap();
+function indexOf(skills) {
+    let index = indexes.get(skills);
+    if (index) return index;
+    index = { selfBuffs: [], enemy: Object.fromEntries(KINDS.map(kind => [kind, []])) };
+    for (const skill of skills) {
+        const target = skill.fetchTargetKind?.();
+        const semantic = skill.fetchSemantic?.() || {};
+        if (target === 'self') {
+            if (semantic.effectType === 'buff' && semantic.effect) index.selfBuffs.push(skill);
+        } else if (target === 'enemy') index.enemy[category(skill)].push(skill);
+    }
+    indexes.set(skills, index);
+    return index;
+}
+
 // One combat tick's pick: { skill, category } or null (the weapon hit).
-// skills: the monster's combat skills; usable(skill): MP and reuse allow it;
-// buffNeeded(skill): a self buff it does not hold; hasTarget; impairments of
-// the target ({ disabled, rooted, silenced }); aiType, targetAiType;
-// debuffReady: DEBUFF_GAP_MS since its last debuff.
+// skills: the monster's combat skills (a list kept between ticks);
+// usable(skill): MP and reuse allow it; buffNeeded(skill): a self buff it
+// does not hold; hasTarget; impairments of the target ({ disabled, rooted,
+// silenced }); aiType, targetAiType; debuffReady: DEBUFF_GAP_MS since its
+// last debuff.
 function select({ skills, usable, buffNeeded, hasTarget = true, impairments = {}, aiType = 'fighter',
     targetAiType = 'fighter', debuffReady = true, rng = Math.random }) {
-    const ready = skills.filter(usable);
-    const selfBuff = ready.find((skill) => {
-        if (skill.fetchTargetKind() !== 'self') return false;
-        const semantic = skill.fetchSemantic?.() || {};
-        if (semantic.effectType !== 'buff' || !semantic.effect) return false;
-        return buffNeeded(skill);
-    });
+    const index = indexOf(skills);
+    const selfBuff = index.selfBuffs.find((skill) => usable(skill) && buffNeeded(skill));
     if (selfBuff) return { skill: selfBuff, category: 'buff' };
-
-    const enemySkills = ready.filter((skill) => skill.fetchTargetKind?.() === 'enemy');
-    if (enemySkills.length === 0 || !hasTarget) return null;
-    const passes = (skill, kind) => Number(rng()) * 100 <= chance(skill, kind, aiType, targetAiType);
+    if (!hasTarget) return null;
     const pick = (kind, allowed = true) => {
         if (!allowed) return null;
-        const selected = enemySkills.filter((skill) => category(skill) === kind).find((skill) => passes(skill, kind));
+        const selected = index.enemy[kind].find((skill) => usable(skill)
+            && Number(rng()) * 100 <= chance(skill, kind, aiType, targetAiType));
         return selected ? { skill: selected, category: kind } : null;
     };
     // L2J checks special utility categories before ordinary damage. A failed
@@ -113,4 +142,5 @@ function select({ skills, usable, buffNeeded, hasTarget = true, impairments = {}
         || pick('debuff', debuffReady) || pick('damage');
 }
 
-module.exports = { AI_TYPES, DEBUFF_GAP_MS, semanticEffect, skillDistance, category, chance, aiTypeFor, select };
+module.exports = { AI_TYPES, DEBUFF_GAP_MS, semanticEffect, skillDistance, category, chance, aiTypeOfModel, aiTypeFor, reuseMs,
+    select };
