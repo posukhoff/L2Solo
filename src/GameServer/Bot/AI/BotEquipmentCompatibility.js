@@ -71,13 +71,15 @@ const CLASS_PROFILES = {
         shield: true,
         weaponHint: 'one_handed_blunt'
     },
+    // Orc Raider: the Destroyer's masteries from 20 (two-handed weapon,
+    // polearm, no shield mastery; Mobius C4 skill trees), user 10-30.
     45: {
-        weaponKinds: ['Weapon.Blunt', 'Weapon.Pole'],
-        preferredWeaponKinds: ['Weapon.Blunt'],
+        weaponKinds: ['Weapon.GreatSword', 'Weapon.Blunt', 'Weapon.Pole'],
+        preferredWeaponKinds: ['Weapon.GreatSword'],
         armorStyle: 'heavy',
-        twoHandedWeaponKinds: ['Weapon.Pole'],
-        shield: true,
-        weaponHint: 'blunt_or_polearm'
+        twoHandedWeaponKinds: ['Weapon.GreatSword', 'Weapon.Blunt', 'Weapon.Pole'],
+        shield: false,
+        weaponHint: 'two_handed_sword_or_blunt'
     },
     46: {
         weaponKinds: ['Weapon.GreatSword', 'Weapon.Blunt', 'Weapon.Pole'],

@@ -26,7 +26,7 @@ const profiles = [
     { classId: 3, role: 'dps', armor: 'heavy', weapon: 'Weapon.Pole', shield: false },
     { classId: 21, role: 'buffer', armor: 'heavy', weapon: 'Weapon.Sword', shield: true },
     { classId: 34, role: 'buffer', armor: 'heavy', weapon: 'Weapon.Dual', shield: false },
-    { classId: 45, role: 'dps', armor: 'heavy', weapon: 'Weapon.Blunt', shield: true },
+    { classId: 45, role: 'dps', armor: 'heavy', weapon: 'Weapon.GreatSword', shield: false }, // Destroyer's masteries (user 10-30)
     { classId: 46, role: 'dps', armor: 'heavy', weapon: 'Weapon.GreatSword', shield: false },
     { classId: 47, role: 'dps', armor: 'light', weapon: 'Weapon.DualFist', shield: false },
     { classId: 55, role: 'spoiler', armor: 'heavy', weapon: 'Weapon.Blunt', shield: true },
