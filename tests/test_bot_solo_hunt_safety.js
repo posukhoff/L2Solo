@@ -80,12 +80,14 @@ try {
         state: fighter, spot: ground, elapsedMs: 60000, timestamp: at, rng: () => 0.5 });
     // T107: between fights the bot may heal where that beats sitting (gapHeals); in the fight it must not.
     assert.equal(fight.debug.heals - fight.debug.gapHeals, 0, 'a heal weaker than damage during its cast cannot replace the finishing attack');
-    // T100: the priced pick (Aura Burn) kills fast enough for a second lizard
-    // within the minute; the remaining HP still admits it.
-    assert.equal(fight.debug.wins, 2, 'the native rotation finishes the lizards');
+    // T100: the priced pick (Aura Burn) kills fast enough for more lizards
+    // within the minute; the remaining HP still admits them. T106: the walk
+    // between the six (10 s each) holds the minute to four kills, and the
+    // last walk engages a fifth.
+    assert.equal(fight.debug.wins, 4, 'the native rotation finishes the lizards');
     assert.equal(fight.debug.died, false);
-    assert.equal(fight.debug.attemptedFights, 2, 'remaining HP must be checked before the next voluntary mob');
-    assert.equal(fight.patch.activity, 'hunting', 'two quick kills leave enough HP to keep hunting');
+    assert.equal(fight.debug.attemptedFights, 5, 'remaining HP must be checked before the next voluntary mob');
+    assert.equal(fight.patch.activity, 'hunting', 'quick kills leave enough HP to keep hunting');
 } finally { Cold.profileFor = savedProfile; Cold.fightProfile = savedFight; Spots.cache = savedSpots; }
 
 // A wealthy reward forecast or a future gear target cannot admit a lethal

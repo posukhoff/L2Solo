@@ -167,7 +167,7 @@ module.exports = {
             const hpRatio = bot.fetchHp() / bot.fetchMaxHp();
             const mpRatio = bot.fetchMp() / bot.fetchMaxMp();
             const recovered = hpRatio >= 0.95 && (
-                !BotRoles.shouldRestForMana(bot) || mpRatio >= 0.95
+                !RestPolicy.sitsForMana(bot) || mpRatio >= 0.95
             );
 
             // A companion can join while it is already sitting from a prior
@@ -263,7 +263,7 @@ module.exports = {
         const restingWithLeader = session.partyCompanion === true
             && session.followPlayerSession?.actor?.state?.fetchSeated?.() === true;
         if (hpRatio >= 0.95 && (
-            !BotRoles.shouldRestForMana(bot) || mpRatio >= 0.95
+            !RestPolicy.sitsForMana(bot) || mpRatio >= 0.95
         ) && !restingWithLeader) {
             session.recoveryLocked = false;
             delete session.explicitRestOrder;

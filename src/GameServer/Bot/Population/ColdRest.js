@@ -52,11 +52,11 @@ function coldRestRegenPerTick(state, options = {}) {
 
 function requiresManaRecovery(state, options = {}) {
     if (typeof options.requireMana === 'boolean') return options.requireMana;
-    return RestPolicy.restsForMana(state, options.party === true);
+    return RestPolicy.sitsForMana(state, options.party === true);
 }
 
 // The seated seconds that refill missingHp and missingMp (MP only for a bot
-// that rests for mana). options.regen: a coldRestRegenPerTick the caller holds.
+// that sits for mana, RestPolicy.sitsForMana). options.regen: a coldRestRegenPerTick the caller holds.
 function restSeconds(state, missingHp, missingMp, options = {}) {
     const regen = options.regen || coldRestRegenPerTick(state, options);
     const hpSeconds = Math.max(0, missingHp) / Math.max(0.01, regen.hp / (Formulas.REGEN_TICK_MS / 1000));

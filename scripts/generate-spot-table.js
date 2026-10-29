@@ -426,17 +426,11 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
 }
 
 // Kills per hour the spot's monsters allow a bot that may fight density of
-// them: the author's fights per hunt cycle over the author's cycle lengths.
+// them: one per walk to the next (BackgroundResolver.soloWalkMs, T106) at
+// the cold trip's run speed (the row's bot is not known here).
 function fightCap(density) {
     const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
-    let fights = 0;
-    let ms = 0;
-    for (let i = 0; i < 1000; i++) {
-        const delay = BR.huntCycleDelayMs((i + 0.5) / 1000);
-        fights += BR.soloFightCount({ density }, delay, density);
-        ms += delay;
-    }
-    return fights / ms * 3600000;
+    return 3600000 / Math.max(1, BR.soloWalkMs(density, invoke('GameServer/Bot/Population/ColdTrip').RUN_SPEED));
 }
 
 // The kills by species, [selfId, share, ...] by share (the first MIX_SPECIES).
