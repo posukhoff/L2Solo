@@ -1209,8 +1209,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     const shotPlan = ShotStock.planForState(state);
     const shotItemId = shotPlan.selfId;
     const potionItemId = HealingPotionStock.purchasePotionFor(state).selfId;
-    const withoutShots = bestSpotId ? Table.value(bestSpotId, tableRole, state.level, false) : null;
-    const shotPolicy = ShotStock.usePolicy(state, { plan: shotPlan, bestTable, withoutShots,
+    const shotPolicy = ShotStock.usePolicy(state, { plan: shotPlan, bestTable,
         hourAdena: Hunt.huntHour(hunt, state), unitPrice: price(shotItemId) });
     const shotBenefit = shotPolicy.benefit;
     const beginnerCurrent = ShotStock.beginnerAmount(state, shotPlan);

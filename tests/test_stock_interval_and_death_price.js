@@ -32,7 +32,6 @@ const native = Economy.basics(warrior, deps), stock = native.stock('shots');
 assert.equal(Math.round(stock.usePerHour), 810);
 const use = stock.usePerHour;
 const withShots = Table.value(native.bestSpotId, native.tableRole, warrior.level, true);
-const withoutShots = Table.value(native.bestSpotId, native.tableRole, warrior.level, false);
 const Floor = invoke('GameServer/Bot/Population/SurvivalFloor');
 // ARCH-NOTE: empty positive-use kit stacks consume their future slots while
 // sizing E9's interval, so a refill does not sell itself back to the NPC.
@@ -42,7 +41,8 @@ const freeSlots = Math.max(0, Floor.inventoryLimit(0) - Floor.stateInventory(war
 const bagT = withShots.stacks === null ? 24 : withShots.stacks === 0 ? 24
     : Math.max(.5, Math.min(24, freeSlots / withShots.stacks));
 const noHistoryT = Math.min(2, bagT);
-const b = 1 - withoutShots.exp / withShots.exp;
+// The farm the shots give: the best spot with shots against the best without.
+const b = 1 - Table.best(native.tableRole, warrior.level, false).exp / Table.best(native.tableRole, warrior.level, true).exp;
 assert(b >= withShots.shots * stock.unitPrice / native.hourAdena);
 for (const commitment of [.1, .9]) {
     const state = { ...warrior, stats: { ...warrior.stats, persona: { traits: { commitment } } } };

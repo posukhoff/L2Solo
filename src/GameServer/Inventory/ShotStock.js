@@ -161,19 +161,21 @@ function usePolicy(state, prepared = {}) {
     const plan = prepared.plan || planForState(state);
     const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
-    let best = prepared.bestTable, without = prepared.withoutShots, hour = prepared.hourAdena;
+    const tableRole = BotRoles.tableRoleFor(state);
+    let best = prepared.bestTable, hour = prepared.hourAdena;
     if (!Object.hasOwn(prepared, 'bestTable')) {
-        const tableRole = BotRoles.tableRoleFor(state);
         const hunt = Hunt.huntIncome(state, prepared.timestamp || Date.now(), prepared.mode);
         const spot = hunt.spotId || state.spotId;
         best = (spot && Table.value(spot, tableRole, state.level, hunt.useShots !== false))
             || Table.best(tableRole, state.level, hunt.useShots !== false);
-        without = spot ? Table.value(spot, tableRole, state.level, false) : null;
         hour = Hunt.huntHour(hunt, state);
     }
     const rawUse = plan.perAction > 0 ? Math.max(0, Number(best?.shots) || 0) : 0;
-    // The farm the shots give: the share of the hour's exp that comes from them (0..1).
-    const benefit = Math.max(0, 1 - Math.max(0, Number(without?.exp) || 0) / Math.max(1, Number(best?.exp) || 0));
+    // The farm the shots give (0..1): the share of the hour's exp they add, the
+    // best spot with shots against the best without (often another spot). One
+    // spot's pair reads 0 where both rows reach its fight cap.
+    const withBest = Table.best(tableRole, state.level, true), withoutBest = Table.best(tableRole, state.level, false);
+    const benefit = Math.max(0, 1 - Math.max(0, Number(withoutBest?.exp) || 0) / Math.max(1, Number(withBest?.exp) || 0));
     const buyback = BeginnerShots.isRestricted(plan.selfId) ? 0
         // lazy: cycle PriceDecision's chain loads this module
         : invoke('GameServer/Bot/Economy/PriceDecision').buyback(plan.selfId);
