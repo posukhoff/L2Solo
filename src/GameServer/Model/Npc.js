@@ -1,6 +1,7 @@
 const CreatureModel = invoke('GameServer/Model/Creature');
 const Formulas      = invoke('GameServer/Formulas');
 const NpcCombatChoice = invoke('GameServer/Npc/NpcCombatChoice');
+const NpcTraits = invoke('GameServer/Npc/NpcTraits');
 
 class NpcModel extends CreatureModel {
 
@@ -81,7 +82,7 @@ class NpcModel extends CreatureModel {
     }
 
     fetchUndead() {
-        return this.model.undead === true;
+        return NpcTraits.isUndead(this.model);
     }
 
     fetchRace() {

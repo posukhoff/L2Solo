@@ -11,6 +11,7 @@ const { skillTreeEntries, learnedTreeRow, treeSkillLevel } = require('./ColdSkil
 const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const SkillRequirements = invoke('GameServer/Skills/SkillRequirements');
 const WeaponMask = invoke('GameServer/Skills/WeaponMask');
+const NpcTraits = invoke('GameServer/Npc/NpcTraits');
 const GameTime = invoke('GameServer/World/GameTime');
 const EffectStore = invoke('GameServer/Effects/EffectStore');
 const C4ArmorSets = invoke('GameServer/Items/C4ArmorSets');
@@ -313,7 +314,7 @@ function npcCombatStats(npc) {
         runSpd: number(npc.speed?.run),
         weaponKind: String(weapon?.template?.kind || ''),
         race: String(npc.traits?.race || '').toLowerCase(),
-        undead: npc.traits?.undead === true,
+        undead: NpcTraits.isUndead(npc.traits),
         vulnerabilities,
         rewardExp: Math.max(0, Formulas.calcAcquiredExp(level, number(npc.rewards?.exp))),
         rewardSp: Math.max(0, number(npc.rewards?.sp))

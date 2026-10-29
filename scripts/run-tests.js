@@ -729,6 +729,7 @@ const tests = [
     'tests/test_spot_crowd_share.js',
     'tests/test_hunt_kit_surface.js',
     'tests/test_two_handed_blunt_mastery.js',
+    'tests/test_npc_undead_race.js',
     'tests/test_solo_gate_fight_model.js',
     'tests/test_player_combat_stance.js',
     'tests/test_effect_restrictions.js',
