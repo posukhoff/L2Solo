@@ -1937,12 +1937,19 @@ function soloPickOptions(state) {
 // alone (BotTargetMatchup.speciesPulls under the pick's options; 0 for one it
 // may not hunt), once per round: a solo hunter takes only the pulls it
 // survives (user 10-29), so a spot's other mobs neither feed its kills nor
-// widen its round. Null for a spot without spawn groups.
+// widen its round. Null for a spot without spawn groups or with none the
+// verdict knows (the fight then takes the spot's own mob: resolveFight).
 function admittedShares(state, spot, timestamp) {
     if (!spot?.npcEntries?.length) return null;
     const profiles = TargetMatchup.coldProfiles(botCombatStats(state, timestamp), state, timestamp);
     const options = soloPickOptions(state);
-    return new Map(spot.npcEntries.map(entry => [entry, TargetMatchup.speciesPulls(profiles, entry, options)?.share ?? 0]));
+    let known = false;
+    const shares = new Map(spot.npcEntries.map(entry => {
+        const verdict = TargetMatchup.speciesPulls(profiles, entry, options);
+        known ||= !!verdict;
+        return [entry, verdict?.share ?? 0];
+    }));
+    return known ? shares : null;
 }
 
 // The spot's monsters a solo bot may fight: its density times the admitted
