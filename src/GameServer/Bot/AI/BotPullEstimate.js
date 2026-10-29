@@ -1,9 +1,10 @@
 // How many mobs come when one is hit (E72, F20; design 13.8, 13.12): the
 // target, its same-clan helpers inside its help radius (SocialAggro), the
 // aggressive mobs within the aggro radius (NpcAggro) and a leader's minion
-// group. One answer for hot target choice and cold fights. The table is one
-// mean per spawn group (a spot's npc entry), computed once from the spawns at
-// start; mobs of a neighbouring spot cell are not counted.
+// group. One answer for hot target choice and cold fights. The table is, per
+// spawn group (a spot's npc entry), the share of its spawns by pull size (and
+// their mean), computed once from the spawns at start; mobs of a neighbouring
+// spot cell are not counted.
 // Pure: the cold worker loads this module without the live world.
 
 // The record of a live npc for pullSize.
@@ -53,28 +54,29 @@ function minionJoiners(groupsByBoss) {
     return joiners;
 }
 
-// Sets entry.pull (one decimal) on each spot entry whose mean pull is above
-// one, from the spot's spawn records, and drops the records.
+// Sets, on each spot entry with a spawn whose pull is above one, entry.pulls
+// ([[size, share], ...] by size, shares to three decimals: user 10-29, a
+// spot is a mix of lone mobs, pairs and packs) and entry.pull (their mean,
+// one decimal), from the spot's spawn records, and drops the records.
 function annotate(spots, rules, joiners = new Map()) {
     let entries = 0, pulls = 0;
     for (const spot of spots) {
         const records = spot.records || [];
-        const sums = new Map();
+        const sizes = new Map();
         for (const record of records) {
             const size = pullSize(record, records, rules, joiners.get(Number(record.selfId)));
-            const sum = sums.get(record.selfId) || { size: 0, count: 0 };
-            sum.size += size;
-            sum.count += 1;
-            sums.set(record.selfId, sum);
+            const bySize = sizes.get(record.selfId) || new Map();
+            bySize.set(size, (bySize.get(size) || 0) + 1);
+            sizes.set(record.selfId, bySize);
         }
         for (const entry of spot.npcEntries || []) {
             entries++;
-            const sum = sums.get(entry.selfId);
-            const pull = sum ? Math.round(sum.size / sum.count * 10) / 10 : 1;
-            if (pull > 1) {
-                entry.pull = pull;
-                pulls++;
-            }
+            const bySize = sizes.get(entry.selfId);
+            if (!bySize || ![...bySize.keys()].some(size => size > 1)) continue;
+            const count = [...bySize.values()].reduce((sum, n) => sum + n, 0);
+            entry.pulls = [...bySize].sort((a, b) => a[0] - b[0]).map(([size, n]) => [size, Math.round(n / count * 1000) / 1000]);
+            entry.pull = Math.round([...bySize].reduce((sum, [size, n]) => sum + size * n, 0) / count * 10) / 10;
+            pulls++;
         }
         delete spot.records;
     }
@@ -95,6 +97,28 @@ function pullView(target, k) {
     return { ...target, maxHp: target.maxHp * k, pAtk: target.pAtk * (k + 1) / 2, pull: k };
 }
 
+// An entry's pulls by size, [[size, share], ...]: its measured ones, else the
+// two whole sizes around its mean (rollPull's draw), else one mob.
+function pullsOf(entry) {
+    if (Array.isArray(entry?.pulls) && entry.pulls.length) return entry.pulls;
+    const mean = Number(entry?.pull) || 1;
+    if (!(mean > 1)) return [[1, 1]];
+    const whole = Math.floor(mean), part = mean - whole;
+    return part > 0 ? [[whole, 1 - part], [whole + 1, part]] : [[whole, 1]];
+}
+
+// One size from pulls [[size, share], ...] (shares need not sum to one).
+function rollPulls(pulls, rng) {
+    const total = pulls.reduce((sum, [, share]) => sum + share, 0);
+    if (pulls.length === 1 || !(total > 0)) return pulls[0]?.[0] || 1;
+    let needle = rng() * total;
+    for (const [size, share] of pulls) {
+        needle -= share;
+        if (needle < 0) return size;
+    }
+    return pulls[pulls.length - 1][0];
+}
+
 // A whole number of mobs for one new fight, from the spot's mean.
 function rollPull(mean, rng) {
     const whole = Math.max(1, Math.floor(Number(mean) || 1));
@@ -102,4 +126,4 @@ function rollPull(mean, rng) {
     return part > 0 && rng() < part ? whole + 1 : whole;
 }
 
-module.exports = { record, pullSize, minionJoiners, annotate, entryPull, pullView, rollPull };
+module.exports = { record, pullSize, minionJoiners, annotate, entryPull, pullView, rollPull, pullsOf, rollPulls };

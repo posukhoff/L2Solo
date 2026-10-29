@@ -414,6 +414,33 @@ function speciesVerdict(profiles, selfId, options = {}) {
         { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel }, options.pull);
 }
 
+// One spawn group's verdict over its pulls (BotPullEstimate.pullsOf): the
+// pulls the profiles survive (allowed, their shares as measured), their
+// share of the group, and the efficiency over all its pulls; null for a
+// species no one hunts. The bot takes only the spawns it can (user 10-29).
+function entryVerdict(verdicts, entry, verdictOptions) {
+    const allowed = [];
+    let efficiency = 0, share = 0, known = false;
+    for (const [size, part] of Pull.pullsOf(entry)) {
+        const verdict = npcVerdict(verdicts, Number(entry.selfId), verdictOptions, size);
+        if (!verdict) continue;
+        known = true;
+        efficiency += part * verdict.efficiency;
+        if (verdict.canHunt) {
+            allowed.push([size, part]);
+            share += part;
+        }
+    }
+    return known ? { efficiency, canHunt: share > 0, share, allowed } : null;
+}
+
+// The spawn group's verdict for profiles under safety options, as a spot
+// search reads it (spotMatchup), for a solo fight's pick (npcForSpot).
+function speciesPulls(profiles, entry, options = {}) {
+    return entryVerdict(optionVerdicts(profiles, options), entry,
+        { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel });
+}
+
 function spotMatchup(spot, profiles, options = {}) {
     if (!profiles?.length) return evaluate([], {});
     let total = 0, effective = 0, eligible = false, safe = 0;
@@ -424,14 +451,13 @@ function spotMatchup(spot, profiles, options = {}) {
     if (known) return known;
     const verdictOptions = { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel };
     for (const entry of spot.npcEntries || []) {
-        const verdict = npcVerdict(verdicts, Number(entry.selfId), verdictOptions, entry.pull);
+        const verdict = entryVerdict(verdicts, entry, verdictOptions);
         if (!verdict) continue;
         const weight = Math.max(1, number(entry.count));
         total += weight;
         effective += weight * Math.min(1, verdict.efficiency);
-        const canHunt = verdict.canHunt;
-        eligible ||= canHunt;
-        if (canHunt) safe += weight;
+        eligible ||= verdict.canHunt;
+        safe += weight * verdict.share;
     }
     const efficiency = total ? effective / total : 1;
     const safeFraction = total ? safe / total : 1;
