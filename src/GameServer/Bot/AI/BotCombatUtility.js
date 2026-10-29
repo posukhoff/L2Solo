@@ -88,12 +88,12 @@ function normalAttackMs(bot) {
 // hot Automation's seated regeneration per its 3 s tick.
 function seatedMpPerMs(bot) {
     if (bot?.fetchSeatedMpPerMs) return bot.fetchSeatedMpPerMs();
-    return Math.max(0, Number(bot?.automation?.fetchRevMpAmount?.(bot, { seated: true })) || 0) / 3000;
+    return Math.max(0, Number(bot?.automation?.fetchRevMpAmount?.(bot, { seated: true })) || 0) / Formulas.REGEN_TICK_MS;
 }
 
 function seatedHpPerMs(bot) {
     if (bot?.fetchSeatedHpPerMs) return bot.fetchSeatedHpPerMs();
-    return Math.max(0, Number(bot?.automation?.fetchRevHpAmount?.(bot, { seated: true })) || 0) / 3000;
+    return Math.max(0, Number(bot?.automation?.fetchRevHpAmount?.(bot, { seated: true })) || 0) / Formulas.REGEN_TICK_MS;
 }
 
 // The seated ms one spent MP costs a bot that rests for mana (T100), else 0.

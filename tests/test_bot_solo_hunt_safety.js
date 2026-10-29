@@ -78,7 +78,8 @@ try {
         stats: { classId: 13, role: 'mage' } };
     const fight = invoke('GameServer/Bot/Population/BackgroundResolver').resolveSolo({
         state: fighter, spot: ground, elapsedMs: 60000, timestamp: at, rng: () => 0.5 });
-    assert.equal(fight.debug.heals, 0, 'a heal weaker than damage during its cast cannot replace the finishing attack');
+    // T107: between fights the bot may heal where that beats sitting (gapHeals); in the fight it must not.
+    assert.equal(fight.debug.heals - fight.debug.gapHeals, 0, 'a heal weaker than damage during its cast cannot replace the finishing attack');
     // T100: the priced pick (Aura Burn) kills fast enough for a second lizard
     // within the minute; the remaining HP still admits it.
     assert.equal(fight.debug.wins, 2, 'the native rotation finishes the lizards');

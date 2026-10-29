@@ -4,6 +4,7 @@ const Timer          = invoke('GameServer/Timer');
 const SpeckMath      = invoke('GameServer/SpeckMath');
 const EffectStats    = invoke('GameServer/Effects/EffectStats');
 const AttackRange    = invoke('GameServer/Actor/AttackRange');
+const Formulas       = invoke('GameServer/Formulas');
 
 class Automation extends SelectedModel {
     static needsGeodataApproach(session, src, dst) {
@@ -63,7 +64,7 @@ class Automation extends SelectedModel {
         this.stopReplenish();
         this.timer.replenish = setInterval(() => {
             this.replenishVitalsTick(creature);
-        }, 3000);
+        }, Formulas.REGEN_TICK_MS);
     }
 
     replenishVitalsTick(creature) {

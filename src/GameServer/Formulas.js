@@ -22,6 +22,8 @@ const Formulas = {
     DEFAULT_SHIELD_RATE: 20,
     DEFAULT_SHIELD_DEFENCE_ANGLE: 120,
     DEFAULT_PERFECT_SHIELD_BLOCK_RATE: 0,
+    // A player's HP and MP regain one tick every 3 s (Automation.replenishVitals).
+    REGEN_TICK_MS: 3000,
 
     calcBaseMod: (() => {
         function func(start, end, base, multiplier) {
@@ -157,10 +159,18 @@ const Formulas = {
         return { drawMs, reuseMs, cycleMs: drawMs + reuseMs };
     },
 
-    // One normal attack, the hot Attack.js cycle: a bow draws and reloads
-    // (calcBowAttackTimes), any other weapon swings once per calcMeleeAtkTime.
-    normalAttackMs(atkSpd, { bow = false, reuseDelay = 1500, reuseMul = 1 } = {}) {
-        return bow ? this.calcBowAttackTimes(atkSpd, reuseDelay ?? 1500, reuseMul).cycleMs : this.calcMeleeAtkTime(atkSpd);
+    // One normal attack's draw and whole cycle, as hot players and monsters
+    // attack (Attack.js, Npc.js): a bow draws and reloads
+    // (calcBowAttackTimes), any other weapon swings once per calcMeleeAtkTime
+    // and lands at 64.4% of it.
+    attackTimes(atkSpd, { bow = false, reuseDelay = 1500, reuseMul = 1 } = {}) {
+        if (bow) return this.calcBowAttackTimes(atkSpd, reuseDelay ?? 1500, reuseMul);
+        const cycleMs = this.calcMeleeAtkTime(atkSpd);
+        return { drawMs: cycleMs * 0.644, cycleMs };
+    },
+
+    normalAttackMs(atkSpd, options = {}) {
+        return this.attackTimes(atkSpd, options).cycleMs;
     },
 
     calcRemoteAtkTime(time, castSpd) {

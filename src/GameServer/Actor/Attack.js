@@ -161,11 +161,8 @@ class Attack {
 
         const attackSpeed = actor.fetchCollectiveAtkSpd();
         const weapon = actor.backpack?.fetchEquippedWeapon?.();
-        const timing = rangedAttack
-            ? Formulas.calcBowAttackTimes(attackSpeed, weapon?.fetchAttackReuseDelay?.() ?? 1500,
-                EffectStats.multiplier(actor, 'atkReuseMul'))
-            : { drawMs: Formulas.calcMeleeAtkTime(attackSpeed) * 0.644,
-                cycleMs: Formulas.calcMeleeAtkTime(attackSpeed) };
+        const timing = Formulas.attackTimes(attackSpeed, { bow: rangedAttack,
+            reuseDelay: weapon?.fetchAttackReuseDelay?.() ?? 1500, reuseMul: EffectStats.multiplier(actor, 'atkReuseMul') });
         const movementGeneration = Number(session.moveRouteGeneration || 0);
         this.repeatTarget = null;
         if (rangedAttack) this.bowReloading = true;

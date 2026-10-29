@@ -1,4 +1,4 @@
-const { coldRestRegenPerTick, requiresManaRecovery, estimateRestMs, restSeconds } = require('./ColdRest');
+const { coldRestRegenPerTick, requiresManaRecovery, estimateRestMs } = require('./ColdRest');
 const PveEncounter = require('./ColdPveEncounter');
 const ColdSoulCrystal = require('./ColdSoulCrystal');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
@@ -346,7 +346,7 @@ function applyStandingRegen(state, sourceVitals, elapsedMs, timestamp = Date.now
         maxMp: combat.maxMp
     };
     const sitting = coldRestRegenPerTick(state);
-    const ticks = Math.max(0, Number(elapsedMs) || 0) / 3000;
+    const ticks = Math.max(0, Number(elapsedMs) || 0) / Formulas.REGEN_TICK_MS;
     // C4 base regeneration continues while standing. The 1.5 multiplier in
     // coldRestRegenPerTick is the seated bonus, so remove it for hunt time.
     vitals.hp = Math.min(vitals.maxHp, vitals.hp + (sitting.hp / 1.5) * ticks);
@@ -363,7 +363,7 @@ function resolveRest(state, elapsedMs, timestamp, options = {}) {
         maxMp: combat.maxMp
     };
     const regen = coldRestRegenPerTick(state, options);
-    const ticks = Math.max(0, Number(elapsedMs) || 0) / 3000;
+    const ticks = Math.max(0, Number(elapsedMs) || 0) / Formulas.REGEN_TICK_MS;
     vitals.hp = Math.min(vitals.maxHp, vitals.hp + regen.hp * ticks);
     vitals.mp = Math.min(vitals.maxMp, vitals.mp + regen.mp * ticks);
 
@@ -715,13 +715,14 @@ function soloMusicGain(provider, skill) {
 
 // T100 (docs/game-decisions.md): BotCombatUtility.manaPrice's rule for a
 // solo song. Its damage gain over its duration must cover the attacks lost
-// sitting for its MP (ColdRest.restSeconds: none for a bot that never rests
-// for MP), scaled by the share of the bar spent; the attack rate cancels out.
+// sitting for its MP (BotCombatUtility.restMsPerMp, the skills' price: none
+// for a bot that never rests for MP); the attack rate cancels out.
 function soloMusicPays(provider, candidate, timestamp) {
     const gain = soloMusicGain(provider, candidate.skill);
     if (!(gain > 0)) return false;
-    const restMs = BotCombatUtility.restShare(provider.vitals.mp, provider.vitals.maxMp)
-        * restSeconds(provider.state, 0, candidate.cost, { party: false }) * 1000;
+    const actor = ColdClassPolicy.actorFor(provider.profile, { hp: provider.vitals.hp, mp: provider.vitals.mp,
+        cooldowns: provider.cooldowns, time: timestamp });
+    const restMs = BotCombatUtility.restMsPerMp(actor) * candidate.cost;
     return gain * ColdCombatProfile.partyMusicEffect(candidate.skill, timestamp).durationMs >= restMs;
 }
 
@@ -1232,13 +1233,8 @@ function summonDamage(fighter, mob, rng) {
     const summon = fighter.summon;
     if (!summon?.active || Number(summon.expiresAt || 0) <= Number(fighter.now || 0)) return 0;
     if (!hitSucceeds(summon.accur, mob.evasion, rng)) return 0;
-    return Math.max(0, Formulas.calcPhysicalDamage(
-        summon.pAtk,
-        summon.pAtkRnd,
-        mob.pDef,
-        0,
-        { critical: Formulas.rollCritical(summon.critical, rng), rng }
-    ));
+    // A hot servitor hits as a monster does (SummonControl -> Attack.prepareNpcMeleeHit).
+    return HitRules.melee(attackerView(summon), defenderView(mob), {}, rng).damage;
 }
 
 // Damage of one attack action in a cold fight (PvE or PvP): a spell with its
@@ -2193,6 +2189,8 @@ const BackgroundResolver = {
         let shotActions = 0;
         let skillUses = 0;
         let heals = 0;
+        // Of the heals, those cast between fights (SoloSelfHeal.betweenFights).
+        let gapHeals = 0;
         let musicUses = 0;
         let summonUses = 0;
         let summonActions = 0;
@@ -2307,6 +2305,7 @@ const BackgroundResolver = {
                     timestamp + combatMs);
                 combatMs += healed.ms;
                 heals += healed.casts;
+                gapHeals += healed.casts;
                 skillUses += healed.casts;
             }
 
@@ -2379,6 +2378,7 @@ const BackgroundResolver = {
                 shotActions,
                 skillUses,
                 heals,
+                gapHeals,
                 musicUses,
                 summonUses,
                 summonActions,

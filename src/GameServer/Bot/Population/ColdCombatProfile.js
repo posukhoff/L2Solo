@@ -654,7 +654,7 @@ function oldSeedRepair(snapshot) {
 function currentCp(state = {}, profile = {}, timestamp = Date.now()) {
     const saved = state.stats?.coldCombat;
     return Number.isFinite(saved?.cp) ? Math.min(profile.maxCp, Math.max(0, saved.cp)
-        + Math.floor(Math.max(0, timestamp - number(saved.cpAt, timestamp)) / 3000) * profile.cpRegen) : profile.maxCp;
+        + Math.floor(Math.max(0, timestamp - number(saved.cpAt, timestamp)) / Formulas.REGEN_TICK_MS) * profile.cpRegen) : profile.maxCp;
 }
 
 // Kit profile builds for the live read (combat_profile:build:all and its ms);

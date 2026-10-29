@@ -59,9 +59,9 @@ function requiresManaRecovery(state, options = {}) {
 // that rests for mana). options.regen: a coldRestRegenPerTick the caller holds.
 function restSeconds(state, missingHp, missingMp, options = {}) {
     const regen = options.regen || coldRestRegenPerTick(state, options);
-    const hpSeconds = Math.max(0, missingHp) / Math.max(0.01, regen.hp / 3);
+    const hpSeconds = Math.max(0, missingHp) / Math.max(0.01, regen.hp / (Formulas.REGEN_TICK_MS / 1000));
     const mpSeconds = requiresManaRecovery(state, options)
-        ? Math.max(0, missingMp) / Math.max(0.01, regen.mp / 3)
+        ? Math.max(0, missingMp) / Math.max(0.01, regen.mp / (Formulas.REGEN_TICK_MS / 1000))
         : 0;
     return Math.max(hpSeconds, mpSeconds);
 }

@@ -789,10 +789,7 @@ class Npc extends NpcModel {
 
         const rangedAttack = AttackRange.weaponKind(src) === 'Weapon.Bow';
         const attackSpeed = src.fetchCollectiveAtkSpd();
-        const timing = rangedAttack
-            ? Formulas.calcBowAttackTimes(attackSpeed)
-            : { drawMs: Formulas.calcMeleeAtkTime(attackSpeed) * 0.644,
-                cycleMs: Formulas.calcMeleeAtkTime(attackSpeed) };
+        const timing = Formulas.attackTimes(attackSpeed, { bow: rangedAttack });
         const hitLanded = Formulas.calcHitChance(src, dst, Math.random, AttackHelper.positionContext(src, dst));
         const hit = AttackHelper.prepareNpcMeleeHit(src, dst, hitLanded);
 
