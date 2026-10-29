@@ -25,9 +25,10 @@ assert.strictEqual(pick(hawkeye, 1), 19, 'a full-MP Hawkeye fires Double Shot');
 assert.strictEqual(pick(hawkeye, 0.3), null, 'a Hawkeye at 30% MP keeps shooting normal arrows');
 
 // Among the paying skills the best damage per ms of cast plus rest is cast:
-// the fast Aura Flare at full MP, the stronger Prominence once rest is dear.
+// the fast Aura Flare at full MP, the cheap Aura Bolt once rest is dear
+// (T117: Prominence pays its C4 initial MP too).
 assert.strictEqual(pick(sorcerer, 1), 1231, 'a full-MP Sorcerer casts the fastest paying nuke');
-assert.strictEqual(pick(sorcerer, 0.3), 1230, 'a Sorcerer low on MP casts the nuke with the best damage per rest');
+assert.strictEqual(pick(sorcerer, 0.3), 1275, 'a Sorcerer low on MP casts the nuke with the best damage per rest');
 // A staff caster's weapon only finishes (BotRoles.usesCasterWeaponCombat):
 // its alternative to a nuke is nothing, so it keeps casting as MP falls.
 assert.strictEqual(pick(bishop, 0.3), 1177, 'a Bishop at 30% MP still casts Wind Strike');
