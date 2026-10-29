@@ -721,6 +721,7 @@ const tests = [
     'tests/test_hunt_corrections_fit.js',
     'tests/test_table_roles_and_blessed.js',
     'tests/test_c4_shot_multipliers.js',
+    'tests/test_table_class_correction.js',
     'tests/test_player_combat_stance.js',
     'tests/test_effect_restrictions.js',
     'tests/test_effect_store_c4_slots.js',

@@ -1188,7 +1188,7 @@ function leafFit(state, deps, timestamp) {
 function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
-    const tableRole = Roles.tableRoleFor(state);
+    const tableRole = Table.roleFor(state);
     const incomeRoute = IncomeRoute.select(state, { ...deps, timestamp, required: GearProgression.assess(state).milestone.required, price });
     keepRoute?.(incomeRoute);
     let hunt;

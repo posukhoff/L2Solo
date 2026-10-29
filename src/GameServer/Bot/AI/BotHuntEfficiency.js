@@ -213,7 +213,7 @@ function huntIncome(state, timestamp = Date.now(), mode, fits = null) {
     }
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
     const rewardOptions = { spoilSkillLevel: KillRewards.spoilLevelOf(state) };
-    const tableRole = Roles.tableRoleFor(state);
+    const tableRole = Table.roleFor(state);
     const level = levelOf(state);
     const currentFits = !state.spotId || !fits || fits(state.spotId);
     const current = state.spotId && currentFits && Table.value(state.spotId, tableRole, level, true, rewardOptions);
@@ -250,10 +250,10 @@ function huntIncome(state, timestamp = Date.now(), mode, fits = null) {
 // Adena per hour of repeatable hunting, independent of wallet and wishes.
 function huntHour(hunt, state = {}) {
     if (Number(hunt?.perHour) > 0) return Number(hunt.perHour);
-    const tableRole = Roles.tableRoleFor(state);
     const costs = consumablePrices(state);
     const rewardOptions = { spoilSkillLevel: KillRewards.spoilLevelOf(state) };
     const table = invoke('GameServer/Bot/AI/SpotValueTable');
+    const tableRole = table.roleFor(state);
     const row = table.rankedIncome(tableRole, levelOf(state), costs, -7, true, rewardOptions)[0]
         || table.rankedIncome(tableRole, levelOf(state), costs, -7, false, rewardOptions)[0];
     return Math.max(1, row ? netIncome(row, costs) : 0);

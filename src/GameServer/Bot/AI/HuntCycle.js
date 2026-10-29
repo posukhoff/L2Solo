@@ -157,7 +157,8 @@ function reader(state, ctx = {}) {
     return built;
 }
 function build(state, ctx) {
-    const role = Roles.tableRoleFor(state), level = Number(state.level) || 1;
+    // The bot's class weighs against its own class's reference (Table.roleFor, T115).
+    const role = Table.roleFor(state), level = Number(state.level) || 1;
     const ref = reference(role, level);
     const shots = ctx.hunt?.useShots !== false;
     // Shots and potions at their NPC prices, as the bot's hour (BotHuntEfficiency.huntIncome).

@@ -17,14 +17,14 @@ const number = (value, fallback = 1) => Number.isFinite(Number(value)) ? Number(
 const positive = value => Math.max(1, number(value));
 // Resolved on first use (the cold worker loads this module before them);
 // invoke() re-resolves the path on every call inside spot scans.
-let DataCacheModule, HuntingTargetPolicy, ColdCombatProfile, ColdMobAction;
+const ColdMobAction = invoke('GameServer/Bot/Population/ColdMobAction');
+let DataCacheModule, HuntingTargetPolicy, ColdCombatProfile;
 const dataCache = () => DataCacheModule || (DataCacheModule = invoke('GameServer/DataCache'));
 const huntingTargetPolicy = () => HuntingTargetPolicy
     || (HuntingTargetPolicy = invoke('GameServer/Bot/AI/BotHuntingTargetPolicy'));
 const coldCombatProfile = () => ColdCombatProfile
     || (ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile'));
-const coldMobAction = () => ColdMobAction
-    || (ColdMobAction = invoke('GameServer/Bot/Population/ColdMobAction'));
+const coldMobAction = () => ColdMobAction;
 
 function npcTemplate(id) {
     return ItemTemplateIndex.findLastByLength(dataCache().npcs, id, npcTemplate);

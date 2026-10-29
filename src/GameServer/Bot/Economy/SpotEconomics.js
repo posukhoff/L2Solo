@@ -1,5 +1,4 @@
 'use strict';
-const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const SpotRewardExpectation = require('./SpotRewardExpectation');
 const KillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 // Shared table evaluation: native facts, own samples and the market's demand
@@ -30,7 +29,7 @@ function create(state, { timestamp = Date.now(), mode, persona, deathHours, mone
     const Tendency = invoke('GameServer/Bot/AI/TendencyRoll');
     const positive = value => Math.max(0, Number(value) || 0);
     persona ||= invoke('GameServer/Bot/AI/BotPersona').of(state) || { traits: {}, understanding: 0.3 };
-    const tableRole = BotRoles.tableRoleFor(state);
+    const tableRole = Table.roleFor(state);
     hunt ??= Hunt.huntIncome(state, timestamp, mode);
     const hourAdena = Hunt.hourValue(state, timestamp, { hunt }).perHour;
     deathHours ??= Valuation.deathHours(state, hunt);

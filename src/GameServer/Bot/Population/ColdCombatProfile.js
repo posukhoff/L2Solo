@@ -1365,6 +1365,7 @@ function actionShot(shot, skill = null) {
 // opens (an aggressive interruption) gives none (the caller's).
 function openingMs(profile = {}, mob = {}) {
     const speed = number(mob.runSpd);
+    // lazy: cycle ColdMobAction loads this module
     if (!(speed > 0) || !invoke('GameServer/Bot/Population/ColdMobAction').meleeOnly(mob)) return 0;
     const kind = profile.equipment?.weaponKind || '';
     let reach = AttackRange.kindRange(kind, kind === 'Weapon.Bow' ? add(profile, 'pAtkRangeAdd', Date.now()) : 0);

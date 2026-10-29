@@ -5,6 +5,7 @@ const ProgressionRates = invoke('GameServer/ProgressionRates');
 const Rewards = require('../Economy/SpotRewardExpectation');
 const SpotIndex = require('./SpotIndex');
 const DiagnosticConfig = require('../Population/PopulationConfig');
+const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 
 // The world spot table (market-sim step 3.3(c), N44): what an hour of solo
 // hunting on a spot gives a bot of a role and level, with shots or without.
@@ -94,7 +95,7 @@ function dropRows() {
 }
 
 function roleSpoilLevel(role, level) {
-    if (role !== 'spoiler') return 0;
+    if (roleName(role) !== 'spoiler') return 0;
     if (!spoilLevels.has(level)) spoilLevels.set(level, KillRewards.spoilLevelOf({ level,
         stats: { classId: roleClass('spoiler', level) } }));
     return spoilLevels.get(level);
@@ -176,6 +177,61 @@ function filled(values, neutral) {
         out[i] = j >= 0 ? values[j] : neutral;
     }
     return out;
+}
+
+// A role key (T115): a table role, or `${role}#${classId}` for a bot whose
+// class is not the one the table measured the role with at its level
+// (roleFor): its kills follow its own class's damage (classKills).
+function roleName(role) {
+    const text = String(role), at = text.indexOf('#');
+    return at < 0 ? role : text.slice(0, at);
+}
+function roleClassOf(role) {
+    const text = String(role), at = text.indexOf('#');
+    return at < 0 ? 0 : Number(text.slice(at + 1)) || 0;
+}
+function roleSlot(t, role) {
+    return t.roleIndex.get(roleName(role));
+}
+
+// The table role key of a bot (BotRoles.tableRoleFor, with its class when the
+// table measured the role with another class at its level and the hunt
+// tables know both classes' damage).
+function roleFor(state = {}) {
+    const role = BotRoles.tableRoleFor(state), level = Number(state.level) || 1;
+    const classId = BotRoles.roleClassId(state.stats?.classId ?? state.classId ?? null);
+    const measured = roleClass(role, level);
+    if (!Number.isInteger(classId) || measured === null || classId === measured) return role;
+    const rot = rotation();
+    return rot.rows[classId] && rot.rows[measured] ? `${role}#${classId}` : role;
+}
+
+// The hunt tables' rotation (scripts/hunt-tables, table 4): per class and
+// level band the reference kit's damage rate x defence (d1), its rotation
+// of skills included.
+let rotationTable = null;
+function rotation() {
+    return rotationTable ||= JSON.parse(fs.readFileSync(path.join(path.dirname(DEFAULT_FILE), 'hunt', 'rotation.json'), 'utf8'));
+}
+function rotationRate(classId, level) {
+    const rot = rotation(), rows = rot.rows[classId];
+    if (!rows) return 0;
+    const want = Math.floor(level / rot.bandLevels);
+    const bands = Object.keys(rows).map(Number);
+    const band = bands.reduce((best, b) => Math.abs(b - want) < Math.abs(best - want) ? b : best, bands[0]);
+    return Number(rows[band]?.[rot.fields.indexOf('d1')]) || 0;
+}
+// The kills per hour of a bot of classId on a row measured with the role's
+// class: its fight and rest (the rest refills what the fight took) run at
+// the measured class's damage rate over its own, the idle time between
+// kills stays.
+function classKills(t, r, row, curve, refGap, gap, level, classId, measured) {
+    const own = rotationRate(classId, level), reference = rotationRate(roleClass(t.roles[r], level), level);
+    if (!(own > 0) || !(reference > 0) || !(measured > 0) || t.f.fight < 0) return measured;
+    const perKill = 3600 / measured;
+    const along = values => values ? ratio(values, t.gaps, refGap, gap) : 1;
+    const busy = Math.min(perKill, row[t.f.fight] * along(curve.fight) + row[t.f.rest] * along(curve.rest));
+    return 3600 / (busy * reference / own + perKill - busy);
 }
 
 // A row's shots state: 0 none, 1 the weapon's shots (true), 2 Blessed
@@ -332,7 +388,8 @@ function memoPart(value, limit) {
 }
 function memoKey(t, spotId, role, level, shots, skill) {
     const s = t.spotIndex.get(typeof spotId === 'string' ? spotId : `${spotId}`);
-    const r = t.roleIndex.get(typeof role === 'string' ? role : `${role}`);
+    // A class role key (roleFor) is its own string key: its kills differ from the role's.
+    const r = String(role).includes('#') ? undefined : t.roleIndex.get(typeof role === 'string' ? role : `${role}`);
     const l = memoPart(level, MEMO_LEVELS), k = memoPart(skill, MEMO_SKILLS);
     if (s !== undefined && r !== undefined && l >= 0 && k >= 0) {
         const key = (((s * t.roleIndex.size + r) * 3 + shotKey(shots)) * MEMO_LEVELS + l) * MEMO_SKILLS + k;
@@ -360,7 +417,7 @@ function memoValue(t, rates, spotId, role, level, shots, skill) {
 
 // A role's measured row at a spot (null: none, or the spot is not in the table).
 function rowOf(t, spotId, role, shots) {
-    const s = t.spotIndex.get(String(spotId)), r = t.roleIndex.get(role);
+    const s = t.spotIndex.get(String(spotId)), r = roleSlot(t, role);
     return s === undefined || r === undefined ? null : t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(shotKey(shots))];
 }
 
@@ -453,7 +510,7 @@ function rowCap(t, row, spot, gate) {
 // The table-only part of a spot's hour (no rewards): the measured row, the level curve and the kills, or
 // null when the bot finds no target it may fight alone there at this level. s, r: the spot's and role's
 // table indexes.
-function combat(t, s, r, level, shots) {
+function combat(t, s, r, level, shots, classId = 0) {
     const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(shotKey(shots))];
     if (!row) return null;
     const spot = t.spots[s], spotLevel = spot[1];
@@ -465,7 +522,9 @@ function combat(t, s, r, level, shots) {
     const mask = gate?.mask ?? ALL_SPECIES;
     const curve = t.curves[r][Math.floor(spotLevel / t.bandLevels)];
     const refGap = row[t.f.refGap];
-    const kills = Math.min(row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap), rowCap(t, row, spot, gate));
+    const measured = row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap);
+    const kills = Math.min(classId ? classKills(t, r, row, curve, refGap, gap, botLevel, classId, measured) : measured,
+        rowCap(t, row, spot, gate));
     if (!(kills > 0)) return null;
     return { row, curve, gap, refGap, kills, gate, mask, expRatio: ratio(curve.exp, t.gaps, refGap, gap),
         busyRatio: ratio(curve.busy, t.gaps, refGap, gap), gapFactor: killGapFactor(t, row, botLevel, spotLevel, mask) };
@@ -482,9 +541,9 @@ function hourExp(t, rates, c) {
 
 function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLevel(role, level)) {
     const s = t.spotIndex.get(String(spotId));
-    const r = t.roleIndex.get(role);
+    const r = roleSlot(t, role);
     if (s === undefined || r === undefined) return null;
-    const c = combat(t, s, r, level, shots);
+    const c = combat(t, s, r, level, shots, roleClassOf(role));
     if (!c) return null;
     const { row, curve, gap, refGap, kills, expRatio, busyRatio, gapFactor, mask } = c;
     // Combat remains an offline measurement. Money comes from the native
@@ -525,9 +584,9 @@ function cycle(spotId, role, level, shots = true, rewardOptions = {}) {
     const t = load(), rates = ProgressionRates.profile();
     refreshCatalog(rates);
     refreshValueMemo(t, rates);
-    const s = t.spotIndex.get(String(spotId)), r = t.roleIndex.get(role);
+    const s = t.spotIndex.get(String(spotId)), r = roleSlot(t, role);
     if (s === undefined || r === undefined || t.f.fight < 0) return null;
-    const c = combat(t, s, r, level, shots);
+    const c = combat(t, s, r, level, shots, roleClassOf(role));
     if (!c) return null;
     const skill = rewardOptions.spoilSkillLevel ?? roleSpoilLevel(role, level);
     const slot = memoValue(t, rates, spotId, role, level, shots, skill);
@@ -545,8 +604,10 @@ function cycle(spotId, role, level, shots = true, rewardOptions = {}) {
 
 // The class the table measured a role with at a level (its header's
 // roleClasses: below 20, 20-39, 40 and up), or null for an unknown role.
+// A class role key (roleFor) names its own class.
 function roleClass(role, level) {
-    const classes = load().header.inputs.roleClasses?.[role];
+    if (roleClassOf(role)) return roleClassOf(role);
+    const classes = load().header.inputs.roleClasses?.[roleName(role)];
     return classes ? classes[level < 20 ? 0 : level < 40 ? 1 : 2] : null;
 }
 
@@ -562,7 +623,7 @@ function spotLevel(spotId) {
 function referenceLevel(spotId, role, shots = true) {
     const t = load();
     const s = t.spotIndex.get(String(spotId));
-    const r = t.roleIndex.get(role);
+    const r = roleSlot(t, role);
     if (s === undefined || r === undefined) return null;
     const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(shotKey(shots))];
     return row ? t.spots[s][1] + row[t.f.refGap] : null;
@@ -583,10 +644,10 @@ function best(role, level, shots = true) {
     DiagnosticConfig.developerDiagnostics && (stats.bestMisses += 1);
     // Exp is table-only (no reward groups): the scan reads the table's combat part of each spot, the
     // first spot of the most exp wins, and only the winner's full row is priced. It bypasses the per-bot memo.
-    const r = t.roleIndex.get(role);
+    const r = roleSlot(t, role);
     let bestIndex = -1, bestExp = 0;
     for (let s = 0; r !== undefined && s < t.spots.length; s++) {
-        const c = combat(t, s, r, level, shots);
+        const c = combat(t, s, r, level, shots, roleClassOf(role));
         if (!c) continue;
         const exp = hourExp(t, rates, c);
         if (bestIndex < 0 || exp > bestExp) { bestIndex = s; bestExp = exp; }
@@ -763,4 +824,4 @@ function useFile(next = DEFAULT_FILE) {
     clearIncomeBases();
 }
 
-module.exports = { value, cycle, roleClass, marketLoot, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };
+module.exports = { value, cycle, roleClass, roleFor, marketLoot, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };

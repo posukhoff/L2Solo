@@ -141,7 +141,8 @@ function heldAmount(state, selfId) {
 function choosesBlessed(state, rank) {
     if (heldAmount(state, BLESSED_SPIRITSHOT_BY_RANK[rank]) > 0) return true;
     if (heldAmount(state, SPIRITSHOT_BY_RANK[rank]) > 0) return false;
-    return blessedPays(BotRoles.tableRoleFor(state), Number(state?.level) || 1, rank);
+    // lazy: cycle as blessedPays
+    return blessedPays(invoke('GameServer/Bot/AI/SpotValueTable').roleFor(state), Number(state?.level) || 1, rank);
 }
 
 // Blessed Spiritshot over Spiritshot for a role, level and grade (user 10-29,
@@ -205,7 +206,7 @@ function usePolicy(state, prepared = {}) {
     const plan = prepared.plan || planForState(state);
     const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
-    const tableRole = BotRoles.tableRoleFor(state);
+    const tableRole = Table.roleFor(state);
     let best = prepared.bestTable, hour = prepared.hourAdena;
     if (!Object.hasOwn(prepared, 'bestTable')) {
         const hunt = Hunt.huntIncome(state, prepared.timestamp || Date.now(), prepared.mode);
