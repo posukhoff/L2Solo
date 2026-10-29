@@ -9,6 +9,12 @@
 // Usage: node scripts/generate-spot-table.js [--jobs=4] [--hours=2] [--curve-hours=1]
 //        [--out=data/Bots/spot-table.json] [--spots=N]   (N: first N spots only, for tests)
 //        --merge-stacks-from=old.json --stacks-table=measured.json [--out=...]
+//        [--phase=rows|curves|merge --shard=i/n --parts=dir]   (split runs, .github/workflows/tables.yml)
+//
+// Split runs: phase rows measures the i-th of n shares of the spots' rows into
+// --out; phase curves reads every rows part of --parts and measures its share
+// of the curves; phase merge reads all parts and writes the table. Each share
+// takes every n-th task, so the parts give the very table one run gives.
 //
 // Layout (factored, so the file stays small):
 // - one row per spot x role x shots (on/off): the bot of the role, in the
@@ -84,7 +90,7 @@ const START = 1_750_000_000_000;
 function args() {
     const out = { jobs: Math.max(1, Math.min(6, os.cpus().length - 2)), hours: 2, curveHours: 1,
         out: path.join(root, 'data', 'Bots', 'spot-table.json'), spots: 0, child: null, revision: null,
-        mergeStacksFrom: null, stacksTable: null };
+        mergeStacksFrom: null, stacksTable: null, phase: 'all', shard: null, parts: null };
     for (const arg of process.argv.slice(2)) {
         const [key, value] = arg.replace(/^--/, '').split('=');
         if (key === 'jobs') out.jobs = Math.max(1, Number(value));
@@ -96,9 +102,50 @@ function args() {
         else if (key === 'revision') out.revision = value;
         else if (key === 'merge-stacks-from') out.mergeStacksFrom = path.resolve(value);
         else if (key === 'stacks-table') out.stacksTable = path.resolve(value);
+        else if (key === 'phase') out.phase = value;
+        else if (key === 'shard') out.shard = value.split('/').map(Number);
+        else if (key === 'parts') out.parts = path.resolve(value);
         else throw new Error(`unknown argument ${arg}`);
     }
+    if (!['all', 'rows', 'curves', 'merge'].includes(out.phase)) throw new Error(`unknown phase ${out.phase}`);
+    if (out.shard && !(out.shard[1] >= 1 && out.shard[0] >= 1 && out.shard[0] <= out.shard[1])) throw new Error('bad --shard');
+    if (out.phase !== 'all' && out.phase !== 'rows' && !out.parts) throw new Error(`phase ${out.phase} needs --parts`);
     return out;
+}
+
+// ---------------------------------------------------------------- split runs
+
+// The share of a phase's tasks: every n-th task from the i-th, with its index.
+function shareOf(tasks, shard) {
+    const indexed = tasks.map((task, index) => ({ task, index }));
+    return shard ? indexed.filter(({ index }) => index % shard[1] === shard[0] - 1) : indexed;
+}
+
+// A phase's results in task order: measured here (its share written to --out
+// for a split run, null returned), or read from the parts of --parts.
+async function phaseResults(phase, tasks, options, catalogueFile) {
+    if (options.phase === phase || options.phase === 'all') {
+        const share = shareOf(tasks, options.shard);
+        const results = await runPool(catalogueFile, share.map(({ task }) => task), options.jobs);
+        if (options.phase === 'all') return results;
+        fs.mkdirSync(path.dirname(options.out), { recursive: true });
+        fs.writeFileSync(options.out, `${JSON.stringify({ phase, total: tasks.length, indices: share.map(({ index }) => index), results })}\n`);
+        process.stderr.write(`wrote ${phase} part ${options.shard?.join('/') || '1/1'}: ${share.length} of ${tasks.length} tasks\n`);
+        return null;
+    }
+    const results = new Array(tasks.length);
+    let found = 0;
+    for (const name of fs.readdirSync(options.parts).filter((file) => file.endsWith('.json')).sort()) {
+        const part = JSON.parse(fs.readFileSync(path.join(options.parts, name), 'utf8'));
+        if (part.phase !== phase) continue;
+        if (part.total !== tasks.length) throw new Error(`${name}: ${part.total} ${phase} tasks, this run has ${tasks.length}`);
+        part.indices.forEach((index, at) => {
+            if (results[index] === undefined) found += 1;
+            results[index] = part.results[at];
+        });
+    }
+    if (found !== tasks.length) throw new Error(`${phase} parts hold ${found} of ${tasks.length} tasks`);
+    return results;
 }
 
 // ARCH-NOTE: full regeneration exceeded the FX-E9 tolerance for XP/SP,
@@ -597,7 +644,8 @@ async function main() {
     try {
         // Rows.
         const rowTasks = spots.map((spot) => ({ kind: 'row', spotId: spot.id, hours: options.hours }));
-        const rowResults = await runPool(catalogueFile, rowTasks, options.jobs);
+        const rowResults = await phaseResults('rows', rowTasks, options, catalogueFile);
+        if (!rowResults) return;
         if (rowResults.length !== spots.length || rowResults.some((rows) => rows.length !== ROLES.length * SHOTS.length)) {
             throw new Error('row results do not match the spots');
         }
@@ -625,7 +673,8 @@ async function main() {
             curveSpots.set(key, chosen);
             for (const spotId of chosen) for (const gap of GAPS) curveTasks.push({ kind: 'curve', key, spotId, role, gap, hours: options.curveHours });
         }
-        const curveResults = await runPool(catalogueFile, curveTasks, options.jobs);
+        const curveResults = await phaseResults('curves', curveTasks, options, catalogueFile);
+        if (!curveResults) return;
 
         const curveResult = new Map(curveTasks.map((task, index) => [`${task.key}|${task.spotId}|${task.gap}`, curveResults[index]]));
         const curves = {};

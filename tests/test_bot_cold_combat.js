@@ -556,8 +556,10 @@ assert(strongPartyResult.memberResults.every((entry) => entry.result.materialize
 
 const result = BackgroundResolver.resolveSolo({ state: fighter, spot, elapsedMs: 12000, timestamp, rng: () => 0.1 });
 assert(result.debug.combatActions > 0, 'cold combat must execute bounded combat actions');
-assert(result.debug.skillUses > 0, 'a usable learned skill must be cast during cold combat');
-assert(result.patch.stats.coldCombat.cooldowns[3] > timestamp, 'skill reuse must survive a cold resolve');
+const toughResult = BackgroundResolver.resolveSolo({ state: fighter, spot: { ...spot, npcSelfIds: [], mob: { hp: 100000, damage: 1 } },
+    elapsedMs: 12000, timestamp, rng: () => 0.1 });
+assert(toughResult.debug.skillUses > 0, 'a usable learned skill that pays its MP is cast during cold combat');
+assert(toughResult.patch.stats.coldCombat.cooldowns[3] > timestamp, 'skill reuse must survive a cold resolve');
 assert.strictEqual(result.patch.stats.coldCombat.charges, 2, 'unspent charges must survive a solo cold fight');
 assert.strictEqual(result.patch.stats.coldCombat.chargeExpiresAt, timestamp + 600000, 'a cold fight must preserve the original charge deadline');
 assert(result.patch.vitals.hp > 0, 'datapack Gremlin damage must be used instead of the synthetic spot damage');
@@ -578,13 +580,15 @@ const readyMusician = (state, profile) => ({ ...state, vitals: {
     hp: profile.maxHp, maxHp: profile.maxHp, mp: profile.maxMp, maxMp: profile.maxMp
 } });
 const singerResult = BackgroundResolver.resolveSolo({ state: readyMusician(singer, singerProfile), spot: musicSpot, elapsedMs: 12000, timestamp, rng: () => 0.1 });
-assert(singerResult.debug.musicUses >= 2, 'cold solo combat must cast the Swordsinger songs it learned');
-assert(singerResult.patch.stats.coldCombat.effects.some((effect) => effect.id === 264),
-    'a cold solo song must persist on the singer after the fight');
+// T100 MP price: alone, a song is sung only when it raises the singer's own
+// damage enough to pay its MP. Song of Earth (264) and Song of Life (265)
+// only defend; Dance of Warrior (271) adds P.Atk, Dance of Inspiration (272)
+// only accuracy.
+assert.strictEqual(singerResult.debug.musicUses, 0, 'a solo Swordsinger does not sing songs that add no damage');
 const dancerResult = BackgroundResolver.resolveSolo({ state: readyMusician(dancer, dancerProfile), spot: musicSpot, elapsedMs: 12000, timestamp, rng: () => 0.1 });
-assert(dancerResult.debug.musicUses >= 2, 'cold solo combat must cast the Bladedancer dances it learned');
-assert(dancerResult.patch.stats.coldCombat.effects.some((effect) => effect.id === 271),
-    'a cold solo dance must persist on the dancer after the fight');
+assert.strictEqual(dancerResult.debug.musicUses, 1, 'a solo Bladedancer dances only the dance that pays');
+assert.deepStrictEqual(dancerResult.patch.stats.coldCombat.effects.filter((effect) => [271, 272].includes(effect.id))
+    .map((effect) => effect.id), [271], 'the paying solo dance persists on the dancer after the fight');
 
 const injuredTank = {
     ...fighter,

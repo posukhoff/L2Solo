@@ -1,4 +1,4 @@
-const { coldRestRegenPerTick, requiresManaRecovery, estimateRestMs } = require('./ColdRest');
+const { coldRestRegenPerTick, requiresManaRecovery, estimateRestMs, restSeconds } = require('./ColdRest');
 const PveEncounter = require('./ColdPveEncounter');
 const ColdSoulCrystal = require('./ColdSoulCrystal');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
@@ -8,6 +8,7 @@ const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const ColdKillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
 const ColdClassPolicy = invoke('GameServer/Bot/Population/ColdClassPolicy');
+const BotCombatUtility = invoke('GameServer/Bot/AI/BotCombatUtility');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
 const ChargeLifecycle = invoke('GameServer/Skills/ChargeLifecycle');
@@ -364,7 +365,7 @@ function hitSucceeds(accuracy, evasion, rng) {
 
 // A skill takes its C4 cast time, cut by a loaded spiritshot; a skill row
 // without a cast time falls back to 1000 ms (spell) or 600 ms (physical).
-// C4 has no floor on the normal attack time: the 250 ms floor is cold's own.
+// A normal attack: ColdCombatProfile.normalAttackMs (a bow draws and reloads).
 function actionDelayMs(profile, skill = null, spiritshot = false) {
     if (skill?.spell) {
         return Formulas.calcSkillHitTime(Number(skill.hitTime) || 1000, profile.castSpd, { magic: true, spiritshot });
@@ -372,7 +373,7 @@ function actionDelayMs(profile, skill = null, spiritshot = false) {
     if (skill) {
         return Formulas.calcSkillHitTime(Number(skill.hitTime) || 600, profile.atkSpd);
     }
-    return Math.max(250, Formulas.calcMeleeAtkTime(profile.atkSpd));
+    return ColdCombatProfile.normalAttackMs(profile);
 }
 
 function effectiveSkillPower(profile, skill, hp) {
@@ -473,7 +474,9 @@ function withinSkillRadius(source, target, semantic) {
     return (dx * dx) + (dy * dy) <= radius * radius;
 }
 
-function chooseMusicAction(provider, targets, timestamp) {
+// options.solo: the provider sings only for itself, so a song must pay its MP
+// (soloMusicPays); a party's songs keep the old every-missing-song rule.
+function chooseMusicAction(provider, targets, timestamp, options = {}) {
     const skill = ColdCombatProfile.partyMusicSkills(provider.profile)
         .map((candidate) => {
             const semantic = C4SkillRules.resolveCached(candidate);
@@ -486,9 +489,35 @@ function chooseMusicAction(provider, targets, timestamp) {
                 cost: ColdCombatProfile.partyMusicMpCost(provider.profile, candidate, timestamp)
             };
         })
-        .filter((candidate) => candidate.cost <= provider.vitals.mp && candidate.affected.length > 0)
+        .filter((candidate) => candidate.cost <= provider.vitals.mp && candidate.affected.length > 0
+            && (options.solo !== true || soloMusicPays(provider, candidate, timestamp)))
         .sort((a, b) => Number(a.skill.selfId) - Number(b.skill.selfId))[0];
     return skill || null;
+}
+
+// The share a song adds to the provider's own normal-attack damage rate, from
+// the song's own stats (P.Atk, attack speed, critical rate and damage; a
+// critical hit doubles): a song that only defends, heals or helps casters
+// adds nothing here.
+function soloMusicGain(provider, skill) {
+    const stats = C4SkillRules.resolveCached(skill).stats || {};
+    const mul = (name) => Math.max(0, Number(stats[name] ?? 1));
+    const rate = Math.min(1, Math.max(0, Number(provider.profile.critical) || 0) / 1000);
+    const hit = (critical, damage) => 1 + critical * (2 * damage - 1);
+    return Math.max(0, mul('pAtkMul') * mul('pAtkSpdMul')
+        * hit(Math.min(1, rate * mul('pCritRateMul')), mul('pCritDamageMul')) / hit(rate, 1) - 1);
+}
+
+// T100 (docs/game-decisions.md): BotCombatUtility.manaPrice's rule for a
+// solo song. Its damage gain over its duration must cover the attacks lost
+// sitting for its MP (ColdRest.restSeconds: none for a bot that never rests
+// for MP), scaled by the share of the bar spent; the attack rate cancels out.
+function soloMusicPays(provider, candidate, timestamp) {
+    const gain = soloMusicGain(provider, candidate.skill);
+    if (!(gain > 0)) return false;
+    const restMs = BotCombatUtility.restShare(provider.vitals.mp, provider.vitals.maxMp)
+        * restSeconds(provider.state, 0, candidate.cost, { party: false }) * 1000;
+    return gain * ColdCombatProfile.partyMusicEffect(candidate.skill, timestamp).durationMs >= restMs;
 }
 
 function replaceMusicEffect(effects, nextEffect) {
@@ -1085,6 +1114,9 @@ function spendColdShot(fighter) {
 // raise a servitor from the corpse.
 function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false, help = null }) {
     fighter.now = at;
+    // Alone (no other living ally, a party of one too) the bot fights solo:
+    // its MP price and songs (T100) are a solo bot's.
+    const solo = !allies.some((ally) => ally !== fighter && ally.vitals.hp > 0);
     if (ensureColdSummon(fighter, at, fighter.cooldowns)) return null;
     expireCharges(fighter, at);
     if (startColdPotion(fighter, time)) {
@@ -1103,7 +1135,7 @@ function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false
         if (shot) spendColdShot(fighter);
         return null;
     }
-    const music = chooseMusicAction(fighter, allies, at);
+    const music = chooseMusicAction(fighter, allies, at, { solo });
     if (music) {
         const shot = loadColdShot(fighter, music.skill);
         applyMusicAction(fighter, music, at);
@@ -1115,7 +1147,7 @@ function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false
         return null;
     }
     const chargeSkill = chooseChargeSkill(fighter.profile, fighter.vitals.mp, fighter.cooldowns, at, fighter.charges,
-        { hp: fighter.vitals.hp, mob, party, summon: fighter.summon });
+        { hp: fighter.vitals.hp, mob, mobHp, party: party && !solo, summon: fighter.summon });
     if (chargeSkill) {
         const shot = loadColdShot(fighter, chargeSkill);
         const semantic = C4SkillRules.resolve(chargeSkill);
@@ -1130,7 +1162,7 @@ function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false
     if (ColdSoulCrystal.tryCast(fighter, mob, mobHp, at)) return null;
     const profile = fighter.profile;
     const selected = chooseSkill(profile, fighter.vitals.hp, fighter.vitals.mp, fighter.cooldowns, at, fighter.charges, rng,
-        { mob, party, summon: fighter.summon });
+        { mob, mobHp, party: party && !solo, summon: fighter.summon });
     const skill = selected?.skill || null;
     const shot = loadColdShot(fighter, skill);
     const damage = attackDamage(fighter, selected, mob, rng, { vsMob: true, at, shot });

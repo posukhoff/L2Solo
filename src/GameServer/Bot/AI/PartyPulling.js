@@ -242,7 +242,8 @@ function cancelForRevival(leaderSession) {
 
 function attackRange(actor, target) {
     const role = BotRoles.inferRole(actor);
-    const combat = BotCombatUtility.select(actor, target, role);
+    // The reach of a usable skill, not whether its MP pays now (T100 price).
+    const combat = BotCombatUtility.select(actor, target, role, { priceMana: false });
     const skillRange = Number(combat?.range);
     // This predicate decides whether normal combat may begin, rather than
     // whether its first selected skill can land in place.  A melee skill may

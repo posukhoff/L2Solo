@@ -263,6 +263,12 @@ const Formulas = {
         return { drawMs, reuseMs, cycleMs: drawMs + reuseMs };
     },
 
+    // One normal attack, the hot Attack.js cycle: a bow draws and reloads
+    // (calcBowAttackTimes), any other weapon swings once per calcMeleeAtkTime.
+    normalAttackMs(atkSpd, { bow = false, reuseDelay = 1500, reuseMul = 1 } = {}) {
+        return bow ? this.calcBowAttackTimes(atkSpd, reuseDelay ?? 1500, reuseMul).cycleMs : this.calcMeleeAtkTime(atkSpd);
+    },
+
     calcRemoteAtkTime(time, castSpd) {
         return  (time / castSpd) * 333;
     },

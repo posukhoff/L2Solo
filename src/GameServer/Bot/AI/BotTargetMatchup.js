@@ -2,6 +2,8 @@ const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Rules = invoke('GameServer/Skills/C4SkillRules');
 const Roles = invoke('GameServer/Bot/AI/BotRoles');
 const WeaponMask = invoke('GameServer/Skills/WeaponMask');
+const Formulas = invoke('GameServer/Formulas');
+const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
 
 const MIN_EFFICIENCY = 0.15;
 const ELEMENTS = ['fire', 'water', 'wind', 'earth', 'holy', 'dark'];
@@ -143,8 +145,14 @@ function skillModifier(actor, target, skill, view = targetView(target)) {
 // The damage rates of the cold fight, one owner (channels, soloSurvival,
 // HuntCycle's kit ratio): a profile's auto-attack and a spell of `power`
 // against a target's defence, and a target's hits against a profile.
+// A bow shot lasts as long as the cold fight's (Formulas.normalAttackMs: it
+// draws and reloads); a swing keeps the gate's own 500 / atkSpd seconds.
 function attackRate(profile, target) {
-    return 70 * positive(profile.pAtk) / positive(target.basePDef || target.pDef) * positive(profile.atkSpd || 300) / 500;
+    const speed = positive(profile.atkSpd || 300);
+    const perSecond = profile.equipment?.weaponKind === 'Weapon.Bow'
+        ? 1000 / Math.max(250, Formulas.normalAttackMs(speed, { bow: true, reuseDelay: profile.equipment?.attackReuseDelay }))
+        : speed / 500;
+    return 70 * positive(profile.pAtk) / positive(target.basePDef || target.pDef) * perSecond;
 }
 function spellDamage(profile, target, power) {
     return 91 * Math.sqrt(positive(profile.mAtk)) * power / positive(target.baseMDef || target.mDef);
@@ -162,7 +170,7 @@ function channels(profile, target) {
     const physical = role !== 'mage';
     const result = [];
     if (physical) result.push({ weight: attackRate(profile, target),
-    modifier: modifier(target, {}, false, kind), magic: false });
+    modifier: modifier(target, {}, false, kind), magic: false, normal: true });
     for (const skill of profile.skills || []) {
         const semantic = skill.semantic || Rules.resolve(skill);
         const magic = skill.spell === true;
@@ -229,6 +237,13 @@ function soloSurvival(profiles, target, minimum = 1.5, attacksOf = channels) {
 
 function soloChannels(profile, target, attacksOf = channels) {
     const attacks = attacksOf(profile, target);
+    // T100: a bot that sits for MP and fights with its weapon (an archer)
+    // spends MP only while its bar is near full (BotCombatUtility's price):
+    // its fight is the normal attack.
+    if (!Roles.usesCasterWeaponCombat(profile) && RestPolicy.restsForMana(profile)) {
+        const normal = attacks.filter(attack => attack.normal);
+        if (normal.length) return normal;
+    }
     if (!profile.soloAttackScores) return attacks;
     // The executor chooses by native skill priority, not maximum DPS. Do not
     // admit a fight on a fast spell the bot would never select at full HP.
