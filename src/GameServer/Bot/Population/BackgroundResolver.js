@@ -1405,12 +1405,16 @@ function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false
     return { skill, damage };
 }
 
-function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp = Date.now(), fightLimitMs = 12000, maxActions = 48 }) {
+// roundProfiles: the solo round's matchup profiles (resolveSolo), so its
+// fights read one set of species verdicts (they are kept per profile array);
+// without them the fight builds its own.
+function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp = Date.now(), fightLimitMs = 12000, maxActions = 48,
+    roundProfiles = null }) {
     const fightState = mutableCombatState(state);
     const bot = botCombatStats(fightState, timestamp);
     const encounterKey = PveEncounter.key([state], spot, targetNpcId);
     const pending = PveEncounter.read(state.stats?.pveEncounter, encounterKey, timestamp);
-    const matchupProfiles = pending ? null : TargetMatchup.coldProfiles(bot, fightState, timestamp);
+    const matchupProfiles = pending ? null : roundProfiles || TargetMatchup.coldProfiles(bot, fightState, timestamp);
     const picked = pending?.mob || ColdCombatProfile.npcForSpot(spot, rng, { preferredNpcId: targetNpcId,
         ...soloPickOptions(state), pull: true, matchupProfiles }) || {
         level: Number(spot.avgLevel || bot.level), maxHp: Math.max(1, Number(spot.mob?.hp || 1)),
@@ -1939,9 +1943,9 @@ function soloPickOptions(state) {
 // survives (user 10-29), so a spot's other mobs neither feed its kills nor
 // widen its round. Null for a spot without spawn groups or with none the
 // verdict knows (the fight then takes the spot's own mob: resolveFight).
-function admittedShares(state, spot, timestamp) {
+// profiles: the round's (roundProfiles), else built here.
+function admittedShares(state, spot, timestamp, profiles = roundProfiles(state, timestamp)) {
     if (!spot?.npcEntries?.length) return null;
-    const profiles = TargetMatchup.coldProfiles(botCombatStats(state, timestamp), state, timestamp);
     const options = soloPickOptions(state);
     let known = false;
     const shares = new Map(spot.npcEntries.map(entry => {
@@ -1950,6 +1954,13 @@ function admittedShares(state, spot, timestamp) {
         return [entry, verdict?.share ?? 0];
     }));
     return known ? shares : null;
+}
+
+// The matchup profiles of a solo round, at the round's start: its fights and
+// its admitted spawns judge by them (a summon raised mid-round counts from
+// the next round; each fight's readiness still reads the HP and MP left).
+function roundProfiles(state, timestamp) {
+    return TargetMatchup.coldProfiles(botCombatStats(state, timestamp), state, timestamp);
 }
 
 // The spot's monsters a solo bot may fight: its density times the admitted
@@ -2205,7 +2216,8 @@ const BackgroundResolver = {
             };
         }
 
-        const admitted = admittedShares(state, spot, timestamp);
+        const profiles = roundProfiles(state, timestamp);
+        const admitted = admittedShares(state, spot, timestamp, profiles);
         const fights = soloFightCount(spot, elapsedMs, admittedDensity(spot, admitted));
         // The share's fraction left from the last round on this spot carries
         // over; a pull above it is owed (a negative carry).
@@ -2272,7 +2284,7 @@ const BackgroundResolver = {
             };
             const result = countedBuilds('fight', 'solo', resolveFight, { state: fightState, spot, pressure, targetNpcId, rng,
                 timestamp: timestamp + combatMs, fightLimitMs: combatBudgetMs - combatMs,
-                maxActions: actionBudget - combatActions });
+                maxActions: actionBudget - combatActions, roundProfiles: profiles });
             if (result.avoided) {
                 patch.stats.lastReason = result.reason;
                 if (result.needsRest) {

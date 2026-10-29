@@ -129,6 +129,17 @@ assert.strictEqual(Resolver.soloShareMobs(lone, 600000, 1, shares), 1);
 const loneRound = Resolver.resolveSolo({ state: hunter(), spot: lone, elapsedMs: 600000, rng: () => 0, timestamp: 1e12 });
 assert(loneRound.debug.mobsKilled <= 1, `the lone group feeds its own respawns (${loneRound.debug.mobsKilled})`);
 assert.deepStrictEqual(loneRound.debug.killedNpcs, loneRound.debug.mobsKilled ? { 1: loneRound.debug.mobsKilled } : {});
+// A round judges its fights by one set of matchup profiles (the species verdicts are kept per
+// profile array): several fights, one build.
+const builtProfiles = Matchup.coldProfiles;
+let builds = 0;
+Matchup.coldProfiles = (...args) => { builds++; return builtProfiles(...args); };
+try {
+    const round = Resolver.resolveSolo({ state: hunter(), spot: { ...gremlins(0), density: 9, npcEntries: [{ selfId: 1, count: 9 }] },
+        elapsedMs: 60000, rng: () => 0, timestamp: 1e12 });
+    assert(round.debug.wins > 1, `the round fights more than once (${round.debug.wins})`);
+    assert.strictEqual(builds, 1, 'one profile build for the round');
+} finally { Matchup.coldProfiles = builtProfiles; }
 // T106 (user 10-29): a species whose usual pull the hunter cannot survive is not hunted, as one mob it would be.
 const pack = hunt(3);
 assert.deepStrictEqual([pack.debug.pulls, pack.patch.stats.lastReason], [0, 'no_safe_solo_target'],
