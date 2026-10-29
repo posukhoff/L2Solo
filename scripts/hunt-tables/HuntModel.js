@@ -146,7 +146,7 @@ function openingAt(rot, list, t, rate = null) {
 // The rotation's damage rate times defence (dps x def) for a strength:
 // physical and magic parts, with MP (the rotation) and without (dry).
 function damageTerms(rot, numbers, mobEvasion) {
-    const speed = numbers.atkSpd * (1 + numbers.critical / 1000) * Formulas.coldHitChance(numbers.accur, mobEvasion) / 0.98;
+    const speed = numbers.atkSpd * (1 + numbers.critical / 1000) * Formulas.hitChance(numbers.accur, mobEvasion) / 0.98;
     const phys = (rot.A * numbers.pAtk + rot.B) * speed;
     const magic = rot.M * Math.sqrt(Math.max(1, numbers.mAtk)) * numbers.castSpd / 333;
     // A rotation that never ran dry in its measure keeps its MP-phase rate.
@@ -208,7 +208,7 @@ function mobHour(bot, mob, correction = null) {
     const manaRest = RestPolicy.restsForMana(state);
     const regen = regenOf(bot.classId, bot.level, profile);
     // The mob's hits on the bot (resolveFight: melee only, at its attack speed).
-    const hitChance = Formulas.coldHitChance(view.accur, profile.evasion);
+    const hitChance = Formulas.hitChance(view.accur, profile.evasion);
     const perHit = 70 * view.pAtk / Math.max(1, profile.pDef);
     const crit = Math.min(1, Math.max(0, view.critical) / 1000);
     const hitsPerSec = 1000 / Math.max(250, Formulas.calcMeleeAtkTime(view.atkSpd));

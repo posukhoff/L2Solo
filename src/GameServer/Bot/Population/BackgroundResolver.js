@@ -360,7 +360,7 @@ function resolveDeathRecovery(state, timestamp = Date.now()) {
 }
 
 function hitSucceeds(accuracy, evasion, rng) {
-    return rng() < Formulas.coldHitChance(accuracy, evasion);
+    return rng() < Formulas.hitChance(accuracy, evasion);
 }
 
 // A skill takes its C4 cast time, cut by a loaded spiritshot; a skill row

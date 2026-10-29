@@ -89,13 +89,13 @@ function regenOfKit(state, numbers) {
 const UNIT = { pDef: 1, mDef: 1 }, MOB = { pAtk: 1 };
 function damageRate(numbers, magic, row) {
     if (magic) return Matchup.spellRate(numbers, UNIT, 1);
-    return Matchup.attackRate(numbers, UNIT) * Formulas.coldHitChance(numbers.accur, row.mobEvasion)
+    return Matchup.attackRate(numbers, UNIT) * Formulas.hitChance(numbers.accur, row.mobEvasion)
         * (1 + Math.min(1, Math.max(0, numbers.critical) / 1000));
 }
 // The mob's hits per second on a kit (BotTargetMatchup.incomingRate), up to
 // the mob's P.Atk, with its hit chance against the kit's evasion.
 function hitsOn(numbers, row) {
-    return Matchup.incomingRate(MOB, { pDef: Math.max(1, numbers.pDef) }) * Formulas.coldHitChance(row.mobAccur, numbers.evasion);
+    return Matchup.incomingRate(MOB, { pDef: Math.max(1, numbers.pDef) }) * Formulas.hitChance(row.mobAccur, numbers.evasion);
 }
 // The mob's damage per second to a kit over the reference's: hits, or spells
 // (M.Def) for magic. The cold fight's mobs only hit; hot ones and players

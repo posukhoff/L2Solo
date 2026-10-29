@@ -146,7 +146,7 @@ function perSecond(part) {
 }
 
 function hitShare(profile) {
-    return Formulas.coldHitChance(profile.accur, 0) / 0.98;
+    return Formulas.hitChance(profile.accur, 0) / 0.98;
 }
 
 // The physical part of a damage rate over its speed, critical and hit terms.

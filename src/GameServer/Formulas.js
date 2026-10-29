@@ -238,9 +238,19 @@ const Formulas = {
         return Math.min(300, Math.max(0, (8 * witBonus * multiplier) + add));
     },
 
-    // The cold fight's hit chance (BackgroundResolver.hitSucceeds; HuntCycle).
-    coldHitChance(accuracy, evasion) {
-        return Math.min(0.98, Math.max(0.2, (80 + 2 * (Number(accuracy) - Number(evasion))) / 100));
+    // The hit chance of a normal attack, 0.2..0.98: 80 + 2 x (accuracy -
+    // evasion) %, the attacker higher by 50 +3 % (lower -3 %), from behind
+    // +10 %, from the side +5 %. The hot hit (calcHitChance) and the cold
+    // fight (BackgroundResolver.hitSucceeds; HuntCycle) both read it.
+    hitChance(accuracy, evasion, context = {}, zDiff = 0) {
+        let modifier = 100;
+        if (zDiff > 50) modifier += 3;
+        else if (zDiff < -50) modifier -= 3;
+        if (context.behind) modifier += 10;
+        else if (context.front === false) modifier += 5;
+        if (context.night) modifier -= 10;
+        const chance = (80 + 2 * ((Number(accuracy) || 0) - (Number(evasion) || 0))) * 10 * modifier / 100;
+        return Math.max(Math.min(chance, 980), 200) / 1000;
     },
 
     rollCritical(critical, rng = Math.random) {
@@ -265,20 +275,8 @@ const Formulas = {
     calcHitChance(attacker, target, rng = Math.random, context = {}) {
         const accuracy = safeNumber(attacker?.fetchCollectiveAccur?.(), safeNumber(attacker?.fetchAccur?.(), 0));
         const evasion = safeNumber(target?.fetchCollectiveEvasion?.(), safeNumber(target?.fetchEvasion?.(), 0));
-        let chance = (80 + (2 * (accuracy - evasion))) * 10;
-        let modifier = 100;
-
         const zDiff = safeNumber(attacker?.fetchLocZ?.(), 0) - safeNumber(target?.fetchLocZ?.(), 0);
-        if (zDiff > 50) modifier += 3;
-        else if (zDiff < -50) modifier -= 3;
-
-        if (context.behind) modifier += 10;
-        else if (context.front === false) modifier += 5;
-        if (context.night) modifier -= 10;
-
-        chance *= modifier / 100;
-        chance = Math.max(Math.min(chance, 980), 200);
-        return chance >= rng() * 1000;
+        return this.hitChance(accuracy, evasion, context, zDiff) >= rng();
     },
 
     calcMagicDamage(mAtk, power, mDef, { spiritshot = false, blessedSpiritshot = false, magicCritical = false } = {}) {
