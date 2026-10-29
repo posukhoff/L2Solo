@@ -613,7 +613,7 @@ function kitTask({ spotId, role, level, kit, hours }) {
 function fitSurface(points) {
     const solve = (pairs) => {
         const n = pairs[0]?.[0].length || 0;
-        if (pairs.length < 2 * n) return null;
+        if (!n || pairs.length < 2 * n) return null;
         const a = Array.from({ length: n }, () => new Array(n).fill(0)), b = new Array(n).fill(0);
         for (const [x, y] of pairs) for (let i = 0; i < n; i++) {
             b[i] += x[i] * y;
@@ -636,10 +636,12 @@ function fitSurface(points) {
         const rms = Math.sqrt(pairs.reduce((sum, [x, y]) => sum + (y - x.reduce((s2, v, i) => s2 + v * coef[i], 0)) ** 2, 0) / pairs.length);
         return { coef: coef.map((value) => Math.round(value * 1000) / 1000), rms: Math.round(rms * 1000) / 1000 };
     };
+    const { weighFeatures } = invoke('GameServer/Bot/AI/HuntCycle');
     const pairs = (field) => points.flatMap(({ kit, ref }) => kit[field] > 0 && ref[field] > 0
-        ? [[kit.features, Math.log(kit[field] / ref[field])]] : []);
+        ? [[weighFeatures(kit.features, ref.taken > 0 ? ref.spellTaken / ref.taken : 0), Math.log(kit[field] / ref[field])]] : []);
+    // A caster that kills before contact takes no hit in any kit: taken null.
     const fight = solve(pairs('fight')), taken = solve(pairs('taken'));
-    return fight && taken ? [fight.coef, taken.coef, points.length, fight.rms, taken.rms] : null;
+    return fight ? [fight.coef, taken?.coef || null, points.length, fight.rms, taken?.rms ?? null] : null;
 }
 
 function runChild(catalogueFile) {

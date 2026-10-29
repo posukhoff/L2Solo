@@ -123,6 +123,13 @@ function kitFeatures(numbers, refNumbers, row, magic) {
         ratio(Math.max(1, numbers.mDef), Math.max(1, refNumbers.mDef)),
         ratio(Math.max(1, numbers.maxHp), Math.max(1, refNumbers.maxHp))];
 }
+// The features weighed by the part of a row's damage from spells (T108):
+// P.Def meets the hits, M.Def the spells. The reader weighs by the row's
+// spellTaken, the generator by the author's kit's measured one.
+function weighFeatures(features, spellShare) {
+    const spells = Math.min(1, Math.max(0, Number(spellShare) || 0));
+    return [features[0], features[1] * (1 - spells), features[2] * spells, features[3]];
+}
 function surfaceRatio(coefficients, features) {
     let sum = 0;
     for (let at = 0; at < features.length; at++) sum += (Number(coefficients[at]) || 0) * features[at];
@@ -137,12 +144,14 @@ function surfaceRatio(coefficients, features) {
 // per.surface: the table's kit surface of the role and level (measured fight
 // and damage taken against the kit's numbers), else the closed-form ratios.
 function kill(state, numbers, regen, row, ref, magic, spells, potionHeal, per) {
-    const features = per.surface ? kitFeatures(numbers, ref.numbers, row, magic) : null;
-    const fight = features ? row.fight * surfaceRatio(per.surface.fight, features)
+    const features = per.surface ? weighFeatures(kitFeatures(numbers, ref.numbers, row, magic),
+        row.taken > 0 ? row.spellTaken / row.taken : 0) : null;
+    // A cell with no measured damage (no hit landed) has no taken coefficients.
+    const fight = features && per.surface.fight ? row.fight * surfaceRatio(per.surface.fight, features)
         : row.fight * per.refRate / damageRate(numbers, magic, row);
     const share = row.fight > 0 ? fight / row.fight : 1;
     // spells (a casting threat's read): all the damage meets M.Def.
-    const taken = features && !spells ? row.taken * surfaceRatio(per.surface.taken, features)
+    const taken = features && !spells && per.surface.taken ? row.taken * surfaceRatio(per.surface.taken, features)
         : row.taken * share * damageScale(numbers, ref.numbers, row, spells, per);
     const takenShare = row.taken > 0 ? taken / row.taken : 1;
     const hpNeed = row.hpLost + taken - row.taken + potionHeal * row.potions * takenShare;
@@ -278,4 +287,4 @@ function build(state, ctx) {
     };
 }
 
-module.exports = { reader, referenceState, kitFeatures, KIT_FEATURES };
+module.exports = { reader, referenceState, kitFeatures, weighFeatures, KIT_FEATURES };

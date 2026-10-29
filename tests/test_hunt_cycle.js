@@ -34,12 +34,14 @@ const chest = Providers.gearGain(bot(1, LEVEL, [10]), template(58), ctx, timesta
 assert(chest > helmet, `a breastplate adds more than a helmet (${chest} vs ${helmet})`);
 
 // A level-45 gladiator with no weapon: a C dual pays more than a D dual, both
-// more than nothing, and neither multiplies the hour beyond reason.
+// more than its whole hour (fists: 1/32 of the damage, its income near zero),
+// and a grade up does not multiply a weapon's worth.
 const unarmed = bot(2, 45, [7, 8, 14]);
 const dWeapon = Providers.gearGain(unarmed, template(2529), ctx, timestamp);
 const cWeapon = Providers.gearGain(unarmed, template(2554), ctx, timestamp);
 assert(dWeapon > 0 && cWeapon > dWeapon, `a C weapon adds more than a D one (${cWeapon} vs ${dWeapon})`);
-assert(cWeapon < 20, `a weapon's gain stays bounded (${cWeapon})`);
+assert(dWeapon > 1, `an unarmed bot's first weapon pays more than its hour (${dWeapon})`);
+assert(cWeapon < dWeapon * 2, `a grade up stays within twice the D weapon's worth (${cWeapon} vs ${dWeapon})`);
 // Worn already: no gain.
 assert.equal(Providers.gearGain(bot(2, 45), template(2554), ctx, timestamp), 0, 'the worn weapon adds nothing');
 

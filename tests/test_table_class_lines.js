@@ -1,7 +1,7 @@
 'use strict';
 // The spot table by C4 class lines (user 10-29): a bot reads the rows of its
-// own class's line, a role name reads its alias line, and only a line whose
-// class knows Spoil keeps a spoil level.
+// own class's line, a role name reads its alias line, and a line's spoil level is its
+// class's learned Spoil.
 const assert = require('node:assert/strict');
 require('../src/Global');
 invoke('GameServer/DataCache').init();
@@ -20,7 +20,9 @@ assert.equal(Table.roleClass('3', 30), 1, 'a line below 40 is its first class');
 
 assert(Table.roleSpoilLevel('55', level) > 0, 'the Bounty Hunter line spoils');
 assert.equal(Table.roleSpoilLevel('spoiler', level), Table.roleSpoilLevel('55', level));
-assert.equal(Table.roleSpoilLevel('57', level), 0, 'the Warsmith line does not');
+// The Dwarven Fighter learns Spoil 1 at 10 (data/Skills/Tree): the Warsmith keeps it, unlearned further.
+assert.equal(Table.roleSpoilLevel('57', level), 1, 'the Warsmith line keeps the Dwarven Fighter\'s Spoil 1');
+assert(Table.roleSpoilLevel('55', level) > 1, 'the Bounty Hunter line spoils at its own rank');
 
 let checked = 0, differ = 0;
 for (const spotId of Table.rankedSpotIds('dps', level, { shots: 0, potions: 0 })) {
