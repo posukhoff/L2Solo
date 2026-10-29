@@ -78,9 +78,11 @@ async function run() {
     offers = []; failed.clear();
 
     const dPlan = Shot.planForKind('soulshot', 'd');
-    // T106 table (class vitals): an unarmed fighter's economic hunt has healing demand at 64 ('30_6'),
-    // none at 20-63 (its larger HP outlasts those spots' mobs without a potion).
-    const economicSpot = require('./fixtures/profitable_stock_state').spotFor('30_6');
+    // An unarmed fighter's economic hunt at 64, at the table's best-income spot with healing demand
+    // (read from the table: a regenerated table moves the spot).
+    const Table = invoke('GameServer/Bot/AI/SpotValueTable'), role = Table.roleFor({ level: 64, stats: { classId: 0 } });
+    const healingSpotId = Table.rankedSpotIds(role, 64).find(id => Table.value(id, role, 64).potions > 0);
+    const economicSpot = require('./fixtures/profitable_stock_state').spotFor(healingSpotId);
     let cold = { characterId: 100, level: 64, phase: 'cold', spotId: economicSpot.id, adena: 51000,
         stats: { classId: 0, money: [10000, .0001, 7500, 0, .001, 60000, 1463, .001, 61400, 1061] },
         inventory: { 1463: { selfId: 1463, amount: 200 } } };

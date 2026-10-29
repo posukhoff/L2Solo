@@ -28,10 +28,10 @@ for (const [, items] of Providers.gearCandidates(warrior)) {
         amount: 1, equipped: true, equippedCount: 1, slot: Number(item.etc.slot), enchant: 0 };
 }
 const native = Economy.basics(warrior, deps), stock = native.stock('shots');
-// ARCH-NOTE: the validated table yields 810/h (T106 per-mob table); use its exact rate and ceil, rather than rounding the fixture to the prose example.
-assert.equal(Math.round(stock.usePerHour), 810);
-const use = stock.usePerHour;
 const withShots = Table.value(native.bestSpotId, native.tableRole, warrior.level, true);
+// ARCH-NOTE: the use is the table's exact rate at the best spot (read from the table: a regenerated table moves it).
+assert(stock.usePerHour > 0); assert.equal(stock.usePerHour, withShots.shots);
+const use = stock.usePerHour;
 const Floor = invoke('GameServer/Bot/Population/SurvivalFloor');
 // ARCH-NOTE: empty positive-use kit stacks consume their future slots while
 // sizing E9's interval, so a refill does not sell itself back to the NPC.
@@ -153,7 +153,7 @@ try {
     assert.equal(calls, spots.length); assert(Walk.summary().buildMs < 1000);
     for (let i = 0; i < 100; i++) Economy.basics(warrior, deps);
     assert.equal(calls, spots.length);
-    console.log(`Stock/death: native 810/h, profitable-shot gate, town clocks, cached ${spots.length} return routes in ${Walk.summary().buildMs.toFixed(1)} ms passed`);
+    console.log(`Stock/death: native ${Math.round(use)}/h, profitable-shot gate, town clocks, cached ${spots.length} return routes in ${Walk.summary().buildMs.toFixed(1)} ms passed`);
 } finally { Trip.spotPlan = plan; Config.coldHonestTravel = honest; Walk.reset(); }
 coldVisits().then(() => { assert.equal(invoke('Database').isReady(), false); console.log('Cold visit end interval writer passed'); })
     .catch(error => { console.error(error); process.exitCode = 1; });

@@ -60,7 +60,8 @@ soloHealer.activity = 'hunting';
 delete soloHealer.party;
 const soloProfile = Profile.profileFor(soloHealer, at);
 Object.assign(soloHealer.vitals, { maxHp: soloProfile.maxHp, mp: soloProfile.maxMp, maxMp: soloProfile.maxMp });
-const soloResolve = state => Resolver.resolveSolo({ state, spot, elapsedMs: 1, timestamp: at, rng: () => 0.5 });
+// 2 s: the solo self-heal lands on the fight's second turn.
+const soloResolve = state => Resolver.resolveSolo({ state, spot, elapsedMs: 2000, timestamp: at, rng: () => 0.5 });
 const resting = soloResolve(soloHealer);
 assert.strictEqual(resting.patch.activity, 'resting', 'an injured idle solo bot must recover before starting a fight');
 assert.strictEqual(resting.patch.stats.lastReason, 'solo_recovery_needed');

@@ -8,6 +8,8 @@ require('./helpers/databaseIsolation');
 const { DatabaseSync } = require('node:sqlite');
 require('../src/Global');
 isolated.assertConfigured(options.default);
+// The author's fixed shot merchant sells shots here (off by default since T116).
+invoke('GameServer/Bot/Population/PopulationConfig').staticShotsDisabled = false;
 
 const World = invoke('GameServer/World/World');
 const FollowingState = invoke('GameServer/Bot/AI/States/FollowingState');
@@ -2481,7 +2483,7 @@ try {
     assert(physicalShotQuote && physicalShotQuote.price > 0);
     const authoredShotInputs = fundAuthoredKit(errandBot, errandSession, inputs => {
         assert(inputs.shotUse > 0, 'the equipped native C weapon must have positive authored shot use');
-        assert.strictEqual(inputs.potionUse, 0, 'this original DPS actor has no potion expense in the authored hunt table');
+        // The regenerated T106 table gives this DPS actor potion use too: fundAuthoredKit funds its reserve.
         return Math.ceil(inputs.shotUse) * physicalShotQuote.price;
     }, 'Giran stock: one authored hour at the actual Squeesh quote');
     const desiredShotQuantity = Math.ceil(authoredShotInputs.shotUse);
