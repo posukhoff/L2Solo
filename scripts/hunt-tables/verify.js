@@ -60,7 +60,7 @@ function strengthCheck(file, count) {
     for (const row of picked) {
         const stats = JSON.parse(row.statsJson || '{}');
         const inventory = JSON.parse(row.inventorySummary || '{}');
-        const classId = Number(stats.coldCombat?.classId ?? stats.classId);
+        const classId = invoke('GameServer/Bot/Population/ColdCombatProfile').classIdOf({ stats });
         const state = { characterId: Number(row.characterId), level: Number(row.level), classId, stats, inventory };
         const owner = M.profileOf(state);
         const worn = [];
