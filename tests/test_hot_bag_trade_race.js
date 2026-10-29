@@ -149,6 +149,22 @@ async function race(name, { timerFlush }) {
     assert.strictEqual(amountOf(await Database.fetchItems(faultA), ADENA), 0, 'an overdrawn row goes to 0, as the bag holds it');
     assert.strictEqual(amountOf(await Database.fetchItems(faultB), ADENA), 60, 'the other character in the batch is written');
 
+    // A gain on an emptied row of a character deleted meanwhile drops (its
+    // row cannot come back): the batch it shares still lands.
+    await Database.createAccount('fault_gone', 'pw');
+    await Database.createAccount('fault_c', 'pw');
+    const goneId = Number((await Database.createCharacter('fault_gone', character('FaultGone'))).insertId);
+    const faultC = Number((await Database.createCharacter('fault_c', character('FaultC'))).insertId);
+    const goneRow = Number((await Database.setItem(goneId, { selfId: ADENA, name: 'Adena', amount: 100 })).insertId);
+    const cRow = Number((await Database.setItem(faultC, { selfId: ADENA, name: 'Adena', amount: 100 })).insertId);
+    WriteQueue.itemDelta(goneId, goneRow, 5, { selfId: ADENA, name: 'Adena', enchant: 0 });
+    WriteQueue.itemDelta(faultC, cRow, 7);
+    await Database.deleteCharacter('fault_gone', 'FaultGone');
+    await WriteQueue.flushAll();
+    assert.strictEqual(WriteQueue.pendingCount(), 0, 'the deleted character jams no batch');
+    assert.strictEqual(amountOf(await Database.fetchItems(goneId), ADENA), 0, 'no row comes back for it');
+    assert.strictEqual(amountOf(await Database.fetchItems(faultC), ADENA), 107, 'the batch it shared is written');
+
     // A quest step is written after the bag change it gave (QuestService).
     WriteQueue.itemDelta(faultB, otherId, 5);
     await Database.setCharacterQuest(faultB, 1, 'started', {});
@@ -181,14 +197,36 @@ async function race(name, { timerFlush }) {
     assert.strictEqual(held(lister.actor, SHOT), 0, 'the newest stack, listed whole, left the bag');
     assert.strictEqual(held(lister.actor, ADENA), 1000);
 
-    // A job's row at 0 is gone from the database: the bag drops the item even
-    // with a gain queued meanwhile (that delta finds no row).
+    // A job emptied a row (a fee took the whole stack) while the bag gained on
+    // it: the gain stays, in the bag and, its row written again, in the
+    // database. A row emptied with nothing gained on it leaves the bag.
     const gone = lister.actor.backpack.fetchItemFromSelfId(ADENA);
     LiveBag.add(lister.actor, gone, 5);
-    const goneRow = WriteQueue.markRead(newestOwner, { id: gone.fetchId(), amount: 0 });
-    LiveBag.applyRow(lister.actor, goneRow);
-    assert.strictEqual(held(lister.actor, ADENA), 0, 'a row the job removed leaves the bag');
+    await Database.execute(['DELETE FROM items WHERE id = ?', [gone.fetchId()]]);
+    LiveBag.applyRow(lister.actor, WriteQueue.markRead(newestOwner, { id: gone.fetchId(), amount: 0 }));
+    assert.strictEqual(held(lister.actor, ADENA), 5, 'the gain on the emptied row stays in the bag');
     await WriteQueue.flushAll();
+    assert.strictEqual(amountOf(await Database.fetchItems(newestOwner), ADENA), 5, 'and in the database');
+    await Database.execute(['DELETE FROM items WHERE id = ?', [gone.fetchId()]]);
+    LiveBag.applyRow(lister.actor, WriteQueue.markRead(newestOwner, { id: gone.fetchId(), amount: 0 }));
+    assert.strictEqual(held(lister.actor, ADENA), 0, 'a row the job emptied leaves the bag');
+    await WriteQueue.flushAll();
+
+    // A trash of 0 or a negative count (TrashItem reads a signed int32)
+    // changes nothing, as for an unknown item: no bag change, no delta, no
+    // callback.
+    const trashed = await race('trash', { timerFlush: false });
+    await WriteQueue.flushAll();
+    const shots = trashed.actor.backpack.fetchItemFromSelfId(SHOT);
+    const revision = trashed.actor.backpack.inventoryRevision;
+    let called = 0;
+    for (const count of [-5, 0]) trashed.actor.backpack.deleteItem(trashed.session, shots.fetchId(), count, () => { called += 1; });
+    assert.strictEqual(called, 0, 'the refused trash calls nothing back');
+    assert.strictEqual(held(trashed.actor, SHOT), 149, 'the bag keeps its shots');
+    assert.strictEqual(trashed.actor.backpack.inventoryRevision, revision);
+    assert.strictEqual(WriteQueue.pendingCount(), 0, 'no delta is queued');
+    assert.strictEqual(WriteQueue.unread(trashed.buyerId).size, 0);
+    assert.strictEqual(amountOf(await Database.fetchItems(trashed.buyerId), SHOT), 149);
     console.log('hot bag trade race ok');
 })().catch((error) => {
     console.error(error);

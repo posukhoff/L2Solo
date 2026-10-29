@@ -21,6 +21,8 @@ const Sell = invoke('GameServer/Network/Request/Sell');
 const ServerResponse = invoke('GameServer/Network/Response');
 const TradeService = invoke('GameServer/Bot/TradeService');
 const World = invoke('GameServer/World/World');
+const LiveBag = invoke('GameServer/Inventory/LiveBag');
+const WriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
 const BuyHtml = invoke('GameServer/World/Generics/NpcBypasses/BuyMerchantItem');
 const SellHtml = invoke('GameServer/World/Generics/NpcBypasses/SellToMerchantItem');
 
@@ -305,6 +307,30 @@ test('bot shots retain authored price after player refresh; other static purchas
     await assert.rejects(TradeService.buyFromStore(session.actor, materialStore, MATERIAL, 1), /static.*unavailable/i);
     const ordinary = { storeType: 1, items: [{ selfId: MATERIAL, price: 7, count: 2 }] };
     assert.strictEqual((await TradeService.buyFromStore(session.actor, ordinary, MATERIAL, 1)).totalAdena, 7);
+});
+
+test('a failing Adena write to a seller with no Adena restores the item and wallet', async () => {
+    const session = await player('FRollback');
+    const actor = session.actor;
+    LiveBag.add(actor, actor.backpack.fetchItemFromSelfId(57), -wallet(session));
+    await WriteQueue.flushAll();
+    const store = staticStore(Configs['4manda']);
+    const item = actor.backpack.fetchItemFromSelfId(MATERIAL);
+    TradeService.refreshStorePrices(store);
+    const count = store.items[0].count;
+    const setItem = Database.setItem;
+    // The seller's new Adena row cannot be written (the database edge).
+    Database.setItem = (characterId, row) => Number(row.selfId) === 57
+        ? Promise.reject(new Error('forced player write failure')) : setItem.call(Database, characterId, row);
+    try { await assert.rejects(TradeService.sellToStore(actor, store, MATERIAL, 1), /forced player write failure/); }
+    finally { Database.setItem = setItem; }
+    assert.strictEqual(wallet(session), 0, 'the seller gets no Adena');
+    assert.strictEqual(item.fetchAmount(), 20, 'the seller keeps the item');
+    assert.strictEqual(store.items[0].count, count, 'the buyer keeps its stock');
+    await WriteQueue.flushAll();
+    const rows = await Database.fetchItems(actor.fetchId());
+    assert.strictEqual(rows.find(row => Number(row.selfId) === MATERIAL)?.amount, 20, 'nothing net is written for the item');
+    assert.strictEqual(rows.some(row => Number(row.selfId) === 57), false, 'nor any Adena');
 });
 
 test('fixed supply is cached by configuration/rate without world session reads', () => {

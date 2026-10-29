@@ -150,12 +150,8 @@ async function execute(session,bot,errand) {
                 ingredients:recipe.materials,product:{selfId:recipe.productId,name:template.template.name,amount:1,slot:14},
                 validate:() => validate(session,bot,errand)
             });
-            // Worn sources the combination used up come off first; then the
-            // rows (sources and the new product) plus what the bag changed since.
-            for (const source of result.sources) {
-                const item = bot.backpack.fetchItemRaw(source.id);
-                if (source.remaining <= 0 && item?.fetchEquipped()) bot.backpack.unequipPaperdoll(item.fetchSlot());
-            }
+            // The rows (sources and the new product) plus what the bag changed
+            // since; worn sources the combination used up come off (LiveBag).
             LiveBag.applyAmounts(bot, result.rows);
             product = bot.backpack.fetchItemRaw(result.product.id);
         }

@@ -103,9 +103,7 @@ async function craftSelf(session, recipeId, random = Math.random, options = {}) 
             LiveBag.applyRows(actor, rows);
         } else {
             LiveBag.applyAmounts(actor, result.sources);
-            if (success) LiveBag.applyRow(actor, result.product, result.product, {
-                ...utils.crushOb(template), equipped: false, slot: product.slot
-            });
+            if (success) LiveBag.applyRow(actor, result.product);
         }
         if (!result.replayed) actor.setMp?.(Number(result.mp ?? mp));
         actor.statusUpdateVitals?.(actor);

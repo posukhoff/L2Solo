@@ -18,7 +18,7 @@ function migrate(connection) {
     `);
 }
 
-function create({ one, all, write, inTransaction, withCharacterFlush, markedRows }) {
+function create({ one, all, write, inTransaction, withCharacterFlush, markedRows, creditTargetRowUnsafe }) {
     function owner(characterId, accountId) {
         const row = one(`SELECT account.username FROM characters c
             JOIN accounts account ON account.username = c.username COLLATE NOCASE
@@ -84,9 +84,8 @@ function create({ one, all, write, inTransaction, withCharacterFlush, markedRows
                     } else {
                         const source = one('SELECT * FROM account_warehouse_items WHERE id = ? AND accountName = ?', [item.id, account]);
                         if (!source || Number(source.selfId) !== item.selfId || Number(source.amount) < item.amount) throw Error('warehouse item changed');
-                        const target = item.stackable && !source.petData ? one(`SELECT id, amount FROM items
-                            WHERE characterId = ? AND selfId = ? AND enchant = ? AND petData IS NULL ORDER BY id LIMIT 1`,
-                        [characterId, source.selfId, source.enchant]) : null;
+                        const target = item.stackable ? creditTargetRowUnsafe(characterId, source.selfId,
+                            { enchant: source.enchant, petData: source.petData }) : null;
                         const inventoryAmount = sum(target?.amount, item.amount);
                         const inventoryId = target ? target.id : write(`INSERT INTO items
                             (selfId, name, amount, enchant, petData, equipped, slot, characterId) VALUES (?, ?, ?, ?, ?, 0, 0, ?)`,

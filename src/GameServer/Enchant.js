@@ -41,14 +41,6 @@ function crystalTemplate(selfId) {
     return ItemTemplateIndex.find(DataCache.items, selfId);
 }
 
-function removeFromMemory(backpack, item) {
-    if (item.fetchEquipped?.()) {
-        backpack.unequipPaperdoll(item.fetchSlot());
-        item.setEquipped(false);
-    }
-    backpack.items = backpack.fetchItems().filter((entry) => entry.fetchId() !== item.fetchId());
-}
-
 function refresh(session) {
     const actor = session.actor;
     send(session, ServerResponse.itemsList(actor.backpack.fetchItems()));
@@ -133,7 +125,8 @@ async function enchant(session, objectId, options = {}) {
             crystalAmount
         });
 
-        // The scroll's (and a break's crystal) rows plus what the bag changed since.
+        // The scroll's (and a break's target and crystal) rows plus what the
+        // bag changed since; a broken worn target comes off (LiveBag).
         LiveBag.applyAmounts(actor, persisted.rows);
         if (result === 'success') {
             target.setEnchantLevel(nextLevel);
@@ -147,7 +140,6 @@ async function enchant(session, objectId, options = {}) {
             send(session, ServerResponse.enchantResult(2));
         } else {
             sendBreakMessage(session, target, oldLevel);
-            removeFromMemory(backpack, target);
             ConsoleText.transmit(session, ConsoleText.caption.earnedAmountOf, [
                 { kind: ConsoleText.kind.item, value: crystalId },
                 { kind: ConsoleText.kind.number, value: crystalAmount }

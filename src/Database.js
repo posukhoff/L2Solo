@@ -118,8 +118,10 @@ let flushPendingCharacterWrites = null;
 let itemLedger = null;
 // Live bag deltas the database could not take whole (logged): overdraw, the
 // row held less than the bag spent (a DB trade spent it meanwhile; the row
-// goes to 0, as the bag holds it); missing, the row is gone (the delta drops).
-const bagDeltaFaults = { overdraw: 0, missing: 0 };
+// goes to 0, as the bag holds it); missing, the row is gone (the delta drops);
+// reinserted, a job emptied the row while the bag gained on it (the gain
+// writes the row again under its id).
+const bagDeltaFaults = { overdraw: 0, missing: 0, reinserted: 0 };
 const MARKET_TRADE_RETENTION_MS = HistoryStore.MARKET_TRADE_RETENTION_MS;
 const cooperative = {
     depth: 0,
@@ -280,18 +282,23 @@ function enqueue(work, { operation = 'raw', read = false, onTiming = null } = {}
         if (!connection?.isTransaction) ClanReviewInputs.beginCandidateCommit();
         let committed = false;
         try {
-            const result = work();
-            EconomyJournal.commit();
-            if (!connection?.isTransaction) ClanReviewInputs.commitCandidateInputs();
+            let result;
+            try {
+                result = work();
+            } catch (error) {
+                EconomyJournal.discard();
+                if (connection?.isTransaction) ClanReviewInputs.restoreCandidateCheckpoint(candidateCheckpoint);
+                else ClanReviewInputs.discardCandidateCommit();
+                if (timed) record(operation, wait, now() - startedAt, read, true);
+                throw error;
+            }
             committed = true;
+            // work() returned: the job committed, so its bookkeeping cannot
+            // reject it (see performTransaction).
+            afterCommit(operation, 'economy journal', () => EconomyJournal.commit());
+            if (!connection?.isTransaction) afterCommit(operation, 'clan review inputs', () => ClanReviewInputs.commitCandidateInputs());
             if (timed) record(operation, wait, now() - startedAt, read);
             return result;
-        } catch (error) {
-            EconomyJournal.discard();
-            if (connection?.isTransaction) ClanReviewInputs.restoreCandidateCheckpoint(candidateCheckpoint);
-            else ClanReviewInputs.discardCandidateCommit();
-            if (timed) record(operation, wait, now() - startedAt, read, true);
-            throw error;
         } finally {
             metrics.pending -= 1;
             // A committed job may have added history outbox rows (directly or
@@ -618,14 +625,14 @@ async function inPreparedTransactionBatch(items, prepare, hooks, operation) {
                 if (prepared && typeof prepared.then === 'function')
                     throw new TypeError('prepared_transaction_must_be_synchronous');
                 value = typeof prepared === 'function' ? performTransaction(prepared, operation) : prepared;
-                EconomyJournal.commit();
-                ClanReviewInputs.commitCandidateInputs();
             } catch (error) {
                 EconomyJournal.discard();
                 ClanReviewInputs.discardCandidateCommit();
                 syncPreparedHook(failed, id, error);
                 throw error;
             }
+            afterCommit(operation, 'economy journal', () => EconomyJournal.commit());
+            afterCommit(operation, 'clan review inputs', () => ClanReviewInputs.commitCandidateInputs());
             try {
                 completed.push({ id, result: committed ? syncPreparedHook(committed, id, value) : value });
             } catch (error) {
@@ -2779,11 +2786,25 @@ function applyBufferedCharacterStateUnsafe(characterId, state = {}) {
         const params = [item.id, characterId];
         const row = one('UPDATE items SET amount = amount + ? WHERE id = ? AND characterId = ? AND amount + ? >= 0 RETURNING amount', [delta, ...params, delta]);
         if (row && Number(row.amount) > 0) return;
-        if (!row && delta) {
-            const fault = Number(write('DELETE FROM items WHERE id = ? AND characterId = ?', params).affectedRows || 0) ? 'overdraw' : 'missing';
+        let fault = null;
+        if (!row && delta > 0 && item.row?.selfId) {
+            // A gain on a row a database job emptied meanwhile (a fee took the
+            // whole stack while a payment came in): the bag kept the gain
+            // (LiveBag.applyRow), so the row comes back under its id. A
+            // character deleted meanwhile takes no row (a foreign key failure
+            // would roll the batch back for good): the delta drops.
+            fault = Number(write(`INSERT OR IGNORE INTO items
+                (id, selfId, name, amount, enchant, equipped, slot, characterId)
+                SELECT ?, ?, ?, ?, ?, 0, 0, ? WHERE EXISTS (SELECT 1 FROM characters WHERE id = ?)`,
+            [item.id, Number(item.row.selfId), String(item.row.name || ''), delta, Number(item.row.enchant || 0), characterId, characterId]).affectedRows || 0)
+                ? 'reinserted' : 'missing';
+        } else if (!row && delta) {
+            fault = Number(write('DELETE FROM items WHERE id = ? AND characterId = ?', params).affectedRows || 0) ? 'overdraw' : 'missing';
+        } else if (row) write('DELETE FROM items WHERE id = ? AND characterId = ?', params);
+        if (fault) {
             bagDeltaFaults[fault] += 1;
             utils.infoWarn('DB', 'live bag delta %s: character %s item %s delta %s (total %s)', fault, characterId, item.id, delta, bagDeltaFaults[fault]);
-        } else if (row) write('DELETE FROM items WHERE id = ? AND characterId = ?', params);
+        }
     });
     itemLedger?.applied(characterId, state);
     return { characterId, fields: fields.length, items: Object.keys(state.items || {}).length };
@@ -3613,7 +3634,7 @@ function afkTradeDebitAdenaUnsafe(characterId, amount) {
 function afkTradeCreditAdenaUnsafe(characterId, amount) {
     const value = Math.max(0, Math.floor(Number(amount) || 0));
     if (value === 0) return 0;
-    const row = one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = 57 ORDER BY id LIMIT 1', [characterId]);
+    const row = creditTargetRowUnsafe(characterId, 57);
     if (row) {
         const total = Number(row.amount) + value;
         write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [total, row.id, characterId]);
@@ -3624,15 +3645,29 @@ function afkTradeCreditAdenaUnsafe(characterId, amount) {
         VALUES (57, 'Adena', ?, 0, 0, 0, ?)`, [value, characterId]).insertId);
 }
 
+// The stack a credit inside a job lands on, for an item that stacks (the
+// caller decides that; a non-stackable item always takes a new row): the
+// character's lowest-id row of the item at the enchant without pet data,
+// worn or not. An item with pet data, or none such row: null (a new row).
+// A worn stack takes the credit too (one stack per stackable item, worn
+// arrows included), as a memory-first pickup (PurchaseItem) does. Source:
+// L2J Mobius C4 entity/itemcontainer/ItemContainer.java addItem ->
+// getItemByItemId, which returns the first item with the id whatever its
+// equip state.
+function creditTargetRowUnsafe(characterId, selfId, { enchant = 0, petData = null } = {}) {
+    if (petData) return null;
+    return one(`SELECT id, amount FROM items
+        WHERE characterId = ? AND selfId = ? AND enchant = ? AND petData IS NULL
+        ORDER BY id LIMIT 1`, [characterId, Number(selfId), Math.max(0, Number(enchant) || 0)]) || null;
+}
+
 function afkTradeCreditItemUnsafe(characterId, item, amount) {
     const count = Math.max(1, Math.floor(Number(amount) || 1));
     const selfId = Number(item.selfId);
     const enchant = Math.max(0, Number(item.enchant || 0));
     const stackable = Number(item.stackable || 0) === 1;
     if (stackable) {
-        const target = one(`SELECT id, amount FROM items
-            WHERE characterId = ? AND selfId = ? AND enchant = ? AND equipped = 0
-            ORDER BY id LIMIT 1`, [characterId, selfId, enchant]);
+        const target = creditTargetRowUnsafe(characterId, selfId, { enchant, petData: item.petData });
         if (target) {
             const total = Number(target.amount) + count;
             write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [total, target.id, characterId]);
@@ -4469,7 +4504,7 @@ const Database = {
     // BotLifeState.save builds its upsert with it.
     MOVE_FAR_REVISION,
 
-    ...PlayerWarehouse.create({ one, all, write, inTransaction, withCharacterFlush, markedRows }),
+    ...PlayerWarehouse.create({ one, all, write, inTransaction, withCharacterFlush, markedRows, creditTargetRowUnsafe }),
     openClanRaidPartyAtImpact(request) {
         // The offensive callback cannot await our queue: its registered roster
         // could change meanwhile. Abort this native action when another write
@@ -4654,8 +4689,7 @@ const Database = {
             // read-marked: a live body adds what it changed since (LiveBag.applyAmounts).
             const left = new Map(payerRows.map(row => [Number(row.id), Number(row.amount)]));
             const credited = providerRows.find(row => Number(row.id) === Number(providerAdenaId));
-            return { ok: true, payerBalance, providerBalance,
-                payerAdenaId: Number(payerRows[0]?.id || 0), providerAdenaId,
+            return { ok: true,
                 payerRows: markedRows(payer, paying.map(row => ({ id: Number(row.id), amount: left.get(Number(row.id)) || 0, selfId: 57 }))),
                 providerRows: markedRows(provider, [{ id: Number(providerAdenaId), amount: Number(credited?.amount || 0), selfId: 57 }]) };
         }, 'buff-service:payment')));
@@ -6925,17 +6959,11 @@ const Database = {
         const characterIds = entries.flatMap((entry) => [entry.fromCharacterId, entry.toCharacterId]);
         return withCharacterFlushes(characterIds, () => inTransaction(() => {
             if (!entries.length) throw new Error('empty inventory transfer');
-
-            const sources = entries.map((entry) => {
+            for (const entry of entries) {
                 if (!entry.fromCharacterId || !entry.toCharacterId || !entry.sourceItemId || !entry.selfId || BeginnerShots.isRestricted(entry.selfId) || entry.amount <= 0) {
                     throw new Error('invalid inventory transfer');
                 }
-                const source = one('SELECT id, selfId, name, amount, enchant, equipped, slot, petData FROM items WHERE id = ? AND characterId = ?', [entry.sourceItemId, entry.fromCharacterId]);
-                if (!source || Number(source.selfId) !== entry.selfId || Number(source.amount) < entry.amount || Number(source.equipped) !== 0) {
-                    throw new Error('inventory item changed');
-                }
-                return { entry, source };
-            });
+            }
 
             const moved = [];
             // Each character's item rows the transfer wrote, in order (a later
@@ -6945,15 +6973,19 @@ const Database = {
                 if (!rows.has(characterId)) rows.set(characterId, []);
                 rows.get(characterId).push(row);
             };
-            sources.forEach(({ entry, source }) => {
+            // Each row is read right before its write: an entry's target stack
+            // can be a later entry's source.
+            entries.forEach((entry) => {
+                const source = one('SELECT id, selfId, name, amount, enchant, equipped, slot, petData FROM items WHERE id = ? AND characterId = ?', [entry.sourceItemId, entry.fromCharacterId]);
+                if (!source || Number(source.selfId) !== entry.selfId || Number(source.amount) < entry.amount || Number(source.equipped) !== 0) {
+                    throw new Error('inventory item changed');
+                }
                 const remaining = Number(source.amount) - entry.amount;
                 if (remaining <= 0) write('DELETE FROM items WHERE id = ? AND characterId = ?', [entry.sourceItemId, entry.fromCharacterId]);
                 else write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [remaining, entry.sourceItemId, entry.fromCharacterId]);
 
-                let target = null;
-                if (entry.stackable) {
-                    target = one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [entry.toCharacterId, entry.selfId]);
-                }
+                const target = entry.stackable ? creditTargetRowUnsafe(entry.toCharacterId, entry.selfId,
+                    { enchant: source.enchant, petData: entry.petData || source.petData }) : null;
                 let targetItemId;
                 const targetAmount = Number(target?.amount || 0) + entry.amount;
                 if (target) {
@@ -6969,11 +7001,7 @@ const Database = {
                 touched(entry.toCharacterId, { id: Number(targetItemId), amount: targetAmount, selfId: entry.selfId,
                     name: entry.name || source.name, enchant: Number(source.enchant || 0), equipped: 0, slot: entry.slot,
                     petData: entry.petData || source.petData || null });
-                moved.push({
-                    ...entry,
-                    targetItemId: Number(targetItemId),
-                    remaining
-                });
+                moved.push({ ...entry });
             });
             // Read-marked per character: a live body adds what it changed since (LiveBag.applyAmounts).
             moved.rows = new Map([...rows].map(([characterId, list]) => [characterId, markedRows(characterId, list)]));
@@ -7184,7 +7212,7 @@ const Database = {
             // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
             const rows = sold.map(item => ({ id: item.objectId, amount: item.amount }));
             if (adena) rows.push({ id: Number(adena.id), amount: Number(adena.amount), selfId: 57 });
-            return { sold, adena, rows: markedRows(characterId, rows) };
+            return { rows: markedRows(characterId, rows) };
         }, 'npc-shop:sell'));
     },
     fetchWarehouseItems(characterId) {
@@ -7226,7 +7254,7 @@ const Database = {
             else write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [inventoryAmount, item.id, characterId]);
             const coldLifeRow = syncEconomySnapshotUnsafe(characterId, coldState, [item.selfId]);
             // Read-marked rows: a live body adds what it changed since (LiveBag.applyAmounts).
-            return { warehouseId: Number(warehouseId), warehouseAmount, inventoryAmount, enchant: sourceEnchant,
+            return { warehouseId: Number(warehouseId), warehouseAmount, enchant: sourceEnchant,
                 rows: markedRows(characterId, [{ id: Number(item.id), amount: Math.max(0, inventoryAmount) }]),
                 ...(coldLifeRow ? { coldLifeRow } : {}) };
         }, 'warehouse:deposit')).then(result => {
@@ -7276,7 +7304,7 @@ const Database = {
             const source = one('SELECT id, selfId, amount, enchant, petData FROM warehouse_items WHERE id = ? AND characterId = ?', [item.id, characterId]);
             if (!source || Number(source.selfId) !== Number(item.selfId) || Number(source.amount) < Number(item.amount)) throw new Error('warehouse item changed');
             const sourceEnchant = Math.max(0, Number(source.enchant) || 0);
-            const target = item.stackable ? one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [characterId, item.selfId]) : null;
+            const target = item.stackable ? creditTargetRowUnsafe(characterId, item.selfId, { enchant: sourceEnchant, petData: source.petData }) : null;
             const inventoryAmount = Number(target?.amount || 0) + Number(item.amount);
             const inventoryId = target ? target.id : write('INSERT INTO items (selfId, name, amount, enchant, equipped, slot, petData, characterId) VALUES (?, ?, ?, ?, 0, 0, ?, ?)', [item.selfId, item.name || '', item.amount, sourceEnchant, source.petData, characterId]).insertId;
             if (target) write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [inventoryAmount, inventoryId, characterId]);
@@ -7287,7 +7315,7 @@ const Database = {
             // Read-marked rows: a live body adds what it changed since (LiveBag.applyAmounts).
             const rows = markedRows(characterId, [{ id: Number(inventoryId), amount: inventoryAmount, selfId: Number(item.selfId),
                 enchant: sourceEnchant, petData: source.petData, equipped: 0, slot: 0 }]);
-            return { inventoryId: Number(inventoryId), inventoryAmount, warehouseAmount, petData: source.petData, enchant: sourceEnchant,
+            return { inventoryId: Number(inventoryId), warehouseAmount, enchant: sourceEnchant,
                 rows, ...(coldLifeRow ? { coldLifeRow } : {}) };
         }, 'warehouse:withdraw')).then(result => {
             invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').changed(characterId); return result;
@@ -7433,8 +7461,7 @@ const Database = {
                 ? Math.max(0, Number(previousState.warehouseRevision) || 0)
                 : Number(one('SELECT COALESCE(MAX(warehouseRevision), 0) AS revision FROM clan_warehouse_ledger WHERE clanId = ?', [clan]).revision || 0);
             const sourceEnchant = Math.max(0, Number(source.enchant) || 0);
-            const target = item.stackable !== false ? one(`SELECT id, amount FROM items
-                WHERE characterId = ? AND selfId = ? AND enchant = ? ORDER BY id LIMIT 1`, [character, selfId, sourceEnchant]) : null;
+            const target = item.stackable !== false ? creditTargetRowUnsafe(character, selfId, { enchant: sourceEnchant, petData: source.petData }) : null;
             const inventoryAmount = Number(target?.amount || 0) + requested;
             const inventoryId = target ? Number(target.id) : Number(write(`INSERT INTO items
                 (selfId, name, amount, enchant, equipped, slot, petData, characterId)
@@ -7455,12 +7482,10 @@ const Database = {
                 state.warehouseRevision = nextRevision;
                 write('UPDATE clan_simulation_clans SET updatedAt = ?, stateJson = ? WHERE clanId = ?', [timestamp, JSON.stringify(state), clan]);
             }
-            const ledger = write(`INSERT INTO clan_warehouse_ledger
+            write(`INSERT INTO clan_warehouse_ledger
                 (clanId, characterId, selfId, amount, operation, resolveKey, warehouseRevision, createdAt)
                 VALUES (?, ?, ?, ?, 'withdraw', ?, ?, ?)`, [clan, character, selfId, requested, key, nextRevision, timestamp]);
             return {
-                inventoryId, inventoryAmount, warehouseAmount, enchant: sourceEnchant,
-                petData: source.petData, warehouseRevision: nextRevision, ledgerId: Number(ledger.insertId),
                 // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
                 rows: markedRows(character, [{ id: inventoryId, amount: inventoryAmount, selfId, enchant: sourceEnchant,
                     petData: source.petData || null, equipped: 0, slot: 0 }])
@@ -7499,7 +7524,7 @@ const Database = {
             else write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [food.amount-1, foodId, characterId]);
             write('UPDATE items SET petData = ? WHERE id = ? AND characterId = ?', [JSON.stringify({...state,currentFeed,starvingSince:0}),controlId,characterId]);
             // Read-marked row: the live body adds what it changed since (LiveBag.applyRow).
-            return { currentFeed, remaining:food.amount-1, food: markedRows(characterId, { id: Number(foodId), amount: food.amount - 1 }) };
+            return { currentFeed, food: markedRows(characterId, { id: Number(foodId), amount: food.amount - 1 }) };
         }, 'pet:mount-food'));
     },
     exchangeDimensionalDiamond(characterId, itemId) {
@@ -7520,7 +7545,7 @@ const Database = {
                 if (used === item.amount) write('DELETE FROM items WHERE id = ?', [item.id]);
                 else write('UPDATE items SET amount = ? WHERE id = ?', [item.amount - used, item.id]);
             }
-            const scroll = one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? AND equipped = 0 ORDER BY id LIMIT 1', [characterId, itemId]);
+            const scroll = creditTargetRowUnsafe(characterId, itemId);
             if (scroll) { write('UPDATE items SET amount = amount + 1 WHERE id = ?', [scroll.id]); changed.add(scroll.id); }
             else changed.add(Number(write('INSERT INTO items(selfId, name, amount, characterId) VALUES (?, ?, 1, ?)', [itemId, template.template.name, characterId]).insertId));
             // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
@@ -7573,7 +7598,7 @@ const Database = {
             }
             for (const give of gives) {
                 if (!Number.isSafeInteger(give.amount) || give.amount < 1 || (!give.stackable && give.amount !== 1)) throw new Error('Invalid quest reward');
-                const item = give.stackable ? one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [characterId, give.selfId]) : null;
+                const item = give.stackable ? creditTargetRowUnsafe(characterId, give.selfId) : null;
                 if (item) { write('UPDATE items SET amount = ? WHERE id = ?', [item.amount + give.amount, item.id]); changed.add(item.id); }
                 else changed.add(Number(write('INSERT INTO items(selfId, name, amount, characterId) VALUES (?, ?, ?, ?)', [give.selfId, give.name, give.amount, characterId]).insertId));
             }
@@ -7640,7 +7665,7 @@ const Database = {
             }
             for (const give of gives) {
                 if (!Number.isSafeInteger(give.amount) || give.amount < 1 || (!give.stackable && give.amount !== 1)) throw new Error('Invalid quest reward');
-                const item = give.stackable ? one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [characterId, give.selfId]) : null;
+                const item = give.stackable ? creditTargetRowUnsafe(characterId, give.selfId) : null;
                 if (item) { write('UPDATE items SET amount = ? WHERE id = ?', [item.amount + give.amount, item.id]); changed.add(item.id); }
                 else changed.add(Number(write('INSERT INTO items(selfId, name, amount, characterId) VALUES (?, ?, ?, ?)', [give.selfId, give.name, give.amount, characterId]).insertId));
             }
@@ -7692,7 +7717,7 @@ const Database = {
             else write('DELETE FROM items WHERE id = ? AND characterId = ?', [ticketId, characterId]);
             const id = Number(write('INSERT INTO items(selfId, name, amount, characterId) VALUES (?, ?, 1, ?)', [output.itemId, output.name, characterId]).insertId);
             // Read-marked row: the live body adds what it changed since (LiveBag.applyRow).
-            return { id, selfId: output.itemId, remaining, ticket: markedRows(characterId, { id: Number(ticketId), amount: remaining }) };
+            return { id, selfId: output.itemId, ticket: markedRows(characterId, { id: Number(ticketId), amount: remaining }) };
         }, 'pet:ticket-exchange'));
     },
     completeWolfQuest(characterId) {
@@ -7706,7 +7731,7 @@ const Database = {
             const id = Number(write("INSERT INTO items(selfId, name, amount, characterId) VALUES (2375, 'Wolf Collar', 1, ?)", [characterId]).insertId);
             write("UPDATE character_quests SET state = 'created', variables = '{}' WHERE characterId = ? AND questId = 419", [characterId]);
             // Read-marked row: the live body adds what it changed since (LiveBag.applyRow).
-            return { id, removedItemId: list.id, removed: markedRows(characterId, { id: Number(list.id), amount: 0 }) };
+            return { id, removed: markedRows(characterId, { id: Number(list.id), amount: 0 }) };
         }, 'pet:wolf-quest-reward'));
     },
     // After the character's buffered bag deltas: a quest step never lands
@@ -7885,7 +7910,7 @@ const Database = {
             }
             write('UPDATE items SET amount=? WHERE id=? AND characterId=?', [remainingWallet, wallet.id, characterId]);
             for (const line of lines) {
-                const existing = line.stackable ? one('SELECT id,amount FROM items WHERE characterId=? AND selfId=? ORDER BY id LIMIT 1', [characterId, line.selfId]) : null;
+                const existing = line.stackable ? creditTargetRowUnsafe(characterId, line.selfId) : null;
                 if (existing) {
                     const nextAmount = Number(existing.amount) + line.amount;
                     if (!Number.isSafeInteger(nextAmount))
@@ -8005,7 +8030,7 @@ const Database = {
                 if (Diagnostics.active()) stageNativeDiagnostic(characterId, step, 'craft_material', 'validated',
                     { item: Number(material.selfId), nativeId: Number(source.id), recipeId: Number(recipeId), owned: Number(source.amount), requested: Number(material.amount) });
             }
-            const target = product?.stackable ? one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [characterId, product.selfId]) : null;
+            const target = product?.stackable ? creditTargetRowUnsafe(characterId, product.selfId) : null;
             let productId = Number(target?.id || 0);
             const productAmount = Number(target?.amount || 0) + Number(product?.amount || 0);
             sources.forEach((source) => source.amount <= 0 ? write('DELETE FROM items WHERE id = ? AND characterId = ?', [source.id, characterId]) : write('UPDATE items SET amount = ? WHERE id = ? AND characterId = ?', [source.amount, source.id, characterId]));
@@ -8024,7 +8049,8 @@ const Database = {
                 : syncEconomySnapshotUnsafe(characterId, coldState, changedIds, mp);
             // Read-marked rows: the live body adds what it changed since (LiveBag.applyRow).
             return { ...result, committed: true, sources: markedRows(characterId, sources),
-                product: product ? markedRows(characterId, { id: productId, amount: productAmount }) : null,
+                product: product ? markedRows(characterId, { id: productId, amount: productAmount, selfId: Number(product.selfId),
+                    equipped: 0, slot: Number(product.slot || 0) }) : null,
                 ...(coldLifeRow ? { coldLifeRow, economyCommit: jsonObject(coldLifeRow.statsJson).economyCommit } : {}) };
         }, 'craft:self'));
     },
@@ -8185,7 +8211,7 @@ const Database = {
             const source = one('SELECT id, selfId, amount, equipped, enchant FROM items WHERE id = ? AND characterId = ?', [sourceId, characterId]);
             if (!source || Number(source.selfId) !== Number(sourceSelfId) || Number(source.amount) !== 1 || Number(source.equipped) !== 0
                 || (expectedEnchant !== null && Number(source.enchant || 0) !== Number(expectedEnchant))) throw new Error('crystallize source changed');
-            const target = one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [characterId, crystalId]);
+            const target = creditTargetRowUnsafe(characterId, crystalId);
             const amount = Number(target?.amount || 0) + Number(crystalAmount);
             if (!Number.isSafeInteger(amount) || amount > 2147483647) throw new Error('crystal stack is full');
             let id = Number(target?.id || 0);
@@ -8196,7 +8222,7 @@ const Database = {
             // Read-marked rows: the live body adds what it changed since (LiveBag.applyAmounts).
             const rows = markedRows(characterId, [{ id: Number(sourceId), amount: 0 },
                 { id: Number(id), amount, selfId: Number(crystalId) }]);
-            return { crystalId, id, amount, rows, ...(coldLifeRow ? { coldLifeRow } : {}) };
+            return { rows, ...(coldLifeRow ? { coldLifeRow } : {}) };
         }, 'crystalize'));
     },
 
@@ -8270,7 +8296,7 @@ const Database = {
                     const crystalId = Rules.CRYSTAL_IDS[Rules.gradeOf(Policy.adapter(item))];
                     const amount = Math.max(1, Rules.crystalCount(Policy.adapter(item), item.enchant)
                         - Math.floor((Policy.adapter(item).fetchCristals() + 1) / 2));
-                    const held = one('SELECT id FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [characterId, crystalId]);
+                    const held = creditTargetRowUnsafe(characterId, crystalId);
                     if (held) mutate('UPDATE items SET amount = amount + ? WHERE id = ?', [amount, held.id]);
                     else mutate('INSERT INTO items(selfId,name,amount,characterId) VALUES(?,?,?,?)', [crystalId, `Crystal ${crystalId}`, amount, characterId]);
                     changedIds.push(crystalId);
@@ -8315,7 +8341,7 @@ const Database = {
                     if (rows.length !== count) throw Error('improvement_source_changed');
                     for (const item of rows) { selected.push(item); total += Crystals.reward(template, item.enchant).net; }
                 }
-                const target = one('SELECT id,amount FROM items WHERE characterId=? AND selfId=? ORDER BY id LIMIT 1', [characterId, crystalId]);
+                const target = creditTargetRowUnsafe(characterId, crystalId);
                 const amount = Number(target?.amount || 0) + total;
                 if (!Number.isSafeInteger(amount) || amount > 2147483647) throw Error('crystal stack is full');
                 // One command breaks every selected piece in one statement.
@@ -8428,7 +8454,7 @@ const Database = {
             }
             const coldLifeRow = syncEconomySnapshotUnsafe(characterId, state, changedIds);
             // The whole bag, read-marked: a live body merges it (LiveBag.applyRows).
-            return { result, coldLifeRow, hennas, questStarted: result === 'crystal_quest', changedIds, items: afkTradeInventoryUnsafe(characterId) };
+            return { result, coldLifeRow, hennas, questStarted: result === 'crystal_quest', items: afkTradeInventoryUnsafe(characterId) };
         }, 'bot:improvement'));
     },
 
@@ -8468,14 +8494,14 @@ const Database = {
 
             if (result === 'success' || result === 'blessed-fail') {
                 write('UPDATE items SET enchant = ? WHERE id = ? AND characterId = ?', [normalizedEnchantLevel, targetId, characterId]);
-                return { result, scrollId: Number(scrollId), scrollAmount: remainingScrolls, targetId: Number(targetId), enchant: normalizedEnchantLevel,
-                    rows: markedRows(characterId, rows) };
+                return { rows: markedRows(characterId, rows) };
             }
 
             if (result !== 'break') throw new Error('invalid enchant result');
 
             write('DELETE FROM items WHERE id = ? AND characterId = ?', [targetId, characterId]);
-            const crystal = one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [characterId, crystalId]);
+            rows.push({ id: Number(targetId), amount: 0 });
+            const crystal = creditTargetRowUnsafe(characterId, crystalId);
             const amount = Number(crystal?.amount || 0) + Number(crystalAmount || 0);
             let crystalItemId = Number(crystal?.id || 0);
             if (crystal) {
@@ -8484,19 +8510,7 @@ const Database = {
                 crystalItemId = write('INSERT INTO items (selfId, name, amount, enchant, equipped, slot, characterId) VALUES (?, ?, ?, 0, 0, 0, ?)', [crystalId, crystalName || `Crystal ${crystalId}`, crystalAmount, characterId]).insertId;
             }
             rows.push({ id: Number(crystalItemId), amount, selfId: Number(crystalId) });
-            return {
-                rows: markedRows(characterId, rows),
-                result,
-                scrollId: Number(scrollId),
-                scrollAmount: remainingScrolls,
-                targetId: Number(targetId),
-                crystalId: Number(crystalId),
-                crystalItemId,
-                crystalAmount: Number(crystalAmount || 0),
-                crystalTotal: amount,
-                targetEquipped: !!target.equipped,
-                targetSlot: Number(target.slot || 0)
-            };
+            return { rows: markedRows(characterId, rows) };
         }, 'item:enchant'));
     },
 
@@ -8715,7 +8729,7 @@ const Database = {
             const fee = Number(price) || 0;
             const customerAdena = fee > 0 ? one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = 57 ORDER BY id LIMIT 1', [customerId]) : null;
             if (fee > 0 && (!customerAdena || Number(customerAdena.amount) < fee)) throw new Error('customer adena changed');
-            let crafterAdena = fee > 0 ? one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = 57 ORDER BY id LIMIT 1', [crafterId]) : null;
+            let crafterAdena = fee > 0 ? creditTargetRowUnsafe(crafterId, 57) : null;
             // One native roll after validated physical inputs and fees;
             // the saved completion returns before every mutable quote check.
             if (step) {
@@ -8726,7 +8740,7 @@ const Database = {
             const warehouseOutput = !!manualOrder && clanOrder.final === true;
             const target = product?.stackable ? warehouseOutput
                 ? one('SELECT id, amount FROM clan_warehouse_items WHERE clanId = ? AND selfId = ? AND enchant = 0 ORDER BY id LIMIT 1', [manualOrder.clanId, product.selfId])
-                : one('SELECT id, amount FROM items WHERE characterId = ? AND selfId = ? ORDER BY id LIMIT 1', [customerId, product.selfId]) : null;
+                : creditTargetRowUnsafe(customerId, product.selfId) : null;
             let productId = Number(target?.id || 0);
             const productAmount = Number(target?.amount || 0) + Number(product?.amount || 0);
             if (!Number.isSafeInteger(productAmount) || productAmount < 0) throw Error('craft_product_overflow');
@@ -8836,10 +8850,12 @@ const Database = {
                 receipt.economyCommit = jsonObject(clanStates.customerState.statsJson).economyCommit;
             }
             // Read-marked rows: a live body adds what it changed since (LiveBag.applyRow).
+            // A product the clan warehouse took is no bag row.
             return { ...clanStates, ...receipt, crafterMp, sources: markedRows(customerId, sources),
-                product: product ? markedRows(customerId, { id: productId, amount: productAmount }) : null,
-                customerAdena: fee > 0 ? markedRows(customerId, { id: Number(customerAdena.id), amount: Number(customerAdena.amount) - fee }) : null,
-                crafterAdena: fee > 0 ? markedRows(crafterId, { id: Number(crafterAdena.id), amount: nextCrafterAdena }) : null };
+                product: product && !warehouseOutput ? markedRows(customerId, { id: productId, amount: productAmount,
+                    selfId: Number(product.selfId), equipped: 0, slot: Number(product.slot || 0) }) : null,
+                customerAdena: fee > 0 ? markedRows(customerId, { id: Number(customerAdena.id), amount: Number(customerAdena.amount) - fee, selfId: 57 }) : null,
+                crafterAdena: fee > 0 ? markedRows(crafterId, { id: Number(crafterAdena.id), amount: nextCrafterAdena, selfId: 57 }) : null };
         }, 'craft:customer'));
     },
 
@@ -8891,7 +8907,7 @@ const Database = {
                 } else {
                     if (source.equipped) throw new Error('Unequip the pet item first');
                     if (command.direction === 'withdraw') {
-                        const target = command.stackable ? one('SELECT * FROM items WHERE characterId = ? AND selfId = ? AND petData IS NULL ORDER BY id LIMIT 1', [characterId, source.selfId]) : null;
+                        const target = command.stackable ? creditTargetRowUnsafe(characterId, source.selfId, { enchant: source.enchant }) : null;
                         if (target && target.amount + amount > 2147483647) throw new Error('Inventory stack overflow');
                         const id = target?.id || Number(write('INSERT INTO items(selfId, name, amount, enchant, characterId) VALUES (?, ?, ?, ?, ?)', [source.selfId, source.name, amount, source.enchant || 0, characterId]).insertId);
                         if (target) write('UPDATE items SET amount = ? WHERE id = ?', [target.amount + amount, id]);

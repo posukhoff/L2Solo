@@ -22,9 +22,7 @@ function syncInventory(session, actor, read, spent = 0, funding = {}) {
     if (session?.actor !== actor) return;
     const rows = LiveBag.applyRows(actor, read);
     if (session.coldLifeState) {
-        session.coldLifeState = { ...session.coldLifeState,
-            adena: rows.filter(row => Number(row.selfId) === 57).reduce((sum, row) => sum + Number(row.amount), 0),
-            inventory: BotLifeState.inventorySummaryFromItems(rows), stats: { ...session.coldLifeState.stats,
+        session.coldLifeState = { ...session.coldLifeState, ...BotLifeState.bagFromItems(rows), stats: { ...session.coldLifeState.stats,
                 money: Funding.packetAfterPurchase(session.coldLifeState.stats?.money, spent, funding) } };
         refreshPartyMemberships([session], invoke);
         EconomyContext.forget(actor.fetchId());

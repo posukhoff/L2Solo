@@ -321,13 +321,20 @@ function equipmentSummaryFromInventory(inventory = {}) {
         .sort((a, b) => a.slot - b.slot || a.selfId - b.selfId);
 }
 
+// A bag's summary and Adena from its item rows (also a live bag's merged
+// rows: LiveBag.applyRows).
+function bagFromItems(items = []) {
+    const inventory = inventorySummaryFromItems(items || []);
+    return { adena: inventoryAdena(inventory), inventory };
+}
+
 // The bag a bot physically holds, as its state: summary, Adena and worn gear
 // rebuilt strictly from the item rows (an entry with no row drops out).
 function inventoryStateFromItems(state, items = []) {
-    const inventory = inventorySummaryFromItems(items || []);
+    const { adena, inventory } = bagFromItems(items);
     return {
         ...state,
-        adena: inventoryAdena(inventory),
+        adena,
         inventory,
         stats: {
             ...(state.stats || {}),
@@ -4165,6 +4172,7 @@ const BotLifeState = {
 BotLifeState.canonicalizeAreaState = canonicalizeAreaState;
 BotLifeState.inventorySummaryFromItems = inventorySummaryFromItems;
 BotLifeState.inventoryStateFromItems = inventoryStateFromItems;
+BotLifeState.bagFromItems = bagFromItems;
 BotLifeState.setSessionSnapshotsAuthority = setSessionSnapshotsAuthority;
 BotLifeState.equipmentSummaryFromInventory = equipmentSummaryFromInventory;
 BotLifeState.marketPurchaseBlocker = marketPurchaseBlocker;

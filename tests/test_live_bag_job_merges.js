@@ -19,6 +19,11 @@ const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
 const Warehouse = invoke('GameServer/Warehouse/PersonalWarehouse');
 const QuestService = invoke('GameServer/Quest/QuestService');
 const QuestStep = invoke('GameServer/Quest/QuestStep');
+const Enchant = invoke('GameServer/Enchant');
+const Manufacture = invoke('GameServer/Crafting/ManufactureShop');
+const RecipeCrafting = invoke('GameServer/Crafting/RecipeCrafting');
+const Recipes = invoke('GameServer/Items/C4RecipeItems');
+const { character } = require('./helpers/liveMarketActors');
 const databasePath = path.join(process.cwd(), 'tmp', 'test-live-bag-job-merges.sqlite');
 const SHOT = 1835, POTION = 1539, ADENA = 57;
 const KEEPER = { objectId: 7097001, selfId: 7097 };
@@ -36,15 +41,19 @@ const held = (actor, selfId) => amountOf(actor.backpack.fetchItems()
     .map(item => ({ selfId: item.fetchSelfId(), amount: item.fetchAmount() })), selfId);
 const stack = (actor, selfId) => actor.backpack.fetchItemFromSelfId(selfId);
 
-// A player with Adena, a shot stack and potions, live in the world.
-async function player(name) {
+// A player with Adena, a shot stack and potions (and `extra` rows), live in
+// the world; worn rows are in its paperdoll.
+async function player(name, extra = []) {
     await Database.createAccount(name, 'pw');
     const id = Number((await Database.createCharacter(name, { name: `${name}C`, race: 0, classId: 0, maxHp: 100, maxMp: 100,
         sex: 0, face: 0, hair: 0, hairColor: 0, locX: 0, locY: 0, locZ: 0 })).insertId);
     await Database.setItem(id, { selfId: ADENA, name: 'Adena', amount: 1000 });
     await Database.setItem(id, { selfId: SHOT, name: 'Soulshot: No Grade', amount: 100 });
     await Database.setItem(id, { selfId: POTION, name: 'Greater Healing Potion', amount: 12 });
-    const backpack = new Backpack({ paperdoll: {}, items: await Database.fetchItems(id) });
+    for (const row of extra) await Database.setItem(id, row);
+    const items = await Database.fetchItems(id);
+    const paperdoll = Object.fromEntries(items.filter(row => row.equipped).map(row => [row.slot, { id: row.id, selfId: row.selfId }]));
+    const backpack = new Backpack({ paperdoll, items });
     const actor = { backpack, fetchId: () => id, isDead: () => false, fetchLocX: () => 0, fetchLocY: () => 0,
         fetchLevel: () => 20, fetchClassId: () => 0, fetchClanId: () => 0 };
     const session = { actor, accountId: name, packets: [], dataSendToMe(packet) { this.packets.push(packet); }, dataSendToOthers() {} };
@@ -149,15 +158,92 @@ async function questStep() {
     assert.strictEqual(state.state, 'started', 'the step moved the quest');
 }
 
+// A workshop fee takes the customer's whole Adena while a payment comes
+// in: the payment stays, in the bag and in the database.
+async function workshopFee() {
+    const body = await player('t98_customer', [{ selfId: 1864, name: 'Stem', amount: 4 }, { selfId: 1869, name: 'Iron Ore', amount: 2 }]);
+    const { actor, session } = body;
+    const recipe = Recipes.resolveByRecipeId(1);
+    const crafter = await character(false, { race: 4, classId: 57, level: 62 });
+    crafter.actor.point = { locX: 0, locY: 0, locZ: 0 };
+    crafter.actor.craftLevel = 9;
+    crafter.actor.recipeBook = [recipe];
+    await Database.setCharacterRecipe(crafter.actor.fetchId(), recipe.recipeId, recipe.type);
+    crafter.actor.storeType = Manufacture.MANUFACTURE_MANAGE;
+    assert.strictEqual(Manufacture.publish(crafter, [{ recipeId: recipe.recipeId, price: 1000 }]), true);
+    const made = await racing(body.id, () => Manufacture.craft(session, crafter.actor.fetchId(), recipe.recipeId, () => 0),
+        () => LiveBag.add(actor, stack(actor, ADENA), 40));
+    assert.strictEqual(made, true, 'the workshop crafts');
+    await expectBoth('workshop fee', body, { [ADENA]: 40, [recipe.productId]: recipe.productCount, 1864: 0, [SHOT]: 100 });
+}
+
+// A self craft's product comes into the bag from its row while the body
+// fires a shot.
+async function selfCraft() {
+    const body = await player('t98_crafter', [{ selfId: 1864, name: 'Stem', amount: 5 }, { selfId: 1869, name: 'Iron Ore', amount: 2 }]);
+    const { actor, session } = body;
+    let mp = 100;
+    Object.assign(actor, { dwarvenRecipes: [{ recipeId: 1 }], fetchDwarvenCraftLevel: () => 9,
+        fetchMp: () => mp, setMp: value => { mp = value; } });
+    const crafted = await racing(body.id, () => RecipeCrafting.craftSelf(session, 1, () => 0),
+        () => LiveBag.add(actor, stack(actor, SHOT), -1));
+    assert.strictEqual(crafted, true, 'the recipe crafts');
+    await expectBoth('self craft', body, { 17: 500, 1864: 1, 1869: 0, [SHOT]: 99, [ADENA]: 1000 });
+    assert.strictEqual(mp, 70, 'the craft spends its MP');
+}
+
+// A worn weapon an enchant breaks comes off its slot.
+async function wornBreak() {
+    const body = await player('t98_enchant', [{ selfId: 69, name: 'Bastard Sword', amount: 1, enchant: 4, equipped: true, slot: 7 },
+        { selfId: 955, name: 'Scroll: Enchant Weapon (Grade D)', amount: 1 }]);
+    const { actor, session } = body;
+    const sword = stack(actor, 69), scroll = stack(actor, 955);
+    assert.strictEqual(actor.backpack.fetchPaperdollId(7), sword.fetchId(), 'the sword is worn');
+    session.activeEnchantItem = { itemId: scroll.fetchId(), selfId: 955 };
+    const result = await Enchant.enchant(session, sword.fetchId(), { rng: () => 0.99, safeMax: 0, safeMaxFull: 0 });
+    assert.strictEqual(result.result, 'break');
+    assert.strictEqual(actor.backpack.fetchPaperdollId(7), undefined, 'the broken sword leaves its slot');
+    assert.strictEqual(sword.fetchEquipped(), false);
+    await expectBoth('enchant break', body, { 69: 0, 955: 0, 1458: result.crystalAmount });
+}
+
+// A live body whose refresh faults when worn gear leaves (this body's stats
+// do not compute, its client socket is closed): a committed enchant break
+// stays a break and the last worn arrows used up still reach the database.
+async function wornRefreshFault() {
+    const body = await player('t98_refresh', [{ selfId: 69, name: 'Bastard Sword', amount: 1, enchant: 4, equipped: true, slot: 7 },
+        { selfId: 955, name: 'Scroll: Enchant Weapon (Grade D)', amount: 1 },
+        { selfId: 17, name: 'Wooden Arrow', amount: 2, equipped: true, slot: 8 }]);
+    const { actor, session } = body;
+    actor.fetchMaxHp = () => 100;
+    session.dataSendToOthers = () => { throw new Error('socket closed'); };
+    const sword = stack(actor, 69), scroll = stack(actor, 955), arrows = stack(actor, 17);
+    session.activeEnchantItem = { itemId: scroll.fetchId(), selfId: 955 };
+    const result = await Enchant.enchant(session, sword.fetchId(), { rng: () => 0.99, safeMax: 0, safeMaxFull: 0 });
+    assert.strictEqual(result.result, 'break', 'the committed break is not turned into a failure');
+    assert.strictEqual(actor.backpack.fetchPaperdollId(7), undefined, 'the broken sword leaves its slot');
+    let used = 0;
+    actor.backpack.deleteItem(session, arrows.fetchId(), 2, () => { used += 1; });
+    assert.strictEqual(used, 1, 'the arrow use completes');
+    assert.strictEqual(arrows.fetchEquipped(), false, 'the used-up arrows leave their slot');
+    await expectBoth('refresh fault', body, { 69: 0, 955: 0, 17: 0, 1458: result.crystalAmount });
+}
+
 (async () => {
     clean();
     options.default.Database.path = path.relative(process.cwd(), databasePath);
     Database.init();
     // The client packets a sale sends back read a full actor (the network edge).
     Response.userInfo = () => Buffer.from([4]);
+    Response.charInfo = () => Buffer.from([3]);
+    Response.sitAndStand = () => Buffer.from([0x2f]);
     await npcSale();
     await warehouse();
     await questStep();
+    await workshopFee();
+    await selfCraft();
+    await wornBreak();
+    await wornRefreshFault();
     console.log('live bag job merges ok');
 })().catch((error) => {
     console.error(error);

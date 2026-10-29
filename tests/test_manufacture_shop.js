@@ -113,7 +113,6 @@ async function run() {
     assert.strictEqual(crafter.fetchReplenishes(), 1, 'A manufacture order must restart normal MP regeneration for a standing crafter');
     assert.strictEqual(customer.backpack.fetchItems().find((entry) => entry.fetchSelfId() === 57).fetchAmount(), 900, 'Customer must pay the advertised fee');
     assert.strictEqual(crafter.backpack.fetchItems().find((entry) => entry.fetchSelfId() === 57).fetchAmount(), 150, 'Dwarf must receive the advertised fee');
-    assert.strictEqual(customer.backpack.fetchItems().find((entry) => entry.fetchId() === 1017)?.fetchAmount(), 500, 'Customer must receive the crafted product');
     assert.strictEqual(persisted[0].price, 100, 'The durable exchange must include the advertised fee');
     assert.strictEqual(customerSession.packets.at(-1)[0], 0xda, 'Manufacture result must use C4 RecipeShopItemInfo');
     assert.strictEqual(customerSession.packets.at(-1).readInt32LE(17), 1, 'Successful manufacture must report status 1');

@@ -12,7 +12,7 @@ const DataCache      = invoke('GameServer/DataCache');
 const ConsoleText    = invoke('GameServer/ConsoleText');
 const World          = invoke('GameServer/World/World');
 const Database       = invoke('Database');
-const CharacterWriteQueue = invoke('GameServer/Persistence/CharacterWriteQueue');
+const LiveBag        = invoke('GameServer/Inventory/LiveBag');
 const ShotStock      = invoke('GameServer/Inventory/ShotStock');
 const SkillEffects   = invoke('GameServer/Skills/C4SkillEffects');
 const C4ItemSkills   = invoke('GameServer/Items/C4ItemSkills');
@@ -87,51 +87,30 @@ class Backpack extends BackpackModel {
         if (session.actor.isDead()) {
             return;
         }
+        // A count of 0 or less (TrashItem reads a signed int32) changes
+        // nothing, as for an unknown item: a negative one would add items.
+        if (!(Number(amount) > 0)) return;
 
         this.fetchItem(id, (item) => {
             if (item.fetchPetLocked?.()) return;
-            const total = item.fetchAmount() - amount;
-            const diagnosticBefore = diagnosticReason && DiagnosticConfig.developerDiagnostics === true && session?.accountId?.startsWith?.('bot_') ? total + amount : null;
-            this.inventoryRevision = Number(this.inventoryRevision || 0) + 1;
-            if (total > 0) {
-                // Update memory state instantly
-                item.setAmount(total);
-                session.dataSendToMe(ServerResponse.itemsList(this.fetchItems()));
-                if (diagnosticBefore !== null) ConsumptionDiagnostics.hot(session, item.fetchSelfId(), diagnosticBefore, Math.max(0, total), diagnosticReason);
-                callback(item.fetchSelfId());
-
-                if (session?.persistenceMode !== 'ephemeral') {
-                    CharacterWriteQueue.itemDelta(session.actor.fetchId(), item.fetchId(), -amount);
-                }
-            }
-            else {
-                const wasEquipped = item.fetchEquipped();
-                if (wasEquipped) {
-                    // Normalize legacy duplicate rows just like an explicit
-                    // unequip, including durable removal of their equip flags.
-                    this.unequipGear(session, item.fetchSlot(), { syncToggles: false });
-                }
-                // Update memory state instantly
-                this.items = this.fetchItems().filter((ob) => ob.fetchId() !== id);
-                Item.bindInventory(this);
-                this.onInventoryChange?.(item.fetchSelfId());
-                if (wasEquipped) {
-                    // Deleting or dropping worn gear must clear its stats and
-                    // visual state just like an explicit unequip.
-                    invoke(path.actor).calculateStats(session, session.actor);
-                    ToggleSkills.syncEquipment(session, session.actor);
-                    session.dataSendToMe(ServerResponse.userInfo(session.actor));
-                    session.dataSendToOthers(ServerResponse.charInfo(session.actor), session.actor);
-                }
-                session.dataSendToMe(ServerResponse.itemsList(this.fetchItems()));
-                if (diagnosticBefore !== null) ConsumptionDiagnostics.hot(session, item.fetchSelfId(), diagnosticBefore, Math.max(0, total), diagnosticReason);
-                callback(item.fetchSelfId());
-
-                if (session?.persistenceMode !== 'ephemeral') {
-                    CharacterWriteQueue.itemDelta(session.actor.fetchId(), item.fetchId(), -(total + amount));
-                }
-            }
+            const before = item.fetchAmount();
+            const diagnosticBefore = diagnosticReason && DiagnosticConfig.developerDiagnostics === true && session?.accountId?.startsWith?.('bot_') ? before : null;
+            // Memory first, then the delta; worn gear used up comes off its
+            // slot, its stats and look with it (LiveBag).
+            const left = LiveBag.add(session.actor, item, -Math.min(amount, before));
+            session.dataSendToMe(ServerResponse.itemsList(this.fetchItems()));
+            if (diagnosticBefore !== null) ConsumptionDiagnostics.hot(session, item.fetchSelfId(), diagnosticBefore, left, diagnosticReason);
+            callback(item.fetchSelfId());
         });
+    }
+
+    // A worn item came off (an explicit unequip, or the item left the bag:
+    // LiveBag).
+    announceUnequipped(session, item) {
+        ConsoleText.transmit(session, ConsoleText.caption.unequipped, [
+            { kind: ConsoleText.kind.item, value: item.fetchSelfId() }
+        ]);
+        recordEquipmentEvent(session, item, 'unequip');
     }
 
     consumeSoulshot(session, callback = () => {}, selfId = null) {
@@ -1569,13 +1548,7 @@ class Backpack extends BackpackModel {
 
         // Unequip from actor
         this.unequipPaperdoll(slot);
-        equippedItems.forEach((item) => {
-            item.setEquipped(false);
-
-            ConsoleText.transmit(session, ConsoleText.caption.unequipped, [
-                { kind: ConsoleText.kind.item, value: item.fetchSelfId() }
-            ]);
-        });
+        equippedItems.forEach((item) => item.setEquipped(false));
         this.updateDatabaseTimer(session.actor.fetchId(), equippedItems);
 
         // Move removed gear to the beginning of inventory (legacy behavior).
@@ -1588,7 +1561,7 @@ class Backpack extends BackpackModel {
         // Recalculate once for the complete slot change.
         invoke(path.actor).calculateStats(session, session.actor);
         if (options.syncToggles !== false) ToggleSkills.syncEquipment(session, session.actor);
-        equippedItems.forEach((item) => recordEquipmentEvent(session, item, 'unequip'));
+        equippedItems.forEach((item) => this.announceUnequipped(session, item));
     }
 
     updateDatabaseTimer(characterId, changedItems = this.items.filter((ob) => ob.isWearable())) {

@@ -104,22 +104,24 @@ function reviewHot(session) {
         if (!current()) throw Error('improvement_actor_retired');
     }}).then(result => {
         if (!current()) return result;
-        // The committed bag plus what the body changed since (LiveBag.applyRows);
-        // worn gear the improvement removed or swapped (an SA) leaves or
-        // takes its paperdoll slot. Enchanted worn gear (a new item object:
-        // LiveBag compares selfId and enchant) stays worn in its slot.
+        // The committed bag plus what the body changed since (LiveBag.applyRows:
+        // worn gear the improvement removed comes off). Worn gear swapped
+        // under its id (an SA) takes its paperdoll slot; enchanted worn gear
+        // (a new item object: LiveBag compares selfId and enchant) stays worn
+        // in its slot.
         const backpack = actor.backpack, before = backpack.fetchItems().slice();
         LiveBag.applyRows(actor, result.items);
         const after = new Map(backpack.fetchItems().map(item => [Number(item.fetchId()), item]));
         for (const item of before) {
             if (!item.fetchEquipped()) continue;
             const now = after.get(Number(item.fetchId()));
-            if (now && Number(now.fetchSelfId()) === Number(item.fetchSelfId())) {
+            if (!now) continue;
+            if (Number(now.fetchSelfId()) === Number(item.fetchSelfId())) {
                 if (now !== item) { now.setEquipped(true); now.setSlot(item.fetchSlot()); }
                 continue;
             }
             backpack.unequipPaperdoll(item.fetchSlot());
-            if (now?.fetchEquipped()) backpack.equipPaperdoll(now.fetchSlot(), now.fetchId(), now.fetchSelfId());
+            if (now.fetchEquipped()) backpack.equipPaperdoll(now.fetchSlot(), now.fetchId(), now.fetchSelfId());
         }
         if (result.questStarted) {
             const quest = invoke('GameServer/Quest/QuestService').stateFor(session, invoke('GameServer/Quest/quests/Q350_EnhanceYourWeapon'));

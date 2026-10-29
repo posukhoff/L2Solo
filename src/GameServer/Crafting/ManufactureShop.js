@@ -43,13 +43,10 @@ function productTemplate(recipe) {
 }
 
 // A crafter's or customer's body takes the Adena row a craft committed
-// (id, amount): the one bag write of a workshop fee (also a hot bot's
-// workshop, CraftWorkshopService.craft).
+// (id, amount, selfId): the one bag write of a workshop fee (also a hot
+// bot's workshop, CraftWorkshopService.craft).
 function applyAdena(actor, result) {
-    LiveBag.applyRow(actor, result, result, () => {
-        const template = ItemTemplateIndex.find(DataCache.items, 57);
-        return template ? { ...utils.crushOb(template), equipped: false, slot: 0 } : null;
-    });
+    LiveBag.applyRow(actor, result);
 }
 
 function distanceAllows(customer, crafter) {
@@ -201,9 +198,7 @@ async function craft(session, crafterId, recipeId, random = Math.random, order =
         committed = { ...result, committed: true, success: result.success ?? success };
         crafter.setMp?.(result.crafterMp ?? crafterMp);
         LiveBag.applyAmounts(customer, result.sources);
-        if (committed.success) LiveBag.applyRow(customer, result.product, result.product, {
-            ...utils.crushOb(template), equipped: false, slot: product.slot
-        });
+        if (committed.success) LiveBag.applyRow(customer, result.product);
         applyAdena(customer, result.customerAdena);
         applyAdena(crafter, result.crafterAdena);
         customer.statusUpdateVitals?.(customer);

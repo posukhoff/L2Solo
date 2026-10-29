@@ -52,6 +52,29 @@ async function main() {
         /inventory item changed/
     );
     assert.strictEqual((await Database.fetchItems(playerId)).find((item) => Number(item.selfId) === 7001).amount, 1, 'failed transfer must roll back the first side');
+
+    // A stack one entry credits and a later entry takes from is read at its
+    // own write: the later entry sees the credit.
+    const stock = async (characterId, selfId, amount, equipped = false) => Number((await Database.setItem(characterId, {
+        selfId, name: `Token ${selfId}`, amount, equipped, slot: equipped ? 7 : 0 })).insertId);
+    const rows = async (characterId, selfId) => (await Database.fetchItems(characterId))
+        .filter((item) => Number(item.selfId) === selfId).map((item) => [Number(item.amount), Number(item.equipped)]);
+    const playerStack = await stock(playerId, 7003, 5);
+    const botStack = await stock(botId, 7003, 10);
+    await Database.transferInventoryBetweenCharacters([
+        { fromCharacterId: playerId, toCharacterId: botId, sourceItemId: playerStack, selfId: 7003, amount: 5, stackable: true },
+        { fromCharacterId: botId, toCharacterId: playerId, sourceItemId: botStack, selfId: 7003, amount: 12, stackable: true }
+    ]);
+    assert.deepStrictEqual(await rows(botId, 7003), [[3, 0]], 'the later entry takes from the credited stack');
+    assert.deepStrictEqual(await rows(playerId, 7003), [[12, 0]], 'the taker receives the whole later entry');
+
+    // A worn stack takes the credit (one stack per stackable item, worn arrows too).
+    await stock(botId, 7004, 10, true);
+    const given = await stock(playerId, 7004, 4);
+    await Database.transferInventoryBetweenCharacters([
+        { fromCharacterId: playerId, toCharacterId: botId, sourceItemId: given, selfId: 7004, amount: 4, stackable: true }
+    ]);
+    assert.deepStrictEqual(await rows(botId, 7004), [[14, 1]], 'the worn stack takes the credit');
     console.log('Bot trade database checks passed');
 }
 

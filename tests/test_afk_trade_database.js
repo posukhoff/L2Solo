@@ -199,6 +199,31 @@ function amountOf(rows, selfId) {
     assert.strictEqual((await Database.fetchAfkTradeShops(customerId))[0].escrowAdena, 20);
     await Database.closeAfkTradeShop(ownerId);
     await Database.closeAfkTradeShop(customerId);
+
+    // A buyer wearing arrows: the bought arrows land on the worn stack (one
+    // stack per stackable item, worn or not).
+    const ARROW = 17;
+    await Database.createAccount('afk_arrow_owner', 'pw');
+    await Database.createAccount('afk_arrow_buyer', 'pw');
+    const arrowOwner = Number((await Database.createCharacter('afk_arrow_owner', character('AfkArrowOwner'))).insertId);
+    const archer = Number((await Database.createCharacter('afk_arrow_buyer', character('AfkArcher'))).insertId);
+    const arrowStock = Number((await Database.setItem(arrowOwner, {
+        selfId: ARROW, name: 'Wooden Arrow', amount: 500, enchant: 0, equipped: false, slot: 0 })).insertId);
+    await Database.setItem(archer, { selfId: 57, name: 'Adena', amount: 1000, enchant: 0, equipped: false, slot: 0 });
+    const wornArrows = Number((await Database.setItem(archer, {
+        selfId: ARROW, name: 'Wooden Arrow', amount: 40, enchant: 0, equipped: true, slot: 8 })).insertId);
+    const arrowSale = await Database.createAfkTradeShop(arrowOwner, {
+        storeType: 1, title: 'Arrows', town: 'Giran', locX: 83000, locY: 148000, locZ: -3400,
+        appearance: { model: { name: 'AfkArrowOwner' } },
+        lines: [{ objectId: arrowStock, selfId: ARROW, name: 'Wooden Arrow', count: 300, price: 2, stackable: true }]
+    });
+    await Database.buyFromAfkTradeShop(archer, { shopId: arrowSale.shop.id, ownerId: arrowOwner,
+        lineId: arrowSale.shop.lines[0].id, amount: 300, expectedPrice: 2, expectedRevision: 1 });
+    const arrows = (await inventory(archer)).filter((row) => Number(row.selfId) === ARROW)
+        .map((row) => [Number(row.id), Number(row.amount), Number(row.equipped)]);
+    assert.deepStrictEqual(arrows, [[wornArrows, 340, 1]], 'the worn arrow stack takes the bought arrows');
+    assert.strictEqual(amountOf(await inventory(archer), 57), 400);
+    await Database.closeAfkTradeShop(arrowOwner);
     await Database.close();
     clean();
     console.log('AFK trade database checks passed');

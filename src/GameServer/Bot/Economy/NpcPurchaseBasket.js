@@ -133,8 +133,7 @@ async function purchaseForActor(actor, options = {}) {
             return result;
         }
         const held = LiveBag.applyRows(actor, rows);
-        session.coldLifeState = { ...result.state, adena: Number(held.filter(row => Number(row.selfId) === 57)
-            .reduce((sum, row) => sum + Number(row.amount), 0)), inventory: Life.inventorySummaryFromItems(held) };
+        session.coldLifeState = { ...result.state, ...Life.bagFromItems(held) };
         result.state = session.coldLifeState;
         invoke('GameServer/World/PartyMembershipPublication')([session], invoke);
         if (Diagnostics.active()) diagnostic(result.state, result.economyCommand, 'npc_delivery', 'actor_accepted', resultFields(result, requestSeller));

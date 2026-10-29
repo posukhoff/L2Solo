@@ -65,11 +65,19 @@ function pruneLedger(now = Date.now()) {
     }
 }
 
-function queueItemDelta(characterId, id, delta) {
+function withRow(entry, row) {
+    if (row) entry.row = row;
+    return entry;
+}
+
+// row: the item's own fields ({ selfId, name, enchant }): a gain whose row
+// a database job removed meanwhile writes the row again (Database).
+function queueItemDelta(characterId, id, delta, row = null) {
     const state = stateFor(characterId);
     if (!state || !id || !Number.isFinite(Number(delta))) return;
     const itemId = Number(id);
-    state.items[itemId] = { id: itemId, delta: Number(state.items[itemId]?.delta || 0) + Number(delta) };
+    const previous = state.items[itemId];
+    state.items[itemId] = withRow({ id: itemId, delta: Number(previous?.delta || 0) + Number(delta) }, row || previous?.row);
     ledgerEntry(Number(characterId), itemId).queued += Number(delta);
     schedule();
 }
@@ -149,7 +157,8 @@ function restore(entries) {
         target.character = { ...state.character, ...target.character };
         const items = { ...state.items };
         for (const [itemId, item] of Object.entries(target.items)) {
-            items[itemId] = { id: item.id, delta: Number(items[itemId]?.delta || 0) + Number(item.delta || 0) };
+            items[itemId] = withRow({ id: item.id, delta: Number(items[itemId]?.delta || 0) + Number(item.delta || 0) },
+                item.row || items[itemId]?.row);
         }
         target.items = items;
         if (target === pending.get(id)) requeued = true;

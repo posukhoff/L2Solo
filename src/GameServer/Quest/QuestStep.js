@@ -26,16 +26,8 @@ async function apply(state, { takes: wanted = [], gives = [], variables = state.
     const rows = await Database.applyQuestStep(actor.fetchId(), state.quest.id,
         { state: state.state, variables: state.variables }, next,
         takes.map(([selfId, amount]) => ({ selfId, amount })), rewards, experience, beginner, pk, removeRecipes);
-    // Worn gear the step took comes off first; then the rows plus what the
-    // bag changed since (a shot used while the step committed).
-    let equipmentChanged = false;
-    for (const row of rows) {
-        const item = actor.backpack.fetchItemRaw(row.id);
-        if (!row.amount && item?.fetchEquipped()) {
-            actor.backpack.unequipPaperdoll(item.fetchSlot());
-            equipmentChanged = true;
-        }
-    }
+    // The rows plus what the bag changed since (a shot used while the step
+    // committed); worn gear the step took comes off (LiveBag).
     LiveBag.applyAmounts(actor, rows);
     state.state = next.state;
     state.variables = next.variables;
@@ -49,12 +41,6 @@ async function apply(state, { takes: wanted = [], gives = [], variables = state.
             if (actor.fetchMaxMp && before.length !== store[property].length)
                 state.session.dataSendToMe(Response.recipeBookItemList(actor, type === 'dwarven'));
         }
-    }
-    if (equipmentChanged && actor.fetchMaxHp) {
-        invoke(path.actor).calculateStats(state.session, actor);
-        invoke('GameServer/Skills/ToggleSkills').syncEquipment(state.session, actor);
-        state.session.dataSendToMe(Response.userInfo(actor));
-        state.session.dataSendToOthers?.(Response.charInfo(actor));
     }
     if (rows.experience) {
         const award = rows.experience;

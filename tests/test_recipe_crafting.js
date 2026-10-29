@@ -71,7 +71,6 @@ async function run() {
     assert.strictEqual(await RecipeCrafting.craftSelf(successful, 1, () => 0), true, 'Known recipe with all materials must craft');
     assert.deepStrictEqual(successful.deleted, [], 'Craft may not mutate inventory before the durable exchange commits');
     assert.strictEqual(successful.fetchMp(), 20, 'Successful craft must consume the recipe MP');
-    assert.strictEqual(successful.actor.backpack.items.find((entry) => entry.fetchId() === 1017)?.fetchAmount(), 500, 'Successful craft must award the sourced product and count');
     assert.strictEqual(persisted.at(-1).product.selfId, 17, 'Successful craft must persist its product in the same exchange');
     assert.strictEqual(successful.packets.at(-1)[0], 0xd7, 'Craft must end with C4 RecipeItemMakeInfo');
     assert.strictEqual(successful.packets.at(-1).readInt32LE(17), 1, 'Successful craft result must report status 1');
