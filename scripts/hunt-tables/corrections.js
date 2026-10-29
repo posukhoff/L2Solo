@@ -166,8 +166,8 @@ function build(tables, options = {}) {
 
 // Per rotation kind x danger on the fit half (half 0), rows both sides hunt:
 // kills per hour by the median of real / formula (a few runaway rows must
-// not move the group), deaths per hour by the ratio of sums (1 when the
-// formula or the real fight has none: no ratio to read).
+// not move the group), deaths per hour by the ratio of sums (0 when the
+// real fight has none; 1 when only the formula has none: no ratio to read).
 function fit(rows) {
     const at = field => FIELDS.indexOf(field);
     const groups = {};
@@ -183,7 +183,7 @@ function fit(rows) {
     for (const [key, group] of Object.entries(groups)) {
         const sorted = group.ratios.sort((a, b) => a - b);
         out[key] = [C.round(sorted[Math.floor(sorted.length / 2)]),
-            group.formulaDeaths > 0 && group.realDeaths > 0 ? C.round(group.realDeaths / group.formulaDeaths) : 1, sorted.length];
+            group.formulaDeaths > 0 ? C.round(group.realDeaths / group.formulaDeaths) : 1, sorted.length];
     }
     return out;
 }

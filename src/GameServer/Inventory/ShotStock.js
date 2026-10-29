@@ -172,11 +172,15 @@ function usePolicy(state, prepared = {}) {
         hour = Hunt.huntHour(hunt, state);
     }
     const rawUse = plan.perAction > 0 ? Math.max(0, Number(best?.shots) || 0) : 0;
+    // The farm the shots give: the share of the hour's exp that comes from them (0..1).
     const benefit = Math.max(0, 1 - Math.max(0, Number(without?.exp) || 0) / Math.max(1, Number(best?.exp) || 0));
     const buyback = BeginnerShots.isRestricted(plan.selfId) ? 0
         // lazy: cycle PriceDecision's chain loads this module
         : invoke('GameServer/Bot/Economy/PriceDecision').buyback(plan.selfId);
-    const affordableUse = cost => rawUse > 0 && Number(hour) > 0 && benefit >= rawUse * cost / hour ? rawUse : 0;
+    // huntHour is net of the shots at the shop price (BotHuntEfficiency.netIncome):
+    // the shots are priced against the hour before them, not twice.
+    const gross = Number(hour) > 0 ? Number(hour) + rawUse * Hunt.consumablePrices(state).shots : 0;
+    const affordableUse = cost => rawUse > 0 && gross > 0 && benefit >= rawUse * cost / gross ? rawUse : 0;
     const paidUsePerHour = affordableUse(buyback);
     const beginnerUsePerHour = affordableUse(0);
     const usePerHour = beginnerAmount(state, plan) >= plan.perAction && plan.perAction > 0
