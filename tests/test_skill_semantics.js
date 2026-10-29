@@ -7227,7 +7227,7 @@ assert.strictEqual(EffectStats.multiplier(blessedSoulTarget, 'maxMpMul'), 1.25, 
 calculateStats({}, blessedSoulTarget);
 assert.strictEqual(
     blessedSoulTarget.fetchMaxMp(),
-    Formulas.calcMp(20, 0, 0, 30) * 1.25,
+    Formulas.calcMp(20, 0, 30) * 1.25,
     'Blessed Soul level 4 should apply the sourced L2J maxMp multiplier'
 );
 

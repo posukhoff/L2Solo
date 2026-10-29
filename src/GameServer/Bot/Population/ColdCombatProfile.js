@@ -732,7 +732,7 @@ function profileNumbers(kitPart, effects, timestamp, sourceOptions) {
 }
 // The pass and its power terms (powerTerms).
 function numbersPass(kitPart, effects, timestamp, sourceOptions) {
-    const { classId, level, spellcaster } = kitPart;
+    const { classId, level } = kitPart;
     const profile = { version: kitPart.version, capturedAt: kitPart.capturedAt, classId, base: kitPart.base,
         equipment: kitPart.equipment, effects, skills: kitPart.skills };
     // Resolve effects and passive requirements once for this calculation.
@@ -742,8 +742,7 @@ function numbersPass(kitPart, effects, timestamp, sourceOptions) {
     const stats = terms.stats = effectiveStats(terms, profile.base);
     const { con, wit, men } = stats;
     const power = formulaPower(terms, equipment, profile.base, stats);
-    const classTransfer = level < 20 ? 0 : level < 40 ? 1 : 2;
-    const maxMp = ((Formulas.calcMp(level, spellcaster ? 1 : 0, classTransfer, men) + number(equipment.bonusMp))
+    const maxMp = ((Formulas.calcMp(level, classId, men) + number(equipment.bonusMp))
         * multiplier(profile, 'maxMpMul', timestamp, sources)) + add(profile, 'maxMpAdd', timestamp, sources);
     const maxCp = Math.max(0, Formulas.calcCp(level, classId, con)
         * multiplier(profile, 'maxCpMul', timestamp, sources) + add(profile, 'maxCpAdd', timestamp, sources));
