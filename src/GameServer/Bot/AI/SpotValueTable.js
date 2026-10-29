@@ -500,6 +500,16 @@ function killGapFactor(t, row, level, spotLevel, mask = ALL_SPECIES) {
     return weight > 0 ? factor / weight : expGapFactor(level - spotLevel);
 }
 
+// A row's kills per hour at the bot's gap with the walk of that gap: the
+// row measured the walk to its reference's admitted spawns (a cap is 3600 /
+// the walk per mob, BackgroundResolver.soloWalkMs); the bot of the gap walks
+// to its own (T106). Without a gate, the kills as measured.
+function walked(t, row, refGap, gate, kills) {
+    const reference = gate && gateAt(t, row, refGap);
+    if (!reference || !(kills > 0) || !(gate.cap > 0) || !(reference.cap > 0)) return kills;
+    return 3600 / (3600 / kills + 3600 / gate.cap - 3600 / reference.cap);
+}
+
 // The mobs per hour a row's kills may reach: its cap at the bot's gap (gate),
 // else its own at the reference (the spawns its bot may fight), else the
 // spot's for every monster.
@@ -523,8 +533,8 @@ function combat(t, s, r, level, shots, classId = 0) {
     const curve = t.curves[r][Math.floor(spotLevel / t.bandLevels)];
     const refGap = row[t.f.refGap];
     const measured = row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap);
-    const kills = Math.min(classId ? classKills(t, r, row, curve, refGap, gap, botLevel, classId, measured) : measured,
-        rowCap(t, row, spot, gate));
+    const own = classId ? classKills(t, r, row, curve, refGap, gap, botLevel, classId, measured) : measured;
+    const kills = Math.min(walked(t, row, refGap, gate, own), rowCap(t, row, spot, gate));
     if (!(kills > 0)) return null;
     return { row, curve, gap, refGap, kills, gate, mask, expRatio: ratio(curve.exp, t.gaps, refGap, gap),
         busyRatio: ratio(curve.busy, t.gaps, refGap, gap), gapFactor: killGapFactor(t, row, botLevel, spotLevel, mask) };

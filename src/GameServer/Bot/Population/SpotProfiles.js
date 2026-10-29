@@ -47,6 +47,7 @@ function profileFromSpot(spot) {
         levelCounts: { ...(spot.levelCounts || {}) },
         dominantLevels: (spot.dominantLevels || []).map((entry) => ({ ...entry })),
         area: spot.area ? { ...spot.area } : null,
+        spawnArea: Number(spot.spawnArea) || null,
         tags: [...(spot.tags || [])],
         tagsAuthoritative: spot.tagsAuthoritative === true,
         capacity: Number(spot.capacity || 0) || null,

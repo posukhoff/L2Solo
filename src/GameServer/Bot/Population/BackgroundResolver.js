@@ -1811,11 +1811,13 @@ function admittedDensity(spot, shares) {
 
 // T106 (docs/game-decisions.md "Solo fights per hour"): the walk from a kill
 // to the next mob, at runSpd: the mean distance to the nearest of the density
-// monsters a bot may fight (admittedDensity) spread over the spot, one
-// SPOT_CELL_SIZE square (SpotService.spotIdAt), 1 / (2 sqrt(density / area)).
-// The spot table generator reads the same rule.
-function soloWalkMs(density, runSpd) {
-    const spacing = SPOT_CELL_SIZE / (2 * Math.sqrt(Math.max(1, Number(density) || 1)));
+// monsters a bot may fight (admittedDensity) spread over the area its spawns
+// cover (SpotService spawnArea; without one the SPOT_CELL_SIZE square of the
+// spot, SpotService.spotIdAt), 1 / (2 sqrt(density / area)). The spot table
+// generator reads the same rule.
+function soloWalkMs(density, runSpd, area = SPOT_CELL_SIZE * SPOT_CELL_SIZE) {
+    const spacing = Math.sqrt(Math.max(1, Number(area) || SPOT_CELL_SIZE * SPOT_CELL_SIZE))
+        / (2 * Math.sqrt(Math.max(1, Number(density) || 1)));
     return Math.round(spacing / Math.max(1, Number(runSpd) || 1) * 1000);
 }
 
@@ -2060,7 +2062,7 @@ const BackgroundResolver = {
         // most (CPU bound): a mob engaged before, one per walk that starts
         // within the elapsed time. A profile without a template run speed
         // walks at the cold trip's.
-        const walkMs = soloWalkMs(admittedDensity(spot, admitted), roundProfile.runSpd || RUN_SPEED);
+        const walkMs = soloWalkMs(admittedDensity(spot, admitted), roundProfile.runSpd || RUN_SPEED, spot.spawnArea || undefined);
         const fights = Math.ceil(elapsedMs / Math.max(1, walkMs)) + 1;
         // The share's fraction left from the last round on this spot carries
         // over; a pull above it is owed (a negative carry).

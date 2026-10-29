@@ -58,9 +58,6 @@ const REF_GAP = 6;
 const GAPS = [-4, -2, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];
 const BAND_LEVELS = 2;
 const CURVE_SPOTS = 3;
-// A density no spot reaches: the fights of a cycle are then limited only by
-// the cycle's time, so a row measures what the bot's own speed allows.
-const UNLIMITED_DENSITY = 300;
 // Kit and skills of a role at a level: the class of the role's profession
 // stage (below 20, 20-39, 40+), one real class line each (T106). Roles with
 // no class below 20 use their first profession there; such rows only serve
@@ -315,11 +312,13 @@ function newBot(classId, level, shots, simulation = sim, kit = null) {
     if (potion?.selfId) inventory[String(potion.selfId)] = { selfId: Number(potion.selfId), amount: 1e9 };
     const profile = simulation.CCP.profileFor(bot, START);
     bot.vitals = { hp: profile.maxHp, maxHp: profile.maxHp, mp: profile.maxMp, maxMp: profile.maxMp };
-    return { bot, shotId, full: { ...bot.vitals } };
+    return { bot, shotId, full: { ...bot.vitals }, runSpd: profile.runSpd };
 }
 
+// The spot as the bot meets it: its own density, so a row's kills pay the
+// walk between them (BackgroundResolver.soloWalkMs, T106).
 function atSpot(spot) {
-    return { ...spot, density: UNLIMITED_DENSITY };
+    return spot;
 }
 
 // One resolve at full health: does the bot find a target it may fight alone?
@@ -367,13 +366,15 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
     const random = Math.random;
     Math.random = mulberry(seed ^ 0x9e3779b9);
     const sum = { kills: 0, mobs: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
-        fightMs: 0, restMs: 0, taken: 0, spellTaken: 0, hpLost: 0, mpLost: 0, mix: {}, density: 0 };
+        fightMs: 0, restMs: 0, taken: 0, spellTaken: 0, hpLost: 0, mpLost: 0, mix: {}, density: 0, runSpd: 0 };
     try {
         const made = newBot(classId, level, shots, simulation, kit);
         const seen = new Set(Object.values(made.bot.inventory).filter(item => item.amount > 0).map(item => Number(item.selfId)));
         let state = { ...made.bot, spotId: spot.id, loc: { ...spot.center } };
         // The monsters it may fight at full health: the cap of its kills (row cap).
         sum.density = simulation.BR.admittedDensity(spot, simulation.BR.admittedShares(state, spot, START));
+        sum.runSpd = made.runSpd;
+        sum.area = spot.spawnArea;
         const target = atSpot(spot);
         let t = START;
         const end = START + hours * 3600000;
@@ -428,9 +429,10 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
 // Kills per hour the spot's monsters allow a bot that may fight density of
 // them: one per walk to the next (BackgroundResolver.soloWalkMs, T106) at
 // the cold trip's run speed (the row's bot is not known here).
-function fightCap(density) {
+// runSpd: the bot's (a spot's own cap, with no bot: the author's run speed).
+function fightCap(density, runSpd = invoke('GameServer/Bot/Population/ColdTrip').RUN_SPEED, area = undefined) {
     const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
-    return 3600000 / Math.max(1, BR.soloWalkMs(density, invoke('GameServer/Bot/Population/ColdTrip').RUN_SPEED));
+    return 3600000 / Math.max(1, BR.soloWalkMs(density, runSpd, area));
 }
 
 // The kills by species, [selfId, share, ...] by share (the first MIX_SPECIES).
@@ -442,7 +444,7 @@ function killMix(mix, mobs) {
 function perKill(sum, hours) {
     if (sum.kills <= 0 || sum.mobs <= 0) return null;
     const k = sum.mobs, pull = sum.mobs / sum.kills;
-    return { pull, cap: fightCap(sum.density) * pull, mix: killMix(sum.mix, k), kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
+    return { pull, cap: fightCap(sum.density, sum.runSpd || undefined, sum.area || undefined) * pull, mix: killMix(sum.mix, k), kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
         adena: sum.adena / k, loot: sum.loot / k, shots: sum.shots / k, potions: sum.potions / k, stacks: sum.stacks / k,
         fight: sum.fightMs / 1000 / k, rest: sum.restMs / 1000 / k, taken: sum.taken / k, spellTaken: sum.spellTaken / k, hpLost: sum.hpLost / k,
         mpLost: sum.mpLost / k };
@@ -455,8 +457,8 @@ function gateBot(role, level, shots) {
     const key = `${role}|${level}|${shots}`;
     let held = gateBots.get(key);
     if (!held) {
-        const { bot } = newBot(classFor(role, level), level, shots);
-        gateBots.set(key, held = { bot, profiles: sim.BR.roundProfiles(bot, START) });
+        const { bot, runSpd } = newBot(classFor(role, level), level, shots);
+        gateBots.set(key, held = { bot, runSpd, profiles: sim.BR.roundProfiles(bot, START) });
     }
     return held;
 }
@@ -470,7 +472,7 @@ function rowGate(spot, role, shots, level, measured) {
     return GAPS.map((gap) => {
         const botLevel = level + gap;
         if (botLevel < 1 || botLevel > MAX_LEVEL) return 0;
-        const { bot, profiles } = gateBot(role, botLevel, shots);
+        const { bot, profiles, runSpd } = gateBot(role, botLevel, shots);
         const shares = sim.BR.admittedShares({ ...bot, spotId: spot.id }, spot, START, profiles);
         const admitted = new Set();
         for (const [entry, share] of shares || []) if (share > 0) admitted.add(Number(entry.selfId));
@@ -478,7 +480,7 @@ function rowGate(spot, role, shots, level, measured) {
         species.forEach((selfId, index) => { if (!shares || admitted.has(selfId)) mask |= 1 << index; });
         const density = sim.BR.admittedDensity(spot, shares);
         if (!mask || !(density > 0)) return 0;
-        return Math.max(1, Math.round(fightCap(density) * measured.pull)) * 256 + mask;
+        return Math.max(1, Math.round(fightCap(density, runSpd || undefined, spot.spawnArea || undefined) * measured.pull)) * 256 + mask;
     });
 }
 
@@ -771,7 +773,7 @@ async function main() {
                 revision,
                 inputs: { hours: options.hours, curveHours: options.curveHours, catalogueSeed: CATALOGUE_SEED,
                     periodMode: PERIOD_MODE, rate: 'x1', maxLevel: MAX_LEVEL, refGap: REF_GAP, bandLevels: BAND_LEVELS,
-                    curveSpots: CURVE_SPOTS, unlimitedDensity: UNLIMITED_DENSITY, roleClasses: ROLE_CLASSES,
+                    curveSpots: CURVE_SPOTS, roleClasses: ROLE_CLASSES,
                     spotLimit: options.spots || null },
                 counts: { catalogueSpots, spots: spots.length, rows: spots.length * ROLES.length * SHOTS.length,
                     huntableRows: rowResults.flat().filter(Boolean).length, curves: curveCount,
@@ -786,7 +788,7 @@ async function main() {
             // [id, level, density, kills per hour all its monsters allow (a row's cap
             //  counts those its bot may fight), monsters per pull (rows: their own),
             //  loot at drop rate 10 and 50 over rate x loot at rate 1, the kills' mean accuracy and evasion]
-            spots: spots.map((spot) => [spot.id, Number(spot.avgLevel), Number(spot.density), round(fightCap(Number(spot.density) || 1)), 1,
+            spots: spots.map((spot) => [spot.id, Number(spot.avgLevel), Number(spot.density), round(fightCap(Number(spot.density) || 1, undefined, spot.spawnArea || undefined)), 1,
                 ...lootRateResponse(spot), ...spotMob(spot)]),
             rows: rowResults.map((rows) => poolRowLoot(rows).map(packRow)),
             curves

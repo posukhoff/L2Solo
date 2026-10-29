@@ -140,6 +140,31 @@ try {
     fs.rmSync(gateScratch, { recursive: true, force: true });
 }
 
+// The walk of the gap adds to the time of a kill (T106): the row measured the
+// walk to its reference's spawns (cap 600: 6 s a mob), the bot two levels
+// lower walks to fewer (cap 300: 12 s a mob).
+const walkScratch = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'spot-walk-'));
+try {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spot_table.json'), 'utf8'));
+    fixture.spots[0][0] = '-10_12';
+    fixture.rowFields.push('pull', 'cap', 'mix', 'gate');
+    const write = (name, gate) => {
+        const copy = structuredClone(fixture);
+        for (const rows of copy.rows) for (const row of rows) if (row) row.push(1, 600, [380, 1], gate);
+        const file = path.join(walkScratch, name);
+        fs.writeFileSync(file, JSON.stringify(copy));
+        return file;
+    };
+    Table.useFile(write('same.json', fixture.gaps.map(gap => gap < 0 ? 0 : 600 * 256 + 1)));
+    const measured = Table.value('-10_12', 'dps', 20, true).kills;
+    Table.useFile(write('walk.json', fixture.gaps.map(gap => gap < 0 ? 0 : gap < 6 ? 300 * 256 + 1 : 600 * 256 + 1)));
+    near(Table.value('-10_12', 'dps', 24, true).kills, 200, 'at the reference the measured kills');
+    near(Table.value('-10_12', 'dps', 20, true).kills, 3600 / (3600 / measured + 12 - 6), 'the longer walk of the gap');
+} finally {
+    Table.useFile();
+    fs.rmSync(walkScratch, { recursive: true, force: true });
+}
+
 // ---------------------------------------------------------------- the committed table
 const raw = JSON.parse(fs.readFileSync(Table.DEFAULT_FILE, 'utf8'));
 assert.strictEqual(raw.rows.length, raw.spots.length, 'one row set per spot');
