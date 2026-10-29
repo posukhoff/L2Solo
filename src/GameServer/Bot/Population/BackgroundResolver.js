@@ -1271,7 +1271,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
     if (!pending && !picked.aggressiveInterruption && !BotRoles.isSummoner(fightState)) {
         const formula = ColdHuntFormula.kill({ classId: BotRoles.classIdOf(fightState), level: bot.level, profile: bot,
             hp: vitals.hp, mp: vitals.mp, shots: !!soloFighter.shot,
-            opens: RestPolicy.restsForMana(fightState) && vitals.mp >= 0.95 * vitals.maxMp }, mob,
+            opens: vitals.mp >= 0.95 * vitals.maxMp }, mob,
         { mobHp, fightLimitMs, mod: coldNpcWeaponModifier(mob, bot, timestamp, soloFighter), rng });
         if (formula) {
             time = formula.ms;

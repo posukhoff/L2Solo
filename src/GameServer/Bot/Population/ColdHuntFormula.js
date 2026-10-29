@@ -63,12 +63,13 @@ function normalCdf(x) {
 
 // The mob's melee on the bot (resolveFight: melee only, at its attack
 // speed): per attempt hit chance, the hit, its critical share and the
-// spread of the sum over a fight of `seconds`. mod: the weapon-kind modifier.
-function incoming(mob, profile, seconds, mod = 1) {
+// spread of the sum over a fight of `seconds` (and `first` attempts at its
+// start). mod: the weapon-kind modifier.
+function incoming(mob, profile, seconds, mod = 1, first = 0) {
     const hitChance = Formulas.coldHitChance(mob.accur, profile.evasion);
     const perHit = 70 * mob.pAtk / Math.max(1, profile.pDef) * mod;
     const crit = Math.min(1, Math.max(0, Number(mob.critical) || 0) / 1000);
-    const attempts = 1000 / Math.max(250, Formulas.calcMeleeAtkTime(mob.atkSpd)) * seconds;
+    const attempts = first + 1000 / Math.max(250, Formulas.calcMeleeAtkTime(mob.atkSpd)) * seconds;
     const spread = 1 + Math.pow(Number(mob.pAtkRnd) || 0, 2) / 3 / 10000;
     const meanHit = perHit * (1 + crit), squareHit = perHit * perHit * (1 + 3 * crit) * spread;
     const mean = attempts * hitChance * meanHit;
@@ -99,8 +100,8 @@ let enabled = true;
 
 // One kill by formula, or null when the fight must run for real.
 // bot { classId, level, profile (the fight profile), hp, mp, maxMp, shots
-// (loaded and paying), opens (a bot that rests for MP at a full bar: its
-// opening burst) }, mob: the pull's view (BotPullEstimate.pullView),
+// (loaded and paying), opens (a full bar: fresh from a rest, its cooldowns
+// ready, the fight opens with its burst) }, mob: the pull's view (BotPullEstimate.pullView),
 // mobHp, fightLimitMs, mod (the mob's weapon modifier on the bot), rng.
 // Returns { ms, taken, mp, shotActions, died }.
 function kill(bot, mob, { mobHp = mob.maxHp, fightLimitMs, mod = 1, rng = Math.random } = {}) {
@@ -114,36 +115,50 @@ function kill(bot, mob, { mobHp = mob.maxHp, fightLimitMs, mod = 1, rng = Math.r
     const area = 1 + (Number(rot.areaShare) || 0) * (Math.max(1, Number(mob.pull) || 1) - 1);
     const wet = (terms.phys / Math.max(1, mob.pDef) + terms.magic / Math.max(1, mob.mDef)) * shot * area;
     const dry = terms.dry / Math.max(1, mob.pDef) * shot;
-    let seconds, mp;
-    if (wet > 0) {
-        seconds = mobHp / wet;
-        // A fight from a full bar opens with its burst (three passes).
-        if (bot.opens) for (let pass = 0; pass < 3; pass++) {
-            const burst = openingAt(rot, rot.openDamage, seconds);
-            if (burst > 0) seconds = mobHp / (wet * burst);
+    // The fight in actions (rot.actsPerSec a second): n actions fell the
+    // mob; the first lands at once, so the fight lasts n - 1 of them
+    // (resolveFight's clock), and n of them spend MP and shots. A full bar
+    // opens fresh: its first actions deal and spend as measured (openHits,
+    // openHitMp: cumulative, in long-run actions and MP), then the long run.
+    const rate = rot.actsPerSec;
+    if (!(rate > 0) || !Array.isArray(rot.openHits) || !rot.openHits.length) return null;
+    const head = rot.openHits.length;
+    const actionsAt = perAction => {
+        if (bot.opens) {
+            for (let k = 1; k <= head; k++) if (rot.openHits[k - 1] * perAction >= mobHp) return k;
+            return head + Math.max(1, Math.ceil((mobHp - rot.openHits[head - 1] * perAction) / perAction - 1e-9));
         }
-        mp = bot.opens ? openingAt(rot, rot.openMp, seconds, rot.mpPerSec) : rot.mpPerSec * seconds;
+        return Math.max(1, Math.ceil(mobHp / perAction - 1e-9));
+    };
+    const mpOf = k => bot.opens && k <= head ? rot.openHitMp[k - 1]
+        : (bot.opens ? rot.openHitMp[head - 1] + (k - head) * rot.mpPerSec / rate : k * rot.mpPerSec / rate);
+    let n, mp;
+    if (wet > 0) {
+        n = actionsAt(wet / rate);
+        mp = mpOf(n);
         if (mp > bot.mp) {
             // The bar runs out: the rest of the mob falls to the dry rate.
             if (!(dry > 0) || !(rot.mpPerSec > 0)) return null;
             const wetSeconds = bot.mp / rot.mpPerSec;
-            seconds = wetSeconds + Math.max(0, mobHp - wet * wetSeconds) / dry;
+            n = Math.max(1, Math.ceil((wetSeconds + Math.max(0, mobHp - wet * wetSeconds) / dry) * rate - 1e-9));
             mp = bot.mp;
         }
     } else {
         if (!(dry > 0)) return null;
-        seconds = mobHp / dry;
+        n = actionsAt(dry / rate);
         mp = 0;
     }
-    if (!(seconds > 0) || seconds * 1000 > fightLimitMs) return null;
-    const hits = incoming(mob, profile, seconds, mod);
+    const lasts = (n - 1) / rate;
+    if (lasts * 1000 > fightLimitMs) return null;
+    // The mob strikes at once too, unless the first action fells it.
+    const hits = incoming(mob, profile, lasts, mod, n > 1 ? 1 : 0);
     if (hits.mean + WORST_Z * hits.sigma >= bot.hp) return null;
     // A normal deviate of the fight's damage (Box-Muller on the fight's rng).
     const z = Math.sqrt(-2 * Math.log(Math.max(1e-12, rng()))) * Math.cos(2 * Math.PI * rng());
     const taken = Math.max(0, hits.mean + z * hits.sigma);
-    const actions = bot.shots ? rot.shotsPerSec * seconds : 0;
-    const shotActions = Math.floor(actions) + (rng() < actions % 1 ? 1 : 0);
-    return { ms: Math.round(seconds * 1000), taken, mp: Math.max(0, mp), shotActions, died: taken >= bot.hp };
+    const loaded = bot.shots ? n * rot.shotsPerSec / rate : 0;
+    const shotActions = Math.floor(loaded) + (rng() < loaded % 1 ? 1 : 0);
+    return { ms: Math.round(lasts * 1000), taken, mp: Math.max(0, mp), shotActions, died: taken >= bot.hp };
 }
 
 module.exports = {

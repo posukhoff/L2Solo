@@ -83,7 +83,7 @@ function fight(classId, level, pDef, mDef, options = {}, dry = false) {
     const rng = C.mulberry(C.hash(`${classId}|${level}|${pDef}|${mDef}|${JSON.stringify(options)}`));
     const key = PveEncounter.key([state], SPOT, 0);
     let t = START, botReadyAt = 0, hp = 1e12;
-    const phase = { ms: 0, damage: 0, mp: 0, shots: 0 }, dryPhase = { ms: 0, damage: 0 };
+    const phase = { ms: 0, damage: 0, mp: 0, shots: 0, actions: 0 }, dryPhase = { ms: 0, damage: 0 };
     const empty = () => state.vitals.mp < 0.05 * profile.maxMp;
     let elapsed = 0;
     while (elapsed < MP_PHASE_MAX_MS + (dry ? DRY_MS : 0)) {
@@ -107,6 +107,7 @@ function fight(classId, level, pDef, mDef, options = {}, dry = false) {
         if (!inDry) {
             phase.mp += Math.max(0, mpBefore - result.mp);
             phase.shots += Number(result.debug?.shotActions) || 0;
+            phase.actions += Number(result.debug?.actions) || 0;
         }
         t += ms;
         elapsed += ms;
@@ -142,6 +143,26 @@ function opening(classId, level) {
             timestamp: START, fightLimitMs: seconds * 1000, maxActions: 10000 });
         return { damage: (1e12 - Number(result.encounter?.hp ?? 1e12)) * DEF / seconds, mp: profile.maxMp - result.mp };
     });
+}
+
+// The same fresh fight cut after its first k actions, k = 1..OPENING_ACTIONS:
+// the cumulative damage (in long-run actions: over d1 / actsPerSec at
+// defences 1000) and MP, for the live formula kill (ColdHuntFormula), which
+// counts a fight in actions.
+const OPENING_ACTIONS = 8;
+function openingActions(classId, level, perAction) {
+    const damage = [], mp = [];
+    for (let k = 1; k <= OPENING_ACTIONS; k++) {
+        const { state, profile } = rotationBot(classId, level);
+        const mob = dummy(level, DEF, DEF, typicalHp(level));
+        state.stats.pveEncounter = { version: 1, key: PveEncounter.key([state], SPOT, 0), mob, hp: 1e12, at: START, slices: 0,
+            botReadyAt: 0, mobReadyAt: 1e15 };
+        const result = Resolver.resolveFight({ state, spot: SPOT, rng: C.mulberry(C.hash(`${classId}|${level}|act|${k}`)),
+            timestamp: START, fightLimitMs: 600000, maxActions: k });
+        damage.push(perAction > 0 ? C.round((1e12 - Number(result.encounter?.hp ?? 1e12)) * DEF / perAction) : 0);
+        mp.push(C.round(profile.maxMp - result.mp));
+    }
+    return { damage, mp };
 }
 
 function perSecond(part) {
@@ -182,17 +203,21 @@ function measure(classId, level) {
     const shotMul = d1 > 0 ? perSecond(shot.phase) * DEF / d1 : 1;
     const mpPerSec = kit.phase.ms > 0 ? kit.phase.mp / (kit.phase.ms / 1000) : 0;
     const open = opening(classId, level);
+    const actsPerSec = kit.phase.ms > 0 ? kit.phase.actions / (kit.phase.ms / 1000) : 0;
+    const hits = openingActions(classId, level, actsPerSec > 0 ? d1 / actsPerSec : 0);
     return { level, refPAtk: p1, refMAtk: kit.profile.mAtk, refAtkSpd: kit.profile.atkSpd, refCastSpd: kit.profile.castSpd,
         A, B, M: mUnit, magicShare: d1 > 0 ? magic1 / d1 : 0, mpPerSec, mpPhaseSec: kit.phase.ms / 1000,
         dryUnit: physUnit(dry, kit.profile) / Math.max(1, p1), shotMul,
         areaShare: d1 > 0 ? Math.max(0, perSecond(pair.phase) * DEF / d1 - 1) : 0, d1,
         openDamage: open.map(point => d1 > 0 ? C.round(point.damage / d1) : 1), openMp: open.map(point => C.round(point.mp)),
         // Shot-loading actions per second of the shots run (ColdHuntFormula's shot debit).
-        shotsPerSec: shot.phase.ms > 0 ? shot.phase.shots / (shot.phase.ms / 1000) : 0 };
+        shotsPerSec: shot.phase.ms > 0 ? shot.phase.shots / (shot.phase.ms / 1000) : 0,
+        // Bot actions per second, and the first actions of a fresh fight.
+        actsPerSec, openHits: hits.damage, openHitMp: hits.mp };
 }
 
 const FIELDS = ['level', 'refPAtk', 'refMAtk', 'refAtkSpd', 'refCastSpd', 'A', 'B', 'M', 'magicShare', 'mpPerSec', 'mpPhaseSec',
-    'dryUnit', 'shotMul', 'areaShare', 'd1', 'openDamage', 'openMp', 'shotsPerSec'];
+    'dryUnit', 'shotMul', 'areaShare', 'd1', 'openDamage', 'openMp', 'shotsPerSec', 'actsPerSec', 'openHits', 'openHitMp'];
 
 function bandsFor(classId) {
     const stage = Math.max(0, Math.min(2, ClassProgression.lineage(classId).length - 1));
