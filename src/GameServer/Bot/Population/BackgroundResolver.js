@@ -1162,6 +1162,8 @@ function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false
     const damage = attackDamage(fighter, selected, mob, rng, { vsMob: true, at, shot });
     // A missed normal attack deals 0 and keeps its soulshot.
     if (shot && (skill || damage > 0)) spendColdShot(fighter);
+    // A bow shot costs its MP (C4WeaponSA.expectedBowMp), as a player's does.
+    if (!skill) fighter.vitals.mp = Math.max(0, fighter.vitals.mp - (Number(profile.equipment?.bowMp) || 0));
     if (skill) {
         settleCharges(fighter, C4SkillRules.resolve(skill), at);
         spendSkill(fighter, skill, at);

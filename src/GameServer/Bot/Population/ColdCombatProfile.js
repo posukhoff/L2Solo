@@ -24,6 +24,7 @@ const RAID_MINIONS = require('../../../../data/Npcs/Minions/c4_raid_bosses.json'
 const PopulationConfig = invoke('GameServer/Bot/Population/PopulationConfig');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 const HennaRules = invoke('GameServer/Henna/HennaRules');
+const C4WeaponSA = invoke('GameServer/Items/C4WeaponSA');
 
 // Rebuild persisted kits that could have been overwritten by an older resolve.
 const PROFILE_VERSION = 6;
@@ -146,6 +147,8 @@ function equipmentFromTemplates(items = [], spellcaster = false, fallback = {}) 
 
     return {
         weaponKind: weapon?.template?.kind || fallback.weaponKind || '',
+        // The MP of one bow shot (user 10-29: bots pay it as players do).
+        bowMp: weapon?.template?.kind === 'Weapon.Bow' ? C4WeaponSA.expectedBowMp(weapon.selfId, weapon.etc?.mp) : 0,
         attackReuseDelay: number(weapon?.stats?.reuseDelay, 1500),
         pAtk: number(weapon?.stats?.pAtk, fallback.pAtk),
         pAtkRnd: number(weapon?.stats?.pAtkRnd, fallback.pAtkRnd),
@@ -500,6 +503,8 @@ function capture(actor, timestamp = Date.now()) {
     const armorKindAt = (slot) => armors.find((item) => Number(item.fetchSlot?.()) === slot)?.fetchKind?.();
     const equipment = {
         weaponKind: backpack?.fetchTotalWeaponKind?.() || '',
+        bowMp: backpack?.fetchTotalWeaponKind?.() === 'Weapon.Bow' ? C4WeaponSA.expectedBowMp(
+            backpack.fetchEquippedWeapon?.()?.fetchSelfId?.(), backpack.fetchEquippedWeapon?.()?.fetchConsumedMp?.()) : 0,
         attackReuseDelay: backpack?.fetchEquippedWeapon?.()?.fetchAttackReuseDelay?.() ?? 1500,
         pAtk: number(backpack?.fetchTotalWeaponPAtk?.(), number(actor.fetchPAtk?.())),
         pAtkRnd: number(backpack?.fetchTotalWeaponPAtkRnd?.()),
