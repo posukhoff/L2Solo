@@ -4,6 +4,7 @@ const Roles = invoke('GameServer/Bot/AI/BotRoles');
 const WeaponMask = invoke('GameServer/Skills/WeaponMask');
 const Formulas = invoke('GameServer/Formulas');
 const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
+const Pull = invoke('GameServer/Bot/AI/BotPullEstimate');
 
 const MIN_EFFICIENCY = 0.15;
 const ELEMENTS = ['fire', 'water', 'wind', 'earth', 'holy', 'dark'];
@@ -374,12 +375,16 @@ function optionVerdicts(profiles, options) {
     return verdicts;
 }
 
-function npcVerdict(verdicts, selfId, options) {
-    if (verdicts.has(selfId)) return verdicts.get(selfId);
+// pull: the spot's mean pull of the species; the fight meets a whole pull
+// (resolveFight: BotPullEstimate.pullView), so the verdict judges it.
+function npcVerdict(verdicts, selfId, options, pull = 1) {
+    const size = Math.max(1, Math.round(Number(pull) || 1));
+    const key = size > 1 ? `${selfId}:${size}` : selfId;
+    if (verdicts.has(key)) return verdicts.get(key);
     const npc = npcTemplate(selfId);
     let verdict = null;
     if (npc && huntingTargetPolicy().canHunt(npc)) {
-        const target = coldCombatProfile().npcCombatStats(npc);
+        const target = Pull.pullView(coldCombatProfile().npcCombatStats(npc), size);
         // One attack list per profile against this species: the efficiency and
         // the solo survival read the same channels (pure in profile and target).
         const lists = new Map();
@@ -392,7 +397,7 @@ function npcVerdict(verdicts, selfId, options) {
             : match.eligible && withinRecoveryLevel;
         verdict = Object.freeze({ efficiency: match.efficiency, canHunt });
     }
-    verdicts.set(selfId, verdict);
+    verdicts.set(key, verdict);
     return verdict;
 }
 
@@ -406,7 +411,7 @@ const spotMatchups = new WeakMap();
 // reads, so a solo fight's pick (ColdCombatProfile.npcForSpot) shares it.
 function speciesVerdict(profiles, selfId, options = {}) {
     return npcVerdict(optionVerdicts(profiles, options), Number(selfId),
-        { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel });
+        { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel }, options.pull);
 }
 
 function spotMatchup(spot, profiles, options = {}) {
@@ -419,7 +424,7 @@ function spotMatchup(spot, profiles, options = {}) {
     if (known) return known;
     const verdictOptions = { profiles, soloSafety: options.soloSafety, maxTargetLevel: options.maxTargetLevel };
     for (const entry of spot.npcEntries || []) {
-        const verdict = npcVerdict(verdicts, Number(entry.selfId), verdictOptions);
+        const verdict = npcVerdict(verdicts, Number(entry.selfId), verdictOptions, entry.pull);
         if (!verdict) continue;
         const weight = Math.max(1, number(entry.count));
         total += weight;

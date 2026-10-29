@@ -25,6 +25,9 @@ function boot() {
     process.env.L2NODE_PROGRESSION_RATE = 'x1';
     require('../../src/Global');
     invoke('GameServer/DataCache').init({ validate: false });
+    // The tables measure the real cold fight, never the live formula kill
+    // (ColdHuntFormula, T106) they feed.
+    invoke('GameServer/Bot/Population/ColdHuntFormula').enabled = false;
     booted = true;
 }
 
@@ -79,7 +82,7 @@ function fingerprints(inputs) {
 
 function gitRevision() {
     try {
-        const head = childProcess.execSync('git rev-parse --short HEAD', { cwd: root }).toString().trim();
+        const head = childProcess.execSync('git rev-parse --short=9 HEAD', { cwd: root }).toString().trim();
         const dirty = childProcess.execSync('git status --porcelain -- src data/Npcs data/Items data/Skills data/Templates data/Henna data/Recipes',
             { cwd: root }).toString().trim() !== '';
         return dirty ? `${head}+local` : head;

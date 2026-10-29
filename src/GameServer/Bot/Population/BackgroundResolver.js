@@ -11,6 +11,7 @@ const ColdClassPolicy = invoke('GameServer/Bot/Population/ColdClassPolicy');
 const BotCombatUtility = invoke('GameServer/Bot/AI/BotCombatUtility');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
+const ColdHuntFormula = invoke('GameServer/Bot/Population/ColdHuntFormula');
 const ChargeLifecycle = invoke('GameServer/Skills/ChargeLifecycle');
 const HealingPotionStock = invoke('GameServer/Bot/AI/HealingPotionStock');
 const BotHuntingGroundPolicy = invoke('GameServer/Bot/AI/BotHuntingGroundPolicy');
@@ -1265,6 +1266,35 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
     // The mob's damage to the bot before any heal (the spot table's damage taken per kill).
     let taken = 0;
 
+    // T106: a safe fight on a fresh mob is a formula kill (ColdHuntFormula):
+    // the steps below do not run; its potion, soul crystal and rewards do.
+    if (!pending && !picked.aggressiveInterruption && !BotRoles.isSummoner(fightState)) {
+        const formula = ColdHuntFormula.kill({ classId: BotRoles.classIdOf(fightState), level: bot.level, profile: bot,
+            hp: vitals.hp, mp: vitals.mp, shots: !!soloFighter.shot,
+            opens: RestPolicy.restsForMana(fightState) && vitals.mp >= 0.95 * vitals.maxMp }, mob,
+        { mobHp, fightLimitMs, mod: coldNpcWeaponModifier(mob, bot, timestamp, soloFighter), rng });
+        if (formula) {
+            time = formula.ms;
+            actions = 1;
+            taken = formula.taken;
+            vitals.mp = Math.max(0, vitals.mp - formula.mp);
+            vitals.hp = formula.died ? 0 : vitals.hp - formula.taken;
+            if (!formula.died) {
+                mobHp = 0;
+                startColdPotion(soloFighter, time);
+            }
+            const shot = soloFighter.shot;
+            const loaded = shot ? Math.min(formula.shotActions, shot.left) : 0;
+            if (loaded > 0) {
+                shot.left -= loaded;
+                const item = fightState.inventory[shot.key];
+                item.amount = Number(item.amount) - loaded * shot.perAction;
+                soloFighter.shotActions += loaded;
+            }
+            soloFighter.formula = true;
+        }
+    }
+
     // A resolve contains only a handful of fights, and a fight itself is
     // bounded by time and actions. This is deliberately cheaper than a live
     // Actor while retaining its hit, critical, damage and speed formulas.
@@ -1361,7 +1391,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             debug: { actions, durationMs: time, skillUses: soloFighter.skillUses, shotActions: soloFighter.shotActions, heals: soloFighter.heals,
                 musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
                 potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
-                mobSelfId: mob.selfId || null, timedOut: !died, pullMobs, areaPullHits, damageTaken: taken }
+                mobSelfId: mob.selfId || null, timedOut: !died, pullMobs, areaPullHits, damageTaken: taken, formula: soloFighter.formula === true }
         };
     }
 
@@ -1409,7 +1439,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
             potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
             mobSelfId: mob.selfId || null, timedOut: false, overhit: kill.overhit, pullMobs, areaPullHits, killsPaid: pulled,
-            damageTaken: taken }
+            damageTaken: taken, formula: soloFighter.formula === true }
     };
 }
 
