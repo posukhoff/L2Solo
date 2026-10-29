@@ -112,6 +112,34 @@ try {
     fs.rmSync(mixScratch, { recursive: true, force: true });
 }
 
+// The gate per gap (T106): a row read below its reference keeps only the
+// species and the cap of the spawns that bot may fight; none closes the row.
+// Gaps 0-4: only NPC 380, cap 50; from 6: 380 and 34, cap 120; below 0: none.
+const gateScratch = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'spot-gate-'));
+try {
+    const Rewards = require('../src/GameServer/Bot/Economy/SpotRewardExpectation');
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spot_table.json'), 'utf8'));
+    fixture.spots[0][0] = '-10_12';
+    fixture.rowFields.push('pull', 'cap', 'mix', 'gate');
+    const gate = fixture.gaps.map(gap => gap < 0 ? 0 : gap < 6 ? 50 * 256 + 1 : 120 * 256 + 3);
+    for (const rows of fixture.rows) for (const row of rows) if (row) row.push(1, 120, [380, .5, 34, .5], gate);
+    const file = path.join(gateScratch, 'table.json');
+    fs.writeFileSync(file, JSON.stringify(fixture));
+    Table.useFile(file);
+    const rewards = { adenaMin: 34, adenaMax: 119 };
+    const at24 = Table.value('-10_12', 'dps', 24, true), at20 = Table.value('-10_12', 'dps', 20, true);
+    near(at24.kills, 120, 'at the reference the row\'s cap');
+    near(at24.adena, 120 * Rewards.value({ id: '-10_12', npcEntries: [{ selfId: 380, count: 500 }, { selfId: 34, count: 500 }], rewards }, 24).adena,
+        'both species pay at the reference');
+    near(at20.kills, 50, 'two levels lower the cap of the spawns that bot may fight');
+    near(at20.adena, 50 * Rewards.value({ id: '-10_12', npcEntries: [{ selfId: 380, count: 500 }], rewards }, 20).adena,
+        'only the species that bot may fight pay');
+    assert.strictEqual(Table.value('-10_12', 'dps', 16, true), null, 'a gap where the bot may fight none: no row');
+} finally {
+    Table.useFile();
+    fs.rmSync(gateScratch, { recursive: true, force: true });
+}
+
 // ---------------------------------------------------------------- the committed table
 const raw = JSON.parse(fs.readFileSync(Table.DEFAULT_FILE, 'utf8'));
 assert.strictEqual(raw.rows.length, raw.spots.length, 'one row set per spot');

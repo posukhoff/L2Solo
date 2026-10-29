@@ -6,6 +6,7 @@ const persistenceDatabase = () => database ||= invoke('Database');
 const DataCache = invoke('GameServer/DataCache');
 const LiveBag = require('./LiveBag');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
+const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
 const BotWeaponCompatibility = invoke('GameServer/Bot/AI/BotWeaponCompatibility');
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 
@@ -120,14 +121,52 @@ function equippedWeapon(items) {
 // class's kind at the equipped weapon's grade, and how many the weapon takes
 // per charge (perAction, the weapon's count as hot charges it; 0 without a
 // weapon, so no shot loads).
-function planForState(state) {
+// options.blessed: true Blessed Spiritshot (null for a soulshot class),
+// false the class's own kind; unset, a spiritshot class takes the blessed
+// one when it holds it, or holds no spiritshot and it pays (blessedPays).
+function planForState(state, options = {}) {
     const weapon = equippedWeapon(state?.inventory);
-    const plan = planFor({
-        classId: Number(state?.stats?.classId || state?.classId || 0),
-        rank: weapon ? itemRank(weapon.selfId) : 'none'
-    });
+    const classId = Number(state?.stats?.classId || state?.classId || 0), rank = weapon ? itemRank(weapon.selfId) : 'none';
+    const spirit = classWantsSpiritshots(classId);
+    if (options.blessed === true && !spirit) return null;
+    const blessed = spirit && (options.blessed ?? choosesBlessed(state, rank));
+    const plan = blessed ? planForKind('blessedSpiritshot', rank) : planFor({ classId, rank });
     const count = weapon ? templateFor(weapon.selfId)?.etc?.[plan.kind === 'soulshot' ? 'soulshot' : 'spiritshot'] : 0;
     return { ...plan, perAction: Math.max(0, Number(count) || 0) };
+}
+
+function heldAmount(state, selfId) {
+    return Math.max(0, Number(state?.inventory?.[selfId]?.amount) || 0);
+}
+
+function choosesBlessed(state, rank) {
+    if (heldAmount(state, BLESSED_SPIRITSHOT_BY_RANK[rank]) > 0) return true;
+    if (heldAmount(state, SPIRITSHOT_BY_RANK[rank]) > 0) return false;
+    return blessedPays(BotRoles.tableRoleFor(state), Number(state?.level) || 1, rank);
+}
+
+// Blessed Spiritshot over Spiritshot for a role, level and grade (user 10-29,
+// docs/game-decisions.md "Shots"): the farm it adds over the spiritshot (the
+// best spots' exp, as usePolicy's benefit) pays its extra cost per hour at
+// the template price (a D+ shot's craft materials) against the hour's money
+// before shots. One answer per table revision.
+const blessedChoices = new Map();
+function blessedPays(role, level, rank) {
+    const Table = SpotValueTable;
+    const key = `${Table.revision()}|${role}|${level}|${rank}`;
+    if (blessedChoices.has(key)) return blessedChoices.get(key);
+    const none = Table.best(role, level, false), spirit = Table.best(role, level, true), blessed = Table.best(role, level, 2);
+    let pays = false;
+    if (none && spirit && blessed) {
+        const gain = row => 1 - Math.max(0, Number(none.exp) || 0) / Math.max(1, Number(row.exp) || 0);
+        const cost = (row, selfId) => Math.max(0, Number(row.shots) || 0) * itemPrice(selfId);
+        const hour = Math.max(1, (Number(blessed.adena) || 0) + (Number(blessed.loot) || 0));
+        pays = gain(blessed) - gain(spirit)
+            >= (cost(blessed, BLESSED_SPIRITSHOT_BY_RANK[rank]) - cost(spirit, SPIRITSHOT_BY_RANK[rank])) / hour;
+    }
+    if (blessedChoices.size > 4096) blessedChoices.clear();
+    blessedChoices.set(key, pays);
+    return pays;
 }
 
 function starterPlanFor(classId) {
@@ -154,6 +193,11 @@ function combatPlanForState(state) {
         ? { ...plan, selfId, name: itemName(selfId), price: 0 } : plan;
 }
 
+// The table rows of a plan's shots (SpotValueTable: 2 Blessed Spiritshot).
+function shotRows(plan) {
+    return plan?.kind === 'blessedSpiritshot' ? 2 : true;
+}
+
 // A shared bounded encounter decision; never builds the wish graph or reads SQL.
 // The stock review supplies its existing table/hunt reads. Combat preparation
 // can read the same static table and at most eight of the owner's hunt samples.
@@ -166,15 +210,15 @@ function usePolicy(state, prepared = {}) {
     if (!Object.hasOwn(prepared, 'bestTable')) {
         const hunt = Hunt.huntIncome(state, prepared.timestamp || Date.now(), prepared.mode);
         const spot = hunt.spotId || state.spotId;
-        best = (spot && Table.value(spot, tableRole, state.level, hunt.useShots !== false))
-            || Table.best(tableRole, state.level, hunt.useShots !== false);
+        const shots = hunt.useShots === false ? false : shotRows(plan);
+        best = (spot && Table.value(spot, tableRole, state.level, shots)) || Table.best(tableRole, state.level, shots);
         hour = Hunt.huntHour(hunt, state);
     }
     const rawUse = plan.perAction > 0 ? Math.max(0, Number(best?.shots) || 0) : 0;
     // The farm the shots give (0..1): the share of the hour's exp they add, the
     // best spot with shots against the best without (often another spot). One
     // spot's pair reads 0 where both rows reach its fight cap.
-    const withBest = Table.best(tableRole, state.level, true), withoutBest = Table.best(tableRole, state.level, false);
+    const withBest = Table.best(tableRole, state.level, shotRows(plan)), withoutBest = Table.best(tableRole, state.level, false);
     const benefit = Math.max(0, 1 - Math.max(0, Number(withoutBest?.exp) || 0) / Math.max(1, Number(withBest?.exp) || 0));
     const buyback = BeginnerShots.isRestricted(plan.selfId) ? 0
         // lazy: cycle PriceDecision's chain loads this module

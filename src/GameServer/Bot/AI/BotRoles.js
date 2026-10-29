@@ -104,11 +104,20 @@ function inferRole(value) {
     return 'dps';
 }
 
+// The table roles of their own (T106): summoners fight with a pet, orc
+// chanters by their own line, not as the role's measured class.
+const SUMMONER_TABLE_CLASSES = new Set([14, 28, 41]);
+const CHANTER_TABLE_CLASSES = new Set([49, 50, 51, 52]);
+
 // The game table's role of a bot (SpotValueTable roles): its party role, else
 // its own. crafter -> spoiler is the author's call (the table has no crafter).
 function tableRoleFor(state = {}) {
     const role = state.party?.role || state.stats?.role || inferRole(state.stats?.classId || state.classId || 0);
-    return role === 'melee' ? 'dps' : role === 'nuker' ? 'mage' : role === 'crafter' ? 'spoiler' : role;
+    const tableRole = role === 'melee' ? 'dps' : role === 'nuker' ? 'mage' : role === 'crafter' ? 'spoiler' : role;
+    const classId = roleClassId(state.stats?.classId ?? state.classId ?? null);
+    if (tableRole === 'mage' && SUMMONER_TABLE_CLASSES.has(classId)) return 'summoner';
+    if (tableRole === 'buffer' && CHANTER_TABLE_CLASSES.has(classId)) return 'chanter';
+    return tableRole;
 }
 
 function isRole(value, role) {

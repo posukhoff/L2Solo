@@ -178,6 +178,12 @@ function filled(values, neutral) {
     return out;
 }
 
+// A row's shots state: 0 none, 1 the weapon's shots (true), 2 Blessed
+// Spiritshot (the generator's SHOTS; a table before it has no 2).
+function shotKey(shots) {
+    return shots === 2 ? 2 : shots ? 1 : 0;
+}
+
 function load() {
     if (table) return table;
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -216,7 +222,7 @@ function load() {
         rows: raw.rows,
         curves,
         gaps: raw.gaps,
-        shotsIndex: new Map(raw.shots.map((shots, index) => [Boolean(shots), index])),
+        shotsIndex: new Map(raw.shots.map((shots, index) => [shotKey(shots), index])),
         bandLevels: raw.header.inputs.bandLevels,
         maxLevel: raw.header.inputs.maxLevel,
         f: {
@@ -230,6 +236,8 @@ function load() {
             spellTaken: raw.rowFields.indexOf('spellTaken'),
             // Per-mob rows (pull, cap, mix); a table before them counts fights.
             pull: raw.rowFields.indexOf('pull'), cap: raw.rowFields.indexOf('cap'), mix: raw.rowFields.indexOf('mix'),
+            // The gate per curve gap (cap and admitted mix); a table before it reads the reference's.
+            gate: raw.rowFields.indexOf('gate'),
             hpLost: raw.rowFields.indexOf('hpLost'), mpLost: raw.rowFields.indexOf('mpLost')
         }
     };
@@ -300,7 +308,9 @@ function slotMarket(t, slot, spotId, role, shots, level, skill, revision) {
     const at = slot * ROW_NUMBERS;
     if (memoNumbers[at + MARKET_AT] !== revision) {
         stats.marketSums += 1;
-        memoNumbers[at + MARKET] = Rewards.lootPremium(killSpot(t, rowOf(t, spotId, role, shots), spotId), Math.min(t.maxLevel, Number(level)),
+        const row = rowOf(t, spotId, role, shots), s = t.spotIndex.get(String(spotId));
+        const mask = gateAt(t, row, Math.min(t.maxLevel, Number(level)) - t.spots[s][1])?.mask ?? ALL_SPECIES;
+        memoNumbers[at + MARKET] = Rewards.lootPremium(killSpot(t, row, spotId, mask), Math.min(t.maxLevel, Number(level)),
             Demand().heldPremium, { spoilSkillLevel: skill });
         memoNumbers[at + MARKET_AT] = revision;
     }
@@ -325,10 +335,10 @@ function memoKey(t, spotId, role, level, shots, skill) {
     const r = t.roleIndex.get(typeof role === 'string' ? role : `${role}`);
     const l = memoPart(level, MEMO_LEVELS), k = memoPart(skill, MEMO_SKILLS);
     if (s !== undefined && r !== undefined && l >= 0 && k >= 0) {
-        const key = (((s * t.roleIndex.size + r) * 2 + (shots ? 1 : 0)) * MEMO_LEVELS + l) * MEMO_SKILLS + k;
+        const key = (((s * t.roleIndex.size + r) * 3 + shotKey(shots)) * MEMO_LEVELS + l) * MEMO_SKILLS + k;
         if (key < MEMO_MAX_KEY) return key;
     }
-    return `${spotId}\u0000${role}\u0000${level}\u0000${shots ? 1 : 0}\u0000${skill}`;
+    return `${spotId}\u0000${role}\u0000${level}\u0000${shotKey(shots)}\u0000${skill}`;
 }
 // The slot of the argument set's row; valid until the next memoValue call.
 function memoValue(t, rates, spotId, role, level, shots, skill) {
@@ -351,7 +361,7 @@ function memoValue(t, rates, spotId, role, level, shots, skill) {
 // A role's measured row at a spot (null: none, or the spot is not in the table).
 function rowOf(t, spotId, role, shots) {
     const s = t.spotIndex.get(String(spotId)), r = t.roleIndex.get(role);
-    return s === undefined || r === undefined ? null : t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(Boolean(shots))];
+    return s === undefined || r === undefined ? null : t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(shotKey(shots))];
 }
 
 // A row's measured kills by species ([selfId, share, ...]), or null for a
@@ -361,20 +371,43 @@ function rowMix(t, row) {
     return Array.isArray(mix) && mix.length ? mix : null;
 }
 
+// A row's gate at a bot's level gap (the generator's rowGate, measured at the
+// curve gaps; combat reads it at or above the row's minGap): { cap, mask } at
+// the nearest gap at or below it, mask the bits
+// of the mix species the bot may fight alone there; null when it may fight
+// none; undefined for a table before the gate (the reference's cap and mix).
+function gateAt(t, row, gap) {
+    const gate = t.f.gate < 0 ? null : row?.[t.f.gate];
+    if (!Array.isArray(gate)) return undefined;
+    let i = t.gaps.length - 1;
+    while (i > 0 && t.gaps[i] > gap) i--;
+    // Between a closed gap and an open one, the row's own minGap already
+    // says the bot hunts: the open one's.
+    let value = Number(gate[i]) || 0;
+    if (!value && gap > t.gaps[i] && i + 1 < t.gaps.length) value = Number(gate[i + 1]) || 0;
+    return value > 0 ? { cap: Math.floor(value / 256), mask: value % 256 } : null;
+}
+const ALL_SPECIES = 255;
+
 // The spot a row's kills are priced on (Rewards): the species its bot killed
 // in their measured shares (an entry's count is its share: the kill draw
 // weighs by count), else the spot's spawns. One per row, so the reward
 // memos hold it. User 10-29: a bot kills only what it may fight alone, so a
 // spot's other mobs neither pay nor set the level gap.
+// mask: the species of the mix the bot may fight at its gap (gateAt).
 const killSpots = new WeakMap();
-function killSpot(t, row, spotId) {
+function killSpot(t, row, spotId, mask = ALL_SPECIES) {
     const base = rewardSpot(spotId), mix = rowMix(t, row);
     if (!mix || !base) return base;
-    let held = killSpots.get(row);
+    let byMask = killSpots.get(row);
+    if (!byMask) killSpots.set(row, byMask = new Map());
+    let held = byMask.get(mask);
     if (!held) {
         const npcEntries = [];
-        for (let at = 0; at < mix.length; at += 2) npcEntries.push({ selfId: mix[at], count: Math.max(1, Math.round(mix[at + 1] * 1000)) });
-        killSpots.set(row, held = { ...base, npcEntries, npcSelfIds: undefined });
+        for (let at = 0; at < mix.length; at += 2) {
+            if (mask & (1 << (at / 2))) npcEntries.push({ selfId: mix[at], count: Math.max(1, Math.round(mix[at + 1] * 1000)) });
+        }
+        byMask.set(mask, held = npcEntries.length ? { ...base, npcEntries, npcSelfIds: undefined } : base);
     }
     return held;
 }
@@ -383,7 +416,7 @@ function killSpot(t, row, spotId) {
 // species' own factors (MobExperience) in their measured shares, else the
 // spot's mean level's.
 const mixLevels = new WeakMap();
-function killGapFactor(t, row, level, spotLevel) {
+function killGapFactor(t, row, level, spotLevel, mask = ALL_SPECIES) {
     const mix = rowMix(t, row);
     if (!mix) return expGapFactor(level - spotLevel);
     let levels = mixLevels.get(row);
@@ -395,34 +428,39 @@ function killGapFactor(t, row, level, spotLevel) {
     }
     let factor = 0, weight = 0;
     for (let at = 0; at < mix.length; at += 2) {
+        if (!(mask & (1 << (at / 2)))) continue;
         factor += mix[at + 1] * expGapFactor(level - levels[at / 2]);
         weight += mix[at + 1];
     }
     return weight > 0 ? factor / weight : expGapFactor(level - spotLevel);
 }
 
-// The mobs per hour a row's kills may reach: its own cap (the spawns its bot
-// may fight), else the spot's for every monster.
-function rowCap(t, row, spot) {
-    return t.f.cap >= 0 ? row[t.f.cap] : spot[3] * spot[4];
+// The mobs per hour a row's kills may reach: its cap at the bot's gap (gate),
+// else its own at the reference (the spawns its bot may fight), else the
+// spot's for every monster.
+function rowCap(t, row, spot, gate) {
+    return gate ? gate.cap : t.f.cap >= 0 ? row[t.f.cap] : spot[3] * spot[4];
 }
 
 // The table-only part of a spot's hour (no rewards): the measured row, the level curve and the kills, or
 // null when the bot finds no target it may fight alone there at this level. s, r: the spot's and role's
 // table indexes.
 function combat(t, s, r, level, shots) {
-    const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(Boolean(shots))];
+    const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(shotKey(shots))];
     if (!row) return null;
     const spot = t.spots[s], spotLevel = spot[1];
     const botLevel = Math.min(t.maxLevel, Number(level));
     const gap = botLevel - spotLevel;
     if (!(gap >= row[t.f.minGap])) return null;
+    const gate = gateAt(t, row, gap);
+    if (gate === null) return null;
+    const mask = gate?.mask ?? ALL_SPECIES;
     const curve = t.curves[r][Math.floor(spotLevel / t.bandLevels)];
     const refGap = row[t.f.refGap];
-    const kills = Math.min(row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap), rowCap(t, row, spot));
+    const kills = Math.min(row[t.f.kph] * ratio(curve.kph, t.gaps, refGap, gap), rowCap(t, row, spot, gate));
     if (!(kills > 0)) return null;
-    return { row, curve, gap, refGap, kills, expRatio: ratio(curve.exp, t.gaps, refGap, gap),
-        busyRatio: ratio(curve.busy, t.gaps, refGap, gap), gapFactor: killGapFactor(t, row, botLevel, spotLevel) };
+    return { row, curve, gap, refGap, kills, gate, mask, expRatio: ratio(curve.exp, t.gaps, refGap, gap),
+        busyRatio: ratio(curve.busy, t.gaps, refGap, gap), gapFactor: killGapFactor(t, row, botLevel, spotLevel, mask) };
 }
 // A curve's value at the bot's gap over its value at the row's reference gap.
 function ratio(values, gaps, refGap, gap) {
@@ -440,12 +478,12 @@ function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLev
     if (s === undefined || r === undefined) return null;
     const c = combat(t, s, r, level, shots);
     if (!c) return null;
-    const { row, curve, gap, refGap, kills, expRatio, busyRatio, gapFactor } = c;
+    const { row, curve, gap, refGap, kills, expRatio, busyRatio, gapFactor, mask } = c;
     // Combat remains an offline measurement. Money comes from the native
     // reward groups at each defeated NPC's level and the current rates.
     // Keep the original multiplication order and return a fresh result.
     const lootFactor = lootRateFactor(t.spots[s], rates.drop);
-    const rewards = Rewards.value(killSpot(t, row, spotId), Math.min(t.maxLevel, Number(level)), { spoilSkillLevel: skill });
+    const rewards = Rewards.value(killSpot(t, row, spotId, mask), Math.min(t.maxLevel, Number(level)), { spoilSkillLevel: skill });
     const busy = row[t.f.busy] * busyRatio;
     return {
         kills,
@@ -489,7 +527,7 @@ function cycle(spotId, role, level, shots = true, rewardOptions = {}) {
     const n = memoNumbers, at = slot * ROW_NUMBERS, kills = n[at];
     const { row, curve, gap, refGap } = c, f = t.f, spot = t.spots[s];
     const fight = ratio(curve.fight, t.gaps, refGap, gap), taken = ratio(curve.taken, t.gaps, refGap, gap);
-    return { spotId: spot[0], kph: row[f.kph] * ratio(curve.kph, t.gaps, refGap, gap), cap: rowCap(t, row, spot), pull: 1,
+    return { spotId: spot[0], kph: row[f.kph] * ratio(curve.kph, t.gaps, refGap, gap), cap: rowCap(t, row, spot, c.gate), pull: 1,
         fight: row[f.fight] * fight, rest: row[f.rest] * ratio(curve.rest, t.gaps, refGap, gap),
         taken: row[f.taken] * taken, spellTaken: f.spellTaken < 0 ? 0 : row[f.spellTaken] * taken, hpLost: row[f.hpLost] * taken, mpLost: row[f.mpLost] * fight,
         deaths: n[at + 1] / kills, money: (n[at + ADENA] + n[at + LOOT]) / kills,
@@ -518,7 +556,7 @@ function referenceLevel(spotId, role, shots = true) {
     const s = t.spotIndex.get(String(spotId));
     const r = t.roleIndex.get(role);
     if (s === undefined || r === undefined) return null;
-    const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(Boolean(shots))];
+    const row = t.rows[s][r * t.shotsIndex.size + t.shotsIndex.get(shotKey(shots))];
     return row ? t.spots[s][1] + row[t.f.refGap] : null;
 }
 
@@ -532,7 +570,7 @@ function best(role, level, shots = true) {
         incomeTable = t; incomeRates = rates;
         dropRows();
     }
-    const key = `${role}:${level}:${Boolean(shots)}`;
+    const key = `${role}:${level}:${shotKey(shots)}`;
     if (bestRows.has(key)) { DiagnosticConfig.developerDiagnostics && (stats.bestHits += 1); return bestRows.get(key); }
     DiagnosticConfig.developerDiagnostics && (stats.bestMisses += 1);
     // Exp is table-only (no reward groups): the scan reads the table's combat part of each spot, the
@@ -566,7 +604,7 @@ function incomeSource() {
 function rankedIncome(role, level, costs = { shots: 0, potions: 0 }, minGap = -7, shots = true, rewardOptions = {}) {
     const { t, rates } = incomeSource();
     const skill = rewardOptions.spoilSkillLevel ?? roleSpoilLevel(role, level);
-    const key = `${role}:${level}:${costs.shots}:${costs.potions}:${minGap}:${Number(shots)}:${skill}`;
+    const key = `${role}:${level}:${costs.shots}:${costs.potions}:${minGap}:${shotKey(shots)}:${skill}`;
     if (incomeRows.has(key)) {
         DiagnosticConfig.developerDiagnostics && (stats.incomeHits += 1);
         const held = incomeRows.get(key);
@@ -615,7 +653,7 @@ function rankedSpotIds(role, level, costs = { shots: 0, potions: 0 }, minGap = -
 const BASIS_MIN_GAP = -15;
 function rankIncome(t, rates, role, level, costs, minGap, shots, skill, market = 0) {
     const basisGap = Math.min(minGap, BASIS_MIN_GAP);
-    const basisKey = `${role}:${level}:${basisGap}:${Number(shots)}:${skill}`;
+    const basisKey = `${role}:${level}:${basisGap}:${shotKey(shots)}:${skill}`;
     let basis = incomeBases.get(basisKey);
     if (basis) {
         incomeBases.delete(basisKey); incomeBases.set(basisKey, basis);

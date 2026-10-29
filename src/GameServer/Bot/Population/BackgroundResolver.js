@@ -2012,6 +2012,7 @@ const BackgroundResolver = {
     soloFightCount,
     soloShareMobs,
     admittedShares,
+    roundProfiles,
     admittedDensity,
     travelRecord,
     huntCycleDelayMs,

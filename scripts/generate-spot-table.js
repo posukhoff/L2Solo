@@ -62,20 +62,26 @@ const CURVE_SPOTS = 3;
 // the cycle's time, so a row measures what the bot's own speed allows.
 const UNLIMITED_DENSITY = 300;
 // Kit and skills of a role at a level: the class of the role's profession
-// stage (below 20, 20-39, 40+). Roles with no class below 20 use their first
-// profession there; such rows only serve higher bots on low spots.
+// stage (below 20, 20-39, 40+), one real class line each (T106). Roles with
+// no class below 20 use their first profession there; such rows only serve
+// higher bots on low spots. summoner and chanter are table roles of their
+// own (BotRoles.tableRoleFor): a pet, an orc chanter's line.
 const ROLE_CLASSES = {
     dps: [0, 1, 2],
     mage: [10, 11, 12],
     tank: [4, 4, 5],
     dagger: [7, 7, 8],
-    archer: [22, 22, 9],
+    archer: [22, 22, 24],
     healer: [15, 15, 16],
-    buffer: [49, 50, 17],
-    spoiler: [53, 54, 55]
+    buffer: [15, 15, 17],
+    spoiler: [53, 54, 55],
+    summoner: [10, 11, 14],
+    chanter: [49, 50, 52]
 };
 const ROLES = Object.keys(ROLE_CLASSES);
-const SHOTS = [1, 0];
+// 1: the weapon's shots, 0: none, 2: Blessed Spiritshot (a spiritshot class
+// only; null rows for the others): ShotStock chooses it by these rows.
+const SHOTS = [1, 0, 2];
 // A row's fields are per mob killed (a fight of a pull kills several), kph
 // mobs per hour. The hunt cycle of a kill (HuntCycle): fight and rest
 // seconds, the mob's damage before heals (taken; spellTaken its part from
@@ -83,9 +89,12 @@ const SHOTS = [1, 0];
 // what its rest refills). pull: mobs per fight; cap: the mobs per hour the
 // spawns the bot may fight allow (BackgroundResolver.admittedDensity); mix:
 // the kills by species, [selfId, share, ...] by share, at most MIX_SPECIES
-// (the reader prices the kill and its level gap by it, user 10-29).
+// (the reader prices the kill and its level gap by it, user 10-29); gate:
+// per GAPS, cap x 256 + the bits of the mix species the bot of that level
+// may fight alone (0: none), so a row read below its reference keeps only
+// what that bot fights (rowGate).
 const ROW_FIELDS = ['minGap', 'refGap', 'kph', 'busy', 'deaths', 'exp', 'sp', 'adena', 'loot', 'shots', 'potions', 'stacks',
-    'fight', 'rest', 'taken', 'spellTaken', 'hpLost', 'mpLost', 'pull', 'cap', 'mix'];
+    'fight', 'rest', 'taken', 'spellTaken', 'hpLost', 'mpLost', 'pull', 'cap', 'mix', 'gate'];
 const MIX_SPECIES = 8;
 // Loot has no curve of its own: one rare drop in an hour of a curve spot
 // would swing it; it follows the adena curve (same drop groups, same
@@ -296,8 +305,8 @@ function newBot(classId, level, shots, simulation = sim, kit = null) {
     const inventory = bot.inventory;
     let shotId = 0;
     if (shots) {
-        const plan = simulation.ShotStock.planForState(bot);
-        if (plan.selfId && plan.perAction > 0) {
+        const plan = simulation.ShotStock.planForState(bot, { blessed: shots === 2 });
+        if (plan?.selfId && plan.perAction > 0) {
             shotId = Number(plan.selfId);
             inventory[String(shotId)] = { selfId: shotId, amount: 1e9 };
         }
@@ -445,6 +454,40 @@ function perKill(sum, hours) {
         mpLost: sum.mpLost / k };
 }
 
+// The reference bots of the gate, one per role, level and shots in a child:
+// { bot, profiles } (BackgroundResolver.roundProfiles), shared by every spot.
+const gateBots = new Map();
+function gateBot(role, level, shots) {
+    const key = `${role}|${level}|${shots}`;
+    let held = gateBots.get(key);
+    if (!held) {
+        const { bot } = newBot(classFor(role, level), level, shots);
+        gateBots.set(key, held = { bot, profiles: sim.BR.roundProfiles(bot, START) });
+    }
+    return held;
+}
+
+// A row's gate per GAPS: the cap (fightCap of the spawns the bot of that
+// level may fight, times the row's pull) x 256 + the bits of the mix species
+// it may fight (BackgroundResolver.admittedShares); 0 where it may fight none.
+function rowGate(spot, role, shots, level, measured) {
+    const species = [];
+    for (let at = 0; at < measured.mix.length; at += 2) species.push(measured.mix[at]);
+    return GAPS.map((gap) => {
+        const botLevel = level + gap;
+        if (botLevel < 1 || botLevel > MAX_LEVEL) return 0;
+        const { bot, profiles } = gateBot(role, botLevel, shots);
+        const shares = sim.BR.admittedShares({ ...bot, spotId: spot.id }, spot, START, profiles);
+        const admitted = new Set();
+        for (const [entry, share] of shares || []) if (share > 0) admitted.add(Number(entry.selfId));
+        let mask = 0;
+        species.forEach((selfId, index) => { if (!shares || admitted.has(selfId)) mask |= 1 << index; });
+        const density = sim.BR.admittedDensity(spot, shares);
+        if (!mask || !(density > 0)) return 0;
+        return Math.max(1, Math.round(fightCap(density) * measured.pull)) * 256 + mask;
+    });
+}
+
 // A row: the lowest level gap at which the role finds a safe target, then the
 // hunt at the reference gap (or that lowest gap when it is higher).
 function rowTask({ spotId, hours }) {
@@ -453,6 +496,10 @@ function rowTask({ spotId, hours }) {
     const rows = [];
     for (const role of ROLES) {
         for (const shots of SHOTS) {
+            if (shots === 2 && !sim.ShotStock.planForState(gateBot(role, level, 0).bot, { blessed: true })) {
+                rows.push(null);
+                continue;
+            }
             let minGap = null;
             for (let gap = GAPS[0]; gap <= GAPS[GAPS.length - 1]; gap++) {
                 const botLevel = level + gap;
@@ -463,7 +510,8 @@ function rowTask({ spotId, hours }) {
             if (minGap === null) { rows.push(null); continue; }
             const refLevel = Math.min(MAX_LEVEL, level + Math.max(REF_GAP, minGap));
             const measured = perKill(hunt(spot, role, refLevel, shots, hours), hours);
-            rows.push(measured ? { minGap, refGap: refLevel - level, ...measured } : null);
+            rows.push(measured ? { minGap, refGap: refLevel - level, ...measured,
+                gate: rowGate(spot, role, shots, level, measured) } : null);
         }
     }
     return rows;
@@ -549,7 +597,7 @@ function poolRowLoot(rows) {
 }
 
 function packRow(row) {
-    return row ? ROW_FIELDS.map((field) => field === 'mix' ? row.mix : round(row[field])) : null;
+    return row ? ROW_FIELDS.map((field) => field === 'mix' || field === 'gate' ? row[field] : round(row[field])) : null;
 }
 
 // Per role and band: for each gap the sum over the band's curve spots of the
@@ -682,10 +730,12 @@ async function main() {
         }
 
         // Curve spots: per role and band, up to CURVE_SPOTS spots of the band
-        // where the role hunts at the reference gap: the narrowest monster level
-        // spread first (a lone low monster on a spot makes a lower bot farm only
-        // it and bends the whole band's curve, T43), then a fixed hashed order.
-        const curveSpots = new Map();
+        // where the role hunts at the reference gap: the lowest gap it hunts at
+        // first (a curve without its low gaps copies the higher one there and
+        // lifts every low bot's read, T106), then the narrowest monster level
+        // spread (a lone low monster on a spot makes a lower bot farm only it
+        // and bends the whole band's curve, T43), then a fixed hashed order.
+        const curveSpots = new Map(), minGaps = new Map();
         spots.forEach((spot, index) => {
             ROLES.forEach((role, roleIndex) => {
                 const row = rowResults[index][roleIndex * SHOTS.length];
@@ -693,6 +743,7 @@ async function main() {
                 const key = `${role}|${bandOf(Number(spot.avgLevel))}`;
                 if (!curveSpots.has(key)) curveSpots.set(key, []);
                 curveSpots.get(key).push(spot.id);
+                minGaps.set(`${spot.id}|${role}`, row.minGap);
             });
         });
         const spotById = new Map(spots.map((spot) => [spot.id, spot]));
@@ -700,7 +751,8 @@ async function main() {
         const curveTasks = [];
         for (const [key, ids] of curveSpots) {
             const [role] = key.split('|');
-            const chosen = ids.sort((a, b) => spread(a) - spread(b) || hash(`${a}|${role}`) - hash(`${b}|${role}`)).slice(0, CURVE_SPOTS);
+            const low = (id) => minGaps.get(`${id}|${role}`);
+            const chosen = ids.sort((a, b) => low(a) - low(b) || spread(a) - spread(b) || hash(`${a}|${role}`) - hash(`${b}|${role}`)).slice(0, CURVE_SPOTS);
             curveSpots.set(key, chosen);
             for (const spotId of chosen) for (const gap of GAPS) curveTasks.push({ kind: 'curve', key, spotId, role, gap, hours: options.curveHours });
         }

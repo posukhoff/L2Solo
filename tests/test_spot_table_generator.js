@@ -24,13 +24,15 @@ try {
     assert.strictEqual(one, two, 'the table does not depend on the number of workers');
     const table = JSON.parse(one);
     const roles = table.roles.length;
-    assert.strictEqual(roles, 8, 'eight combat roles');
-    assert.deepStrictEqual(table.shots, [1, 0]);
+    assert.strictEqual(roles, 10, 'eight combat roles, summoner and chanter');
+    assert.deepStrictEqual(table.shots, [1, 0, 2], 'shots, none, blessed spiritshot');
     assert.strictEqual(table.spots.length, 2);
     assert.strictEqual(table.header.counts.spots, 2);
-    assert.strictEqual(table.header.counts.rows, 2 * roles * 2);
+    assert.strictEqual(table.header.counts.rows, 2 * roles * 3);
     assert.strictEqual(table.rows.length, 2);
-    assert(table.rows.every((rows) => rows.length === roles * 2), 'a row per role and shots');
+    assert(table.rows.every((rows) => rows.length === roles * 3), 'a row per role and shots');
+    const dps = table.roles.indexOf('dps');
+    assert(table.rows.every((rows) => rows[dps * 3 + 2] === null), 'no blessed spiritshot row for a soulshot class');
     assert(table.rows.flat().every((row) => row === null || row.length === table.rowFields.length), 'complete rows');
     assert.strictEqual(table.rows.flat().filter(Boolean).length, table.header.counts.huntableRows);
     assert(table.header.counts.huntableRows > 0, 'the first spots are huntable');
@@ -48,6 +50,11 @@ try {
         assert(Array.isArray(mix) && mix.length >= 2 && mix.length % 2 === 0, 'a row has its kill mix');
         const shares = mix.filter((_, at) => at % 2 === 1);
         assert(Math.abs(shares.reduce((sum, share) => sum + share, 0) - 1) < 0.01, 'the mix shares make the kills');
+        // The gate per gap (T106): cap x 256 + the mix species that bot may fight, open at the reference.
+        const gate = row[field('gate')];
+        assert(Array.isArray(gate) && gate.length === table.gaps.length, 'a gate value per gap');
+        const reference = gate[table.gaps.findLastIndex(gap => gap <= row[field('refGap')])];
+        assert(reference > 0 && reference % 256 > 0 && reference % 256 < 1 << (mix.length / 2), 'the reference gap is open');
     }
     for (const role of Object.keys(table.curves)) {
         for (const curve of Object.values(table.curves[role])) {
