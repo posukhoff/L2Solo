@@ -49,8 +49,11 @@ const near = context => ({ ...context, ...DecisionEvents.nearFields(context, con
     assert(Manufacture.publish(crafter, [{ recipeId: recipe.recipeId, price: 50 }]));
     for (const item of invoke('GameServer/Bot/AI/BotGear').planFor({ classId: 1, level: 30 }).items)
         await stock(customer, item.selfId, item.amount || 1, 0, true, item.slot);
-    for (const row of recipe.materials) await stock(customer, row.selfId, row.amount * 10);
     await stock(customer, 1463, 2500);
+    // Materials for every batch the shot target needs: a refill never exceeds the target, and the
+    // material stacks only shorten the bag interval the target is sized on.
+    const heldBatches = Math.ceil(Economy.basics(customer.coldLifeState).stock('shots').target / recipe.productCount);
+    for (const row of recipe.materials) await stock(customer, row.selfId, row.amount * heldBatches);
     const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
     const equipmentPlan = { status: 'deferred', strategy: 'market', target: { selfId: 852, slot: 1 } };
     let state = customer.coldLifeState;
@@ -102,7 +105,7 @@ const near = context => ({ ...context, ...DecisionEvents.nearFields(context, con
     assert.equal(await sqlAmount(customer, 1463), output); assert.equal(memoryAmount(customer, 1463), output);
     assert.equal(await sqlAmount(customer, 57), cash - fee); assert.equal(await sqlAmount(crafter, 57), feeWallet + fee);
     assert.equal(crafter.actor.mp, mp - recipe.mpCost * batches);
-    for (const row of recipe.materials) assert.equal(await sqlAmount(customer, row.selfId), row.amount * (10 - batches));
+    for (const row of recipe.materials) assert.equal(await sqlAmount(customer, row.selfId), row.amount * (heldBatches - batches));
     assert.deepEqual(customer.coldLifeState.stats.equipmentPlan, equipmentPlan, 'the stock visit preserves the separate gear plan');
     assert.equal(customer.shoppingTarget, undefined);
 
