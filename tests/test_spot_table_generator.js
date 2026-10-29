@@ -67,6 +67,15 @@ try {
             assert.strictEqual(rows[warlord * 3][exp], row[exp], 'lines of one class share its hunt');
         }
     });
+    // The kit surface (user 10-29): fight and damage-taken coefficients per
+    // line and band over the kit features, fitted from real fights in kits.
+    assert.deepStrictEqual(table.kitSurface.features, ['offence', 'pDefence', 'mDefence', 'hp']);
+    const surfaces = Object.values(table.kitSurface.rows).flatMap((byBand) => Object.values(byBand));
+    assert(surfaces.length > 0, 'a band has its kit surface');
+    for (const [fight, taken, points] of surfaces) {
+        assert(fight.length === 4 && taken.length === 4 && points >= 8, 'four coefficients each, from enough kits');
+        assert(fight[0] < 0, `a stronger weapon shortens the fight: ${fight}`);
+    }
     for (const role of Object.keys(table.curves)) {
         for (const curve of Object.values(table.curves[role])) {
             assert(table.curveFields.every((field) => curve[field].length === table.gaps.length), 'a curve value per gap');

@@ -110,15 +110,40 @@ function damageScale(numbers, ref, row, spells, per) {
     return (1 - spellShare) * hitsOn(numbers, row) / per.refHits + spellShare * magic;
 }
 
+// A kit's numbers against the reference's on a row (the kit surface, user
+// 10-29): the logs of its damage rate (offence), of the mob's hits it escapes
+// (P.Def and evasion), of its M.Def and of its max HP, over the reference's.
+// The spot table's kit surface fits the fight and the damage taken on them
+// from real fights (scripts/generate-spot-table.js); kill reads it.
+const KIT_FEATURES = ['offence', 'pDefence', 'mDefence', 'hp'];
+function kitFeatures(numbers, refNumbers, row, magic) {
+    const ratio = (own, reference) => Math.log(Math.max(1e-9, own) / Math.max(1e-9, reference));
+    return [ratio(damageRate(numbers, magic, row), damageRate(refNumbers, magic, row)),
+        ratio(hitsOn(refNumbers, row), hitsOn(numbers, row)),
+        ratio(Math.max(1, numbers.mDef), Math.max(1, refNumbers.mDef)),
+        ratio(Math.max(1, numbers.maxHp), Math.max(1, refNumbers.maxHp))];
+}
+function surfaceRatio(coefficients, features) {
+    let sum = 0;
+    for (let at = 0; at < features.length; at++) sum += (Number(coefficients[at]) || 0) * features[at];
+    return Math.exp(sum);
+}
+
 // One kill of a kit at a spot row: fight and rest seconds, damage taken (and
 // its share of the reference's), deaths. potionHeal: the HP a potion heals
 // when the bot drinks none (its potions' heal is rested instead), else 0.
 // per: the row's numbers of the reader (the bot rests for mana; the
 // reference's seated seconds, damage rate and hits taken).
+// per.surface: the table's kit surface of the role and level (measured fight
+// and damage taken against the kit's numbers), else the closed-form ratios.
 function kill(state, numbers, regen, row, ref, magic, spells, potionHeal, per) {
-    const fight = row.fight * per.refRate / damageRate(numbers, magic, row);
+    const features = per.surface ? kitFeatures(numbers, ref.numbers, row, magic) : null;
+    const fight = features ? row.fight * surfaceRatio(per.surface.fight, features)
+        : row.fight * per.refRate / damageRate(numbers, magic, row);
     const share = row.fight > 0 ? fight / row.fight : 1;
-    const taken = row.taken * share * damageScale(numbers, ref.numbers, row, spells, per);
+    // spells (a casting threat's read): all the damage meets M.Def.
+    const taken = features && !spells ? row.taken * surfaceRatio(per.surface.taken, features)
+        : row.taken * share * damageScale(numbers, ref.numbers, row, spells, per);
     const takenShare = row.taken > 0 ? taken / row.taken : 1;
     const hpNeed = row.hpLost + taken - row.taken + potionHeal * row.potions * takenShare;
     // The reference's need beyond its rest it regenerates standing (fights,
@@ -186,7 +211,8 @@ function build(state, ctx) {
     // The bot's mana rest and the reference's seated seconds, damage rate
     // and hits taken per row: once.
     const requireMana = ColdRest.requiresManaRecovery(state);
-    const rests = rows.map(row => ({ requireMana, refRate: damageRate(ref.numbers, magic, row), refHits: hitsOn(ref.numbers, row),
+    const surface = Table.kitSurface(role, level);
+    const rests = rows.map(row => ({ requireMana, surface, refRate: damageRate(ref.numbers, magic, row), refHits: hitsOn(ref.numbers, row),
         refNeed: ColdRest.restSeconds(state, row.hpLost, row.mpLost, { regen: ref.regen, requireMana }) }));
     if (Diagnostics.active()) Diagnostics.count('hunt_cycle', 'reader', !rows.length ? 'none' : rows.length > weighed ? 'open' : 'top');
     const hourAdena = Math.max(1, Number(ctx.hourAdena) || Hunt.huntHour(ctx.hunt, state));
@@ -252,4 +278,4 @@ function build(state, ctx) {
     };
 }
 
-module.exports = { reader, referenceState };
+module.exports = { reader, referenceState, kitFeatures, KIT_FEATURES };

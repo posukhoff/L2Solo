@@ -543,11 +543,110 @@ function curveTask({ spotId, role, gap, hours }) {
     return perKill(hunt(spot, role, level, 1, hours), hours);
 }
 
+// ---------------------------------------------------------------- kit surface
+
+// The kits a line's bot is measured in on its band's curve spots (user
+// 10-29): from the hunt model's ladders (data/Bots/hunt/gear.json: one weapon
+// per weapon tier, a set of pieces per armour tier, grades up to the level's),
+// this grade's best and weakest weapon and the grade below's best, each with
+// this grade's full armour, its body pieces and the grade below's full
+// armour; and the best weapon, then the full armour, at +3. Named
+// '<weapon>+<armour>[+3w|+3a]'; 'ref' is the author's kit (the table's).
+let gearTable = null;
+function gear() {
+    if (gearTable) return gearTable;
+    const raw = JSON.parse(fs.readFileSync(path.join(root, 'data', 'Bots', 'hunt', 'gear.json'), 'utf8'));
+    const items = new Map(raw.items.map((row) => [row[0], Object.fromEntries(raw.itemFields.map((field, i) => [field, row[i]]))]));
+    return gearTable = { items, classes: new Map(raw.classes.map((row) => [row.classId, row])) };
+}
+function kitGrid(classId, level) {
+    const row = gear().classes.get(Number(classId));
+    if (!row) return [];
+    const { GRADES, gradeForLevel } = invoke('GameServer/Bot/AI/GearGradeRule');
+    const grade = gradeForLevel(level), below = GRADES[Math.max(0, GRADES.indexOf(grade) - 1)];
+    const tier = (list, name) => list.find((entry) => entry[0] === name)?.[1] || null;
+    const pick = (list, names) => [...new Set(names)].map((name) => [name, tier(list, name)]).filter(([, ids]) => ids?.length);
+    const weapons = pick(row.weaponTiers, [`${grade}-top`, `${grade}-low`, `${below}-top`]);
+    const armours = pick(row.armourTiers, [`${grade}-full`, `${grade}-body`, `${below}-full`]);
+    const kits = [];
+    for (const [w, wIds] of weapons) for (const [a, aIds] of armours) kits.push({ name: `${w}+${a}`, weapon: wIds, armour: aIds });
+    if (weapons.length && armours.length) {
+        kits.push({ name: `${weapons[0][0]}+${armours[0][0]}+3w`, weapon: weapons[0][1], armour: armours[0][1], weaponEnchant: 3 });
+        kits.push({ name: `${weapons[0][0]}+${armours[0][0]}+3a`, weapon: weapons[0][1], armour: armours[0][1], armourEnchant: 3 });
+    }
+    return kits;
+}
+
+// One kit point: the line's bot at a level on a curve spot in that kit (kit
+// null: the author's), shots on, the reference's seed (hunt: one seed per
+// class and level, so the kit's difference is the kit's). Its kit features
+// against the author's kit (HuntCycle.kitFeatures) and its per-kill hunt, or
+// gated: true where its solo gate admits none of the spot's spawns.
+function kitTask({ spotId, role, level, kit, hours }) {
+    const spot = sim.profiles.get(spotId);
+    const classId = classFor(role, level);
+    const S = require('./hunt-tables/static-tables');
+    const M = require('./hunt-tables/HuntModel');
+    const dress = kit && ((bot) => {
+        const worn = [...kit.weapon.map((id) => ({ id, enchant: kit.weaponEnchant || 0 })),
+            ...kit.armour.map((id) => ({ id, enchant: kit.armourEnchant || 0 }))];
+        bot.inventory = M.kitState(classId, level, worn.flatMap(({ id, enchant }) =>
+            S.wear(gear().items.get(id)).map((entry) => ({ ...entry, enchant })))).inventory;
+    });
+    const made = newBot(classId, level, 1, sim, dress);
+    const shares = sim.BR.admittedShares({ ...made.bot, spotId: spot.id }, spot, START);
+    if (shares && ![...shares.values()].some((share) => share > 0)) return { gated: true };
+    const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
+    const numbers = sim.CCP.profileFor(made.bot, START);
+    const reference = sim.CCP.profileFor(newBot(classId, level, 1).bot, START);
+    const [mobAccur, mobEvasion] = spotMob(spot);
+    const features = HuntCycle.kitFeatures(numbers, reference, { mobAccur, mobEvasion },
+        invoke('GameServer/Bot/AI/BotRoles').usesCasterWeaponCombat({ classId, stats: { classId } }));
+    return { features, measured: perKill(hunt(spot, role, level, 1, hours, sim, dress, classId), hours) };
+}
+
+// The kit surface of a line's band: least squares, no intercept (the
+// author's kit is 1), of the logs of fight and damage taken per kill over the
+// author's kit's on the kit features, from every kit point of its curve
+// spots both measured; a small ridge keeps a feature no kit moved at 0.
+// null with fewer points than twice the features.
+function fitSurface(points) {
+    const solve = (pairs) => {
+        const n = pairs[0]?.[0].length || 0;
+        if (pairs.length < 2 * n) return null;
+        const a = Array.from({ length: n }, () => new Array(n).fill(0)), b = new Array(n).fill(0);
+        for (const [x, y] of pairs) for (let i = 0; i < n; i++) {
+            b[i] += x[i] * y;
+            for (let j = 0; j < n; j++) a[i][j] += x[i] * x[j];
+        }
+        for (let i = 0; i < n; i++) a[i][i] += 1e-3;
+        // Gauss-Jordan on the normal equations.
+        for (let i = 0; i < n; i++) {
+            let pivot = i;
+            for (let r = i + 1; r < n; r++) if (Math.abs(a[r][i]) > Math.abs(a[pivot][i])) pivot = r;
+            [a[i], a[pivot]] = [a[pivot], a[i]]; [b[i], b[pivot]] = [b[pivot], b[i]];
+            for (let r = 0; r < n; r++) {
+                if (r === i) continue;
+                const f = a[r][i] / a[i][i];
+                for (let c = i; c < n; c++) a[r][c] -= f * a[i][c];
+                b[r] -= f * b[i];
+            }
+        }
+        const coef = b.map((value, i) => value / a[i][i]);
+        const rms = Math.sqrt(pairs.reduce((sum, [x, y]) => sum + (y - x.reduce((s2, v, i) => s2 + v * coef[i], 0)) ** 2, 0) / pairs.length);
+        return { coef: coef.map((value) => Math.round(value * 1000) / 1000), rms: Math.round(rms * 1000) / 1000 };
+    };
+    const pairs = (field) => points.flatMap(({ kit, ref }) => kit[field] > 0 && ref[field] > 0
+        ? [[kit.features, Math.log(kit[field] / ref[field])]] : []);
+    const fight = solve(pairs('fight')), taken = solve(pairs('taken'));
+    return fight && taken ? [fight.coef, taken.coef, points.length, fight.rms, taken.rms] : null;
+}
+
 function runChild(catalogueFile) {
     loadSimulation(catalogueFile);
     process.on('message', (message) => {
         if (message.type === 'stop') process.exit(0);
-        const result = message.kind === 'row' ? rowTask(message) : curveTask(message);
+        const result = message.kind === 'row' ? rowTask(message) : message.kind === 'kit' ? kitTask(message) : curveTask(message);
         process.send({ id: message.id, result });
     });
     process.send({ ready: true });
@@ -785,10 +884,49 @@ async function main() {
                 }
             }
         }
+        // The kit surface's points (user 10-29): each line's kits on its
+        // band's curve spots at the reference gap, keyed by the bot's band;
+        // lines of one class at a level share a point (as the curves).
+        const kitKeys = [];
+        const seenKits = new Map();
+        for (const [key, ids] of curveSpots) {
+            const [role] = key.split('|');
+            for (const spotId of ids) {
+                const spot = spotById.get(spotId);
+                const level = Math.min(MAX_LEVEL, Number(spot.avgLevel) + REF_GAP);
+                const classId = classFor(role, level);
+                for (const kit of [null, ...kitGrid(classId, level)]) {
+                    const point = `${spotId}|${classId}|${level}|${kit?.name || 'ref'}`;
+                    if (!seenKits.has(point)) {
+                        seenKits.set(point, curveTasks.length);
+                        curveTasks.push({ kind: 'kit', point, spotId, role, level, kit, hours: options.curveHours });
+                    }
+                    kitKeys.push({ role, band: bandOf(level), spotId, ref: `${spotId}|${classId}|${level}|ref`, point });
+                }
+            }
+        }
         const curveResults = await phaseResults('curves', curveTasks, options, catalogueFile);
         if (!curveResults) return;
+        const kitResult = (point) => curveResults[seenKits.get(point)];
+        const kitPoints = new Map();
+        for (const { role, band, ref, point } of kitKeys) {
+            if (point === ref) continue;
+            const kit = kitResult(point), base = kitResult(ref);
+            if (!kit?.measured || !base?.measured) continue;
+            const key = `${role}|${band}`;
+            if (!kitPoints.has(key)) kitPoints.set(key, []);
+            kitPoints.get(key).push({ kit: { ...kit.measured, features: kit.features }, ref: base.measured });
+        }
+        const kitSurface = { features: invoke('GameServer/Bot/AI/HuntCycle').KIT_FEATURES, fields: ['fight', 'taken'],
+            layout: 'rows[line][band] = [fight coefficients, taken coefficients, points, fight rms, taken rms] (log ratio over the author\'s kit)', rows: {} };
+        for (const [key, points] of kitPoints) {
+            const [role, band] = key.split('|');
+            const fit = fitSurface(points);
+            if (!fit) continue;
+            (kitSurface.rows[role] ||= {})[band] = fit;
+        }
 
-        const curveResult = new Map(curveTasks.map((task, index) => [task.point, curveResults[index]]));
+        const curveResult = new Map(curveTasks.flatMap((task, index) => task.kind === 'kit' ? [] : [[task.point, curveResults[index]]]));
         const curves = {};
         let curveCount = 0;
         for (const [key, ids] of [...curveSpots].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
@@ -824,7 +962,8 @@ async function main() {
             spots: spots.map((spot) => [spot.id, Number(spot.avgLevel), Number(spot.density), round(fightCap(Number(spot.density) || 1, undefined, spot.spawnArea || undefined)), 1,
                 ...lootRateResponse(spot), ...spotMob(spot)]),
             rows: rowResults.map((rows) => poolRowLoot(rows).map(packRow)),
-            curves
+            curves,
+            kitSurface
         };
         if (table.rows.length !== table.spots.length) throw new Error('rows and spots differ');
         fs.mkdirSync(path.dirname(options.out), { recursive: true });

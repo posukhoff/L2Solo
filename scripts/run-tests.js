@@ -726,6 +726,7 @@ const tests = [
     'tests/test_cold_regen_passives.js',
     'tests/test_warrior_chanter_kits.js',
     'tests/test_spot_crowd_share.js',
+    'tests/test_hunt_kit_surface.js',
     'tests/test_solo_gate_fight_model.js',
     'tests/test_player_combat_stance.js',
     'tests/test_effect_restrictions.js',

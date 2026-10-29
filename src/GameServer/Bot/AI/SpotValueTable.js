@@ -253,6 +253,8 @@ function load() {
         spots: raw.spots,
         rows: raw.rows,
         curves,
+        kitSurface: raw.kitSurface || null,
+        maxBand,
         gaps: raw.gaps,
         shotsIndex: new Map(raw.shots.map((shots, index) => [shotKey(shots), index])),
         bandLevels: raw.header.inputs.bandLevels,
@@ -814,6 +816,21 @@ function roles() {
     return load().roles;
 }
 
+// The kit surface of a table key at a level (user 10-29): { fight, taken }
+// coefficients over HuntCycle.KIT_FEATURES, measured on its band's curve
+// spots (the nearest measured band, lower first), or null (an older table, a
+// band without enough fights).
+function kitSurface(role, level) {
+    const t = load(), byBand = t.kitSurface?.rows?.[`${role}`] || t.kitSurface?.rows?.[t.header.inputs.roleLines?.[role]];
+    if (!byBand) return null;
+    const want = Math.floor(Number(level) / t.bandLevels);
+    for (let distance = 0; distance <= t.maxBand + 1; distance++) {
+        const row = byBand[want - distance] || byBand[want + distance];
+        if (row) return { fight: row[0], taken: row[1] };
+    }
+    return null;
+}
+
 // role:level -> { shots, exp } per hour of the role's best exp spot at the
 // level (best(role, level, true)). The exp argmax is rate-invariant (a rate
 // profile scales every spot alike) and the shots come from the table alone;
@@ -854,4 +871,4 @@ function useFile(next = DEFAULT_FILE) {
     clearIncomeBases();
 }
 
-module.exports = { value, cycle, production, roleClass, roleFor, marketLoot, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };
+module.exports = { value, cycle, production, kitSurface, roleClass, roleFor, marketLoot, roleSpoilLevel, spotLevel, referenceLevel, roles, revision, best, bandUse, shotsUse, rankedIncome, rankedSpotIds, useFile, useSpots, expGapFactor, cacheStats, DEFAULT_FILE };
