@@ -105,23 +105,27 @@ let enabled = true;
 // mobHp, fightLimitMs, mod (the mob's weapon modifier on the bot), rng.
 // Returns { ms, taken, mp, shotActions, died }.
 function kill(bot, mob, { mobHp = mob.maxHp, fightLimitMs, mod = 1, rng = Math.random } = {}) {
+    // The rotation was measured on a neutral dummy: the species' resistances
+    // and weaknesses (the matchup's efficiency) scale it.
+    const efficiency = Number.isFinite(mob.efficiency) && mob.efficiency > 0 ? mob.efficiency : 1;
     if (!enabled) return null;
     const rot = rotationFor(bot.classId, bot.level);
-    if (!rot || !(rot.d1 > 0) || !Number.isFinite(rot.shotsPerSec)) return null;
+    if (!rot || !(rot.d1 > 0) || !Number.isFinite(rot.shotsPerAct)) return null;
     const { profile } = bot;
     const terms = damageTerms(rot, profile, mob.evasion);
     const shot = bot.shots ? rot.shotMul : 1;
     // Area skills strike every mob of the pull (resolveFight).
     const area = 1 + (Number(rot.areaShare) || 0) * (Math.max(1, Number(mob.pull) || 1) - 1);
-    const wet = (terms.phys / Math.max(1, mob.pDef) + terms.magic / Math.max(1, mob.mDef)) * shot * area;
-    const dry = terms.dry / Math.max(1, mob.pDef) * shot;
+    const wet = (terms.phys / Math.max(1, mob.pDef) + terms.magic / Math.max(1, mob.mDef)) * shot * area * efficiency;
+    const dry = terms.dry / Math.max(1, mob.pDef) * shot * efficiency;
     // The fight in actions (rot.actsPerSec a second): n actions fell the
-    // mob; the first lands at once, so the fight lasts n - 1 of them
+    // mob; the first lands at once, so the fight lasts until the n-th
     // (resolveFight's clock), and n of them spend MP and shots. A full bar
-    // opens fresh: its first actions deal and spend as measured (openHits,
-    // openHitMp: cumulative, in long-run actions and MP), then the long run.
+    // opens fresh: its first actions deal, spend and come as measured
+    // (openHits, openHitMp: cumulative, in long-run actions and MP;
+    // openHitMs: the k-th action's time), then the long run.
     const rate = rot.actsPerSec;
-    if (!(rate > 0) || !Array.isArray(rot.openHits) || !rot.openHits.length) return null;
+    if (!(rate > 0) || !Array.isArray(rot.openHitMs) || !rot.openHitMs.length) return null;
     const head = rot.openHits.length;
     const actionsAt = perAction => {
         if (bot.opens) {
@@ -148,7 +152,8 @@ function kill(bot, mob, { mobHp = mob.maxHp, fightLimitMs, mod = 1, rng = Math.r
         n = actionsAt(dry / rate);
         mp = 0;
     }
-    const lasts = (n - 1) / rate;
+    const lasts = bot.opens ? (n <= head ? rot.openHitMs[n - 1] / 1000 : rot.openHitMs[head - 1] / 1000 + (n - head) / rate)
+        : (n - 1) / rate;
     if (lasts * 1000 > fightLimitMs) return null;
     // The mob strikes at once too, unless the first action fells it.
     const hits = incoming(mob, profile, lasts, mod, n > 1 ? 1 : 0);
@@ -156,7 +161,7 @@ function kill(bot, mob, { mobHp = mob.maxHp, fightLimitMs, mod = 1, rng = Math.r
     // A normal deviate of the fight's damage (Box-Muller on the fight's rng).
     const z = Math.sqrt(-2 * Math.log(Math.max(1e-12, rng()))) * Math.cos(2 * Math.PI * rng());
     const taken = Math.max(0, hits.mean + z * hits.sigma);
-    const loaded = bot.shots ? n * rot.shotsPerSec / rate : 0;
+    const loaded = bot.shots ? n * rot.shotsPerAct : 0;
     const shotActions = Math.floor(loaded) + (rng() < loaded % 1 ? 1 : 0);
     return { ms: Math.round(lasts * 1000), taken, mp: Math.max(0, mp), shotActions, died: taken >= bot.hp };
 }

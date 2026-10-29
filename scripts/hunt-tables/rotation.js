@@ -147,11 +147,11 @@ function opening(classId, level) {
 
 // The same fresh fight cut after its first k actions, k = 1..OPENING_ACTIONS:
 // the cumulative damage (in long-run actions: over d1 / actsPerSec at
-// defences 1000) and MP, for the live formula kill (ColdHuntFormula), which
-// counts a fight in actions.
+// defences 1000), MP and the k-th action's time (ms from the first), for the
+// live formula kill (ColdHuntFormula), which counts a fight in actions.
 const OPENING_ACTIONS = 8;
 function openingActions(classId, level, perAction) {
-    const damage = [], mp = [];
+    const damage = [], mp = [], ms = [];
     for (let k = 1; k <= OPENING_ACTIONS; k++) {
         const { state, profile } = rotationBot(classId, level);
         const mob = dummy(level, DEF, DEF, typicalHp(level));
@@ -161,8 +161,9 @@ function openingActions(classId, level, perAction) {
             timestamp: START, fightLimitMs: 600000, maxActions: k });
         damage.push(perAction > 0 ? C.round((1e12 - Number(result.encounter?.hp ?? 1e12)) * DEF / perAction) : 0);
         mp.push(C.round(profile.maxMp - result.mp));
+        ms.push(Math.round(Number(result.debug?.durationMs) || 0));
     }
-    return { damage, mp };
+    return { damage, mp, ms };
 }
 
 function perSecond(part) {
@@ -213,11 +214,13 @@ function measure(classId, level) {
         // Shot-loading actions per second of the shots run (ColdHuntFormula's shot debit).
         shotsPerSec: shot.phase.ms > 0 ? shot.phase.shots / (shot.phase.ms / 1000) : 0,
         // Bot actions per second, and the first actions of a fresh fight.
-        actsPerSec, openHits: hits.damage, openHitMp: hits.mp };
+        actsPerSec, openHits: hits.damage, openHitMp: hits.mp, openHitMs: hits.ms,
+        shotsPerAct: shot.phase.actions > 0 ? shot.phase.shots / shot.phase.actions : 0 };
 }
 
 const FIELDS = ['level', 'refPAtk', 'refMAtk', 'refAtkSpd', 'refCastSpd', 'A', 'B', 'M', 'magicShare', 'mpPerSec', 'mpPhaseSec',
-    'dryUnit', 'shotMul', 'areaShare', 'd1', 'openDamage', 'openMp', 'shotsPerSec', 'actsPerSec', 'openHits', 'openHitMp'];
+    'dryUnit', 'shotMul', 'areaShare', 'd1', 'openDamage', 'openMp', 'shotsPerSec', 'actsPerSec', 'openHits', 'openHitMp',
+    'openHitMs', 'shotsPerAct'];
 
 function bandsFor(classId) {
     const stage = Math.max(0, Math.min(2, ClassProgression.lineage(classId).length - 1));
