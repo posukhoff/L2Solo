@@ -13,7 +13,7 @@ const simulation = {
     items: definitions,
     BotGear: { planFor: () => ({ items: [{ selfId: 1864, slot: 0 }] }) },
     Potions: { purchasePotionFor: () => null },
-    CCP: { profileFor: () => ({ maxHp: 100, maxMp: 100 }),
+    CCP: { profileFor: () => ({ maxHp: 100, maxMp: 100 }), attackReach: () => 0,
         skillRecordsFromTree: () => [], skillSnapshotsFromRecords: () => [] },
     HuntEfficiency: { lootValue: () => 0 },
     BR: { admittedShares: () => null, admittedDensity: spot => spot.density, huntCycleDelayMs: roll => 30000 + roll * 90000,

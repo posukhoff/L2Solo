@@ -73,7 +73,9 @@ const secondClassGroups = [
     { ids: [5, 6, 20, 33], weapons: ['Weapon.Sword', 'Weapon.Blunt'], armor: 'heavy', shield: true },
     { ids: [8, 23, 36], weapons: ['Weapon.Knife'], armor: 'light', shield: false },
     { ids: [9, 24, 37], weapons: ['Weapon.Bow'], armor: 'light', shield: false },
-    { ids: [12, 13, 14, 16, 17, 27, 28, 30, 40, 41, 43, 51, 52], weapons: ['Weapon.Etc', 'Weapon.Sword', 'Weapon.Blunt'], armor: 'robe', shield: false },
+    { ids: [12, 13, 14, 16, 17, 27, 28, 30, 40, 41, 43], weapons: ['Weapon.Etc', 'Weapon.Sword', 'Weapon.Blunt'], armor: 'robe', shield: false },
+    // Overlord and Warcryer keep the Orc Shaman's melee kit (user 10-29).
+    { ids: [51, 52], weapons: ['Weapon.Blunt'], armor: 'heavy', shield: true },
     { ids: [21], weapons: ['Weapon.Sword', 'Weapon.Blunt'], armor: 'heavy', shield: true },
     { ids: [34], weapons: ['Weapon.Dual'], armor: 'heavy', shield: false },
     { ids: [46], weapons: ['Weapon.GreatSword', 'Weapon.Blunt', 'Weapon.Pole'], armor: 'heavy', shield: false },

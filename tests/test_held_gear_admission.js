@@ -75,10 +75,14 @@ try {
     // cannot cover yet (a 1.15M weapon no one sells): the held money is as
     // dear as earned money (at least the hunt rate), so the 60k Bronze
     // Helmet is not admitted and the weapon stays its goal.
-    const saver = decide(bot(37, 1, 3e5, { worn: [[6, 45], [7, 69]] }), 10000);
+    // A Human Knight: a one-handed sword (a Warrior holds a two-hander, user 10-29).
+    const saver = decide(bot(37, 4, 3e5, { worn: [[6, 45], [7, 69]] }), 10000);
     assert(saver.network.heldPrice >= 1 / 10000, 'saving for the weapon keeps held money at the hunt rate');
     assert(!saver.projection.roots.includes('power:46:6'), 'the D helmet does not take the saved money');
-    assert.equal(saver.network.focus?.[0], 'power:72:7', 'the C weapon stays the focus');
+    const [, focusId, focusSlot] = String(saver.network.focus?.[0]).split(':');
+    assert.equal(focusSlot, '7', 'a weapon stays the focus');
+    assert.equal(Data.items.find(item => item.selfId === Number(focusId))?.etc?.rank, 'c',
+        'the C weapon stays the focus');
     assert(!saver.network.queue.some(row => row.funded), 'nothing is bought');
 
     // (3) A level-53 bot with 26M on a 1.5k/h field wearing a D polearm:
