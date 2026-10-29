@@ -136,6 +136,10 @@ function damageScale(numbers, ref, row, spells, per) {
 // The spot table's kit surface fits the fight and the damage taken on them
 // from real fights (scripts/generate-spot-table.js); kill reads it.
 const KIT_FEATURES = ['offence', 'pDefence', 'mDefence', 'hp'];
+// The closed-form slopes on those features (kill without a surface): the
+// fight over the damage rate, the damage taken over the fight and the hits or
+// spells met. The surface fit starts from them (scripts/generate-spot-table.js).
+const KIT_PRIOR = Object.freeze({ fight: Object.freeze([-1, 0, 0, 0]), taken: Object.freeze([-1, -1, -1, 0]) });
 function kitFeatures(numbers, refNumbers, row, magic) {
     const ratio = (own, reference) => Math.log(Math.max(1e-9, own) / Math.max(1e-9, reference));
     return [ratio(damageRate(numbers, magic, row), damageRate(refNumbers, magic, row)),
@@ -307,4 +311,4 @@ function build(state, ctx) {
     };
 }
 
-module.exports = { reader, referenceState, referenceId, kitFeatures, weighFeatures, KIT_FEATURES };
+module.exports = { reader, referenceState, referenceId, kitFeatures, weighFeatures, KIT_FEATURES, KIT_PRIOR };

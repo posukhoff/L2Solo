@@ -633,7 +633,12 @@ function kitTask({ spotId, role, level, kit, hours }) {
 // spots both measured; a small ridge keeps a feature no kit moved at 0.
 // null with fewer points than twice the features.
 function fitSurface(points) {
-    const solve = (pairs) => {
+    // The ridge pulls toward the closed-form slopes (HuntCycle's old ratios:
+    // fight ~ 1/damage rate, taken ~ fight x hits or spells met), not toward
+    // 0: a feature the kits never moved (M.Def where no mob casts) keeps the
+    // physics, a measured one the measurement.
+    const { KIT_PRIOR } = invoke('GameServer/Bot/AI/HuntCycle');
+    const solve = (pairs, prior) => {
         const n = pairs[0]?.[0].length || 0;
         if (!n || pairs.length < 2 * n) return null;
         const a = Array.from({ length: n }, () => new Array(n).fill(0)), b = new Array(n).fill(0);
@@ -641,7 +646,7 @@ function fitSurface(points) {
             b[i] += x[i] * y;
             for (let j = 0; j < n; j++) a[i][j] += x[i] * x[j];
         }
-        for (let i = 0; i < n; i++) a[i][i] += 1e-3;
+        for (let i = 0; i < n; i++) { a[i][i] += 1e-3; b[i] += 1e-3 * prior[i]; }
         // Gauss-Jordan on the normal equations.
         for (let i = 0; i < n; i++) {
             let pivot = i;
@@ -662,7 +667,7 @@ function fitSurface(points) {
     const pairs = (field) => points.flatMap(({ kit, ref }) => kit[field] > 0 && ref[field] > 0
         ? [[weighFeatures(kit.features, ref.taken > 0 ? ref.spellTaken / ref.taken : 0), Math.log(kit[field] / ref[field])]] : []);
     // A caster that kills before contact takes no hit in any kit: taken null.
-    const fight = solve(pairs('fight')), taken = solve(pairs('taken'));
+    const fight = solve(pairs('fight'), KIT_PRIOR.fight), taken = solve(pairs('taken'), KIT_PRIOR.taken);
     return fight ? [fight.coef, taken?.coef || null, points.length, fight.rms, taken?.rms ?? null] : null;
 }
 
