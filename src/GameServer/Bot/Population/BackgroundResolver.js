@@ -29,6 +29,8 @@ const NpcCombatChoice = invoke('GameServer/Npc/NpcCombatChoice');
 const HitRules = invoke('GameServer/Combat/HitRules');
 const CombatantView = invoke('GameServer/Combat/CombatantView');
 const SurvivalFloor = require('./SurvivalFloor');
+const { SPOT_CELL_SIZE } = invoke('GameServer/World/WorldConstants');
+const { RUN_SPEED } = require('./ColdTrip');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 
 function clamp(value, min, max) {
@@ -768,13 +770,16 @@ function applyMusicAction(provider, action, timestamp) {
     return action.cost;
 }
 
-function coldBuffSkill(skill) {
+// self: the caster's own buffs too (target self, no cast condition such as
+// Frenzy's HP gate): a solo bot buffs itself (T106); a party casts only its
+// buffs for others.
+function coldBuffSkill(skill, self = false) {
     if (!skill || skill.passive === true) return false;
     const semantic = C4SkillRules.resolveCached(skill);
     const skillType = String(semantic.skillType || '');
     const durationMs = Math.max(0, Number(semantic.durationMs ?? skill?.buffTime) || 0);
     return semantic.effectType === 'buff'
-        && ['friendly', 'ally', 'party'].includes(semantic.target)
+        && (['friendly', 'ally', 'party'].includes(semantic.target) || self && semantic.target === 'self' && !semantic.condition)
         && semantic.isDance !== true
         && !['hot', 'healHot', 'manaHot'].includes(skillType)
         && !['kiss_of_eva'].includes(String(semantic.effect || '').toLowerCase())
@@ -885,13 +890,18 @@ function raidPreparationFighters(members, timestamp) {
     });
 }
 
-function coldBuffPlan(fighters, timestamp) {
+function coldBuffPlan(fighters, timestamp, { self = false } = {}) {
     const actors = fighters.map(coldBuffActor);
     const skillCache = new Map();
     const skills = (actor) => {
         if (!skillCache.has(actor)) {
+            const weaponMask = Number(actor.fighter.profile.weaponMask) || 0;
             skillCache.set(actor, (actor.fighter.profile.skills || [])
-                .filter(coldBuffSkill)
+                .filter((skill) => coldBuffSkill(skill, self))
+                .filter((skill) => {
+                    const required = Number(C4SkillRules.resolveCached(skill).requires?.weaponsAllowed) || 0;
+                    return !required || (required & weaponMask) !== 0;
+                })
                 .map(coldSkillAdapter));
         }
         return skillCache.get(actor);
@@ -904,6 +914,7 @@ function coldBuffPlan(fighters, timestamp) {
             skills,
             recipients: (_members, provider, skill) => {
                 const target = skill.fetchSemantic().target;
+                if (target === 'self') return [provider];
                 if (target === 'party') return actors;
                 if (target !== 'ally') return [];
                 // Forecast the same clan coverage as admission. A stronger
@@ -913,37 +924,44 @@ function coldBuffPlan(fighters, timestamp) {
                 return actors.filter(actor => actor === provider || clanId > 0
                     && clanId === Number(actor.fighter.state.clanId || actor.fighter.state.stats?.clanId || 0));
             },
-            isAura: (skill) => ['party', 'ally'].includes(skill.fetchSemantic().target),
+            isAura: (skill) => ['party', 'ally', 'self'].includes(skill.fetchSemantic().target),
             effects: (actor) => (actor.fighter.profile.effects || [])
                 .filter((effect) => !effect?.expiresAt || Number(effect.expiresAt) > timestamp),
             useful: (actor, skill, _provider, context) => PartyBuffLoadout.useful(actor, skill, context)
         }
     ).chosen;
-    return chosen.filter((action) => {
-        const semantic = action.skill.fetchSemantic();
-        const key = PartyBuffLoadout.normalize(semantic.effect);
-        const family = PartyBuffLoadout.family(key);
-        const level = Number(action.skill.fetchLevel() || 1);
-        const durationMs = Math.max(60000, Number(semantic.durationMs ?? action.skill.fetchBuffTime()) || 1200000);
-        const threshold = Math.min(BUFF_RECAST_MAX_MS, Math.floor(durationMs * BUFF_RECAST_SHARE));
-        return action.beneficiaries.some((actor) => !(actor.fighter.profile.effects || []).some((effect) => (
-            (Number(effect?.id || 0) === Number(action.skill.fetchSelfId())
-                || PartyBuffLoadout.family(effect?.key) === family)
-            && Number(effect?.level || 0) >= level
-            && (!effect?.expiresAt || Number(effect.expiresAt) - timestamp > threshold)
-        )));
-    });
+    return chosen.filter((action) => action.beneficiaries.some((actor) => !buffHeld(actor.fighter.profile.effects, action.skill, timestamp)));
+}
+
+// Does effects hold the buff of skill (an adapter) at this level or above,
+// with more than its recast share left?
+function buffHeld(effects, skill, timestamp) {
+    const semantic = skill.fetchSemantic();
+    const family = PartyBuffLoadout.family(PartyBuffLoadout.normalize(semantic.effect));
+    const level = Number(skill.fetchLevel() || 1);
+    const durationMs = Math.max(60000, Number(semantic.durationMs ?? skill.fetchBuffTime()) || 1200000);
+    const threshold = Math.min(BUFF_RECAST_MAX_MS, Math.floor(durationMs * BUFF_RECAST_SHARE));
+    return (effects || []).some((effect) => (
+        (Number(effect?.id || 0) === Number(skill.fetchSelfId())
+            || PartyBuffLoadout.family(effect?.key) === family)
+        && Number(effect?.level || 0) >= level
+        && (!effect?.expiresAt || Number(effect.expiresAt) - timestamp > threshold)
+    ));
 }
 
 // One cast pass of the planned party buffs: the raid preparation and an
 // ordinary cold party hunt both call it. Returns the casts and their duration.
-function castPartyBuffs(fighters, timestamp) {
+function castPartyBuffs(fighters, timestamp, options = {}) {
     let buffCasts = 0;
     let durationMs = 0;
-    for (const action of coldBuffPlan(fighters, timestamp)) {
+    for (const action of coldBuffPlan(fighters, timestamp, options)) {
         const provider = action.provider.fighter;
         const cost = Math.max(0, Number(action.skill.fetchConsumedMp() || 0));
         if (provider.vitals.mp < cost) continue;
+        // Alone, a buff still on its reuse waits (War Cry: 60 s on, 180 s
+        // reuse). A party pass casts its plan whole (its single-target buffs
+        // go to each member in one pass).
+        if (options.self && Number(provider.cooldowns[action.skill.fetchSelfId()] || 0) > timestamp + durationMs) continue;
         const effect = coldBuffEffect(action.skill, timestamp + durationMs);
         action.recipients.forEach((actor) => {
             const target = actor.fighter;
@@ -981,6 +999,36 @@ function castHuntPartyBuffs(members, timestamp) {
                 coldCombat: { ...(fighter.state.stats?.coldCombat || {}), cooldowns: fighter.cooldowns }
             }
         }))
+    };
+}
+
+// A solo bot's own buffs before a fight (T106, docs/game-decisions.md "Solo
+// self-buffs"): the party plan (coldBuffPlan) on the bot alone, its own
+// buffs included, paying the MP and the cast time. The fighter is built only
+// when one of its buffs is missing or about to expire, castable now
+// (ColdCombatProfile.skillsFor, without the build). Null when none is due;
+// buffCasts 0 when the plan casts none of them.
+function castSoloBuffs(state, timestamp) {
+    const effects = state.stats?.coldCombat?.effects, cooldowns = state.stats?.coldCombat?.cooldowns || {};
+    const mp = Number(state.vitals?.mp) || 0;
+    const due = ColdCombatProfile.skillsFor(state).some((skill) => coldBuffSkill(skill, true)
+        && Number(skill.mp || 0) <= mp && !(Number(cooldowns[skill.selfId] || 0) > timestamp)
+        && !buffHeld(effects, coldSkillAdapter(skill), timestamp));
+    if (!due) return null;
+    const fighters = raidPreparationFighters([state], timestamp);
+    const { buffCasts, durationMs } = castPartyBuffs(fighters, timestamp, { self: true });
+    return { buffCasts, durationMs, fighter: fighters[0] };
+}
+
+// The solo round's patch after castSoloBuffs: the MP spent, the buffs and
+// reuses on its saved fight snapshot (seeded as a fight seeds it).
+function applySoloBuffs(patch, { buffCasts, fighter }, timestamp) {
+    if (!(buffCasts > 0)) return;
+    patch.vitals.mp = fighter.vitals.mp;
+    patch.stats.coldCombat = {
+        ...(patch.stats.coldCombat || ColdCombatProfile.seedSnapshot(fighter.state, timestamp)),
+        effects: fighter.profile.effects || [],
+        cooldowns: fighter.cooldowns
     };
 }
 
@@ -1959,8 +2007,8 @@ function admittedShares(state, spot, timestamp, profiles = roundProfiles(state, 
 // The matchup profiles of a solo round, at the round's start: its fights and
 // its admitted spawns judge by them (a summon raised mid-round counts from
 // the next round; each fight's readiness still reads the HP and MP left).
-function roundProfiles(state, timestamp) {
-    return TargetMatchup.coldProfiles(botCombatStats(state, timestamp), state, timestamp);
+function roundProfiles(state, timestamp, profile = botCombatStats(state, timestamp)) {
+    return TargetMatchup.coldProfiles(profile, state, timestamp);
 }
 
 // The spot's monsters a solo bot may fight: its density times the admitted
@@ -1977,12 +2025,14 @@ function admittedDensity(spot, shares) {
     return total > 0 ? density * admitted / total : density;
 }
 
-// A solo hunt cycle holds one fight per 12 seconds of the cycle, at most a
-// third of the monsters it may fight (density: admittedDensity). The spot
-// table generator reads the same rule.
-function soloFightCount(spot, elapsedMs, density = spot.density) {
-    const maxFights = Math.max(1, Math.floor(elapsedMs / 12000));
-    return Math.min(maxFights, Math.max(1, Math.ceil((Number(density) || 1) / 3)));
+// T106 (docs/game-decisions.md "Solo fights per hour"): the walk from a kill
+// to the next mob, at runSpd: the mean distance to the nearest of the density
+// monsters a bot may fight (admittedDensity) spread over the spot, one
+// SPOT_CELL_SIZE square (SpotService.spotIdAt), 1 / (2 sqrt(density / area)).
+// The spot table generator reads the same rule.
+function soloWalkMs(density, runSpd) {
+    const spacing = SPOT_CELL_SIZE / (2 * Math.sqrt(Math.max(1, Number(density) || 1)));
+    return Math.round(spacing / Math.max(1, Number(runSpd) || 1) * 1000);
 }
 
 // E69: a cold solo bot kills at most its share of what the spot's spawns give
@@ -2009,7 +2059,7 @@ function huntCycleDelayMs(roll) {
 }
 
 const BackgroundResolver = {
-    soloFightCount,
+    soloWalkMs,
     soloShareMobs,
     admittedShares,
     admittedDensity,
@@ -2216,19 +2266,25 @@ const BackgroundResolver = {
             };
         }
 
-        const profiles = roundProfiles(state, timestamp);
+        const roundProfile = botCombatStats(state, timestamp);
+        const profiles = roundProfiles(state, timestamp, roundProfile);
         const admitted = admittedShares(state, spot, timestamp, profiles);
-        const fights = soloFightCount(spot, elapsedMs, admittedDensity(spot, admitted));
+        // T106: the round's kills are limited by the walk to each next mob and
+        // by the share below; fights, gap heals, buffs and walks run by their
+        // own time within the elapsed time. The fights a round may hold at
+        // most (CPU bound): a mob engaged before, one per walk that starts
+        // within the elapsed time. A profile without a template run speed
+        // walks at the cold trip's.
+        const walkMs = soloWalkMs(admittedDensity(spot, admitted), roundProfile.runSpd || RUN_SPEED);
+        const fights = Math.ceil(elapsedMs / Math.max(1, walkMs)) + 1;
         // The share's fraction left from the last round on this spot carries
         // over; a pull above it is owed (a negative carry).
         const share = soloShareMobs(spot, elapsedMs, spotHunters, admitted);
         const shareCarry = share !== null && String(state.stats?.coldShare?.spotId) === String(spot.id)
             ? Number(state.stats.coldShare.carry) || 0 : 0;
         const shareMobs = share === null ? Infinity : share + shareCarry;
-        // Spend the cycle's available combat time on the current monster before
-        // starting another. Slow kills must not repeatedly reset at 12 seconds.
-        // Retain the old action budget and cap simulated combat at one minute.
-        const combatBudgetMs = Math.min(60000, Math.max(12000, elapsedMs));
+        // A fight longer than the round goes on in the next (pveEncounter).
+        const combatBudgetMs = elapsedMs;
         const actionBudget = fights * 48;
         const events = [];
         const materialize = { exp: 0, sp: 0, adena: 0, items: [] };
@@ -2268,13 +2324,34 @@ const BackgroundResolver = {
         let areaPullHits = 0;
         let mobsKilled = 0;
         let shareCut = 0;
+        let walkedMs = 0, buffCasts = 0, buffsTried = false;
 
         for (let i = 0; i < fights; i++) {
-            if (combatMs >= combatBudgetMs || combatActions >= actionBudget) break;
+            // The first fight starts in any round (its readiness may send the bot to rest).
+            if (i > 0 && (combatMs >= combatBudgetMs || combatActions >= actionBudget)) break;
             // A mob already engaged is finished; a new one needs a whole mob of the share.
-            if (mobsKilled + 1 > shareMobs && !(i === 0 && continuing)) {
-                shareCut = fights - i;
+            const engaged = i === 0 && !!continuing;
+            if (mobsKilled + 1 > shareMobs && !engaged) {
+                // The fights the walk would still allow.
+                shareCut = Math.max(1, Math.ceil((combatBudgetMs - combatMs) / Math.max(1, walkMs)));
                 break;
+            }
+            if (!engaged) {
+                // Its own buffs first (a round builds the fighter for them once at most).
+                const buffed = buffsTried ? null : castSoloBuffs({ ...state, vitals: patch.vitals,
+                    inventory: patch.inventory || state.inventory,
+                    stats: { ...(state.stats || {}), ...(patch.stats || {}) } }, timestamp + combatMs);
+                if (buffed) {
+                    buffsTried = buffed.buffCasts === 0;
+                    applySoloBuffs(patch, buffed, timestamp + combatMs);
+                    combatMs += buffed.durationMs;
+                    buffCasts += buffed.buffCasts;
+                }
+                // Then the walk to the mob. A walk past the round's end
+                // engages the mob still (the opening action, at least 1 ms of
+                // fight): its fight goes on in the next round.
+                combatMs += walkMs;
+                walkedMs += walkMs;
             }
             const fightState = {
                 ...state,
@@ -2283,7 +2360,7 @@ const BackgroundResolver = {
                 stats: { ...(state.stats || {}), ...(patch.stats || {}) }
             };
             const result = countedBuilds('fight', 'solo', resolveFight, { state: fightState, spot, pressure, targetNpcId, rng,
-                timestamp: timestamp + combatMs, fightLimitMs: combatBudgetMs - combatMs,
+                timestamp: timestamp + combatMs, fightLimitMs: Math.max(1, combatBudgetMs - combatMs),
                 maxActions: actionBudget - combatActions, roundProfiles: profiles });
             if (result.avoided) {
                 patch.stats.lastReason = result.reason;
@@ -2456,6 +2533,8 @@ const BackgroundResolver = {
                 pullMobs,
                 areaPullHits,
                 shareCut,
+                walkedMs,
+                buffCasts,
                 targetNpcId: Number(targetNpcId) || null,
                 targetOnSpot: ColdCombatProfile.spotSpawns(spot, targetNpcId) ? 1 : 0,
                 foughtNpcIds,

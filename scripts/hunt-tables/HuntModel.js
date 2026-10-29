@@ -165,8 +165,8 @@ function normalCdf(x) {
 // The wait after a rest ends (BackgroundResolver.resolveRest: next step in 30 s).
 const REST_TAIL_S = 30;
 
-// The cold step's mean combat budget and length (resolveSolo: budget
-// min(60 s, max(12 s, elapsed)), elapsed = huntCycleDelayMs of a uniform roll).
+// The cold step's mean combat budget and length (resolveSolo: budget =
+// elapsed, T106; elapsed = huntCycleDelayMs of a uniform roll).
 let held = null;
 function stepTimes() {
     if (held) return held;
@@ -174,7 +174,7 @@ function stepTimes() {
     let budget = 0, cycle = 0;
     for (let i = 0; i < 1000; i++) {
         const delay = Resolver.huntCycleDelayMs((i + 0.5) / 1000);
-        budget += Math.min(60000, Math.max(12000, delay)) / 1000;
+        budget += delay / 1000;
         cycle += delay / 1000;
     }
     held = { budget: budget / 1000, cycle: cycle / 1000 };

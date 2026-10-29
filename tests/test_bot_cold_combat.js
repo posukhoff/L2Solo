@@ -224,7 +224,8 @@ const spot = {
     id: 'gremlin_field',
     name: 'Gremlin field',
     avgLevel: 1,
-    density: 1,
+    // Dense enough that the walk to a mob (T106) fits a short round.
+    density: 30,
     npcSelfIds: [1],
     rewards: { exp: 10, sp: 2, adenaMin: 1, adenaMax: 1 },
     // Deliberately contradictory placeholders: the resolver must take the
@@ -288,7 +289,8 @@ const coldSummoner = {
 const coldSummonerResult = BackgroundResolver.resolveSolo({
     state: coldSummoner,
     spot: { ...spot, npcSelfIds: [], mob: { hp: 100000, damage: 1 } },
-    elapsedMs: 12000,
+    // T106: the shortest hunt cycle; the Warlock buffs itself and walks first.
+    elapsedMs: 30000,
     timestamp,
     rng: () => 0.1
 });
@@ -325,7 +327,8 @@ const coldNecromancer = {
 const coldNecromancerResult = BackgroundResolver.resolveSolo({
     state: coldNecromancer,
     spot: { ...spot, npcSelfIds: [], mob: { hp: 1, damage: 1 } },
-    elapsedMs: 12000,
+    // T106: the shortest hunt cycle; the Necromancer buffs itself and walks first.
+    elapsedMs: 30000,
     timestamp,
     rng: () => 0.1
 });
@@ -572,7 +575,8 @@ const focusedResult = BackgroundResolver.resolveSolo({
     timestamp,
     rng: () => 0.9
 });
-assert.deepStrictEqual(focusedResult.debug.foughtNpcIds, [1], 'solo direct-drop farming must fight the requested NPC, not a random spot entry');
+assert(focusedResult.debug.foughtNpcIds.length > 0 && focusedResult.debug.foughtNpcIds.every((selfId) => selfId === 1),
+    'solo direct-drop farming must fight the requested NPC, not a random spot entry');
 
 const musicSpot = { ...spot, npcSelfIds: [], mob: { hp: 100000, damage: 1 } };
 // Level-75 solo actors must start ready; the old 1000-HP fixture represents

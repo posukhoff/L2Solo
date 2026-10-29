@@ -31,6 +31,12 @@ function healAmount(actor, skill, semantic, periodic) {
     return amount;
 }
 
+// A skill that heals its caster (periodic: the heals over time count too).
+function selfHeal(semantic, targetKind, periodic) {
+    return (INSTANT.has(semantic.skillType) || (periodic && PERIODIC.has(semantic.skillType)))
+        && ON_SELF.has(semantic.target || targetKind);
+}
+
 // The heals the bot can cast on itself now: { skill, amount, mp, castMs }.
 function heals(actor, periodic) {
     const hp = Number(actor.fetchHp?.()) || 0, maxHp = Math.max(1, Number(actor.fetchMaxHp?.()) || 1);
@@ -40,8 +46,7 @@ function heals(actor, periodic) {
     for (const skill of actor.skillset?.skills || []) {
         if (!skill || skill.fetchPassive?.()) continue;
         const semantic = skill.fetchSemantic?.() || {};
-        if (!INSTANT.has(semantic.skillType) && !(periodic && PERIODIC.has(semantic.skillType))) continue;
-        if (!ON_SELF.has(semantic.target || skill.fetchTargetKind?.())) continue;
+        if (!selfHeal(semantic, skill.fetchTargetKind?.(), periodic)) continue;
         const limit = semantic.condition?.actorHpPercentAtMost;
         if (limit !== undefined && hp / maxHp * 100 > limit) continue;
         const cost = Number(skill.fetchConsumedMp?.()) || 0;
@@ -118,4 +123,4 @@ function castOnSelf(session, bot, skill, Generics, reason) {
     return true;
 }
 
-module.exports = { inFight, betweenFights, pace, healAmount, tryInFight, tryBetweenFights };
+module.exports = { selfHeal, inFight, betweenFights, pace, healAmount, tryInFight, tryBetweenFights };

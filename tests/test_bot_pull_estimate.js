@@ -95,14 +95,17 @@ const gremlins = pull => ({ id: 'starter_gremlin', name: 'Gremlin field', avgLev
 const hunter = () => ({ characterId: 71, name: 'ColdHunter', level: 10, levelBand: '10-12', activity: 'hunting',
     vitals: { hp: 99999, maxHp: 99999, mp: 99999, maxMp: 99999 }, stats: {}, party: { role: 'dps' } });
 const hunt = pull => Resolver.resolveSolo({ state: hunter(), spot: gremlins(pull), elapsedMs: 60000, rng: () => 0 });
+// T106: the walk between mobs sets the fights of the minute; each counts per won fight.
 const one = hunt(0), two = hunt(2);
-assert.strictEqual(one.debug.wins, 1);
-assert.strictEqual(two.debug.wins, 1);
-assert.deepStrictEqual([one.debug.pulls, one.debug.pullMobs], [1, 1]);
-assert.deepStrictEqual([two.debug.pulls, two.debug.pullMobs], [1, 2]);
-assert.strictEqual(two.materialize.exp, one.materialize.exp * 2, 'each mob of the pull gives its exp');
-assert.strictEqual(two.materialize.items.length, one.materialize.items.length * 2, 'each mob rolls its drops');
-assert(two.debug.combatMs > one.debug.combatMs, 'two mobs take longer to kill');
+assert(one.debug.wins > 0 && two.debug.wins > 0);
+// A pull counts when its fight starts (the last walk engages one more).
+assert.deepStrictEqual([one.debug.pulls, one.debug.pullMobs], [one.debug.attemptedFights, one.debug.attemptedFights]);
+assert.deepStrictEqual([two.debug.pulls, two.debug.pullMobs], [two.debug.attemptedFights, 2 * two.debug.attemptedFights]);
+assert.strictEqual(two.materialize.exp / two.debug.wins, one.materialize.exp / one.debug.wins * 2, 'each mob of the pull gives its exp');
+assert.strictEqual(two.materialize.items.length / two.debug.wins, one.materialize.items.length / one.debug.wins * 2,
+    'each mob rolls its drops');
+const fightMs = result => (result.debug.combatMs - result.debug.walkedMs) / result.debug.wins;
+assert(fightMs(two) > fightMs(one), 'two mobs take longer to kill');
 // User 10-29: the bot fights only the pull sizes it survives. The weaponless level-10 hunter survives a
 // gremlin pair but not a trio; on a field of 70% pairs and 30% trios, a roll that would draw a trio
 // draws among the pairs, and the field is still hunted.
@@ -164,19 +167,21 @@ const nuker = selfId => ({ characterId: 72, name: 'ColdNuker', level: 20, levelB
         // Same record for both: Flame Strike (area) and Wind Strike (one target).
         effects: [], skills: [{ selfId, level: 1, passive: false, spell: true, power: 4, mp: 20, hitTime: 2000, reuse: 1 }] } } });
 const field = pull => ({ id: 'f20_field', name: 'F20 field', avgLevel: 20, density: 1, npcSelfIds: [fieldMob.selfId],
-    npcEntries: [{ selfId: fieldMob.selfId, count: 3, ...(pull > 1 ? { pull } : {}) }],
+    // One mob a minute respawns for the lone hunter: the round holds one fight (T106: else the walk sets them).
+    npcEntries: [{ selfId: fieldMob.selfId, count: 3, production: 60, ...(pull > 1 ? { pull } : {}) }],
     rewards: { exp: 10, sp: 2, adenaMin: 7, adenaMax: 10 }, mob: { hp: 8, damage: 1 } });
 const nukeFight = (selfId, pull) => {
     const result = Resolver.resolveSolo({ state: nuker(selfId), spot: field(pull), elapsedMs: 60000, rng: () => 0.5 });
     assert.strictEqual(result.debug.wins, 1, `skill ${selfId} wins its pull of ${pull}`);
     assert(result.debug.skillUses > 1, 'the nuker casts its spell');
-    return result.debug;
+    // The fight's time, without the walk to it.
+    return { ...result.debug, fightMs: result.debug.combatMs - result.debug.walkedMs };
 };
 const areaOne = nukeFight(1181, 1), areaThree = nukeFight(1181, 3);
 const singleOne = nukeFight(1177, 1), singleThree = nukeFight(1177, 3);
-assert.strictEqual(areaOne.combatMs, singleOne.combatMs, 'equal damage against one mob');
-assert(singleThree.combatMs > 2.5 * singleOne.combatMs, 'a single-target nuker kills the three one by one');
-assert(areaThree.combatMs < 1.5 * areaOne.combatMs, 'an area nuker kills the three together');
+assert.strictEqual(areaOne.fightMs, singleOne.fightMs, 'equal damage against one mob');
+assert(singleThree.fightMs > 2.5 * singleOne.fightMs, 'a single-target nuker kills the three one by one');
+assert(areaThree.fightMs < 1.5 * areaOne.fightMs, 'an area nuker kills the three together');
 assert(areaThree.areaPullHits > 0, 'the cycle reports area hits on a pull');
 assert.strictEqual(singleThree.areaPullHits, 0);
 assert.strictEqual(areaOne.areaPullHits, 0, 'a lone mob takes no area hits');

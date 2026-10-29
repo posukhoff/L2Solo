@@ -782,6 +782,11 @@ function numbersPass(kitPart, effects, timestamp, sourceOptions) {
         pDef: power.pDef, mDef: power.mDef, accur: power.accur, evasion: power.evasion,
         critical: power.critical, mCritRate, atkSpd: power.atkSpd, castSpd: power.castSpd, con: power.con, men: power.men,
         str: stats.str, dex: stats.dex,
+        // Run speed as the hot CalculateStats.setCollectiveTotalRunSpd: the
+        // template's by DEX, plus and times the effects (the solo walk, T106);
+        // 0 without a template run speed.
+        runSpd: Math.max(0, number(classTemplate(classId).speed?.run) && (Formulas.calcSpeed(stats.dex, number(classTemplate(classId).speed.run))
+            + add(profile, 'runSpdAdd', timestamp, sources)) * multiplier(profile, 'runSpdMul', timestamp, sources)),
         weaponMask: (WEAPON_MASK_BY_KIND[equipment.weaponKind] || 0) | (number(equipment.shieldPDef) > 0 ? 1048576 : 0)
     } };
 }

@@ -13,7 +13,8 @@ const ShotStock = invoke('GameServer/Inventory/ShotStock');
 const original = Cold.npcForSpot;
 const at = Date.now();
 const spot = { id: 'shot-consumption', name: 'Shot check', minLevel: 12, maxLevel: 12, avgLevel: 12,
-    density: 1, rewards: { exp: 1000, sp: 10, adenaMin: 1, adenaMax: 1 } };
+    // Dense enough that the walk to a mob (T106) fits a short round.
+    density: 30, rewards: { exp: 1000, sp: 10, adenaMin: 1, adenaMax: 1 } };
 const base = { characterId: 901, name: 'Fighter', level: 12, phase: 'cold', activity: 'hunting',
     spotId: '-18_39',
     loc: { locX: 0, locY: 0, locZ: 0 },

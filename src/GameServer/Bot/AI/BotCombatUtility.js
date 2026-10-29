@@ -96,10 +96,10 @@ function seatedHpPerMs(bot) {
     return Math.max(0, Number(bot?.automation?.fetchRevHpAmount?.(bot, { seated: true })) || 0) / Formulas.REGEN_TICK_MS;
 }
 
-// The seated ms one spent MP costs a bot that rests for mana (T100), else 0.
+// The seated ms one spent MP costs a bot that sits for mana (T100), else 0.
 function restMsPerMp(bot, party = false) {
     const seated = seatedMpPerMs(bot);
-    return seated > 0 && RestPolicy.restsForMana(bot, party) ? restShare(bot.fetchMp?.(), bot.fetchMaxMp?.()) / seated : 0;
+    return seated > 0 && RestPolicy.sitsForMana(bot, party) ? restShare(bot.fetchMp?.(), bot.fetchMaxMp?.()) / seated : 0;
 }
 
 // T100 (docs/game-decisions.md, Bot behaviour): MP is priced in rest time.
