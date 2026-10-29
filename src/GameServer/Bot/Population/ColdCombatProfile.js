@@ -1159,9 +1159,6 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
         ...combat,
         // A solo fight takes the whole pull of its spawn group (F20).
         ...(options.pull && !explicitRaid ? { pull: BotPullEstimate.rollPull(selected.pull, rng) } : {}),
-        // The matchup's damage share against this species (resistances and
-        // weaknesses), read by the formula kill (ColdHuntFormula).
-        ...(Number.isFinite(selected.match?.efficiency) ? { efficiency: selected.match.efficiency } : {}),
         ...(explicitRaid ? {
             // Cold mode represents the raid group as one bounded encounter.
             // Adds contribute part of their HP and incoming damage instead of

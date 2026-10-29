@@ -25,9 +25,6 @@ function boot() {
     process.env.L2NODE_PROGRESSION_RATE = 'x1';
     require('../../src/Global');
     invoke('GameServer/DataCache').init({ validate: false });
-    // The tables measure the real cold fight, never the live formula kill
-    // (ColdHuntFormula, T106) they feed.
-    invoke('GameServer/Bot/Population/ColdHuntFormula').enabled = false;
     booted = true;
 }
 

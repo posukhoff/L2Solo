@@ -11,7 +11,6 @@ const ColdClassPolicy = invoke('GameServer/Bot/Population/ColdClassPolicy');
 const BotCombatUtility = invoke('GameServer/Bot/AI/BotCombatUtility');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
-const ColdHuntFormula = invoke('GameServer/Bot/Population/ColdHuntFormula');
 const ChargeLifecycle = invoke('GameServer/Skills/ChargeLifecycle');
 const HealingPotionStock = invoke('GameServer/Bot/AI/HealingPotionStock');
 const BotHuntingGroundPolicy = invoke('GameServer/Bot/AI/BotHuntingGroundPolicy');
@@ -1266,37 +1265,6 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
     // The mob's damage to the bot before any heal (the spot table's damage taken per kill).
     let taken = 0;
 
-    // T106: a safe fight on a fresh mob is a formula kill (ColdHuntFormula):
-    // the steps below do not run; its potion, soul crystal and rewards do.
-    if (!pending && !picked.aggressiveInterruption && !BotRoles.isSummoner(fightState)) {
-        const formula = ColdHuntFormula.kill({ classId: BotRoles.classIdOf(fightState), level: bot.level, profile: bot,
-            hp: vitals.hp, mp: vitals.mp, shots: !!soloFighter.shot,
-            // A bot that heals itself must not fall to its heal line (chooseHeal).
-            floor: ColdHuntFormula.healsInFight(bot) ? HEAL_BELOW * vitals.maxHp : 0,
-            opens: vitals.mp >= 0.95 * vitals.maxMp }, mob,
-        { mobHp, fightLimitMs, mod: coldNpcWeaponModifier(mob, bot, timestamp, soloFighter), rng });
-        if (formula) {
-            time = formula.ms;
-            actions = 1;
-            taken = formula.taken;
-            vitals.mp = Math.max(0, vitals.mp - formula.mp);
-            vitals.hp = formula.died ? 0 : vitals.hp - formula.taken;
-            if (!formula.died) {
-                mobHp = 0;
-                startColdPotion(soloFighter, time);
-            }
-            const shot = soloFighter.shot;
-            const loaded = shot ? Math.min(formula.shotActions, shot.left) : 0;
-            if (loaded > 0) {
-                shot.left -= loaded;
-                const item = fightState.inventory[shot.key];
-                item.amount = Number(item.amount) - loaded * shot.perAction;
-                soloFighter.shotActions += loaded;
-            }
-            soloFighter.formula = true;
-        }
-    }
-
     // A resolve contains only a handful of fights, and a fight itself is
     // bounded by time and actions. This is deliberately cheaper than a live
     // Actor while retaining its hit, critical, damage and speed formulas.
@@ -1393,7 +1361,7 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             debug: { actions, durationMs: time, skillUses: soloFighter.skillUses, shotActions: soloFighter.shotActions, heals: soloFighter.heals,
                 musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
                 potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
-                mobSelfId: mob.selfId || null, timedOut: !died, pullMobs, areaPullHits, damageTaken: taken, formula: soloFighter.formula === true }
+                mobSelfId: mob.selfId || null, timedOut: !died, pullMobs, areaPullHits, damageTaken: taken }
         };
     }
 
@@ -1441,14 +1409,12 @@ function resolveFight({ state, spot, pressure, targetNpcId = 0, rng, timestamp =
             musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions,
             potionsUsed: soloFighter.potionsUsed, drunkPotions: soloFighter.drunkPotions || null,
             mobSelfId: mob.selfId || null, timedOut: false, overhit: kill.overhit, pullMobs, areaPullHits, killsPaid: pulled,
-            damageTaken: taken, formula: soloFighter.formula === true }
+            damageTaken: taken }
     };
 }
 
-// A cold heal goes to an ally under this share of its max HP.
-const HEAL_BELOW = 0.7;
 function chooseHeal(profile, allies, mp, cooldowns, time, caster, mob) {
-    const injured = allies.filter((ally) => ally.vitals.hp > 0 && ally.vitals.hp / Math.max(1, ally.vitals.maxHp) < HEAL_BELOW)
+    const injured = allies.filter((ally) => ally.vitals.hp > 0 && ally.vitals.hp / Math.max(1, ally.vitals.maxHp) < 0.7)
         .sort((a, b) => (a.vitals.hp / a.vitals.maxHp) - (b.vitals.hp / b.vitals.maxHp))[0];
     if (!injured) return null;
     const skill = (profile.skills || []).filter((candidate) => {
@@ -1474,7 +1440,7 @@ function chooseHeal(profile, allies, mp, cooldowns, time, caster, mob) {
             && (semantic.target !== 'ally' || caster === injured || Number(caster?.state.clanId) > 0
                 && Number(caster.state.clanId) === Number(injured.state.clanId))
             && (!semantic.hot || !(injured.profile.effects || []).some(e => e.key === semantic.effect && Number(e.expiresAt) > time))
-            && (semantic.target !== 'self' || caster?.vitals.hp > 0 && caster.vitals.hp < caster.vitals.maxHp * HEAL_BELOW);
+            && (semantic.target !== 'self' || caster?.vitals.hp > 0 && caster.vitals.hp < caster.vitals.maxHp * 0.7);
     }).sort((a, b) => {
         const score = skill => {
             const semantic = C4SkillRules.resolveCached(skill);
@@ -1484,7 +1450,7 @@ function chooseHeal(profile, allies, mp, cooldowns, time, caster, mob) {
                     ? injured.vitals.maxHp * Number(skill.power || 0) / 100 : Formulas.calcHealAmount(skill.power)),
                 cost: Number(skill.mp || 0), castMs: Number(skill.hitTime || 0),
                 periodic: !!semantic.hot, ticks: semantic.hot?.count,
-                recipients: ['party', 'ally'].includes(semantic.target) ? allies.filter(f => f.vitals.hp > 0 && f.vitals.hp < f.vitals.maxHp * HEAL_BELOW).length : 1
+                recipients: ['party', 'ally'].includes(semantic.target) ? allies.filter(f => f.vitals.hp > 0 && f.vitals.hp < f.vitals.maxHp * 0.7).length : 1
             });
         };
         return score(b) - score(a);

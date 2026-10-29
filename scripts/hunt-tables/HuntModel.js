@@ -115,10 +115,52 @@ const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
 const MobExperience = invoke('GameServer/Progression/MobExperience');
 const Potions = invoke('GameServer/Bot/AI/HealingPotionStock');
 
-// The rotation row, its opening curve, damage terms and the mob's incoming
-// damage: the live formula's (ColdHuntFormula, T106).
-const Formula = invoke('GameServer/Bot/Population/ColdHuntFormula');
-const { rotationOf, openingAt, damageTerms, normalCdf } = Formula;
+// A rotation row of table 4 as an object (fields: the table's).
+function rotationOf(rotationTable, classId, level) {
+    const rows = rotationTable.rows[classId];
+    if (!rows) return null;
+    const bands = Object.keys(rows).map(Number);
+    const want = Math.floor(level / rotationTable.bandLevels);
+    const band = bands.reduce((best, b) => Math.abs(b - want) < Math.abs(best - want) ? b : best, bands[0]);
+    const rot = Object.fromEntries(rotationTable.fields.map((field, index) => [field, rows[band][index]]));
+    rot.openingSeconds = rotationTable.openingSeconds;
+    return rot;
+}
+
+// A value of the opening curve at t seconds (linear between points; before
+// the first the first, after the last the last for a rate, the long-run MP
+// rate added for MP).
+function openingAt(rot, list, t, rate = null) {
+    const times = rot.openingSeconds || [];
+    if (!times.length || !list) return null;
+    if (t <= times[0]) return rate === null ? list[0] : list[0] * t / times[0];
+    for (let i = 1; i < times.length; i++) {
+        if (t <= times[i]) {
+            const w = (t - times[i - 1]) / (times[i] - times[i - 1]);
+            return list[i - 1] + w * (list[i] - list[i - 1]);
+        }
+    }
+    return rate === null ? list.at(-1) : list.at(-1) + rate * (t - times.at(-1));
+}
+
+// The rotation's damage rate times defence (dps x def) for a strength:
+// physical and magic parts, with MP (the rotation) and without (dry).
+function damageTerms(rot, numbers, mobEvasion) {
+    const speed = numbers.atkSpd * (1 + numbers.critical / 1000) * Formulas.coldHitChance(numbers.accur, mobEvasion) / 0.98;
+    const phys = (rot.A * numbers.pAtk + rot.B) * speed;
+    const magic = rot.M * Math.sqrt(Math.max(1, numbers.mAtk)) * numbers.castSpd / 333;
+    // A rotation that never ran dry in its measure keeps its MP-phase rate.
+    const dry = rot.dryUnit > 0 ? rot.dryUnit * numbers.pAtk * speed : rot.mpPhaseSec >= 180 ? phys : 0;
+    return { phys, magic, dry };
+}
+
+function normalCdf(x) {
+    // Abramowitz-Stegun 7.1.26 on erf.
+    const t = 1 / (1 + 0.3275911 * Math.abs(x) / Math.SQRT2);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t
+        * Math.exp(-x * x / 2);
+    return x >= 0 ? (1 + y) / 2 : (1 - y) / 2;
+}
 
 // The wait after a rest ends (BackgroundResolver.resolveRest: next step in 30 s).
 const REST_TAIL_S = 30;
@@ -165,8 +207,11 @@ function mobHour(bot, mob, correction = null) {
     const dry = terms.dry / Math.max(1, view.pDef) * shot;
     const manaRest = RestPolicy.restsForMana(state);
     const regen = regenOf(bot.classId, bot.level, profile);
-    // The mob's hits on the bot (ColdHuntFormula.incoming: per second here).
-    const perSecond = Formula.incoming(view, profile, 1).mean;
+    // The mob's hits on the bot (resolveFight: melee only, at its attack speed).
+    const hitChance = Formulas.coldHitChance(view.accur, profile.evasion);
+    const perHit = 70 * view.pAtk / Math.max(1, profile.pDef);
+    const crit = Math.min(1, Math.max(0, view.critical) / 1000);
+    const hitsPerSec = 1000 / Math.max(250, Formulas.calcMeleeAtkTime(view.atkSpd));
     // The cold step (resolveSolo): a fight runs at most the step's combat
     // budget, then waits for the next step, which first adds the standing
     // regeneration of the whole elapsed step (applyStandingRegen).
@@ -189,7 +234,7 @@ function mobHour(bot, mob, correction = null) {
             const burst = openingAt(rot, rot.openDamage, fight);
             if (burst > 0) fight = view.maxHp / (dps * burst);
         }
-        taken = perSecond * fight;
+        taken = hitsPerSec * hitChance * perHit * (1 + crit) * fight;
         const steps = Math.max(1, Math.ceil(fight / budget));
         wall = fight + (steps - 1) * (cycle - budget);
         // The most the fight's HP falls: its first step's damage, or all of it
@@ -203,7 +248,10 @@ function mobHour(bot, mob, correction = null) {
     }
     // Death: the fight's damage over the bot's HP, its spread from the hit
     // roll, critical and damage spread (pAtkRnd %).
-    const sigma = Math.max(Math.sqrt(1e-9), Formula.incoming(view, profile, fight).sigma);
+    const attempts = hitsPerSec * fight;
+    const spread = 1 + Math.pow(Number(view.pAtkRnd) || 0, 2) / 3 / 10000;
+    const meanHit = perHit * (1 + crit), squareHit = perHit * perHit * (1 + 3 * crit) * spread;
+    const sigma = Math.sqrt(Math.max(1e-9, attempts * (hitChance * squareHit - Math.pow(hitChance * meanHit, 2))));
     // One healing potion a fight (BackgroundResolver.startColdPotion) when the
     // bot carries them (bot.potions; its heal over time counted whole).
     const potion = bot.potions === false ? 0 : Number(Potions.purchasePotionFor({ level: bot.level })?.heal) || 0;

@@ -261,9 +261,6 @@ function loadSimulation(catalogueFile) {
     // ARCH-NOTE: cold kills apply the C4 exp level-gap penalty (MobExperience,
     // d4322a214) and SpotValueTable applies it again on read for the bot's own
     // gap. The table keeps the pre-penalty exp the reader expects.
-    // ARCH-NOTE: the tables measure the real cold fight, the truth the live
-    // formula kill (ColdHuntFormula, T106) is held to: no formula here.
-    invoke('GameServer/Bot/Population/ColdHuntFormula').enabled = false;
     const MobExperience = invoke('GameServer/Progression/MobExperience');
     MobExperience.rewards = (exp, sp) => ({ exp: Math.max(0, Number(exp) || 0), sp: Math.max(0, Number(sp) || 0) });
     const saved = JSON.parse(fs.readFileSync(catalogueFile, 'utf8'));
