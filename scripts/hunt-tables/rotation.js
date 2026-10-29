@@ -83,7 +83,7 @@ function fight(classId, level, pDef, mDef, options = {}, dry = false) {
     const rng = C.mulberry(C.hash(`${classId}|${level}|${pDef}|${mDef}|${JSON.stringify(options)}`));
     const key = PveEncounter.key([state], SPOT, 0);
     let t = START, botReadyAt = 0, hp = 1e12;
-    const phase = { ms: 0, damage: 0, mp: 0 }, dryPhase = { ms: 0, damage: 0 };
+    const phase = { ms: 0, damage: 0, mp: 0, shots: 0 }, dryPhase = { ms: 0, damage: 0 };
     const empty = () => state.vitals.mp < 0.05 * profile.maxMp;
     let elapsed = 0;
     while (elapsed < MP_PHASE_MAX_MS + (dry ? DRY_MS : 0)) {
@@ -104,7 +104,10 @@ function fight(classId, level, pDef, mDef, options = {}, dry = false) {
         const target = inDry ? dryPhase : phase;
         target.ms += ms;
         target.damage += dealt;
-        if (!inDry) phase.mp += Math.max(0, mpBefore - result.mp);
+        if (!inDry) {
+            phase.mp += Math.max(0, mpBefore - result.mp);
+            phase.shots += Number(result.debug?.shotActions) || 0;
+        }
         t += ms;
         elapsed += ms;
     }
@@ -183,11 +186,13 @@ function measure(classId, level) {
         A, B, M: mUnit, magicShare: d1 > 0 ? magic1 / d1 : 0, mpPerSec, mpPhaseSec: kit.phase.ms / 1000,
         dryUnit: physUnit(dry, kit.profile) / Math.max(1, p1), shotMul,
         areaShare: d1 > 0 ? Math.max(0, perSecond(pair.phase) * DEF / d1 - 1) : 0, d1,
-        openDamage: open.map(point => d1 > 0 ? C.round(point.damage / d1) : 1), openMp: open.map(point => C.round(point.mp)) };
+        openDamage: open.map(point => d1 > 0 ? C.round(point.damage / d1) : 1), openMp: open.map(point => C.round(point.mp)),
+        // Shot-loading actions per second of the shots run (ColdHuntFormula's shot debit).
+        shotsPerSec: shot.phase.ms > 0 ? shot.phase.shots / (shot.phase.ms / 1000) : 0 };
 }
 
 const FIELDS = ['level', 'refPAtk', 'refMAtk', 'refAtkSpd', 'refCastSpd', 'A', 'B', 'M', 'magicShare', 'mpPerSec', 'mpPhaseSec',
-    'dryUnit', 'shotMul', 'areaShare', 'd1', 'openDamage', 'openMp'];
+    'dryUnit', 'shotMul', 'areaShare', 'd1', 'openDamage', 'openMp', 'shotsPerSec'];
 
 function bandsFor(classId) {
     const stage = Math.max(0, Math.min(2, ClassProgression.lineage(classId).length - 1));

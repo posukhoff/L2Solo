@@ -1104,7 +1104,7 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
             // read: the same evaluate and soloCanHunt for these profiles and
             // safety options (resisted only names a pick without safety).
             if (options.soloSafety) {
-                const verdict = Matchup.speciesVerdict(options.matchupProfiles, entry.selfId, options);
+                const verdict = Matchup.speciesVerdict(options.matchupProfiles, entry.selfId, { ...options, pull: entry.pull });
                 return { ...entry, match: { eligible: verdict?.canHunt === true, efficiency: verdict?.efficiency } };
             }
             const match = Matchup.evaluate(options.matchupProfiles, npcCombatStats(ItemTemplateIndex.find(DataCache.npcs, entry.selfId)));

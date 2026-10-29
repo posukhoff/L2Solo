@@ -85,7 +85,7 @@ const gremlins = pull => ({ id: 'starter_gremlin', name: 'Gremlin field', avgLev
 const hunter = () => ({ characterId: 71, name: 'ColdHunter', level: 10, levelBand: '10-12', activity: 'hunting',
     vitals: { hp: 99999, maxHp: 99999, mp: 99999, maxMp: 99999 }, stats: {}, party: { role: 'dps' } });
 const hunt = pull => Resolver.resolveSolo({ state: hunter(), spot: gremlins(pull), elapsedMs: 60000, rng: () => 0 });
-const one = hunt(0), two = hunt(2), three = hunt(3);
+const one = hunt(0), two = hunt(2), three = hunt(2.4);
 assert.strictEqual(one.debug.wins, 1);
 assert.strictEqual(two.debug.wins, 1);
 assert.deepStrictEqual([one.debug.pulls, one.debug.pullMobs], [1, 1]);
@@ -93,9 +93,14 @@ assert.deepStrictEqual([two.debug.pulls, two.debug.pullMobs], [1, 2]);
 assert.strictEqual(two.materialize.exp, one.materialize.exp * 2, 'each mob of the pull gives its exp');
 assert.strictEqual(two.materialize.items.length, one.materialize.items.length * 2, 'each mob rolls its drops');
 assert(two.debug.combatMs > one.debug.combatMs, 'two mobs take longer to kill');
-// Helpers come regardless (design 13.5): a pull above the hunter's margin still starts, it is not rested for.
+// Helpers come regardless (design 13.5): the species verdict judges the spot's mean pull (two here), a rolled
+// pull of three still starts, it is not rested for.
 assert.deepStrictEqual([three.debug.pulls, three.debug.pullMobs], [1, 3]);
 assert.notStrictEqual(three.patch.stats.lastReason, 'solo_recovery_needed');
+// T106 (user 10-29): a species whose usual pull the hunter cannot survive is not hunted, as one mob it would be.
+const pack = hunt(3);
+assert.deepStrictEqual([pack.debug.pulls, pack.patch.stats.lastReason], [0, 'no_safe_solo_target'],
+    'a weaponless level-10 hunter leaves a field of gremlin trios alone');
 
 // Area and aura skills hit every mob of the pull (F20, plan 3.3(в)): a nuker whose
 // only spell strikes an area kills a pull of three about as fast as one mob, while
