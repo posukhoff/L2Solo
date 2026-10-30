@@ -120,8 +120,10 @@ function build(tables, options = {}) {
     tables.spots = C.readTable('spots');
     const items = itemRows(tables.gear);
     const tasks = [];
-    for (const sampled of SAMPLE_CLASSES) {
-        const key = String(sampled), { classId } = C.parseKitKey(key);
+    // A split-kit first class is sampled once per future line (C.kitFutures).
+    const keys = SAMPLE_CLASSES.flatMap(classId => C.kitFutures(classId).map(future => C.kitKey(classId, future)));
+    for (const key of keys) {
+        const { classId } = C.parseKitKey(key);
         const gearClass = C.rowOfKey(tables.gear.classes, key);
         for (const level of levelsFor(classId)) {
             const rot = M.rotationOf(tables.rotation, key, level);
