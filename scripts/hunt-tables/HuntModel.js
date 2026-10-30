@@ -15,7 +15,6 @@ C.boot();
 const DataCache = invoke('GameServer/DataCache');
 const Index = require('../../src/GameServer/Item/ItemTemplateIndex');
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
-const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
 const ColdRest = invoke('GameServer/Bot/Population/ColdRest');
 const Formulas = invoke('GameServer/Formulas');
 const Matchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
@@ -31,10 +30,12 @@ const ITEM_STATS = ['pAtk', 'pAtkRnd', 'mAtk', 'atkSpd', 'crit', 'accur', 'reuse
 // The numbers a strength carries (a profile's).
 const NUMBERS = ['maxHp', 'maxMp', 'pAtk', 'mAtk', 'pDef', 'mDef', 'accur', 'evasion', 'critical', 'atkSpd', 'castSpd', 'con', 'men'];
 
-// A cold bot state of a class and level wearing items [{ selfId, slot, enchant }]
-// with hennas (symbol ids) and skills (snapshots; default: the class tree at
-// the level, as the spot table's reference bot learns it).
-function kitState(classId, level, items = [], { hennas = [], skills = null } = {}) {
+// A cold bot state of a class key (C.kitKey: '7>9' a Rogue for the Hawkeye
+// line) and level wearing items [{ selfId, slot, enchant }] with hennas
+// (symbol ids) and skills (snapshots; default: the class tree at the level,
+// as the spot table's reference bot learns it).
+function kitState(key, level, items = [], { hennas = [], skills = null } = {}) {
+    const { classId } = C.parseKitKey(key);
     const inventory = {};
     for (const item of items) {
         const key = `kit-${item.selfId}-${item.enchant || 0}`;
@@ -43,8 +44,8 @@ function kitState(classId, level, items = [], { hennas = [], skills = null } = {
         inventory[key] = { selfId: Number(item.selfId), amount, equipped: true, equippedCount: amount, enchant: Number(item.enchant) || 0,
             equippedSlots: [...(prior?.equippedSlots || []), Number(item.slot)], slot: Number(item.slot) };
     }
-    // A class-only bot: a split-kit first class keeps its own role's weapon.
-    return { characterId: HuntCycle.referenceId(classId), name: 'HuntTable', classId, level, activity: 'hunting', phase: 'cold', vitals: {},
+    // The key's line: a split-kit first class fights with its future's weapon.
+    return { characterId: C.kitCharacterId(key), name: 'HuntTable', classId, level, activity: 'hunting', phase: 'cold', vitals: {},
         stats: { classId, hennas: [...hennas], coldCombat: { skillSource: 'database',
             skills: skills || Profile.skillSnapshotsFromRecords(Profile.skillRecordsFromTree(classId, level)) } },
         inventory };
@@ -120,9 +121,9 @@ const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
 const MobExperience = invoke('GameServer/Progression/MobExperience');
 const Potions = invoke('GameServer/Bot/AI/HealingPotionStock');
 
-// A rotation row of table 4 as an object (fields: the table's).
-function rotationOf(rotationTable, classId, level) {
-    const rows = rotationTable.rows[classId];
+// A rotation row of table 4 as an object (fields: the table's); key: C.kitKey.
+function rotationOf(rotationTable, key, level) {
+    const rows = rotationTable.rows[key];
     if (!rows) return null;
     const bands = Object.keys(rows).map(Number);
     const want = Math.floor(level / rotationTable.bandLevels);
@@ -187,7 +188,7 @@ function stepTimes() {
 }
 
 // One mob's hunt numbers for a bot by formula (no fight run):
-// bot { classId, level, profile (the owner's profile of the kit), rot
+// bot { key (C.kitKey, default classId), classId, level, profile (the owner's profile of the kit), rot
 // (rotationOf), shots, potions (default true) }, mob { combat (table 1 combat fields as an object),
 // exp, sp, reward (DataCache reward shape), pull (the spot entry's mean) },
 // correction (table 8 row { kph, deaths } or null).
@@ -196,7 +197,8 @@ function stepTimes() {
 // death chance and per hour kills, deaths, exp, SP and drops by item.
 // A kit's state and matchup profiles as the cold fight builds them (resolveFight).
 function matchupOf(bot) {
-    const state = { classId: bot.classId, level: bot.level, stats: { classId: bot.classId }, vitals: { mp: bot.profile.maxMp } };
+    const state = { characterId: C.kitCharacterId(bot.key ?? bot.classId), classId: bot.classId, level: bot.level,
+        stats: { classId: bot.classId }, vitals: { mp: bot.profile.maxMp } };
     return { state, profiles: Matchup.coldProfiles({ ...bot.profile, role: invoke('GameServer/Bot/AI/BotRoles').combatRoleFor(state) }, state, 0) };
 }
 

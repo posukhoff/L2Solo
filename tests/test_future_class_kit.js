@@ -57,4 +57,22 @@ assert.equal(referenceKind(HAWKEYE), 'Weapon.Bow');
 assert.equal(referenceKind(TREASURE_HUNTER), DAGGER);
 assert.equal(referenceKind(null), DAGGER, 'a class-only reference Rogue keeps its dagger');
 
+// The hunt data per class (scripts/hunt-tables) follows the line: a Rogue's
+// rows are keyed by its future second class, the very key the spot table's
+// line bot has (generate-spot-table botFor), bow for the Hawkeye's.
+const HuntKeys = require('../scripts/hunt-tables/common');
+const Generator = require('../scripts/generate-spot-table');
+const keys = HuntKeys.kitKeys();
+assert(['7>8', '7>9', '22>23', '22>24', '35>36', '35>37', '2', '0'].every((key) => keys.includes(key)), 'a split-kit class per future');
+assert(!keys.includes('7'), 'no class-only Rogue row: every bot Rogue fights for its future');
+assert.equal(Generator.botFor(String(HAWKEYE), LEVEL), '7>9', 'the line\'s bot reads the hunt data of its key');
+assert.equal(Generator.botFor(String(TREASURE_HUNTER), LEVEL), '7>8');
+const S = require('../scripts/hunt-tables/static-tables');
+const M = require('../scripts/hunt-tables/HuntModel');
+const bowRow = S.classRow('7>9'), daggerRow = S.classRow('7>8');
+assert.equal(bowRow.role, 'archer', 'a future Hawkeye\'s hunt data has the archer role');
+assert(bowRow.weaponKinds.includes('Weapon.Bow') && !daggerRow.weaponKinds.includes('Weapon.Bow'), 'bow ladders for line 9 only');
+assert.equal(daggerRow.role, 'dagger');
+assert.equal(Roles.kitClassId(M.kitState('7>9', LEVEL)), HAWKEYE, 'the hunt model\'s bot of the key fights for its line');
+
 console.log('test_future_class_kit: ok');

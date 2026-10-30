@@ -56,10 +56,12 @@ function dummy(level, pDef, mDef, maxHp, pull = 1) {
         critical: 0, atkSpd: 1, castSpd: 333, race: '', undead: false, vulnerabilities: {}, rewardExp: 0, rewardSp: 0 };
 }
 
-// The bot of a class and level in the author's kit; weaponless: the kit
-// without its weapon; shots: its weapon's shots loaded (never running out).
-function rotationBot(classId, level, { weaponless = false, shots = false } = {}) {
-    const state = HuntCycle.referenceState(classId, level);
+// The bot of a class key (C.kitKey: '7>9' a Rogue with the Hawkeye's bow)
+// and level in the author's kit; weaponless: the kit without its weapon;
+// shots: its weapon's shots loaded (never running out).
+function rotationBot(classKey, level, { weaponless = false, shots = false } = {}) {
+    const { classId, future } = C.parseKitKey(classKey);
+    const state = HuntCycle.referenceState(classId, level, { line: future });
     if (weaponless) {
         for (const [key, item] of Object.entries(state.inventory)) {
             if ([7, 14].includes(Number(item.slot))) delete state.inventory[key];
@@ -77,10 +79,10 @@ function rotationBot(classId, level, { weaponless = false, shots = false } = {})
 
 // The fight in slices against the dummy. Returns the MP phase { ms, damage,
 // mp } and the dry phase { ms, damage } (dry only when asked).
-function fight(classId, level, pDef, mDef, options = {}, dry = false) {
-    const { state, profile } = rotationBot(classId, level, options);
+function fight(classKey, level, pDef, mDef, options = {}, dry = false) {
+    const { state, profile } = rotationBot(classKey, level, options);
     const mob = dummy(level, pDef, mDef, typicalHp(level), options.pull || 1);
-    const rng = C.mulberry(C.hash(`${classId}|${level}|${pDef}|${mDef}|${JSON.stringify(options)}`));
+    const rng = C.mulberry(C.hash(`${classKey}|${level}|${pDef}|${mDef}|${JSON.stringify(options)}`));
     const key = PveEncounter.key([state], SPOT, 0);
     let t = START, botReadyAt = 0, hp = 1e12;
     const phase = { ms: 0, damage: 0, mp: 0 }, dryPhase = { ms: 0, damage: 0 };
@@ -129,13 +131,13 @@ function typicalHp(level) {
 // rest starts: the damage (dps x def at defences 1000) and MP of its first
 // t seconds, one uncut fight per t.
 const OPENING_SECONDS = [3, 6, 12, 24, 48];
-function opening(classId, level) {
+function opening(classKey, level) {
     return OPENING_SECONDS.map(seconds => {
-        const { state, profile } = rotationBot(classId, level);
+        const { state, profile } = rotationBot(classKey, level);
         const mob = dummy(level, DEF, DEF, typicalHp(level));
         state.stats.pveEncounter = { version: 1, key: PveEncounter.key([state], SPOT, 0), mob, hp: 1e12, at: START, slices: 0,
             botReadyAt: 0, mobReadyAt: 1e15 };
-        const result = Resolver.resolveFight({ state, spot: SPOT, rng: C.mulberry(C.hash(`${classId}|${level}|open|${seconds}`)),
+        const result = Resolver.resolveFight({ state, spot: SPOT, rng: C.mulberry(C.hash(`${classKey}|${level}|open|${seconds}`)),
             timestamp: START, fightLimitMs: seconds * 1000, maxActions: 10000 });
         return { damage: (1e12 - Number(result.encounter?.hp ?? 1e12)) * DEF / seconds, mp: profile.maxMp - result.mp };
     });
@@ -154,14 +156,14 @@ function physUnit(physical, profile) {
     return physical / (profile.atkSpd * (1 + profile.critical / 1000) * hitShare(profile));
 }
 
-function measure(classId, level) {
-    const kit = fight(classId, level, DEF, DEF, {}, true);
-    const harder = fight(classId, level, 2 * DEF, DEF);
-    const bare = fight(classId, level, DEF, DEF, { weaponless: true });
-    const shot = fight(classId, level, DEF, DEF, { shots: true });
+function measure(classKey, level) {
+    const kit = fight(classKey, level, DEF, DEF, {}, true);
+    const harder = fight(classKey, level, 2 * DEF, DEF);
+    const bare = fight(classKey, level, DEF, DEF, { weaponless: true });
+    const shot = fight(classKey, level, DEF, DEF, { shots: true });
     // A pull of two: an area skill strikes both (resolveFight), so the
     // damage over one mob's is 1 + the area share.
-    const pair = fight(classId, level, DEF, DEF, { pull: 2 });
+    const pair = fight(classKey, level, DEF, DEF, { pull: 2 });
     const d1 = perSecond(kit.phase) * DEF, d2 = perSecond(harder.phase) * DEF;
     // Physical part at defence 1000 (halves at 2000), magic the rest.
     const phys1 = Math.max(0, Math.min(d1, 2 * (d1 - d2)));
@@ -178,7 +180,7 @@ function measure(classId, level) {
     const dry = perSecond(kit.dryPhase) * DEF;
     const shotMul = d1 > 0 ? perSecond(shot.phase) * DEF / d1 : 1;
     const mpPerSec = kit.phase.ms > 0 ? kit.phase.mp / (kit.phase.ms / 1000) : 0;
-    const open = opening(classId, level);
+    const open = opening(classKey, level);
     return { level, refPAtk: p1, refMAtk: kit.profile.mAtk, refAtkSpd: kit.profile.atkSpd, refCastSpd: kit.profile.castSpd,
         A, B, M: mUnit, magicShare: d1 > 0 ? magic1 / d1 : 0, mpPerSec, mpPhaseSec: kit.phase.ms / 1000,
         dryUnit: physUnit(dry, kit.profile) / Math.max(1, p1), shotMul,
@@ -200,17 +202,17 @@ function bandsFor(classId) {
 function build(classTable, gearTable, options = {}) {
     const rows = {};
     let runs = 0;
-    const classes = classTable.classes.map(row => row.classId);
+    const classes = classTable.classes.map(row => row.key ?? String(row.classId));
     const picked = options.sample > 0 ? classes.filter((_, index) => index % Math.ceil(classes.length / options.sample) === 0) : classes;
-    for (const classId of picked) {
-        rows[classId] = {};
-        for (const band of bandsFor(classId)) {
+    for (const classKey of picked) {
+        rows[classKey] = {};
+        for (const band of bandsFor(C.parseKitKey(classKey).classId)) {
             const level = Math.max(1, Math.min(C.MAX_LEVEL, 2 * band + 1));
-            const measured = measure(classId, level);
-            rows[classId][band] = FIELDS.map(field => Array.isArray(measured[field]) ? measured[field] : C.round(measured[field]));
+            const measured = measure(classKey, level);
+            rows[classKey][band] = FIELDS.map(field => Array.isArray(measured[field]) ? measured[field] : C.round(measured[field]));
             runs += 5;
         }
-        process.stderr.write(`  rotation class ${classId}: ${Object.keys(rows[classId]).length} bands\n`);
+        process.stderr.write(`  rotation class ${classKey}: ${Object.keys(rows[classKey]).length} bands\n`);
     }
     return { body: { bandLevels: 2, def: DEF, openingSeconds: OPENING_SECONDS, fields: FIELDS, rows },
         counts: { classes: picked.length, rows: Object.values(rows).reduce((sum, row) => sum + Object.keys(row).length, 0), runs },

@@ -121,5 +121,48 @@ function c4ClassIds() {
     return [...ids].sort((a, b) => a - b);
 }
 
+// The key of a class's hunt data, one scheme with the spot table's lines
+// (generate-spot-table.js botFor): the class id, and for a split-kit first
+// class the future second class whose weapon it fights with ('7>9': a Rogue
+// with the Hawkeye's bow, '7>8' with the Treasure Hunter's dagger;
+// BotRoles.kitClassId). key: a number or such a string.
+function kitKey(classId, future = null) {
+    return future === null || future === undefined ? String(classId) : `${classId}>${future}`;
+}
+function parseKitKey(key) {
+    const [classId, future] = String(key).split('>');
+    return { classId: Number(classId), future: future === undefined ? null : Number(future) };
+}
+
+// The second classes a class fights for: each one a split-kit first class's
+// reference bot of that line wields (HuntCycle.referenceId, BotRoles.kitClassId),
+// else [null] (the class's own role).
+function kitFutures(classId) {
+    boot();
+    const Roles = invoke('GameServer/Bot/AI/BotRoles');
+    const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
+    const seconds = invoke('GameServer/ClassProgression').secondProfMap[classId] || [];
+    const futures = seconds.filter(second => Roles.kitClassId({ classId, characterId: HuntCycle.referenceId(classId, second) }) === second);
+    return futures.length ? futures : [null];
+}
+
+// The keys the per-class hunt tables hold: every C4 class, a split-kit first
+// class once per future second class.
+function kitKeys() {
+    return c4ClassIds().flatMap(classId => kitFutures(classId).map(future => kitKey(classId, future)));
+}
+
+// A per-class table row of a key (rows carry key; an older table only classId).
+function rowOfKey(rows, key) {
+    return rows.find(row => (row.key ?? String(row.classId)) === String(key)) || null;
+}
+
+// The character id of a key's reference bot: its line's (HuntCycle.referenceId).
+function kitCharacterId(key) {
+    boot();
+    const { classId, future } = parseKitKey(key);
+    return invoke('GameServer/Bot/AI/HuntCycle').referenceId(classId, future);
+}
+
 module.exports = { root, OUT_DIR, MAX_LEVEL, boot, hash, mulberry, seeded, round, writeTable, readTable, tablePath, c4ClassIds,
-    fingerprints };
+    fingerprints, kitKey, parseKitKey, kitFutures, kitKeys, rowOfKey, kitCharacterId };

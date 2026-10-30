@@ -43,6 +43,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const ProgressionRates = require('../src/GameServer/ProgressionRates');
+const HuntKeys = require('./hunt-tables/common');
 
 const root = path.resolve(__dirname, '..');
 process.chdir(root);
@@ -240,10 +241,11 @@ function lineBot(role, level) {
     return { classId, future: invoke('GameServer/Bot/AI/BotRoles').kitClassId({ classId, characterId }) };
 }
 
-// The key of the steps lines share (7>9: a Rogue with the Hawkeye's bow).
+// The key of the steps lines share (7>9: a Rogue with the Hawkeye's bow),
+// the very key of the class's hunt data (scripts/hunt-tables kitKey).
 function botFor(role, level) {
     const { classId, future } = lineBot(role, level);
-    return future === null ? `${classId}` : `${classId}>${future}`;
+    return HuntKeys.kitKey(classId, future);
 }
 
 function bandOf(level) {
@@ -381,9 +383,13 @@ function countNewStacks(items, seen, definitions = invoke('GameServer/DataCache'
     return invoke('GameServer/Bot/Population/SurvivalFloor').stateInventory({ inventory }, definitions).slots;
 }
 
-// The author's cold combat for `hours` of game time. A death is counted and
-// the bot stands up at full health at once: the time a death costs belongs to
-// the price of death (step 3.5), not to the spot. kit(bot): changes the
+// The author's cold combat for `hours` of game time. A death costs the time
+// it costs a live cold bot: the next step is the author's respawn
+// (BackgroundResolver resolveDeathRecovery, the respawn delay on the clock),
+// so a deadly spot's kills and exp per hour fall as they do live. Its exp
+// loss stays out of the row's exp: the loss (DeathExperience) does not scale
+// with the exp rate the reader applies to this x1 table; the reader charges
+// it per death on the row's deaths (EconomicValuation.deathHours). kit(bot): changes the
 // reference bot's worn gear before the hunt (scripts/hunt-cycle-check.js);
 // classId: another class than the role's (scripts/hunt-tables).
 function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, classId = classFor(role, level)) {
@@ -436,12 +442,8 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
             const inventory = patch.inventory || state.inventory;
             state = { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) },
                 stats: { ...(patch.stats || state.stats), classId }, inventory };
-            if (debug.died || state.activity === 'dead') {
-                sum.deaths += 1;
-                state = { ...state, activity: 'hunting', vitals: { ...made.full },
-                    stats: { ...state.stats, pveEncounter: null, restUntil: null } };
-            }
-            if (state.activity !== 'hunting' && state.activity !== 'resting') {
+            if (debug.died || patch.activity === 'dead') sum.deaths += 1;
+            if (!['hunting', 'resting', 'dead'].includes(state.activity)) {
                 throw new Error(`spot ${spot.id} ${role} L${level}: unexpected activity ${state.activity}`);
             }
             const next = Math.max(t + 1000, Number(result.nextResolveAt) || t + 30000);
@@ -579,10 +581,11 @@ function gear() {
     if (gearTable) return gearTable;
     const raw = JSON.parse(fs.readFileSync(path.join(root, 'data', 'Bots', 'hunt', 'gear.json'), 'utf8'));
     const items = new Map(raw.items.map((row) => [row[0], Object.fromEntries(raw.itemFields.map((field, i) => [field, row[i]]))]));
-    return gearTable = { items, classes: new Map(raw.classes.map((row) => [row.classId, row])) };
+    return gearTable = { items, classes: new Map(raw.classes.map((row) => [row.key ?? String(row.classId), row])) };
 }
-function kitGrid(classId, level) {
-    const row = gear().classes.get(Number(classId));
+// key: the line's bot at the level (botFor; a split-kit Rogue of line 9: its bow ladders).
+function kitGrid(key, level) {
+    const row = gear().classes.get(String(key));
     if (!row) return [];
     const { GRADES, gradeForLevel } = invoke('GameServer/Bot/AI/GearGradeRule');
     const grade = gradeForLevel(level), below = GRADES[Math.max(0, GRADES.indexOf(grade) - 1)];
@@ -606,13 +609,13 @@ function kitGrid(classId, level) {
 // gated: true where its solo gate admits none of the spot's spawns.
 function kitTask({ spotId, role, level, kit, hours }) {
     const spot = sim.profiles.get(spotId);
-    const classId = classFor(role, level);
+    const classId = classFor(role, level), key = botFor(role, level);
     const S = require('./hunt-tables/static-tables');
     const M = require('./hunt-tables/HuntModel');
     const dress = kit && ((bot) => {
         const worn = [...kit.weapon.map((id) => ({ id, enchant: kit.weaponEnchant || 0 })),
             ...kit.armour.map((id) => ({ id, enchant: kit.armourEnchant || 0 }))];
-        bot.inventory = M.kitState(classId, level, worn.flatMap(({ id, enchant }) =>
+        bot.inventory = M.kitState(key, level, worn.flatMap(({ id, enchant }) =>
             S.wear(gear().items.get(id)).map((entry) => ({ ...entry, enchant })))).inventory;
     });
     const made = newBot(classId, level, 1, sim, dress, lineClassFor(role));
@@ -923,9 +926,9 @@ async function main() {
             for (const spotId of ids) {
                 const spot = spotById.get(spotId);
                 const level = Math.min(MAX_LEVEL, Number(spot.avgLevel) + REF_GAP);
-                // A split-kit Rogue wears its future class's ladders (bows for line 9).
-                const { classId, future } = lineBot(role, level), bot = botFor(role, level);
-                for (const kit of [null, ...kitGrid(future ?? classId, level)]) {
+                // A split-kit Rogue wears its own line's ladders (bows for line 9).
+                const bot = botFor(role, level);
+                for (const kit of [null, ...kitGrid(bot, level)]) {
                     const point = `${spotId}|${bot}|${level}|${kit?.name || 'ref'}`;
                     if (!seenKits.has(point)) {
                         seenKits.set(point, curveTasks.length);
@@ -1014,4 +1017,4 @@ if (require.main === module) main().catch((error) => {
     process.exit(1);
 });
 
-module.exports = { hunt, perKill, countNewStacks, runPool, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor, lineClassFor };
+module.exports = { hunt, perKill, countNewStacks, runPool, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor, lineClassFor, botFor };

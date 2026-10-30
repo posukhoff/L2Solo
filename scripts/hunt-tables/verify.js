@@ -46,7 +46,7 @@ function strengthCheck(file, count) {
     const db = new DatabaseSync(file, { readOnly: true });
     const rows = db.prepare('SELECT characterId, level, statsJson, inventorySummary FROM bot_life_state ORDER BY characterId').all();
     db.close();
-    const classes = new Map(C.readTable('classes').classes.map(row => [row.classId, row]));
+    const classes = C.readTable('classes').classes;
     const gear = C.readTable('gear');
     const items = new Map(gear.items.map(row => [row[0], Object.fromEntries(gear.itemFields.map((field, i) => [field, row[i]]))]));
     // Items worn but outside table 5 (a class's unsuitable or sourceless
@@ -74,7 +74,9 @@ function strengthCheck(file, count) {
                 if (tableRow) worn.push({ row: tableRow, slot: Number(slot), enchant: Number(instance?.enchant ?? item.enchant) || 0 });
             }
         }
-        const sum = M.strength(classes.get(classId), Number(row.level), { hennas: stats.hennas || [], items: worn,
+        // The bot's own line's row (C.kitKey of its class and kit future).
+        const key = C.kitKey(classId, invoke('GameServer/Bot/AI/BotRoles').kitClassId(state));
+        const sum = M.strength(C.rowOfKey(classes, key), Number(row.level), { hennas: stats.hennas || [], items: worn,
             skills: M.Profile.skillsFor(state) });
         let botMax = 0;
         for (const field of M.NUMBERS) {
@@ -189,7 +191,7 @@ function spotTableCheck() {
         const classId = spotTable.header.inputs.roleClasses[dpsKey][level < 20 ? 0 : level < 40 ? 1 : 2];
         const rot = M.rotationOf(tables.rotation, classId, level);
         const kit = { classId, level, rot, shots: true, profile: M.profileOf(HuntCycle.referenceState(classId, level)) };
-        const gearClass = tables.gear.classes.find(cls => cls.classId === classId);
+        const gearClass = C.rowOfKey(tables.gear.classes, classId);
         const live = K.gearOptions(gearClass, level).filter(([name]) => name !== 'kit');
         // A per-mob table carries each row's cap; an older one the spot's fights.
         const cap = capField >= 0 ? row[capField] : spot[3];

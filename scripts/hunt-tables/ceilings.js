@@ -82,27 +82,27 @@ function build(classTable, gearTable, mobTable, rotationTable, correctionTable) 
     const rows = {};
     let cells = 0, evaluations = 0;
     for (const [classKey, bands] of Object.entries(rotationTable.rows)) {
-        const classId = Number(classKey);
-        const gearClass = gearTable.classes.find(row => row.classId === classId);
-        rows[classId] = {};
+        const { classId } = C.parseKitKey(classKey);
+        const gearClass = C.rowOfKey(gearTable.classes, classKey);
+        rows[classKey] = {};
         for (const bandKey of Object.keys(bands)) {
             const level = Math.max(1, Math.min(C.MAX_LEVEL, 2 * Number(bandKey) + 1));
             const top = GRADES.indexOf(gradeForLevel(level));
             const weapons = gearClass.weaponTiers.filter(([name]) => name === 'none' || tierGrade(name) <= top);
             const armours = gearClass.armourTiers.filter(([name]) => name === 'none' || tierGrade(name) <= top);
-            const rot = M.rotationOf(rotationTable, classId, level);
+            const rot = M.rotationOf(rotationTable, classKey, level);
             const out = [];
             for (const [, armourIds] of armours) {
                 // Weakest weapon first: the staircase climbs with the kit.
                 const kits = weapons.map(([name, weaponIds]) => {
-                    const profile = M.profileOf(M.kitState(classId, level, K.wearList([...weaponIds, ...armourIds], items)));
+                    const profile = M.profileOf(M.kitState(classKey, level, K.wearList([...weaponIds, ...armourIds], items)));
                     return { name, profile };
                 }).map((kit, index) => ({ ...kit, index }))
                     .sort((a, b) => a.profile.pAtk * a.profile.atkSpd + a.profile.mAtk - (b.profile.pAtk * b.profile.atkSpd + b.profile.mAtk));
                 const row = new Array(weapons.length);
                 const from = { solo: 0, crowd: 0 };
                 for (const kit of kits) {
-                    const bot = { classId, level, profile: kit.profile, rot, shots: true };
+                    const bot = { key: classKey, classId, level, profile: kit.profile, rot, shots: true };
                     const cell = DANGERS.map(danger => {
                         const row = correctionTable.corrections[`${K.rotKind(rot)}|${danger}`];
                         const value = ceiling(bot, typical, danger, from[danger], row ? { kph: row[0], deaths: row[1] } : null);
@@ -115,7 +115,7 @@ function build(classTable, gearTable, mobTable, rotationTable, correctionTable) 
                 }
                 out.push(row);
             }
-            rows[classId][bandKey] = out;
+            rows[classKey][bandKey] = out;
         }
     }
     return { body: { bandLevels: 2, dangers: DANGERS, layout: 'rows[class][band][armourTier][weaponTier] = [solo, crowd] (tiers: gear.json'

@@ -110,10 +110,12 @@ function buildSpots() {
 const LEVEL_FIELDS = ['maxHp', 'maxMp', 'pAtk', 'mAtk', 'pDef', 'mDef', 'accur', 'evasion', 'critical', 'atkSpd', 'castSpd',
     'regenHp', 'regenMp'];
 
-function classRow(classId) {
+// key: C.kitKey (a split-kit first class per future: its line's role).
+function classRow(key) {
+    const { classId } = C.parseKitKey(key);
     const template = ClassProgression.firstClassRow(DataCache.classTemplates, classId) || {};
-    const role = Roles.combatRoleFor({ classId, stats: { classId } });
-    const naked = M.profileOf(M.kitState(classId, 1));
+    const role = Roles.combatRoleFor({ classId, characterId: C.kitCharacterId(key), stats: { classId } });
+    const naked = M.profileOf(M.kitState(key, 1));
     // The class's naked torso is the spellcaster's (equipmentFromTemplates);
     // read from its naked profile, not from a second class list.
     const spellcaster = naked.equipment.pDef === Profile.equipmentFromTemplates([], true, template.stats || {}).pDef
@@ -121,7 +123,7 @@ function classRow(classId) {
     const levels = [];
     const passives = new Map();
     for (let level = 1; level <= C.MAX_LEVEL; level++) {
-        const state = M.kitState(classId, level);
+        const state = M.kitState(key, level);
         const profile = M.profileOf(state);
         const regen = M.regenOf(classId, level, profile);
         levels.push([...LEVEL_FIELDS.slice(0, 11).map(field => C.round(profile[field])), C.round(regen.hp), C.round(regen.mp)]);
@@ -132,7 +134,7 @@ function classRow(classId) {
         }
     }
     const nakedGear = Profile.equipmentFromTemplates([], spellcaster, template.stats || {});
-    return { classId, name: template.template?.class || '', role, spellcaster, race: Number(template.template?.race) || 0,
+    return { key: String(key), classId, name: template.template?.class || '', role, spellcaster, race: Number(template.template?.race) || 0,
         base: { ...(template.base || {}) }, classStats: { ...(template.stats || {}) },
         naked: { pDef: nakedGear.pDef, mDef: nakedGear.mDef },
         weaponKinds: Compat.weaponKindsFor(role, classId), armorKind: Compat.armorKindFor(role, classId),
@@ -141,7 +143,7 @@ function classRow(classId) {
 }
 
 function buildClasses() {
-    const classes = C.c4ClassIds().map(classRow);
+    const classes = C.kitKeys().map(classRow);
     return { levelFields: LEVEL_FIELDS, passiveFields: ['skill', 'level', 'fromLevel'], classes };
 }
 
@@ -171,8 +173,8 @@ function wear(row) {
 // armour piece by P.Def, a shield by its block (P.Def x rate), a jewel by
 // M.Def; each read from the class's profile
 // wearing only the piece (masteries counted).
-function pieceValue(classId, row, caster) {
-    const profile = M.profileOf(M.kitState(classId, LADDER_LEVEL, wear(row)));
+function pieceValue(key, row, caster) {
+    const profile = M.profileOf(M.kitState(key, LADDER_LEVEL, wear(row)));
     if (WEAPON_SLOTS.includes(row.slot)) return caster ? profile.mAtk : profile.pAtk * profile.atkSpd * (1 + profile.critical / 1000);
     // A shield's P.Def blocks (shieldPDef), it is not in the profile's P.Def.
     if (row.slot === 8) return profile.equipment.shieldPDef * (profile.equipment.shieldRate || 0) / 100;
@@ -199,9 +201,9 @@ function bestOf(list, rank, slots) {
 // set of the grade (its parts, the other slots best) when its P.Def is higher.
 // suitable: every piece the class may wear (set parts are looked up there:
 // the ladder drops a part an equal piece with a lower id dominates).
-function armourOfGrade(classId, ladder, rank, shield, suitable) {
+function armourOfGrade(key, ladder, rank, shield, suitable) {
     const pick = slots => bestOf(ladder, rank, slots);
-    const defOf = list => list.length ? M.profileOf(M.kitState(classId, LADDER_LEVEL, list.flatMap(wear))).pDef : 0;
+    const defOf = list => list.length ? M.profileOf(M.kitState(key, LADDER_LEVEL, list.flatMap(wear))).pDef : 0;
     const chest = pick([10]), legs = pick([11]), full = pick([15]);
     const rest = [6, 9, 12, ...(shield ? [8] : [])].map(slot => pick([slot])).filter(Boolean);
     const split = [...[chest, legs].filter(Boolean), ...rest];
@@ -234,9 +236,9 @@ function buildGear(classTable) {
     const wearable = DataCache.items.filter(item => /^(Weapon|Armor)\./.test(item.template?.kind || '')
         && !/\.Pet$/.test(item.template?.kind || '') && Sources.hasSource(item.selfId));
     for (const cls of classTable.classes) {
-        const classId = cls.classId;
+        const classId = cls.classId, key = cls.key ?? String(classId);
         const caster = Compat.isCasterRole(cls.role);
-        const state = { classId, level: LADDER_LEVEL, stats: { classId }, inventory: {} };
+        const state = { characterId: C.kitCharacterId(key), classId, level: LADDER_LEVEL, stats: { classId }, inventory: {} };
         const entries = [];
         for (const item of wearable) {
             const rank = String(item.etc?.rank || 'none').toLowerCase();
@@ -244,7 +246,7 @@ function buildGear(classTable) {
             const row = itemRow(item);
             items.set(row.selfId, row);
             entries.push({ selfId: row.selfId, slot: row.slot, rank, price: row.price, wearLevel: levelForGrade(rank) || 1,
-                value: pieceValue(classId, row, caster) });
+                value: pieceValue(key, row, caster) });
         }
         const slots = {};
         const ladder = [];
@@ -266,19 +268,19 @@ function buildGear(classTable) {
             const kept = ladder.filter(entry => entry.rank === rank && WEAPON_SLOTS.includes(entry.slot)).sort((a, b) => b.value - a.value);
             if (kept.length) weapons.push([`${rank}-top`, [kept[0].selfId]]);
             if (kept.length > 1) weapons.push([`${rank}-low`, [kept.at(-1).selfId]]);
-            const armour = armourOfGrade(classId, ladder, rank, cls.shield, entries);
+            const armour = armourOfGrade(key, ladder, rank, cls.shield, entries);
             const jewels = jewelsOfGrade(ladder, rank);
             if (armour.length || jewels.length) armours.push([`${rank}-full`, [...armour, ...jewels].map(entry => entry.selfId)]);
             // The mix live bots wear: this grade's body, the grade below's rest.
             const below = GRADES[gradeIndex(rank) - 1];
             if (below && armour.length) {
                 const body = armour.filter(entry => [10, 11, 15].includes(entry.slot));
-                const rest = [...armourOfGrade(classId, ladder, below, cls.shield, entries).filter(entry => ![10, 11, 15].includes(entry.slot)),
+                const rest = [...armourOfGrade(key, ladder, below, cls.shield, entries).filter(entry => ![10, 11, 15].includes(entry.slot)),
                     ...jewelsOfGrade(ladder, below)];
                 armours.push([`${rank}-body`, [...body, ...rest].map(entry => entry.selfId)]);
             }
         }
-        classes.push({ classId, slots, weaponTiers: weapons, armourTiers: armours });
+        classes.push({ key, classId, slots, weaponTiers: weapons, armourTiers: armours });
     }
     const itemFields = ['selfId', 'name', 'kind', 'slot', 'rank', 'price', 'stats'];
     return { ladderLevel: LADDER_LEVEL, itemFields,
@@ -346,11 +348,12 @@ function buildHenna(classTable) {
         return [symbol.id, symbol.name, Number(symbol.dyeSelfId), Number(symbol.dyeAmount), Number(symbol.price),
             Number.isFinite(price) ? price : null, ...M.BASE_STATS.map(stat => Number(symbol[stat.toUpperCase()]) || 0)];
     });
-    const classes = classTable.classes.map(cls => [cls.classId, Hennas.slotsForClass(cls.classId),
-        Hennas.availableForClass(cls.classId).map(symbol => symbol.id)]);
+    // Hennas go by class, not by line: one row per class id.
+    const classes = [...new Set(classTable.classes.map(cls => cls.classId))].map(classId => [classId, Hennas.slotsForClass(classId),
+        Hennas.availableForClass(classId).map(symbol => symbol.id)]);
     return { source: data.source, symbolFields: ['id', 'name', 'dye', 'dyeAmount', 'fee', 'dyeNpcPrice',
         ...M.BASE_STATS.map(stat => stat.toUpperCase())], symbols, classFields: ['class', 'slots', 'symbols'], classes };
 }
 
-module.exports = { buildMobs, buildSpots, buildClasses, buildGear, buildSources, buildHenna, rewardsOf, wear, wornSlots,
+module.exports = { buildMobs, buildSpots, buildClasses, buildGear, buildSources, buildHenna, classRow, rewardsOf, wear, wornSlots,
     COMBAT_FIELDS, LEVEL_FIELDS };

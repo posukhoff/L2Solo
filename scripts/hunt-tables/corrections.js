@@ -20,7 +20,8 @@ const { GRADES, gradeForLevel } = invoke('GameServer/Bot/AI/GearGradeRule');
 const ClassProgression = invoke('GameServer/ClassProgression');
 
 const HOURS = 0.5;
-// Classes by kind: melee, dagger, archer, nuker, summoner, healer, buffer, spoiler.
+// Classes by kind: melee, dagger, archer, nuker, summoner, healer, buffer,
+// spoiler (class keys, C.kitKey: '7>9' would be a Rogue with the Hawkeye's bow).
 const SAMPLE_CLASSES = [1, 2, 3, 4, 8, 9, 11, 12, 14, 15, 16, 17, 27, 41, 50, 51, 55];
 const GAPS = [-2, 2, 5, 8];
 const FIELDS = ['classId', 'level', 'gear', 'mob', 'pull', 'rotKind', 'danger', 'half',
@@ -102,10 +103,11 @@ function mobInput(tables, npcId, pull) {
     return { combat, exp: mob[3], sp: mob[4], reward: mob[6] >= 0 ? S.rewardsOf(tables.mobs.rewards[mob[6]]) : null, pull, danger: mob[5] };
 }
 
-// The profile of a sample kit: the author's (ids null) or a tier list.
-function kitProfile(classId, level, ids, items) {
-    const state = M.kitState(classId, level, ids ? wearList(ids, items) : []);
-    if (!ids) state.inventory = invoke('GameServer/Bot/AI/HuntCycle').referenceState(classId, level).inventory;
+// The profile of a sample kit of a class key: the author's (ids null) or a tier list.
+function kitProfile(key, level, ids, items) {
+    const { classId, future } = C.parseKitKey(key);
+    const state = M.kitState(key, level, ids ? wearList(ids, items) : []);
+    if (!ids) state.inventory = invoke('GameServer/Bot/AI/HuntCycle').referenceState(classId, level, { line: future }).inventory;
     return M.profileOf(state);
 }
 
@@ -118,16 +120,17 @@ function build(tables, options = {}) {
     tables.spots = C.readTable('spots');
     const items = itemRows(tables.gear);
     const tasks = [];
-    for (const classId of SAMPLE_CLASSES) {
-        const gearClass = tables.gear.classes.find(row => row.classId === classId);
+    for (const sampled of SAMPLE_CLASSES) {
+        const key = String(sampled), { classId } = C.parseKitKey(key);
+        const gearClass = C.rowOfKey(tables.gear.classes, key);
         for (const level of levelsFor(classId)) {
-            const rot = M.rotationOf(tables.rotation, classId, level);
+            const rot = M.rotationOf(tables.rotation, key, level);
             for (const [gearName, ids] of gearOptions(gearClass, level)) {
-                const profile = kitProfile(classId, level, ids, items);
-                const admits = candidate => !!rot && M.mobHour({ classId, level, profile, rot, shots: true },
+                const profile = kitProfile(key, level, ids, items);
+                const admits = candidate => !!rot && M.mobHour({ key, classId, level, profile, rot, shots: true },
                     mobInput(tables, candidate.npcId, candidate.pull)) !== null;
-                for (const pick of sampleMobs(tables, level, `${classId}|${level}|${gearName}`, admits)) {
-                    tasks.push({ classId, level, gearName, ids, pick: { ...pick, level: level - pick.gap } });
+                for (const pick of sampleMobs(tables, level, `${key}|${level}|${gearName}`, admits)) {
+                    tasks.push({ key, classId, level, gearName, ids, pick: { ...pick, level: level - pick.gap } });
                 }
             }
         }
@@ -143,14 +146,16 @@ function build(tables, options = {}) {
         generator.loadSimulation(file);
         chosen.forEach((task, index) => {
             const spot = spots[index];
-            const kit = task.ids ? bot => { bot.inventory = M.kitState(task.classId, task.level, wearList(task.ids, items)).inventory; } : null;
-            const sum = generator.hunt(spot, 'dps', task.level, 1, HOURS, undefined, kit, task.classId);
-            const profile = kitProfile(task.classId, task.level, task.ids, items);
-            const rot = M.rotationOf(tables.rotation, task.classId, task.level);
+            const kit = task.ids ? bot => { bot.inventory = M.kitState(task.key, task.level, wearList(task.ids, items)).inventory; } : null;
+            // The hunt's line: a split-kit key's future second class (its reference bot), else any.
+            const line = C.parseKitKey(task.key).future;
+            const sum = generator.hunt(spot, line === null ? 'dps' : String(line), task.level, 1, HOURS, undefined, kit, task.classId);
+            const profile = kitProfile(task.key, task.level, task.ids, items);
+            const rot = M.rotationOf(tables.rotation, task.key, task.level);
             const mob = mobInput(tables, task.pick.npcId, task.pick.pull);
-            const formula = rot ? M.mobHour({ classId: task.classId, level: task.level, profile, rot, shots: true }, mob) : null;
+            const formula = rot ? M.mobHour({ key: task.key, classId: task.classId, level: task.level, profile, rot, shots: true }, mob) : null;
             const kills = sum.kills;
-            rows.push([task.classId, task.level, task.gearName, task.pick.npcId, task.pick.pull, rot ? rotKind(rot) : 'none',
+            rows.push([line === null ? task.classId : task.key, task.level, task.gearName, task.pick.npcId, task.pick.pull, rot ? rotKind(rot) : 'none',
                 task.pick.danger, C.hash(`${index}|${task.pick.npcId}`) % 2,
                 C.round(kills / HOURS), C.round(sum.deaths / HOURS), C.round(kills > 0 ? sum.fightMs / 1000 / kills : 0),
                 C.round(kills > 0 ? sum.restMs / 1000 / kills : 0),

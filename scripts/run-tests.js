@@ -724,6 +724,7 @@ const tests = [
     'tests/test_c4_shot_multipliers.js',
     'tests/test_table_class_lines.js',
     'tests/test_future_class_kit.js',
+    'tests/test_spot_table_death_time.js',
     'tests/test_cold_regen_passives.js',
     'tests/test_warrior_chanter_kits.js',
     'tests/test_spot_crowd_share.js',
