@@ -1527,7 +1527,10 @@ function startKernel(config = {}) {
                 buyOrderEscrow: escrowFor(state.characterId), goalRevision: goalRevision(state.characterId), routeRows };
             const wishFocus = previousPlan?.status === 'deferred' && previousPlan.strategy === 'none'
                 && previousPlan.next == null && previousPlan.reason === 'wish_focus';
-            const solo = !partyIdOf(state) && !state.stats?.partyRequest;
+            // A healer or buffer without solo ground plans its party request
+            // below (PartyRequestPlanner, decision 10-30): no card reuse.
+            const solo = !partyIdOf(state) && !state.stats?.partyRequest
+                && !PartyRequestPlanner.supportWithoutGround(state, spots);
             const nativeHolds = !nativeReplan.failure && !nativeReplan.invalidSource && !nativeReplan.levelingRecovery;
             // An active current plan: before, finalizePlan re-finalized it on
             // every such step. Its steps count as plan_holds finalized (paid)

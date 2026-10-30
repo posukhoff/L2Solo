@@ -427,6 +427,7 @@ const tests = [
     'tests/test_bot_persona_types.js',
     'tests/test_bot_persona_migration.js',
     'tests/test_bot_persona_background_intent.js',
+    'tests/test_support_no_solo_ground.js',
     'tests/test_wealth_craft_policy.js',
     'tests/test_craft_facts.js',
     'tests/test_cold_wealth_craft.js',
