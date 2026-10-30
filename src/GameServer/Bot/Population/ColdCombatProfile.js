@@ -711,6 +711,9 @@ function gatherKit(state, timestamp) {
         version: 1,
         capturedAt: number(saved?.capturedAt, timestamp),
         classId,
+        // A bot's id (null for a player): its future second class's kit
+        // (BotRoles.kitClassId), such as a future summoner's pet.
+        characterId: BotRoles.botCharacterId(state),
         base: { ...(template.base || {}), ...(template.stats || {}), ...(saved?.base || {}) },
         equipment: kitEquipment(equipmentFromTemplates(equipped, spellcaster, template.stats || {}), equipped.length, saved?.equipment),
         // Set bonuses follow the current worn parts, including hypothetical swaps;
@@ -755,8 +758,8 @@ function profileNumbers(kitPart, effects, timestamp, sourceOptions) {
 // The pass and its power terms (powerTerms).
 function numbersPass(kitPart, effects, timestamp, sourceOptions) {
     const { classId, level } = kitPart;
-    const profile = { version: kitPart.version, capturedAt: kitPart.capturedAt, classId, base: kitPart.base,
-        equipment: kitPart.equipment, effects, skills: kitPart.skills };
+    const profile = { version: kitPart.version, capturedAt: kitPart.capturedAt, classId, characterId: kitPart.characterId,
+        base: kitPart.base, equipment: kitPart.equipment, effects, skills: kitPart.skills };
     // Resolve effects and passive requirements once for this calculation.
     const sources = statSources(profile, timestamp, sourceOptions);
     const equipment = profile.equipment;
@@ -1028,7 +1031,7 @@ function summonDetails(skill = {}) {
 }
 
 function summonSkills(profile = {}) {
-    if (!BotRoles.isSummoner(profile.classId)) return [];
+    if (!BotRoles.isSummoner(profile)) return [];
     return (profile.skills || [])
         .filter((skill) => !skill.passive)
         .filter((skill) => {

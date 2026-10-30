@@ -35,16 +35,16 @@ const REFERENCE_ID = 990001;
 // A guard of the search below: each id is a fair pick among two or three classes.
 const REFERENCE_ID_SEARCH = 1000;
 // The reference bot's character id. A split-kit first class fights with the
-// weapon of its future second class (BotRoles.kitClassId, a pick by its id):
-// the first id whose future is the line's second class, else one whose
-// future keeps the class's own role (a class-only reference).
+// kit of its future second class (BotRoles.kitClassId, a pick by its id:
+// weapon, pet): the first id whose future is the line's second class, else
+// one whose future keeps the class's own role and pet (a class-only reference).
 function referenceId(classId, line = null) {
-    const own = Roles.inferRole(classId);
+    const own = Roles.inferRole(classId), ownPet = Roles.isSummoner(classId);
     const target = ClassProgression.secondProfMap[classId]?.includes(Number(line)) ? Number(line) : null;
     for (let characterId = REFERENCE_ID; characterId < REFERENCE_ID + REFERENCE_ID_SEARCH; characterId++) {
         const future = Roles.kitClassId({ classId, characterId });
         if (future === null) return REFERENCE_ID;
-        if (target ? future === target : Roles.inferRole(future) === own) return characterId;
+        if (target ? future === target : Roles.inferRole(future) === own && Roles.isSummoner(future) === ownPet) return characterId;
     }
     return REFERENCE_ID;
 }

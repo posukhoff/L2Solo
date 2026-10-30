@@ -2709,8 +2709,9 @@ const BotLifeState = {
         // the input (shots/potions have separate counters), so carry only these
         // native cast-cost decreases before adding this round's loot.
         const summonClass = Number(state.stats?.classId || 0);
-        if (result.patch?.inventory && (BotRoles.isSummoner(summonClass) || BotRoles.isNecromancer(summonClass))) {
-            const summonProfile = { ...(result.patch.stats?.coldCombat || state.stats?.coldCombat || {}), classId: summonClass };
+        const summonProfile = result.patch?.inventory && { ...(result.patch.stats?.coldCombat || state.stats?.coldCombat || {}),
+            classId: summonClass, characterId: BotRoles.botCharacterId(state) };
+        if (summonProfile && (BotRoles.isSummoner(summonProfile) || BotRoles.isNecromancer(summonClass))) {
             const materialIds = new Set([...ColdCombatProfile.summonSkills(summonProfile),
                 ...ColdCombatProfile.corpseSummonSkills(summonProfile)]
                 .filter(skill => Number(skill.itemId) > 0 && Number(skill.itemCount) > 0)

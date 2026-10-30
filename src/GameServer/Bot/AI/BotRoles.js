@@ -13,12 +13,17 @@ const ROLE_CLASSES = {
     spoiler: [53, 54, 55],
     crafter: [56, 57]
 };
-// The first classes whose second classes split between bow and dagger
-// (Rogue, Elven Scout, Assassin): they fight 20-39 with the weapon of their
-// own future second class (user 10-30, class kits by C4 masteries).
+const SUMMONER_CLASSES = new Set([14, 28, 41]);
+// The first classes whose second classes split the kit they fight 20-39
+// with: they fight with their own future second class's (user 10-30, class
+// kits by C4 masteries). By weapon, bow or dagger (Rogue, Elven Scout,
+// Assassin); by pet, a servitor or none (Wizard, Elven Wizard, Dark Wizard:
+// a future summoner summons the cat it learns at 20, as in C4, T122).
+const splitsBy = (next, holds) => next.some(holds) && next.some((id) => !holds(id));
 const SPLIT_KIT_CLASSES = new Set(Object.entries(ClassProgression.secondProfMap)
-    .filter(([, next]) => next.some((id) => ROLE_CLASSES.archer.includes(id))
+    .filter(([, next]) => (next.some((id) => ROLE_CLASSES.archer.includes(id))
         && next.some((id) => ROLE_CLASSES.dagger.includes(id)))
+        || splitsBy(next, (id) => SUMMONER_CLASSES.has(id)))
     .map(([classId]) => Number(classId)));
 const DWARF_CLASS_IDS = new Set([53, 54, 55, 56, 57, 117, 118]);
 const SPOILER_CLASS_IDS = new Set([53, 54, 55, 117]);
@@ -31,7 +36,6 @@ const MANA_REST_ROLES = new Set(['mage', 'archer', 'healer']);
 // whose combat loop must not stop merely because their MP is low.
 const CASTER_BUFFER_CLASSES = new Set([17, 49, 50, 51, 52]);
 const PARTY_MUSIC_CLASSES = new Set([21, 34]);
-const SUMMONER_CLASSES = new Set([14, 28, 41]);
 const NECROMANCER_CLASSES = new Set([13]);
 
 function classIdOf(value) {
@@ -87,8 +91,8 @@ function botCharacterIdOf(value) {
     return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-// The future second class whose weapon a split-kit first class fights with,
-// or null (a class-only value, or any other class).
+// The future second class whose kit (weapon, pet) a split-kit first class
+// fights with, or null (a class-only value, a player, or any other class).
 function kitClassId(value) {
     const classId = roleClassId(value);
     if (!SPLIT_KIT_CLASSES.has(classId)) return null;
@@ -136,9 +140,8 @@ function inferRole(value) {
     return 'dps';
 }
 
-// The table roles of their own (T106): summoners fight with a pet, orc
-// chanters by their own line, not as the role's measured class.
-const SUMMONER_TABLE_CLASSES = new Set([14, 28, 41]);
+// The table roles of their own (T106): summoners fight with a pet (isSummoner),
+// orc chanters by their own line, not as the role's measured class.
 const CHANTER_TABLE_CLASSES = new Set([49, 50, 51, 52]);
 
 // The game table's role of a bot (SpotValueTable roles): its party role, else
@@ -148,7 +151,7 @@ function tableRoleFor(state = {}) {
         || inferRole({ classId: state.stats?.classId || state.classId || 0, characterId: state.characterId });
     const tableRole = role === 'melee' ? 'dps' : role === 'nuker' ? 'mage' : role === 'crafter' ? 'spoiler' : role;
     const classId = roleClassId(state.stats?.classId ?? state.classId ?? null);
-    if (tableRole === 'mage' && SUMMONER_TABLE_CLASSES.has(classId)) return 'summoner';
+    if (tableRole === 'mage' && isSummoner({ classId, characterId: state.characterId })) return 'summoner';
     if (tableRole === 'buffer' && CHANTER_TABLE_CLASSES.has(classId)) return 'chanter';
     return tableRole;
 }
@@ -185,8 +188,12 @@ function isTank(value) {
     return isRole(value, 'tank');
 }
 
+// A summoner fights with its servitor: a summoner class, or a bot's first
+// class whose future second class is one (kitClassId; a Wizard heading for
+// Warlock, T122). A future Sorcerer or Necromancer Wizard learns the cat too,
+// but no rule prices a pet for a non-summoner: it fights without one.
 function isSummoner(value) {
-    return SUMMONER_CLASSES.has(roleClassId(value));
+    return SUMMONER_CLASSES.has(kitClassId(value) ?? roleClassId(value));
 }
 
 function isNecromancer(value) {
@@ -259,6 +266,7 @@ module.exports = {
     className,
     roleClassId,
     kitClassId,
+    botCharacterId: botCharacterIdOf,
     isSpoiler,
     isCrafterClass,
     presentation,

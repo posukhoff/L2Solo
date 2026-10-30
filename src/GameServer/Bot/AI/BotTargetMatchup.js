@@ -34,7 +34,7 @@ function npcTemplate(id) {
 // skills across decisions. Cold callers already own an immutable profile.
 function actorProfile(actor) {
     return {
-        classId: actor.fetchClassId?.(), level: actor.fetchLevel?.(),
+        classId: actor.fetchClassId?.(), characterId: Roles.botCharacterId(actor), level: actor.fetchLevel?.(),
         role: Roles.combatRoleFor(actor),
         pAtk: actor.fetchCollectivePAtk?.() ?? actor.fetchPAtk?.(),
         mAtk: actor.fetchCollectiveMAtk?.() ?? actor.fetchMAtk?.(),
@@ -72,7 +72,7 @@ function coldProfiles(profile, state = {}, timestamp = Date.now()) {
     const summon = state.stats?.coldCombat?.summon;
     if (summon?.active && number(summon.hp, summon.maxHp) > 0 && summon.expiresAt > timestamp) {
         profiles.push({ ...summon, role: 'dps', skills: [], soloDamageReceiver: false, servitor: true });
-    } else if (Roles.isSummoner(profile.classId)) {
+    } else if (Roles.isSummoner(profile)) {
         const Cold = invoke('GameServer/Bot/Population/ColdCombatProfile');
         const skill = Cold.summonSkills(profile).find(s => s.reuseReady !== false
             && number(s.mp, 0) <= number(state.vitals?.mp, profile.maxMp)
