@@ -1,6 +1,7 @@
 const Config = invoke('GameServer/Bot/Population/PopulationConfig');
 const Material = require('./CraftMaterialParty');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
+const Roles = invoke('GameServer/Bot/AI/BotRoles');
 
 // No solo ground -> a party (decision 10-30, T106): a healer or buffer
 // (BotRoles) whose solo gate admits no spot near its level
@@ -9,9 +10,8 @@ const Diagnostics = require('../Economy/EconomyDiagnostics');
 // planned) and by the request below.
 const NO_SOLO_GROUND = 'no_solo_ground';
 function supportWithoutGround(state, spots) {
-    const Roles = invoke('GameServer/Bot/AI/BotRoles');
     return (Roles.isHealer(state) || Roles.canBuff(state))
-        && invoke('GameServer/Bot/Population/BotRoute').soloGroundMissing(state, spots);
+        && invoke('GameServer/Bot/Population/BotRoute').soloGroundMissing(state, spots); // lazy: cycle BotRoute's chain loads this planner
 }
 
 // A bot whose open request is that seeking (main's party assembly reads it:
@@ -31,6 +31,7 @@ function seekObjective(state, previous, { spots, timestamp }) {
     if (!supportWithoutGround(state, spots)) return null;
     const held = previous?.reason === NO_SOLO_GROUND && (previous.status === 'open'
         || previous.status === 'deferred' && Number(previous.deferredUntil || 0) > timestamp) ? previous.spotId : null;
+    // lazy: cycle SpotProfiles' chain loads this planner
     const searched = held ? null : invoke('GameServer/Bot/Population/SpotProfiles').findForState({ ...state, spotId: null,
         stats: Object.fromEntries(Object.entries(state.stats || {}).filter(([key]) => key !== 'equipmentPlan')) },
     { profiles: spots, mode: 'party', timestamp });

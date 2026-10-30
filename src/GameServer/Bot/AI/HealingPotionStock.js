@@ -1,6 +1,4 @@
-const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const ConsumableRestock = invoke('GameServer/Inventory/ConsumableRestock');
-const DataCache = invoke('GameServer/DataCache');
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
 const StaticMerchantPricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
@@ -24,10 +22,6 @@ const MELEE_USE_HP_RATIO = 0.35;
 const RANGED_USE_HP_RATIO = 0.25;
 const QUICK_USE_HP_RATIO = 0.12;
 const DESIRED_HP_RATIO = 0.65;
-
-function templateFor(selfId) {
-    return ItemTemplateIndex.find(DataCache.items, selfId) || null;
-}
 
 function detailsFor(selfId) {
     return POTIONS.find((potion) => potion.selfId === Number(selfId)) || null;

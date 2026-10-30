@@ -5,6 +5,7 @@ const PriceDecision = require('../Economy/PriceDecision');
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 const KillRewards = invoke('GameServer/Bot/Population/ColdKillRewards');
+const StaticMerchantPricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
 const MAX_SPOTS = 8;
 const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -44,7 +45,7 @@ function lootValue(items = []) {
 }
 // Prices are independent of the wish network: callers may supply their
 // current quotes, otherwise the NPC's price at the rate (else the template's).
-function consumablePrices(state, price = id => invoke('GameServer/Bot/Economy/StaticMerchantPricing').botBuyPrice(id)) {
+function consumablePrices(state, price = id => StaticMerchantPricing.botBuyPrice(id)) {
     const shots = invoke('GameServer/Inventory/ShotStock').planForState(state);
     const potion = invoke('GameServer/Bot/AI/HealingPotionStock').purchasePotionFor(state);
     return { shots: Math.max(0, Number(price(shots.selfId)) || 0), potions: Math.max(0, Number(price(potion.selfId)) || 0) };

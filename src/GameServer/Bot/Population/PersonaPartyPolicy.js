@@ -2,6 +2,7 @@ const BotPersona = invoke('GameServer/Bot/AI/BotPersona');
 const PartyAffinity = invoke('GameServer/Bot/Population/BackgroundPartyAffinity');
 const TendencyRoll = require('../AI/TendencyRoll');
 const PartyMemoryPreference = require('./PartyMemoryPreference');
+const PartyRequestPlanner = require('./PartyRequestPlanner');
 
 function supportCount(coverage = {}) {
     return ['tank', 'healer', 'buffer'].filter((role) => Number(coverage[role] || 0) > 0).length;
@@ -30,7 +31,7 @@ function backgroundIntent(state = {}) {
     // A healer or buffer without solo ground seeks a party whatever its
     // persona (decision 10-30, T106); the persona still weighs each party it
     // is offered (PartyGoalPolicy.decide) and its score stays its own.
-    if (require('./PartyRequestPlanner').seeksParty(state)) {
+    if (PartyRequestPlanner.seeksParty(state)) {
         return { accept: true, reason: 'no_solo_ground', score: Math.round(baseScore(persona)), persona };
     }
 
