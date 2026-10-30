@@ -4227,7 +4227,7 @@ assert.strictEqual(summonQueenCatData.summon.expPenalty, 0.05, 'Summon Queen of 
 assert.strictEqual(summonQueenCatData.summon.itemConsumeSteps, 4, 'Summon Queen of Cat should preserve sourced summon crystal consume step mode');
 assert.strictEqual(summonQueenCatData.levels.length, 10, 'Summon Queen of Cat should preserve sourced 10 base levels');
 assert.strictEqual(summonQueenCatData.levels[0].mp, 70, 'Summon Queen of Cat level 1 MP should use sourced initial + consume total');
-assert.strictEqual(summonQueenCatData.levels[1].mp, 108, 'Summon Queen of Cat level 2 MP should preserve sourced initial + consume total');
+assert.strictEqual(summonQueenCatData.levels[1].mp, 78, 'Summon Queen of Cat level 2 MP is the l2hub C4 78 (Lisvus 108)');
 assert.strictEqual(summonQueenCatData.levels[0].itemId, 1459, 'Summon Queen of Cat should preserve sourced crystal item id');
 assert.strictEqual(summonQueenCatData.levels[0].itemCountOT, 1, 'Summon Queen of Cat level 1 should preserve sourced ongoing crystal count');
 assert.strictEqual(summonQueenCatData.levels[0].npcId, 13137, 'Summon Queen of Cat level 1 should preserve sourced npcId');
@@ -4248,7 +4248,7 @@ assert.strictEqual(summonSeraphimData.summon.expPenalty, 0.05, 'Summon Unicorn S
 assert.strictEqual(summonSeraphimData.summon.itemConsumeSteps, 4, 'Summon Unicorn Seraphim should preserve sourced summon crystal consume step mode');
 assert.strictEqual(summonSeraphimData.levels.length, 10, 'Summon Unicorn Seraphim should preserve sourced 10 base levels');
 assert.strictEqual(summonSeraphimData.levels[0].mp, 70, 'Summon Unicorn Seraphim level 1 MP should use sourced initial + consume total');
-assert.strictEqual(summonSeraphimData.levels[1].mp, 108, 'Summon Unicorn Seraphim level 2 MP should preserve sourced initial + consume total');
+assert.strictEqual(summonSeraphimData.levels[1].mp, 78, 'Summon Unicorn Seraphim level 2 MP is the l2hub C4 78 (Lisvus 108)');
 assert.strictEqual(summonSeraphimData.levels[0].itemId, 1459, 'Summon Unicorn Seraphim should preserve sourced crystal item id');
 assert.strictEqual(summonSeraphimData.levels[0].itemCountOT, 1, 'Summon Unicorn Seraphim level 1 should preserve sourced ongoing crystal count');
 assert.strictEqual(summonSeraphimData.levels[0].npcId, 13151, 'Summon Unicorn Seraphim level 1 should preserve sourced npcId');
@@ -4269,7 +4269,7 @@ assert.strictEqual(summonNightshadeData.summon.expPenalty, 0.05, 'Summon Nightsh
 assert.strictEqual(summonNightshadeData.summon.itemConsumeSteps, 4, 'Summon Nightshade should preserve sourced summon crystal consume step mode');
 assert.strictEqual(summonNightshadeData.levels.length, 10, 'Summon Nightshade should preserve sourced 10 base levels');
 assert.strictEqual(summonNightshadeData.levels[0].mp, 70, 'Summon Nightshade level 1 MP should use sourced initial + consume total');
-assert.strictEqual(summonNightshadeData.levels[1].mp, 108, 'Summon Nightshade level 2 MP should preserve sourced initial + consume total');
+assert.strictEqual(summonNightshadeData.levels[1].mp, 78, 'Summon Nightshade level 2 MP is the l2hub C4 78 (Lisvus 108)');
 assert.strictEqual(summonNightshadeData.levels[0].itemId, 1459, 'Summon Nightshade should preserve sourced crystal item id');
 assert.strictEqual(summonNightshadeData.levels[0].itemCountOT, 1, 'Summon Nightshade level 1 should preserve sourced ongoing crystal count');
 assert.strictEqual(summonNightshadeData.levels[0].npcId, 13165, 'Summon Nightshade level 1 should preserve sourced npcId');
@@ -5962,7 +5962,7 @@ assert.strictEqual(npcBleedData.template.distance, 40, 'NPC Bleed should preserv
 assert.strictEqual(npcBleedData.time.buff, 30000, 'NPC Bleed should preserve sourced 10x3s duration');
 assert.strictEqual(npcBleedData.levels.length, 12, 'NPC Bleed should preserve sourced 12 levels');
 assert.strictEqual(npcBleedData.levels[11].power, 10, 'NPC Bleed level 12 should preserve sourced power 10');
-assert.strictEqual(npcBleedData.levels[11].mp, 36, 'NPC Bleed level 12 should preserve sourced mpConsume 36');
+assert.strictEqual(npcBleedData.levels[11].mp, 95, 'NPC Bleed level 12 MP is the l2hub C4 95 (Lisvus 36)');
 const npcBleed = skill({ selfId: 4088, name: 'Bleed', spell: true, power: 10, level: 12, buff: 30000, distance: 40 });
 const npcBleedTarget = statActor();
 const npcBleedOutcome = SkillEffects.execute(session(npcBleedTarget), caster, npcBleedTarget, npcBleed, {
@@ -5990,7 +5990,7 @@ assert.strictEqual(siegeHammerData.template.name, 'Siege Hammer', 'Siege Hammer 
 assert.strictEqual(siegeHammerData.time.hitTime, 4800, 'Siege Hammer should preserve sourced hitTime 4800');
 assert.strictEqual(siegeHammerData.time.reuse, 5000, 'Siege Hammer should preserve sourced reuseDelay 5000');
 assert.strictEqual(siegeHammerData.levels[0].power, 266024, 'Siege Hammer should preserve sourced PDAM power 266024');
-assert.strictEqual(siegeHammerData.levels[0].mp, 150, 'Siege Hammer should preserve sourced mpConsume 150');
+assert.strictEqual(siegeHammerData.levels[0].mp, 0, 'Siege Hammer MP is the l2hub C4 0 (Lisvus 150)');
 const siegeHammer = skill({ selfId: 4079, name: 'Siege Hammer', spell: false, power: 266024, level: 1, distance: 600 });
 const siegeHammerOutcome = SkillEffects.execute(session(), caster, statActor(), siegeHammer, {
     magicSkill: false,

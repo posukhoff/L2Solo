@@ -9,7 +9,9 @@
 // level's `mp` in active.json), and that number must equal the C4 sum.
 // Why Lisvus and not Mobius C4: Mobius C4 skill MP differs from Lisvus on
 // ~770 levels in 90 skills, and l2hub.info/c4 sides with Lisvus on every
-// sample (Charm 1: 37, Thunder Storm 1: 40, Lightning Strike 1: 54).
+// sample (Charm 1: 37, Thunder Storm 1: 40, Lightning Strike 1: 54). A full
+// check of the 821 differing levels against l2hub: Lisvus 778; the other 43
+// are Bless the Soul (a duplicate table, see loadSkills) and L2HUB_MP.
 //
 //   node scripts/check-skill-mp.js [--source <skills dir>] [--fix]
 //
@@ -57,8 +59,11 @@ function loadSkills(dir) {
             const body = match[2];
             const id = Number(attrs.id);
             const tables = {};
+            // A table defined twice in one skill: the first one is C4 (Bless the
+            // Soul 1048 #mpConsume: first 31.. + 8.. initial = l2hub 39, the
+            // second gives 47; Spoil Festival 302 repeats an equal table).
             for (const t of body.matchAll(/<table\s+name="(#[^"]+)">([^<]*)<\/table>/g)) {
-                tables[t[1]] = t[2].trim().split(/\s+/).map(Number);
+                if (!(t[1] in tables)) tables[t[1]] = t[2].trim().split(/\s+/).map(Number);
             }
             // Mobius writes <mpConsume>v</mpConsume>; Lisvus <set name="mpConsume" val="v"/>.
             const single = (tag) => {
@@ -83,6 +88,49 @@ function loadSkills(dir) {
     }
     return skills;
 }
+
+// Levels where Lisvus is not C4: the MP column of l2hub.info/c4 (the C4
+// client) wins. [skill, level, mp, l2hub.info/c4 page]
+const L2HUB_MP = [
+    [27, 1, 19, 'classes/assasin'], // Unlock: Lisvus 20, Mobius 19
+    [27, 5, 31, 'classes/assasin'], // Unlock: Lisvus 32, Mobius 31
+    [27, 8, 43, 'classes/abyss_walker'], // Unlock: Lisvus 44, Mobius 43
+    [27, 9, 47, 'classes/abyss_walker'], // Unlock: Lisvus 48, Mobius 47
+    [27, 10, 51, 'classes/abyss_walker'], // Unlock: Lisvus 52, Mobius 51
+    [27, 12, 59, 'classes/abyss_walker'], // Unlock: Lisvus 60, Mobius 59
+    [27, 13, 63, 'classes/abyss_walker'], // Unlock: Lisvus 64, Mobius 63
+    [34, 1, 19, 'classes/artisan'], // Bandage: Lisvus 20, Mobius 19
+    [34, 2, 41, 'classes/bounty_hunter'], // Bandage: Lisvus 35, Mobius 41
+    [97, 5, 86, 'classes/paladin'], // Sanctuary: Lisvus 87, Mobius 43
+    [97, 7, 92, 'classes/paladin'], // Sanctuary: Lisvus 93, Mobius 46
+    [97, 9, 97, 'classes/paladin'], // Sanctuary: Lisvus 98, Mobius 49
+    [121, 3, 22, 'classes/destroyer'], // Battle Roar: Lisvus 23, Mobius 22
+    [121, 4, 27, 'classes/destroyer'], // Battle Roar: Lisvus 28, Mobius 27
+    [313, 3, 59, 'classes/hawkeye'], // Snipe: Lisvus 60, Mobius 30
+    [313, 4, 61, 'classes/hawkeye'], // Snipe: Lisvus 62, Mobius 31
+    [313, 5, 63, 'classes/hawkeye'], // Snipe: Lisvus 64, Mobius 32
+    [1011, 1, 10, 'classes/dark_mage'], // Heal: Lisvus 11, Mobius 10
+    [1308, 2, 220, 'classes/warcryer'], // Chant of Predator: Lisvus 200, Mobius 220
+    [1331, 2, 78, 'classes/warlock'], // Summon Queen of Cat: Lisvus 108, Mobius 78
+    [1332, 2, 78, 'classes/elemental_summoner'], // Summon Unicorn Seraphim: Lisvus 108, Mobius 78
+    [1333, 2, 78, 'classes/phantom_summoner'], // Summon Nightshade: Lisvus 108, Mobius 78
+    [4075, 2, 22, 'skills/4075 levels'], // Shock: Lisvus 23, Mobius 20
+    [4075, 3, 31, 'skills/4075 levels'], // Shock: Lisvus 32, Mobius 28
+    [4079, 1, 0, 'skills/4079 levels'], // Siege Hammer: Lisvus 150, Mobius 0
+    [4088, 1, 14, 'skills/4088 levels'], // Bleed: Lisvus 9, Mobius 16
+    [4088, 2, 22, 'skills/4088 levels'], // Bleed: Lisvus 13, Mobius 24
+    [4088, 3, 31, 'skills/4088 levels'], // Bleed: Lisvus 17, Mobius 34
+    [4088, 4, 43, 'skills/4088 levels'], // Bleed: Lisvus 22, Mobius 47
+    [4088, 5, 55, 'skills/4088 levels'], // Bleed: Lisvus 27, Mobius 61
+    [4088, 6, 68, 'skills/4088 levels'], // Bleed: Lisvus 31, Mobius 75
+    [4088, 7, 79, 'skills/4088 levels'], // Bleed: Lisvus 34, Mobius 87
+    [4088, 8, 84, 'skills/4088 levels'], // Bleed: Lisvus 34, Mobius 93
+    [4088, 9, 89, 'skills/4088 levels'], // Bleed: Lisvus 35, Mobius 98
+    [4088, 10, 92, 'skills/4088 levels'], // Bleed: Lisvus 35, Mobius 101
+    [4088, 11, 94, 'skills/4088 levels'], // Bleed: Lisvus 36, Mobius 103
+    [4088, 12, 95, 'skills/4088 levels'], // Bleed: Lisvus 36, Mobius 104
+];
+const l2hubMp = new Map(L2HUB_MP.map(([id, level, mp]) => [`${id}:${level}`, mp]));
 
 function main() {
     const dir = argValue('--source') || defaultSource;
@@ -120,12 +168,12 @@ function main() {
                 continue;
             }
             checked++;
-            const want = source.mp(level);
+            const want = l2hubMp.get(`${skill.selfId}:${level}`) ?? source.mp(level);
             // Built as Skillset.populate builds an owned skill.
             const model = new SkillModel({ ...utils.crushOb({ ...skill, levels: undefined }), ...entry });
             const paid = Number(model.fetchConsumedMp());
             const row = { id: skill.selfId, name: skill.template?.name, level, have: paid, want,
-                consumeOnly: source.consumeOnly(level) };
+                consumeOnly: source.consumeOnly(level), l2hub: l2hubMp.has(`${skill.selfId}:${level}`) };
             if (model.semantic.mpConsume !== null && model.semantic.mpConsume !== undefined) {
                 if (paid !== want) rules.push(row);
                 continue;
@@ -154,7 +202,7 @@ function main() {
         const skills = new Set(rows.map((row) => row.id)).size;
         console.log(`${title}: ${rows.length} levels in ${skills} skills`);
         for (const row of rows) {
-            const note = row.have === row.consumeOnly ? ' (initial missing)' : '';
+            const note = row.l2hub ? ' (l2hub)' : row.have === row.consumeOnly ? ' (initial missing)' : '';
             console.log(`  ${row.id} ${row.name} lv${row.level}: ${row.have} -> ${row.want}${note}`);
         }
     };

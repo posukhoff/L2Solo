@@ -32,7 +32,10 @@ const totals = [
     [15, 1, 37, 'Charm 1: 29 + 8 initial (Mobius C4 has 10; l2hub C4 37)'],
     [1108, 1, 97, 'Seal of Flame 1: 77 + 20 (Lisvus defines the initial table without setting it; l2hub 97)'],
     [1206, 1, 3, 'Wind Shackle 1 (l2hub 3)'],
-    [1020, 27, 144, 'Vitalize 27: a level past the old file end paid level 9\'s 111']
+    [1020, 27, 144, 'Vitalize 27: a level past the old file end paid level 9\'s 111'],
+    [1048, 1, 39, 'Bless the Soul 1: the first of two Lisvus #mpConsume tables, 31 + 8 initial (l2hub 39, not 47)'],
+    [97, 5, 86, 'Sanctuary 5: l2hub classes/paladin 86 (Lisvus 87)'],
+    [1011, 1, 10, 'Heal 1: l2hub classes/dark_mage 10 (Lisvus 11)']
 ];
 for (const [selfId, level, mp, why] of totals) {
     assert.strictEqual(ownedSkill(selfId, level).fetchConsumedMp(), mp, why);
