@@ -43,8 +43,8 @@ function lootValue(items = []) {
     return value;
 }
 // Prices are independent of the wish network: callers may supply their
-// current quotes, otherwise native shop/template prices are the baseline.
-function consumablePrices(state, price = id => Number(ItemTemplateIndex.find(DataCache.items, id)?.template?.price || 0)) {
+// current quotes, otherwise the NPC's price at the rate (else the template's).
+function consumablePrices(state, price = id => invoke('GameServer/Bot/Economy/StaticMerchantPricing').botBuyPrice(id)) {
     const shots = invoke('GameServer/Inventory/ShotStock').planForState(state);
     const potion = invoke('GameServer/Bot/AI/HealingPotionStock').purchasePotionFor(state);
     return { shots: Math.max(0, Number(price(shots.selfId)) || 0), potions: Math.max(0, Number(price(potion.selfId)) || 0) };
