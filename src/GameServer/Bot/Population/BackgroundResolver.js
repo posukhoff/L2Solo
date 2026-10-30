@@ -1194,7 +1194,7 @@ function coldBotTurn(fighter, { allies, mob, mobHp, at, time, rng, party = false
     // Alone (no other living ally, a party of one too) the bot fights solo:
     // its class mode, MP price and songs (T100) are a solo bot's. ARCH-NOTE:
     // a hot bot left alone in its party keeps the party mode (BotClassPolicy
-    // .modeFor reads actor.party); todo T108.
+    // .modeFor reads actor.party); todo T126.
     const solo = !allies.some((ally) => ally !== fighter && ally.vitals.hp > 0);
     if (ensureColdSummon(fighter, at, fighter.cooldowns)) return null;
     expireCharges(fighter, at);

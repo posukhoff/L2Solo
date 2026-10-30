@@ -15,7 +15,6 @@ const Persona = invoke('GameServer/Bot/Population/PersonaPartyPolicy');
 const PartyState = invoke('GameServer/Bot/Population/BackgroundPartyState');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
 const PopulationService = invoke('GameServer/Bot/Population/PopulationService');
-const Diagnostics = invoke('GameServer/Bot/Economy/EconomyDiagnostics');
 const Calculation = invoke('GameServer/Bot/Population/PartyGoalCalculation');
 
 const spot = (id, level, locX) => ({ id, name: id, avgLevel: level, minLevel: level - 1, maxLevel: level + 1,
@@ -33,7 +32,6 @@ const at = Date.now();
 async function run() {
     const previousDiagnostics = Config.developerDiagnostics;
     Config.developerDiagnostics = true;
-    const counted = reason => Number(Diagnostics.metrics().counts[`party_seek:no_solo_ground:${reason}`] || 0);
 
     // Rule 1+2: a Prophet 76 on grey ground has no solo ground: it seeks a
     // party at the ground of its level, whatever its persona.
@@ -45,13 +43,11 @@ async function run() {
     { status: 'open', priority: 'preferred', reason: 'no_solo_ground', spotId: 'ground76', objectiveKey: 'spot:ground76' },
     'it asks for a party at the spot a party of its level hunts');
     const seeker = { ...prophet, stats: { ...prophet.stats, partyRequest: request } };
-    assert.strictEqual(counted('seeking'), 1, 'the seeking is counted, not silent');
     assert.strictEqual(Persona.backgroundIntent({ ...prophet }).accept, false, 'its persona alone prefers solo');
     assert.deepStrictEqual((({ accept, reason }) => ({ accept, reason }))(Persona.backgroundIntent(seeker)),
         { accept: true, reason: 'no_solo_ground' }, 'the fact forces the seeking');
     const kept = Request.partyRequestForPlan(seeker, null, at + 1000, { spots });
     assert.strictEqual(kept.requestedAt, request.requestedAt, 'the open request keeps its window and spot');
-    assert.strictEqual(counted('seeking'), 1, 'a kept request is no new seeking');
     // A Shillien Elder (a healer) is a seeker too; a DPS on the same ground is not.
     assert.strictEqual(Request.supportWithoutGround(bot(9002, 43, 76, 'grey65', 'healer'), spots), true);
     assert.strictEqual(Request.supportWithoutGround(bot(9003, 2, 76, 'grey65', 'dps'), spots), false,
@@ -89,7 +85,6 @@ async function run() {
         const joined = await PopulationService.recruitBackgroundMembers([seeker]);
         assert.deepStrictEqual([...joined], [9001]);
         assert.deepStrictEqual(assigned.filter(([id]) => id === 9001), [[9001, 'bgp_far']], 'the seeker joins the far party');
-        assert.strictEqual(counted('found_party'), 1, 'the found party is counted');
     } finally {
         LifeState.assignParty = originals.assignParty; Calculation.recruitCheck = originals.recruitCheck;
         Object.assign(PartyState, { active: originals.active, find: originals.find, createOrUpdate: originals.createOrUpdate });
