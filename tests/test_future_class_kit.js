@@ -35,6 +35,13 @@ assert.equal(Roles.inferRole(actor({})), 'dagger', 'a player picks its second cl
 assert.equal(Roles.inferRole({ ...hawkeye, accountName: 'player1' }), 'dagger', 'a player row: its class role');
 assert.equal(Roles.inferRole({ characterId: hawkeye.characterId, stats: { classId: 4 } }), 'tank', 'other classes keep their role');
 
+// The cold fight reads the same role off the bot's profile (ColdClassPolicy).
+const ColdClassPolicy = invoke('GameServer/Bot/Population/ColdClassPolicy');
+const coldActor = characterId => ColdClassPolicy.actorFor({ classId: ROGUE, level: LEVEL, characterId, skills: [] },
+    { hp: 1, mp: 1, cooldowns: {}, time: 0 });
+assert.equal(Roles.combatRoleFor(coldActor(hawkeye.characterId)), 'archer', 'a cold future Hawkeye fights as an archer');
+assert.equal(Roles.combatRoleFor(coldActor(null)), 'dagger', 'a cold player Rogue: its class role');
+
 const weaponKind = (state) => {
     const weapon = BotGear.planFor(state).items.find((item) => [7, 14].includes(Number(item.slot)));
     return Index.find(DataCache.items, weapon.selfId)?.template?.kind;

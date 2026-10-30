@@ -1,4 +1,5 @@
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
+const BotClassPolicy = invoke('GameServer/Bot/AI/BotClassPolicy');
 const C4SkillRules = invoke('GameServer/Skills/C4SkillRules');
 const EffectStore = invoke('GameServer/Effects/EffectStore');
 const SummonControl = invoke('GameServer/Npc/SummonControl');
@@ -185,11 +186,12 @@ function combatAction(session, actor, target, Generics) {
             actor.select?.({ id: targetId });
             SummonControl.attack(session, actor, summon);
         }
-        // The pet tanks, as in C4 (user 10-29): the owner adds its own damage
-        // only while the mob is on the pet (the pet holds its most hate), so
-        // its hits never draw the mob off; until then it waits, and the pet's
-        // hits take the mob (back). Its heals and buffs above stay free.
-        if (!petHoldsMob(target, summon)) return { handled: true, reason: 'summon_tanks', summon, target };
+        // The pet tanks a solo fight, as in C4 (user 10-29): the owner adds
+        // its own damage only while the mob is on the pet (the pet holds its
+        // most hate), so its hits never draw the mob off; until then it waits,
+        // and the pet's hits take the mob (back). Its heals and buffs above
+        // stay free. In a party the tank holds the mob: the owner fights.
+        if (BotClassPolicy.modeFor(actor, { session }).startsWith('solo') && !petHoldsMob(target, summon)) return { handled: true, reason: 'summon_tanks', summon, target };
 
         // Pet maintenance must not steal a combat tick from the owner while
         // the servitor is already engaged. Let the normal combat selector

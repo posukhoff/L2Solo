@@ -444,6 +444,10 @@ try {
     const freeSession = {};
     BotAI.executeCombat(freeSession, petOwner, mobOn(pet), generics());
     assert.notStrictEqual(freeSession.lastCombatDecision?.action, 'summon_tanks', 'the owner fights once the pet holds the mob');
+    const tank = { fetchId: () => 11050 };
+    const partySession = {};
+    BotAI.executeCombat(partySession, { ...petOwner, party: { partyId: 9 } }, mobOn(tank), generics());
+    assert.notStrictEqual(partySession.lastCombatDecision?.action, 'summon_tanks', 'in a party the tank holds the mob: the owner fights');
 
     const necroCorpseSummon = skill(1154, {
         name: 'Summon Corrupted Man',

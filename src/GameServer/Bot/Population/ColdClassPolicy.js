@@ -41,6 +41,9 @@ function adapter(profile) {
     // The numbers BotCombatUtility's MP price reads (T100): the cold normal
     // attack time and the rate the cold rest (resolveRest) refills MP at.
     const actor={
+        // A bot's id (ColdCombatProfile): a split-kit first class fights for
+        // its future second class (BotRoles.kitClassId), hot and cold.
+        characterId:profile.characterId,
         fetchClassId:()=>profile.classId,fetchLevel:()=>profile.level,
         fetchPAtk:()=>profile.pAtk,fetchMAtk:()=>profile.mAtk,fetchAtkSpd:()=>profile.atkSpd,fetchCastSpd:()=>profile.castSpd,
         fetchNormalAttackMs:()=>ColdCombatProfile.normalAttackMs(profile),
