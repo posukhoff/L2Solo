@@ -18,7 +18,12 @@ const NpcHate = invoke('GameServer/Npc/NpcHate');
 const PathfindingWorkerPool = invoke('GameServer/Geodata/PathfindingWorkerPool');
 const AttackHelper   = new Attack();
 // Dropped chases and mobs left out of combat still hating (sleep, stun, fake death).
-const hateStats = { outOfReach: 0, noPath: 0, idleWithHate: 0 };
+const hateStats = { outOfReach: 0, noPath: 0, idleWithHate: 0, attackTimeout: 0 };
+// A monster that has not attacked or cast at its target for 2 minutes drops the
+// chase and its hate, then walks home (Mobius C4 AttackableAI MAX_ATTACK_TIMEOUT
+// = 1200 game ticks, refreshed by each attack: the timeout is for targets it
+// cannot reach, such as a player running at its speed).
+const ATTACK_TIMEOUT_MS = 120000;
 
 // MoveToPawn already tells the client to follow a moving target. Rebuilding
 // that request on every 100ms combat tick yields visible stop/start jitter.
@@ -303,6 +308,7 @@ class Npc extends NpcModel {
         invoke('GameServer/Npc/NpcWander').cancel(this, session);
         this.switchCombatTarget(target);
         this.state.setCombats(true);
+        this.combatActedAt = Date.now();
 
         this.setStateRun(true);
         this.setStateAttack(true);
@@ -357,6 +363,12 @@ class Npc extends NpcModel {
                 // combat here pins its target to the corpse indefinitely and
                 // makes party resurrection believe the fight never ended.
                 if (actor?.isDead?.() || actor?.state?.fetchDead?.() || actor?.fakeDeath) {
+                    this.abortCombatState(session);
+                    return;
+                }
+
+                if (Date.now() - this.combatActedAt >= ATTACK_TIMEOUT_MS) {
+                    hateStats.attackTimeout += 1;
                     this.abortCombatState(session);
                     return;
                 }
@@ -856,6 +868,7 @@ class Npc extends NpcModel {
         if (!EffectRestrictions.canCast(this)) return;
         if (!this.canUseCombatSkillOn(actor, skill)) return;
         if (actor !== this && !this.hasCombatLineOfSight(actor)) return;
+        this.combatActedAt = Date.now();
         this.attack.remoteHit({
             actor: this,
             dataSendToMe: (packet) => session.dataSendToMe?.(packet),
@@ -908,6 +921,7 @@ class Npc extends NpcModel {
             return;
         }
 
+        if (src === this) this.combatActedAt = Date.now();
         const rangedAttack = AttackRange.weaponKind(src) === 'Weapon.Bow';
         const attackSpeed = src.fetchCollectiveAtkSpd();
         const timing = rangedAttack

@@ -131,10 +131,10 @@ const PopulationStatus = {
             + ` geoHeightReads=${geodata.heightFileReads || 0}+${worker.geodata?.heightFileReads || 0} ${this.npcHateText()}`;
     },
 
-    // Mobs that forgot a chase (out of reach / no path) and mobs left out of combat still hating.
+    // Mobs that forgot a chase (out of reach / no path / 2 min without an attack) and mobs left out of combat still hating.
     npcHateText() {
         const hate = Npc.hateStats();
-        return `npcHate=${hate.outOfReach}o/${hate.noPath}n/${hate.idleWithHate}i`;
+        return `npcHate=${hate.outOfReach}o/${hate.noPath}n/${hate.idleWithHate}i/${hate.attackTimeout}t`;
     },
 
     summary() {

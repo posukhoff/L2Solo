@@ -368,6 +368,32 @@ try {
         assert.notEqual(npc.state.fetchTowards(), 'wander');
         stop(npc); delete world.npcAggroTicker;
     });
+    check('a chase without an attack for 2 minutes ends, and a mob away from home walks back on every tick', () => {
+        const npc = npcAt({ hostile: true }); const player = observer(1000); const world = worldFor([npc], [player]);
+        Geo.hasLineOfSight = () => true;
+        const timeouts = Npc.hateStats().attackTimeout;
+        npc.enterCombatState(player, player.actor);
+        assert.equal(npc.state.fetchCombats(), true);
+        // Held in place, it cannot reach the player to attack.
+        Effects.apply(npc, { key: 'stun', id: 100, type: 'debuff', durationMs: 300000 });
+        mock.timers.tick(119000);
+        assert.equal(npc.state.fetchCombats(), true, 'the chase holds under 2 minutes');
+        mock.timers.tick(2000);
+        assert.equal(npc.state.fetchCombats(), false, 'no attack for 2 minutes: the chase ends');
+        assert.equal(npc.fetchMostHated(), null, 'its hate is dropped');
+        assert.equal(Npc.hateStats().attackTimeout, timeouts + 1);
+        Effects.remove(npc, 'stun');
+        npc.model.locX = 2000;
+        const away = observer(2000); world.user.sessions = [away];
+        assert.equal(Wander.awayFromHome(npc), true);
+        assert.equal(Wander.tick(world, { random: () => 0.99 }), 1, 'no random-walk roll for a mob away from home');
+        assert.equal(npc.state.fetchTowards(), 'wander');
+        const to = Wander.destination(npc, () => 0.99);
+        assert(to.locX < 2000 && to.locX >= 2000 - 401, 'it walks toward its spawn in bounded steps');
+        npc.model.locX = 8;
+        assert.equal(Wander.awayFromHome(npc), false);
+        stop(npc);
+    });
     console.log(`NPC wander: ${assertions} scenario groups passed`);
 } finally {
     for (const npc of created) stop(npc);
