@@ -2104,7 +2104,7 @@ function saleKitPublished(state = {}) {
     return ratesOf(state, true) !== null;
 }
 function survivalReserve(state = {}) {
-    return Array.isArray(state.stats?.money) ? positive(Packet.survivalReserve(state.stats.money)) : keptKit(state).survivalReserve;
+    return Array.isArray(state.stats?.money) ? positive(Packet.survivalReserve(state.stats.money)) : basics(state).survivalReserve;
 }
 function craftIncome(state) {
     // The guarded worker publication is the only production income reader on
@@ -2324,5 +2324,5 @@ function reset() {
 function size() { return { context: cache.size, engine: engine.cache.size, groups: groups.size }; }
 
 module.exports = { quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
-    heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, heldBuildVerdict, eventProofHolds, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, keptKit, keptTargets, saleKitPublished, shotDemand, stateForActor, preparedRouteRows, heldWorkshop, heldWorkshopOf, keptWorkshop, RETAIN_LIMIT, leafCheck, survivalReserve, forgetContext, forget, reset, configure, registerProvider,
+    heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, heldBuildVerdict, eventProofHolds, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, kitRates, keptKit, keptTargets, saleKitPublished, shotDemand, stateForActor, preparedRouteRows, heldWorkshop, heldWorkshopOf, keptWorkshop, RETAIN_LIMIT, leafCheck, survivalReserve, forgetContext, forget, reset, configure, registerProvider,
     craftIncome };

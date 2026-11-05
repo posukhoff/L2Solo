@@ -236,11 +236,13 @@ async function run() {
     const rates = Packet.ratesOf(packet.kitRates);
     assert(rates, 'the build publishes its kit rates');
     const rated = changes => ({ ...state, stats: { ...state.stats, kitRates: Packet.kitRates({ ...rates, ...changes }) } });
-    const published = rated({ potionUse: 5, potionRestUse: 0, outingHours: 3 });
-    assert.equal(potionLine(published), 15, 'the errand fills an outing of the published use');
-    assert.equal(potionLine(rated({ potionUse: 5, potionRestUse: 0, outingHours: .5 })), 5, 'never less than one hour of it');
+    const published = rated({ potionUse: 15, potionRestUse: 0, outingHours: 1 });
+    assert.equal(potionLine(published), 15, 'the errand fills the published line (one hour of use)');
+    const potionTarget = value => Potions.restockPlan(value, { unitPrice: Restock.quoteFor(potionId, 'Dion').price }).targetAmount;
+    assert.equal(potionTarget(rated({ potionUse: 5, potionRestUse: 0, outingHours: 3 })), 15, 'its target is an outing of that use');
+    assert.equal(potionTarget(rated({ potionUse: 5, potionRestUse: 0, outingHours: .5 })), 5, 'never less than one hour of it');
     // The rates are read by kind: a level or weapon change since the build buys its new potion at them.
-    assert.equal(potionLine(rated({ potionUse: 5, potionRestUse: 0, outingHours: 3, potionId: 0 })), 15,
+    assert.equal(potionLine(rated({ potionUse: 15, potionRestUse: 0, outingHours: 1, potionId: 0 })), 15,
         'a row of another potion buys the bot\'s potion at the row\'s rates');
     // No build has rated the kit yet: no potion is bought, no basics are built.
     const unrated = { ...state, stats: { ...state.stats, kitRates: undefined } };

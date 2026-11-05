@@ -1046,14 +1046,17 @@ async function run() {
         const stock = context.stock('shots');
         assert(stock.usePerHour > 0 && stock.target === Math.ceil(stock.usePerHour * stock.targetHours));
         const Shot = invoke('GameServer/Inventory/ShotStock');
-        assert.equal(Shot.keptAmounts(base)[stock.itemId], stock.target);
+        // Main reads the rates this build publishes over the same bag.
+        const rated = { ...base, stats: { ...base.stats, kitRates: context.statsPacket.kitRates } };
+        assert.equal(Shot.keptAmounts(rated)[stock.itemId], stock.target);
         assert(invoke('GameServer/Bot/Economy/PurchaseFunding').operatingReserve({ level: 78, adena: 1e9 }) > 0);
-        const plan = Shot.restockPlan({ ...base, adena: 1e8 }, { unitPrice: 10 });
+        const plan = Shot.restockPlan({ ...rated, adena: 1e8 }, { unitPrice: 10 });
         assert.equal(plan.targetAmount, stock.target);
         assert(plan.amount >= stock.survivalMissing && plan.amount <= stock.target, 'the floor permits survival and only worthwhile extra stock');
         assert.equal(plan.reserve, context.survivalReserve);
         const potion = context.stock('potions');
-        assert.equal(invoke('GameServer/Bot/AI/HealingPotionStock').targetAmountFor(base), potion.target);
+        assert(invoke('GameServer/Bot/AI/HealingPotionStock').targetAmountFor(rated) >= potion.target,
+            'the sale keeps at least the build\'s potion target (the wallet bounds a purchase, not what is kept)');
         const gap = context.network.queue.find(row => !row.funded);
         const stockWish = context.network.queue.find(row => row.key === 'stock:shots');
         if (stockWish && gap.key !== stockWish.key && context.network.queue.indexOf(gap) < context.network.queue.indexOf(stockWish)) {
