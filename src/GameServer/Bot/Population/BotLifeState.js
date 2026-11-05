@@ -1138,28 +1138,39 @@ function writeHeldOnRevision(member, { stats = {}, columns = {} }, reason) {
 // one, nothing written, when the bits add nothing), null when the row is not far
 // (the caller raises where the bot is now) or the write failed (counted). Cost:
 // one UPDATE per raise that adds a bit; main raises a few per far bot per hour.
+// The facts a raise carries (Situations.raisedFacts: a command's held answer, the
+// unreachable marks) are written whole, worked out over the cached row's: a worker
+// commit between that read and this write that moved them is overwritten (rare: a
+// body's raises ride its bag while it is hot; these land here only on its edge).
 function raiseOnRow(characterId, names, reason = 'situation') {
-    const id = Number(characterId), where = Situations.place(cache.get(id) || { phase: 'cold' });
-    const bits = { woken: 0, waiting: 0, wishDirty: 0, leaf: false }, each = [];
+    const id = Number(characterId), cached = cache.get(id), where = Situations.place(cached || { phase: 'cold' });
+    const bits = { woken: 0, waiting: 0, wishDirty: 0, leaf: false, cleared: 0 }, each = [];
+    const facts = { earning: cached?.stats?.earning, unreachable: cached?.stats?.unreachable }, written = {};
     for (const [name, payload] of names) {
-        const one = Situations.delta(name, payload, where);
-        bits.woken |= one.woken; bits.waiting |= one.waiting; bits.wishDirty |= one.wishDirty; bits.leaf ||= one.leaf;
+        const one = Situations.delta(name, payload, where, facts);
+        // In order: a decision a fact took clears what came before it, a later raise wakes it again.
+        bits.woken = (bits.woken | one.woken) & ~one.taken; bits.cleared = (bits.cleared | one.taken) & ~one.woken;
+        bits.waiting |= one.waiting; bits.wishDirty |= one.wishDirty; bits.leaf ||= one.leaf;
+        for (const key of ['earning', 'unreachable']) {
+            if (one.facts[key] !== undefined) facts[key] = written[key] = one.facts[key];
+        }
         each.push([name, payload, one]);
     }
+    const factKeys = Object.keys(written);
     // Nothing to OR: no write, no revision move, no stale step for the worker.
-    if (!bits.woken && !bits.waiting && !bits.wishDirty && !bits.leaf) {
-        const cached = cache.get(id);
+    if (!bits.woken && !bits.cleared && !bits.waiting && !bits.wishDirty && !bits.leaf && !factKeys.length) {
         return Promise.resolve(cached?.phase === 'cold' ? cached : null);
     }
     const mind = "COALESCE(NULLIF(mindJson, ''), '{}')", at = path => `json_extract(${mind}, '$.${path}')`;
     return module.exports.serializeClanLevelUp(id, () => Database.execute([`UPDATE ${TABLE} SET
         mindJson = json_set(${mind},
-            '$.woken', COALESCE(${at('woken')}, ?) | ?, '$.waiting', COALESCE(${at('waiting')}, 0) | ?,
+            '$.woken', (COALESCE(${at('woken')}, ?) & ~?) | ?, '$.waiting', COALESCE(${at('waiting')}, 0) | ?,
             '$.wishDirty', COALESCE(${at('wishDirty')}, 0) | ?, '$.situationSeq', COALESCE(${at('situationSeq')}, 0) + 1
-            ${bits.leaf ? ", '$.activityLeaf', 0" : ''}),
+            ${bits.leaf ? ", '$.activityLeaf', 0" : ''}${factKeys.map(key => `, '$.${key}', json(?)`).join('')}),
         simulationRevision = simulationRevision + 1, updatedAt = ?
         WHERE characterId = ? AND phase = 'cold'
-        RETURNING *`, [Situations.ALL, bits.woken, bits.waiting, bits.wishDirty, now(), id], { read: true }]))
+        RETURNING *`, [Situations.ALL, bits.cleared, bits.woken, bits.waiting, bits.wishDirty,
+        ...factKeys.map(key => JSON.stringify(written[key])), now(), id], { read: true }]))
         .then(([row] = []) => {
             if (!row) return null;
             for (const [name, payload, one] of each) Situations.counted(name, where, 0, one.woken, id, one.waiting, payload);

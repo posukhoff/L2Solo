@@ -2,23 +2,14 @@ const SpotService = invoke('GameServer/Bot/AI/SpotService');
 const DecisionEvents = invoke('GameServer/Bot/AI/DecisionEvents');
 const DecisionSections = invoke('GameServer/Bot/Economy/DecisionSections');
 const TownTransitPolicy = invoke('GameServer/Bot/AI/TownTransitPolicy');
-const Karma = invoke('GameServer/Karma');
 const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
+const SpotRiskPolicy = invoke('GameServer/Bot/Population/SpotRiskPolicy');
 
-const MOVE_TO_SPOT_COOLDOWN = 15000;
 const EMPTY_HUNT_SCANS = 3;
 
 function occupationKey(leaf) {
     return JSON.stringify([leaf.activity, leaf.rootKey, leaf.kind, leaf.itemId, leaf.npcId,
         leaf.town, leaf.spotId, leaf.recipeId, leaf.sourceType]);
-}
-
-function now() {
-    return Date.now();
-}
-
-function canMoveToSpot(session) {
-    return !session.lastSpotMoveAt || (now() - session.lastSpotMoveAt) > MOVE_TO_SPOT_COOLDOWN;
 }
 
 // A hot solo hunter's look at its ground, the cold round's rule (BackgroundResolver:
@@ -155,39 +146,37 @@ const BotDecisionService = {
             };
         }
 
+        // Main never chooses a spot (situations.md §8): the body walks to the spot its
+        // held decisions name (DecisionEvents.heldSpotId) or raises the earning spot's
+        // situation and waits for the background thread's answer.
         if (status.mode === 'hunting') {
             const economy = DecisionEvents.held(session);
             const leaf = economy?.network.activity;
+            const stats = DecisionEvents.statsFor(session);
+            // A player's command waits for its answer: the card still names the spot it replaced.
+            if (DecisionEvents.commandPending(session)) return { action: 'search_locally', reason: 'awaiting_command_answer' };
             if (leaf?.activity && leaf.activity !== 'hunting') {
                 // A deferred errand keeps its wish, but cannot pin a hunter
                 // forever to ground where the expanded live scan found no
-                // fight. Choose recovery ground using the actual body/kit.
+                // fight: the ground is empty for it (spot_empty, raised once a
+                // stay: stats.emptyGround, as groundLook's), and it walks to its
+                // held earning answer when that names another spot.
                 if (session.deferredOccupation === occupationKey(leaf) && Number(session.noTargetTicks || 0) >= EMPTY_HUNT_SCANS
-                    && session.huntingTargetScan && !session.huntTargetScanPending
-                    && canMoveToSpot(session)) {
-                    session.lastSpotMoveAt = now();
-                    const loc = physicalLocation(status, session);
-                    const recoveryStatus = { ...status, loc, spot: SpotService.findCurrentSpot(loc) };
-                    const recoveryOptions = {
-                        spotRetryAfter: session.spotRetryAfter,
-                        walkOnly: Karma.closesTowns(session.actor?.fetchKarma?.()),
-                        allowEasierSpots: true,
-                        equipment: session.actor?.backpack?.fetchItems?.(),
-                        matchupProfiles: session.actor ? invoke('GameServer/Bot/AI/BotTargetMatchup').actorProfiles([session.actor]) : undefined
-                    };
-                    let candidate = SpotService.findBestSpot(recoveryStatus, recoveryOptions);
-                    if (!candidate?.spot) {
-                        candidate = SpotService.findBestSpot(recoveryStatus, { ...recoveryOptions,
-                            minLevelGap: 1 - status.level, allowEasierSpots: false });
+                    && session.huntingTargetScan && !session.huntTargetScanPending) {
+                    const ground = String(SpotService.findCurrentSpot(physicalLocation(status, session))?.id ?? '');
+                    if (String(stats.emptyGround ?? '') !== ground) {
+                        stats.emptyGround = ground;
+                        DecisionEvents.raiseDecision(session, 'spot_empty');
                     }
-                    if (candidate?.spot) return { action: 'move_to_spot', reason: 'deferred_occupation_hunt',
-                        spot: candidate.spot, deferredOccupation: session.deferredOccupation };
+                    const heldId = DecisionEvents.heldSpotId(session);
+                    const spot = heldId && heldId !== ground ? SpotService.findById(heldId) : null;
+                    if (spot) return { action: 'move_to_spot', reason: 'deferred_occupation_hunt',
+                        spot, deferredOccupation: session.deferredOccupation };
                 }
                 return { action: 'continue_occupation', reason: 'selected_occupation', activity: leaf.activity };
             }
             const loc = physicalLocation(status, session);
             const physical = SpotService.findCurrentSpot(loc);
-            const stats = DecisionEvents.statsFor(session);
             const plannedOn = spotId => DecisionSections.occupationPlanned({ activity: 'hunting', spotId, stats }, leaf);
             // The cold planner may already have accepted a capacity detour.
             // Both arrival and a later return from town use that same ground;
@@ -204,20 +193,13 @@ const BotDecisionService = {
             spot ||= leaf?.spotId ? SpotService.findById(leaf.spotId) : null;
             let reason = 'selected_hunting_ground';
             // An accepted empty decision is different from awaiting the first
-            // worker answer. Once a town visit has ended, select the default
-            // farm route; an empty target scan in the field still stays local.
+            // worker answer. Once a town visit has ended, the bot returns to its
+            // held earning answer; an empty target scan in the field stays local.
             const completedVisit = !leaf && economy?.decided === true
                 && (session.pendingFarmDepartureAnnouncement || TownTransitPolicy.townAt(loc));
             if (completedVisit) {
-                if (!canMoveToSpot(session)) return { action: 'search_locally', reason: 'spot_move_cooldown' };
-                const candidate = SpotService.findBestSpot({ ...status, loc, spot: physical }, {
-                    spotRetryAfter: session.spotRetryAfter,
-                    walkOnly: Karma.closesTowns(session.actor?.fetchKarma?.()),
-                    allowEasierSpots: true,
-                    equipment: session.actor?.backpack?.fetchItems?.(),
-                    matchupProfiles: session.actor ? invoke('GameServer/Bot/AI/BotTargetMatchup').actorProfiles([session.actor]) : undefined
-                });
-                spot = candidate?.spot || null;
+                const heldId = DecisionEvents.heldSpotId(session);
+                spot = heldId ? SpotService.findById(heldId) : null;
                 reason = 'return_to_hunting';
                 if (!spot) return { action: 'search_locally', reason: 'no_hunting_route' };
             }
@@ -225,12 +207,8 @@ const BotDecisionService = {
                 return { action: 'search_locally', reason: economy?.decided === false
                     ? 'awaiting_occupation_decision' : 'selected_hunting_ground' };
             }
-            if (Number(session.spotRetryAfter?.[spot.id] || 0) > now()) {
-                return { action: 'search_locally', reason: 'planned_route_unavailable' };
-            }
-            if (!canMoveToSpot(session)) {
-                return { action: 'search_locally', reason: 'spot_move_cooldown' };
-            }
+            // A spot its body could not reach waits for the answer its spot_unreachable woke.
+            if (SpotRiskPolicy.isUnreachable(stats, spot.id)) return { action: 'search_locally', reason: 'planned_route_unavailable' };
             return { action: 'move_to_spot', reason, spot };
         }
 

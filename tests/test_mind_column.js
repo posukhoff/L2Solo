@@ -155,6 +155,18 @@ async function bodyMoney(id) {
         const quietRevision = (await row(raisedId)).simulationRevision;
         assert(await Life.raiseOnRow(raisedId, [['goal_moved', null]]), 'a raise that adds nothing still lands');
         assert.equal((await row(raisedId)).simulationRevision, quietRevision, 'and moves no revision');
+        // The facts a raise carries land in the mind with its bits (situations.md B6): a spot the body could not
+        // reach is marked, a player's command is the held earning answer and takes the bit its move woke, and the
+        // next situation that wakes the earning spot drops the marks.
+        await Life.raiseOnRow(raisedId, [['spot_unreachable', { spotId: 'far', reason: 'walk_timeout' }]]);
+        let factMind = JSON.parse((await row(raisedId)).mindJson);
+        assert.deepEqual(factMind.unreachable, [{ spotId: 'far', reason: 'walk_timeout' }], 'the unreachable mark is on the row');
+        assert(factMind.woken & 1, 'and it woke the earning spot');
+        await Life.raiseOnRow(raisedId, [['moved_by_world', null], ['player_command', { spotId: 'near', at: 5 }]]);
+        factMind = JSON.parse((await row(raisedId)).mindJson);
+        assert.equal(factMind.earning.spotId, 'near', 'a command is the held answer');
+        assert.equal(factMind.woken & 1, 0, 'and it took the earning spot\'s bit');
+        assert.deepEqual(factMind.unreachable, null, 'the move that woke the earning spot dropped the marks');
         // A rejection whose row is not far and whose body is not in the world is counted, not lost silently.
         const Events = invoke('GameServer/Bot/AI/DecisionEvents'), FailureLog = require('../src/FailureLog');
         const lostBefore = FailureLog.snapshot()?.['situations.raise_lost'] || 0;

@@ -161,6 +161,48 @@ function onWorker() {
         const heard = count(() => Economy.forState(raised(turned, 'spot_disappoints', { stop: Situations.REST }), deps(7)));
         assert.equal(heard.searches, 1, 'a disappointing stay wakes one search at the rest');
     }
+    // The body's inputs (situations.md B6). A spot it could not reach is marked: the search it wakes passes it
+    // by, and the mark lasts until the bot's next own situation that re-decides the spot (no clock).
+    const raisedWith = (state, name, payload) => ({ ...state,
+        stats: Situations.raise({ ...state.stats }, name, payload, Situations.place(state), state.characterId) });
+    {
+        const failed = raisedWith(turned, 'spot_unreachable', { spotId: 'poor', reason: 'walk_timeout' });
+        const read = count(() => Economy.forState(failed, deps(15)));
+        assert.equal(read.searches, 1, 'spot_unreachable wakes one search');
+        assert.equal(read.result.statsPacket.earning.spotId, 'rich', 'which passes the unreachable spot by');
+        const after = published(failed, read.result);
+        assert.deepEqual(after.stats.unreachable.map(mark => mark.spotId), ['poor'], 'the mark stays after the answer');
+        const died = raised(after, 'died');
+        assert.equal(died.stats.unreachable, null, 'the next situation that re-decides the spot drops it');
+        assert.equal(Economy.forState(died, deps(16)).statsPacket.earning.spotId, 'poor', 'and the spot is a choice again');
+    }
+    // A player's command naming a spot is the held answer itself (no search), and takes the bit its move woke.
+    {
+        const commanded = raisedWith(raised(held, 'moved_by_world'), 'player_command', { spotId: 'poor', at: time(17) });
+        assert.equal(commanded.stats.earning.spotId, 'poor', 'the command is the held answer');
+        assert.equal(commanded.stats.earning.earning, held.stats.earning.earning, 'with the bot\'s hour kept');
+        assert.equal(Situations.woken(commanded.stats, 'earning_spot'), false, 'it took the decision');
+        const read = count(() => Economy.forState(commanded, deps(17)));
+        assert.equal(read.searches, 0, 'a command searches nothing');
+        assert.equal(read.result.hunt.spotId, 'poor', 'the bot hunts the commanded spot');
+    }
+    // Karma: appearing or clearing is the decision's situation, and while it lasts the decision takes the
+    // karma wash's choice (its own spot, near and eligible) instead of the best earning.
+    {
+        const red = { ...held, stats: { ...held.stats, karma: 50 } };
+        assert(Situations.detect(held, red).includes('karma_changed'), 'karma that appears is a situation');
+        const woken = raised(red, 'karma_changed');
+        // The fixture's spots lie in Gludin's peace zone, where no karma washes.
+        const peace = utils.isInPeaceZone;
+        utils.isInPeaceZone = () => false;
+        let read;
+        try { read = count(() => Economy.forState(woken, deps(18))); } finally { utils.isInPeaceZone = peace; }
+        assert.equal(read.searches, 1, 'karma_changed wakes one search');
+        assert.equal(read.result.statsPacket.earning.spotId, 'poor', 'which takes the wash\'s spot');
+        const washing = published(woken, read.result);
+        assert(Situations.detect(washing, { ...washing, stats: { ...washing.stats, karma: 0 } }).includes('karma_changed'),
+            'and karma that clears');
+    }
     // A situation that does not wake it searches nothing.
     for (const name of ['recipe_learned', 'arrived_town', 'goal_failed']) {
         assert.equal(count(() => Economy.forState(raised(turned, name), deps(8))).searches, 0, `${name} does not wake the earning spot`);
@@ -209,7 +251,8 @@ function onWorker() {
     assert.deepEqual(unwoken(), [], 'the earning spot is never decided unwoken');
     Economy.reset();
     console.log('PASS earning spot on its situations (worker): held across prices, weight, samples and catalogue; '
-        + 'level at the rest, gear in town, death, empty, dangerous, potions, party left; party member keeps; none held');
+        + 'level at the rest, gear in town, death, empty, dangerous, potions, party left; unreachable marks, a command, karma; '
+        + 'party member keeps; none held');
 }
 
 function onMain() {

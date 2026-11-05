@@ -6,6 +6,7 @@ const TownGatekeeperCatalog = invoke('GameServer/Bot/AI/TownGatekeeperCatalog');
 const TownNpcApproach = invoke('GameServer/Bot/AI/TownNpcApproach');
 const CompanionNavigationRecovery = invoke('GameServer/Bot/AI/CompanionNavigationRecovery');
 const TownTransitPolicy = invoke('GameServer/Bot/AI/TownTransitPolicy');
+const DecisionEvents = invoke('GameServer/Bot/AI/DecisionEvents');
 
 const SOE_SKILL_ID = 2013;
 const SOE_CAST_MS = 20000;
@@ -251,6 +252,11 @@ function recoverOrDefer(session, bot, reason = 'gatekeeper_route_timeout') {
         session, bot, recoveryKey(relocation), relocation.token);
     cancel(session, bot, reason);
     TownTransitPolicy.defer(session, bot, reason);
+    // A confirmed failure with no escape: the spot is unreachable for it, the earning
+    // spot's situation (situations.md B6; its mark keeps the body off it until the
+    // answer). An unconfirmed one (a queued path) is only deferred.
+    if (!escape && confirmed) DecisionEvents.raiseDecision(session, 'spot_unreachable',
+        { payload: { spotId: String(relocation.spotId), reason } });
     if (!escape) return false;
     const spot = SpotService.findById(relocation.spotId) || { id: relocation.spotId, center: relocation.destination };
     return startEmergencyScroll(session, bot, spot, relocation.destination, relocation.preserveSpot);

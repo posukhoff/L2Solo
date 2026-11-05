@@ -2044,7 +2044,7 @@ function shotDemand(economy, state, timestamp, previous = null) {
 // it buys (our model choice, not C4): the worker's published targets
 // (stats.stockTargets) over the live bag, so a town errand's restock and the
 // sale list read the plan the worker decided under spot occupancy instead of
-// a second earning-spot search per read (IncomeRoute.select in the basics).
+// a second earning-spot read per read (IncomeRoute.heldRoute in the basics).
 // The basics answer instead when the row is missing or names another potion or
 // shot (level, weapon: no published target yet), and when shots that cannot
 // restock rose above the stock owned at the build (their target was capped by

@@ -30,9 +30,11 @@ function compact(stats = {}) {
 // and published card). It is saved in its own column (bot_life_state.mindJson),
 // so a refused body write never takes the decision with it.
 // woken, waiting, situationSeq: the bot's woken decisions (Situations, their one owner); earning: the earning
-// spot's held answer (EquipmentIncomeRoute.answerOf).
+// spot's held answer (EquipmentIncomeRoute.answerOf); unreachable: the spots its body could not reach, the
+// earning spot's exclusion marks (SpotRiskPolicy.withUnreachable, written by Situations' raise).
 const MIND_KEYS = Object.freeze(['decisionSeq', 'activityLeaf', 'wishFocus', 'wishSections', 'wishDirty',
-    'dormantWishes', 'money', 'stockTargets', 'dangerPrice', 'wishAdvisory', 'woken', 'waiting', 'situationSeq', 'earning']);
+    'dormantWishes', 'money', 'stockTargets', 'dangerPrice', 'wishAdvisory', 'woken', 'waiting', 'situationSeq', 'earning',
+    'unreachable']);
 
 // A whole stats object (or a stats patch) as its two saved halves.
 function split(stats = {}) {

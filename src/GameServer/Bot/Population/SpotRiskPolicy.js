@@ -13,6 +13,11 @@ const MAX_BACKOFFS = 8;
 const CAPACITY_BACKOFF_STEPS = 1;
 const MAX_FAILED_HUNTS = 3;
 const FAILED_HUNT_RECOVERY_WINS = 3;
+// Spots the bot could not reach (situations.md B6, spot_unreachable: a body's walk
+// or gatekeeper relocation that failed): stats.unreachable [{ spotId, reason }], the
+// latest MAX_UNREACHABLE kept (limits.md). No end of their own (no step, no clock):
+// Situations drops them at the bot's next situation that re-decides its earning spot.
+const MAX_UNREACHABLE = 8;
 
 function normalizedSpotId(value) {
     const spotId = String(value || '').trim();
@@ -216,9 +221,10 @@ function backoffForStates(states = [], spotId, timestamp = Date.now()) {
 }
 
 // The spots one holder's marks exclude, added to `excluded`: its active
-// death and "was full" marks, its competition avoid and its death pressure.
-// Returns the holder's step at which the first of those marks ends (Infinity:
-// none ends by itself; death pressure ends only by a resolve).
+// death and "was full" marks, its competition avoid, its death pressure and the
+// spots it could not reach (unreachable). Returns the holder's step at which the first of those marks ends (Infinity:
+// none ends by itself; death pressure ends only by a resolve, an unreachable mark
+// only by a raise).
 function addExclusions(state, excluded) {
     let untilStep = Infinity;
     const mark = (spotId, entry) => { excluded.add(spotId); untilStep = Math.min(untilStep, Number(entry.untilStep)); };
@@ -229,8 +235,21 @@ function addExclusions(state, excluded) {
     if (normalizedSpotId(avoid?.spotId) && markActive(avoid, state)) mark(normalizedSpotId(avoid.spotId), avoid);
     const pressure = deathPressure(state);
     if (pressure) excluded.add(pressure.spotId);
+    for (const entry of unreachable(state.stats)) excluded.add(entry.spotId);
     return untilStep;
 }
+
+// The unreachable marks of a stats object (written only through Situations' raise).
+function unreachable(stats) {
+    return Array.isArray(stats?.unreachable) ? stats.unreachable.filter(entry => normalizedSpotId(entry?.spotId)) : [];
+}
+// The marks with one more: the spot's earlier mark replaced, the oldest past MAX_UNREACHABLE dropped.
+function withUnreachable(stats, spotId, reason = 'unreachable') {
+    const id = normalizedSpotId(spotId);
+    const kept = unreachable(stats).filter(entry => String(entry.spotId) !== id);
+    return id ? [...kept, { spotId: id, reason: String(reason || 'unreachable') }].slice(-MAX_UNREACHABLE) : kept;
+}
+const isUnreachable = (stats, spotId) => unreachable(stats).some(entry => String(entry.spotId) === String(spotId));
 
 // Callers still pass a time as the second argument; marks no longer read it.
 function excludedSpotIdsForStates(states = []) {
@@ -320,6 +339,10 @@ module.exports = {
     BACKOFF_STEPS,
     MAX_BACKOFF_STEPS,
     MAX_BACKOFFS,
+    MAX_UNREACHABLE,
+    unreachable,
+    withUnreachable,
+    isUnreachable,
     marksInSteps,
     CAPACITY_BACKOFF_STEPS,
     MAX_FAILED_HUNTS,
