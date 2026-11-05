@@ -847,6 +847,11 @@ class ColdSimulationCoordinator {
         case 'command_request':
             this.handleCommandRequest(message, worker, epoch);
             break;
+        case 'spot_command':
+            // Two bodies near a player met on a spot (enemy_met): the holder starts its fight
+            // when its body may (BotRevenge.fromSpot, counted enemy_met:<outcome>).
+            for (const command of payload.commands) invoke('GameServer/Bot/AI/BotRevenge').fromSpot(command);
+            break;
         case 'heartbeat':
             this.lastHeartbeatAt = Date.now();
             this.noteBusy(payload);

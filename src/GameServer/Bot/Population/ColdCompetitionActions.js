@@ -51,7 +51,8 @@ class ColdCompetitionActions {
         this.lastScanAt = options.framed ? Math.max(this.lastScanAt, forecast.at) : forecast.at;
         const candidates = (forecast.events || forecast.recent || []).filter(e => e.at === forecast.at
             && (e.action === 'avoid' || e.action === 'yield' || (e.action === 'contest' && this.conflictsEnabled())
-                || (e.action === 'revenge' && this.conflictsEnabled() && this.pvpEnabled()) || (e.action === 'offer_party' && e.accepted)))
+                || (e.action === 'revenge' && this.conflictsEnabled() && this.pvpEnabled())
+                || (e.action === 'clan_war' && this.pvpEnabled()) || (e.action === 'offer_party' && e.accepted)))
             .sort((a, b) => priority(b) - priority(a));
         this.running = (async () => {
             const started = this.budgetNow();
@@ -135,15 +136,15 @@ class ColdCompetitionActions {
         }
         if (event.action === 'clan_war') {
             if (!this.pvpEnabled()) return { ok: false, reason: 'forecast_only' };
-            return require('./ColdPartyConflict').apply({ ...this, event, waitMs: 1000, cooldownMs: 15000, disputeCooldownMs: 15000 });
+            return require('./ColdPartyConflict').apply({ ...this, event, waitMs: 1000 });
         }
         if (event.action === 'revenge') {
             if (!this.conflictsEnabled() || !this.pvpEnabled()) return { ok: false, reason: 'forecast_only' };
-            return require('./ColdPartyConflict').apply({ ...this, event, waitMs: WAIT_MS, cooldownMs: CONFLICT_COOLDOWN_MS, disputeCooldownMs: DISPUTE_COOLDOWN_MS });
+            return require('./ColdPartyConflict').apply({ ...this, event, waitMs: WAIT_MS });
         }
         if (event.action === 'contest' && (participants.some(p => p.partyId) || event.pvpIntent === true && this.pvpEnabled())) {
             if (!this.conflictsEnabled()) return { ok: false, reason: 'forecast_only' };
-            return require('./ColdPartyConflict').apply({ ...this, event, waitMs: WAIT_MS, cooldownMs: CONFLICT_COOLDOWN_MS, disputeCooldownMs: DISPUTE_COOLDOWN_MS });
+            return require('./ColdPartyConflict').apply({ ...this, event, waitMs: WAIT_MS });
         }
         const states = participants.map(p => this.life.cachedState(p.id));
         if (!states.every((s, i) => eligible(s, event, participants[i], now))) return { ok: false, reason: 'state_changed_or_busy' };
