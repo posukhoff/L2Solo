@@ -1,5 +1,6 @@
 const Memory = invoke('GameServer/Social/InteractionMemoryRuntime');
 const Policy = require('../../Social/RevengePolicy');
+const { hotStanding } = require('../../Social/PvpAggression');
 const Threats = invoke('GameServer/Bot/AI/BotPvpThreats');
 const Risk = invoke('GameServer/Bot/AI/BotPvpRisk');
 const Arena = invoke('GameServer/World/ArenaCombatRules');
@@ -15,7 +16,10 @@ const NOTICE_RADIUS = Policy.NOTICE_RADIUS;
 function assessment(session, target, now) {
     const identity = actor => ({ id: Number(actor.fetchId()), clanId: Number(actor.fetchClanId?.() || 0),
         partyId: actor.session?.coldLifeState?.party?.partyId });
-    return Policy.evaluate(Memory.assess(identity(session.actor), identity(target), {}, now), Voice.profile(session));
+    const standing = hotStanding(target);
+    // A bot with karma starts no revenge (the rule's own karma); a red target is free.
+    return Policy.evaluate(Memory.assess(identity(session.actor), identity(target), {}, now), Voice.profile(session),
+        { ownKarma: hotStanding(session.actor).karma, targetKarma: standing.karma, targetFlagged: standing.flagged });
 }
 function stillWanted(session, objective, now) {
     return objective.reason !== 'revenge' || assessment(session, objective.target, now).chance > objective.revengeRoll;
@@ -111,11 +115,6 @@ function request(session, target, reason, lines, attack = true, now = Date.now()
 }
 
 function tryStart(session, now = Date.now(), rng = Math.random) {
-    // Clear karma through hunting before initiating another revenge fight.
-    if (session?.actor?.fetchKarma?.() > 0) {
-        delete session.pendingPvpProvocation;
-        return false;
-    }
     if (session?.pendingPvpProvocation) return flushPending(session, now);
     if (!String(session?.accountId || '').startsWith('bot_') || session.arenaEphemeral ||
         session.staticService || session.partyCompanion || session.pvpDefense || session.pvpRevenge || session.pvpAggressors?.size ||

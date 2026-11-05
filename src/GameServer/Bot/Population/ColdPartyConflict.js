@@ -11,6 +11,7 @@ const partyIdOf = state => state?.party?.partyId || state?.partyId || null;
 
 const { reaction, select } = require('../../Social/ConflictParticipationPolicy');
 const RevengePolicy = require('../../Social/RevengePolicy');
+const { coldPair } = require('../../Social/PvpAggression');
 const ColdRevengeMonitor = require('./ColdRevengeMonitor');
 const ColdPvpResolver = require('./ColdPvpResolver');
 const RelationshipContext = require('../../Social/RelationshipContext');
@@ -53,7 +54,8 @@ async function apply({ event, life, owner, memory, parties, personaFor, particip
         if (!revenge || resume) return true;
         const [a, b] = sides.map(s => s.principal);
         const identity = s => ({ id: s.characterId, clanId: Number(s.stats?.clanId || 0), partyId: partyIdOf(s) });
-        const social = RevengePolicy.evaluate(memory.assess(identity(a), identity(b), {}, now()), personaFor(a));
+        const social = RevengePolicy.evaluate(memory.assess(identity(a), identity(b), {}, now()), personaFor(a),
+            coldPair(a, b, now()));
         return Number.isFinite(event.revengeRoll) && event.revengeRoll >= 0 && event.revengeRoll < social.chance
             && states.every(s => ColdRevengeMonitor.available(s, now()))
             && ColdRevengeMonitor.nearby(a, b)

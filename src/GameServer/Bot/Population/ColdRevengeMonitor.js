@@ -1,4 +1,5 @@
 const Policy = require('../../Social/RevengePolicy');
+const { coldPair } = require('../../Social/PvpAggression');
 const TendencyRoll = require('../AI/TendencyRoll');
 const MAX_ACTORS = 128;
 const partyId = state => state.party?.partyId || state.partyId || null;
@@ -7,7 +8,7 @@ function available(state, at) {
     return state?.phase === 'cold' && ['hunting', 'grouped'].includes(state.activity) && state.vitals?.hp > 0
         && state.spotId && !state.stats?.travel && !state.stats?.coldCompetition?.wait
         && !state.stats?.supplyErrand && !state.stats?.warehouseWorkflow && !state.stats?.marketReturn
-        && !(state.stats?.karma > 0) && !(state.stats?.pvpEncounter?.expiresAt > at)
+        && !(state.stats?.pvpEncounter?.expiresAt > at)
         && Math.max(Number(state.stats?.revengeUntil || 0), Number(state.stats?.coldCompetition?.conflictUntil || 0)) <= at;
 }
 function nearby(a, b) {
@@ -50,7 +51,7 @@ class ColdRevengeMonitor {
                 const peer = read(id), b = peer?.state;
                 if (!available(b, at) || unitId(a) === unitId(b) || this.cooldowns.has(unitId(b)) || !nearby(a, b)) continue;
                 if (!memory.views.get(id)?.ready) continue;
-                const social = Policy.evaluate(memory.assess(identity(a), identity(b), {}, at), personaFor(a));
+                const social = Policy.evaluate(memory.assess(identity(a), identity(b), {}, at), personaFor(a), coldPair(a, b, at));
                 if (!(social.chance > 0)) continue;
                 // One roll per grievance (actor, peer) and retry window, the cooldown
                 // this decision starts: independent of the sample time, the batch
