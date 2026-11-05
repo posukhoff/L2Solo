@@ -42,14 +42,23 @@ function collect(state, options = {}) {
     const Shot = invoke('GameServer/Inventory/ShotStock');
     const Potions = invoke('GameServer/Bot/AI/HealingPotionStock');
     const survivalIds = new Set([736, Shot.planForState(current).selfId, Potions.purchasePotionFor(current).selfId]);
-    let preparedState = null, prepared = null;
+    // The visit's amounts: the kit rates over the bag after the purchases
+    // before (the wallet after the sale) at this town's quotes (EconomyContext.
+    // keptKit), unless the visit holds its own (a hot visit: options.kit, fixed
+    // at its first restock). The worker's funding reads its build (forState).
+    const onMain = require('node:worker_threads').isMainThread;
+    const quote = id => quoteFor(id, town, null, options.seller)?.price;
+    let preparedState = null, prepared = null, kitState = null, visitKit = null;
+    const kitFor = () => {
+        if (kitState !== current) { visitKit = Economy.keptKit(current, {}, quote); kitState = current; }
+        return visitKit;
+    };
     const economics = () => {
-        if (preparedState !== current) {
-            prepared = require('node:worker_threads').isMainThread ? Economy.keptKit(current) : Economy.forState(current);
-            preparedState = current;
-        }
+        if (onMain) return kitFor();
+        if (preparedState !== current) { prepared = Economy.forState(current); preparedState = current; }
         return prepared;
     };
+    const kit = () => options.kit || kitFor();
     const baskets = new Map();
     let order = 0;
     const PartyBreak = invoke('GameServer/Bot/Population/PartyMarketBreak'); // lazy: optional, war trips only
@@ -107,7 +116,7 @@ function collect(state, options = {}) {
         const potion = Potions.purchasePotionFor(current), offer = quoteFor(potion.selfId, town, null, options.seller);
         if (offer) {
             const context = economics();
-            const plan = Potions.restockPlan(current, { potion, unitPrice: offer.price, context });
+            const plan = Potions.restockPlan(current, { potion, unitPrice: offer.price, context, kit: kit() });
             add(potion.selfId, plan.amount, offer, {}, { survival: Funding.survivalTranche(context, potion.selfId, offer.price) });
         }
     }
@@ -116,7 +125,7 @@ function collect(state, options = {}) {
         const offer = quoteFor(736, town, null, options.seller);
         if (offer) {
             const context = economics();
-            const plan = Scrolls.restockPlan(current, { unitPrice: offer.price, context });
+            const plan = Scrolls.restockPlan(current, { unitPrice: offer.price, context, kit: kit() });
             add(736, plan.amount, offer, plan.funding, { survival: Funding.survivalTranche(context, 736, offer.price) });
         }
     }
@@ -129,7 +138,7 @@ function collect(state, options = {}) {
         const shot = Shot.planForState(current), offer = quoteFor(shot.selfId, town, null, options.seller);
         if (offer) {
             const context = economics();
-            const plan = Shot.restockPlan(current, { plan: shot, unitPrice: offer.price, potionUnitPrice: 0, context });
+            const plan = Shot.restockPlan(current, { plan: shot, unitPrice: offer.price, potionUnitPrice: 0, context, kit: kit() });
             add(shot.selfId, plan.npcAmount, offer, {}, { survival: Funding.survivalTranche(context, shot.selfId, offer.price) });
         }
     }

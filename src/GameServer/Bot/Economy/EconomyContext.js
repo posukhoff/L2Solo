@@ -903,13 +903,14 @@ function scrollSavingHours(state, origin) {
 // The kit's live inputs (kitReader): the bot's shot and potion now (a new
 // weapon grade or level reads the rates by kind, not by the item they were
 // built for), the units it holds of them (the shot with its beginner grant),
-// its Scroll of Escape and whether karma closes the towns.
-function kitBag(state) {
+// its Scroll of Escape, whether karma closes the towns and its hour (the
+// money packet's, else the caller's build's).
+function kitBag(state, hour = Packet.hourAdena(state.stats?.money)) {
     const ShotStock = invoke('GameServer/Inventory/ShotStock'), plan = ShotStock.planForState(state);
     const potionId = Number(HealingPotionStock.purchasePotionFor(state).selfId), beginner = ShotStock.beginnerAmount(state, plan);
     return { shotId: Number(plan.selfId), shots: positive(state.inventory?.[plan.selfId]?.amount) + beginner, beginner,
         potionId, potions: positive(state.inventory?.[potionId]?.amount), scrolls: positive(state.inventory?.[736]?.amount),
-        closed: invoke('GameServer/Karma').closesTowns(state.stats?.karma) };
+        closed: invoke('GameServer/Karma').closesTowns(state.stats?.karma), hour: positive(hour) };
 }
 // The one kit rule, hot and cold, worker and main (plan §5): stock(kind),
 // kitCost(id) and the survival reserve over the build's rates (kitRates: use
@@ -922,7 +923,11 @@ function kitBag(state) {
 // and the reserve is empty. Prices go through the caller's price reader, so
 // each read joins the review's inputs. scrollHours: the hours a Scroll of
 // Escape saves, read only when a scroll is priced (a build solves its route
-// lazily).
+// lazily). The scroll is no survival item (situations.md B2): one is carried
+// per outing when the walk it saves is worth more than it costs at the bot's
+// hour, none in towns karma closes; a broke bot walks. It is no part of the
+// reserve; a purchase pays it from money the queue does not hold (ScrollStock).
+// One per outing is our rule, not C4.
 // The survival kit is priced at the NPC's list price (StaticMerchantPricing.
 // botNpcListPrice, kept per item), not the bot's estimate: the reserve holds
 // that, and a restock's survival tranche spends that share (kitCost) at any
@@ -951,19 +956,18 @@ function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates
             benefitPerUnit: use + restUse > 0 ? positive(shots ? rates.shotBenefit : rates.potionBenefit) : 0 };
     };
     const kit = [base('shots'), base('potions')];
-    const escapeCost = held || bag.closed ? 0 : survivalPrice(736, price) * Math.max(0, 1 - bag.scrolls);
-    // The survival reserve: the escape scroll and the kit's missing survival units at their list price.
-    const reserve = escapeCost + kit.reduce((sum, row) => sum + row.survivalMissing * row.survivalPrice, 0);
+    // The survival reserve: the kit's missing survival units at their list price.
+    const reserve = kit.reduce((sum, row) => sum + row.survivalMissing * row.survivalPrice, 0);
     const hours = held ? 0 : positive(rates.outingHours);
     const stock = kind => {
         if (kind === 'scrolls') {
-            const current = bag.scrolls, survivalTarget = held ? current : 1,
-                target = held ? current : invoke('GameServer/Bot/Travel/ScrollStock').TARGET_AMOUNT;
-            const missing = Math.max(0, target - Math.max(current, survivalTarget));
+            const current = bag.scrolls, unitPrice = price(736);
+            const target = held ? current : bag.closed ? 0 : current >= 1 || scrollHours() * bag.hour > unitPrice ? 1 : 0;
+            const missing = Math.max(0, target - current);
             const benefitPerUnit = current < target ? scrollHours() : 0;
             return { itemId: 736, usePerHour: 0, current, hours: Infinity, targetHours: hours, target,
-                survivalTarget, survivalMissing: Math.max(0, survivalTarget - current), missing,
-                unitPrice: price(736), survivalPrice: survivalPrice(736, price), benefitPerUnit, benefitHours: missing * benefitPerUnit, needed: current < target };
+                survivalTarget: 0, survivalMissing: 0, missing, unitPrice, survivalPrice: survivalPrice(736, price),
+                benefitPerUnit, benefitHours: missing * benefitPerUnit, needed: false };
         }
         const row = kit[kind === 'shots' ? 0 : 1], { itemId, current, use, restUse, line } = row;
         // The rest bottles (RestPotion.stockUse) beside the survival use: an
@@ -986,8 +990,6 @@ function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates
     // the share beside the queue's money and never refuses the kit itself).
     const kitCost = (id, unitPrice = null) => {
         const quoted = Number.isFinite(unitPrice) && unitPrice > 0;
-        if (Number(id) === 736 && (held || bag.closed)) return 0;
-        if (Number(id) === 736) return quoted ? unitPrice * Math.max(0, 1 - bag.scrolls) : escapeCost;
         return kit.filter(row => row.itemId === Number(id)).reduce((sum, row) => sum
             + row.survivalMissing * (quoted ? unitPrice : row.survivalPrice), 0);
     };
@@ -1170,7 +1172,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         scrollHours: undefined, outingHours: targetHours,
         policy: { ownedUsePerHour: shotPolicy.usePerHour, beginnerUsePerHour: shotPolicy.beginnerUsePerHour,
             paidUsePerHour: shotPolicy.paidUsePerHour } };
-    const { stock, kitCost, reserve } = kitReader(rates, kitBag(state), Funding.budget(state), price,
+    const { stock, kitCost, reserve } = kitReader(rates, kitBag(state, hourAdena), Funding.budget(state), price,
         () => rates.scrollHours ??= scrollHoursFor(state, deps.spots, bestSpotId));
     // The published scroll hours (StatsPacket.kitRates): the build's own answer,
     // else the catalogue spot's cached one, never a route solve of its own.
@@ -1185,7 +1187,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
 // A kept foundation: the plan's pieces, its kit rates read over the live bag
 // and wallet (kitReader).
 function foundationFromPlan(state, plan, deps, price) {
-    const { stock, kitCost, reserve } = kitReader(plan.rates, kitBag(state), Funding.budget(state), price,
+    const { stock, kitCost, reserve } = kitReader(plan.rates, kitBag(state, plan.hourAdena), Funding.budget(state), price,
         () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
     const scrollHours = () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId, false);
     return { hunt: plan.hunt, hourAdena: plan.hourAdena, survivalReserve: reserve,
@@ -1975,7 +1977,7 @@ function view(state, plan, deps, built = {}) {
     // A later view starts from the build's prices of the plan's own items.
     const price = built.price || pricing(state, plan.persona, built.board, plan.timestamp, deps, built.read, new Map(plan.prices)).price;
     // The plan's kit rates over the bag, wallet and prices of this view's state.
-    const { stock, kitCost } = built.kit || kitReader(plan.rates, kitBag(state), Funding.budget(state), price,
+    const { stock, kitCost } = built.kit || kitReader(plan.rates, kitBag(state, plan.hourAdena), Funding.budget(state), price,
         () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
     // Reprice funding against this physical wallet. Reuse of benefit/source
     // calculations is never a retained permission to spend an old balance.
@@ -2083,9 +2085,12 @@ function ratesOf(state, quiet) {
 // The kit a purchase reads (ShotStock, HealingPotionStock and ScrollStock
 // restocks, NpcRestockPlan, ColdMarketService funding, the card view):
 // stock, kitCost, survivalReserve and price, priced at the bot's prices.
-function keptKit(state = {}, deps = {}) {
+// quote(id): a town's own price (NpcRestockPlan.quoteFor), read before the
+// bot's: a visit's amounts are priced where it buys.
+function keptKit(state = {}, deps = {}, quote = null) {
     let read = null;
-    const price = id => (read ||= personal(state, deps).price)(id);
+    const own = id => (read ||= personal(state, deps).price)(id);
+    const price = !quote ? own : id => { const local = Number(quote(id)); return local > 0 ? local : own(id); };
     const rates = ratesOf(state);
     const { stock, kitCost, reserve } = kitReader(rates, kitBag(state), Funding.budget(state), price);
     return { stock, kitCost, survivalReserve: reserve, price };

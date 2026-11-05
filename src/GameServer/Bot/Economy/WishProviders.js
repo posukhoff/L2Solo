@@ -1322,10 +1322,9 @@ function buildProjection(state, ctx, deps) {
         if (!key) continue;
         const heldStock = nativeQuantities.physical(stock.itemId);
         quantityInputs?.stockPhysical(`stock:${kind}`, stock.itemId, heldStock);
+        // Shots, potions and the scroll are ordinary consumables (situations.md
+        // A5, B2): none outranks unfinished equipment; each is weighed by its value.
         root({ key: `stock:${kind}`, need: 'power', object: { itemId: stock.itemId, amount, kind },
-            // A scroll saves time, not a life: it never outranks the kit, the
-            // visit's restock brings it along (user 11-01, T177).
-            progressionPriority: progression.required && kind !== 'scrolls' && stock.survivalMissing > 0 ? 4 : 0,
             valueHours: amount * stock.benefitPerUnit * powerWeight, price: amount * stock.unitPrice,
             // The survival tranche is the kit's cost (kitCost), already held
             // by the survival reserve; the money queue charges only the rest.
