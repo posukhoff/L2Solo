@@ -1177,7 +1177,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     // The published scroll hours (StatsPacket.kitRates): the build's own answer,
     // else the catalogue spot's cached one, never a route solve of its own.
     const scrollHours = () => rates.scrollHours ??= scrollHoursFor(state, deps.spots, bestSpotId, false);
-    return { tableRole, hunt, hourAdena, survivalReserve: reserve, kitCost, rates,
+    return { tableRole, hunt, hourAdena, refillReserve: reserve, kitCost, rates,
         lostGearHours, bestSpotId, deathHours, bestTable, stock, scrollHours,
         earning: income.earning,
         riskWeight: Valuation.riskWeight(state, persona),
@@ -1190,7 +1190,7 @@ function foundationFromPlan(state, plan, deps, price) {
     const { stock, kitCost, reserve } = kitReader(plan.rates, kitBag(state, plan.hourAdena), Funding.budget(state), price,
         () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
     const scrollHours = () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId, false);
-    return { hunt: plan.hunt, hourAdena: plan.hourAdena, survivalReserve: reserve,
+    return { hunt: plan.hunt, hourAdena: plan.hourAdena, refillReserve: reserve,
         rates: plan.rates, stock, kitCost, scrollHours, lostGearHours: plan.lostGearHours, bestSpotId: plan.bestSpotId,
         earning: plan.earning,
         deathHours: plan.deathHours, riskWeight: plan.riskWeight,
@@ -1545,7 +1545,7 @@ function buildForState(state, deps) {
         ...(keptBase ? { horizonHours: keptBase.horizonHours } : {}),
         riskWeight: base.riskWeight, bestSpotId: base.bestSpotId, deathHours: base.deathHours, lostGearHours: base.lostGearHours,
         karmaHours: base.karmaHours, expectedDeathHours: base.expectedDeathHours, stock: base.stock,
-        survivalReserve: base.survivalReserve, kitCost: base.kitCost, hourAdena: base.hourAdena,
+        refillReserve: base.refillReserve, kitCost: base.kitCost, hourAdena: base.hourAdena,
         walletBoundary: cash.watch,
         budgetBoundary: budget.watch,
         // What a node read, so that a later candidate of this build reusing
@@ -1596,7 +1596,7 @@ function buildForState(state, deps) {
         context.itemUsefulness = () => 0; context.worth = price; context.purchaseBudget = () => 0;
         context.statsPacket = { wishFocus: context.network.focus, dormantWishes: context.network.dormant,
             decisionSeq: context.network.decisionSeq, activityLeaf: context.network.activityLeaf,
-            money: state.stats?.money || Packet.money({ hourAdena: 0, moneyPrice: 0, survivalReserve: base.survivalReserve, firstUnfundedPrice: 0 }), kitRates: state.stats?.kitRates || kitRates(base),
+            money: state.stats?.money || Packet.money({ hourAdena: 0, moneyPrice: 0, refillReserve: base.refillReserve, firstUnfundedPrice: 0 }), kitRates: state.stats?.kitRates || kitRates(base),
             dangerPrice: dangerPrice(base) };
         readIds = null;
         return view(state, planOf(context, base, { key, tripHour, prices }), deps, { price, kit: base, board, read, spotValue: context.spotValue, trip: context.trip });
@@ -1641,7 +1641,7 @@ function buildForState(state, deps) {
         stockFor: context.stockFor,
         completionKey: context.completionKey,
         characterId: state.characterId, decisionSeq: state.stats?.decisionSeq, activityLeaf: state.stats?.activityLeaf,
-        wallet: context.wallet, survivalReserve: base.survivalReserve,
+        wallet: context.wallet, refillReserve: base.refillReserve,
         reconsider,
         // Diagnostics only: the events that re-weigh (network:reconsider), 'quiet' for none.
         reconsiderReasons: !diagnostic ? null : moved ? Sections.sectionNames(moved) : ['quiet'],
@@ -1666,7 +1666,7 @@ function buildForState(state, deps) {
     context.watchList ||= [];
     context.statsPacket = { wishFocus: network.focus, dormantWishes: network.dormant,
         decisionSeq: network.decisionSeq, activityLeaf: network.activityLeaf,
-        money: Funding.packetFor(network, context.hourAdena, base.survivalReserve), kitRates: kitRates(base, context.gapHorizonHours),
+        money: Funding.packetFor(network, context.hourAdena, base.refillReserve), kitRates: kitRates(base, context.gapHorizonHours),
         dangerPrice: dangerPrice(base), wishDirty: 0 };
     // The decisions this build took (only this build's result carries them, never a plan served later): the build,
     // and the earning spot when it searched (its held answer published, the spot marks it read cleared: they hold
@@ -1676,7 +1676,7 @@ function buildForState(state, deps) {
         woken: Situations.decided(state.stats, earningDecided ? ['earning_spot', 'build'] : 'build', { caller: deps.caller || 'economy_context',
             subject: state.characterId, answer: !Trace.on() ? null : { earning_spot: [base.earning?.spotId ?? 'none', state.stats?.earning?.spotId ?? 'none'],
                 build: [network.activity?.key || network.focus?.[0], held?.plan.network?.activity?.key || held?.plan.network?.focus?.[0]] } }) };
-    let cumulative = base.survivalReserve;
+    let cumulative = base.refillReserve;
     for (const wish of network.queue) {
         cumulative += cashCharge(wish);
         budget.watch(cumulative);
@@ -1729,7 +1729,7 @@ function buildForState(state, deps) {
         durationMs: Math.round(elapsed * 100) / 100,
         sequence: inputSequence, decisionSeq: network.decisionSeq, activityLeaf: network.activityLeaf,
         revision: state.simulation?.revision, wallet: positive(state.adena), escrow: positive(deps.buyOrderEscrow),
-        available: network.available, reserve: base.survivalReserve, wishKey: network.focus?.[0],
+        available: network.available, reserve: base.refillReserve, wishKey: network.focus?.[0],
         gate: eventVerdict.reason || 'valid', mask: Sections.sectionNames(mask).join('+') || 'none',
         heldFocus: held?.plan.network.focus?.[0], freshFocus: network.focus?.[0],
         heldLeaf: held?.plan.network.activity?.key, freshLeaf: network.activity?.key });
@@ -1875,7 +1875,7 @@ function planOf(context, base, { key, tripHour, projection = null, knowledgeEnab
         riskWeight: context.riskWeight, bestSpotId: context.bestSpotId, earning: base.earning,
         deathHours: context.deathHours,
         lostGearHours: context.lostGearHours, karmaHours: context.karmaHours, expectedDeathHours: context.expectedDeathHours,
-        survivalReserve: context.survivalReserve, rates: base.rates, hourAdena: context.hourAdena, workshop: context.workshop,
+        refillReserve: context.refillReserve, rates: base.rates, hourAdena: context.hourAdena, workshop: context.workshop,
         workshopKey: context.workshopKey,
         routeKey: context.routeKey, routeRows: context.routeRows, tripHour,
         network: compactNetwork(context.network), moneyPrice: context.moneyPrice, gapHorizonHours: context.gapHorizonHours,
@@ -1982,16 +1982,16 @@ function view(state, plan, deps, built = {}) {
     // Reprice funding against this physical wallet. Reuse of benefit/source
     // calculations is never a retained permission to spend an old balance.
     const funding = moneyQueue(plan.network.queue, Funding.budget(state, deps.buyOrderEscrow),
-        plan.survivalReserve, plan.hourAdena > 0 ? 1 / plan.hourAdena : 0);
+        plan.refillReserve, plan.hourAdena > 0 ? 1 / plan.hourAdena : 0);
     const inputKey = plan.key;
     const network = { ...plan.network, inputKey, ...funding };
     const statsPacket = plan.pending ? plan.statsPacket : { ...plan.statsPacket,
-        money: Funding.packetFor(network, plan.hourAdena, plan.survivalReserve) };
+        money: Funding.packetFor(network, plan.hourAdena, plan.refillReserve) };
     const context = { inputKey, actorKey: plan.actorKey, state,
         timestamp: plan.timestamp, gearThreatMask: plan.gearThreatMask, persona: plan.persona, board: built.board, hunt: plan.hunt,
         price, buyback, riskWeight: plan.riskWeight, bestSpotId: plan.bestSpotId,
         deathHours: plan.deathHours, lostGearHours: plan.lostGearHours, karmaHours: plan.karmaHours,
-        expectedDeathHours: plan.expectedDeathHours, stock, survivalReserve: plan.survivalReserve, kitCost,
+        expectedDeathHours: plan.expectedDeathHours, stock, refillReserve: plan.refillReserve, kitCost,
         hourAdena: plan.hourAdena, workshop: plan.workshop, routeKey: plan.routeKey, routeRows: plan.routeRows,
         // The caller's route of this state; the plan's only from where it was built.
         trip: built.trip || deps.tripCost || Trip.preparedReader(deps.routeRows
@@ -2084,7 +2084,7 @@ function ratesOf(state, quiet) {
 }
 // The kit a purchase reads (ShotStock, HealingPotionStock and ScrollStock
 // restocks, NpcRestockPlan, ColdMarketService funding, the card view):
-// stock, kitCost, survivalReserve and price, priced at the bot's prices.
+// stock, kitCost, refillReserve and price, priced at the bot's prices.
 // quote(id): a town's own price (NpcRestockPlan.quoteFor), read before the
 // bot's: a visit's amounts are priced where it buys.
 function keptKit(state = {}, deps = {}, quote = null) {
@@ -2093,7 +2093,7 @@ function keptKit(state = {}, deps = {}, quote = null) {
     const price = !quote ? own : id => { const local = Number(quote(id)); return local > 0 ? local : own(id); };
     const rates = ratesOf(state);
     const { stock, kitCost, reserve } = kitReader(rates, kitBag(state), Funding.budget(state), price);
-    return { stock, kitCost, survivalReserve: reserve, price };
+    return { stock, kitCost, refillReserve: reserve, price };
 }
 // The sale's kept stock (ItemDisposition.saleCandidates): targets only, no
 // price read. The wallet does not bound what is kept: the rest bottles' cap
@@ -2108,8 +2108,8 @@ function keptTargets(state = {}) {
 function saleKitPublished(state = {}) {
     return ratesOf(state, true) !== null;
 }
-function survivalReserve(state = {}) {
-    return Array.isArray(state.stats?.money) ? positive(Packet.survivalReserve(state.stats.money)) : basics(state).survivalReserve;
+function refillReserve(state = {}) {
+    return Array.isArray(state.stats?.money) ? positive(Packet.refillReserve(state.stats.money)) : basics(state).refillReserve;
 }
 function craftIncome(state) {
     // The guarded worker publication is the only production income reader on
@@ -2329,5 +2329,5 @@ function reset() {
 function size() { return { context: cache.size, engine: engine.cache.size, groups: groups.size }; }
 
 module.exports = { quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
-    heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, heldBuildVerdict, eventProofHolds, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, kitRates, keptKit, keptTargets, saleKitPublished, shotDemand, stateForActor, preparedRouteRows, heldWorkshop, heldWorkshopOf, keptWorkshop, RETAIN_LIMIT, leafCheck, survivalReserve, forgetContext, forget, reset, configure, registerProvider,
+    heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, heldBuildVerdict, eventProofHolds, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, kitRates, keptKit, keptTargets, saleKitPublished, shotDemand, stateForActor, preparedRouteRows, heldWorkshop, heldWorkshopOf, keptWorkshop, RETAIN_LIMIT, leafCheck, refillReserve, forgetContext, forget, reset, configure, registerProvider,
     craftIncome };
