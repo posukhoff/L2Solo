@@ -2063,6 +2063,15 @@ function applySchemaMigrations() {
                 characterId INTEGER PRIMARY KEY REFERENCES bot_life_state(characterId) ON DELETE CASCADE,
                 tuple TEXT NOT NULL
             );
+        `)],
+        // The kit's published targets (stats.stockTargets) gave way to its rates
+        // (stats.kitRates, StatsPacket): the old row is read by nothing and would
+        // stay in the bot's stats for good.
+        ['drop-kit-targets', () => connection.exec(`
+            UPDATE bot_life_state SET mindJson = json_remove(mindJson, '$.stockTargets')
+            WHERE mindJson LIKE '%stockTargets%' AND json_valid(mindJson);
+            UPDATE bot_life_state SET statsJson = json_remove(statsJson, '$.stockTargets')
+            WHERE statsJson LIKE '%stockTargets%' AND json_valid(statsJson);
         `)]
     ];
     const migrate = (apply, record) => {

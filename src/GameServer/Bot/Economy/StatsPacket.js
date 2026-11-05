@@ -9,10 +9,12 @@
 //   [hourAdena, moneyPrice (hours per Adena), survivalReserve, firstUnfundedPrice (the gap's cash, 0 without one),
 //    then one (ratio, cumulative, itemId) row per funded queue wish, at most MONEY_ROWS; with more funded
 //    wishes the last row merges the tail and carries itemId 0 (FX-E3)].
-// stats.stockTargets, the plan's kit targets (EconomyContext.stockTargets writes it):
-//   [potionId, potionTarget, shotId, shotTarget, shotCurrentAtBuild, potionSurvivalTarget, gapHorizonHours,
-//    shotsCanRestock (1/0), shotSurvivalTarget, scrollHours (-1: the build did not price the scroll)].
-//   Rows saved before the restock slots carry 5 or 7 slots and read as such.
+// stats.kitRates, the build's kit rates (EconomyContext.kitRates writes it; EconomyContext.kitReader
+// computes the amounts from them over the live bag, wallet and prices):
+//   [shotId, shotUse (per hour while the bot holds shots or a restock pays), shotBenefit (hours per unit),
+//    shotsCanRestock (1/0), potionId, potionUse (survival drinks per hour), potionRestUse (rest bottles per hour,
+//    RestPotion), potionBenefit (hours per unit), scrollHours (-1: the build did not price the scroll),
+//    outingHours, gapHorizonHours]. A row of another length (the old stockTargets) reads as none.
 // stats.dangerPrice: [deathHours, riskWeight] (DangerRule's weights for the cold fight).
 // Values are stored as given: their rounding is the writer's caller's rule.
 
@@ -48,26 +50,28 @@ function setFundedCumulative(packet, row, cumulative) {
     return packet;
 }
 
-// The kit targets row.
-const SCROLL_UNPRICED = -1;
-function stockTargets({ potionId, potionTarget, shotId, shotTarget, shotCurrentAtBuild, potionSurvivalTarget, gapHorizonHours,
-    shotsCanRestock, shotSurvivalTarget, scrollHours }) {
-    return [potionId, potionTarget, shotId, shotTarget, shotCurrentAtBuild, potionSurvivalTarget, gapHorizonHours,
-        shotsCanRestock ? 1 : 0, shotSurvivalTarget, scrollHours ?? SCROLL_UNPRICED];
+// The kit rates row.
+const SCROLL_UNPRICED = -1, RATES = 11;
+const SHOT_USE = 1, POTION_USE = 5, OUTING = 9, HORIZON = 10;
+function kitRates({ shotId, shotUse, shotBenefit, shotsCanRestock, potionId, potionUse, potionRestUse, potionBenefit,
+    scrollHours, outingHours, gapHorizonHours }) {
+    return [shotId, shotUse, shotBenefit, shotsCanRestock ? 1 : 0, potionId, potionUse, potionRestUse, potionBenefit,
+        scrollHours ?? SCROLL_UNPRICED, outingHours, gapHorizonHours];
 }
-// The row by name; null without one (fewer than its five first slots).
-// complete: the row has the restock slots and finite targets (a row from
-// before them serves the sale only). scrollHours: null when unpriced.
-function kitRow(row) {
-    if (!Array.isArray(row) || row.length < 5) return null;
-    return { potionId: row[0], potionTarget: row[1], shotId: row[2], shotTarget: row[3], shotCurrentAtBuild: row[4],
-        potionSurvivalTarget: row[5], gapHorizonHours: row[6], shotsCanRestock: row[7] === 1, shotSurvivalTarget: row[8],
-        scrollHours: row[9] >= 0 ? row[9] : null,
-        complete: row.length >= 10 && [1, 3, 5, 8, 9].every(at => Number.isFinite(row[at])) };
+// A row is its length with its two item ids (a saved value may be null: JSON keeps no Infinity).
+const isRates = row => Array.isArray(row) && row.length === RATES && Number.isFinite(row[0]) && Number.isFinite(row[4]);
+// The row by name; null without one. scrollHours: null when unpriced.
+function ratesOf(row) {
+    if (!isRates(row)) return null;
+    return { shotId: row[0], shotUse: row[SHOT_USE], shotBenefit: row[2], shotsCanRestock: row[3] === 1, potionId: row[4],
+        potionUse: row[POTION_USE], potionRestUse: row[6], potionBenefit: row[7], scrollHours: Number(row[8]) >= 0 ? row[8] : null,
+        outingHours: row[OUTING], gapHorizonHours: row[HORIZON] };
 }
-// One slot without the row object (read per rest tick and per step).
-const potionSurvivalTarget = row => slot(row, 5);
-const gapHorizonHours = row => slot(row, 6);
+// One value without the row object (read per rest tick and per step); undefined without a row.
+// lineOf: a kind's line, one hour of its use (the survival drinks for potions).
+const lineOf = (row, kind) => isRates(row) ? Math.ceil(Math.max(0, Number(row[kind === 'shots' ? SHOT_USE : POTION_USE]) || 0)) : undefined;
+const outingHours = row => isRates(row) ? row[OUTING] : undefined;
+const gapHorizonHours = row => isRates(row) ? row[HORIZON] : undefined;
 
 // The danger price.
 const dangerPrice = ({ deathHours, riskWeight }) => [deathHours, riskWeight];
@@ -76,4 +80,4 @@ const riskWeight = row => slot(row, 1);
 
 module.exports = { MONEY_ROWS, money, addFunded, hasMoney, hourAdena, moneyPrice, survivalReserve, firstUnfundedPrice,
     fundedRows, fundedRatio, fundedCumulative, fundedItem, setFundedCumulative,
-    stockTargets, kitRow, potionSurvivalTarget, gapHorizonHours, dangerPrice, deathHours, riskWeight };
+    kitRates, ratesOf, lineOf, outingHours, gapHorizonHours, dangerPrice, deathHours, riskWeight };
