@@ -965,6 +965,16 @@ function nearEvents(id, previous, entry, applied) {
     const where = Situations.place(row, previous);
     for (const name of DecisionSections.softEvents(row, stats.wishSections, softInputFor(id, Date.now()))) Situations.raise(stats, name, null, where, id);
 }
+// A near bot's post that moved its spot (SpotService.assignSpot's near_spot, leaveSpot's
+// near_left; main raises no moved_by_world for it, Situations.detect's body): an arrival
+// at the spot it now stands on, or a leave, for the spot aggregate. Its own hook, apart
+// from nearEvents (whose soft part goes in step 4). previous: the record's row before.
+function nearArrival(id, previous, row) {
+    const from = previous?.spotId ?? null, to = row.spotId ?? null;
+    if (String(from ?? '') === String(to ?? '')) return;
+    if (from != null) Situations.note('spot:left@hot');
+    if (to != null) Situations.note('spot:arrival@hot');
+}
 // A bot's goal revision (GoalState.revision on main, 0 = no goal) from the
 // 'goals' table; undefined while the table loads (the decision skips the compare).
 const goalRevision = characterId => tables.ready('goals')
@@ -2124,7 +2134,10 @@ function startKernel(config = {}) {
         const previousEntry = kernel.states.get(Number(id)), previous = previousEntry?.state;
         // A new life starts from no record (activations fence the bot first),
         // so the raises applied are this life's.
-        if (previous && previous !== entry.state && entry.state.phase === 'hot') nearEvents(id, previous, entry, Number(previousEntry.raiseSeq || 0));
+        if (previous && previous !== entry.state && entry.state.phase === 'hot') {
+            nearEvents(id, previous, entry, Number(previousEntry.raiseSeq || 0));
+            nearArrival(id, previous, entry.state);
+        }
         // The near bookkeeping ends with the body: a far record keeps no
         // route rows of a near decision, and the next activation's raises
         // count from its session's first.
