@@ -19,6 +19,8 @@ function hunterSpot(state, spotOf) {
 }
 const TendencyRoll = require('../AI/TendencyRoll');
 const { ColdRevengeMonitor } = require('./ColdRevengeMonitor');
+// Over room per target species: the spot aggregate's rule (B9), read here until this scan goes (step 2 S5).
+const { targetPressure } = require('./SpotContest');
 class ColdCompetitionMonitor {
     // ownSide(states, timestamp): how a side knows itself (U26). The worker passes the
     // exact one (ColdPvpResolver.ownSide); standalone tests see themselves as others do.
@@ -99,8 +101,7 @@ class ColdCompetitionMonitor {
             const total = spawnRows.reduce((n, r) => n + Math.max(1, Number(r.count) || 1), 0);
             if (!count || !total) continue;
             const key = `${state.spotId}:${target}`;
-            if (!groups.has(key)) groups.set(key, { key, spotId: state.spotId, npcId: target, fraction: count / total,
-                capacity: Math.max(1, this.capacityForSpot(spot) * count / total), demand: 0, units: new Map() });
+            if (!groups.has(key)) groups.set(key, { key, spotId: state.spotId, npcId: target, spot, demand: 0, units: new Map() });
             const group = groups.get(key), unitKey = unitKeyOf(partyId, state.characterId);
             group.demand++;
             if (!group.units.has(unitKey)) group.units.set(unitKey, { id: Number(state.characterId), name: state.name,
@@ -113,7 +114,7 @@ class ColdCompetitionMonitor {
         }
         const pressured = [];
         for (const group of groups.values()) {
-            group.pressure = (group.demand + (untargeted.get(group.spotId) || 0) * group.fraction) / group.capacity;
+            Object.assign(group, targetPressure(group.spot, group.npcId, group.demand, untargeted.get(group.spotId) || 0, this.capacityForSpot));
             for (const unit of group.units.values()) {
                 unit.hunters = unit.members;
                 if (unit.partyId) {

@@ -3,7 +3,9 @@ const { INTERVAL_MS, hunterSpot } = require('./ColdCompetitionMonitor');
 const PartyTarget = require('./PartyHuntingTarget');
 const { StableOwnerMap } = require('./StableOwnerSet');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
+const Situations = require('../Situations');
 const metaKey = Symbol('coldCompetitionCandidate');
+const CONTEST_QUEUE = 64;
 const partyOf = state => state?.party?.partyId || state?.partyId || null;
 const unitOf = state => partyOf(state) || `solo:${state?.characterId}`;
 function add(map, key, value) {
@@ -36,6 +38,10 @@ class ColdCompetitionCandidates {
         this.spots = new Map(); this.parties = new Map(); this.partyHunters = new Map();
         this.memberParties = new Map(); this.relationOwners = new StableOwnerMap(); this.clans = new Map(); this.units = new Map();
         this.pendingSpots = new Map(); this.pendingActors = new Map(); this.policyDeadlines = new Map();
+        // The spot contest's outcomes that touch a standing unit (SpotContest, after the
+        // arriving commit's ack): sent first in the next frame, stamped with its time.
+        // At most CONTEST_QUEUE wait; one past it is dropped, counted (limits.md "Spot contest").
+        this.contestEvents = [];
         this.nextSequence = 0; this.nextInput = 0; this.nextFrame = 0; this.activeHunters = 0;
         this.frame = null; this.stopped = false;
         monitor.onCooldown = (...args) => this.cooldown(...args);
@@ -235,6 +241,12 @@ class ColdCompetitionCandidates {
         Diagnostics.count('competition_roll', 'window', 'first');
         return spot.rollElapsed;
     }
+    queueEvent(event) {
+        if (this.stopped) return false;
+        if (this.contestEvents.length >= CONTEST_QUEUE) { Situations.note('spot:contest:dropped'); return false; }
+        this.contestEvents.push(event);
+        return true;
+    }
     takeKeys(queue, limit) {
         const selected = [];
         for (const [key, generation] of queue) {
@@ -246,7 +258,7 @@ class ColdCompetitionCandidates {
     reviewBatch(at) {
         if (this.stopped || this.frame) return this.frame;
         const spots = this.takeKeys(this.pendingSpots, 32), actors = this.takeKeys(this.pendingActors, 128);
-        if (!spots.length && !actors.length) return null;
+        if (!spots.length && !actors.length && !this.contestEvents.length) return null;
         const events = [], frameId = this.nextFrame + 1;
         let sizing;
         try { sizing = this.frameSizing?.({ frameId, at }); }
@@ -269,6 +281,9 @@ class ColdCompetitionCandidates {
             } catch { return false; }
             events.push(freeze(copy)); return true;
         };
+        // The contests first, each restamped at the frame's time (main takes a frame's
+        // events at its time); one the frame cannot carry waits for the next.
+        while (this.contestEvents.length && offer({ ...this.contestEvents[0], at })) this.contestEvents.shift();
         let pairs = 0;
         for (const { key } of spots) {
             const spot = this.spots.get(key);
@@ -326,6 +341,6 @@ class ColdCompetitionCandidates {
         if (this.frame) report.frame = this.frame;
         return report;
     }
-    stop() { this.stopped = true; this.frame = null; this.selected = null; this.pendingSpots.clear(); this.pendingActors.clear(); }
+    stop() { this.stopped = true; this.frame = null; this.selected = null; this.pendingSpots.clear(); this.pendingActors.clear(); this.contestEvents.length = 0; }
 }
 module.exports = ColdCompetitionCandidates;

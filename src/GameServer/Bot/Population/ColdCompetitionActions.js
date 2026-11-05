@@ -4,7 +4,7 @@ const RelationshipContext = require('../../Social/RelationshipContext');
 const InventorySummary = require('./InventorySummary');
 const TTL_MS = 10000;
 const COOLDOWN_MS = 2 * 60000;
-const WAIT_MS = 15000;
+const { WAIT_MS } = require('./SpotContest');
 const CONFLICT_COOLDOWN_MS = 10 * 60000;
 // Losing a mob is a provocation, but should not exhaust the budget of a real fight.
 const DISPUTE_COOLDOWN_MS = 3 * 60000;
