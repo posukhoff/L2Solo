@@ -109,7 +109,7 @@ function notifyColdSnapshot(state, reason = 'state_changed', options = {}) {
 }
 
 // A near bot's body moved a fact (reason: bag, equip, level, death, revive,
-// near_spot, activated): its row goes to its slot in the worker, whose one fact
+// near_spot, near_left, activated): its row goes to its slot in the worker, whose one fact
 // function decides whether that is an event. A delivery, not a save: neither
 // the cache nor the database is written. The row is built on the next turn, so
 // it reads the body after the change; several changes in one turn stay one
@@ -117,6 +117,9 @@ function notifyColdSnapshot(state, reason = 'state_changed', options = {}) {
 // Does this body post its facts at all (a bot's own body, not an arena copy)? An
 // activating one posts once activated.
 const nearPosts = session => !!session?.accountId?.startsWith?.('bot_') && session.arenaEphemeral !== true;
+// A body's arrival on a spot and its leave are the spot aggregate's arrivals on the
+// background thread (its hot arrival hook): sent at once, not batched with the bag.
+const SPOT_POSTS = new Set(['near_spot', 'near_left']);
 function notifyNearFacts(session, reason) {
     if (!nearPosts(session)) return;
     // Ownership is persisted before enterWorld finishes. That provisional
@@ -134,8 +137,8 @@ function notifyNearFacts(session, reason) {
             // session.coldLifeState may lag it.
             row.simulation = current.simulation;
             // The spot the bot was given, as a far traveler counts at its
-            // travel spot; loc stays physical.
-            row.spotId = session.currentSpot?.id ?? row.spotId;
+            // travel spot; loc stays physical. A body that left its spot stands on none.
+            row.spotId = session.currentSpot?.id ?? (reason === 'near_left' ? null : row.spotId);
             row.updatedAt = now();
             // Not saved: the number of this post and the raise it carries,
             // with the situations of the body's own facts (A1: detected here).
@@ -146,7 +149,8 @@ function notifyNearFacts(session, reason) {
             if (session.nearRaise) row.raise = DecisionEvents.postedBag(session);
             // lazy: cycle the coordinator requires this module at its top.
             invoke('GameServer/Bot/Population/ColdSimulationCoordinator').markDirty(row,
-                { reason, critical: isCriticalSnapshotReason(reason, row) || row.raise?.named === true, near: true });
+                { reason, critical: isCriticalSnapshotReason(reason, row) || row.raise?.named === true
+                    || SPOT_POSTS.has(reason), near: true });
         } catch (error) {
             // The post and the facts detected on it (DecisionEvents.detectNear): counted by site.
             FailureLog.note('botlife.near_post', error);
