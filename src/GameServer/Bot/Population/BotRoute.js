@@ -351,7 +351,8 @@ function soloGroundMissing(state, spots, search = null) {
     const { owner, timestamp = Date.now(), hasRoom = null, spotHunters = null } = search;
     const frame = frameFor(state, null, [], timestamp, hasRoom, spotHunters);
     frame.owner = owner;
-    const chosen = owner.route || choose(state, SpotService.standingSpot(state, spots), null, [], { spots, timestamp, frame });
+    const chosen = heldChoice(state, spots, frame)
+        ?? (owner.route || choose(state, SpotService.standingSpot(state, spots), null, [], { spots, timestamp, frame }));
     // No search now (choose: a bot on a rest, a trip, a duty): no verdict. Only
     // a search that found nothing, { spotId: null }, means no ground.
     if (chosen === null) return false;
@@ -395,17 +396,42 @@ function trip(owner, state, leaf, { spots, currentSpot = null, timestamp, hasRoo
         if (started) drop(owner, 'leaf');
         return started;
     }
-    const kept = owner?.route;
-    if (hasRoom && kept?.spotId && String(kept.spotId) !== String(state.spotId || '') && !hasRoom(kept.spotId)) {
-        drop(owner, 'full');
+    // A solo bot holding an earning answer goes to its spot (heldChoice), unless its
+    // own ground is unsafe and the answer leaves it there: the search's evacuation.
+    let chosen = heldChoice(state, spots, frame);
+    if (chosen && unsafeSoloGround(state, currentSpot, frame)
+        && (!chosen.spotId || String(chosen.spotId) === String(currentSpotId(state, currentSpot, null, spots) || ''))) chosen = undefined;
+    if (chosen !== undefined) EconomyDiagnostics.count('route', 'trip', 'held');
+    else {
+        const kept = owner?.route;
+        if (hasRoom && kept?.spotId && String(kept.spotId) !== String(state.spotId || '') && !hasRoom(kept.spotId)) {
+            drop(owner, 'full');
+        }
+        EconomyDiagnostics.count('route', 'trip', owner?.route ? 'kept' : 'search');
+        chosen = owner?.route || choose(state, currentSpot, null, [], { spots, timestamp, frame });
+        if (owner && !owner.route) owner.route = chosen;
     }
-    EconomyDiagnostics.count('route', 'trip', owner?.route ? 'kept' : 'search');
-    const chosen = owner?.route || choose(state, currentSpot, null, [], { spots, timestamp, frame });
-    if (owner && !owner.route) owner.route = chosen;
     const started = record(state, chosen, null, [], { spots, currentSpot, timestamp, frame });
     if (!started || !wished?.full || !DETOUR_REASONS.has(started.reason) || ColdEconomyDecision.materialHunt(leaf)) return started;
     EconomyDiagnostics.count('route', 'trip', 'detour');
     return { ...started, leafSpotId: wished.spotId };
+}
+
+// A solo bot's route while it holds an earning answer (situations.md B12): the
+// answer's spot, read, never searched and kept nowhere (the same after a worker
+// restart: the answer is in the mind). { spotId: null }: none it may take (none
+// found, its marks exclude it, or no room: ROUTE-ROOM-2): it stays until a
+// situation re-decides. undefined: no answer yet (its first decision pending), a
+// gear plan's source or a protected starter field: the search decides (choose).
+function heldChoice(state, spots, frame) {
+    const plan = state.stats?.equipmentPlan;
+    if (state.stats?.earning === undefined || SpotProfiles.isProtectedStarterCohort(state)
+        || plan?.status === 'active' && plan.next?.spotId) return undefined;
+    const spot = EquipmentIncomeRoute.heldSpot(state, spots);
+    if (!spot || frame.excludedSpotIds.has(String(spot.id))) return { spotId: null };
+    const hasRoom = frame.options.hasRoom;
+    if (hasRoom && String(spot.id) !== String(state.spotId || '') && !hasRoom(spot.id)) return { spotId: null };
+    return { spotId: spot.id };
 }
 
 // The kept route goes; the next trip start searches again. Counted as

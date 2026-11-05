@@ -93,6 +93,16 @@ function find(state, { spots = [], timestamp = Date.now(), price, required = fal
         spotFactors.set(spot, allowed ? undefined : null);
         return allowed;
     };
+    // lazy: cycle SpotProfiles' search reads this module's held answer.
+    const Spots = invoke('GameServer/Bot/Population/SpotProfiles');
+    // A fresh racial cohort stays on its level-one field until it advances (SpotProfiles.isProtectedStarterCohort):
+    // that field is its answer while it may hunt there.
+    const own = Spots.isProtectedStarterCohort(state) ? Index.spotById(spots, state.spotId) : null;
+    if (own && admitted(own)) {
+        const row = evaluate(own, true) || evaluate(own, false);
+        return { route: { spot: own, row: row || { income: 0, expected: 0, kills: 0, exp: 0, useShots: true },
+            earning: Number(row?.income) || 0 }, error: evaluate.incomeError };
+    }
     // Every spot the bot may earn at with this charge policy, each with its
     // score; those earning nothing at the prices read stay out.
     const candidates = shots => {
@@ -124,7 +134,6 @@ function find(state, { spots = [], timestamp = Date.now(), price, required = fal
     const allowed = Routes.spotAllowedReaderFor(state, options);
     // A spot full of other bots is no pick (the search's room rule): the bot
     // takes its next best now, not a refused trip.
-    const Spots = invoke('GameServer/Bot/Population/SpotProfiles'); // lazy: cycle SpotProfiles' search calls this select
     const open = shortlist.filter(candidate => Spots.roomFor(candidate.spot, state) || !(candidate.closed = true));
     const checks = Math.max(1, maxChecks);
     // Each spot's verdict, asked once.
