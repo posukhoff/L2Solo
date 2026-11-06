@@ -68,6 +68,15 @@ const spot = () => Events.held(session)?.network.activity?.spotId;
     assert.equal(session.nearRaise?.seq, impossibleSeq + 1, 'the later raise still waits');
     assert.equal(session.nearRaise.impossible, false, 'the answered impossible mark is lifted');
     assert.equal(Events.rejectSession(session, accepted(10)), true, 'a new rejection raises again');
+    // A failed gear errand is its own entry beside a pending goal_failed (its mark is its own
+    // raise's), and its wait ends with the answer that applied it while a later raise still waits.
+    Events.raiseDecision(session, 'goal_failed', { payload: { kind: 'gear_errand', key: 5 } });
+    assert(Events.failureWaits(session), 'the failed gear errand joins the bag and waits for its answer');
+    const errandSeq = session.raiseSeq;
+    Events.raiseDecision(session, 'spot_empty');
+    await coordinator.onMessage(decided('partial', 7, 11, errandSeq));
+    assert(!Events.failureWaits(session), 'the answer that applied it ends the wait');
+    assert.deepEqual(session.nearRaise?.names.map(entry => entry.name), ['spot_empty'], 'the later raise still waits');
 
     // An executor's raise from inside the bot's own command lands after that command
     // ends (its revision-checked writes first), never mid-command.
@@ -152,7 +161,7 @@ const spot = () => Events.held(session)?.network.activity?.spotId;
     // A decision for a bot that cooled before it came is dropped, and counted.
     const dropped = coordinator.nearDecisions.dropped;
     World.registeredActorById = () => null;
-    await coordinator.onMessage(decided('cooled', 7, 11));
+    await coordinator.onMessage(decided('cooled', 8, 12));
     assert.equal(coordinator.nearDecisions.dropped, dropped + 1);
     assert.equal(spot(), 'partial');
 

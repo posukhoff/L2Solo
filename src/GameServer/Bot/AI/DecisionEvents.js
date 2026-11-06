@@ -80,6 +80,11 @@ function raiseDecision(session, reason, { impossible = false, payload: fact = nu
             FailureLog.note('near.command_lost', new Error(`player_command on ${session.actor.fetchId?.()}: the body posts nothing`));
             dropCommand(raise);
         }
+        // Nor a gear errand's failure: no wait is set (its mark stays on the body).
+        if (fact?.kind === 'gear_errand' && !Life.nearPosts(session)) {
+            FailureLog.note('near.gear_wait_lost', new Error(`gear errand on ${session.actor.fetchId?.()}: the body posts nothing`));
+            raise.names = raise.names.filter(entry => entry.payload?.kind !== 'gear_errand');
+        }
         Life.notifyNearFacts(session, reason);
         return;
     }
@@ -90,10 +95,16 @@ function raiseDecision(session, reason, { impossible = false, payload: fact = nu
     }
     replaceStats(session, Situations.raise({ ...statsFor(session) }, reason, payload, Situations.OPEN, session.actor?.fetchId?.()));
 }
+// One entry of a body's bag (nearBag): the situation and what its payload names, a
+// spot fact's spot (a later command replaces the earlier), else its kind and key (a
+// failed gear errand's goal_failed { kind: 'gear_errand', key } is its own entry
+// beside a plain goal_failed: its mark is written by its own raise).
+const entryOf = (name, payload) => name === 'player_command' ? name
+    : FACTS.has(name) ? `${name}|${payload?.spotId}` : `${name}|${payload?.kind ?? ''}|${payload?.key ?? ''}`;
 // A body's pending bag with these situations joined: a new raise (a new seq)
 // when one joins it, or always (force: a named raise or a stop, whose post is
-// flushed at once: named). One that waits already adds nothing, but a fact's
-// (FACTS) moves to the end with its payload, so the background thread writes it
+// flushed at once: named). One that waits already (entryOf) adds nothing, but a
+// fact's (FACTS) moves to the end with its payload, so the background thread writes it
 // after what came before, as the body did (its own copy: Situations.applyFacts);
 // past NEAR_NAMES it is counted and dropped.
 // names: [{ name, payload }].
@@ -102,9 +113,8 @@ function nearBag(session, names, force = false) {
     let joined = force, command = false;
     const added = [];
     for (const { name, payload = null } of names) {
-        const fact = FACTS.has(name), key = fact && name !== 'player_command' ? String(payload?.spotId) : null;
-        const at = raise.names.findIndex(held => held.name === name && (!fact || name === 'player_command'
-            || String(held.payload?.spotId) === key));
+        const fact = FACTS.has(name), id = entryOf(name, payload);
+        const at = raise.names.findIndex(held => entryOf(held.name, held.payload) === id);
         if (at >= 0 && !fact) continue;
         if (at >= 0) raise.names.splice(at, 1);
         else if (raise.names.length >= NEAR_NAMES) { nearOverflow++; continue; }
@@ -166,10 +176,12 @@ function raiseBag(stats, raise, impossible, where, subject, applied = 0) {
     if (impossible) Situations.raise(stats, raise.impossibleName || 'goal_failed', { impossible: true }, where, subject);
     if (raise?.stop) Situations.stop(stats, raise.stop === 'town' ? Situations.OPEN : Situations.REST, subject);
 }
-// A body's failed step waits for the worker's answer to it: its goal_failed raise
-// (impossible) is still in its bag. Where the body acts, it tries the failed errand
-// again only after that answer (ShoppingState, HuntingState, FollowingState).
-const failureWaits = session => session?.nearRaise?.impossible === true;
+// A body's failed gear errand waits for the worker's answer to it: its goal_failed
+// raise of kind gear_errand is still in its bag (no other rejection blocks its errands).
+// Where the body acts, it plans a gear errand again only after that answer
+// (ShoppingState, HuntingState, FollowingState); the failed one stays marked (GearMarks).
+const failureWaits = session => !!session?.nearRaise?.names?.some(entry => entry.name === 'goal_failed'
+    && entry.payload?.kind === 'gear_errand');
 // A real command rejection belongs to the accepted decision that attempted
 // it: late failures never invalidate a newer decision or raise an event twice.
 const rejections = {};
@@ -225,7 +237,7 @@ function raiseOn(characterId, name, payload = null, reason = `situation_${name}`
     return Promise.resolve(owned).catch(() => null).then(run);
 }
 // The mind keys a row raise writes (BotLifeState.raiseOnRow).
-const RAISED_KEYS = Object.freeze(['woken', 'waiting', 'situationSeq', 'activityLeaf', 'earning', 'spotMarks']);
+const RAISED_KEYS = Object.freeze(['woken', 'waiting', 'situationSeq', 'activityLeaf', 'earning', 'spotMarks', 'gearMarks']);
 // A state the caller writes after its raise landed (raised: the raised row's
 // state): built on the raised row's revision, carrying its raised mind.
 const withRaise = (state, raised) => ({ ...state, simulation: raised.simulation,
@@ -308,14 +320,16 @@ function receive(session, card, near) {
     return session.heldEconomy;
 }
 // The raise an answer (near: its raiseSeq, the raise it applied; its nearSeq, the
-// post it answers) settled: all of it, or only the impossible mark and the command
-// it took. A command whose post was answered without it (refused or lost on the
+// post it answers) settled: all of it, or the entries it applied (joined at or before
+// its seq: a failed gear errand's wait ends with its answer, failureWaits), the
+// impossible mark and the command it took. A command whose post was answered without it (refused or lost on the
 // way) is dropped and counted (FailureLog near.command_lost): the body never waits
 // for an answer that will not come.
 function settle(session, near) {
     const raise = session.nearRaise, answered = Number(near.raiseSeq || 0);
     if (!raise) return;
     if (answered >= raise.seq) { session.nearRaise = null; return; }
+    raise.names = raise.names.filter(entry => Number(entry.seq || 0) > answered);
     if (raise.impossible && answered >= Number(raise.impossibleSeq || 0)) { raise.impossible = false; raise.impossibleSeq = 0; }
     if (!raise.commandSeq) return;
     const lost = answered < raise.commandSeq;
