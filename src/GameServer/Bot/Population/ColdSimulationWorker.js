@@ -2192,7 +2192,7 @@ function startKernel(config = {}) {
         }
         return result;
     };
-    kernel.states.delete = id => { occupationPlanner.cancel(id); cancelRoute(id); outbox?.drop(id, 'stale'); return nativeDelete(id); };
+    kernel.states.delete = (id, options) => { occupationPlanner.cancel(id); cancelRoute(id); outbox?.drop(id, 'stale'); return nativeDelete(id, options); };
     kernel.states.clear = () => {
         for (const entry of [...occupationPlanner.slots.values(), ...occupationPlanner.cards.values(), ...occupationPlanner.waiting.values()])
             occupationPlanner.cancel(entry.id, entry.mode);
