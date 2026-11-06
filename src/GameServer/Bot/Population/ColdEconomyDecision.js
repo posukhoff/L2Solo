@@ -80,18 +80,22 @@ function workshopValues(value) {
     return recipeId > 0 && productId > 0 && income > 0 && cycle > 0
         && Number.isFinite(income) && Number.isFinite(cycle) ? [recipeId, productId, income, cycle] : [0, 0, NaN, NaN];
 }
-function unknownWorkshop() { return { known: false, recipeId: 0, productId: 0, incomePerHour: NaN, cycleHours: NaN }; }
-// A known workshop with nothing to craft (the planner's answer to a bot it has no recipe search for).
+// An unknown workshop; reason (a planner answer only): why it is not known (the workshop
+// decision counts it and stays woken: ColdSimulationWorker workshopTaken).
+function unknownWorkshop(reason = undefined) {
+    return { known: false, recipeId: 0, productId: 0, incomePerHour: NaN, cycleHours: NaN, ...(reason ? { reason } : {}) };
+}
+// A known workshop with nothing to craft (the answer to a bot that is no service crafter).
 function noWorkshop() { return { known: true, recipeId: 0, productId: 0, incomePerHour: 0, cycleHours: 0 }; }
-// The occupation planner's answer to a bot that is no service crafter and has
-// no own board line, known without the planner (no recipe search, no sale
-// feasibility to read): its occupation branch (ColdSimulationWorker) and the
-// step's shortcut before an ask (member, lifecycle) both return it. Else null:
-// the planner answers. board: the board mirror (ownerLines).
-function noCrafterWorkshop(state, board) {
-    if (require('../Economy/CraftEligibility').isServiceCrafter(state)
-        || board?.ownerLines(Number(state.characterId))?.length) return null;
-    return { ...noWorkshop(), feasibility: null };
+// The workshop decision's held answer (stats.craftIncome, a mind key: workshopValues
+// saved, an unknown income as null) as the workshop every build reads, hot and cold.
+// None held: unknown (the decision is woken).
+function craftIncomeOf(stats) {
+    const held = stats?.craftIncome;
+    if (!Array.isArray(held)) return unknownWorkshop();
+    const [recipeId, productId, income, cycle] = held.map(value => value === null ? NaN : Number(value));
+    if (!recipeId && !productId && income === 0 && cycle === 0) return noWorkshop();
+    return { known: Number.isFinite(income) && Number.isFinite(cycle), recipeId, productId, incomePerHour: income, cycleHours: cycle };
 }
 class CompactDecision {
     constructor(updatedAt, echo, riskWeight, activity, data, flags) {
@@ -715,8 +719,8 @@ function sameEconomicOutput(before, after) {
     return true;
 }
 
-// A published card made on exactly this state: the one check of decided(),
-// workshopFor() and feasibilityFor(). A hot bot's card is current by its post
+// A published card made on exactly this state: the one check of decided()
+// and feasibilityFor(). A hot bot's card is current by its post
 // number (nearSeq, checked on arrival), not by updatedAt: the body's row moves
 // on between posts.
 function current(state, entry) {
@@ -811,12 +815,6 @@ class ColdEconomyDecisions {
         const entry = this.byId.get(Number(id)), clan = entry?.clan;
         return clan ? { ...clan, updatedAt: entry.updatedAt } : null;
     }
-    workshopFor(state) {
-        // A held strategic decision may survive a physical command. Its earning
-        // estimate cannot: the accepted publication must still match this bag.
-        const entry = this.byId.get(Number(state?.characterId));
-        return current(state, entry) ? entry.workshop : unknownWorkshop();
-    }
     feasibilityFor(state) {
         const entry = this.byId.get(Number(state?.characterId));
         return current(state, entry) ? entry.feasibility : null;
@@ -832,4 +830,4 @@ class ColdEconomyDecisions {
 }
 
 module.exports = { personalUsefulness, preparedCardWorth, usefulnessVersion, capture, heldFor, heldAtDecisionOf, progressSince, remainingToOrder, materialHunt, ownItem, stateEcho, echoHolds, CompactActivity, ColdEconomyDecisions, economyFor, view, nearView, advisory, restoreAdvisory, advisoryPublicationHolds, sameEconomicOutput, current, canReuse, refusal, refreshAdvisory, refreshPreparedCraft, cardWithShot, kindCode, kindFor, compact, workshopValues,
-    unknownWorkshop, noWorkshop, noCrafterWorkshop, MAX_BYTES, MAX_SHOT_BYTES, COMMAND_HEADER_BYTES, MAX_SHOT_PAYLOAD_BYTES };
+    unknownWorkshop, noWorkshop, craftIncomeOf, MAX_BYTES, MAX_SHOT_BYTES, COMMAND_HEADER_BYTES, MAX_SHOT_PAYLOAD_BYTES };

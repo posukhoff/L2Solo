@@ -1,6 +1,7 @@
 'use strict';
 const DiagnosticConfig = require('./PopulationConfig');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
+const FailureLog = require('../../../FailureLog');
 
 const { performance } = require('node:perf_hooks');
 const { unknownWorkshop } = require('./ColdEconomyDecision');
@@ -36,7 +37,6 @@ class ColdOccupationPlanner {
         Object.assign(this, { capture, create, step, result, ownCurrent, inputKey, valueKey, servesUntil, sourceToken, sourceScope, sourceScopeToken, onSlots, onWorking, publish, onPublishError, now, schedule });
         this.slots = new Map(); this.cards = new Map(); this.waiting = new Map(); this.ready = new Set(); this.dependencies = new Map();
         this.workingContexts = 0;
-        this.errorsSeen = new Set();
         this.scopes = new Map();
         this.scopeDependencies = new Map();
         // Meeting readers share one representative item per category: their
@@ -63,7 +63,7 @@ class ColdOccupationPlanner {
 
     request(id, input, { awaitResult = true } = {}) {
         id = Number(id);
-        if (!id || this.stopped) return Promise.resolve(unknownWorkshop());
+        if (!id || this.stopped) return Promise.resolve(unknownWorkshop('stopped'));
         const mode = input?.mode || 'occupation', key = keyOf(id, mode);
         const existing = this.waiting.get(key) || this.slots.get(key) || this.cards.get(key);
         const fingerprint = this.inputKey(input);
@@ -244,17 +244,15 @@ class ColdOccupationPlanner {
         entry.validation = null;
     }
 
-    // A failed build ends as an empty result: each distinct failure is logged
-    // once, as an error the deploy read counts. A meeting's refusal is its answer.
-    reportError(entry) {
-        if (entry.mode === 'meeting' || this.errorsSeen.has(entry.error) || this.errorsSeen.size >= 32) return;
-        this.errorsSeen.add(entry.error);
-        console.error(`ColdOccupationPlanner :: Error: ${entry.error}`);
+    // A failed build ends as an empty result (an unknown answer): counted per mode, the
+    // first logged with its stack (FailureLog). A meeting's refusal is its answer.
+    reportError(entry, error) {
+        if (entry.mode !== 'meeting') FailureLog.note(`occupation.${entry.mode}_failed`, error);
     }
 
     finish(entry, value) {
         if (entry.done || this.slots.get(entry.key) !== entry) return;
-        entry.done = true; entry.value = value ?? (entry.mode === 'action' ? null : unknownWorkshop());
+        entry.done = true; entry.value = value ?? (entry.mode === 'action' ? null : unknownWorkshop('none'));
         // The card keeps the answer, its key and its read tokens: no scratch
         // graph, no cursor. It leaves the working pool.
         entry.work = null; entry.captured = null; entry.validation = null; entry.cursor = null;
@@ -311,10 +309,10 @@ class ColdOccupationPlanner {
                 if (units && clock - started >= SLICE_MS) break;
                 const unitStarted = clock;
                 try { this.unit(entry); }
-                catch (error) { entry.error = String(error?.message || error); this.reportError(entry); this.finish(entry, entry.mode === 'meeting'
+                catch (error) { entry.error = String(error?.message || error); this.reportError(entry, error); this.finish(entry, entry.mode === 'meeting'
                     ? { refused: true, reason: entry.error, ...(error.priceEvidence ? { priceEvidence: error.priceEvidence } : {}),
                         ...(error.priceFallback ? { priceFallback: error.priceFallback } : {}) }
-                    : unknownWorkshop()); }
+                    : unknownWorkshop('failed')); }
                 clock = this.now();
                 const duration = clock - unitStarted;
                 DiagnosticConfig.developerDiagnostics && (this.stats.maxUnitMs = Math.max(this.stats.maxUnitMs, duration));
@@ -352,7 +350,7 @@ class ColdOccupationPlanner {
         const entry = this.waiting.get(key) || this.slots.get(key) || this.cards.get(key);
         if (!entry) return;
         this.waiting.delete(key);
-        entry.resolve?.(unknownWorkshop()); entry.resolve = null;
+        entry.resolve?.(unknownWorkshop('cancelled')); entry.resolve = null;
         this.release(id, mode);
     }
     stop() {
