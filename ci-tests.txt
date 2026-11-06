@@ -1,0 +1,16 @@
+cold_store_release
+player_moment
+bot_market_nearest_town
+bot_recipe_disposition
+unknown_recipe_worker
+agenda
+economy_context
+near_fact_post
+near_decision_order
+bot_hunting_route_failure
+bot_acquisition_recovery
+cold_cleanup_need_worker
+hot_sell_junk_market_stock
+held_earning_spot
+cold_solo_window
+cold_warehouse_deposit_transaction
