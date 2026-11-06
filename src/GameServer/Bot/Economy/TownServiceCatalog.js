@@ -12,8 +12,16 @@ const ROLES = Object.freeze({
     SELLER: 'seller',
     GENERIC_MERCHANT: 'generic_merchant',
     WAREHOUSE: 'warehouse',
-    GATEKEEPER: 'gatekeeper'
+    GATEKEEPER: 'gatekeeper',
+    // A bot's improvements at a town NPC: a smith's special ability, the soul crystal
+    // quest (Q350) and a henna.
+    SMITH: 'smith',
+    SOUL_CRYSTAL: 'soul_crystal',
+    SYMBOL_MAKER: 'symbol_maker'
 });
+// C4 spawns (L2J): the blacksmiths that add a special ability and the magisters of the
+// soul crystal quest stand in their towns only; a symbol maker by its title.
+const SMITHS = new Set([7300, 7471, 7678, 7688, 7846, 7898, 8271, 8316]), MAGISTERS = new Set([7115, 7194, 7856]);
 
 const GENERIC_MERCHANT_TITLES = Object.freeze(new Set([
     'Trader',
@@ -46,6 +54,15 @@ function rolesFor(npcSelfId, title, sellerIds, gatekeeperIds) {
     }
     if (/^Warehouse (Keeper|Chief|Freightman)$/i.test(title)) roles.push(ROLES.WAREHOUSE);
     if (gatekeeperIds.has(npcSelfId)) roles.push(ROLES.GATEKEEPER);
+    return roles.concat(improvementRoles(npcSelfId, title));
+}
+// The improvement roles of an NPC: one rule for the catalogue's rows (a far visit's town)
+// and a near body's NPC in reach (BotImprovementService.stationMatches).
+function improvementRoles(npcSelfId, title) {
+    const roles = [];
+    if (SMITHS.has(npcSelfId)) roles.push(ROLES.SMITH);
+    if (MAGISTERS.has(npcSelfId)) roles.push(ROLES.SOUL_CRYSTAL);
+    if (/symbol maker/i.test(title)) roles.push(ROLES.SYMBOL_MAKER);
     return roles;
 }
 
@@ -204,6 +221,7 @@ module.exports = {
     MAX_TOWN_DISTANCE,
     ROLES,
     candidates,
+    improvementRoles,
     rows,
     rowsForTown,
     targetFor,

@@ -3284,6 +3284,17 @@ const PopulationService = {
             return { ok: false, reason: 'apply_failed', state };
         }
         if (workerPlan?.economyDecision) ColdSimulationCoordinator.economyDecisions.hold(updatedState.characterId, workerPlan.economyDecision);
+        // The step's writes below hold to the worker that planned it and to a far bot:
+        // a replaced worker or a bot gone hot writes nothing.
+        const sourceWorker = ColdSimulationCoordinator.worker, sourceEpoch = ColdSimulationCoordinator.workerEpoch;
+        const beforeWrite = () => {
+            if (ColdSimulationCoordinator.stopping || ColdSimulationCoordinator.worker !== sourceWorker
+                || ColdSimulationCoordinator.workerEpoch !== sourceEpoch)
+                throw new WorkerCommandAdmissionRefusal('stale_worker_source');
+            if (ColdSimulationCoordinator.fencedBots?.has(updatedState.characterId)
+                || LifeState.cachedState(updatedState.characterId)?.phase !== 'cold')
+                throw new WorkerCommandAdmissionRefusal('hot_handoff_fenced');
+        };
 
         // Every ordinary town visit publishes its worker-selected stock
         // before native errands can finish the visit and leave town.
@@ -3298,38 +3309,31 @@ const PopulationService = {
         // the author's path (E306).
         if (updatedState.activity === 'shopping' && workerPlan?.economyPlan && !correctedBids
             && (!saleVisit(updatedState) || updatedState.stats?.forcedMarketCleanup)) {
-            const sourceWorker = ColdSimulationCoordinator.worker, sourceEpoch = ColdSimulationCoordinator.workerEpoch;
-            const beforeWrite = () => {
-                if (ColdSimulationCoordinator.stopping || ColdSimulationCoordinator.worker !== sourceWorker
-                    || ColdSimulationCoordinator.workerEpoch !== sourceEpoch)
-                    throw new WorkerCommandAdmissionRefusal('stale_worker_source');
-                if (ColdSimulationCoordinator.fencedBots?.has(updatedState.characterId)
-                    || LifeState.cachedState(updatedState.characterId)?.phase !== 'cold')
-                    throw new WorkerCommandAdmissionRefusal('hot_handoff_fenced');
-            };
             const board = await BotAfkMarketService.executePlan(updatedState, workerPlan.economyPlan,
                 { reviewGoal: false, beforeWrite });
             updatedState = board.state || updatedState;
         }
 
+        Config.developerDiagnostics && Metrics.recordBackgroundResolve();
+        Config.developerDiagnostics && Metrics.recordCombat(result.debug);
         const improvementService = invoke('GameServer/Bot/Economy/BotImprovementService');
-        const acquisitionLeaf = ColdSimulationCoordinator.economyDecisions.activity(updatedState);
-        if (acquisitionLeaf?.activity === 'improving'
-            && ['crystallize', 'luxury_exchange'].includes(acquisitionLeaf.improvement?.kind)
-            && (improvementService.selfCrystallization(acquisitionLeaf.improvement)
-                || updatedState.currentRegion === 'Giran' && improvementService.inTown(updatedState))) {
-            const improved = await improvementService.reviewCold(updatedState);
+        const decision = ColdSimulationCoordinator.economyDecisions.decided(updatedState);
+        const improvement = decision?.activity?.activity === 'improving' ? decision.activity.improvement : null;
+        // The held improvement is done on the visit it came for, before the visit ends: a
+        // symbol maker's henna or a smith's work needs a town that has one (reviewCold),
+        // and the review after a commit no longer finds the bot there once the visit has left.
+        if (improvement && (improvementService.selfCrystallization(improvement) || improvementService.inTown(updatedState))) {
+            const improved = await improvementService.reviewCold(updatedState, { beforeWrite, decide: () => decision });
             if (improved.changed) {
                 // Consumed inputs retire this card. Replan in town before
                 // another purchase or the return to a hunting spot.
                 ColdSimulationCoordinator.economyDecisions.release(updatedState.characterId);
                 exchangeWaits.delete(Number(updatedState.characterId));
+                await LifeEvents.recordMany(state.characterId, [...planEvents, ...travelEvents, ...result.events,
+                    ...CraftTelemetry.progressEvents(state, acquisitionPlan, updatedState)]);
                 return { ok: true, state: improved.state, debug: result.debug };
             }
         }
-
-        Config.developerDiagnostics && Metrics.recordBackgroundResolve();
-        Config.developerDiagnostics && Metrics.recordCombat(result.debug);
         if (updatedState.activity === 'crafting') {
             return { ok: true, state: updatedState, debug: result.debug };
         }
