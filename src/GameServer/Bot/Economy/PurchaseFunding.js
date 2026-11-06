@@ -131,10 +131,13 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
         const quoted = options.quoteScale > 0 ? r * options.quoteScale : r;
         if (quoted >= Packet.moneyPrice(packet)) { reason = 'funded_ratio'; queueBudget = budgetFor(packet, wallet, 0, r, capture); }
     }
-    // Native utility terms take precedence over a free/clan allowance too.
+    // Native utility terms take precedence over a free/clan allowance too. A purchase
+    // with its queue rank (r: a funded row's) reads the money above the rows ranked
+    // before it, as the build funded it; without one, above every funded row.
     if (Packet.hasMoney(packet) && !options.upperBound && options.valueHours !== undefined) {
         reason = 'finite_value';
-        queueBudget = Math.min(worth(packet, options.valueHours), budgetFor(packet, wallet, 0, Packet.moneyPrice(packet), capture));
+        const rank = Number(options.r) > 0 ? Number(options.r) : Packet.moneyPrice(packet);
+        queueBudget = Math.min(worth(packet, options.valueHours), budgetFor(packet, wallet, 0, rank, capture));
     }
     // A side purchase (T177) carries its own value per Adena and takes only the
     // money no queue row holds.
