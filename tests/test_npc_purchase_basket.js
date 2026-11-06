@@ -226,16 +226,22 @@ async function run() {
     state = await seed(9543, 1000000, { classId: 1, marketReturn: { loc: { locX: 12000, locY: 90000, locZ: -3000 } } });
     state = { ...state, level: 30 };
     const packet = Economy.forState(state).statsPacket;
-    state = await Life.upsertState({ ...state, stats: { ...state.stats, ...packet } }, 'basket_fixture');
+    // Its earning answer carries the spot's kit use (situations.md §14), as the worker's decision publishes it.
+    state = await Life.upsertState(require('./helpers/ratedKit')({ ...state, stats: { ...state.stats, ...packet } }), 'basket_fixture');
     const Restock = invoke('GameServer/Bot/Economy/NpcRestockPlan');
     // A town restock buys from the build's published kit rates (stats.kitRates) over the live bag,
     // not a fresh earning-spot search's target: an outing's survival drinks, never less than one hour's.
     const Potions = invoke('GameServer/Bot/AI/HealingPotionStock'), potionId = Potions.purchasePotionFor(state).selfId;
     const potionLine = value => Restock.collect(value, { town: 'Dion', shots: false, scrolls: false })
         .flatMap(row => row.lines).find(line => line.selfId === potionId)?.amount || 0;
-    const rates = Packet.ratesOf(packet.kitRates);
+    const rates = Packet.ratesOf(state.stats.kitRates, state.stats.earning);
     assert(rates, 'the build publishes its kit rates');
-    const rated = changes => ({ ...state, stats: { ...state.stats, kitRates: Packet.kitRates({ ...rates, ...changes }) } });
+    // The per-bot rates in stats.kitRates, the spot's use in the earning answer.
+    const rated = changes => {
+        const named = { ...rates, ...changes };
+        return { ...state, stats: { ...state.stats, kitRates: Packet.kitRates(named),
+            earning: { ...state.stats.earning, shotsPerHour: named.shotUse, potionsPerHour: named.potionUse } } };
+    };
     const published = rated({ potionUse: 15, potionRestUse: 0, outingHours: 1 });
     assert.equal(potionLine(published), 15, 'the errand fills the published line (one hour of use)');
     const potionTarget = value => Potions.restockPlan(value, { unitPrice: Restock.quoteFor(potionId, 'Dion').price }).targetAmount;
