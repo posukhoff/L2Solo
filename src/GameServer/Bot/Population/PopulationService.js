@@ -3284,6 +3284,9 @@ const PopulationService = {
             return { ok: false, reason: 'apply_failed', state };
         }
         if (workerPlan?.economyDecision) ColdSimulationCoordinator.economyDecisions.hold(updatedState.characterId, workerPlan.economyDecision);
+        // The build's held step on a visit (the step's card, held above).
+        const visitLeaf = updatedState.activity === 'shopping'
+            ? ColdSimulationCoordinator.economyDecisions.activity(updatedState) : null;
 
         // Every ordinary town visit publishes its worker-selected stock
         // before native errands can finish the visit and leave town.
@@ -3367,6 +3370,15 @@ const PopulationService = {
                 const trip = workerPlan?.buildTaken === true && !LifeState.hotRow(finalState.characterId)
                     && BotWarehouse.beginCraftReturn(finalState, Date.now(), { decided: true });
                 if (trip) finalState = await LifeState.upsertState(trip, 'craft_warehouse_return') || finalState;
+                // A sale step is carried out by the visit that sells: once the bot leaves town its
+                // held answer is spent, and the build decides again on the bag the sale left. Held
+                // past the visit, the answer chosen in town (where selling costs no trip) sent the bot
+                // back to town to sell the next loot it picked up. Temporary until the town plan owns
+                // the visit's sale and the build holds no sale step.
+                if (visitLeaf?.activity === 'selling' && finalState.phase === 'cold'
+                    && !['shopping', 'merchant', 'crafting'].includes(finalState.activity)) {
+                    DecisionEvents.raiseOn(finalState.characterId, 'goal_done:goal');
+                }
                 // A bot that went hot meanwhile speaks through its own AI.
                 if (finalState.phase !== 'hot') GlobalChat.maybeAnnounce(finalState, result.events);
                 return {

@@ -11,12 +11,13 @@ const sellerId = 730184;
 const doneSellerId = 730185;
 const cleanerId = 730186;
 const archerId = 730187;
+const poorId = 730188;
 const STATIC_BOUGHT = [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871];
 
 (async () => {
     const world = await createWorld([{ id, classId: 0, level: 20 }, { id: sellerId, classId: 0, level: 20 },
         { id: doneSellerId, classId: 0, level: 20 }, { id: cleanerId, classId: 0, level: 20 },
-        { id: archerId, classId: 9, level: 20 }], 'native-afk-visit');
+        { id: archerId, classId: 9, level: 20 }, { id: poorId, classId: 0, level: 20 }], 'native-afk-visit');
     try {
         await Life.init();
         await Database.createAccount('bot_native_afk_visit', 'fixture');
@@ -185,6 +186,44 @@ const STATIC_BOUGHT = [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871];
         const unbacked = offered.filter(line => sold.has(variant(line)));
         assert.deepEqual(unbacked.map(variant), [], 'sold variants are gone; another enchant of the same item can remain offered');
         console.log('PASS native sale town visit: worker showcase skipped, static buyers paid, sale retry written, open listed the rest');
+        // The visit that sold spent the held sale step: leaving town, the build decides again on the bag the sale
+        // left. Held past the visit, the step chosen in town (where selling costs no trip) sent the bot back to
+        // town with its next loot. A poor bot's money goes to its first gap, which its bag pays for here.
+        {
+            await Database.createAccount('bot_native_poor_seller', 'fixture');
+            await Database.execute(['UPDATE characters SET username=? WHERE id=?', ['bot_native_poor_seller', poorId]]);
+            await Database.setItem(poorId, { selfId: 57, amount: 2000, slot: 0 });
+            await Database.setItem(poorId, { selfId: 1, amount: 1, equipped: 1, slot: 7 });
+            for (const selfId of [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871])
+                await Database.setItem(poorId, { selfId, amount: 200, slot: 0 });
+            const poor = await Life.upsertState({ characterId: poorId, accountName: 'bot_native_poor_seller',
+                name: 'NativePoorSeller', level: 20, exp: Number(DataCache.experience[19]),
+                phase: 'cold', activity: 'shopping', currentRegion: 'Elven Village', spotId: String(spot.id),
+                adena: 2000, loc: place, vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
+                inventory: Life.inventorySummaryFromItems(await Database.fetchItems(poorId)),
+                stats: { classId: 0, generatedCold: true, classProgressionClassId: 0, classProgressionLevel: 20,
+                    townVisit: { town: 'Elven Village', startedAt, reason: 'sell_inventory' },
+                    marketReturn: { spotId: String(spot.id), regionName: spot.name, loc: spot.center } },
+                timing: { activityStartedAt: Date.now(), lastResolvedAt: Date.now() - 1000, nextResolveAt: Date.now() }
+            }, 'poor_sale_visit_fixture');
+            const poorNative = await nativeDecision(poor, { townVisit: true });
+            const leaf = invoke('GameServer/Bot/Population/ColdEconomyDecision').compact(poorNative.plan.economyDecision).activity;
+            assert.equal(leaf?.activity, 'selling', 'the fixture holds a sale step in town');
+            const visited = await Population.resolveColdState(poor, { precomputedPlan: poorNative.plan,
+                precomputedResult: { patch: {}, events: [], materialize: { exp: 0, sp: 0, adena: 0, items: [] },
+                    nextResolveAt: Date.now() + 30000, debug: {} } });
+            assert(visited.ok);
+            assert.notEqual(visited.state.activity, 'shopping', 'the sale visit left town');
+            const Situations = invoke('GameServer/Bot/Situations');
+            const wokenNow = async () => Situations.woken((await Life.findByCharacterId(poorId))?.stats, 'build');
+            let woken = await wokenNow();
+            for (let wait = 0; wait < 50 && !woken; wait++) {
+                await new Promise(resolve => setTimeout(resolve, 20));
+                woken = await wokenNow();
+            }
+            assert(woken, 'the sale visit that left town woke the build');
+        }
+        console.log('PASS sale visit: leaving town wakes the build over the sold bag');
 
         assert.equal(Population.marketListingIntent({ ...saleState, stats: { ...saleState.stats,
             townVisit: { ...saleState.stats.townVisit, town: 'Gludin Village' } } }, { type: 'restock' }).saleVisit, false,
