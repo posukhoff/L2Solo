@@ -195,9 +195,10 @@ Config.staticShotsDisabled = false;
     assert.strictEqual(goal.plan.marketTown, 'Dion');
     assert.strictEqual(goal.target.itemId, 1463);
     // The errand's town and arrival are the subject here (its road was weighed when it was taken).
+    // A bot standing in Dion does the errand there (no trip); else it travels to shop there.
     const travel = GoalExecutor.beginMarketTravel(state, { ...goal, status: 'active' }, 1000);
-    assert.strictEqual(travel.stats.travel.townName, 'Dion');
-    assert.strictEqual(travel.stats.travel.arrivalActivity, 'shopping');
+    assert.strictEqual(travel.stats.travel?.townName ?? travel.currentRegion, 'Dion');
+    assert.strictEqual(travel.stats.travel?.arrivalActivity ?? travel.activity, 'shopping');
     assert.deepStrictEqual(ColdMarketService.errandGoal(errand).plan.marketTown, 'Dion');
 }
 

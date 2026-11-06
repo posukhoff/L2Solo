@@ -65,6 +65,16 @@ function beginMarketTravel(state, goal, timestamp = Date.now()) {
         marketReturn: { loc: from, regionName: state.currentRegion || null, spotId: state.spotId || null },
         ...(shopTown ? { shopTown } : {})
     });
+    // A bot already in that town (resting there after a visit with no return) does the
+    // step there: no trip across the town and no second arrival (arrived_town) for it.
+    const here = ColdTrip.inTown(state, town.center) ? CombinedErrands.visit(state, town.name, timestamp, goal.type) : null;
+    if (here) return {
+        ...here, activity: 'shopping', currentRegion: town.name,
+        stats: { ...here.stats,
+            marketReturn: { loc: from, regionName: state.currentRegion || null, spotId: state.spotId || null },
+            ...(sale?.shopTown ? { shopTown: sale.shopTown } : {}) },
+        timing: { ...(state.timing || {}), activityStartedAt: timestamp, nextResolveAt: timestamp }
+    };
     const travel = trip(town, sale?.shopTown);
     if (travel || !sellingInventory) return travel;
     // A bot that cannot pay the gatekeeper to its sale town sells in the town

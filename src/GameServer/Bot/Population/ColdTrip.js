@@ -73,6 +73,16 @@ function townPlan(state, to) {
     };
 }
 
+// Does the bot stand in the town at `to` already (within TOWN_RADIUS of the
+// town a scroll lands it in, and that is the town of `to`)? There is no trip
+// to it then: the bot acts where it stands.
+function inTown(state, to) {
+    const from = state.loc || {};
+    const { start, destination } = TravelRoutes.between(from, to);
+    return !!start && !!destination && TravelRoutes.townKey(start) === TravelRoutes.townKey(destination)
+        && distance(from, start) <= TOWN_RADIUS;
+}
+
 // A newly accepted meeting waits for an already paid journey to finish.
 // Reserve its fare from that journey's physical destination, retaining the
 // current wallet and remaining scrolls (the previous journey is already paid).
@@ -155,5 +165,5 @@ function positionAt(state, timestamp = Date.now()) {
 
 module.exports = {
     FALLBACK_TRIP_MS, RUN_SPEED, TOWN_RADIUS, HOP_MS,
-    runMs, point, townPlan, meetingTownPlan, toTown, toSpot, spotPlan, positionAt
+    runMs, point, townPlan, inTown, meetingTownPlan, toTown, toSpot, spotPlan, positionAt
 };
