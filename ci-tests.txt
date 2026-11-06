@@ -1,0 +1,15 @@
+goal_revision
+task4_execute_recheck
+cold_economy_plan_execution
+cold_plan_withdrawal_batch
+task4_b5_authority_bump
+cold_simulation_kernel
+party_meeting_lifecycle
+decision_trace
+bot_cold_market_purchase
+cold_worker_afk_visit
+cold_worker_shot_plan
+bot_afk_buy_shop
+ready_trade_execution
+cold_cleanup_economy_authority
+bot_party_goal_agreement
