@@ -52,7 +52,6 @@ class CompactActivity {
 // One binary record keeps exact watch/material numbers, leaf fields and Float32 usefulness;
 // the public tuple fields are decoded on demand and are never retained twice.
 const encoder = new TextEncoder(), decoder = new TextDecoder();
-const WORKSHOP = 16384;
 const SHOT = 32768;
 const FEASIBILITY = 65536;
 // Keep the original two watch-count bits and use two spare header bits for
@@ -66,7 +65,7 @@ const MAX_SHOT_PAYLOAD_BYTES = MAX_SHOT_BYTES - COMMAND_HEADER_BYTES;
 const cardWireRoom = echo => MAX_BYTES - 48 - encoder.encode(JSON.stringify(echo ?? null)).length;
 function shotOffset(counts) {
     return 28 + (counts & 63) * 8 + watchCount(counts) * 21 + ((counts >>> 8) & 15) * 12
-        + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0) + (counts & WORKSHOP ? 32 : 0) + (counts & FEASIBILITY ? 8 : 0);
+        + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0) + (counts & FEASIBILITY ? 8 : 0);
 }
 function encodeShot(value) {
     const encoded = value ? encoder.encode(JSON.stringify(value)) : null;
@@ -122,8 +121,6 @@ class CompactDecision {
     set stale(value) { this.flags = value ? this.flags | 1 : this.flags & ~1; }
     get held() { return !!(this.flags & 2); }
     set held(value) { this.flags = value ? this.flags | 2 : this.flags & ~2; }
-    get workshopStale() { return !!(this.flags & 4); }
-    set workshopStale(value) { this.flags = value ? this.flags | 4 : this.flags & ~4; }
     get counts() { return new DataView(this.data).getUint32(0, true); }
     get inputHash() { return new DataView(this.data).getUint32(4, true); }
     get usefulness() { return new Float32Array(this.data, 28, (this.counts & 63) * 2); }
@@ -160,28 +157,18 @@ class CompactDecision {
         return { horizonHours: view.getFloat64(at, true), huntPerHour: view.getFloat64(at + 8, true),
             plan: itemId ? { itemId, valueHours: view.getFloat64(at + 24, true) } : null };
     }
-    get workshop() {
-        const counts = this.counts;
-        if (!(counts & WORKSHOP) || this.workshopStale) return unknownWorkshop();
-        const at = 28 + (counts & 63) * 8 + watchCount(counts) * 21 + ((counts >>> 8) & 15) * 12
-            + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0);
-        const view = new DataView(this.data);
-        const incomePerHour = view.getFloat64(at + 16, true), cycleHours = view.getFloat64(at + 24, true);
-        return { known: Number.isFinite(incomePerHour) && Number.isFinite(cycleHours),
-            recipeId: view.getFloat64(at, true), productId: view.getFloat64(at + 8, true), incomePerHour, cycleHours };
-    }
     get shot() {
         const counts = this.counts;
-        if (!(counts & SHOT) || this.workshopStale || this.stale || this.held) return null;
+        if (!(counts & SHOT) || this.stale || this.held) return null;
         const at = shotOffset(counts);
         const bytes = new DataView(this.data).getUint16(at, true);
         return JSON.parse(decoder.decode(new Uint8Array(this.data, at + 2, bytes)));
     }
     get feasibility() {
         const counts = this.counts;
-        if (!(counts & FEASIBILITY) || this.workshopStale || this.stale) return null;
+        if (!(counts & FEASIBILITY) || this.stale) return null;
         const at = 28 + (counts & 63) * 8 + watchCount(counts) * 21 + ((counts >>> 8) & 15) * 12
-            + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0) + (counts & WORKSHOP ? 32 : 0);
+            + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0);
         const view = new DataView(this.data);
         return [view.getUint32(at, true), view.getUint16(at + 4, true), view.getUint16(at + 6, true)];
     }
@@ -191,7 +178,6 @@ function compact(record) {
         const result = new CompactDecision(record.updatedAt, record.echo, record.riskWeight, null, record.data, record.flags);
         if (Object.hasOwn(record, 'stale')) result.stale = record.stale;
         if (Object.hasOwn(record, 'held')) result.held = record.held;
-        if (Object.hasOwn(record, 'workshopStale')) result.workshopStale = record.workshopStale;
         return result;
     }
     const pairs = record.usefulness || [], watch = record.watch || [], materials = record.materials || [], wish = record.wish;
@@ -206,15 +192,14 @@ function compact(record) {
                 ...(leaf.r !== undefined ? [leaf.r] : [])]
             : leaf.heldAtDecision !== undefined ? [leaf.heldAtDecision] : [])])) : [];
     const clan = record.clan;
-    const workshop = Object.hasOwn(record, 'workshop') ? workshopValues(record.workshop) : null;
     const feasibility = Array.isArray(record.feasibility) && record.feasibility[2] <= 14 ? record.feasibility : null;
     const shot = encodeShot(record.shot);
-    const fixed = 28 + w * 21 + m * 12 + (wish ? 17 : 0) + (clan ? 32 : 0) + (workshop ? 32 : 0)
+    const fixed = 28 + w * 21 + m * 12 + (wish ? 17 : 0) + (clan ? 32 : 0)
         + (feasibility ? 8 : 0) + (shot ? shot.length + 2 : 0) + activity.length;
     const wireRoom = cardWireRoom(record.echo);
     const n = Math.min(40, Math.floor(pairs.length / 2), Math.max(0, Math.floor((wireRoom - fixed) / 8)));
     const data = new ArrayBuffer(fixed + n * 8), view = new DataView(data);
-    view.setUint32(0, n | ((w & 3) << 6) | ((w >>> 2) << 17) | (m << 8) | (wish ? 4096 : 0) | (clan ? 8192 : 0) | (workshop ? WORKSHOP : 0) | (shot ? SHOT : 0) | (feasibility ? FEASIBILITY : 0), true);
+    view.setUint32(0, n | ((w & 3) << 6) | ((w >>> 2) << 17) | (m << 8) | (wish ? 4096 : 0) | (clan ? 8192 : 0) | (shot ? SHOT : 0) | (feasibility ? FEASIBILITY : 0), true);
     view.setUint32(4, record.inputHash >>> 0, true);
     new Float32Array(data, 28, n * 2).set(pairs.subarray ? pairs.subarray(0, n * 2) : pairs.slice(0, n * 2));
     let at = 28 + n * 8;
@@ -224,7 +209,6 @@ function compact(record) {
     if (wish) { view.setUint8(at, wish[0]); view.setFloat64(at + 1, wish[1], true); view.setFloat64(at + 9, wish[2], true); at += 17; }
     if (clan) { view.setFloat64(at, clan.horizonHours, true); view.setFloat64(at + 8, clan.huntPerHour, true);
         view.setFloat64(at + 16, clan.plan?.itemId || 0, true); view.setFloat64(at + 24, clan.plan?.valueHours || 0, true); at += 32; }
-    if (workshop) { for (const value of workshop) { view.setFloat64(at, value, true); at += 8; } }
     if (feasibility) { view.setUint32(at, feasibility[0], true); view.setUint16(at + 4, feasibility[1], true);
         view.setUint16(at + 6, feasibility[2], true); at += 8; }
     if (shot) { view.setUint16(at, shot.length, true); new Uint8Array(data, at + 2, shot.length).set(shot); at += shot.length + 2; }
@@ -274,8 +258,6 @@ function echoHolds(state, echo) {
 // A raise for the build waits on the state (its woken bit as raised; a card names a
 // build that published, so a held answer the row lacks is no raise here).
 const buildWoken = state => !!((Number(state?.stats?.woken) || 0) & Situations.BITS.build);
-const sameEcho = (left, right) => Array.isArray(left) && Array.isArray(right)
-    && left[0] === right[0] && left[1] === right[1] && left[2] === right[2];
 // A received or saved echo: two safe non-negative integers and a focus
 // that is null or a string of at most 128 characters.
 const validEcho = echo => Array.isArray(echo) && echo.length === 3
@@ -399,7 +381,7 @@ function capture(economy, state, seen = state) {
             Number(wish.object?.amount || 0), Number(wish.price || 0)] : urgency ? [URGENCY_ONLY | (urgency << 6), 0, 0] : null,
         watch: (economy?.watchList || []).slice(0, 8).map(row => [Number(row.itemId), Number(row.amount), Number(row.worth), kindCode(row.kind)]),
         materials: [...missing].slice(0, 8), usefulness, inputHash: fnv1a32(economy?.inputKey || ''), clan,
-        workshop: economy?.workshop || unknownWorkshop(), shot: economy?.shot || null,
+        shot: economy?.shot || null,
         feasibility: economy?.workshop?.feasibility || economy?.feasibility || null
     });
     if (Diagnostics.active()) Diagnostics.count('ready_card', 'build', 'decision_pack');
@@ -497,7 +479,7 @@ function view(state, decision, deps = {}, preparedBase = null) {
         craftReservations: Object.fromEntries(activity?.craftReservations || []),
         watchList: (decision?.watch || []).map(row => ({ itemId: row[0], amount: row[1], worth: row[2], kind: kindFor(row[3]) })),
         materials: decision?.materials || [], inputHash: decision?.inputHash || 0, decided: !!decision,
-        workshop: decision?.workshop || unknownWorkshop(),
+        workshop: craftIncomeOf(state?.stats),
         itemUsefulness, worth: id => known(id) !== null && moneyPrice > 0 ? itemUsefulness(id) / moneyPrice : personal().price(id),
         stock: kind => kitOf().stock(kind), kitCost: (id, unitPrice) => kitOf().kitCost(id, unitPrice) };
     if (base) return { ...base, ...own, gapHorizonHours: gapHorizonHours() };
@@ -618,7 +600,7 @@ function readAdvisoryCard(record) {
         if (card.counts & ~131071 || (card.counts & 63) > 40 || ((card.counts >>> 8) & 15) > 8
             || card.flags || activity !== null && !activity?.activity) return null;
         // Validate all binary ranges before this becomes retained native data.
-        void card.usefulness; void card.watch; void card.materials; void card.workshop; void card.feasibility; void card.shot;
+        void card.usefulness; void card.watch; void card.materials; void card.feasibility; void card.shot;
         return card;
     } catch (error) { FailureLog.note('economy.codec:advisory_card', error); return null; }
 }
@@ -709,8 +691,7 @@ function sameEconomicOutput(before, after) {
     if (before.data.byteLength !== after.data.byteLength || before.counts !== after.counts) return false;
     const counts = before.counts;
     const fingerprint = counts & FEASIBILITY ? 28 + (counts & 63) * 8 + watchCount(counts) * 21
-        + ((counts >>> 8) & 15) * 12 + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0)
-        + (counts & WORKSHOP ? 32 : 0) : -1;
+        + ((counts >>> 8) & 15) * 12 + (counts & 4096 ? 17 : 0) + (counts & 8192 ? 32 : 0) : -1;
     const left = new Uint8Array(before.data), right = new Uint8Array(after.data);
     for (let at = 16; at < left.length; at++) {
         if (at >= 24 && at < 28 || at >= fingerprint && at < fingerprint + 4) continue;
@@ -818,10 +799,6 @@ class ColdEconomyDecisions {
     feasibilityFor(state) {
         const entry = this.byId.get(Number(state?.characterId));
         return current(state, entry) ? entry.feasibility : null;
-    }
-    staleWorkshop(id, expected) {
-        const entry = this.byId.get(Number(id));
-        if (entry && (!expected || entry.updatedAt === expected.updatedAt && sameEcho(entry.echo, expected.echo))) entry.workshopStale = true;
     }
     clear() {
         if (Diagnostics.active() && this.byId.size) Diagnostics.count('ready_card', 'eviction', 'reset', this.byId.size);
