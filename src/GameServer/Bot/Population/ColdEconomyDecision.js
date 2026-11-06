@@ -639,10 +639,12 @@ function refusal(state, accepted, deps = {}, options = {}) {
     const identity = Economy.proofIdentity(state, accepted.eventProof, leaf);
     if (identity) return identity;
     if (state.incomingPending) return 'incoming';
-    // A card serves a bot in the field only (a hunt, a rest, a trip, a party member's fight;
-    // a dead, shopping or crafting bot's step is none), and a far bot's held build lost (a
-    // restart, eviction) has no answer to serve: both build.
-    if (!Economy.FIELD_ACTIVITIES.has(state.activity) && state.activity !== 'grouped') return `not_field:${state.activity}`;
+    // A card serves a bot in the field (a hunt, a rest, a trip, a party member's fight) and
+    // on a town visit, which carries out the step it came for (its end raised where it is
+    // checked, leafOutcome; an arrival it did not plan wakes the build); a dead, merchant or
+    // crafting bot's step is none, and a far bot's held build lost (a restart, eviction)
+    // has no answer to serve: both build.
+    if (!Economy.FIELD_ACTIVITIES.has(state.activity) && !['grouped', 'shopping'].includes(state.activity)) return `not_field:${state.activity}`;
     if (Situations.reactive(state) && !Economy.heldBuild(state, deps)) return 'no_held';
     if (!options.afterResult && state.activity === 'traveling'
         && !invoke('GameServer/Bot/Population/BackgroundResolver').travelRecord(state.stats.travel)) return 'travel_record'; // lazy: as canReuse before L114 (load order unchecked)

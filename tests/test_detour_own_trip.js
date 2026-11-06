@@ -191,6 +191,31 @@ async function run() {
     console.log('PASS a death-pressure flight is an event');
 
     {
+        // A far bot arrives in town. On the trip its held leaf ordered to the town the leaf names (a
+        // purchase, a sale) the build is not woken: the visit carries out the step it came for, which a
+        // build in town, where a sale costs no trip, dropped. Any other arrival wakes it; the workshop
+        // hears both.
+        const shop = { ...base, characterId: 990105, activity: 'shopping', currentRegion: 'Giran' };
+        const trip = (townName, cause = undefined) => ({ ...shop, activity: 'traveling',
+            stats: { ...base.stats, travel: { townName, arrivalActivity: 'shopping', cause } } });
+        const woken = (before, leaf) => {
+            const stats = { woken: 0, waiting: 0, earning: null, wishSections: {}, equipmentPlan: null, craftIncome: null };
+            for (const name of Situations.detect(before, shop, { leaf })) Situations.raise(stats, name, null, Situations.place(shop, before));
+            return ['build', 'workshop'].filter(decision => Situations.woken(stats, decision));
+        };
+        const buy = { activity: 'shopping', town: 'Giran', itemId: 1864, amount: 5 };
+        assert.deepEqual(woken(trip('Giran'), buy), ['workshop'], 'the purchase\'s own trip to its town wakes no build');
+        assert.deepEqual(woken(trip('Giran'), { activity: 'selling', town: 'Giran', items: [1864] }), ['workshop'],
+            'nor a sale\'s');
+        assert.deepEqual(woken(trip('Dion'), buy), ['build', 'workshop'], 'a trip to another town than the step names wakes it');
+        assert.deepEqual(woken(trip('Giran'), { activity: 'hunting', spotId: 'x' }), ['build', 'workshop'],
+            'an arrival a hunting leaf did not order (a bag or supply trip) wakes it');
+        assert.deepEqual(woken(trip('Giran', 'death_pressure'), buy), ['build', 'workshop'], 'a forced trip wakes it');
+        assert.deepEqual(woken({ ...shop, activity: 'hunting' }, buy), ['build', 'workshop'], 'an arrival with no trip wakes it');
+    }
+    console.log('PASS a town arrival on the held leaf\'s own trip wakes no build');
+
+    {
         // A trip start keeps its spot verdicts on the bot's kernel record
         // (BotRoute heldVerdict) while what they read stands: the spot, the
         // bot's side (kit and level, shot kind, servitor), the recovery's

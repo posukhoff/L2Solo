@@ -2011,7 +2011,10 @@ function startKernel(config = {}) {
                 rememberWishAdvisory(kernel.states.get(Number(state.characterId)), refreshed.advisory);
                 // economy: worker-local, the step's one decision; the
                 // projection after the round reads it (never posted).
-                return { statsPacket: stepStatsPacket(state, refreshed.economy, timestamp), economy: refreshed.economy,
+                // The workshop taken on this step rides the step's packet, as in a build: a
+                // step main executes (a town visit) reads the packet, not this state.
+                return { statsPacket: workshopKeys ? { ...stepStatsPacket(state, refreshed.economy, timestamp), ...workshopKeys }
+                    : stepStatsPacket(state, refreshed.economy, timestamp), economy: refreshed.economy,
                     // The facts of the step's last action ask: the card's own or its craft refresh's.
                     ...(asked?.baseline || refreshed.actionBaseline
                         ? { actionBaseline: asked?.baseline || refreshed.actionBaseline } : {}),

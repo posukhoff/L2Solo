@@ -340,7 +340,9 @@ async function run() {
         const moved = {
             wallet: { ...published, adena: published.adena * 3 + 1000 },
             loot: { ...published, inventory: { ...published.inventory, 1864: { selfId: 1864, amount: 90 }, 1865: { selfId: 1865, amount: 5 } } },
-            rest: { ...published, activity: 'resting' }
+            rest: { ...published, activity: 'resting' },
+            // A town visit carries out the step it came for: no build in town re-weighs it.
+            visit: { ...published, activity: 'shopping' }
         };
         for (const [name, state] of Object.entries(moved)) {
             assert.equal(Card.refusal(state, card, deps()), '', `a moved ${name} is no reason to decide`);
