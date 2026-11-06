@@ -761,11 +761,10 @@ function* nearDecision(input, iterator) {
 }
 // The gear plan's full review taken (gear_plan, F1), one rule for a far step and a near
 // decision: its bit cleared over the build's packet, and the marks of the errands the bot
-// failed before the situation that woke it dropped (GearMarks.afterReview: planned again).
-// The mind keys it writes.
+// failed dropped (GearMarks.afterReview: the review planned without them). The mind keys it writes.
 function gearPlanTaken(stats, packet, plan, subject, caller) {
     return { woken: Situations.decided({ ...stats, ...packet, equipmentPlan: plan }, 'gear_plan', { caller, subject }),
-        gearMarks: GearMarks.afterReview(stats) };
+        gearMarks: GearMarks.afterReview() };
 }
 // options: { economy, stock, routeRows, routeKey } a step already holds, and
 // a party goal query's own (main's) buyOrderEscrow and recipeKnowledge;
@@ -2070,7 +2069,7 @@ function startKernel(config = {}) {
             const fallbackSpot = partyFallback?.spot || null;
             // A new packet, never the build's own (stepStatsPacket may return economy.statsPacket,
             // which the card shares). The gear plan's full review taken with the build (gear_plan,
-            // F1): the errands it failed before the situation that woke it are planned again (GearMarks).
+            // F1): it planned without the errands the bot failed, whose marks go (GearMarks).
             let statsPacket = stepStatsPacket(state, economy, timestamp);
             if (deps.fullReview && !nullReuse) statsPacket = { ...statsPacket,
                 ...gearPlanTaken(state.stats, statsPacket, acquisitionPlan, state.characterId, 'step') };

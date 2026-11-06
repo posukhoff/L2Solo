@@ -840,12 +840,16 @@ const ColdMarketService = {
         // the worker decides anew and the bot waits for it.
         const arrival = arrivalStep(state, goal);
         // A missed step failed where it acts (after any return handling): the bot decides anew.
-        const refreshAfter = written => written.then(result => {
-            invoke('GameServer/Bot/AI/DecisionEvents').raiseOn(state.characterId, 'goal_failed', { impossible: true });
+        // A gear or material buy that found no fill is a failed gear errand: its item is
+        // marked (GearMarks), so the build it wakes does not send the bot for it again. A
+        // step the card no longer holds is no errand failed (no mark).
+        const failedErrand = { impossible: true, kind: 'gear_errand', key: Number(goal.target.itemId) };
+        const refreshAfter = (written, payload = failedErrand) => written.then(result => {
+            invoke('GameServer/Bot/AI/DecisionEvents').raiseOn(state.characterId, 'goal_failed', payload);
             return result;
         });
-        const missed = reason => refreshAfter(retryAfterFailedPurchase(state, goal, reason));
-        if (!arrival) return missed('arrival_step_gone');
+        const missed = (reason, payload) => refreshAfter(retryAfterFailedPurchase(state, goal, reason), payload);
+        if (!arrival) return missed('arrival_step_gone', { impossible: true });
         // What the bot may spend (PurchaseFunding.spendable): its wallet above
         // the operating reserve, at the goal root's place in the money queue.
         // A buy ad's escrow is not in the wallet a shop is paid from.
@@ -880,6 +884,8 @@ const ColdMarketService = {
             if (!plan) return missed('no_affordable_offer');
             const snapshot = GoalState.snapshot(state.characterId);
             return buyHere(state, plan, { goal: { expectedGoal: goal, updatedAt: snapshot?.updatedAt } }).then(async bought => {
+                if (!bought.pending && !bought.hot && !(bought.units > 0)) return refreshAfter(Promise.resolve({ ...bought,
+                    purchased: false, reason: 'market_material_no_fill' }));
                 const progress = bought.progressApplied || (bought.units > 0 ? await GoalState.applyPurchase(state.characterId, goal, bought.units) : null);
                 if (diagnosticGoalRevision !== null) Trace.detail({ owner: state.characterId,
                     revision: Number(bought.state?.simulation?.revision), goalRevision: diagnosticGoalRevision,
@@ -893,7 +899,7 @@ const ColdMarketService = {
         }
         if (offer.sourceType === 'npc') {
             const blocker = LifeState.marketPurchaseBlocker(state, offer, 1);
-            if (blocker) return finishBlockedPurchase(state, goal, blocker);
+            if (blocker) return refreshAfter(finishBlockedPurchase(state, goal, blocker));
         }
         offer.buyerCharacterId = Number(state.characterId);
         offer.equipSlot = Number(goal.target.itemSlot || 0) || undefined;
@@ -909,7 +915,7 @@ const ColdMarketService = {
             if (bought.pending) return bought;
             if (!bought.purchased) {
                 if (bought.reason === 'trade_meeting_purchase_price_changed') return refreshAfter(replanAfterPriceRefusal(state));
-                return bought.blocked ? finishBlockedPurchase(state, goal, bought.reason) : retryAfterFailedPurchase(state, goal, bought.reason);
+                return refreshAfter(bought.blocked ? finishBlockedPurchase(state, goal, bought.reason) : retryAfterFailedPurchase(state, goal, bought.reason));
             }
             return (bought.progressApplied ? Promise.resolve() : GoalState.applyPurchase(state.characterId, goal, Number(bought.units || 0))).then(() => {
                 if (diagnosticGoalRevision !== null) Trace.detail({ owner: state.characterId,
