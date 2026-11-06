@@ -150,6 +150,7 @@ if (workerData?.spotTable) SpotValueTable.attachShared(workerData.spotTable);
 const ColdCombatProfile = require('./ColdCombatProfile');
 const EconomyContext = invoke('GameServer/Bot/Economy/EconomyContext');
 const CraftEligibility = require('../Economy/CraftEligibility');
+const CraftShopService = require('../Economy/CraftShopService');
 const RecipeBookCodec = require('../Economy/RecipeBookCodec');
 const EconomyCommit = require('../Economy/EconomyCommit');
 const VisitNeed = require('../../ClanHall/VisitNeed');
@@ -753,25 +754,32 @@ function* ownProduction(input) {
     return Wealth.resultOccupation(cursor);
 }
 // The workshop decision, one rule for a far step (decideWorkshop) and a near body's
-// decision (nearWorkshop): woken, it is taken (a crafter's answer, else none) and held
-// (stats.craftIncome: workshopValues); its mind keys, or null when not woken. Not taken
-// on an unknown planner answer (no book, board or money packet yet, a cancelled or failed
-// job): its bit stays woken and the next step or post asks again; counted by its reason
-// (workshop:unknown:<reason>).
-function workshopTaken(stats, answer, caller, subject) {
+// decision (nearWorkshop): woken, it is taken and held. Its two answers at one moment:
+// its own production (answer: a crafter's planner answer, else none; stats.craftIncome:
+// workshopValues) and a service crafter's listing on its known book
+// (CraftShopService.listing, stats.workshop; fees priced over every rival's public row).
+// The stats keys it takes; null on an unknown planner answer (no book, board or money
+// packet yet, a cancelled or failed job): not taken, its bit stays woken and the next
+// step or post asks again; counted by its reason (workshop:unknown:<reason>).
+function workshopTaken(state, answer, caller) {
     if (answer?.known === false) { Situations.note(`workshop:unknown:${answer.reason || 'other'}`); return null; }
-    return { craftIncome: ColdEconomyDecision.workshopValues(answer), woken: Situations.decided(stats, 'workshop',
-        { caller, subject, answer: Trace.on() ? `${answer.recipeId}:${Math.round(answer.incomePerHour) || 0}` : null }) };
+    const stats = state.stats || {};
+    const book = CraftEligibility.isServiceCrafter(state) ? RecipeBookCodec.unpack(recipeKnowledgeOf(state).recipeBook) : null;
+    const workshop = book ? CraftShopService.listing(state, book,
+        recipeId => [...publicWorkshopIndex.fees(recipeId, Number(state.characterId))]) : stats.workshop;
+    return { craftIncome: ColdEconomyDecision.workshopValues(answer), ...(workshop !== stats.workshop ? { workshop } : {}),
+        woken: Situations.decided(stats, 'workshop', { caller, subject: state.characterId,
+            answer: Trace.on() ? `${answer.recipeId}:${Math.round(answer.incomePerHour) || 0}` : null }) };
 }
-// A near body's workshop (mode near): taken when woken, on the post's state, which then
-// holds it for the build; else the held answer. Beside it the sale-feasibility mask of
+// A near body's workshop (mode near): taken when woken (and known), on the post's state,
+// which then holds it for the build; else the held answer. Beside it the sale-feasibility mask of
 // its own lines (ColdOccupationSources.feasibility) a hot look reads (HotBoardReviewService).
 // { answer: the workshop with its mask, taken: the mind keys taken, or null }.
 function* nearWorkshop(input) {
     let taken = null;
     if (Situations.woken(input.state.stats, 'workshop')) {
         const answer = CraftEligibility.isServiceCrafter(input.state) ? yield* ownProduction(input) : noWorkshop();
-        taken = workshopTaken(input.state.stats, answer, 'economy_near', input.state.characterId);
+        taken = workshopTaken(input.state, answer, 'economy_near');
         if (taken) input.state = { ...input.state, stats: { ...input.state.stats, ...taken } };
     }
     const feasibility = input.board?.ownerLines(input.state.characterId)?.length
@@ -889,7 +897,7 @@ async function decideWorkshop(state, timestamp, routeRows, caller) {
     if (!Situations.woken(state.stats, 'workshop')) return null;
     const answer = CraftEligibility.isServiceCrafter(state)
         ? await occupationFor(state, timestamp, { routeRows, routeKey: EconomicTrip.key(state), caller }) : noWorkshop();
-    return workshopTaken(state.stats, answer, caller, state.characterId);
+    return workshopTaken(state, answer, caller);
 }
 // The card's craft (its shot step) is prepared again only when the MP moved
 // out of the band its craft checks answer alike on (WealthCraftPolicy
