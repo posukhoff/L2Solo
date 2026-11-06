@@ -235,7 +235,8 @@ function npcDied(session, actor, npc) {
         const life = invoke('GameServer/Bot/Economy/EconomicValuation').progressStats(state, {
             timestamp: Date.now(), startedAt: invoke('GameServer/Bot/AI/BotHuntEfficiency').SERVER_STARTED_AT,
             kills: 1, persona: invoke('GameServer/Bot/AI/BotPersona').of(state), knowledgeEnabled: learning.knowledgeEnabled() });
-        reward.session.coldLifeState = { ...saved, stats: { ...saved.stats, ...life } };
+        // Its kill counts as a far round's win (GearStall: one kill count, stats.fightsWon).
+        reward.session.coldLifeState = { ...saved, stats: { ...saved.stats, ...life, fightsWon: Number(saved.stats?.fightsWon || 0) + 1 } };
     }
     invoke('GameServer/Social/SharedHuntMemory').recordHot(rewards, npc);
 }
