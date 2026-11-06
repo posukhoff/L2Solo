@@ -43,7 +43,7 @@ const hoursOf = seconds => seconds / HOUR_SECONDS;
 
 // The healing potions in the bag beyond those its survival drink keeps.
 function spareBottles(actor, stats, inventory) {
-    let bottles = -Math.max(0, Number(Packet.lineOf(stats?.kitRates, 'potions')) || 0);
+    let bottles = -Math.max(0, Number(Packet.lineOf(stats?.kitRates, stats?.earning, 'potions')) || 0);
     for (const potion of DRINKS) bottles += HealingPotionStock.heldAmount(actor, inventory, potion.selfId);
     return bottles;
 }

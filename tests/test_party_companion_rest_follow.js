@@ -2540,6 +2540,9 @@ try {
     };
     publishSessions([errandLeaderSession, errandSession, fakeSession('bot_shot_seller', shotSeller)]);
     deliverNearDecision(errandSession);
+    // The spot's kit use lives in the bot's earning answer (situations.md §14), the one it held solo.
+    const errandStats = invoke('GameServer/Bot/AI/DecisionEvents').statsFor(errandSession);
+    errandStats.earning = { ...errandStats.earning, shotsPerHour: authoredShotInputs.shotUse, potionsPerHour: authoredShotInputs.potionUse };
     FollowingState.tick(errandSession, errandBot, {}, {
         getClosestNewbieGuide: () => ({ locX: -84081, locY: 243227, locZ: -3723 }),
         getClosestTown: () => ({ name: 'Giran', x: 83396, y: 147904, z: -3404 }),

@@ -705,7 +705,7 @@ function restockAfterWeaponChange(actor, slots = [], logTag = 'BotGear') {
 function needsActorRestock(actor) {
     // lazy: cycle DecisionEvents requires this module at its top.
     const stats = invoke('GameServer/Bot/AI/DecisionEvents').decisionStatsFor(actor.session);
-    const line = invoke('GameServer/Bot/Economy/StatsPacket').lineOf(stats?.kitRates, 'shots');
+    const line = invoke('GameServer/Bot/Economy/StatsPacket').lineOf(stats?.kitRates, stats?.earning, 'shots');
     if (!(line > 0)) return false;
     const plan = planForActor(actor), beginner = BeginnerShots.selfIdFor(plan.kind, plan.rank);
     const held = shotAmount(actor, plan) + (beginner ? Number(actor.backpack?.fetchItemFromSelfId?.(beginner)?.fetchAmount?.() || 0) : 0);
