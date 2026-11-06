@@ -12,12 +12,14 @@ const doneSellerId = 730185;
 const cleanerId = 730186;
 const archerId = 730187;
 const poorId = 730188;
+const poorErrandId = 730189;
 const STATIC_BOUGHT = [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871];
 
 (async () => {
     const world = await createWorld([{ id, classId: 0, level: 20 }, { id: sellerId, classId: 0, level: 20 },
         { id: doneSellerId, classId: 0, level: 20 }, { id: cleanerId, classId: 0, level: 20 },
-        { id: archerId, classId: 9, level: 20 }, { id: poorId, classId: 0, level: 20 }], 'native-afk-visit');
+        { id: archerId, classId: 9, level: 20 }, { id: poorId, classId: 0, level: 20 },
+        { id: poorErrandId, classId: 0, level: 20 }], 'native-afk-visit');
     try {
         await Life.init();
         await Database.createAccount('bot_native_afk_visit', 'fixture');
@@ -189,41 +191,52 @@ const STATIC_BOUGHT = [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871];
         // The visit that sold spent the held sale step: leaving town, the build decides again on the bag the sale
         // left. Held past the visit, the step chosen in town (where selling costs no trip) sent the bot back to
         // town with its next loot. A poor bot's money goes to its first gap, which its bag pays for here.
-        {
-            await Database.createAccount('bot_native_poor_seller', 'fixture');
-            await Database.execute(['UPDATE characters SET username=? WHERE id=?', ['bot_native_poor_seller', poorId]]);
-            await Database.setItem(poorId, { selfId: 57, amount: 2000, slot: 0 });
-            await Database.setItem(poorId, { selfId: 1, amount: 1, equipped: 1, slot: 7 });
-            for (const selfId of [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871])
-                await Database.setItem(poorId, { selfId, amount: 200, slot: 0 });
-            const poor = await Life.upsertState({ characterId: poorId, accountName: 'bot_native_poor_seller',
-                name: 'NativePoorSeller', level: 20, exp: Number(DataCache.experience[19]),
+        const JUNK = [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871];
+        const poorVisit = async (characterId, label, townVisit) => {
+            const account = `bot_native_${label}`;
+            await Database.createAccount(account, 'fixture');
+            await Database.execute(['UPDATE characters SET username=? WHERE id=?', [account, characterId]]);
+            await Database.setItem(characterId, { selfId: 57, amount: 2000, slot: 0 });
+            await Database.setItem(characterId, { selfId: 1, amount: 1, equipped: 1, slot: 7 });
+            for (const selfId of JUNK) await Database.setItem(characterId, { selfId, amount: 200, slot: 0 });
+            const poor = await Life.upsertState({ characterId, accountName: account,
+                name: `Native${label}`, level: 20, exp: Number(DataCache.experience[19]),
                 phase: 'cold', activity: 'shopping', currentRegion: 'Elven Village', spotId: String(spot.id),
                 adena: 2000, loc: place, vitals: { hp: 1000, maxHp: 1000, mp: 1000, maxMp: 1000 },
-                inventory: Life.inventorySummaryFromItems(await Database.fetchItems(poorId)),
+                inventory: Life.inventorySummaryFromItems(await Database.fetchItems(characterId)),
                 stats: { classId: 0, generatedCold: true, classProgressionClassId: 0, classProgressionLevel: 20,
-                    townVisit: { town: 'Elven Village', startedAt, reason: 'sell_inventory' },
+                    ...(townVisit ? { townVisit } : {}),
                     marketReturn: { spotId: String(spot.id), regionName: spot.name, loc: spot.center } },
                 timing: { activityStartedAt: Date.now(), lastResolvedAt: Date.now() - 1000, nextResolveAt: Date.now() }
-            }, 'poor_sale_visit_fixture');
+            }, `${label}_fixture`);
             const poorNative = await nativeDecision(poor, { townVisit: true });
             const leaf = invoke('GameServer/Bot/Population/ColdEconomyDecision').compact(poorNative.plan.economyDecision).activity;
-            assert.equal(leaf?.activity, 'selling', 'the fixture holds a sale step in town');
+            assert.equal(leaf?.activity, 'selling', `${label}: the fixture holds a sale step in town`);
             const visited = await Population.resolveColdState(poor, { precomputedPlan: poorNative.plan,
                 precomputedResult: { patch: {}, events: [], materialize: { exp: 0, sp: 0, adena: 0, items: [] },
                     nextResolveAt: Date.now() + 30000, debug: {} } });
             assert(visited.ok);
-            assert.notEqual(visited.state.activity, 'shopping', 'the sale visit left town');
+            assert.notEqual(visited.state.activity, 'shopping', `${label}: the visit left town`);
             const Situations = invoke('GameServer/Bot/Situations');
-            const wokenNow = async () => Situations.woken((await Life.findByCharacterId(poorId))?.stats, 'build');
+            const wokenNow = async () => Situations.woken((await Life.findByCharacterId(characterId))?.stats, 'build');
             let woken = await wokenNow();
             for (let wait = 0; wait < 50 && !woken; wait++) {
                 await new Promise(resolve => setTimeout(resolve, 20));
                 woken = await wokenNow();
             }
-            assert(woken, 'the sale visit that left town woke the build');
-        }
-        console.log('PASS sale visit: leaving town wakes the build over the sold bag');
+            assert(woken, `${label}: the visit that left town woke the build`);
+            return (await Database.fetchItems(characterId)).reduce((sum, row) => {
+                sum[row.selfId] = (sum[row.selfId] || 0) + Number(row.amount || 0);
+                return sum;
+            }, {});
+        };
+        await poorVisit(poorId, 'poor_seller', { town: 'Elven Village', startedAt, reason: 'sell_inventory' });
+        // A visit that came for something else and holds a sale step in town sells there, as a player sells
+        // his loot while in town: no second trip for it.
+        const errandBag = await poorVisit(poorErrandId, 'poor_errand_visit', null);
+        assert(JUNK.some(selfId => (errandBag[selfId] || 0) < 200), `the held sale step sold on an ordinary visit: ${JSON.stringify(errandBag)}`);
+        assert((errandBag[57] || 0) > 2000, 'the sale paid adena');
+        console.log('PASS held sale step: sold on the visit that holds it, leaving town wakes the build');
 
         assert.equal(Population.marketListingIntent({ ...saleState, stats: { ...saleState.stats,
             townVisit: { ...saleState.stats.townVisit, town: 'Gludin Village' } } }, { type: 'restock' }).saleVisit, false,

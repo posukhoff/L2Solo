@@ -650,7 +650,13 @@ function saleVisit(state) {
         && (!visit.town || visit.town === state.currentRegion);
 }
 
-function marketListingIntent(state, goal = null) {
+// The visit sells (open decides the bag) when it came to sell, or when the build's held
+// step on it is a sale: a sale step chosen in town is carried out there, not left for a
+// second trip. Temporary until the town plan's sell stop.
+const visitSells = (state, leaf = null) => saleVisit(state) || leaf?.activity === 'selling';
+
+// leaf: the build's held step on this visit (the step's card).
+function marketListingIntent(state, goal = null, leaf = null) {
     const ordinaryVisit = state?.phase === 'cold' && state.activity === 'shopping'
         && invoke('GameServer/Bot/Economy/BotImprovementService').inTown(state);
     const floor = ordinaryVisit && state.stats?.townVisit?.reason === 'sell_inventory'
@@ -663,7 +669,7 @@ function marketListingIntent(state, goal = null) {
         // Arrows the sale takes (its own lines): sold at the NPC beside the worker's board plan.
         || (ordinaryVisit && invoke('GameServer/Bot/Economy/ItemDisposition').unusedArrowCandidates(state).length
             ? { cleanupReason: 'unused_arrows' } : null);
-    const selling = saleVisit(state);
+    const selling = visitSells(state, leaf);
     if (!forcedCleanup && goal?.type !== 'sell_inventory' && !ordinaryVisit && !selling) {
         return { shouldOpen: false, state };
     }
@@ -3300,7 +3306,7 @@ const PopulationService = {
         // first would make two pricers fight over it. A forced cleanup keeps
         // the author's path (E306).
         if (updatedState.activity === 'shopping' && workerPlan?.economyPlan && !correctedBids
-            && (!saleVisit(updatedState) || updatedState.stats?.forcedMarketCleanup)) {
+            && (!visitSells(updatedState, visitLeaf) || updatedState.stats?.forcedMarketCleanup)) {
             const sourceWorker = ColdSimulationCoordinator.worker, sourceEpoch = ColdSimulationCoordinator.workerEpoch;
             const beforeWrite = () => {
                 if (ColdSimulationCoordinator.stopping || ColdSimulationCoordinator.worker !== sourceWorker
@@ -3360,7 +3366,7 @@ const PopulationService = {
                     ? Promise.resolve({ state: marketLifecycle.state, purchased: false, reason: 'other_town_deferred' })
                     : ColdMarketService.tryPurchase(marketLifecycle.state, goalSnapshot?.current))
                     .then((marketResult) => ({ marketLifecycle, marketResult, goal: goalSnapshot?.current || null }))))
-            .then(({ marketLifecycle, marketResult, goal }) => this.finishColdMarketStep(updatedState, workerPlan, spot, tripEdge, marketLifecycle, marketResult, goal))
+            .then(({ marketLifecycle, marketResult, goal }) => this.finishColdMarketStep(updatedState, workerPlan, spot, tripEdge, marketLifecycle, marketResult, goal, visitLeaf))
             .then((finalState) => {
                 const craftEvents = CraftTelemetry.progressEvents(state, acquisitionPlan, updatedState);
                 return LifeEvents.recordMany(state.characterId, [...planEvents, ...travelEvents, ...result.events, ...craftEvents])
@@ -3390,7 +3396,7 @@ const PopulationService = {
             });
     },
 
-    finishColdMarketStep(updatedState, workerPlan, spot, tripEdge, marketLifecycle, marketResult, goal) {
+    finishColdMarketStep(updatedState, workerPlan, spot, tripEdge, marketLifecycle, marketResult, goal, visitLeaf = null) {
         const purchasedState = marketResult.state || marketLifecycle.state || updatedState;
         if (marketResult.pending) return purchasedState;
         // The bot was activated while the market step ran (the activation fence waits
@@ -3419,7 +3425,7 @@ const PopulationService = {
             return LifeState.upsertState(batchState, 'market_batch_continue')
                 .then((saved) => saved || batchState);
         }
-        const listingIntent = marketListingIntent(purchasedState, goal);
+        const listingIntent = marketListingIntent(purchasedState, goal, visitLeaf);
         // A sale trip must reach the buyers and its sale retry, which only open does.
         const listingPromise = !marketLifecycle.closed && listingIntent.shouldOpen
             && (!workerPlan?.economyPlan || listingIntent.cleanup || listingIntent.saleVisit)
