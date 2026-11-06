@@ -81,6 +81,18 @@ assert(Packet.firstUnfundedPrice(poorChoice.state.stats.money) > 0, 'a real unfu
 assert.strictEqual(Funding.spendable(poorChoice.state, 0, { itemId: NECKLACE }), 0,
     'the old jewellery plan alone cannot authorize its debit');
 
+// A sale leaf names no kind the last sale visit could not place (stats.marketSellSeen):
+// it would only send the bot back to leave it in the bag again.
+{
+    const Providers = invoke('GameServer/Bot/Economy/WishProviders');
+    const seller = bot(wealth, npcJewellery, 50000);
+    const kinds = state => Providers.liquidationCandidates(state, Economy.basics(state)).map(row => Number(row.selfId));
+    const tried = kinds(seller)[0];
+    assert(tried > 0, 'the loot is for sale');
+    const after = { ...seller, stats: { ...seller.stats, marketSellSeen: { items: [tried], buyers: null } } };
+    assert.deepStrictEqual(kinds(after), kinds(seller).filter(id => id !== tried), 'the kind the last visit kept is no sale');
+}
+
 const botOffer = { ...npcJewellery, partyNeedReason: 'market_fallback', market: { ...npcJewellery.market, sourceType: 'afk_bot_store' } };
 const ordinary = { ...bot({ primaryDrive: 'progress', traits: {} }, botOffer), level: 40,
     stats: { ...bot(null, botOffer).stats, build: { grade: 'c', classId: 1, level: 40 } } };

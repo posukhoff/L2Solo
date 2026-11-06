@@ -1552,15 +1552,19 @@ function personalCraftPlan(state, context, { allowStock = false, wishKey = null 
         componentRecipes: components, valueRate: Number(wish.ratio || 0), source: 'wish_network',
         ...(stock ? { purpose: 'stock', wishKey: leaf.rootKey } : {}) };
 }
+// A kind the last sale visit could not place (stats.marketSellSeen, ItemDisposition.saleSlots'
+// reading) is none: a sale leaf on it would send the bot back to leave it in the bag again.
 function liquidationCandidates(state, ctx) {
     const saleState = invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').saleState(state);
     const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+    const tried = state.stats?.marketSellSeen?.items;
     return Disposition.saleCandidates(saleState, {
         preparedReservations: Disposition.reservedEquipmentAmounts(saleState),
         keptAmounts: { ...invoke('GameServer/Inventory/ShotStock').keptAmounts(state, ctx),
             ...invoke('GameServer/Bot/AI/HealingPotionStock').keptAmounts(state, { targetAmount: ctx.stock('potions').target }),
             ...invoke('GameServer/Bot/Travel/ScrollStock').keptAmounts(state) }
-    }).filter(row => row.npcComparable && !Disposition.isGradeCrystal(row));
+    }).filter(row => row.npcComparable && !Disposition.isGradeCrystal(row)
+        && !(Array.isArray(tried) && tried.includes(Number(row.selfId))));
 }
 // The native selector's sale rows at the held stock targets, including rejected
 // and cap-displaced items (selected before the exclusions are filtered out: an
