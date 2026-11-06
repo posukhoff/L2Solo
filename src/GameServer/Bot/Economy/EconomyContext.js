@@ -1024,7 +1024,7 @@ function incomeRouteFor(state, deps, timestamp, price, keep) {
         ? IncomeRoute.heldRoute(state, { spots: deps.spots, timestamp, price: read, mode: deps.mode }) : null;
     // searched: the route is this search's; earning: the answer it holds.
     const record = { state, timestamp, spots: deps.spots, mode: deps.mode, maxChecks: deps.maxChecks, required, reads, route, earns,
-        searched: !!found, earning: found ? IncomeRoute.answerOf(found.route, timestamp, found.error) : state.stats?.earning ?? null };
+        searched: !!found, earning: found ? IncomeRoute.answerOf(found.route, timestamp, found.error, state) : state.stats?.earning ?? null };
     keep?.(record);
     return record;
 }
