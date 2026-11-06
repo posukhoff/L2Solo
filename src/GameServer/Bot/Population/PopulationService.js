@@ -3317,10 +3317,11 @@ const PopulationService = {
 
         const improvementService = invoke('GameServer/Bot/Economy/BotImprovementService');
         const acquisitionLeaf = ColdSimulationCoordinator.economyDecisions.activity(updatedState);
+        // The held improvement is done on the visit it came for, before the visit ends: a
+        // symbol maker's henna or a smith's work needs the town (reviewCold checks which town),
+        // and the review after a commit no longer finds the bot there once the visit has left.
         if (acquisitionLeaf?.activity === 'improving'
-            && ['crystallize', 'luxury_exchange'].includes(acquisitionLeaf.improvement?.kind)
-            && (improvementService.selfCrystallization(acquisitionLeaf.improvement)
-                || updatedState.currentRegion === 'Giran' && improvementService.inTown(updatedState))) {
+            && (improvementService.selfCrystallization(acquisitionLeaf.improvement) || improvementService.inTown(updatedState))) {
             const improved = await improvementService.reviewCold(updatedState);
             if (improved.changed) {
                 // Consumed inputs retire this card. Replan in town before
