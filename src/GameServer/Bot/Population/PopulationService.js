@@ -649,6 +649,13 @@ function saleVisit(state) {
     return visit?.reason === 'sell_inventory' && visit.completed !== true
         && (!visit.town || visit.town === state.currentRegion);
 }
+// A visit sells when it came to sell or the step it carries out is a sale (a sale taken in
+// town on another visit, where it costs no trip): its own sale (ColdMarketListingService.open)
+// places the bag and writes the sale retry on what it could not place, which the held sale's
+// end reads (EconomyContext.saleSpent). Read during the step's command, which holds its card.
+function visitSells(state) {
+    return saleVisit(state) || ColdSimulationCoordinator.economyDecisions.activity(state)?.activity === 'selling';
+}
 
 function marketListingIntent(state, goal = null) {
     const ordinaryVisit = state?.phase === 'cold' && state.activity === 'shopping'
@@ -663,7 +670,7 @@ function marketListingIntent(state, goal = null) {
         // Arrows the sale takes (its own lines): sold at the NPC beside the worker's board plan.
         || (ordinaryVisit && invoke('GameServer/Bot/Economy/ItemDisposition').unusedArrowCandidates(state).length
             ? { cleanupReason: 'unused_arrows' } : null);
-    const selling = saleVisit(state);
+    const selling = visitSells(state);
     if (!forcedCleanup && goal?.type !== 'sell_inventory' && !ordinaryVisit && !selling) {
         return { shouldOpen: false, state };
     }
@@ -3293,11 +3300,11 @@ const PopulationService = {
         correctedBids = checked.changed;
         // A correction changed the owner's board revision. Its earlier
         // optional plan waits for fresh preparation, rather than replaying it.
-        // A sale trip's own sale (open) decides the bag: the worker showcase
+        // A selling visit's own sale (open) decides the bag: the worker showcase
         // first would make two pricers fight over it. A forced cleanup keeps
         // the author's path (E306).
         if (updatedState.activity === 'shopping' && workerPlan?.economyPlan && !correctedBids
-            && (!saleVisit(updatedState) || updatedState.stats?.forcedMarketCleanup)) {
+            && (!visitSells(updatedState) || updatedState.stats?.forcedMarketCleanup)) {
             const sourceWorker = ColdSimulationCoordinator.worker, sourceEpoch = ColdSimulationCoordinator.workerEpoch;
             const beforeWrite = () => {
                 if (ColdSimulationCoordinator.stopping || ColdSimulationCoordinator.worker !== sourceWorker
