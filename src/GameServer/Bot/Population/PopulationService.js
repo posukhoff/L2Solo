@@ -3291,6 +3291,17 @@ const PopulationService = {
             return { ok: false, reason: 'apply_failed', state };
         }
         if (workerPlan?.economyDecision) ColdSimulationCoordinator.economyDecisions.hold(updatedState.characterId, workerPlan.economyDecision);
+        // The step's writes below hold to the worker that planned it and to a far bot:
+        // a replaced worker or a bot gone hot writes nothing.
+        const sourceWorker = ColdSimulationCoordinator.worker, sourceEpoch = ColdSimulationCoordinator.workerEpoch;
+        const beforeWrite = () => {
+            if (ColdSimulationCoordinator.stopping || ColdSimulationCoordinator.worker !== sourceWorker
+                || ColdSimulationCoordinator.workerEpoch !== sourceEpoch)
+                throw new WorkerCommandAdmissionRefusal('stale_worker_source');
+            if (ColdSimulationCoordinator.fencedBots?.has(updatedState.characterId)
+                || LifeState.cachedState(updatedState.characterId)?.phase !== 'cold')
+                throw new WorkerCommandAdmissionRefusal('hot_handoff_fenced');
+        };
 
         // Every ordinary town visit publishes its worker-selected stock
         // before native errands can finish the visit and leave town.
@@ -3305,38 +3316,31 @@ const PopulationService = {
         // the author's path (E306).
         if (updatedState.activity === 'shopping' && workerPlan?.economyPlan && !correctedBids
             && (!visitSells(updatedState) || updatedState.stats?.forcedMarketCleanup)) {
-            const sourceWorker = ColdSimulationCoordinator.worker, sourceEpoch = ColdSimulationCoordinator.workerEpoch;
-            const beforeWrite = () => {
-                if (ColdSimulationCoordinator.stopping || ColdSimulationCoordinator.worker !== sourceWorker
-                    || ColdSimulationCoordinator.workerEpoch !== sourceEpoch)
-                    throw new WorkerCommandAdmissionRefusal('stale_worker_source');
-                if (ColdSimulationCoordinator.fencedBots?.has(updatedState.characterId)
-                    || LifeState.cachedState(updatedState.characterId)?.phase !== 'cold')
-                    throw new WorkerCommandAdmissionRefusal('hot_handoff_fenced');
-            };
             const board = await BotAfkMarketService.executePlan(updatedState, workerPlan.economyPlan,
                 { reviewGoal: false, beforeWrite });
             updatedState = board.state || updatedState;
         }
 
-        const improvementService = invoke('GameServer/Bot/Economy/BotImprovementService');
-        const acquisitionLeaf = ColdSimulationCoordinator.economyDecisions.activity(updatedState);
-        if (acquisitionLeaf?.activity === 'improving'
-            && ['crystallize', 'luxury_exchange'].includes(acquisitionLeaf.improvement?.kind)
-            && (improvementService.selfCrystallization(acquisitionLeaf.improvement)
-                || updatedState.currentRegion === 'Giran' && improvementService.inTown(updatedState))) {
-            const improved = await improvementService.reviewCold(updatedState);
-            if (improved.changed) {
-                // Consumed inputs retire this card. Replan in town before
-                // another purchase or the return to a hunting spot.
-                ColdSimulationCoordinator.economyDecisions.release(updatedState.characterId);
-                exchangeWaits.delete(Number(updatedState.characterId));
-                return { ok: true, state: improved.state, debug: result.debug };
-            }
-        }
-
         Config.developerDiagnostics && Metrics.recordBackgroundResolve();
         Config.developerDiagnostics && Metrics.recordCombat(result.debug);
+        // The one place a far bot carries out its held improvement (reviewCold owns where it may:
+        // an enchant anywhere, a henna or a smith's work in a town that has the NPC), first in
+        // the step's work: a visit draws the henna it came for before it buys, sells and leaves
+        // (a review after the commit found the bot already on its way out of town). Consumed
+        // inputs retire the card; the rest of the visit runs on the improved bag and, as after a
+        // purchase, the bot stays for one pass that replans from it (a crystallization's exchange).
+        const decision = ColdSimulationCoordinator.economyDecisions.decided(updatedState);
+        let improved = false;
+        if (decision?.activity?.activity === 'improving') {
+            const review = await invoke('GameServer/Bot/Economy/BotImprovementService')
+                .reviewCold(updatedState, { beforeWrite, decide: () => decision });
+            if (review.changed) {
+                ColdSimulationCoordinator.economyDecisions.release(updatedState.characterId);
+                exchangeWaits.delete(Number(updatedState.characterId));
+                improved = true;
+            }
+            updatedState = review.state || updatedState;
+        }
         if (updatedState.activity === 'crafting') {
             return { ok: true, state: updatedState, debug: result.debug };
         }
@@ -3363,7 +3367,8 @@ const PopulationService = {
                     ? Promise.resolve({ state: marketLifecycle.state, purchased: false, reason: 'other_town_deferred' })
                     : ColdMarketService.tryPurchase(marketLifecycle.state, goalSnapshot?.current))
                     .then((marketResult) => ({ marketLifecycle, marketResult, goal: goalSnapshot?.current || null }))))
-            .then(({ marketLifecycle, marketResult, goal }) => this.finishColdMarketStep(updatedState, workerPlan, spot, tripEdge, marketLifecycle, marketResult, goal))
+            .then(({ marketLifecycle, marketResult, goal }) => this.finishColdMarketStep(updatedState, workerPlan, spot, tripEdge, marketLifecycle,
+                improved ? { ...marketResult, improved } : marketResult, goal))
             .then((finalState) => {
                 const craftEvents = CraftTelemetry.progressEvents(state, acquisitionPlan, updatedState);
                 return LifeEvents.recordMany(state.characterId, [...planEvents, ...travelEvents, ...result.events, ...craftEvents])
@@ -3395,7 +3400,8 @@ const PopulationService = {
             const returning = GoalExecutor.finishMarketVisit(purchasedState, Date.now(), { recoverMissingReturn: true });
             return returning ? LifeState.upsertState(returning, 'war_supply_return').then(saved => saved || returning) : purchasedState;
         }
-        if (marketResult.purchased) {
+        // marketResult.improved: the step carried out its held improvement (applyColdResolve).
+        if (marketResult.purchased || marketResult.improved) {
             exchangeWaits.delete(Number(purchasedState.characterId));
             const batchState = {
                 ...purchasedState,
@@ -3407,7 +3413,7 @@ const PopulationService = {
                 }
             };
             // Keep the bot in town for one prompt follow-up pass.
-            // The next scheduler tick replans from the purchased
+            // The next scheduler tick replans from the purchased (or improved)
             // inventory and can buy another item in this same town
             // without returning to the hunting ground in between.
             return LifeState.upsertState(batchState, 'market_batch_continue')
@@ -3495,11 +3501,7 @@ const PopulationService = {
         if (outcome?.ok && !options.workerAdmission
             && !invoke('GameServer/AfkTrade/TradeMeetingService').hasPreparation(state.characterId)) {
             const current = LifeState.cachedState(state.characterId) || outcome.state;
-            if (current) {
-                const trained = await LifeState.reviewTrainingAfterCommit(current);
-                const improved = await invoke('GameServer/Bot/Economy/BotImprovementService').reviewCold(trained);
-                outcome.state = improved.state || trained;
-            }
+            if (current) outcome.state = await LifeState.reviewTrainingAfterCommit(current) || current;
         }
         // Native errands can start a new trip after publishing the bids.
         // Finish this owner's resolve against that final route and money
