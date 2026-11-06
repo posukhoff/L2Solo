@@ -108,6 +108,7 @@ const SavedStats = require('../SavedStats');
 const { stateKey } = require('./SpotOccupancyIndex');
 const DecisionSections = invoke('GameServer/Bot/Economy/DecisionSections');
 const Situations = invoke('GameServer/Bot/Situations');
+const GearMarks = require('../AI/GearMarks');
 const PartyWaitFallback = invoke('GameServer/Bot/Population/PartyWaitFallback');
 const Protocol = require('./ColdSimulationProtocol');
 const ColdEconomyDecision = require('./ColdEconomyDecision');
@@ -2063,9 +2064,13 @@ function startKernel(config = {}) {
                 : null;
             const fallbackSpot = partyFallback?.spot || null;
             const statsPacket = stepStatsPacket(state, economy, timestamp);
-            // The gear plan's full review taken with the build (gear_plan, F1).
-            if (deps.fullReview && !nullReuse) statsPacket.woken = Situations.decided({ ...state.stats, ...statsPacket, equipmentPlan: acquisitionPlan },
-                'gear_plan', { caller: 'step', subject: state.characterId });
+            // The gear plan's full review taken with the build (gear_plan, F1): the errands
+            // it failed before the situation that woke it are planned again (GearMarks).
+            if (deps.fullReview && !nullReuse) {
+                statsPacket.woken = Situations.decided({ ...state.stats, ...statsPacket, equipmentPlan: acquisitionPlan },
+                    'gear_plan', { caller: 'step', subject: state.characterId });
+                statsPacket.gearMarks = GearMarks.afterReview(state.stats);
+            }
             const plannedStats = { ...(state.stats || {}), ...statsPacket, equipmentPlan: acquisitionPlan };
             if (partyRequest) plannedStats.partyRequest = partyRequest;
             else delete plannedStats.partyRequest;

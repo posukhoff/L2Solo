@@ -80,6 +80,11 @@ function raiseDecision(session, reason, { impossible = false, payload: fact = nu
             FailureLog.note('near.command_lost', new Error(`player_command on ${session.actor.fetchId?.()}: the body posts nothing`));
             dropCommand(raise);
         }
+        // Nor a gear errand's failure: no wait is set (its mark stays on the body).
+        if (fact?.kind === 'gear_errand' && !Life.nearPosts(session)) {
+            FailureLog.note('near.gear_wait_lost', new Error(`gear errand on ${session.actor.fetchId?.()}: the body posts nothing`));
+            raise.names = raise.names.filter(entry => entry.payload?.kind !== 'gear_errand');
+        }
         Life.notifyNearFacts(session, reason);
         return;
     }
@@ -166,10 +171,12 @@ function raiseBag(stats, raise, impossible, where, subject, applied = 0) {
     if (impossible) Situations.raise(stats, raise.impossibleName || 'goal_failed', { impossible: true }, where, subject);
     if (raise?.stop) Situations.stop(stats, raise.stop === 'town' ? Situations.OPEN : Situations.REST, subject);
 }
-// A body's failed step waits for the worker's answer to it: its goal_failed raise
-// (impossible) is still in its bag. Where the body acts, it tries the failed errand
-// again only after that answer (ShoppingState, HuntingState, FollowingState).
-const failureWaits = session => session?.nearRaise?.impossible === true;
+// A body's failed gear errand waits for the worker's answer to it: its goal_failed
+// raise of kind gear_errand is still in its bag (no other rejection blocks its errands).
+// Where the body acts, it plans a gear errand again only after that answer
+// (ShoppingState, HuntingState, FollowingState); the failed one stays marked (GearMarks).
+const failureWaits = session => !!session?.nearRaise?.names?.some(entry => entry.name === 'goal_failed'
+    && entry.payload?.kind === 'gear_errand');
 // A real command rejection belongs to the accepted decision that attempted
 // it: late failures never invalidate a newer decision or raise an event twice.
 const rejections = {};
@@ -225,7 +232,7 @@ function raiseOn(characterId, name, payload = null, reason = `situation_${name}`
     return Promise.resolve(owned).catch(() => null).then(run);
 }
 // The mind keys a row raise writes (BotLifeState.raiseOnRow).
-const RAISED_KEYS = Object.freeze(['woken', 'waiting', 'situationSeq', 'activityLeaf', 'earning', 'spotMarks']);
+const RAISED_KEYS = Object.freeze(['woken', 'waiting', 'situationSeq', 'activityLeaf', 'earning', 'spotMarks', 'gearMarks']);
 // A state the caller writes after its raise landed (raised: the raised row's
 // state): built on the raised row's revision, carrying its raised mind.
 const withRaise = (state, raised) => ({ ...state, simulation: raised.simulation,

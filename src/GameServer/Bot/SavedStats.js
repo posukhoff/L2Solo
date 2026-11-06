@@ -34,7 +34,7 @@ function compact(stats = {}) {
 // the next held answer (SpotRiskPolicy.withSpotMark, written by Situations' raise).
 const MIND_KEYS = Object.freeze(['decisionSeq', 'activityLeaf', 'wishFocus', 'wishSections',
     'dormantWishes', 'money', 'kitRates', 'dangerPrice', 'wishAdvisory', 'woken', 'waiting', 'situationSeq', 'earning',
-    'spotMarks']);
+    'spotMarks', 'gearMarks']);
 
 // A whole stats object (or a stats patch) as its two saved halves.
 // Keys no owner keeps any more, dropped as an old row saves again: wishDirty (the build's
