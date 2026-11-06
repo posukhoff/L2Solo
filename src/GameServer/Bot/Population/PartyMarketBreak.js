@@ -11,15 +11,34 @@ function cleanupNeed(member, now) {
     // lazy: worker ItemDisposition's own links are not loaded with the worker kernel.
     return invoke('GameServer/Bot/Economy/ItemDisposition').inventoryCleanupNeed(member, { now });
 }
+// The bag fact (situations.md F2; DecisionSections.stateView: its rise raises bag_full):
+// what the bag holds, read without a price, the board or the clock. 2 at the slot or
+// weight floor (SurvivalFloor.bagFloor), 1 at a cleanup count (ItemDisposition.cleanupCounted),
+// else 0. Whether the bag goes to town, and what it sells, is the build's (cleanupDecision).
+// kitHashes: the state's kit events when the caller holds them.
+function bagFact(state, kitHashes = null) {
+    if (SurvivalFloor.bagFloor(state, kitHashes)?.action === 'unload') return 2;
+    // lazy: worker ItemDisposition's own links are not loaded with the worker kernel.
+    return Number(invoke('GameServer/Bot/Economy/ItemDisposition').cleanupCounted(state));
+}
+// The build's cleanup decision, one rule for both threads (EconomyContext: a far step's
+// build, a near body's): a solo bot's bag must go to town (cleanupNeed, its sale retry
+// read now). Held in stats.cleanupDue until its trip starts (the far kernel's step with
+// main's cleanup goal, a body's HuntingState) or the bag fact falls to 0.
+function cleanupDecision(state, now) {
+    return state.party?.partyId || state.partyId ? null : cleanupNeed(state, now);
+}
 const CLEANUP_BUSY_FLAGS = ['marketReturn'];
 const CLEANUP_BUSY_ACTIVITIES = ['traveling', 'shopping', 'merchant', 'crafting', 'dead', 'pk_hunting'];
-// A solo cold bot with no trip or errand under way goes to sell when its bag
-// needs it: the worker attaches this need to the step's proposal, main starts the trip.
+// A solo cold bot with no trip or errand under way: free to start a cleanup trip.
+function cleanupFree(state) {
+    return !!state && state.phase === 'cold' && !(state.party?.partyId || state.partyId)
+        && !state.stats?.travel && !BotErrands.busyWith(state, CLEANUP_BUSY_FLAGS)
+        && !CLEANUP_BUSY_ACTIVITIES.includes(state.activity);
+}
+// Main's own resolve (no worker step): the bag's need decided where the trip starts.
 function forcedCleanupNeed(state, now) {
-    if (!state || state.phase !== 'cold' || state.party?.partyId || state.partyId
-        || state.stats?.travel || BotErrands.busyWith(state, CLEANUP_BUSY_FLAGS)
-        || CLEANUP_BUSY_ACTIVITIES.includes(state.activity)) return null;
-    return cleanupNeed(state, now);
+    return cleanupFree(state) ? cleanupNeed(state, now) : null;
 }
 // A forced cleanup decided over a resolve outranks a trip that resolve
 // started (route, karma), as it did when it was decided before the fight;
@@ -149,5 +168,5 @@ function ready(state) {
         && !state.stats?.travel && !state.stats?.marketReturn
         && ['hunting', 'party_wait', 'grouped'].includes(state.activity);
 }
-module.exports = { cleanupNeed, forcedCleanupNeed, withoutStartedTrip, clanDuty, warDuty, warSupplyGoal, warSupplyPurchaseBlocker, pending, sessionReady, memberNeed, warehouseDeparture,
+module.exports = { cleanupNeed, bagFact, cleanupDecision, cleanupFree, forcedCleanupNeed, withoutStartedTrip, clanDuty, warDuty, warSupplyGoal, warSupplyPurchaseBlocker, pending, sessionReady, memberNeed, warehouseDeparture,
     allowed, goal, departure, stats, ready };
