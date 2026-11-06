@@ -1142,6 +1142,17 @@ function writeHeldOnRevision(member, { stats = {}, columns = {} }, reason) {
         });
 }
 
+// The recipe ids a bot's next build reads (WishProviders.recipeIds over the book the
+// build is given): a far bot's step builds on its state; a near body's decision on its
+// workshop book, else its workshop entries (ColdSimulationWorker's planner capture;
+// main reads the same book, CraftWorkshopService.bookFor).
+function recipeReader(state) {
+    const Providers = invoke('GameServer/Bot/Economy/WishProviders');
+    if (state.phase !== 'hot' || !isMainThread) return row => Providers.recipeIds(row);
+    const Workshops = invoke('GameServer/Bot/Economy/CraftWorkshopService');
+    const known = Workshops.bookFor(state.characterId) !== null ? Workshops.cachedRecipes(state.characterId) : null;
+    return row => Providers.recipeIds(row, { knownRecipes: known || row.stats?.workshop?.entries || [] });
+}
 // Main's raise on a far bot (Situations' one SQL writer of its bits): the
 // situations' bits, as Situations.raise computes them where main last saw the
 // bot, ORed into the row's mind with no read of the rest, and the revision moved,
@@ -1968,6 +1979,7 @@ function reconcilePersistedLoadouts() {
 const BotLifeState = {
     notifyNearFacts,
     raiseOnRow,
+    recipeReader,
     nearPosts,
 
     // Boot only: { startedAt, downtimeMs } of this restart, measured once (L136).
@@ -3040,7 +3052,9 @@ const BotLifeState = {
             // The round found its spot empty of prey (BackgroundResolver, once a stay).
             // A round the full bag stopped (BackgroundResolver: survival_no_slot /
             // survival_overweight) raises bag_full again until its build takes the trip.
-            hard = Situations.detect(state, nextState, { escrow, leaf: options.leaf ?? null,
+            // The recipe ids its next build reads: the state's book on the background
+            // thread (its step builds on the state), the workshop's on main.
+            hard = Situations.detect(state, nextState, { escrow, leaf: options.leaf ?? null, recipes: recipeReader(nextState),
                 unhuntable: result.debug?.unhuntable === true, bagStopped: /^survival_(no_slot|overweight)$/.test(result.debug?.reason || '') });
         }
         // The bot's step counter, the clock of its spot marks (SpotRiskPolicy):
