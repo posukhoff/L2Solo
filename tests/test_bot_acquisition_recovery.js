@@ -67,6 +67,11 @@ async function run() {
     assert(step(Planner.STALL_KILLS - 5, Planner.STALL_KILLS).includes('source_stalled'), 'the crossing raises source_stalled');
     assert(!step(Planner.STALL_KILLS, Planner.STALL_KILLS + 5).includes('source_stalled'), 'past the crossing nothing more');
     assert(!step(0, 5).includes('source_stalled'), 'before it nothing');
+    // Near a player the body's kills count too (NpcDied: one kill count): its post crosses the stall.
+    const Sections = invoke('GameServer/Bot/Economy/DecisionSections');
+    const posted = Sections.semanticFacts(planned(killed(state, Planner.STALL_KILLS - 1)));
+    assert(Situations.detect({}, planned(killed(state, Planner.STALL_KILLS)), { facts: posted, body: true }).includes('source_stalled'),
+        'a body\'s post that crosses it raises source_stalled');
     const progressState = killed({ ...state, inventory: { 75: { selfId: 75, amount: 1 } } }, Planner.STALL_KILLS);
     assert.strictEqual(Planner.replanContextFor(progressState, stamped, now + 1).failure, null,
         'actually acquiring a component must prevent a no-progress stall');
