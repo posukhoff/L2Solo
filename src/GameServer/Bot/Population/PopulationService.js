@@ -2944,6 +2944,8 @@ const PopulationService = {
             return Promise.resolve({ ok: true, pending: true, state });
         }
         if (workerRequest?.precomputedPlan?.statsPacket) options = { ...options, statsPacket: workerRequest.precomputedPlan.statsPacket };
+        // The worker's plan of the step: the projection reads its held leaf (arrived_town:own).
+        if (workerRequest?.precomputedPlan) options = { ...options, stepPlan: workerRequest.precomputedPlan };
         const startedAt = Date.now();
         if (require('./RaidSupplyPolicy').held(state, startedAt)) {
             const result = workerRequest?.precomputedResult || BackgroundResolver.resolveSolo({ state, timestamp: startedAt });
