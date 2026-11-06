@@ -474,6 +474,20 @@ async function run() {
         assert.equal(Economy.leafOutcome({ ...base, phase: 'cold', activity: 'hunting', inventory: {} }, material), '', 'a held hunt raises nothing');
         assert.equal(Economy.leafOutcome({ ...base, phase: 'cold', activity: 'hunting' }, { activity: 'shopping', itemId: 1 }), '',
             'a shop is checked where it happens, in town');
+        // A sale is spent by the visit that ended after the build took it, the bot back toward its
+        // ground: done when its items left the bag, refused when they stayed. Held past the visit, a
+        // sale taken in town sent the bot back to town with its next loot.
+        const sale = { activity: 'selling', town: 'Giran', items: [1864] };
+        const back = (look, inventory = {}, activity = 'hunting', travel = null) => ({ ...base, phase: 'cold', activity, inventory,
+            stats: { ...base.stats, travel, wishSections: { at: 1000 }, townLook: { at: look, n: 1 } } });
+        assert.equal(Economy.leafOutcome(back(500), sale), '', 'a sale taken after the last visit waits for its own');
+        assert.equal(Economy.leafOutcome(back(2000), sale), 'goal_done:goal', 'the visit that ended after it spent the sale');
+        assert.equal(Economy.leafOutcome(back(2000, {}, 'traveling', { arrivalActivity: 'hunting' }), sale), 'goal_done:goal',
+            'on the way back to its ground too');
+        assert.equal(Economy.leafOutcome(back(2000, { 1864: { selfId: 1864, amount: 3 } }), sale), 'goal_failed',
+            'a visit that sold none of its items refused it');
+        assert.equal(Economy.leafOutcome(back(2000, {}, 'traveling', { arrivalActivity: 'shopping' }), sale), '',
+            'a trip on to a town (a craft warehouse return) is not the way back');
         assert.equal(check(marked(12), hunt), '', 'the mark is forgotten after its steps');
         const craft = check(base, { activity: 'crafting', recipeId: 999999 });
         assert.equal(craft.reason, 'check:craft', 'an unknown recipe refuses the craft');
