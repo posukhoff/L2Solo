@@ -15,7 +15,6 @@ const Consumption = require('../Economy/ConsumptionDiagnostics');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 const Trace = require('../DecisionTrace');
 const DecisionEvents = require('../AI/DecisionEvents');
-const DecisionSections = require('../Economy/DecisionSections');
 const Situations = require('../Situations');
 const PartyRequestPlanner = invoke('GameServer/Bot/Population/PartyRequestPlanner');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
@@ -3061,11 +3060,6 @@ const BotLifeState = {
         // +1 once per resolved step, whichever thread resolves it (hot actor
         // sessions never come here, so a near bot's marks wait until it is far).
         nextState.stats.stepCount = SpotRiskPolicy.stepCount(state) + 1;
-        // The soft point (background thread, every far step, whatever its
-        // round): money, income and the watched market against the bot's own
-        // error; raised with the round's situations.
-        const soft = !isMainThread && typeof options.softInputFor === 'function'
-            ? DecisionSections.softEvents(nextState, nextState.stats.wishSections, options.softInputFor(nextState, timestamp), state) : [];
         // Then the step's stop: at a rest or in town what waited for it wakes.
         const where = Situations.place(nextState, state);
         // A solo far hunter's stay weighed at its rest, once (situations.md Q2): its own income below its held
@@ -3076,7 +3070,7 @@ const BotLifeState = {
             nextState.stats.stay = { ...nextState.stats.stay, judged: true };
             hard.push('spot_disappoints');
         }
-        for (const name of [...hard, ...soft]) Situations.raise(nextState.stats, name, null, where, nextState.characterId);
+        for (const name of hard) Situations.raise(nextState.stats, name, null, where, nextState.characterId);
         Situations.stop(nextState.stats, where, nextState.characterId);
         // The worker's post-round economy ask: only a step that took no
         // decision before its round (a party member).
