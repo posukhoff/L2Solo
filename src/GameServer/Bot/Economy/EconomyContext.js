@@ -937,8 +937,13 @@ function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates
     };
     const kit = [base('shots'), base('potions')];
     // The survival reserve: the kit's missing survival units at their list price.
-    const reserve = kit.reduce((sum, row) => sum + row.survivalMissing * row.survivalPrice, 0);
     const hours = held ? 0 : positive(rates.outingHours);
+    // The outing refill: the units one outing uses of a kind worth restocking,
+    // never under its line (the bot's usual purchase). The reserve holds it at
+    // the NPC list price whatever the bag holds now, so gear never takes the next
+    // kit's money (plan §5); a town counter spends of it what the bag misses.
+    const refill = row => row.canRestock ? Math.max(row.line, Math.ceil(row.use * hours)) : 0;
+    const reserve = kit.reduce((sum, row) => sum + refill(row) * row.survivalPrice, 0);
     const stock = kind => {
         if (kind === 'scrolls') {
             const current = bag.scrolls, unitPrice = price(736);
@@ -971,7 +976,7 @@ function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates
     const kitCost = (id, unitPrice = null) => {
         const quoted = Number.isFinite(unitPrice) && unitPrice > 0;
         return kit.filter(row => row.itemId === Number(id)).reduce((sum, row) => sum
-            + row.survivalMissing * (quoted ? unitPrice : row.survivalPrice), 0);
+            + Math.max(0, refill(row) - row.current) * (quoted ? unitPrice : row.survivalPrice), 0);
     };
     return { stock, kitCost, reserve };
 }
