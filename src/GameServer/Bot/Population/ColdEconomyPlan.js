@@ -50,7 +50,10 @@ function factEdges(was, after, options) {
     const stockFor = options.stockFor || ((state, kind) => EconomyContext.keptTargets(state)[kind]);
     for (const kind of ['shots', 'potions']) {
         const stock = stockFor(after, kind);
-        const id = Number(stock?.itemId), keep = Number(stock?.keep ?? stock?.target);
+        // A kind crossing its line (one hour of use, the kit rates'): the field reads
+        // no band above it (plan §5). Temporary until step 6: the action plan asks on
+        // the stock_low situations then.
+        const id = Number(stock?.itemId), keep = Number(stock?.keep ?? stock?.line);
         if (!(id > 0) || !(keep > 0)) continue;
         if ((was.amount(id) >= keep) !== (Number(bag[id]?.amount || 0) >= keep)) bits |= 2;
     }

@@ -699,11 +699,17 @@ function restockAfterWeaponChange(actor, slots = [], logTag = 'BotGear') {
         .catch((error) => utils.infoWarn(logTag, 'failed to refresh shots for %s: %s', actor.fetchName?.(), error.message));
 }
 
-// Whether the decision the body holds wants a shot restock the money queue
-// funds (DecisionEvents.nearFields, taken in the background thread).
+// Whether a body's shots (the paid shot and the beginner grant) stand below
+// their line, one hour of use (the kit rates the decision it holds published,
+// StatsPacket.lineOf): a companion's errand for them (FollowingState).
 function needsActorRestock(actor) {
     // lazy: cycle DecisionEvents requires this module at its top.
-    return invoke('GameServer/Bot/AI/DecisionEvents').held(actor.session)?.shotRestock === true;
+    const stats = invoke('GameServer/Bot/AI/DecisionEvents').decisionStatsFor(actor.session);
+    const line = invoke('GameServer/Bot/Economy/StatsPacket').lineOf(stats?.kitRates, 'shots');
+    if (!(line > 0)) return false;
+    const plan = planForActor(actor), beginner = BeginnerShots.selfIdFor(plan.kind, plan.rank);
+    const held = shotAmount(actor, plan) + (beginner ? Number(actor.backpack?.fetchItemFromSelfId?.(beginner)?.fetchAmount?.() || 0) : 0);
+    return held < line;
 }
 
 // Where a hot bot goes for its shots in `town`: the best seller there, a
