@@ -3038,8 +3038,10 @@ const BotLifeState = {
             // and arrival raise nothing; none (main, a step without a plan):
             // every move is an event.
             // The round found its spot empty of prey (BackgroundResolver, once a stay).
+            // A round the full bag stopped (BackgroundResolver: survival_no_slot /
+            // survival_overweight) raises bag_full again until its build takes the trip.
             hard = Situations.detect(state, nextState, { escrow, leaf: options.leaf ?? null,
-                unhuntable: result.debug?.unhuntable === true });
+                unhuntable: result.debug?.unhuntable === true, bagStopped: /^survival_(no_slot|overweight)$/.test(result.debug?.reason || '') });
         }
         // The bot's step counter, the clock of its spot marks (SpotRiskPolicy):
         // +1 once per resolved step, whichever thread resolves it (hot actor

@@ -271,7 +271,11 @@ function rejectSession(session, accepted) {
 // queue and no plans.
 function nearFields(economy, state) {
     const stock = economy.stock('shots');
-    return { statsPacket: economy.statsPacket,
+    // A solo body's full bag (situations step 4 C4): the slot and weight floor the
+    // decision read on the posted row (SurvivalFloor.bagFor), carried to town by the
+    // body (HuntingState); its flip raised bag_full, which woke this decision.
+    const floor = state.party?.partyId || state.partyId ? null : invoke('GameServer/Bot/Population/SurvivalFloor').bagFor(state);
+    return { statsPacket: economy.statsPacket, unload: floor?.action === 'unload' ? floor.reason : null,
         // A near body may also order consumables at a workshop (allowStock).
         personalCraft: WishProviders.personalCraftPlan(state, economy, { allowStock: true }) || null,
         // The auto-shot verdict (ShotStock.enableAutoShot's inputs): the

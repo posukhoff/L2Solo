@@ -718,15 +718,14 @@ module.exports = {
             session.plan = 'resting';
             return;
         }
-        if (floor?.action === 'unload' && isSoloHunter(session)) {
-            // Temporary until step 4: a body's full bag is a situation now (bag_full,
-            // raised from its post); the build takes the unload on it then and this
-            // every-tick check goes. Like the loot sell trip below and the cold sale visit: the trip starts
-            // the sale retry, so a bag that sold nothing heavy hunts on at penalty 1.
-            // A trip deferred by a fight comes back every tick: the retry it
-            // already started stays, the trip itself waits in pendingTownTrip.
+        // The full bag the body's held decision read (DecisionEvents.nearFields: its
+        // bag_full woke it): carried to town. Like the loot sell trip below and the cold
+        // sale visit: the trip starts the sale retry, so a bag that sold nothing heavy
+        // hunts on at penalty 1. A trip deferred by a fight waits in pendingTownTrip.
+        const unload = isSoloHunter(session) ? DecisionEvents.held(session)?.unload : null;
+        if (unload) {
             if (!ItemDisposition.saleRetryHolds(MarketListingPolicy.actorState(session))) pauseSelling(session);
-            const trip = startShopping(session, bot, BotAI, `Inventory ${floor.reason}. Heading to town.`);
+            const trip = startShopping(session, bot, BotAI, `Inventory ${unload}. Heading to town.`);
             if (trip !== 'deferred') return;
         }
 

@@ -497,7 +497,10 @@ let Planner = null;
 // whose moves are its own (main executes its held decisions): a spot it reaches or
 // leaves is an arrival for the spot aggregate (the background thread's hot arrival
 // hook, the near_spot / near_left posts), not moved_by_world.
-function detect(before, after, { escrow = 0, leaf = null, unhuntable = false, facts = null, funding: fundingBefore, out = null, body = false } = {}) {
+// bagStopped: the round could not fight for its full bag (the resolver's unload wait):
+// bag_full again, so a build that could not take the trip (a trip under way) takes it
+// at a later round.
+function detect(before, after, { escrow = 0, leaf = null, unhuntable = false, bagStopped = false, facts = null, funding: fundingBefore, out = null, body = false } = {}) {
     const Sections = readers();
     // Main may replay a validated worker packet that already describes this
     // same round: a newer build's baseline (its own time) is the one compared;
@@ -519,9 +522,10 @@ function detect(before, after, { escrow = 0, leaf = null, unhuntable = false, fa
     if (out) { out.facts = current; out.funding = fundingAfter; }
     const names = factNames(previousFact, current, funding, body || Sections.occupationPlanned(after, leaf));
     if (unhuntable) names.push('spot_empty');
+    if (bagStopped) names.push('bag_full');
     // lazy: the planner loads spot modules that read this catalogue.
     if ((Planner ||= invoke('GameServer/Bot/AI/GearAcquisitionPlanner')).stallCrossed(before, after)) names.push('source_stalled');
-    // A body near a player hears its full bag too (its post's previous facts: bagFull, weight).
+    // A body near a player hears its full bag too (its post's previous facts: bagNeed).
     return body || gated(place(after, before)) ? names.concat(needsOpened(before, names, view, facts)) : names;
 }
 // A need that opened in this step, one raise: one that stays open raises nothing more.
@@ -531,7 +535,7 @@ function needsOpened(before, names, now, was = null) {
     const opened = [];
     if (names.includes('bag')) {
         was ||= readers().stateView(before);
-        if (now.bagFull > (Number(was.bagFull) || 0) || now.weight > (Number(was.weight) || 0)) opened.push('bag_full');
+        if (now.bagNeed > (Number(was.bagNeed) || 0) && !names.includes('bag_full')) opened.push('bag_full');
     }
     return opened;
 }

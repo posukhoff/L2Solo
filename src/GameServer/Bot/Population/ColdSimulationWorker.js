@@ -2185,6 +2185,12 @@ function startKernel(config = {}) {
                     ? { actionBaseline: asked?.baseline || refreshed.actionBaseline } : {}),
                 statsPacket,
                 economy,
+                // The build decides the cleanup trip (situations step 4 C4): its bag must go to
+                // town (PartyMarketBreak.forcedCleanupNeed, the bag_full that woke it), main
+                // starts the trip after the step's round (the kernel's proposal.cleanupNeed).
+                // Temporary until step 6: the town plan's sell stop takes it (an unload root).
+                ...(!nullReuse && invoke('GameServer/Bot/Population/PartyMarketBreak').forcedCleanupNeed(state, timestamp)
+                    ? { cleanupDue: true } : {}),
                 activityPick: economy.network.activity ? { activity: economy.network.activity.activity,
                     spotId: economy.network.activity.spotId, npcId: economy.network.activity.npcId } : null,
                 economyDecision: heldDecision || ColdEconomyDecision.capture({ ...economy, workshop: deps.workshop }, routedState),

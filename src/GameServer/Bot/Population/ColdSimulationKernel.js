@@ -2294,10 +2294,11 @@ class ColdSimulationKernel {
             if (!this.resolverSourceCurrent(source)) return;
             const projectedState = projection?.state || projection;
             this.countHuntStep(first, round);
-            // The forced cleanup on the fight's result, over a trip this step
-            // started (main starts the cleanup trip).
-            const cleanupNeed = projectedState && !require('./RaidSupplyPolicy').held(active.state, timestamp) ? PartyMarketBreak.forcedCleanupNeed(
-                PartyMarketBreak.withoutStartedTrip(active.state, projectedState), round.timestamp) : null;
+            // The cleanup trip the step's build decided (lifecyclePlan.cleanupDue: its
+            // bag must go to town, woken by bag_full), on the fight's result and over a
+            // trip this step started (main starts the trip). No step checks the bag else.
+            const cleanupNeed = lifecyclePlan?.cleanupDue && projectedState && !require('./RaidSupplyPolicy').held(active.state, timestamp)
+                ? PartyMarketBreak.forcedCleanupNeed(PartyMarketBreak.withoutStartedTrip(active.state, projectedState), round.timestamp) : null;
             const priority = playerWaitingTransition(active.state, null, this) ? 'P0'
                 : projection?.durable ? 'P1' : priorityForResult(active.state, round.loot || round.result);
             const proposal = {
