@@ -247,33 +247,16 @@ function changeWorkshop(key, row) {
 }
 const EDGE_STEPS = 64;
 const WORK_STAGES = Object.freeze(['stock', 'recipe', 'ingredient', 'owned', 'quote', 'trip', 'exit', 'without', 'success', 'utility', 'candidate', 'funding', 'edge']);
-// A workshop card's window: the demand forecasts' clock decay has no event
-// (debt.md 25); 30 game min (5 real min) is ~8% demand drift.
-const WORKSHOP_SERVE_MS = 30 * invoke('GameServer/World/GameTime').GAME_MINUTE_MS;
 // A planner job's inputs (ColdOccupationPlanner): a short key of the inputs
 // beside the state (inputKey) and, compared only when that one matches, the
 // digest of the state values the mode reads (valueKey), one per state object.
 // - wish: the route table's inputs (EconomicTrip.key): the rows read nothing else.
-// - occupation (a crafter's workshop): beside the state, the recipe book and
-//   known shot recipes, the escrow, the route key (the rows), the warehouse
-//   and clan supply versions and whether the board and market copies are
-//   whole; of the state, its top-level fields but the commit stamps
-//   (updatedAt, simulation, timing: the meeting's authority and diagnostics
-//   read them), its max MP and its MP as the band its craft checks answer
-//   alike on (WealthCraftPolicy.craftMpBand; no workshop rule reads HP or CP),
-//   and the stats fields the workshop's modules read (WORKSHOP_STATS:
-//   ColdOccupationSources, WealthCraftDecision and the modules they require,
-//   traced over the perf save's crafters); the kit's class beside the stats'
-//   (InventoryLimits). A cold state with no stored max MP reads its combat
-//   profile (ColdOccupationSources.craftLabour): all of it but the stamps.
-//   Board and market rows are the job's read tokens (sourceChanged). Not in
-//   it: the clock its sale exits read through the demand forecasts
-//   (MarketTradeDemand: the trades of an item decay by an e-fold per uptime
-//   hour, with no event between two trades): a finished workshop serves for
-//   its own window (WORKSHOP_SERVE_MS, servesUntil; limits.md "Occupation planner").
-// - action, showcase, craft_market: beside the state, the same with the
-//   step's stock target, the step's economy (the object the step built) and
-//   the step clock, which the plan reads directly (SurvivalFloor's cooldowns
+// - occupation (a crafter's workshop decision), action, showcase, craft_market:
+//   beside the state, the recipe book and known shot recipes, the escrow, the
+//   route key (the rows), the warehouse and clan supply versions and whether
+//   the board and market copies are whole, the step's stock target, the step's
+//   economy (the object the step built, none for the workshop) and the step
+//   clock, which the plan reads directly (SurvivalFloor's cooldowns
 //   and sale retry, the errands' expiry, price beliefs): a finished one serves
 //   its step only. Of the state, all of it but the stamps, with HP and the MP
 //   band (the exact MP of a bot that rests for mana: SurvivalFloor's cast
@@ -286,34 +269,23 @@ const WORKSHOP_SERVE_MS = 30 * invoke('GameServer/World/GameTime').GAME_MINUTE_M
 //   warehouse and clan supply versions, the escrow, the recipe book and known
 //   shot recipes, whether the board and market copies are whole, the pending
 //   page count and a meeting's token. A short string, no state read.
-const CLOCK_MODES = new Set(['action', 'showcase', 'craft_market']);
+const CLOCK_MODES = new Set(['occupation', 'action', 'showcase', 'craft_market']);
 const IDENTITY_MODES = new Set(['near', 'page', 'meeting']);
 const STATE_STAMPS = Object.freeze({ updatedAt: undefined, simulation: undefined, timing: undefined });
-const WORKSHOP_STATS = Object.freeze(['workshop', 'dwarvenCraftLevel', 'classId', 'race', 'money', 'equipmentPlan',
-    'wishFocus', 'craftStationId', 'craftShop', 'clanId', 'travel', 'marketReturn', 'karma', 'clanMaterialDemand',
-    'clanMarketDemand', 'marketErrand', 'marketErrands', 'marketSellSeen', 'wealthRefused', 'wealthCraft', 'shotCraft',
-    'kitRates', 'dangerPrice', 'tradeMeeting', 'townLook', 'hennas', 'generatedIndex', 'playerPartyTakeover',
-    'decisionSeq', 'activityLeaf', 'economyClock', 'playedHours', 'frustration', 'lifelongKills', 'exp', 'earning']);
 const objectSerials = new WeakMap();
 let nextObjectSerial = 0;
 const serialOf = value => value && typeof value === 'object'
     ? objectSerials.get(value) ?? (objectSerials.set(value, ++nextObjectSerial), nextObjectSerial) : 0;
-// The digest of a state's values per variant ([workshop, plan]), built once
-// per state object: a state is replaced, not edited (the near publish's mind
-// merge drops its entry after the jobs asked on it keep theirs).
+// The digest of a state's plan values, built once per state object: a state is
+// replaced, not edited (the near publish's mind merge drops its entry after the
+// jobs asked on it keep theirs).
 const stateDigests = new WeakMap();
-function stateDigest(state, variant) {
-    let digests = stateDigests.get(state);
-    if (!digests) stateDigests.set(state, digests = [null, null]);
-    return digests[variant] ??= textDigest(variant ? planValues(state) : workshopValues(state));
+function stateDigest(state) {
+    let digest = stateDigests.get(state);
+    if (digest === undefined) stateDigests.set(state, digest = textDigest(planValues(state)));
+    return digest;
 }
 const mpBand = state => WealthCraftPolicy.craftMpBand(CraftEligibility.craftLevelFor(state), state.vitals?.mp);
-function workshopValues(state) {
-    if (state.phase !== 'hot' && !(Number(state.vitals?.maxMp) > 0)) return JSON.stringify({ ...state, ...STATE_STAMPS });
-    const stats = state.stats || {};
-    return JSON.stringify([{ ...state, ...STATE_STAMPS, vitals: undefined, stats: undefined }, Number(state.vitals?.maxMp || 0),
-        mpBand(state), WORKSHOP_STATS.map(key => stats[key]), stats.coldCombat?.classId]);
-}
 function planValues(state) {
     const mp = invoke('GameServer/Bot/AI/BotRoles').shouldRestForMana(state) ? state.vitals?.mp : mpBand(state);
     const vitals = state.vitals && { ...state.vitals, mp };
@@ -330,7 +302,7 @@ function plannerInputKey(input) {
 }
 function plannerValueKey(input) {
     const mode = input.mode || 'occupation';
-    return mode === 'wish' || IDENTITY_MODES.has(mode) ? '' : stateDigest(input.state, +CLOCK_MODES.has(mode));
+    return mode === 'wish' || IDENTITY_MODES.has(mode) ? '' : stateDigest(input.state);
 }
 const occupationPlanner = new ColdOccupationPlanner({
     onPublishError: (error, characterId, input) => send('fault', {
@@ -347,7 +319,6 @@ const occupationPlanner = new ColdOccupationPlanner({
     ownCurrent: (id, input) => !shuttingDown && kernel?.states.get(id)?.state === input.sourceState,
     inputKey: plannerInputKey,
     valueKey: plannerValueKey,
-    servesUntil: input => (input.mode || 'occupation') === 'occupation' ? Number(input.timestamp) + WORKSHOP_SERVE_MS : Infinity,
     capture: (id, input, read, readScope) => {
         const book = RecipeBookCodec.unpack(input.recipeBook);
         const exactReads = input.mode === 'meeting' ? new Map() : null;
@@ -711,12 +682,9 @@ const occupationPlanner = new ColdOccupationPlanner({
         if (input.mode === 'action' || input.mode === 'showcase' || input.mode === 'craft_market') input.economy = null;
         const owner = kernel?.states.get(id);
         if (shuttingDown || owner?.state !== input.sourceState) return;
-        if (meta.stale) {
-            // Main marks its copy stale (staleWorkshop). A near row's slot
-            // recomputes on its next post; main's copy is current by nearSeq.
-            if (input.state.phase !== 'hot') send('ready', { phase: 'economy_workshop_stale', characterId: id,
-                updatedAt: Number(input.state.updatedAt || 0), echo: ColdEconomyDecision.stateEcho(input.state) });
-        } else if (input.mode === 'near' && workshop?.decision) {
+        // A source move on a finished answer only dirties it (meta.stale): the next ask
+        // builds anew, main's copy of the decision stands.
+        if (!meta.stale && input.mode === 'near' && workshop?.decision) {
             // The near bot's decision on its post: the card, and beside it the
             // mind keys the body takes and the post and raise it answers.
             // The published packet moves the record's mind, as the far step's merge does,
