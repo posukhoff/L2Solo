@@ -1,0 +1,14 @@
+cold_cleanup_need_worker
+bot_hunting_route_failure
+bot_acquisition_recovery
+economy_context
+detour_own_trip
+near_decision_order
+worker_economy_publication
+cold_worker_one_decision
+cold_solo_window
+e311_stuck_shopping
+refused_purchase_errand
+companion_dual_sword_crafting
+active_craft_warehouse
+player_moment
