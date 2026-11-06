@@ -774,11 +774,18 @@ async function listSellAds(ownerId, state, listings, shop, inventory, options = 
 async function executePlan(state, plan, { step = work => work(), beforeWrite = () => {}, preparedState = state, reviewGoal = true } = {}) {
     if (state.stats?.tradeMeeting || invoke('GameServer/AfkTrade/TradeMeetingService').hasPreparation(state.characterId)) return { state, pending: true };
     const ownerId = Number(state.characterId);
-    const authority = EconomyCommit.authority(preparedState);
-    const stillPrepared = () => EconomyCommit.sameAuthority(EconomyCommit.authority(LifeState.cachedState(ownerId) || state), authority);
+    let authority = EconomyCommit.authority(preparedState);
+    const current = () => EconomyCommit.authority(LifeState.cachedState(ownerId) || state);
+    const stillPrepared = () => EconomyCommit.sameAuthority(current(), authority);
+    // The plan's own steps write the row (a craft, a withdrawal, a listing): what they
+    // moved is its own output, not a change of the need its later steps were prepared on,
+    // so a step that ran on the prepared row hands the row it wrote to the next one. A
+    // write by anyone else before it still leaves the plan stale.
     const run = async (work) => {
+        const prepared = stillPrepared();
         const result = await step(() => Database.withMutationAdmission(beforeWrite, work));
         state = LifeState.cachedState(ownerId) || result?.state || state;
+        if (prepared) authority = current();
         return result;
     };
     // No native writer reads accepted incoming. Units that reached the bag or
