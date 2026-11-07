@@ -17,9 +17,13 @@ assert(!Situations.woken(raiseAt('clan_call', 'hunting'), 'build') && Situations
 assert(Situations.woken(raiseAt('clan_changed', 'resting'), 'build'));
 // The build and the gear plan wake on their own situations only (situations.md §14): the
 // money's crossings of its thresholds, not its drift; a new level or gear waits for its stop.
-for (const name of ['arrived_town', 'died', 'goal_failed', 'goal_done:goal', 'bag_full', 'stock_low:shots', 'source_stalled',
+for (const name of ['arrived_town', 'goal_failed', 'goal_done:goal', 'bag_full', 'stock_low:shots', 'stock_low:potions', 'source_stalled',
     'goal_affordable:focus', 'out_of_money'])
     assert(Situations.woken(raiseAt(name, 'hunting'), 'build'), `${name} wakes the build at once`);
+// A death wakes the earning spot (its search runs in a build), not the gear plan: a PvE death costs no
+// gear; low potions are bought, the spot holds; a party left keeps the gear plan.
+assert(Situations.woken(raiseAt('died', 'hunting'), 'earning_spot') && !Situations.woken(raiseAt('died', 'hunting'), 'gear_plan'));
+assert(!Situations.woken(raiseAt('stock_low:potions', 'hunting'), 'earning_spot') && !Situations.woken(raiseAt('party_left', 'hunting'), 'gear_plan'));
 for (const name of ['bag', 'party_joined', 'moved_by_world'])
     assert(!Situations.woken(raiseAt(name, 'shopping'), 'build'), `${name} wakes no build`);
 assert(!Situations.woken(raiseAt('grade_changed', 'hunting'), 'build') && Situations.woken(raiseAt('grade_changed', 'resting'), 'build'), 'a new grade waits for the rest');

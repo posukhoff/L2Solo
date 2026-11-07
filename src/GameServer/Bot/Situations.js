@@ -69,7 +69,8 @@ const SITUATIONS = Object.freeze({
     gear_changed: link(WORK | VISIT, TOWN),
     recipe_learned: link(WORK | VISIT, STOP),
     died: link(0),
-    // A hot body's respawn in town (BotAI): its town arrival follows as its own.
+    // A hot body's respawn in town (BotAI): wakes nothing, its town arrival follows as
+    // its own (a death wakes the earning spot; a PvE death costs no gear).
     revived: link(0),
     // Its clan joined, left or changed (detect's clan fact): heard at its next stop. Its
     // friends and enemies wake nothing (Q13): they are read when it decides.
@@ -164,14 +165,17 @@ function woke(name, where) {
 // the situations that wake it; a decision joins as the step that moves it does
 // (situations.md §10, §14).
 // build: the wish projection, the money queue, the leaf and the party request. Beside
-// §14's list: player_command (the commanded spot reaches the hunting leaf),
-// goal_done:visit / goal_failed:visit (the agenda over the held entry, F4: temporary
-// until step 6), revived (a respawn), the
-// step's market reviews (craft_bid, clan_market) and goal_moved (until AI-5).
+// the catalogue's list: player_command (the commanded spot reaches the hunting leaf,
+// which names the spot a body walks to), goal_done:visit / goal_failed:visit (the agenda
+// over the held entry, F4: temporary until the town plan holds the visit), the step's
+// market reviews (craft_bid, clan_market) and goal_moved (until goals read the card). A death wakes it
+// through the earning spot (its search runs in the build). Low potions wake the build
+// only: a bot buys them; a broke one moves on at a death or a dangerous spot.
 // gear_plan (F1): the gear plan's full review, every gear candidate weighed and the
 // native plan judged afresh (GearPlanSelection); a build it does not wake keeps the
 // gear the bot follows. One question, which gear to work toward: it hears the bot's
-// own changes only, not a town arrival or a failed step; a failed gear errand reaches
+// own grade and gear only, not a death (PvE costs no gear), a party left, a town
+// arrival or a failed step; a failed gear errand reaches
 // it as its mark alone (GearMarks), which the build reads too.
 // workshop: what a crafter offers and produces (its own production's best recipe and
 // income, stats.craftIncome), taken at the start of a town visit (arrived_town, either
@@ -180,13 +184,13 @@ function woke(name, where) {
 // the held answer. A bot that is no service crafter takes it as none, with no planner job.
 const DECISIONS = Object.freeze({
     earning_spot: Object.freeze(['grade_changed', 'spot_outleveled', 'gear_changed', 'died', 'recovered', 'spot_disappoints', 'contest_lost', 'spot_empty',
-        'spot_dangerous', 'spot_unreachable', 'moved_by_world', 'party_left', 'shots_out', 'stock_low:potions', 'goal_affordable:potions',
+        'spot_dangerous', 'spot_unreachable', 'moved_by_world', 'party_left', 'shots_out', 'goal_affordable:potions',
         'karma_changed']),
-    build: Object.freeze(['arrived_town', 'grade_changed', 'gear_changed', 'recipe_learned', 'died', 'revived', 'party_left',
+    build: Object.freeze(['arrived_town', 'grade_changed', 'gear_changed', 'recipe_learned', 'party_left',
         'goal_affordable:potions', 'goal_affordable:focus', 'out_of_money', 'goal_done:goal', 'goal_failed',
         'goal_done:visit', 'goal_failed:visit', 'stock_low:shots', 'stock_low:potions', 'bag_full', 'source_stalled', 'clan_call',
         'clan_changed', 'spot_empty', 'goal_moved', 'player_command', 'craft_bid', 'clan_market']),
-    gear_plan: Object.freeze(['grade_changed', 'gear_changed', 'died', 'party_left', 'source_stalled']),
+    gear_plan: Object.freeze(['grade_changed', 'gear_changed', 'source_stalled']),
     workshop: Object.freeze(['arrived_town', 'arrived_town:own', 'recipe_learned'])
 });
 const BITS = Object.freeze(Object.fromEntries(Object.keys(DECISIONS).map((name, at) => [name, 1 << at])));
