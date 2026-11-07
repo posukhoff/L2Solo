@@ -77,7 +77,9 @@ assert.equal(Sections.occupationPlanned(trip({ reason: 'death_pressure_replan', 
 assert.equal(Sections.occupationPlanned(trip({ reason: 'party_spot_replan' }, { partyId: 'p' }), leaf), false, 'a party\'s call stays an event');
 assert.equal(Sections.occupationPlanned(cold('hunting', { spotId: 'x' }), { activity: 'shopping' }), true, 'reaching its ground is no second event');
 assert.equal(Sections.occupationPlanned(cold('grouped', { spotId: 'x', partyId: 'p' }), { activity: 'shopping' }), true, 'nor a party\'s fight');
-assert.equal(Sections.occupationPlanned(cold('shopping'), leaf), false, 'and town is a moment');
+assert.equal(Sections.occupationPlanned(cold('shopping'), leaf), true, 'its town visit is its own (its arrival is the town\'s moment)');
+assert.equal(Sections.occupationPlanned(cold('shopping', { stats: { partyMarketReturn: { partyId: 'p' } } }), leaf), false,
+    'a market break its party called is not');
 assert.equal(Sections.occupationPlanned({ ...trip(back), phase: 'hot' }, leaf), false, 'nor a near bot');
 console.log('player moment ok');
 process.exit(0);

@@ -324,9 +324,9 @@ function isEmptyWishPlan(plan) {
 // (stats.standIn, BackgroundResolver.resolveTravel), the leaf's own arrival
 // while the bot stands on that ground.
 // A far bot (a gated place, Situations) owns more: hunting or resting on any ground,
-// and any trip but a forced one (FORCED_TRIPS: a flight, a death pressure, a
-// pushed-out spot, a party's call), so a pull to another spot or a flight's
-// arrival raises nothing there. Near a player only the leaf's own trip and
+// any trip but a forced one (FORCED_TRIPS: a flight, a death pressure, a
+// pushed-out spot, a party's call) and its town visit, so a pull to another spot,
+// a flight's arrival or its own bag or supply trip's arrival raises nothing there. Near a player only the leaf's own trip and
 // arrival are; death, recall, a pull, a flight or a yield stay events. Read by
 // the held build's verdict and by the far step's round check (Situations.factNames'
 // planned); its field-trip clause is EconomyContext.fieldActivity's.
@@ -348,10 +348,12 @@ function occupationPlanned(state, leaf) {
         && (ownSpot(state.spotId, leaf) || standsIn(state, leaf));
     return state.activity === leaf.activity;
 }
-// A trip the bot took itself, out or back, and the ground it reached (the trip's
-// start was its event); a flight, a pushed-out spot or a party's call is the world's.
+// A trip the bot took itself, out or back, the ground it reached and the town visit it
+// came to (the trip's start was its event, whichever errand its held leaf names); a
+// flight, a pushed-out spot or a party's call (its market break) is the world's.
 const FORCED_TRIPS = new Set(['unsafe_ground_evacuation', 'death_pressure_replan', 'party_spot_replan']);
 function ownMove(state, where) {
+    if (state.activity === 'shopping') return !state.stats?.partyMarketReturn;
     if (state.activity !== 'traveling') return Situations.field(where);
     const travel = state.stats?.travel;
     return !!travel && !travel.cause && !FORCED_TRIPS.has(travel.reason);
