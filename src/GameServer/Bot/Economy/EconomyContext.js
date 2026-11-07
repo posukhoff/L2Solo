@@ -379,6 +379,14 @@ function saleSpent(state, leaf) {
     const tried = state.stats?.marketSellSeen?.items;
     return Array.isArray(tried) && stayed.every(id => tried.includes(Number(id))) ? 'goal_failed' : '';
 }
+// Whether the held plan of a bot on a town visit names a stop after its leaf (the
+// agenda the build that sent it decided, WishNetwork.agendaOf): its leaf's end then
+// moves on to it (deps.visitStop) with no build; with none left the visit's end wakes
+// the build (goal_done:visit / goal_failed:visit), which takes the next leaf.
+function visitStopsLeft(state, deps = {}) {
+    const held = cache.get(actorKeyOf(state, deps));
+    return Situations.onVisit(state) && (held?.plan.network?.agenda?.length || 0) > 0;
+}
 function leafOutcome(state, leaf, deps = {}, heldUnits = leaf?.heldAtDecision) {
     if (!leaf?.activity) return '';
     const visit = Situations.onVisit(state);
@@ -965,8 +973,9 @@ function followedGear(state, held) {
     return ids;
 }
 // What the agenda moves to when the held leaf's step ended on a visit (Agenda.advance:
-// why, the leaf check's reason; goal_done:visit / goal_failed:visit woke the build,
-// temporary until the town plan holds the visit). dropped: receives the steps it dropped. facts:
+// why, the leaf check's reason): the visit's next stop, carried out with no build
+// (deps.visitStop, the step's own move), or a woken build's first move. dropped:
+// receives the steps it dropped. facts:
 // the state's facts now, the move's baseline as a build's (Sections.snapshot): gear the
 // visit bought and wore is the build's own answer, no gear_changed later.
 function advanced(held, why, state, deps, dropped, facts) {
@@ -1069,8 +1078,10 @@ function buildForState(state, deps) {
         // A late price read of a held plan is reported as in its build.
         const late = id => deps.onSourceRead?.(Number(id));
         const served = view(state, entry.plan, deps, { board: sourceBoard, read: late, projection: entry.projection });
-        // The agenda's move is the woken build's answer: it takes the build.
-        if (next) served.statsPacket.woken = Situations.decided(state.stats, 'build', { caller: deps.caller || 'economy_context',
+        // The visit's next stop (deps.visitStop): the held plan moves on, no decision is
+        // taken. Else the agenda's move is the woken build's answer: it takes the build.
+        if (next && deps.visitStop) Situations.note('town_plan:next_stop');
+        else if (next) served.statsPacket.woken = Situations.decided(state.stats, 'build', { caller: deps.caller || 'economy_context',
             subject: state.characterId, answer: !Trace.on() ? null : next.plan.network.activity?.key });
         return served;
     }
@@ -1832,5 +1843,5 @@ function reset() {
 }
 function size() { return { context: cache.size, engine: engine.cache.size, groups: groups.size }; }
 
-module.exports = { quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
+module.exports = { visitStopsLeft, quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
     heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, proofIdentity, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, kitRates, keptKit, visitStock, keptTargets, saleKitPublished, shotDemand, stateForActor, preparedRouteRows, RETAIN_LIMIT, leafCheck, leafOutcome, refillReserve, forgetContext, forget, reset, configure, registerProvider };

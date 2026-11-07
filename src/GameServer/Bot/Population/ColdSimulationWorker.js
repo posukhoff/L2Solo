@@ -1930,7 +1930,12 @@ function startKernel(config = {}) {
             const boardWakeSeq = boardWake ? { boardWakeSeq: boardWake.seq } : {};
             const leaf = card?.card?.activity;
             const outcome = card && solo ? Economy.leafOutcome(state, leaf, deps, leaf?.heldAtDecision) : '';
-            if (outcome) raise(outcome);
+            // A town visit's stop ended with a stop after it in the held plan: the plan moves
+            // on to it with no decision (the step's build path serves the moved plan,
+            // EconomyContext deps.visitStop); with none left its end wakes the build.
+            const visitStop = (outcome === 'goal_done:visit' || outcome === 'goal_failed:visit')
+                && Economy.visitStopsLeft(state, deps) ? outcome : '';
+            if (outcome && !visitStop) raise(outcome);
             if (card && Number.isFinite(deps.goalRevision) && deps.goalRevision !== card.goalRevision
                 && Situations.hears('goal_moved', where)) raise('goal_moved');
             const marketReview = craftBidReview ? 'craft_bid' : clanMarketReviewDue(state) ? 'clan_market' : '';
@@ -1952,7 +1957,7 @@ function startKernel(config = {}) {
             // card naming its decision; else the card serves, judging nothing more. The
             // gear plan's full review (every candidate, the native plan afresh) only when
             // woken (gear_plan, F1).
-            const woken = Situations.woken(state.stats, 'build') || Situations.woken(state.stats, 'earning_spot');
+            const woken = Situations.woken(state.stats, 'build') || Situations.woken(state.stats, 'earning_spot') || !!visitStop;
             deps.fullReview = Situations.woken(state.stats, 'gear_plan');
             // Diagnostics only: why the card did not serve the step (advisory:refused:<reason>
             // or advisory:skip:<why>).
@@ -2006,7 +2011,7 @@ function startKernel(config = {}) {
             }
             // A build (woken, or the step's card no longer names its decision: counted
             // unwoken under its caller).
-            const buildDeps = { ...deps, decide: true, caller: solo ? 'step' : 'party_request' };
+            const buildDeps = { ...deps, decide: true, caller: solo ? 'step' : 'party_request', ...(visitStop ? { visitStop } : {}) };
             const preparedEconomy = nullReuse ? refreshed.economy
                 : Economy.forState(preparationState, buildDeps);
             const selectedAcquisition = nullReuse ? {

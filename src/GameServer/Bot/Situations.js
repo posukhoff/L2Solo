@@ -92,8 +92,9 @@ const SITUATIONS = Object.freeze({
     source_stalled: link(0),
     // What an executor proved of the held plan where it acts: its goal reached (a
     // purchase landed, a material hunt's count, a paid piece waits for its exchange);
-    // a town visit's step done or refused (the visit's own check, a review main could
-    // not run): the agenda moves on (Agenda.advance, temporary until step 6).
+    // a town visit's last stop done or refused (the visit's own check, a review main
+    // could not run): the build takes the next leaf. A stop with a stop after it in the
+    // held plan raises nothing: the plan moves on (EconomyContext visitStop).
     'goal_done:goal': link(0),
     'goal_done:visit': link(0),
     'goal_failed:visit': link(0),
@@ -169,8 +170,8 @@ function woke(name, where) {
 // (situations.md §10, §14).
 // build: the wish projection, the money queue, the leaf and the party request. Beside
 // the catalogue's list: player_command (the commanded spot reaches the hunting leaf,
-// which names the spot a body walks to), goal_done:visit / goal_failed:visit (the agenda
-// over the held entry, F4: temporary until the town plan holds the visit), the step's
+// which names the spot a body walks to), goal_done:visit / goal_failed:visit (a visit
+// whose held plan has no stop left: the next leaf), the step's
 // market reviews (craft_bid, clan_market) and goal_moved (until goals read the card). A death wakes it
 // through the earning spot (its search runs in the build). Low potions wake the build
 // only: a bot buys them; a broke one moves on at a death or a dangerous spot.
