@@ -717,6 +717,22 @@ function earningDue(state, deps = {}) {
     const source = deps.spots ?? runtime.spots, spots = typeof source === 'function' ? source() : source;
     return Array.isArray(spots) && spots.length > 0 && Situations.woken(state.stats, 'earning_spot');
 }
+// The earning spot taken alone, when its own situations woke it and not the build's
+// (a contest lost, the recovery lifted, a spot outleveled): the search a build runs
+// (foundation's incomeRouteFor), at the bot's own prices, no wish network. Its answer
+// wakes no dependant (Q10): the held build serves on, and its hunting leaf reads the
+// held answer's spot (heldSpotOf). Far steps and near posts alike. Returns the mind
+// keys it writes (the answer, its read marks cleared, the bits left), or null when it
+// is not due here (main, a party member, an incoming projection waiting).
+function decideEarning(state, deps = {}) {
+    if (!earningDue(state, deps) || state.incomingPending) return null;
+    deps = resolved(state, deps, false);
+    const { price, timestamp } = personal(state, deps);
+    const found = IncomeRoute.search(state, { ...deps, timestamp, required: true, price });
+    const earning = IncomeRoute.answerOf(found.route, timestamp, found.error, state);
+    return { earning, spotMarks: null, woken: Situations.decided(state.stats, 'earning_spot', { caller: deps.caller || 'economy_context',
+        subject: state.characterId, answer: earning.spotId ?? 'none', was: state.stats?.earning?.spotId ?? 'none' }) };
+}
 // The bot's own fit for the spot of its hunting leaf (docs/architecture.md §2
 // route): the route's one test, BotRoute.leafFitReader, as a yes or no per
 // spot. Only in a worker build (the worker owns the leaf and its planning
@@ -1054,6 +1070,11 @@ function buildForState(state, deps) {
     const visitEnd = decide && held && !deps.fullReview && Situations.onVisit(state)
         ? leafCheck(state, held.plan.network?.activity, deps, { heldUnits: held.heldUnits, current: null, prepared: {} }) : '';
     const next = visitEnd ? advanced(held, visitEnd.reason, state, deps, dropped, current === state ? facts : requestFacts(state, deps)) : null;
+    // The step's next stop (deps.visitStop) that the agenda cannot move to (each stop
+    // left refused or not worth its visit: Agenda.advance ends) is the visit's end: its
+    // outcome raised wakes the build, as with no stop left (EconomyContext.visitStopsLeft).
+    if (visitEnd && !next && deps.visitStop) state = { ...state,
+        stats: Situations.raise({ ...state.stats }, deps.visitStop, null, Situations.place(state), state.characterId) };
     // A reader is served the held entry while its identity holds. A caller that needs
     // the member's graph nodes (a worker group solve) builds unless the held entry kept
     // them (the main thread keeps them, the worker a party member's).
@@ -1844,5 +1865,5 @@ function reset() {
 }
 function size() { return { context: cache.size, engine: engine.cache.size, groups: groups.size }; }
 
-module.exports = { visitStopsLeft, quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
+module.exports = { visitStopsLeft, decideEarning, quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
     heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, proofIdentity, restartEventProof, receiveEventProof, restoreEventProof, wireEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, kitRates, keptKit, visitStock, keptTargets, saleKitPublished, shotDemand, stateForActor, preparedRouteRows, RETAIN_LIMIT, leafCheck, leafOutcome, refillReserve, forgetContext, forget, reset, configure, registerProvider };

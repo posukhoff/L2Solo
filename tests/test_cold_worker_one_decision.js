@@ -115,11 +115,16 @@ module.exports.goalProbe = async (id) => {
         const ask = () => ColdEconomyDecision.refusal(kernel.states.get(id).state, kernel.states.get(id).wishAdvisory,
             { goalRevision: goalRevision(id), timestamp: timestamp + 3000 });
         const held = ask();
+        // The body goes near and far again with no decision of its own between: its far card serves.
+        const far = kernel.states.get(id);
+        kernel.states.set(id, { ...far, state: { ...far.state, phase: 'hot' } });
+        kernel.states.set(id, { ...kernel.states.get(id), state: far.state });
+        const handoff = ask();
         tables.apply([{ name: 'goals', from: 0, to: 1, full: false, rows: [[id, goal(2)]], removed: [], last: true }]);
         const refusal = ask();
         const moved = await step(timestamp + 3000);
         const unwoken = Object.keys(invoke('GameServer/Bot/Situations').counts().unwoken).filter(key => key.startsWith('build:'));
-        return { same, held, refusal, moved, unwoken };
+        return { same, held, handoff, refusal, moved, unwoken };
     } finally { Economy.forState = original; }
 };
 // A kept card's craft refresh (a crafter's MP out of its band) asks the action
@@ -337,6 +342,7 @@ parentPort.on('message', message => {
         console.log(JSON.stringify(goal));
         assert.equal(goal.same, 0, 'a quiet step reuses the held decision while the goal revision holds');
         assert.equal(goal.held, '', 'the held decision holds on the warm state at the same goal revision');
+        assert.equal(goal.handoff, '', 'a near body back far serves its far card: no build for the handoff');
         assert.equal(goal.refusal, 'goal', 'a moved goal revision refuses the held decision');
         assert.equal(goal.moved, 1, 'the next decision point after a goal change builds once');
         assert.deepEqual(goal.unwoken, [], 'every build of the steps was woken by a situation (decided:build:unwoken 0)');

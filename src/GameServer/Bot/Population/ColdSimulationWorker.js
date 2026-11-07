@@ -562,6 +562,10 @@ const occupationPlanner = new ColdOccupationPlanner({
             // too is the gear plan's full review, as a far step's (gearPlanTaken).
             // Its workshop first when woken (the far step's order: workshop, then build).
             const workshop = input.mode === 'near' ? yield* nearWorkshop(input) : null;
+            // Its earning spot woken alone is taken alone, as a far step's (EconomyContext.decideEarning).
+            const earningKeys = input.mode === 'near' && !Situations.woken(input.state.stats, 'build')
+                ? EconomyContext.decideEarning(input.state, { board: input.board, timestamp: input.timestamp, caller: 'economy_near' }) : null;
+            if (earningKeys) input.state = { ...input.state, stats: { ...input.state.stats, ...earningKeys } };
             const stats = input.state.stats || {};
             const decide = input.mode === 'near' && (Situations.woken(stats, 'build') || EconomyContext.earningDue(input.state));
             const gearReview = decide && Situations.woken(stats, 'gear_plan');
@@ -575,7 +579,7 @@ const occupationPlanner = new ColdOccupationPlanner({
             // planner reads them: CompanionEquipmentShopping.planErrand).
             if (input.mode === 'near') input.nearMind = gearReview
                 ? gearPlanTaken(stats, input.economy.statsPacket, stats.equipmentPlan, input.state.characterId, 'economy_near')
-                : { gearMarks: stats.gearMarks ?? null };
+                : { ...earningKeys, gearMarks: stats.gearMarks ?? null };
             // The shared money packet is derived from this same graph. Use it
             // in preparation only; the native writer owns physical funding.
             input.state = { ...input.state, stats: { ...input.state.stats, ...input.economy.statsPacket } };
@@ -1961,6 +1965,11 @@ function startKernel(config = {}) {
             // card naming its decision; else the card serves, judging nothing more. The
             // gear plan's full review (every candidate, the native plan afresh) only when
             // woken (gear_plan, F1).
+            // The earning spot woken alone is taken alone (EconomyContext.decideEarning): its new
+            // answer wakes no build, which serves on (its hunting leaf reads the answer's spot).
+            const earningKeys = solo && !visitStop && !Situations.woken(state.stats, 'build')
+                ? Economy.decideEarning(state, deps) : null;
+            if (earningKeys) state = { ...state, stats: { ...state.stats, ...earningKeys } };
             const woken = Situations.woken(state.stats, 'build') || Situations.woken(state.stats, 'earning_spot') || !!visitStop;
             deps.fullReview = Situations.woken(state.stats, 'gear_plan');
             // Diagnostics only: why the card did not serve the step (advisory:refused:<reason>
@@ -2002,7 +2011,7 @@ function startKernel(config = {}) {
                 // projection after the round reads it (never posted).
                 // The workshop taken on this step rides the step's packet, as in a build: a
                 // step main executes (a town visit) reads the packet, not this state.
-                return { ...boardWakeSeq, statsPacket: { ...stepStatsPacket(state, refreshed.economy, timestamp), ...workshopKeys }, economy: refreshed.economy,
+                return { ...boardWakeSeq, statsPacket: { ...stepStatsPacket(state, refreshed.economy, timestamp), ...workshopKeys, ...earningKeys }, economy: refreshed.economy,
                     // The facts of the step's last action ask: the card's own or its craft refresh's.
                     ...(asked?.baseline || refreshed.actionBaseline
                         ? { actionBaseline: asked?.baseline || refreshed.actionBaseline } : {}),
