@@ -2906,11 +2906,15 @@ const PopulationService = {
             });
     },
 
-    // workerHall: the worker sent a hall visit (its placeholder result); a
+    // workerHall: the worker sent a hall or guide visit (its placeholder result); a
     // visit main does not take here falls through on that empty result.
     resolveColdEntryBranch(state, options, startedAt, workerHall = false) {
+        // The rebuff's guide answer (ColdGuideVisit), then its hall answer, a hall
+        // visit under way or a restart in the hall (ColdVisit).
+        const guide = invoke('GameServer/Bot/Population/ColdGuideVisit');
+        if (!joinedBackgroundParty(state) && guide.pending(state)) return guide.resolve(state, startedAt, options);
         const hallVisit = invoke('GameServer/ClanHall/ColdVisit');
-        const visit = !joinedBackgroundParty(state) && (hallVisit.needed(state, startedAt) || !!state.stats?.clanHallVisit);
+        const visit = !joinedBackgroundParty(state) && hallVisit.needed(state);
         if (workerHall) Config.developerDiagnostics && Diagnostics.count('hall_visit', visit ? 'visit' : 'fall_through');
         if (visit) {
             // ARCH-NOTE: Hall dispatch bypasses the ordinary resolve branch; keep Main's captured admission through its inner writer.

@@ -792,7 +792,6 @@ function recordFromSession(session, phase, reason = '') {
             ? Number(cache.get(characterId).stats.clanId || 0)
             : actor.fetchClanId ? Number(actor.fetchClanId()) || 0 : 0,
         clanHallVisit: session.clanHallVisit === undefined ? session.coldLifeState?.stats?.clanHallVisit || null : session.clanHallVisit,
-        clanHallRetryAt: session.clanHallRetryAt ?? session.coldLifeState?.stats?.clanHallRetryAt ?? 0,
         route: currentSpot?.route || null,
         equipment: equipmentSummaryFromInventory(inventory),
         // Cold combat must start from the exact same character model as the
@@ -2984,6 +2983,10 @@ const BotLifeState = {
             // A decided town trip for the bag (stats.cleanupDue) ends with the bag's need (its fact at 0).
             if (nextState.stats.cleanupDue && !seen.facts.bagNeed) nextState.stats.cleanupDue = null;
         }
+        // The buffed fact, at every step (a rest's too): its last value is on the row.
+        const buffs = Situations.buffFact(nextState.stats, nextState.stats.coldCombat?.effects, timestamp,
+            { dead: nextActivity === 'dead' || Number(nextState.vitals?.hp) <= 0, grouped: !!(nextState.party?.partyId || nextState.partyId) });
+        if (buffs) hard.push(buffs);
         // The bot's step counter, the clock of its spot marks (SpotRiskPolicy):
         // +1 once per resolved step, whichever thread resolves it (hot actor
         // sessions never come here, so a near bot's marks wait until it is far).

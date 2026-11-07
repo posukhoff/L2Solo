@@ -2,6 +2,7 @@ const Runtime = require('./Runtime');
 const Services = require('./Services');
 const Effects = invoke('GameServer/Effects/EffectStore');
 const VisitNeed = require('./VisitNeed');
+const Rebuff = invoke('GameServer/Bot/AI/Rebuff');
 const { actorFor, eligible } = VisitNeed;
 const VISIT_MS = 180000;
 function hallFor(state) {
@@ -9,12 +10,9 @@ function hallFor(state) {
     const id = invoke('GameServer/Clan/ClanSocialRuntime').view.memberships.get(Number(state.characterId));
     return Runtime.owned(id);
 }
-// Main thread: the hall from the membership projection, the manager from World
-// (asked only past the cheap gates: a missing manager costs a spawn scan).
-function needed(state, timestamp = Date.now()) {
-    if (!eligible(state)) return false;
-    const hall = state.stats?.clanHallVisit ? null : hallFor(state);
-    return VisitNeed.needed(state, hall, () => !!Services.manager(hall), timestamp);
+// Main thread: the hall from the membership projection (VisitNeed.needed).
+function needed(state) {
+    return VisitNeed.needed(state, state.stats?.clanHallVisit || Rebuff.pending(state.stats, 'hall') ? null : hallFor(state));
 }
 function result(state, patch, timestamp, nextAt, reason) {
     return {
@@ -52,7 +50,6 @@ function finish(state, timestamp, reason) {
             stats: {
                 ...state.stats,
                 clanHallVisit: null,
-                clanHallRetryAt: timestamp + 300000,
                 travel: null,
                 restUntil: null
             }
@@ -62,10 +59,14 @@ function finish(state, timestamp, reason) {
         reason
     );
 }
-async function resolve(state, timestamp = Date.now(), options = {}) {
-    if (!needed(state, timestamp) && !state.stats?.clanHallVisit) return null;
+async function resolve(original, timestamp = Date.now(), options = {}) {
+    if (!needed(original)) return null;
     const Life = invoke('GameServer/Bot/Population/BotLifeState');
     const Resolver = invoke('GameServer/Bot/Population/BackgroundResolver');
+    // The rebuff's hall answer is carried out once: the visit it starts, or the
+    // cancel that ends it, holds it done (a failed visit waits for the next situation).
+    const asked = Rebuff.pending(original.stats, 'hall');
+    const state = asked ? { ...original, stats: { ...original.stats, rebuff: Rebuff.done(asked) } } : original;
     const hall = hallFor(state),
         npc = Services.manager(hall),
         visit = state.stats?.clanHallVisit;
@@ -81,7 +82,6 @@ async function resolve(state, timestamp = Date.now(), options = {}) {
             next.patch.restoreExpPercent = Services.available(hall, timestamp) ? Number(hall.functions.exp || 0) : 0;
             next.patch.stats = {
                 ...next.patch.stats,
-                clanHallRetryAt: 0,
                 clanHallVisit: null,
                 coldCombat: { ...next.patch.stats.coldCombat, effects: [] }
             };
@@ -202,8 +202,8 @@ async function resolve(state, timestamp = Date.now(), options = {}) {
         }
     }
     // ARCH-NOTE: The native lifecycle queue rechecks the original worker/checkpoint before any hall transition writes.
-    const saved = await Life.applyResolve(state, next, options);
+    const saved = await Life.applyResolve(original, next, options);
     if (saved) await invoke('GameServer/Bot/Population/BotLifeEvents').recordMany(state.characterId, next.events);
-    return { ok: !!saved, state: saved || state, debug: next.debug };
+    return { ok: !!saved, state: saved || original, debug: next.debug };
 }
 module.exports = { hallFor, actorFor, eligible, needed, resolve };
