@@ -8,7 +8,10 @@ const Loadout = invoke('GameServer/Bot/AI/PartyBuffLoadout');
 
 const BUFF_DURATION_MS = 20 * 60 * 1000;
 const REFRESH_THRESHOLD_MS = 2 * 60 * 1000;
-const NEWBIE_GUIDE_MAX_LEVEL = 20;
+// The Newbie Guide serves characters up to this level: the NPC's own cap, what a player
+// sees (NewbieBuff), the one number for players and bots (ours until a C4 source, L2J
+// Lisvus's newbie guide script, names it).
+const NEWBIE_GUIDE_MAX_LEVEL = 25;
 const ALL_BUFFS = BuffCatalog.ALL_BUFFS;
 
 const NEWBIE_BUFF_TYPES = ['windwalk', 'shield', 'haste'];
