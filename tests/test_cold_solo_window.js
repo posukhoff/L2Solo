@@ -55,7 +55,8 @@ function world({ windowed = true, plan = null, ends = () => false, ground = spot
         resolveSolo: options => Resolver.resolveSolo(options),
         spotOf: () => ground,
         planLifecycle: ({ state }) => plan ? plan(state, held(state)) : held(state),
-        projectResolve: (state, result, timestamp, lifecyclePlan, writtenAt) => project(state, result, timestamp, writtenAt),
+        // ready: the window's projection of its last round, the step's own (the worker's contract).
+        projectResolve: (state, result, timestamp, lifecyclePlan, writtenAt, ready) => ready || project(state, result, timestamp, writtenAt),
         soloWindow: !windowed ? null : {
             projectRound: (state, result, timestamp, lifecyclePlan, writtenAt) => { onRound(kernel); return project(state, result, timestamp, writtenAt); },
             readers: () => ({ feasible: after => !ends(after) && !Economy.leafOutcome(after, activity, {}, 0) }) },
@@ -143,14 +144,20 @@ const roundsOf = state => state.stats.stepCount;
 
     {
         // The goal in reach: the first adena past the build's threshold raises
-        // goal_affordable (the round's own diff) and ends it.
+        // goal_affordable (the round's own diff) and ends it, raised once: the
+        // step goes on from the window's projection of that round.
+        const Situations = invoke('GameServer/Bot/Situations');
+        const raised = () => Object.entries(Situations.counts().raised).filter(([key]) => key.startsWith('goal_affordable'))
+            .reduce((sum, [, n]) => sum + n, 0);
         const { kernel, step } = world({});
         const bound = await hunter();
         bound.stats.wishSections = { ...bound.stats.wishSections, affordAt: { at: bound.adena + 1, kind: 'focus' } };
         kernel.upsert({ state: bound });
+        const before = raised();
         const { state } = await step();
         assert.equal(state.activity, 'hunting');
         assert.equal(roundsOf(state), 1, 'the round that paid it is the last');
+        assert.equal(raised() - before, 1, 'the crossing is raised once');
     }
 
     {

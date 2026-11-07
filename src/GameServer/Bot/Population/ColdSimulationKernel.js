@@ -2259,7 +2259,7 @@ class ColdSimulationKernel {
             // The step's one decision (its economy, worker-local) travels
             // through the round: the projection asks no second one.
             const projection = this.projectResolve
-                ? await this.projectResolve(round.state, round.result, round.timestamp, lifecyclePlan, startedAt)
+                ? await this.projectResolve(round.state, round.result, round.timestamp, lifecyclePlan, startedAt, round.projected || null)
                 : null;
             if (!this.resolverSourceCurrent(source)) return;
             const projectedState = projection?.state || projection;
@@ -2332,7 +2332,11 @@ class ColdSimulationKernel {
         };
         add(first.result);
         for (;;) {
-            const after = await projectRound(round.state, round.result, round.timestamp, plan, writtenAt);
+            // huntedThrough (ColdSoloWindow): the round's start, the end of the credited hunt
+            // when it is the last; a round's own clock (lastResolvedAt) is the same.
+            const stamped = { ...round.result, patch: { ...round.result.patch,
+                stats: { ...round.result.patch?.stats, huntedThrough: round.timestamp } } };
+            const after = await projectRound(round.state, stamped, round.timestamp, plan, writtenAt);
             if (!this.resolverSourceCurrent(source)) return null;
             // Three guards bound the loop whatever endOf decides: a round cap, the
             // look-ahead (the next round due past the step's clock + WINDOW_LEAD_MS:
@@ -2343,10 +2347,10 @@ class ColdSimulationKernel {
                 || (Math.ceil(Number(after.timing?.nextResolveAt)) >= first.timestamp + WINDOW_LEAD_MS ? 'lead' : '')
                 || (Math.ceil(Number(after.timing?.nextResolveAt)) > round.timestamp ? '' : 'stalled');
             if (ended) {
-                // huntedThrough (ColdSoloWindow): the last round's start, the end of the credited hunt.
-                const result = { ...round.result, ...(soulCrystals.length ? { soulCrystals } : {}),
-                    patch: { ...round.result.patch, stats: { ...round.result.patch?.stats, huntedThrough: round.timestamp } } };
-                return { ...round, result, ended, rounds, loot: { ...result, materialize: { items } }, posted: { events, debug } };
+                // projected: the last round's projection, the step's own (its situations raised
+                // once): the step's projection goes on from it, it does not project the round again.
+                const result = { ...stamped, ...(soulCrystals.length ? { soulCrystals } : {}) };
+                return { ...round, result, projected: after, ended, rounds, loot: { ...result, materialize: { items } }, posted: { events, debug } };
             }
             await nextTurn();
             if (!this.resolverSourceCurrent(source)) return null;

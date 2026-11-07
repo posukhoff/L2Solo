@@ -1691,7 +1691,9 @@ function startKernel(config = {}) {
         },
         // writtenAt: the row's write stamp, the real now (timestamp is the
         // round's time, the bot's due for a step started its lead early).
-        projectResolve: async (state, result, timestamp, lifecyclePlan = null, writtenAt = timestamp) => {
+        // ready: a hunt window's projection of this round (ColdSimulationKernel.huntWindow), on the
+        // same options as the step's own: the round is projected once, its situations raised once.
+        projectResolve: async (state, result, timestamp, lifecyclePlan = null, writtenAt = timestamp, ready = null) => {
             const owner = kernel.states.get(Number(state.characterId));
             // The spot contest at arrival, before the projection: the arriving
             // bot's outcome rides the patch (SpotContest; contest_lost raised there).
@@ -1706,7 +1708,8 @@ function startKernel(config = {}) {
             const stepEconomy = lifecyclePlan?.economy || null;
             let economy = stepEconomy, seenEcho = null, refreshed = null, observedDeps = null;
             const base = roundProjection(state, timestamp, writtenAt, lifecyclePlan);
-            const resolved = await LifeStateProjector.prepareResolve(state, result, raidPreparing
+            const resolved = ready && stepEconomy && !raidPreparing && !contested ? ready
+                : await LifeStateProjector.prepareResolve(state, result, raidPreparing
                 ? { ...base, statsPacket: {}, statsPacketBeforeResolve: true } : stepEconomy
                 // Merged before the event check, whose dirty bits follow it.
                 ? { ...base, statsPacket: lifecyclePlan.statsPacket, statsPacketBeforeResolve: true }
