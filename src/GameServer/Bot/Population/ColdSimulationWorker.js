@@ -199,12 +199,16 @@ const buyerWaiters = new MarketBuyerWaiters({
 });
 // A build taken (the step's own, its commit pending): its card's watch rows are the
 // bot's board wants, replacing the last build's; each pays at most its worth a unit
-// and the wallet above its operating reserve now.
+// and the wallet above its operating reserve now, and only below the cheapest line
+// the build saw (an offer it already passed over is no news).
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 function registerWants(state, economy) {
-    const spendable = PurchaseFunding.budget(state, escrowFor(state.characterId)) - PurchaseFunding.operatingReserve(state);
-    buyerWaiters.register(Number(state.characterId), (economy?.watchList || [])
-        .map(row => ({ itemId: Number(row.itemId), budget: Math.min(Number(row.worth) || 0, spendable) })));
+    const id = Number(state.characterId);
+    const spendable = PurchaseFunding.budget(state, escrowFor(id)) - PurchaseFunding.operatingReserve(state);
+    buyerWaiters.register(id, (economy?.watchList || []).map(row => {
+        const seen = Number(boardIndex.first(Number(row.itemId), 1, { excludeOwner: id })?.price);
+        return { itemId: Number(row.itemId), budget: Math.min(Number(row.worth) || 0, spendable, seen > 0 ? seen - 1 : Infinity) };
+    }));
 }
 const boardFollower = boardIndex.follower();
 // A whole 'board' or 'market' table is being replaced: set by its reset, cleared
