@@ -92,12 +92,17 @@ function markCompleted(session, actor, BotAI, key = null) {
 // A body's last hunting buff ended (EffectTicker at an effect's expiry): buffs_expired,
 // raised when no rebuffable effect is left in force (BotBuffs). A death clears the
 // timers (no raise). A player's companion keeps its own threshold and a party member's
-// buffs are its party's: neither raises.
+// buffs are its party's: neither raises. Once per fall: buffs with one end time end
+// on as many timers, and the first that finds the bot unbuffed raises; the rest find
+// the raise held (in the body's bag, or the rebuff bit still woken or waiting).
 function buffEnded(actor, timestamp = Date.now()) {
     const session = invoke('GameServer/Bot/BotManager').findSessionById(actor?.fetchId?.());
     if (!session || session.actor !== actor || session.followPlayerSession || session.partyCompanion
         || session.hotBackgroundPartyId || BotBuffs.buffedAt(EffectStore.list(actor), timestamp)) return false;
-    invoke('GameServer/Bot/AI/DecisionEvents').raiseDecision(session, 'buffs_expired');
+    const Events = invoke('GameServer/Bot/AI/DecisionEvents'), stats = Events.statsFor(session);
+    if (session.nearRaise?.names.some(entry => entry.name === 'buffs_expired')
+        || ((Number(stats.woken) || 0) | (Number(stats.waiting) || 0)) & invoke('GameServer/Bot/Situations').BITS.rebuff) return false;
+    Events.raiseDecision(session, 'buffs_expired');
     return true;
 }
 

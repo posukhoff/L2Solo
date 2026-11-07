@@ -87,19 +87,19 @@ function effectsFor(selected, timestamp) {
 }
 
 // The buffer at a buyer's spot its rebuff buys from (ColdSimulationWorker's
-// decision): the first of the spot's units, at most MAX_PROVIDERS looked at
-// (past them counted rebuff:buffer:capped), that sells it support now
-// within its price read (BuffServicePolicy.affordable; trust is the sale's, read by
-// main when it prices it). units: the spot's [key, state] pairs or states. Its id, or null.
+// decision): the first of the spot's buffers (service classes other than the buyer),
+// at most MAX_PROVIDERS of them looked at (a buffer left past them counted
+// rebuff:buffer:capped), that sells it support now within its price read
+// (BuffServicePolicy.affordable; trust is the sale's, read by main when it prices
+// it). units: the spot's [key, state] pairs or states. Its id, or null.
 function providerFor(recipient, units, timestamp = Date.now()) {
     if (!available(recipient)) return null;
-    const iterator = units[Symbol.iterator]();
-    for (let looked = 0; ; looked++) {
-        if (looked >= MAX_PROVIDERS) { require('../Situations').note('rebuff:buffer:capped'); return null; }
-        const next = iterator.next();
-        if (next.done) return null;
-        const entry = next.value, provider = Array.isArray(entry) ? entry[1] : entry;
-        const choice = provider && Policy.serviceClass(provider) ? select(provider, recipient, timestamp) : null;
+    let looked = 0;
+    for (const entry of units) {
+        const provider = Array.isArray(entry) ? entry[1] : entry;
+        if (!provider || provider.characterId === recipient.characterId || !Policy.serviceClass(provider)) continue;
+        if (looked++ >= MAX_PROVIDERS) { require('../Situations').note('rebuff:buffer:capped'); return null; }
+        const choice = select(provider, recipient, timestamp);
         if (!choice) continue;
         const price = Policy.priceFor({ provider, recipient, mp: choice.mpCost, count: choice.selected.length, town: false });
         if (Policy.affordable(price, recipient.adena, recipient)) return Number(provider.characterId);

@@ -44,10 +44,14 @@ async function run() {
         assert.ok(packet); assert.equal(packet.recipientId, buyer.characterId);
         assert.equal(packet.providerRevision, 41); assert.equal(packet.recipientRevision, 17);
         assert.ok(Buffer.byteLength(JSON.stringify(packet)) <= 512);
+        // At most 16 buffers are looked at; the spot's other units cost no look.
         let inspected = 0;
-        function* far() { for (let i = 0; i < 17; i++) { inspected++; yield first; } yield provider; }
-        assert.equal(Offer.providerFor(buyer, far(), timestamp), null);
-        assert.equal(inspected, 16, 'only the first 16 yielded units are examined');
+        const busy = { ...provider, characterId: 719499, stats: { ...provider.stats, pvpEncounter: {} } };
+        function* far(buffers) { for (let i = 0; i < 20; i++) yield first; for (let i = 0; i < buffers; i++) { inspected++; yield busy; } yield provider; }
+        assert.equal(Offer.providerFor(buyer, far(15), timestamp), provider.characterId, 'the 16th buffer sells');
+        inspected = 0;
+        assert.equal(Offer.providerFor(buyer, far(16), timestamp), null, 'a 17th is never reached');
+        assert.equal(inspected, 16);
         const longSpot = 'x'.repeat(600);
         assert.equal(Offer.offer({ ...provider, spotId: longSpot }, { ...buyer, spotId: longSpot }, timestamp), null,
             'an offer which exceeds the hard IPC bound is not emitted');

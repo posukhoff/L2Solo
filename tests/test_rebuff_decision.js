@@ -17,7 +17,9 @@ const at = 1800000000000;
 const blessing = Buffs.newbieEffects(at);
 const ends = blessing[0].expiresAt;
 
-// The buffed fact: its 1 -> 0 fall raises buffs_expired once, kept on the row.
+// The buffed fact: its 1 -> 0 fall raises buffs_expired once, kept on the row; a solo
+// field step that first reads the bot unbuffed (a new row, back from town, a death's
+// restart, a party left) raises it once too.
 {
     const stats = {};
     assert.equal(Situations.buffFact(stats, blessing, at + 1000), null, 'getting buffed raises nothing');
@@ -25,13 +27,37 @@ const ends = blessing[0].expiresAt;
     assert.equal(Situations.buffFact(stats, blessing, ends - 1), null, 'no rebuff ahead of the end');
     assert.equal(Situations.buffFact(stats, blessing, ends + 1), 'buffs_expired', 'the last buff ended');
     assert.equal(Situations.buffFact(stats, blessing, ends + 2), null, 'raised once');
+    assert.equal(Situations.buffFact({}, [], at), 'buffs_expired', 'a bot never buffed renews at its next stop');
     const dying = { buffed: 1 };
     assert.equal(Situations.buffFact(dying, [], ends, { dead: true }), null, 'a death clears buffs and raises none');
-    assert.equal(dying.buffed, 0);
-    assert.equal(Situations.buffFact({ buffed: 1 }, [], ends, { grouped: true }), null, 'a party\'s buffs are its own');
+    assert.equal(Situations.buffFact(dying, [], ends + 1), 'buffs_expired', 'its restart in the field reads them gone');
+    const visiting = { buffed: 0 };
+    assert.equal(Situations.buffFact(visiting, [], ends, { field: false }), null, 'a town visit raises none');
+    assert.equal(Situations.buffFact(visiting, [], ends + 1), 'buffs_expired', 'back in the field unbuffed');
+    const grouped = { buffed: 1 };
+    assert.equal(Situations.buffFact(grouped, [], ends, { grouped: true }), null, 'a party\'s buffs are its own');
+    assert.equal(Situations.buffFact(grouped, blessing, at), null, 'solo again and buffed: nothing to renew');
     // A song or a dance is party tactics, not a hunting buff.
     assert.equal(Buffs.rebuffable({ key: 'dance_of_fury', type: 'buff' }), false);
     assert.equal(Buffs.rebuffable({ key: 'might', type: 'buff' }), true);
+}
+
+// A body's buffs with one end time end on as many timers: one raise (one post) per fall.
+{
+    const Manager = invoke('GameServer/Bot/BotManager'), Events = invoke('GameServer/Bot/AI/DecisionEvents');
+    const Hot = invoke('GameServer/Bot/AI/HotTownRebuff');
+    const actor = { fetchId: () => 5, effects: {} }, session = { actor, decisionStats: { woken: 0, waiting: 0 } };
+    const find = Manager.findSessionById, raise = Events.raiseDecision;
+    const posts = [];
+    Manager.findSessionById = () => session;
+    Events.raiseDecision = (body, name) => { posts.push(name); (body.nearRaise ||= { names: [] }).names.push({ name, payload: null }); };
+    try {
+        assert.equal(Hot.buffEnded(actor, ends + 30), true);
+        assert.equal(Hot.buffEnded(actor, ends + 31), false, 'the next timer finds the raise held');
+        session.nearRaise = null; session.decisionStats = { woken: 0, waiting: Situations.BITS.rebuff };
+        assert.equal(Hot.buffEnded(actor, ends + 40), false, 'nor while the decision waits for its stop');
+        assert.deepEqual(posts, ['buffs_expired']);
+    } finally { Manager.findSessionById = find; Events.raiseDecision = raise; }
 }
 
 // Heard at the next stop: the hunt goes on, the rest end (or the town) takes it.
@@ -79,5 +105,10 @@ const ends = blessing[0].expiresAt;
     const outgrown = Guide.plan({ ...newbie, level: Buffs.NEWBIE_GUIDE_MAX_LEVEL + 1 }, at);
     assert.deepEqual(outgrown.patch.stats.coldCombat.effects, [], 'a bot past the guide\'s levels gets nothing');
     assert.equal(outgrown.patch.stats.rebuff.done, true, 'its answer holds done: no retry');
+    const died = Guide.plan({ ...newbie, activity: 'dead', vitals: { ...newbie.vitals, hp: 0 } }, at);
+    assert.equal(died.patch.vitals, undefined, 'a bot that died in the round walks to no guide: no HP, no blessing');
+    assert.deepEqual(died.patch.stats.coldCombat.effects, []);
+    assert.equal(died.patch.activity, undefined, 'it stays dead for its death recovery');
+    assert.equal(died.patch.stats.rebuff.done, true);
 }
-console.log('PASS rebuff: buffs_expired at the last buff\'s end, heard at the stop; the guide for a newbie in reach, none grouped; one visit per answer');
+console.log('PASS rebuff: buffs_expired at the last buff\'s end or first read unbuffed in the field, heard at the stop; the guide for a newbie in reach, none grouped or dead; one visit per answer');

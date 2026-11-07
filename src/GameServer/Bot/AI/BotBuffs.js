@@ -89,7 +89,7 @@ function rebuffable(effect) {
 // The buffed fact: one rebuffable effect in force at `at` (a far state's saved
 // effects, stats.coldCombat.effects, or a body's live list).
 function buffedAt(effects, at) {
-    return (effects || []).some(effect => rebuffable(effect) && Number(effect.expiresAt || 0) > at);
+    return (effects || []).some(effect => Number(effect?.expiresAt || 0) > at && rebuffable(effect));
 }
 // The guide's blessing as saved effects (a far bot's: stats.coldCombat.effects),
 // the same buffs applyFullNewbieBlessing casts on a body.
