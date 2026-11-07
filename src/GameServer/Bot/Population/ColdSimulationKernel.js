@@ -476,11 +476,10 @@ function meetingTravelTransition(state, kind = null, facts = NO_FACTS) {
 // the worker (it carries functions and is never posted).
 // economy and route are worker-local (the request carries the route's spot).
 function postedPlan(plan) {
-    if (!plan?.economy && !plan?.route && !plan?.actionBaseline && !plan?.boardWakeSeq) return plan;
+    if (!plan?.economy && !plan?.route && !plan?.boardWakeSeq) return plan;
     const posted = { ...plan };
     delete posted.economy;
     delete posted.route;
-    delete posted.actionBaseline;
     delete posted.boardWakeSeq;
     return posted;
 }
@@ -1033,8 +1032,7 @@ class ColdSimulationKernel {
         const version = Number(this.versions.get(characterId) || 0) + 1;
         this.versions.set(characterId, version);
         // The bot's one record: { state, version, route, spotFit, materialMemo,
-        // economyPending, economyPlanHash, wishAdvisory, raiseSeq, nearRoute,
-        // actionBaseline }.
+        // economyPending, economyPlanHash, wishAdvisory, raiseSeq, nearRoute }.
         // Every field but the state and version is this thread's own and
         // survives a new state: the kept route (BotRoute.trip) until its
         // step's drops, the trip's kept spot verdicts (BotRoute heldVerdict,
@@ -1614,8 +1612,6 @@ class ColdSimulationKernel {
             if (!this.currentCommand(id, attempt)) return;
             DiagnosticConfig.developerDiagnostics && (this.stats.resolved += 1);
             attempt.sent = true;
-            // The facts of the plan's action ask: the bot's baseline once main ran the command.
-            attempt.actionBaseline = lifecyclePlan?.actionBaseline || null;
             attempt.boardWakeSeq = Number(lifecyclePlan?.boardWakeSeq) || 0;
             const sent = this.emit('command_request', {
                 requests: [{
@@ -2148,7 +2144,6 @@ class ColdSimulationKernel {
                     // made on its party state, so main decides on the solo one.
                     ...(projection?.economyDecision && resolvedParty.status !== 'dissolved'
                         ? { economyDecision: projection.economyDecision } : {}),
-                    economyEdges: resolvedParty.status === 'dissolved' ? 0 : Number(projection?.economyEdges || 0),
                     ...(projection?.economyPlan && resolvedParty.status !== 'dissolved'
                         ? { economyPlan: projection.economyPlan } : {}),
                     result: proposalResult({
@@ -2264,7 +2259,7 @@ class ColdSimulationKernel {
             // The step's one decision (its economy, worker-local) travels
             // through the round: the projection asks no second one.
             const projection = this.projectResolve
-                ? await this.projectResolve(round.state, round.result, round.timestamp, lifecyclePlan, startedAt, resolveState)
+                ? await this.projectResolve(round.state, round.result, round.timestamp, lifecyclePlan, startedAt)
                 : null;
             if (!this.resolverSourceCurrent(source)) return;
             const projectedState = projection?.state || projection;
@@ -2288,7 +2283,6 @@ class ColdSimulationKernel {
                 durable: projection?.durable || null,
                 ...(projection?.market ? { market: projection.market } : {}),
                 ...(projection?.economyDecision ? { economyDecision: projection.economyDecision } : {}),
-                economyEdges: Number(projection?.economyEdges || 0),
                 ...(projection?.economyPlan ? { economyPlan: projection.economyPlan } : {}),
                 ...(projection?.buffOffer ? { buffOffer: projection.buffOffer } : {}),
                 ...(cleanupNeed ? { cleanupNeed } : {}),
@@ -2296,9 +2290,6 @@ class ColdSimulationKernel {
                 options: { allowLifecycle: true, allowParty: !!active.state.stats?.tradeMeeting }
             };
             handled = true;
-            // Worker-local, never posted: the facts of the step's last action
-            // ask, the bot's baseline once main commits the step (onCommitAck).
-            active.actionBaseline = projection?.actionBaseline || null;
             active.boardWakeSeq = Number(lifecyclePlan?.boardWakeSeq) || 0;
             this.dirty.set(Number(characterId), proposal);
             DiagnosticConfig.developerDiagnostics && (this.stats.resolved += 1);
@@ -2564,11 +2555,7 @@ class ColdSimulationKernel {
             // cache is the proposal's state with them.
             const committed = result.ok ? result.state || Protocol.committedState(active.proposed, result) : null;
             if (committed) {
-                // The committed step's action ask is the bot's last (ColdEconomyPlan.edgesSince);
-                // a step that ends otherwise leaves the baseline before it.
-                const record = this.states.get(id);
-                if (record && active.actionBaseline) record.actionBaseline = active.actionBaseline;
-                this.boardWakeAnswered(record, active.boardWakeSeq);
+                this.boardWakeAnswered(this.states.get(id), active.boardWakeSeq);
                 // Without result.state main changed nothing: the held state is
                 // the step's own output, not news for its economy (ownOutput).
                 this.upsert({ state: committed, ownOutput: result.state ? null : 'commit' });
@@ -2672,8 +2659,6 @@ class ColdSimulationKernel {
         // A command that threw on main (payload.fault, its stack) is held off as
         // a throw here is (fault); before the upsert, so its schedule keeps the hold.
         if (payload.ok) this.clearFault(id);
-        // A lifecycle command main ran: its plan's action ask is the bot's last.
-        if (payload.ok && attempt.actionBaseline) current.actionBaseline = attempt.actionBaseline;
         if (payload.ok) this.boardWakeAnswered(current, attempt.boardWakeSeq);
         const retryAt = payload.fault && payload.ok === false
             ? this.fault(id, { message: payload.reason, stack: payload.fault.stack }, 'main_command')

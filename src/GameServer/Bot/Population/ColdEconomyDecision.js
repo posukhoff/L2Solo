@@ -211,12 +211,6 @@ function cardWithShot(before, shot) {
     bytes.set(source.subarray(previousEnd), next);
     return compact({ echo: before.echo, data });
 }
-function refreshPreparedCraft(refreshed, shot, mp) {
-    const decision = cardWithShot(refreshed.decision, shot);
-    if (!decision) return null;
-    refreshed.economy.shot = shot;
-    return { ...refreshed, decision, advisory: { ...refreshed.advisory, card: decision, preparedMp: mp } };
-}
 
 // What a decision depends on beyond updatedAt: its echo, [decisionSeq,
 // activityLeaf, focus]. A card belongs to the decision whose echo it carries;
@@ -790,5 +784,5 @@ class ColdEconomyDecisions {
     }
 }
 
-module.exports = { stepLeaf, personalUsefulness, preparedCardWorth, usefulnessVersion, capture, heldFor, heldAtDecisionOf, progressSince, remainingToOrder, materialHunt, ownItem, stateEcho, echoHolds, CompactActivity, ColdEconomyDecisions, economyFor, view, nearView, advisory, restoreAdvisory, advisoryPublicationHolds, sameEconomicOutput, current, canReuse, refusal, refreshAdvisory, refreshPreparedCraft, cardWithShot, kindCode, kindFor, compact,
+module.exports = { stepLeaf, personalUsefulness, preparedCardWorth, usefulnessVersion, capture, heldFor, heldAtDecisionOf, progressSince, remainingToOrder, materialHunt, ownItem, stateEcho, echoHolds, CompactActivity, ColdEconomyDecisions, economyFor, view, nearView, advisory, restoreAdvisory, advisoryPublicationHolds, sameEconomicOutput, current, canReuse, refusal, refreshAdvisory, cardWithShot, kindCode, kindFor, compact,
     MAX_BYTES, MAX_SHOT_BYTES, COMMAND_HEADER_BYTES, MAX_SHOT_PAYLOAD_BYTES };

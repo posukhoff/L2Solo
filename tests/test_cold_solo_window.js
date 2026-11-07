@@ -11,7 +11,6 @@ const Life = invoke('GameServer/Bot/Population/BotLifeState');
 const Resolver = invoke('GameServer/Bot/Population/BackgroundResolver');
 const Cold = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
-const Plan = invoke('GameServer/Bot/Population/ColdEconomyPlan');
 const Sections = invoke('GameServer/Bot/Economy/DecisionSections');
 const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
 const { ColdSimulationKernel } = require('../src/GameServer/Bot/Population/ColdSimulationKernel');
@@ -59,8 +58,7 @@ function world({ windowed = true, plan = null, ends = () => false, ground = spot
         projectResolve: (state, result, timestamp, lifecyclePlan, writtenAt) => project(state, result, timestamp, writtenAt),
         soloWindow: !windowed ? null : {
             projectRound: (state, result, timestamp, lifecyclePlan, writtenAt) => { onRound(kernel); return project(state, result, timestamp, writtenAt); },
-            readers: () => ({ edges: (before, after) => Plan.edges(before, after, { stockFor: (state, kind) => stock(kind) }),
-                feasible: after => !ends(after) && !Economy.leafOutcome(after, activity, {}, 0) }) },
+            readers: () => ({ feasible: after => !ends(after) && !Economy.leafOutcome(after, activity, {}, 0) }) },
         emit: (type, payload) => { if (type === 'proposal_batch') proposals.push(...payload.proposals); return true; }
     });
     // One step at the bot's due (or `at`): its committed row, null when none left.
@@ -134,13 +132,13 @@ const roundsOf = state => state.stats.stepCount;
     }
 
     {
-        // A level ends it at the round that reached it.
+        // A level is no decision point (what it opens is heard at the rest): the window runs on.
         const next = Number(Data.experience[18]);
         const { kernel, step } = world({ ground: earning });
         kernel.upsert({ state: await hunter({ exp: next - 1 }) });
         const { state } = await step();
         assert.equal(state.level, 19);
-        assert.equal(roundsOf(state), 1, 'the round that reached it is the last');
+        assert(roundsOf(state) > 1, `the window runs on past the round that reached it (${roundsOf(state)} rounds)`);
     }
 
     {
@@ -153,15 +151,6 @@ const roundsOf = state => state.stats.stepCount;
         const { state } = await step();
         assert.equal(state.activity, 'hunting');
         assert.equal(roundsOf(state), 1, 'the round that paid it is the last');
-    }
-
-    {
-        // Supplies: a stock passes the decision's keep (edges, either way).
-        const { kernel, step } = world({ stock: kind => kind === 'shots' ? { itemId: 57, keep: 101 } : null });
-        kernel.upsert({ state: await hunter() });
-        const { state } = await step();
-        assert(state.adena >= 101, 'the stock passed its keep');
-        assert.equal(roundsOf(state), 1, 'the round that passed the keep is the last');
     }
 
     {

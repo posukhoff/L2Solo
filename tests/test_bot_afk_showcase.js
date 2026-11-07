@@ -180,10 +180,10 @@ async function groupedReplacement() {
         assert(Buffer.byteLength(JSON.stringify(visit)) <= Plan.MAX_PLAN_PAYLOAD_BYTES);
         // A visit's showcase carries the craft step its held decision prepared: the crafter crafts in town.
         assert.equal(Plan.decide(state, { ...Decision.economyFor(state), network: { activity: null } }, { board: Afk.boardIndex(),
-            now: Date.now(), npcOffersFor: () => [], findSpot: () => null, showcaseOnly: true }).shot, undefined);
+            now: Date.now(), npcOffersFor: () => [], findSpot: () => null, visit: true }).shot, undefined);
         const heldCraft = { wealth: [90001, 2] };
         assert.deepEqual(Plan.decide(state, { ...Decision.economyFor(state), network: { activity: null }, shot: heldCraft },
-            { board: Afk.boardIndex(), now: Date.now(), npcOffersFor: () => [], findSpot: () => null, showcaseOnly: true }).shot, heldCraft);
+            { board: Afk.boardIndex(), now: Date.now(), npcOffersFor: () => [], findSpot: () => null, visit: true }).shot, heldCraft);
         const adsBefore = await Database.fetchAfkTradeShops(owner);
         const ad = adsBefore.find(row => row.lines.some(line => line.selfId === 79));
         const weapon = originalBag.find(row => row.selfId === 79);
