@@ -36,6 +36,22 @@ assert(Situations.woken(raiseAt('grade_changed', 'resting'), 'gear_plan') && !Si
     assert(Situations.woken(done, 'build') && !Situations.woken(done, 'gear_plan'), 'a finished plan wakes no gear review');
     assert(Situations.woken({}, 'gear_plan'), 'a new bot takes its first gear review');
 }
+// Its gear source failing wakes the gear review: a gear errand failed on its item (an offer
+// sold out: another is sought in the same town), as a craft route's stall; any other failed
+// step wakes the build only. A clan left drops a clan's gear plan: the review hears it.
+{
+    const errand = Situations.raise({ woken: 0, wishSections: {}, earning: {} }, 'goal_failed', { kind: 'gear_errand', key: 5 }, at('shopping'));
+    assert(Situations.woken(errand, 'build') && Situations.woken(errand, 'gear_plan'), 'a failed gear errand wakes the gear review');
+    assert(!Situations.woken(raiseAt('goal_failed', 'shopping'), 'gear_plan'), 'another failed step does not');
+    assert(Situations.woken(raiseAt('clan_changed', 'resting'), 'gear_plan'), 'a clan left or joined wakes it at the stop');
+}
+// A decision with no answer held reads woken until it holds one; a raise for another
+// decision leaves it so, it stores no bit of it.
+{
+    const raised = Situations.raise({ woken: 0, wishSections: {}, earning: {} }, 'goal_failed', null, at('hunting'));
+    assert(Situations.woken(raised, 'workshop'), 'no workshop answer held: it reads woken');
+    assert(!Situations.woken({ ...raised, craftIncome: null }, 'workshop'), 'an answer held: the build\'s raise left it asleep');
+}
 // The wallet against the decision's thresholds (F3, B7): its goal in reach as the budget stands
 // at or past it, out of money as it falls below the held leaf's funded row; a drift is nothing.
 // The build it wakes re-arms them; the agenda's move over the held baseline spends the passed ones.

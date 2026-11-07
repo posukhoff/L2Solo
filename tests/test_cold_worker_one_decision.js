@@ -184,8 +184,13 @@ module.exports.kitProbe = async (id) => {
         // (its stop) and the member's build it wakes moves the kit.
         const levelUp = await step(quiet.state, gain, timestamp + 2000);
         const rested = await step({ ...levelUp.state, activity: 'resting' }, 0, timestamp + 3000);
+        // Its earning spot woken (a death in the party's fight) is its party's to hold: no
+        // build of the member's for it, step after step, until it hunts alone.
+        const Situations = invoke('GameServer/Bot/Situations');
+        const died = { ...rested.state, stats: { ...rested.state.stats, woken: Situations.BITS.earning_spot } };
+        const after = await step(died, 0, timestamp + 4000);
         return { quiet: quiet.kitMoved, inFight: levelUp.kitMoved, levelUp: rested.kitMoved, levels: [quiet.state.level, levelUp.state.level],
-            workshop: rested.build?.workshop || null, workshopAsks };
+            workshop: rested.build?.workshop || null, workshopAsks, earningBuilds: after.build ? 1 : 0 };
     } finally { occupationPlanner.request = request; }
 };
 // A crafter's workshop decision: taken (one planner ask) with no held answer and at a
@@ -366,6 +371,7 @@ parentPort.on('message', message => {
         assert.deepEqual(kit.workshop, { known: true, recipeId: 0, productId: 0, incomePerHour: 0, cycleHours: 0 },
             'a member that is no crafter builds with no workshop');
         assert.equal(kit.workshopAsks, 0, 'and asks the occupation planner for none');
+        assert.equal(kit.earningBuilds, 0, 'a member\'s woken earning spot builds nothing: its party holds the spot');
         worker.postMessage({ ...Protocol.envelope('pause', epoch, {}, 'workshop'), workshopProbe: id });
         const workshopResponse = await wait(message => message.probeId === 'workshop');
         if (workshopResponse.error) throw Error(workshopResponse.error);

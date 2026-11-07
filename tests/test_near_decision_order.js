@@ -189,6 +189,11 @@ const spot = () => Events.held(session)?.network.activity?.spotId;
         assert.equal(outgrown.nearRaise, null, 'a spot at the gap still holds');
         Events.detectNear(outgrown, { ...holding, level: lowLevel + 10 });
         assert(outgrown.nearRaise.names.some(({ name }) => name === 'spot_outleveled'), 'one level past it is outleveled');
+        // A baseline kept before the fact was its own reads 0: a bot already past its spot hears it once.
+        const older = { ...holding.stats.wishSections }, before = { nearRaise: null, raiseSeq: 0 };
+        delete older.outleveled;
+        Events.detectNear(before, { ...holding, level: lowLevel + 10, stats: { ...holding.stats, wishSections: older } });
+        assert(before.nearRaise?.names.some(({ name }) => name === 'spot_outleveled'), 'an old baseline: outleveled once');
         // New gear waits for the town; the body's arrival in town is its stop there.
         const town = { woken: 0, earning: { spotId: 'held' } };
         Events.takePostedRaise(town, { seq: 1, names: [{ name: 'gear_changed', payload: null, seq: 1 }] }, 0, hunting);

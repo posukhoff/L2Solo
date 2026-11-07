@@ -748,8 +748,8 @@ function rowCap(t, row, spot, gate) {
     return gate ? gate.cap : t.f.cap >= 0 ? row[t.f.cap] : spot[3] * spot[4];
 }
 
-// Spots down to the first deep-blue level only (user 10-29: below it the C4
-// drop falls to 30% and less, ProgressionRates' deep-blue gap): a spot further
+// Spots down to the first deep-blue level only (below it the C4 drop falls to
+// 30% and less, ProgressionRates' deep-blue gap): a spot further
 // below the bot is no candidate (combat), and a held one is outleveled.
 const beyondDeepBlue = gap => gap > ProgressionRates.DEEP_BLUE_LEVEL_GAP;
 // Did the bot outlevel this spot (its monsters past the deep-blue gap below its
