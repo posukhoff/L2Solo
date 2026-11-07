@@ -19,6 +19,8 @@ const EconomicTrip = require('./EconomicTrip');
 const EconomicValuation = require('./EconomicValuation');
 const PriceDecision = require('./PriceDecision');
 const Trace = require('../DecisionTrace');
+const BoardClaims = require('./BoardClaims');
+const Situations = require('../Situations');
 
 function purchaseObservation(state, selfId, requested, budget, phase, reason, extra) {
     if (!Diagnostics.active()) return;
@@ -334,6 +336,8 @@ function planPurchase(state, selfId, amount, options = {}) {
         if (options.purpose === 'raid_supply' && (line?.conditional || line?.custodyPolicy === 1)) return false;
         return personalOfferAllowed(line, state);
     };
+    // The units other bots' errands claim are gone for this buyer (BoardClaims).
+    const countOf = line => BoardClaims.unclaimed(line, state?.characterId, timestamp);
     const acceptFill = (line, count) => {
         const refused = priceRefused(state, line, count, board);
         if (refused) options.onPriceRefusal?.(line, count);
@@ -342,7 +346,7 @@ function planPurchase(state, selfId, amount, options = {}) {
     const moneyForTown = (_town, npcPrice, lines) => {
         if (!options.currentFunding) return money;
         const first = lines.find(line => accept(line) && Number(line.price) > 0 && Number(line.price) <= maxPrice
-            && Number(line.count) >= 1 && Number(line.ownerId ?? line.sourceId) !== Number(state.characterId)
+            && countOf(line) >= 1 && Number(line.ownerId ?? line.sourceId) !== Number(state.characterId)
             && (!(npcPrice > 0) || Number(line.price) <= npcPrice));
         const price = Number(first?.price || npcPrice || 0);
         fundingContext ||= options.economy?.kitCost ? options.economy : invoke('GameServer/Bot/Economy/EconomyContext').keptKit(state);
@@ -371,7 +375,7 @@ function planPurchase(state, selfId, amount, options = {}) {
             if (staticOffers(selfId).some(offer => offer.town === source.town && Number(offer.price) === price)) npcPrice = price;
         }
         const filled = OfferQuery.fill(quotes, amount, { money: moneyForTown(source.town, npcPrice, quotes), maxPrice, npcPrice,
-            excludeOwner: state?.characterId, accept, acceptFill });
+            excludeOwner: state?.characterId, accept, acceptFill, countOf });
         if (filled.units < amount) options.onUnfilled?.({ amount, planned: Number(source.npc || 0)
             + (source.lines || []).reduce((sum, entry) => sum + Number(entry.count), 0),
             money: moneyForTown(source.town, npcPrice, quotes), cost: Number(source.cost) });
@@ -380,7 +384,7 @@ function planPurchase(state, selfId, amount, options = {}) {
             landed: filled.cost + Math.max(0, Number(source.landed) - Number(source.cost || 0)) };
     } else {
         plan = OfferQuery.cheapestTown(board, selfId, {
-            amount, money, moneyForTown, maxPrice, towns, excludeOwner: state?.characterId, accept, acceptFill,
+            amount, money, moneyForTown, maxPrice, towns, excludeOwner: state?.characterId, accept, acceptFill, countOf,
             npcOffers: npc ? staticOffers(selfId) : [], cost: cost || tripFrom(state, timestamp),
             quoteDepth: options.quoteDepth ? PriceDecision.QUOTE_DEPTH : 0
         });
@@ -644,6 +648,8 @@ async function acquire(state, selfId, amount, options = {}) {
     // errandAt: this call left the errand (a clan credit travels with it).
     if (options.persist === false) return { state: next, bought: false, units: 0, traveling: !!travel, plan, errandAt: errand.at };
     const saved = await LifeState.upsertState(next, travel ? `market_errand_${errand.purpose}` : 'market_errand_kept');
+    // The trip decided: its board lines are the bot's until the errand ends (BoardClaims).
+    if (saved) BoardClaims.claim(state.characterId, errand, plan.lines, Situations.note);
     return { state: saved || next, bought: false, units: 0, traveling: !!travel && !!saved, plan, errandAt: saved ? errand.at : null };
 }
 
