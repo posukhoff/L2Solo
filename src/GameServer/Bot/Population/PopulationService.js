@@ -587,15 +587,15 @@ async function resumePartyMarketBreak(state, timestamp) {
     return { ok: !!saved, state: saved || state, reason: 'clan_party_return_wait' };
 }
 
-// need: the cold worker's verdict on this state (a far step's proposal);
-// the command path decides here.
-function inventoryCleanupGoal(state, timestamp = Date.now(), need = PartyMarketBreak.forcedCleanupNeed(state, timestamp)) {
+// need: the cold worker's verdict on this state (a far step's proposal); else the
+// build's held bag trip (stats.cleanupDue): no resolve decides the bag on its own.
+function inventoryCleanupGoal(state, need = PartyMarketBreak.heldCleanup(state)) {
     if (!need) return null;
     return { ...invoke('GameServer/Bot/Goals/NeedsEvaluator').cleanupGoal(need), status: 'active' };
 }
 
 function inventoryCleanupTravelState(state, timestamp = Date.now(), simulation = null, need = undefined) {
-    const cleanupGoal = inventoryCleanupGoal(state, timestamp, need);
+    const cleanupGoal = inventoryCleanupGoal(state, need);
     if (!cleanupGoal) return null;
     const travelState = GoalExecutor.beginMarketTravel(state, cleanupGoal, timestamp);
     if (!travelState) return null;
@@ -2965,7 +2965,7 @@ const PopulationService = {
         // With a worker result the fight already happened: the transition
         // branch below applies it first and then starts the cleanup trip.
         const cleanupAfterFight = !!precomputedResult && state.activity !== 'shopping'
-            && !!inventoryCleanupGoal(state, startedAt);
+            && !!inventoryCleanupGoal(state);
         const cleanupState = precomputedResult ? null : inventoryCleanupTravelState(state, startedAt);
         if (cleanupState) return this.resolveColdCleanupTravel(state, cleanupState, startedAt);
         const elapsedMs = stepElapsedMs(state, startedAt);

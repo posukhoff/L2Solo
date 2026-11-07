@@ -1587,7 +1587,7 @@ class ColdSimulationCoordinator {
         HuntEfficiency.observe(resolvedState);
         // A build decided the cleanup trip and the step found the bot free to start it
         // (cleanupNeed: the held stats.cleanupDue); main only starts the trip, which ends
-        // the hold (temporary until step 6: the town plan's sell stop, an unload root of the build).
+        // the hold: the build decides, main executes the visit's sale.
         const cleanupState = proposal.cleanupNeed ? this.population?.prepareInventoryCleanupProposal?.(
             resolvedState, timestamp, stepState.simulation, stepState, proposal.cleanupNeed) : null;
         if (cleanupState) {
@@ -1900,8 +1900,8 @@ class ColdSimulationCoordinator {
     }
 
     // The steps of the review command the worker sends on this ok ack, decided
-    // here where the facts are: the plan unless main started a cleanup trip over
-    // it (temporary until step 6, with inventoryCleanupForced), the buff offer, training when the step moved the
+    // here where the facts are: the plan unless main started the build's cleanup trip over
+    // it (inventoryCleanupForced), the buff offer, training when the step moved the
     // level fact (its durable class/level: B13, training is that fact's consumer) or brought a book into the bag,
     // and the committed state needs it. None: no review.
     reviewSteps(proposal, state) {
