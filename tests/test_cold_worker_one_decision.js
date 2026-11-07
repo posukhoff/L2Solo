@@ -111,7 +111,11 @@ module.exports.goalProbe = async (id) => {
     };
     try {
         await step(timestamp); await step(timestamp + 1000);
-        const same = await step(timestamp + 2000);
+        // A served step in the field asks no town route rows (only a build or a town visit reads them).
+        const rowsAsk = occupationFor, wishAsks = [];
+        occupationFor = (state, at, options, mode) => { if (mode === 'wish') wishAsks.push(state.activity); return rowsAsk(state, at, options, mode); };
+        let same;
+        try { same = await step(timestamp + 2000); } finally { occupationFor = rowsAsk; }
         const ask = () => ColdEconomyDecision.refusal(kernel.states.get(id).state, kernel.states.get(id).wishAdvisory,
             { goalRevision: goalRevision(id), timestamp: timestamp + 3000 });
         const held = ask();
@@ -124,7 +128,7 @@ module.exports.goalProbe = async (id) => {
         const refusal = ask();
         const moved = await step(timestamp + 3000);
         const unwoken = Object.keys(invoke('GameServer/Bot/Situations').counts().unwoken).filter(key => key.startsWith('build:'));
-        return { same, held, handoff, refusal, moved, unwoken };
+        return { same, wishAsks, held, handoff, refusal, moved, unwoken };
     } finally { Economy.forState = original; }
 };
 // A kept card's craft refresh (a crafter's MP out of its band) asks the action
@@ -341,6 +345,7 @@ parentPort.on('message', message => {
         const goal = goalResponse.value;
         console.log(JSON.stringify(goal));
         assert.equal(goal.same, 0, 'a quiet step reuses the held decision while the goal revision holds');
+        assert.deepEqual(goal.wishAsks, [], 'and asks no town route rows in the field');
         assert.equal(goal.held, '', 'the held decision holds on the warm state at the same goal revision');
         assert.equal(goal.handoff, '', 'a near body back far serves its far card: no build for the handoff');
         assert.equal(goal.refusal, 'goal', 'a moved goal revision refuses the held decision');

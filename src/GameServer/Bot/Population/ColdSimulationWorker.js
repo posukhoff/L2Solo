@@ -1907,9 +1907,10 @@ function startKernel(config = {}) {
             if (previousPlan !== originalPlan) state = { ...state, stats: { ...state.stats, equipmentPlan: previousPlan } };
             const craftBidReview = personalCraftBidReviewDue(state);
             const spots = planningSpots;
-            // GearPlanSelection uses EconomyContext's same prepared occupation
-            // reader. No synchronous recipe scan can run through it.
-            const routeRows = await occupationFor(state, timestamp, { caller: 'step' }, 'wish');
+            // The town route rows (a 'wish' ask, EconomicTrip.prepare) are read by a build
+            // (asked below, before it) and on a town visit (its stop's check, its plan's
+            // towns); a step that serves its card in the field reads none.
+            const routeRows = state.activity === 'shopping' ? await occupationFor(state, timestamp, { caller: 'step' }, 'wish') : undefined;
             const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
             const deps = { spots, timestamp, board: boardReady(), caller: 'step',
                 buyOrderEscrow: escrowFor(state.characterId), goalRevision: goalRevision(state.characterId), routeRows };
@@ -2023,7 +2024,9 @@ function startKernel(config = {}) {
                     targetNpcId: Number(previousPlan?.next?.npcId || leaf.npcId || 0), plannedState: routedState, route, lastFight };
             }
             // A build (woken, or the step's card no longer names its decision: counted
-            // unwoken under its caller).
+            // unwoken under its caller). GearPlanSelection uses EconomyContext's same
+            // prepared occupation reader: no synchronous recipe scan runs through it.
+            if (!nullReuse && !deps.routeRows) deps.routeRows = await occupationFor(state, timestamp, { caller: 'step' }, 'wish');
             const buildDeps = { ...deps, decide: true, caller: solo ? 'step' : 'party_request', ...(visitStop ? { visitStop } : {}) };
             const preparedEconomy = nullReuse ? refreshed.economy
                 : Economy.forState(preparationState, buildDeps);
