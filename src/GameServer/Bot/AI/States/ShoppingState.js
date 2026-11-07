@@ -270,8 +270,9 @@ function clearShoppingServiceState(session) {
 // The visit's kit amounts, fixed at its first restock once its sale has
 // settled (shoppingSale): the build's kit rates over the bag and wallet then,
 // at that town's quotes (EconomyContext.keptKit), read by every restock of the
-// visit in that town. None without a town. Temporary until step 6 (the town
-// plan on the worker takes the kit reader).
+// visit in that town. None without a town. The same kit rule cold execution
+// reads on main; picked once per stop, so the body keeps it rather than wait
+// for a worker plan of the visit.
 function shoppingKit(session, bot, town) {
     if (!town) return undefined;
     if (session.shoppingKit?.town !== town) {
