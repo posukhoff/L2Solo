@@ -340,6 +340,9 @@ async function run() {
             assert(served, `the ${name} step serves the card`);
             assert.equal(served.economy.statsPacket.woken, undefined, 'a served card clears no bit');
         }
+        // The craft step the decision prepared rides its served view: a town visit's plan carries it out.
+        const shot = { wealth: [90001, 2] };
+        assert.deepEqual(Card.refreshAdvisory(published, { ...card, card: Card.cardWithShot(card.card, shot) }, deps()).economy.shot, shot);
         const raised = Situations.raise({ ...published.stats }, 'goal_affordable:focus', null, Situations.place(published));
         assert(Situations.woken(raised, 'build'), 'its goal in reach wakes the build');
         assert.equal(Card.refusal({ ...published, stats: { ...published.stats, decisionSeq: packet.decisionSeq + 1 } }, card, deps()),
