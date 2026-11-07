@@ -1849,12 +1849,12 @@ function startKernel(config = {}) {
                 buyOrderEscrow: escrowFor(state.characterId), goalRevision: goalRevision(state.characterId), routeRows };
             const wishFocus = previousPlan?.status === 'deferred' && previousPlan.strategy === 'none'
                 && previousPlan.next == null && previousPlan.reason === 'wish_focus';
-            // A healer or buffer without solo ground plans its party request
-            // below (PartyRequestPlanner, decision 10-30), and a bot waiting on its
-            // party request, at every step: temporary until step 7 (the request's
-            // deadlines), its builds counted unwoken under 'party_request'.
-            const solo = !state.party?.partyId && !state.partyId && !state.stats?.partyRequest
-                && !PartyRequestPlanner.supportWithoutGround(state, spots, routeSearch(state, timestamp));
+            // A bot outside a party serves its held card unless woken. A party request
+            // (PartyRequestPlanner) is the build's output, held with no clock until the
+            // next build: a held card carries it (its holder hunts on, as a C4 player
+            // whose LFG waits), and a healer or buffer without solo ground plans its
+            // request only in a build a situation woke.
+            const solo = !state.party?.partyId && !state.partyId;
             const where = Situations.place(state);
             const card = record?.wishAdvisory || null;
             // The step's own situations, raised on the state it plans (worker-local; the
@@ -1936,14 +1936,14 @@ function startKernel(config = {}) {
                     ...(occupation?.economyPlan ? { economyPlan: occupation.economyPlan } : {}),
                     activityPick: { activity: leaf.activity, spotId: leaf.spotId, npcId: leaf.npcId },
                     economyDecision: refreshed.decision, previousPlan, acquisitionPlan: previousPlan,
-                    partyRequest: null, reusablePartyRequest: false, replanFailure: null,
+                    partyRequest: state.stats?.partyRequest || null, reusablePartyRequest: false, replanFailure: null,
                     targetNpcId: Number(previousPlan?.next?.npcId || leaf.npcId || 0), plannedState: routedState, route, lastFight };
             }
             // A build (woken, or the step's card no longer names its decision: counted
             // unwoken under its caller). GearPlanSelection uses EconomyContext's same
             // prepared occupation reader: no synchronous recipe scan runs through it.
             if (!nullReuse && !deps.routeRows) deps.routeRows = await occupationFor(state, timestamp, { caller: 'step' }, 'wish');
-            const buildDeps = { ...deps, decide: true, caller: solo ? 'step' : 'party_request', ...(visitStop ? { visitStop } : {}) };
+            const buildDeps = { ...deps, decide: true, caller: solo ? 'step' : 'party', ...(visitStop ? { visitStop } : {}) };
             const preparedEconomy = nullReuse ? refreshed.economy
                 : Economy.forState(preparationState, buildDeps);
             const selectedAcquisition = nullReuse ? {

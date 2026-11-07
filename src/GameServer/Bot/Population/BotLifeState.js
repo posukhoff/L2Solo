@@ -16,7 +16,6 @@ const Diagnostics = require('../Economy/EconomyDiagnostics');
 const Trace = require('../DecisionTrace');
 const DecisionEvents = require('../AI/DecisionEvents');
 const Situations = require('../Situations');
-const PartyRequestPlanner = invoke('GameServer/Bot/Population/PartyRequestPlanner');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const SpotService = invoke('GameServer/Bot/AI/SpotService');
@@ -1751,67 +1750,14 @@ function publishDeferredPartyRequests(rows) {
     }
 }
 
-// Start-up only: a request left open across a restart is deferred once here;
-// at run time each request expires at its own deadline (PartyAssemblyEvents).
-function expireStalePartyRequests() {
-    const timestamp = now();
-    const requiredMaxAge = PartyRequestPlanner.maxAgeMs('required');
-    const preferredMaxAge = PartyRequestPlanner.maxAgeMs('preferred');
-    const cooldownMs = PartyRequestPlanner.cooldownMs();
-    // Spread the next eligible formation attempts over at most two minutes so
-    // a restart cannot turn one historical queue into a new SQLite spike.
-    const staggerMs = Math.min(120000, Math.max(0, Math.floor(cooldownMs / 2)));
-    const target = `phase = 'cold'
-        AND (partyId IS NULL OR partyId = '')
-        AND activity IN ('hunting', 'resting', 'party_wait')
-        AND partyRequestStatus = 'open'
-        AND partyRequestedAt <= ?
-        AND (COALESCE(partyRequestPriority, '') <> 'required' OR partyRequestedAt <= ?)`;
-    const sql = `UPDATE ${TABLE}
-        SET statsJson = json_set(
-                COALESCE(statsJson, '{}'),
-                '$.partyRequest.status', 'deferred',
-                '$.partyRequest.deferredUntil', ? + (ABS(characterId) % ?),
-                '$.partyRequest.expiredAt', ?,
-                '$.partyRequest.attempts', COALESCE(CAST(json_extract(statsJson, '$.partyRequest.attempts') AS INTEGER), 0) + 1
-            ),
-            simulationRevision = COALESCE(simulationRevision, 0) + 1,
-            updatedAt = ?
-        WHERE ${target} RETURNING *`;
-    const params = [
-        timestamp + cooldownMs,
-        Math.max(1, staggerMs),
-        timestamp,
-        timestamp,
-        timestamp - preferredMaxAge,
-        timestamp - requiredMaxAge
-    ];
-    const staleParams = [timestamp - preferredMaxAge, timestamp - requiredMaxAge];
-    const selectStale = () => Database.execute([
-        `SELECT characterId FROM ${TABLE} WHERE ${target}`,
-        staleParams
-    ]);
-    const waitForPending = (rows) => Promise.all((rows || [])
-        .map((row) => pendingWrites.get(Number(row.characterId || 0)))
-        .filter(Boolean)
-        .map((pending) => pending.catch(() => null)));
-    return selectStale()
-        .then(waitForPending)
-        .then(() => Database.execute([sql, params, { read: true }]))
-        .then((rows) => {
-            publishDeferredPartyRequests(rows);
-            if (rows.length) utils.infoWarn('BotLife', 'deferred %d stale party requests', rows.length);
-            return rows.length;
-        });
-}
-
+// Forming found no group for these open required requests (PartyAssemblyEvents'
+// answer): each is closed (PartyRequestPlanner.closed) and held until the bot's next
+// build, which asks again; no clock reopens it.
 function deferUnformablePartyRequests(characterIds = [], reason = 'no_compatible_level_match') {
     const ids = [...new Set((characterIds || []).map((id) => Number(id)).filter(Boolean))].slice(0, 500);
     if (!ids.length) return Promise.resolve(0);
 
     const timestamp = now();
-    const cooldownMs = PartyRequestPlanner.cooldownMs();
-    const staggerMs = Math.min(120000, Math.max(0, Math.floor(cooldownMs / 2)));
     const placeholders = ids.map(() => '?').join(', ');
     const selection = `characterId IN (${placeholders})
         AND phase = 'cold'
@@ -1830,9 +1776,7 @@ function deferUnformablePartyRequests(characterIds = [], reason = 'no_compatible
     const sql = `UPDATE ${TABLE}
         SET statsJson = json_set(
                 COALESCE(statsJson, '{}'),
-                '$.partyRequest.status', 'deferred',
-                '$.partyRequest.deferredUntil', ? + (ABS(characterId) % ?),
-                '$.partyRequest.expiredAt', ?,
+                '$.partyRequest.status', 'closed',
                 '$.partyRequest.attempts', COALESCE(CAST(json_extract(statsJson, '$.partyRequest.attempts') AS INTEGER), 0) + 1,
                 '$.partyRequest.lastReason', ?
             ),
@@ -1840,9 +1784,6 @@ function deferUnformablePartyRequests(characterIds = [], reason = 'no_compatible
             updatedAt = ?
         WHERE ${selection} RETURNING *`;
     const params = [
-        timestamp + cooldownMs,
-        Math.max(1, staggerMs),
-        timestamp,
         String(reason || 'no_compatible_level_match'),
         timestamp,
         ...ids
@@ -1852,7 +1793,7 @@ function deferUnformablePartyRequests(characterIds = [], reason = 'no_compatible
         .then(() => Database.execute([sql, params, { read: true }]))
         .then((rows) => {
             publishDeferredPartyRequests(rows);
-            if (rows.length) utils.infoWarn('BotLife', 'deferred %d unformable party requests reason=%s', rows.length, String(reason || 'unknown'));
+            if (rows.length) utils.infoWarn('BotLife', 'closed %d unformable party requests reason=%s', rows.length, String(reason || 'unknown'));
             return rows.length;
         });
 }
@@ -2010,7 +1951,7 @@ const BotLifeState = {
                     (SELECT karma FROM characters WHERE id = characterId))
                 WHERE COALESCE(json_extract(statsJson, '$.karma'), 0)
                     <> (SELECT karma FROM characters WHERE id = characterId)`, []]))
-            .then(() => Database.reconcileBotClanGoals?.()).then(() => removeRetiredStaticMerchantStates()).then(() => Database.recoverConstPartyActivities()).then(() => recoverStaleHotStates()).then(() => recoverDissolvedPartyMembers()).then(() => recoverStaleCraftWaits()).then(() => migrateAcquisitionPartyWaits()).then(() => clearPassivePartyRequests()).then(() => expireStalePartyRequests()).then(() => discardInvalidEquipmentPlans()).then(() => discardFulfilledEquipmentPlans()).then(() => hydrateCache()).then((count) => {
+            .then(() => Database.reconcileBotClanGoals?.()).then(() => removeRetiredStaticMerchantStates()).then(() => Database.recoverConstPartyActivities()).then(() => recoverStaleHotStates()).then(() => recoverDissolvedPartyMembers()).then(() => recoverStaleCraftWaits()).then(() => migrateAcquisitionPartyWaits()).then(() => clearPassivePartyRequests()).then(() => discardInvalidEquipmentPlans()).then(() => discardFulfilledEquipmentPlans()).then(() => hydrateCache()).then((count) => {
             const repairs = [...cache.values()]
                 .map(canonicalizeAreaState)
                 .map(recoverOrphanedGiranState)
