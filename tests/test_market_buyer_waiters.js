@@ -1,29 +1,25 @@
-process.env.BOT_DEVELOPER_DIAGNOSTICS = 'true'; // This fixture inspects optional developer metrics.
+'use strict';
+// The board's buyers: a bot's held build registers what it wants from player supply
+// (its card's watch rows), a new or cheaper SELL line wakes at most five buyers of its
+// item within their budgets (offer_posted at the bot's next step), and a woken want
+// waits for the next build. No clock.
 require('../src/Global');
 const assert = require('node:assert/strict');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
-const { MarketBuyerWaiters } = require('../src/GameServer/Bot/Economy/MarketBuyerWaiters');
+const { MarketBuyerWaiters, MAX_WANTS } = require('../src/GameServer/Bot/Economy/MarketBuyerWaiters');
 const { ColdSimulationKernel } = require('../src/GameServer/Bot/Population/ColdSimulationKernel');
-const Protocol = require('../src/GameServer/Bot/Population/ColdSimulationProtocol');
-const Funding = require('../src/GameServer/Bot/Economy/PurchaseFunding');
-const reserve = Funding.operatingReserve;
-Funding.operatingReserve = () => 500; // This index fixture supplies a fixed, already decided reserve.
 
 async function main() {
-    let now = 100000, reads = 0;
-    const requests = [];
+    const now = 100000;
     const kernel = new ColdSimulationKernel({ now: () => now,
         planLifecycle: ({ state }) => ({ plannedState: state }),
         resolveSolo: () => ({ patch: {}, events: [], materialize: { items: [] }, nextResolveAt: now + 60000 }),
-        emit: (type, payload) => { if (type === 'command_request') requests.push(...payload.requests); } });
-    const waiters = new MarketBuyerWaiters({
-        stateFor: id => { reads++; return kernel.states.get(id)?.state; },
-        demandsFor: state => [[state.stats.wanted, { ready: true, budget: state.adena }]],
-        wake: (id, timestamp, offer) => kernel.wakeBuyer(id, timestamp, offer)
-    });
+        emit: () => true });
+    let capped = 0;
+    const waiters = new MarketBuyerWaiters({ wake: (id, offer) => kernel.boardWake(id, offer), capped: () => capped++ });
     kernel.buyerEvents = waiters;
-    const state = (id, item = 99, overrides = {}) => ({ characterId: id, phase: 'cold', activity: 'hunting', level: 1,
-        adena: 2000, inventory: {}, vitals: { hp: 100 }, stats: { wanted: item },
+    const state = (id, overrides = {}) => ({ characterId: id, phase: 'cold', activity: 'hunting', level: 1,
+        adena: 2000, inventory: {}, vitals: { hp: 100 }, stats: {},
         timing: { lastResolvedAt: now - 60000, nextResolveAt: now + 3600000 },
         updatedAt: now, simulation: { revision: 1 }, ...overrides });
     const board = new BoardIndex();
@@ -32,56 +28,43 @@ async function main() {
     const publish = row => {
         const previous = board.records.get(row.id) || [];
         board.put(row);
-        return waiters.recordChanged(row, previous, now);
+        return waiters.recordChanged(row, previous);
     };
     try {
-        for (let id = 1; id <= 12; id++) kernel.upsert(state(id));
-        for (let id = 100; id < 164; id++) kernel.upsert(state(id, 1000 + id));
-        kernel.upsert(state(20, 99, { activity: 'resting' }));
-        kernel.upsert(state(21, 99, { phase: 'hot' }));
-        kernel.upsert(state(22, 99, { partyId: 'party' }));
-        kernel.upsert(state(23, 99, { adena: 510 }));
-        reads = 0;
-        assert.deepEqual(publish(record(1)), [1, 2, 3, 4, 5]);
-        assert.equal(reads, 5, 'new stock reads five addressed owners, independent of unrelated population');
-        assert.equal(waiters.stats.inspected, 5);
-        kernel.tick();
-        await kernel.resolveChain;
-        assert.equal(requests.length, 5);
-        assert(requests.every(request => request.kind === 'lifecycle'));
-        assert(requests.every(request => JSON.stringify(request.marketWakeup) === JSON.stringify([{ itemId: 99, price: 100 }])),
-            'the command names the offer that woke the buyer');
-        assert.equal(Protocol.validateEnvelope(Protocol.envelope('command_request', 'buyer-events', { requests }), 'worker',
-            { workerEpoch: 'buyer-events' }).ok, true, 'wakeups follow the actual command wire contract');
-        assert(requests.every(request => request.state.timing.nextResolveAt === now + 3600000),
-            'the event wakes native commands without falsifying persisted deadlines');
-        assert.equal(kernel.inFlight.size, 0, 'the wakeup plans a purchase rather than an extra combat step');
-        assert.deepEqual(publish(record(1)), [], 'metadata refresh is not new stock');
-        assert.deepEqual(publish(record(1, 100, 9)), [], 'a sale cannot wake buyers again');
-        assert.deepEqual(publish(record(1, 90, 9)), [6, 7, 8, 9, 10], 'a cheaper quote is new useful evidence');
-        assert.deepEqual(publish(record(2, 10000)), [], 'unaffordable head stops without scanning all waiters');
-        assert.deepEqual(publish(record(3, 100, 10, [
-            { lineId: 1, selfId: 99, count: 5, price: 100 },
-            { lineId: 2, selfId: 1100, count: 5, price: 100 }
-        ])), [11, 12, 100], 'a multi-item record deduplicates buyers and shares its five-owner budget');
-        kernel.remove(101);
-        assert.deepEqual(publish(record(4, 100, 10, [{ lineId: 3, selfId: 1101, count: 5, price: 100 }])), []);
-        const busy = kernel.beginCommand(102);
-        assert(busy);
-        assert.deepEqual(publish(record(5, 100, 10, [{ lineId: 4, selfId: 1102, count: 5, price: 100 }])), [102]);
-        assert(kernel.buyerWakeups.has(102), 'an event during a native command stays pending');
-        kernel.cancelCommand(102, busy);
-        kernel.upsert(state(102, 1102));
-        assert.equal(kernel.scheduleTokens.get(102).dueAt, now, 'accepted state rearms the pending event');
-        // The bot turns near: its hot row comes at the revision the handoff moved.
-        kernel.upsert(state(103, 1103, { phase: 'hot', simulation: { revision: 2 } }));
-        assert.deepEqual(publish(record(6, 100, 10, [{ lineId: 5, selfId: 1103, count: 5, price: 100 }])), []);
-        console.log('market buyer waiters: PASS (bounded new-stock delivery, native command, affordability, busy and retirement)');
+        for (let id = 1; id <= 12; id++) { kernel.upsert(state(id)); waiters.register(id, [{ itemId: 99, budget: 1500 }]); }
+        for (let id = 100; id < 104; id++) { kernel.upsert(state(id)); waiters.register(id, [{ itemId: 1000 + id, budget: 1500 }]); }
+        kernel.upsert(state(21, { phase: 'hot' })); waiters.register(21, [{ itemId: 99, budget: 1500 }]);
+        assert.deepEqual(publish(record(1)), [1, 2, 3, 4, 5], 'a new offer wakes five buyers of its item');
+        assert.deepEqual(kernel.states.get(1).boardWake, { seq: 1, itemId: 99, price: 100 }, 'raised at the next step: the offer');
+        assert.equal(kernel.inFlight.size + kernel.commanding.size, 0, 'a wake starts no step: the bot hears it at its next one');
+        assert.deepEqual(publish(record(1)), [], 'a metadata refresh is not a new offer');
+        assert.deepEqual(publish(record(1, 100, 9)), [], 'a sale wakes no buyer');
+        assert.deepEqual(publish(record(1, 90, 9)), [6, 7, 8, 9, 10], 'a cheaper line is a new offer');
+        assert.deepEqual(publish(record(2, 10000)), [], 'an offer above every budget wakes none');
+        assert.deepEqual(publish(record(3, 100, 10, [{ lineId: 1, selfId: 99, count: 5, price: 100 },
+            { lineId: 2, selfId: 1100, count: 5, price: 100 }])), [11, 12, 100], 'one record wakes at most five');
+        assert.deepEqual(publish(record(4, 100, 10, [{ lineId: 3, selfId: 99, count: 5, price: 100 }])), [],
+            'a hot body is not woken: its wants are not a far bot\'s');
+        // A woken want waits for the next build: the same offer again wakes nobody.
+        assert.deepEqual(publish(record(5, 80, 10)), [], 'woken wants left the index until the next build');
+        waiters.register(1, [{ itemId: 99, budget: 1500 }]);
+        assert.deepEqual(publish(record(5, 70, 10)), [1], 'the next build registers its wants again');
+        assert.equal(kernel.states.get(1).boardWake.seq, 2, 'a newer wake replaces the pending one');
+        // A step that raised it commits: answered; a newer one waits.
+        kernel.boardWakeAnswered(kernel.states.get(1), 1);
+        assert(kernel.states.get(1).boardWake, 'an older step does not answer a newer wake');
+        kernel.boardWakeAnswered(kernel.states.get(1), 2);
+        assert.equal(kernel.states.get(1).boardWake, null);
+        // At most MAX_WANTS a bot, the rest counted.
+        waiters.register(200, Array.from({ length: MAX_WANTS + 2 }, (_, at) => ({ itemId: 500 + at, budget: 10 })));
+        assert.equal(waiters.owners.get(200).length, MAX_WANTS);
+        assert.equal(capped, 1, 'the wants past the cap are counted');
+        kernel.remove(103);
+        assert.deepEqual(publish(record(6, 100, 10, [{ lineId: 3, selfId: 1103, count: 5, price: 100 }])), [], 'a removed bot waits no more');
+        console.log('market buyer waiters: PASS (wants of the build, bounded wakes at the next step, no clock)');
     } finally {
-        Funding.operatingReserve = reserve;
         await kernel.shutdown();
         assert.equal(waiters.items.size, 0);
-        assert.equal(kernel.buyerWakeups.size, 0);
     }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

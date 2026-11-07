@@ -194,10 +194,18 @@ const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const Trace = require('../DecisionTrace');
 const boardIndex = new BoardIndex({ groupOf: MarketCounters.counterOf });
 const buyerWaiters = new MarketBuyerWaiters({
-    stateFor: id => kernel?.states.get(id)?.state,
-    demandsFor: (state, timestamp) => invoke('GameServer/Bot/Economy/MarketDemandIndex').signalsOfState(state, timestamp),
-    wake: (id, timestamp, offer) => kernel?.wakeBuyer(id, timestamp, offer) === true
+    wake: (id, offer) => kernel?.boardWake(id, offer) === true,
+    capped: () => Situations.note('board:wait:capped')
 });
+// A build taken (the step's own, its commit pending): its card's watch rows are the
+// bot's board wants, replacing the last build's; each pays at most its worth a unit
+// and the wallet above its operating reserve now.
+const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
+function registerWants(state, economy) {
+    const spendable = PurchaseFunding.budget(state, escrowFor(state.characterId)) - PurchaseFunding.operatingReserve(state);
+    buyerWaiters.register(Number(state.characterId), (economy?.watchList || [])
+        .map(row => ({ itemId: Number(row.itemId), budget: Math.min(Number(row.worth) || 0, spendable) })));
+}
 const boardFollower = boardIndex.follower();
 // A whole 'board' or 'market' table is being replaced: set by its reset, cleared
 // by the table_page whose piece ends the full copy (TableMirror ready), which
@@ -1916,6 +1924,10 @@ function startKernel(config = {}) {
                 const stats = Situations.raise({ ...state.stats }, name, payload, where, state.characterId);
                 if (stats.situationSeq !== state.stats?.situationSeq) state = { ...state, stats };
             };
+            // A board offer that woke its build since its last step (kernel boardWake).
+            const boardWake = record?.boardWake || null;
+            if (boardWake) raise('offer_posted', { itemId: boardWake.itemId, price: boardWake.price });
+            const boardWakeSeq = boardWake ? { boardWakeSeq: boardWake.seq } : {};
             const leaf = card?.card?.activity;
             const outcome = card && solo ? Economy.leafOutcome(state, leaf, deps, leaf?.heldAtDecision) : '';
             if (outcome) raise(outcome);
@@ -1981,7 +1993,7 @@ function startKernel(config = {}) {
                 // projection after the round reads it (never posted).
                 // The workshop taken on this step rides the step's packet, as in a build: a
                 // step main executes (a town visit) reads the packet, not this state.
-                return { statsPacket: { ...stepStatsPacket(state, refreshed.economy, timestamp), ...workshopKeys }, economy: refreshed.economy,
+                return { ...boardWakeSeq, statsPacket: { ...stepStatsPacket(state, refreshed.economy, timestamp), ...workshopKeys }, economy: refreshed.economy,
                     // The facts of the step's last action ask: the card's own or its craft refresh's.
                     ...(asked?.baseline || refreshed.actionBaseline
                         ? { actionBaseline: asked?.baseline || refreshed.actionBaseline } : {}),
@@ -2066,7 +2078,9 @@ function startKernel(config = {}) {
                 : ColdEconomyDecision.advisory(economy, seen, preparationState.activity, deps);
             rememberWishAdvisory(kernel.states.get(Number(state.characterId)), advice, seen, deps);
             if (nullReuse && economyDiagnostics.active()) economyDiagnostics.count('advisory', 'reuse', 'lifecycle');
+            if (!nullReuse) registerWants(state, economy);
             const stepPlan = {
+                ...boardWakeSeq,
                 ...(preparedOccupation?.economyPlan || nullReuse && refreshed?.economyPlan
                     ? { economyPlan: preparedOccupation?.economyPlan || refreshed.economyPlan } : {}),
                 // Worker-local: the facts of the step's last action ask, its own or

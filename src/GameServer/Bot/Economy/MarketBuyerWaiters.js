@@ -1,16 +1,16 @@
-const DiagnosticConfig = require('../Population/PopulationConfig');
-const PurchaseFunding = require('./PurchaseFunding');
+'use strict';
+// The board's buyers (worker): what each bot's held build
+// wants from player supply (its card's watch rows: item, the most it pays a unit),
+// registered when the build is taken (register) and replaced by its next build, no
+// clock. A new SELL line, or a cheaper one, wakes at most five buyers of its item whose
+// budget reaches its price (recordChanged → wake: offer_posted, which wakes the build);
+// a woken want leaves the index until the next build registers it again. At most
+// MAX_WANTS per bot (the rest counted: board:wait:capped).
+const MAX_WANTS = 8;
+const WAKES_PER_RECORD = 5;
 
-function eligible(state) {
-    return state?.phase === 'cold' && ['hunting', 'party_wait'].includes(state.activity)
-        && Number(state.vitals?.hp ?? state.hp ?? 1) > 0
-        && !state.partyId && !state.party?.partyId && !state.stats?.travel
-        && !state.stats?.pveEncounter && !state.stats?.pvpEncounter;
-}
-
-// Each item keeps an indexed max-heap of affordable budgets. Publication
-// visits only this owner's wants; a new record inspects at most five nodes.
-// State objects remain in the canonical provider, never in this index.
+// Each item keeps an indexed max-heap of budgets. Publication visits only
+// this owner's wants; a new record inspects at most five nodes.
 class ItemWaiters {
     constructor() { this.nodes = []; }
     before(a, b) { return a.budget > b.budget || (a.budget === b.budget && a.sequence < b.sequence); }
@@ -47,13 +47,12 @@ class ItemWaiters {
 }
 
 class MarketBuyerWaiters {
-    constructor({ stateFor, demandsFor, wake }) {
-        if ([stateFor, demandsFor, wake].some(fn => typeof fn !== 'function')) {
-            throw new TypeError('market buyer waiters require canonical state, demand and wake providers');
-        }
-        Object.assign(this, { stateFor, demandsFor, wake });
+    // wake(ownerId, { itemId, price }): the offer that woke the buyer; true when taken.
+    // capped(): told a want past MAX_WANTS.
+    constructor({ wake, capped = () => {} }) {
+        if (typeof wake !== 'function') throw new TypeError('market buyer waiters require a wake');
+        Object.assign(this, { wake, capped });
         this.items = new Map(); this.owners = new Map(); this.sequence = 0;
-        this.stats = { inspected: 0, woken: 0 };
     }
     clear() { this.items.clear(); this.owners.clear(); }
     size() { return { owners: this.owners.size, items: this.items.size }; }
@@ -65,27 +64,27 @@ class MarketBuyerWaiters {
         }
         this.owners.delete(ownerId);
     }
-    ownerChanged(ownerId, timestamp = Date.now()) {
+    // A build taken: its wants replace the bot's. wants: [{ itemId, budget }] (budget: the
+    // most it pays a unit, as the build read its wallet).
+    register(ownerId, wants = []) {
         this.remove(ownerId);
-        const state = this.stateFor(ownerId);
-        if (!eligible(state)) return;
-        const reserve = PurchaseFunding.operatingReserve(state);
         const byItem = new Map();
-        for (const [itemId, signal] of this.demandsFor(state, timestamp)) {
-            const budget = Math.max(0, Number(signal.budget) - reserve);
-            if (signal.ready && Number.isSafeInteger(itemId) && itemId > 0 && Number.isFinite(budget) && budget > 0) {
-                byItem.set(itemId, Math.max(byItem.get(itemId) || 0, budget));
-            }
+        for (const { itemId, budget } of wants) {
+            const id = Number(itemId), most = Number(budget);
+            if (Number.isSafeInteger(id) && id > 0 && Number.isFinite(most) && most > 0) byItem.set(id, Math.max(byItem.get(id) || 0, most));
         }
         const nodes = [];
         for (const [itemId, budget] of byItem) {
+            if (nodes.length >= MAX_WANTS) { this.capped(); break; }
             if (!this.items.has(itemId)) this.items.set(itemId, new ItemWaiters());
             const node = { ownerId, itemId, budget, sequence: ++this.sequence, position: -1 };
             this.items.get(itemId).add(node); nodes.push(node);
         }
         if (nodes.length) this.owners.set(ownerId, nodes);
     }
-    recordChanged(record, previous = [], timestamp = Date.now()) {
+    // A SELL record posted or changed: the offers it adds (a new line, a lower price,
+    // more units) wake their buyers. Returns the woken owner ids.
+    recordChanged(record, previous = []) {
         if (Number(record.storeType) !== 1) return [];
         const old = new Map(previous.map(line => [line.lineId, line]));
         const offers = new Map();
@@ -103,29 +102,22 @@ class MarketBuyerWaiters {
         try {
             for (const [itemId, price] of offers) {
                 const heap = this.items.get(itemId);
-                while (heap?.peek()?.budget >= price && inspected < 5) {
+                while (heap?.peek()?.budget >= price && inspected < WAKES_PER_RECORD) {
                     const node = heap.peek(); heap.remove(node); inspected++;
                     if (node.ownerId === Number(record.ownerId)) { held.push(node); continue; }
-                    const state = this.stateFor(node.ownerId);
                     this.remove(node.ownerId);
-                    if (!eligible(state)) continue;
-                    const reserve = PurchaseFunding.operatingReserve(state);
-                    const demand = this.demandsFor(state, timestamp).find(([id, signal]) => id === itemId
-                        && signal.ready && Number(signal.budget) - reserve >= price);
-                    if (!demand) continue;
-                    if (this.wake(node.ownerId, timestamp, { itemId, price })) woken.push(node.ownerId);
+                    if (this.wake(node.ownerId, { itemId, price })) woken.push(node.ownerId);
                 }
-                if (inspected === 5) break;
+                if (inspected === WAKES_PER_RECORD) break;
             }
         } finally {
             for (const node of held) {
                 if (!this.items.has(node.itemId)) this.items.set(node.itemId, new ItemWaiters());
                 this.items.get(node.itemId).add(node);
             }
-            DiagnosticConfig.developerDiagnostics && (this.stats.inspected += inspected); DiagnosticConfig.developerDiagnostics && (this.stats.woken += woken.length);
         }
         return woken;
     }
 }
 
-module.exports = { MarketBuyerWaiters, eligible };
+module.exports = { MarketBuyerWaiters, MAX_WANTS };

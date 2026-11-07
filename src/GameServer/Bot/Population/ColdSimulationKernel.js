@@ -61,7 +61,6 @@ const EconomyDiagnostics = require('../Economy/EconomyDiagnostics');
 const ColdEconomyDecision = require('./ColdEconomyDecision');
 const BotErrands = require('./BotErrands');
 const PartyMarketBreak = require('./PartyMarketBreak');
-const { eligible: eligibleBuyer } = require('../Economy/MarketBuyerWaiters');
 const { SpotOccupancyIndex, stateKey, huntersOn } = require('./SpotOccupancyIndex');
 const C4Unseal = require('../../Items/C4Unseal');
 const ClanEquipment = require('./ClanEquipmentPartyPolicy');
@@ -477,11 +476,12 @@ function meetingTravelTransition(state, kind = null, facts = NO_FACTS) {
 // the worker (it carries functions and is never posted).
 // economy and route are worker-local (the request carries the route's spot).
 function postedPlan(plan) {
-    if (!plan?.economy && !plan?.route && !plan?.actionBaseline) return plan;
+    if (!plan?.economy && !plan?.route && !plan?.actionBaseline && !plan?.boardWakeSeq) return plan;
     const posted = { ...plan };
     delete posted.economy;
     delete posted.route;
     delete posted.actionBaseline;
+    delete posted.boardWakeSeq;
     return posted;
 }
 
@@ -722,9 +722,6 @@ class ColdSimulationKernel {
         this.scheduleTokens = new Map();
         this.nextScheduleToken = 1;
         this.buyerEvents = null;
-        // A pending market wake per bot: the offers that woke it, item id ->
-        // the cheapest new price (MarketBuyerWaiters), handed to its command.
-        this.buyerWakeups = new Map();
         // Bots with no step coming whose row a raise woke: one command step answers it.
         this.raiseWakeups = new Set();
         // Own line observations: <=8 numeric {deals, at} rows per stepping bot.
@@ -1005,7 +1002,6 @@ class ColdSimulationKernel {
             // still resolve and receive newer commit ACKs. Preserve monotonic
             // ownership state when an older page arrives out of order.
             this.refreshCommandSource(characterId);
-            this.buyerStateChanged(characterId);
             this.ensureScheduled(characterId);
             this.refreshPartyMeetingLeader(characterId, current);
             return false;
@@ -1033,7 +1029,6 @@ class ColdSimulationKernel {
             this.occupancy.update(state);
             DiagnosticConfig.developerDiagnostics && (this.stats.snapshots += 1);
             this.refreshCommandSource(characterId);
-            this.buyerStateChanged(characterId);
             this.ensureScheduled(characterId, nextDue, nextKind);
             this.refreshPartyMeetingLeader(characterId, current);
             return true;
@@ -1066,7 +1061,6 @@ class ColdSimulationKernel {
         this.occupancy.update(state);
         DiagnosticConfig.developerDiagnostics && (this.stats.snapshots += 1);
         this.refreshCommandSource(characterId);
-        this.buyerStateChanged(characterId);
         this.ensureScheduled(characterId, nextDue, nextKind);
         if (raised && !this.busy(characterId)) this.requeue(characterId, this.now());
         this.refreshPartyMeetingLeader(characterId, current);
@@ -1102,7 +1096,7 @@ class ColdSimulationKernel {
         if (current?.state) this.occupancy.remove(stateKey(current.state));
         this.states.delete(id);
         this.buyerEvents?.remove(id);
-        this.buyerWakeups.delete(id); this.raiseWakeups.delete(id);
+        this.raiseWakeups.delete(id);
         this.lookSeen.delete(id);
         this.versions.set(id, Number(this.versions.get(id) || 0) + 1);
         this.heap.remove(this.scheduleTokens.get(id)?.heapEntry);
@@ -1152,7 +1146,7 @@ class ColdSimulationKernel {
             inFlight: this.inFlight.size, dirty: this.dirty.size,
             commanding: this.commanding.size, commandStartedAt: this.commandStartedAt.size,
             partyRuns: this.partyRuns.size, partyRequirementProgress: this.partyRequirementProgress.size,
-            buyerWakeups: this.buyerWakeups.size, lookSeen: this.lookSeen.size
+            lookSeen: this.lookSeen.size
         };
     }
 
@@ -1174,32 +1168,25 @@ class ColdSimulationKernel {
         return !!entry && isSchedulableKind(lifecycleKind(entry.state, this));
     }
 
-    buyerStateChanged(characterId) {
-        this.buyerEvents?.ownerChanged(characterId, this.now());
-        if (!eligibleBuyer(this.states.get(characterId)?.state)) this.buyerWakeups.delete(characterId);
-    }
-
-    // offer: { itemId, price } of the new offer that woke the bot; a wake
-    // already pending takes it beside its own.
-    wakeBuyer(characterId, timestamp = this.now(), offer = null) {
-        const id = Number(characterId);
-        // A bot its checkpoint refused takes no wake: each would replace the
-        // queued turn that leaves it its resolver steps.
-        if (this.stopping || !eligibleBuyer(this.states.get(id)?.state) || this.checkpointErrors.has(id)) return false;
-        const pending = this.buyerWakeups.get(id);
-        this.addWakeOffers(id, offer ? [offer] : []);
-        if (pending) return false;
-        if (!this.busy(id)) this.requeue(id, timestamp);
+    // A board offer that woke a far bot's build (MarketBuyerWaiters): raised as
+    // offer_posted at the bot's next step (planLifecycle reads record.boardWake) and
+    // kept until a step that raised it commits (onCommitAck, completeCommand: its
+    // seq). A bot with no step coming (a craft shop) takes one command step for it.
+    // A worker restart loses a wake not yet committed (counted board:wake:lost by
+    // shutdown). offer: { itemId, price }. True when taken.
+    boardWake(characterId, offer = null) {
+        const id = Number(characterId), record = this.states.get(id), state = record?.state;
+        if (this.stopping || state?.phase !== 'cold' || state.party?.partyId || state.partyId || this.checkpointErrors.has(id)) return false;
+        record.boardWake = { seq: (Number(record.boardWake?.seq) || 0) + 1, itemId: Number(offer?.itemId) || 0, price: Number(offer?.price) || 0 };
+        if (lifecycleKind(state, this) === 'event_driven') {
+            this.raiseWakeups.add(id);
+            if (!this.busy(id)) this.requeue(id, this.now());
+        }
         return true;
     }
-
-    addWakeOffers(id, offers) {
-        const held = this.buyerWakeups.get(id) || new Map();
-        for (const { itemId, price } of offers) {
-            if (!(Number(price) >= 0)) continue;
-            held.set(Number(itemId), Math.min(Number(price), held.get(Number(itemId)) ?? Infinity));
-        }
-        this.buyerWakeups.set(id, held);
+    // The board wake a committed step raised is answered (its seq; a newer one waits).
+    boardWakeAnswered(record, seq) {
+        if (record && seq && record.boardWake?.seq === seq) record.boardWake = null;
     }
 
     // dueAt and kind: the due time and lifecycleKind of the stored state when
@@ -1208,10 +1195,6 @@ class ColdSimulationKernel {
         const id = Number(characterId);
         const current = this.states.get(id);
         if (!current || this.busy(id)) return false;
-        if (this.buyerWakeups.has(id) && eligibleBuyer(current.state)) {
-            if (!this.hasNormalCoverage(id) || this.scheduleTokens.get(id).dueAt > this.now()) this.requeue(id, this.now());
-            return true;
-        }
         if (this.hasNormalCoverage(id)) {
             const scheduled = this.scheduleTokens.get(id);
             if (scheduled.heapEntry.playerWaiting !== playerWaitingTransition(current.state, kind, this)
@@ -1288,7 +1271,7 @@ class ColdSimulationKernel {
                 this.requeueAtDue(id);
                 continue;
             }
-            const kind = this.buyerWakeups.has(id) && eligibleBuyer(current.state) || this.raiseWakeups.has(id)
+            const kind = this.raiseWakeups.has(id)
                 ? 'command' : lifecycleKind(current.state, this);
             if (kind === 'resolver') {
                 // The step starts from the kernel's own copy at once.
@@ -1509,11 +1492,6 @@ class ColdSimulationKernel {
         const attempt = { startedAt: this.now(), commandId: `${kind}:${id}:${this.nextCommandRequest++}`,
             kind, checkpoint, version: current.version, sent: false };
         this.raiseWakeups.delete(id);
-        const wake = kind === 'lifecycle' ? this.buyerWakeups.get(id) : null;
-        if (wake) {
-            this.buyerWakeups.delete(id);
-            attempt.marketWakeup = [...wake].map(([itemId, price]) => ({ itemId, price }));
-        }
         this.commandStartedAt.set(id, attempt);
         this.commanding.add(id);
         return attempt;
@@ -1545,7 +1523,7 @@ class ColdSimulationKernel {
         console.info('ColdWorker :: overdue trace %s', JSON.stringify({ id, main, worker: { at: timestamp, activity: state.activity, phase: state.phase,
             kind: lifecycleKind(state, this), nextResolveAt: state.timing?.nextResolveAt, lastResolvedAt: state.timing?.lastResolvedAt,
             updatedAt: state.updatedAt, revision: state.simulation?.revision, kernelDueInMs: Math.round(this.dueAt(state, timestamp) - timestamp), version,
-            covered: this.hasNormalCoverage(id), busy: this.busy(id), dirty: this.dirty.has(id), wake: this.buyerWakeups.has(id),
+            covered: this.hasNormalCoverage(id), busy: this.busy(id), dirty: this.dirty.has(id), wake: !!record.boardWake,
             token: token ? { dueInMs: Math.round(token.dueAt - timestamp), version: token.version, inHeap: this.heap.positions.has(entry),
                 lead: entry?.lead, startInMs: entry ? Math.round(this.startAt(entry) - timestamp) : null } : null,
             step: step ? { ageMs: timestamp - step.startedAt, sent: !!step.pendingCommitId, dueAt: step.dueAt } : null,
@@ -1560,7 +1538,7 @@ class ColdSimulationKernel {
     // market wake would hold the bot on commands; its resolver steps still run.
     refuseCheckpoint(id, state) {
         this.checkpointsRefused += 1;
-        this.buyerWakeups.delete(id); this.raiseWakeups.delete(id);
+        this.raiseWakeups.delete(id);
         if (this.checkpointErrors.has(id) || this.checkpointErrors.size >= 32) return;
         this.checkpointErrors.add(id);
         console.error(`ColdSimulationKernel :: Error: command checkpoint refused bot ${id} ${state.activity}: ${JSON.stringify(state.timing)} updatedAt ${state.updatedAt}`);
@@ -1641,6 +1619,7 @@ class ColdSimulationKernel {
             attempt.sent = true;
             // The facts of the plan's action ask: the bot's baseline once main ran the command.
             attempt.actionBaseline = lifecyclePlan?.actionBaseline || null;
+            attempt.boardWakeSeq = Number(lifecyclePlan?.boardWakeSeq) || 0;
             const sent = this.emit('command_request', {
                 requests: [{
                     characterId: id,
@@ -1656,20 +1635,16 @@ class ColdSimulationKernel {
                         ? { needed: true, spotId: lifecyclePlan.route.spotId }
                         : { needed: false, spotId: spot?.id ?? null },
                     computedAt: timestamp,
-                    // [{ itemId, price }]: the new offers that woke the buyer.
-                    ...(attempt.marketWakeup ? { marketWakeup: attempt.marketWakeup } : {}),
                     ...(hallVisit ? { hallVisit: true } : {})
                 }]
             });
             if (sent === false && this.cancelCommand(id, attempt)) {
-                if (attempt.marketWakeup) this.addWakeOffers(id, attempt.marketWakeup);
                 this.requeue(id, this.now() + 5000);
             }
         } catch (error) {
             if (!this.currentCommand(id, attempt)) return;
             DiagnosticConfig.developerDiagnostics && (this.stats.errors += 1);
             this.cancelCommand(id, attempt);
-            if (attempt.marketWakeup) this.addWakeOffers(id, attempt.marketWakeup);
             this.requeue(id, this.fault(id, error || 'command_error', 'command'));
         }
     }
@@ -2327,6 +2302,7 @@ class ColdSimulationKernel {
             // Worker-local, never posted: the facts of the step's last action
             // ask, the bot's baseline once main commits the step (onCommitAck).
             active.actionBaseline = projection?.actionBaseline || null;
+            active.boardWakeSeq = Number(lifecyclePlan?.boardWakeSeq) || 0;
             this.dirty.set(Number(characterId), proposal);
             DiagnosticConfig.developerDiagnostics && (this.stats.resolved += 1);
             if (priority !== 'P2' || this.dirty.size >= this.maxBatch) {
@@ -2595,6 +2571,7 @@ class ColdSimulationKernel {
                 // a step that ends otherwise leaves the baseline before it.
                 const record = this.states.get(id);
                 if (record && active.actionBaseline) record.actionBaseline = active.actionBaseline;
+                this.boardWakeAnswered(record, active.boardWakeSeq);
                 // Without result.state main changed nothing: the held state is
                 // the step's own output, not news for its economy (ownOutput).
                 this.upsert({ state: committed, ownOutput: result.state ? null : 'commit' });
@@ -2700,6 +2677,7 @@ class ColdSimulationKernel {
         if (payload.ok) this.clearFault(id);
         // A lifecycle command main ran: its plan's action ask is the bot's last.
         if (payload.ok && attempt.actionBaseline) current.actionBaseline = attempt.actionBaseline;
+        if (payload.ok) this.boardWakeAnswered(current, attempt.boardWakeSeq);
         const retryAt = payload.fault && payload.ok === false
             ? this.fault(id, { message: payload.reason, stack: payload.fault.stack }, 'main_command')
             : this.now() + Math.max(1000, Number(payload.retryAfterMs) || 5000);
@@ -2805,7 +2783,8 @@ class ColdSimulationKernel {
         this.stopping = true;
         this.partyRequirementProgress.clear();
         this.buyerEvents?.clear();
-        this.buyerWakeups.clear();
+        // A board wake no step committed is lost with this worker (a restart re-plans).
+        for (const record of this.states.values()) if (record.boardWake) (Situations ||= require('../Situations')).note('board:wake:lost');
         this.lookSeen.clear();
         this.commanding.clear();
         this.commandStartedAt.clear();

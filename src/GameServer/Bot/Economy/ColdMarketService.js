@@ -32,11 +32,6 @@ function purchaseObservation(state, selfId, requested, budget, phase, reason, ex
         errandAt: Number(state.stats?.marketErrand?.at), ...extra });
 }
 
-// After a visit that found no affordable offer, the bot does not travel to buy
-// that item again for this long: a new affordable offer wakes it at once
-// (MarketBuyerWaiters, which lifts the stamp); its wallet growing past an
-// offer it saw has no event yet (limits.md "Buyer retry").
-const RETRY_DELAY_MS = 15 * 60 * 1000;
 // A bound on an errand the bot has not carried out (no route, a party that
 // keeps it): after it the job that sent it plans again.
 const ERRAND_MS = CombinedErrands.ERRAND_MS;
@@ -68,12 +63,13 @@ function retryAfterFailedPurchase(state, goal, reason) {
         ...state,
         stats: {
             ...(state.stats || {}),
-            marketRetryAfter: timestamp + RETRY_DELAY_MS,
             marketWanted: {
                 ...(state.stats?.marketWanted || {}),
                 itemId: goal.target.itemId,
                 itemName: goal.target.itemName,
                 lastMissingAt: timestamp,
+                // A want only the wish card backs lives with the build held now (MarketDemandIndex).
+                decisionSeq: Number(state.stats?.decisionSeq) || 0,
                 // What the bag holds once the want is met: its arrival clears it (BotLifeState.settleMarketWanted).
                 held: Number(state.inventory?.[goal.target.itemId]?.amount || 0) + Math.max(1, Number(goal.target.amount) || 1),
                 // Backed by the equipment plan: it lives until the plan drops it (MarketDemandIndex).
@@ -98,7 +94,6 @@ function finishBlockedPurchase(state, goal, reason) {
     if (hot) return Promise.resolve(hot);
     const stats = {
         ...(state.stats || {}),
-        marketRetryAfter: null,
         marketWanted: null,
         marketLead: null
     };
@@ -857,11 +852,12 @@ const ColdMarketService = {
         // the worker decides anew and the bot waits for it.
         const arrival = arrivalStep(state, goal);
         // A missed step failed where it acts (after any return handling): the bot decides anew.
-        // A gear buy whose source failed here (GEAR_SOURCE_FAILED) is a failed gear errand: its
-        // item is marked (GearMarks), so the build it wakes does not send the bot for it again.
+        // A buy whose source failed here (GEAR_SOURCE_FAILED: a gear piece or a craft material)
+        // is a failed errand: its item is marked (GearMarks), so the build it wakes does not
+        // send the bot for it again; a new offer of it wakes the build (offer_posted).
         const refreshAfter = written => written.then(result => {
             invoke('GameServer/Bot/AI/DecisionEvents').raiseOn(state.characterId, 'goal_failed',
-                activeGearPurchase && GEAR_SOURCE_FAILED.has(result?.reason)
+                GEAR_SOURCE_FAILED.has(result?.reason)
                     ? { impossible: true, kind: 'gear_errand', key: Number(goal.target.itemId) } : { impossible: true });
             return result;
         });
@@ -1015,6 +1011,5 @@ const ColdMarketService = {
     pendingErrand
 };
 
-ColdMarketService.RETRY_DELAY_MS = RETRY_DELAY_MS;
 ColdMarketService.ERRAND_MS = ERRAND_MS;
 module.exports = ColdMarketService;

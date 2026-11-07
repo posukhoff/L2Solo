@@ -42,7 +42,6 @@ function beginMarketTravel(state, goal, timestamp = Date.now()) {
     const improving = goal.type === 'improving' && goal.target?.improvement?.kind !== 'enchant';
     if (!buyingGear && !buyingMaterial && !buyingErrand && !sellingInventory && !improving) return null;
     if (!improving && invoke('GameServer/Bot/Economy/BotAfkMarketService').canTradeRemotely(state, goal)) return null;
-    if ((buyingGear || buyingMaterial) && Number(state.stats?.marketRetryAfter || 0) > timestamp) return null;
     if (sellingInventory && !forcedInventoryCleanup
         && invoke('GameServer/Bot/Economy/ItemDisposition').saleRetryHolds(state)) return null;
 

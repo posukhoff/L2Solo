@@ -147,10 +147,13 @@ const SITUATIONS = Object.freeze({
     bag_full: link(0),
     // The wallet reached the build's threshold (baseline.affordAt): a broke bot's survival
     // potions, else an unarmed bot's weapon bridge or its focus (both wake the build only:
-    // one name). Its own failed buy's retry stamp goes with it (stats.marketRetryAfter:
-    // it may buy again, raisedFacts).
+    // one name).
     'goal_affordable:potions': link(0),
-    'goal_affordable:focus': link(0)
+    'goal_affordable:focus': link(0),
+    // A board offer its held build wants (MarketBuyerWaiters: a new SELL line, or a cheaper
+    // one, within the want's budget), raised at the bot's next step (payload { itemId,
+    // price }): it answers the trade it hears, as a C4 player answers a WTS shout.
+    offer_posted: link(0)
 });
 const hears = (name, where) => !(SITUATIONS[name].waits & where);
 // One reason with no decision of its own (a step's market review): is it heard here, counted as a raise.
@@ -191,7 +194,7 @@ const DECISIONS = Object.freeze({
     build: Object.freeze(['arrived_town', 'grade_changed', 'gear_changed', 'recipe_learned', 'party_left',
         'goal_affordable:potions', 'goal_affordable:focus', 'out_of_money', 'goal_done:goal', 'goal_failed',
         'goal_done:visit', 'goal_failed:visit', 'stock_low:shots', 'stock_low:potions', 'bag_full', 'source_stalled', 'clan_call',
-        'clan_changed', 'spot_empty', 'goal_moved', 'player_command', 'craft_bid', 'clan_market']),
+        'clan_changed', 'spot_empty', 'goal_moved', 'player_command', 'craft_bid', 'clan_market', 'offer_posted']),
     gear_plan: Object.freeze(['grade_changed', 'gear_changed', 'clan_changed', 'source_stalled']),
     workshop: Object.freeze(['arrived_town', 'arrived_town:own', 'recipe_learned'])
 });
@@ -313,8 +316,6 @@ let IncomeRoute = null, Risk = null;
 const MARKS = new Set(['spot_unreachable', 'spot_dangerous', 'contest_lost']);
 const GearMarks = require('./AI/GearMarks');
 function raisedFacts(stats, name, payload, dropped = null) {
-    // The wallet in reach of its goal: the retry stamp of its last failed buy goes (debt 24).
-    if (name.startsWith('goal_affordable:')) return stats?.marketRetryAfter != null ? { marketRetryAfter: null } : {};
     // A gear errand failed where the body acts: its key marked for the gear plan (GearMarks).
     if (name === 'goal_failed' && payload?.kind === 'gear_errand') {
         const gearMarks = GearMarks.withMark(stats, payload.key, dropped);
@@ -334,8 +335,7 @@ function writeFacts(stats, facts) {
     if (facts.earning) stats.earning = facts.earning;
     if (facts.spotMarks) stats.spotMarks = facts.spotMarks;
     if (facts.gearMarks) stats.gearMarks = facts.gearMarks;
-    if (Object.hasOwn(facts, 'marketRetryAfter')) stats.marketRetryAfter = null;
-    return !!facts.earning || !!facts.spotMarks || !!facts.gearMarks || Object.hasOwn(facts, 'marketRetryAfter');
+    return !!facts.earning || !!facts.spotMarks || !!facts.gearMarks;
 }
 // A unit (a body, a far bot's kernel record: memory) that needs a spot while its held
 // earning answer names none it may take (none found, marked, full): an existing answer
