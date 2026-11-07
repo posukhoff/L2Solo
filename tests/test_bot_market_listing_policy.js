@@ -249,6 +249,11 @@ for (let decisionPoint = 0; decisionPoint < 20; decisionPoint++) {
     }
 }
 assert(dumped <= decided * 0.1, `fixed buyers' materials are kept, not dumped at the NPC (${dumped} of ${decided})`);
+// An adventurer (no warehouse use) does not dump them at the NPC either: they
+// ride in the bag to a fixed buyer's town.
+const adventurer = { ...state, stats: { generatedCold: true } };
+const carried = atRate('x50', () => MarketListingPolicy.evaluate(adventurer, options()));
+assert.strictEqual(carried.npc.filter(item => item.selfId === 1869).length, 0, 'an adventurer keeps Iron Ore for its fixed buyer');
 // An own line under that price stands for nothing: the bag's units are not
 // added to it at its old ask.
 const cheapLine = new BoardIndex({ groupOf: MarketCounters.counterOf });

@@ -48,7 +48,8 @@ function refreshFixedOffers() {
     sellers = new Map();
     fixedMinimums = new Map();
     buyers = new Map();
-    for (const [name, store] of Object.entries(config)) {
+    const stores = Object.entries(config);
+    for (const [name, store] of stores) {
         if (Number(store?.storeType) !== SELL) continue;
         for (const line of store.items || []) {
             if (!(Number(line.count ?? 1) > 0)) continue;
@@ -61,10 +62,13 @@ function refreshFixedOffers() {
             }
         }
     }
-    // After the supply: a buyer's price is capped by it (botPriceFor).
-    for (const [buyerName, store] of Object.entries(config)) {
+    // After the supply: a buyer's price is capped by it (botPriceFor). A bot
+    // sells a fixed buyer only materials (TradeService.acceptsSellerItem).
+    for (const [buyerName, store] of stores) {
         if (Number(store?.storeType) !== BUY || !store.town) continue;
         for (const line of store.items || []) {
+            if (!String(ItemTemplateIndex.find(DataCache.items, Number(line.selfId))?.template?.kind || '')
+                .startsWith('Other.Material')) continue;
             const id = Number(line.selfId), price = botPriceFor(store, line);
             if (!(price > 0) || !Number.isFinite(price)) continue;
             if (!buyers.has(id)) buyers.set(id, []);

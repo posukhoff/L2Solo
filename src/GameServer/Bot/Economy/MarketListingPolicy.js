@@ -234,6 +234,11 @@ function evaluate(state, options = {}) {
         .map(line => [`${line.selfId}:${line.enchant || 0}`, line.price]));
     const keptCounts = options.keptCounts || listedAmounts(owned.filter(line => line.custodyPolicy === 1));
     const liquidate = invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state);
+    // What is not listed: the warehouse, or for an adventurer the NPC, unless
+    // a fixed buyer pays more than the NPC: then it rides in the bag to that
+    // buyer's town (the sale trip goes there, MarketTownPolicy.saleTown).
+    const carried = item => StaticPricing.botSellPrice(item.selfId) > StaticPricing.npcBuyback(item.selfId);
+    const parked = item => !liquidate ? 'warehouse' : carried(item) ? 'keep' : 'npc';
     const decisions = [];
     const forBoard = [];
     const dispose = (item, canList) => {
@@ -241,7 +246,7 @@ function evaluate(state, options = {}) {
         const town = MarketTownPolicy.targetTownForItems(state, [item], options);
         const chosen = disposition(item, {
             town, room: canList && (options.stockQuotes === true || marketOnly) ? 1
-                : liquidate ? 0 : roomFor(item, options.stored),
+                : liquidate ? Number(carried(item)) : roomFor(item, options.stored),
             stockQuote: canList && (options.stockQuotes === true || marketOnly),
             rollKey: rollKey(item),
             selectedAnswerRecord: Number(options.selectedAnswer?.selfId) === Number(item.selfId)
@@ -251,11 +256,11 @@ function evaluate(state, options = {}) {
         const ask = chosen.priced?.ask;
         let action = (ask?.stockQuote || marketOnly && ask?.price > 0 && !ask.npc) && chosen.action !== 'ad' ? 'list'
             : marketOnly && ['keep', 'npc'].includes(chosen.action) ? 'keep'
-            : chosen.action === 'keep' ? liquidate ? 'npc' : 'warehouse' : chosen.action;
+            : chosen.action === 'keep' ? parked(item) : chosen.action;
         // One non-stackable instance fits a new line. An existing gear line
         // cannot silently acquire the bag's other copies at its standing price either.
         const blocked = action === 'list' && !canList;
-        if (blocked) action = marketOnly ? 'keep' : liquidate ? 'npc' : 'warehouse';
+        if (blocked) action = marketOnly ? 'keep' : parked(item);
         const decision = { action,
             reason: blocked ? 'no_board_slot' : ask?.stockQuote ? 'stock_quote' : 'expected_value', item,
             priced: chosen.priced, gain: chosen.gain, answer: chosen.answer,
@@ -319,7 +324,7 @@ function evaluate(state, options = {}) {
         if (decision.action !== 'list' || chosen.has(decision.item)) continue;
         // Grade crystals wait for a market slot; cleanup must not turn them
         // into NPC receipts when more expensive loot fills the board.
-        decision.action = ItemDisposition.isGradeCrystal(decision.item) ? 'keep' : liquidate ? 'npc' : 'warehouse';
+        decision.action = ItemDisposition.isGradeCrystal(decision.item) ? 'keep' : parked(decision.item);
         decision.reason = 'no_board_slot';
     }
     return {

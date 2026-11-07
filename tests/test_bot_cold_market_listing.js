@@ -321,6 +321,11 @@ async function run() {
         stats: { ...buyerRoutedState.stats, marketReturn: { ...buyerRoutedState.stats.marketReturn,
             loc: { ...giranLoc }, regionName: 'Giran' } }
     }, 'remote_buyer_owner_geometry');
+    // From here no fixed buyer takes Stem: its sure exit is the NPC's, so an ask
+    // above it is a valid native quote (with a fixed buyer the bag keeps them).
+    const PopulationConfig = invoke('GameServer/Bot/Population/PopulationConfig');
+    const buyersDisabled = PopulationConfig.staticBuyersDisabled;
+    PopulationConfig.staticBuyersDisabled = true;
     // The visit decided on a bag with no craft running; the row the writer
     // checks has since started one (recipe 1 takes 4 Stem). Listing all ten
     // Stem is the owner's "no" (economy_material_protected): a refused,
@@ -374,6 +379,8 @@ async function run() {
         console.error('Native remote stock quote outcome:', JSON.stringify({ remoteBuyer,
             remoteRecords, remotePublicRecords, remotePhysicalAfter }));
         throw error;
+    } finally {
+        PopulationConfig.staticBuyersDisabled = buyersDisabled;
     }
 
     const SpotProfiles = invoke('GameServer/Bot/Population/SpotProfiles');

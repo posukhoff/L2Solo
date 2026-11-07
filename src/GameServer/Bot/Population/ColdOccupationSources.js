@@ -271,7 +271,7 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
             }
         }
     };
-    return { context, feasibility: preparedFeasibility, options: { board, reserved, ownStock, prepareExits, preparePurchase, prepareTrip: ensureTrip, gearRowsFor,
+    return { context, feasibility: preparedFeasibility, options: { reserved, ownStock, prepareExits, preparePurchase, prepareTrip: ensureTrip, gearRowsFor,
         unknownRecipes: () => admission ? admission.rowsFor(craftLevel) : [],
         ownLines: board?.ownerLines(Number(state.characterId)) || [] } };
 }

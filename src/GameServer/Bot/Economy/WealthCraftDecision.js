@@ -108,8 +108,7 @@ const townForCode = code => require('./ShotCraftPolicy').townForCode(code);
 function* decisionSearch(state, knownRecipes, context, options) {
     const budgetState = { ...state, adena: PurchaseFunding.spendable(state, 0, { upperBound: true }) };
     const trip = context.trip || Profit.tripFor(state, context);
-    const evaluationContext = { ...context, trip, inputValue: id => exitValue(state, id, options.board),
-        ...(options.preparePurchase ? {
+    const evaluationContext = { ...context, trip, ...(options.preparePurchase ? {
         preparePurchase: (id, missing) => options.preparePurchase(state, id, missing, { npc: true, cost: trip }) } : {}) };
     const reserved = options.reserved || ItemDisposition.reservedEquipmentAmounts(state);
     const ownStock = options.ownStock || new Map(), seenPhysical = new Set();
