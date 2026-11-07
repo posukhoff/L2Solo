@@ -89,6 +89,12 @@ assert.strictEqual(Funding.spendable(poorChoice.state, 0, { itemId: NECKLACE }),
     const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
     const seller = bot(wealth, npcJewellery, 50000);
     const kinds = state => Providers.liquidationCandidates(state, Economy.basics(state)).map(row => Number(row.selfId));
+    // The loot is materials the fixed buyers pay more for than the NPC: the bag
+    // carries them to a buyer's town, no funding (NPC) sale names them.
+    assert.deepStrictEqual(kinds(seller), [], 'carried materials are no funding sale');
+    const PopulationConfig = invoke('GameServer/Bot/Population/PopulationConfig');
+    const buyersDisabled = PopulationConfig.staticBuyersDisabled;
+    PopulationConfig.staticBuyersDisabled = true;
     const seen = Disposition.saleSeen(seller).items;
     assert(kinds(seller).some(id => seen.includes(id)), 'the loot is for sale');
     const after = { ...seller, stats: { ...seller.stats, marketSellSeen: { items: seen, buyers: null } } };
@@ -96,6 +102,7 @@ assert.strictEqual(Funding.spendable(poorChoice.state, 0, { itemId: NECKLACE }),
     assert.deepStrictEqual(kinds(after), kinds(seller).filter(id => !seen.includes(id)), 'the kinds the last visit kept are no sale');
     const newKind = { ...seller, stats: { ...seller.stats, marketSellSeen: { items: seen.slice(1), buyers: null } } };
     assert.deepStrictEqual(kinds(newKind), kinds(seller), 'a kind the visit did not try sends every kind to sale again');
+    PopulationConfig.staticBuyersDisabled = buyersDisabled;
 }
 
 const botOffer = { ...npcJewellery, partyNeedReason: 'market_fallback', market: { ...npcJewellery.market, sourceType: 'afk_bot_store' } };

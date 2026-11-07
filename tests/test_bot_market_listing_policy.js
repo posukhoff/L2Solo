@@ -254,14 +254,19 @@ assert(dumped <= decided * 0.1, `fixed buyers' materials are kept, not dumped at
 const adventurer = { ...state, stats: { generatedCold: true } };
 const carried = atRate('x50', () => MarketListingPolicy.evaluate(adventurer, options()));
 assert.strictEqual(carried.npc.filter(item => item.selfId === 1869).length, 0, 'an adventurer keeps Iron Ore for its fixed buyer');
+// A bot with karma enters no buyer's town: it carries nothing for a fixed buyer.
+const outlaw = atRate('x50', () => MarketListingPolicy.evaluate({ ...adventurer, stats: { ...adventurer.stats, karma: 120 } }, options()));
+assert(!outlaw.decisions.some(decision => decision.item.selfId === 1869 && decision.action === 'keep'),
+    'a karma adventurer does not carry Iron Ore to a town it cannot enter');
 // An own line under that price stands for nothing: the bag's units are not
 // added to it at its old ask.
 const cheapLine = new BoardIndex({ groupOf: MarketCounters.counterOf });
 cheapLine.put({ id: 77, ownerId: state.characterId, storeType: 1, kind: 'shop', town: 'Giran', revision: 1,
     lines: [{ lineId: 77, selfId: 1869, count: 5, price: 150 }] });
-const underFloor = atRate('x50', () => MarketListingPolicy.evaluate(state, options({ board: cheapLine })));
-assert(!underFloor.decisions.some(decision => decision.item.selfId === 1869 && decision.reason === 'kept_line'),
-    'no units join an ask under the fixed buyer\'s price');
+const underFloor = atRate('x50', () => MarketListingPolicy.evaluate(state, options({ board: cheapLine, stockQuotes: true })));
+assert(!underFloor.decisions.some(decision => decision.item.selfId === 1869
+    && (decision.reason === 'kept_line' || decision.action === 'list')),
+    'no units join an ask under the fixed buyer\'s price, nor list beside it');
 // No room to keep (a third copy of a gear piece): the NPC.
 const gear = { characterId: 4243, level: 40, adena: 50000, stats: { generatedCold: true },
     inventory: { [lowGradeGear.selfId]: { selfId: Number(lowGradeGear.selfId), amount: 1, kind: lowGradeGear.template.kind } } };

@@ -1389,9 +1389,10 @@ function buildProjection(state, ctx, deps) {
     const liquidation = liquidationInputs(state, { shots: ctx.stock('shots'), potions: ctx.stock('potions'),
         excluded: [...values.keys()].filter(id => Object.hasOwn(state.inventory || {}, id)) });
     const sale = (liquidation || liquidationCandidates(state, ctx)).filter(row => !values.has(Number(row.selfId)));
-    const saleValue = sale.reduce((sum, row) => sum + ctx.buyback(row.selfId) * row.count, 0);
+    const npcBuyback = invoke('GameServer/Bot/Economy/StaticMerchantPricing').npcBuyback;
+    const saleValue = sale.reduce((sum, row) => sum + npcBuyback(row.selfId) * row.count, 0);
     if (saleValue > 0) {
-        // NPC buyback is the same across towns. Compare the prepared routes
+        // What the NPC pays is the same across towns. Compare the prepared routes
         // once; a nearby seller can fund gear without an unaffordable fare to
         // the item's preferred player-market town.
         let best = null;
@@ -1560,12 +1561,16 @@ function personalCraftPlan(state, context, { allowStock = false, wishKey = null 
 function liquidationCandidates(state, ctx) {
     const saleState = invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').saleState(state);
     const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+    const Static = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
     const rows = Disposition.saleCandidates(saleState, {
         preparedReservations: Disposition.reservedEquipmentAmounts(saleState),
         keptAmounts: { ...invoke('GameServer/Inventory/ShotStock').keptAmounts(state, ctx),
             ...invoke('GameServer/Bot/AI/HealingPotionStock').keptAmounts(state, { targetAmount: ctx.stock('potions').target }),
             ...invoke('GameServer/Bot/Travel/ScrollStock').keptAmounts(state) }
-    }).filter(row => row.npcComparable && !Disposition.isGradeCrystal(row));
+    }).filter(row => row.npcComparable && !Disposition.isGradeCrystal(row)
+        // A funding sale is an NPC sale: what the bag carries to a fixed buyer
+        // is no part of it (the sale decision keeps it for the buyer's town).
+        && !Static.carriedToBuyer(state, row.selfId));
     const tried = state.stats?.marketSellSeen?.items;
     if (!Array.isArray(tried) || !rows.some(row => tried.includes(Number(row.selfId))) || !Disposition.saleRetryHolds(state)) return rows;
     return rows.filter(row => !tried.includes(Number(row.selfId)));

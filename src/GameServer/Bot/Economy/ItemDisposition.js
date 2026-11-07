@@ -854,7 +854,7 @@ function walkSale(state, { reserved, arrowSales, personalShot, limit, onlyNpc, p
             : 0;
         const price = clanProgression
             ? clanPrice
-            : npcOnly ? Math.max(priceFor(state, item, template), NpcSellRules.npcBuyPrice(base)) : priceFor(state, item, template);
+            : npcOnly ? Math.max(priceFor(state, item, template), StaticMerchantPricing.botSellPrice(selfId)) : priceFor(state, item, template);
         if (price <= 0 || sellableCount <= 0) return [];
         if (presenceOnly) return [true];
         const candidate = {

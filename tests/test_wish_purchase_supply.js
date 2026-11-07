@@ -58,7 +58,8 @@ Object.assign(adapters, {
     'GameServer/Bot/Population/ColdOccupationSources': {
         craftLabour: state => ({ executor: state.phase === 'hot' ? 'hot' : 'cold', mpCapacity: 1000, mpPerHour: 120000 }),
         exitValue: function* () { return 0; } },
-    'GameServer/Bot/Population/ColdKillRewards': { spoilerFor: () => false } });
+    'GameServer/Bot/Population/ColdKillRewards': { spoilerFor: () => false },
+    'GameServer/Bot/Economy/StaticMerchantPricing': { carriedToBuyer: () => false, npcBuyback: () => 0 } });
 adapters['GameServer/Bot/Population/ColdCombatProfile'].profileFor = () => ({ maxMp: 1000 });
 // The farm path reads Planner.sourceFacts (its hunt rules are pinned in
 // test_source_facts.js); this stand-in maps the fixture's index rows by
