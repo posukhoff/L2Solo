@@ -647,6 +647,8 @@ function refreshAdvisory(state, accepted, deps = {}, options = {}) {
         echo: [accepted.decisionSeq, accepted.activityLeaf, accepted.focus], flags: 0 });
     const economy = view(state, decision, deps);
     economy.inputKey = String(decision.inputHash);
+    // The craft step the decision holds: a town visit's plan carries it out.
+    economy.shot = decision.shot;
     economy.wallet = PurchaseFunding.budget(state, deps.buyOrderEscrow);
     economy.statsPacket = { wishFocus: state.stats.wishFocus, dormantWishes: state.stats.dormantWishes,
         decisionSeq: state.stats.decisionSeq, activityLeaf: state.stats.activityLeaf, money: state.stats.money,
