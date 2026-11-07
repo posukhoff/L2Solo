@@ -101,6 +101,15 @@ function finishVisit(state, timestamp, options) {
     if (!state || !['shopping', 'merchant'].includes(state.activity)) return null;
     if (!state.stats?.partyMarketReturn?.warOperationId && (CombinedErrands.pending(state, timestamp, state.currentRegion).length
         || (state.stats?.townVisit && state.stats.townVisit.completed !== true))) return null;
+    // An errand its job decided during the visit for another town (ColdMarketService.acquire:
+    // a bot in a visit leaves at its end) is the visit's next trip, before the way back: a C4
+    // player done in one town goes on to the next for what he still has to buy there.
+    const errand = !state.stats?.partyMarketReturn && !state.party?.partyId && !state.partyId
+        ? CombinedErrands.pending(state, timestamp).find(pending => pending.town !== state.currentRegion) : null;
+    // lazy: cycle ColdMarketService loads this module.
+    const onward = errand && beginMarketTravel({ ...state, activity: 'hunting' },
+        invoke('GameServer/Bot/Economy/ColdMarketService').errandGoal(errand), timestamp);
+    if (onward) return { ...onward, stats: { ...onward.stats, marketReturn: state.stats?.marketReturn || onward.stats.marketReturn } };
     let destination = state.stats?.marketReturn;
     const returningParty = state.stats?.partyMarketReturn
         ? invoke('GameServer/Bot/Population/BackgroundPartyState').find(state.stats.partyMarketReturn.partyId) : null;
