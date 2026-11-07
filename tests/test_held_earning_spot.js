@@ -108,10 +108,10 @@ function onWorker() {
     // Its situations: each heard where it stands wakes one search, which may move it.
     const turned = sampled(held, 'poor');
     {
-        const atWork = raised(turned, 'level_up');
+        const atWork = raised(turned, 'grade_changed');
         const waiting = count(() => Economy.forState(atWork, deps(2)));
-        assert.equal(waiting.searches, 0, 'a level up at work waits');
-        const rested = raised(turned, 'level_up', { stop: Situations.REST });
+        assert.equal(waiting.searches, 0, 'a new grade at work waits');
+        const rested = raised(turned, 'grade_changed', { stop: Situations.REST });
         const heard = count(() => Economy.forState(rested, deps(3)));
         assert.equal(heard.searches, 1, 'and is heard at the rest');
         assert.equal(heard.result.hunt.spotId, 'poor', 'the search finds the better spot now');
@@ -205,12 +205,12 @@ function onWorker() {
     }
     // A player's command naming a spot is the held answer itself (no search), and takes the bit its move woke.
     {
-        const waiting = raised(raised(held, 'moved_by_world'), 'level_up', { at: Situations.place(held) });
+        const waiting = raised(raised(held, 'moved_by_world'), 'grade_changed', { at: Situations.place(held) });
         const commanded = raisedWith(waiting, 'player_command', { spotId: 'poor', at: time(17) });
         assert.equal(commanded.stats.earning.spotId, 'poor', 'the command is the held answer');
         assert.equal(commanded.stats.earning.earning, held.stats.earning.earning, 'with the bot\'s hour kept');
         assert.equal(Situations.woken(commanded.stats, 'earning_spot'), false, 'it took the decision');
-        assert.equal(Number(commanded.stats.waiting) & 0x101, 0, 'a level up waiting for the stop does not wake it again');
+        assert.equal(Number(commanded.stats.waiting) & 0x101, 0, 'a new grade waiting for the stop does not wake it again');
         const read = count(() => Economy.forState(commanded, deps(17)));
         assert.equal(read.searches, 0, 'a command searches nothing');
         assert.equal(read.result.hunt.spotId, 'poor', 'the bot hunts the commanded spot');

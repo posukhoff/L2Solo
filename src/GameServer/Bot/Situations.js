@@ -58,10 +58,14 @@ const link = (waits, heard = NOW) => Object.freeze({ waits, heard });
 // plane a far bot hears it on (heard: NOW, at its next STOP, in TOWN). The decisions
 // each wakes are declared below (DECISIONS).
 const SITUATIONS = Object.freeze({
-    // Its own state (detect). A level moved; the gear a fight turns on (the worn
-    // weapon, the body armour's grade, the armour sets worn whole: not a ring, an
-    // enchant, hennas, skills, the craft or karma).
-    level_up: link(WORK | VISIT, STOP),
+    // Its own state (detect). A level alone is none (training reads it in its round):
+    // what a level opens is. The C4 expertise grade its level allows moved, either way
+    // (a death's lost level too: GearGradeRule); the held earning spot's monsters fell
+    // past the deep-blue gap below it (SpotValueTable.outleveled: the search's own cut).
+    // The gear a fight turns on (the worn weapon, the body armour's grade, the armour
+    // sets worn whole: not a ring, an enchant, hennas, skills, the craft or karma).
+    grade_changed: link(WORK | VISIT, STOP),
+    spot_outleveled: link(WORK | VISIT, STOP),
     gear_changed: link(WORK | VISIT, TOWN),
     recipe_learned: link(WORK | VISIT, STOP),
     died: link(0),
@@ -171,19 +175,19 @@ function woke(name, where) {
 // it as its mark alone (GearMarks), which the build reads too.
 // workshop: what a crafter offers and produces (its own production's best recipe and
 // income, stats.craftIncome), taken at the start of a town visit (arrived_town, either
-// kind, one per visit), at a recipe learned and at a level (the recipes its craft reaches), held
-// between: worn gear, prices, the board and its own fills wake it not. The build reads
+// kind, one per visit; a craft level gained in the field is read there) and at a recipe
+// learned, held between: levels, worn gear, prices, the board and its own fills wake it not. The build reads
 // the held answer. A bot that is no service crafter takes it as none, with no planner job.
 const DECISIONS = Object.freeze({
-    earning_spot: Object.freeze(['level_up', 'gear_changed', 'died', 'recovered', 'spot_disappoints', 'contest_lost', 'spot_empty',
+    earning_spot: Object.freeze(['grade_changed', 'spot_outleveled', 'gear_changed', 'died', 'recovered', 'spot_disappoints', 'contest_lost', 'spot_empty',
         'spot_dangerous', 'spot_unreachable', 'moved_by_world', 'party_left', 'shots_out', 'stock_low:potions', 'goal_affordable:potions',
         'karma_changed']),
-    build: Object.freeze(['arrived_town', 'level_up', 'gear_changed', 'recipe_learned', 'died', 'revived', 'party_left',
+    build: Object.freeze(['arrived_town', 'grade_changed', 'gear_changed', 'recipe_learned', 'died', 'revived', 'party_left',
         'goal_affordable:potions', 'goal_affordable:focus', 'out_of_money', 'goal_done:goal', 'goal_failed',
         'goal_done:visit', 'goal_failed:visit', 'stock_low:shots', 'stock_low:potions', 'bag_full', 'source_stalled', 'clan_call',
         'clan_changed', 'spot_empty', 'goal_moved', 'player_command', 'craft_bid', 'clan_market']),
-    gear_plan: Object.freeze(['level_up', 'gear_changed', 'died', 'party_left', 'source_stalled']),
-    workshop: Object.freeze(['arrived_town', 'arrived_town:own', 'recipe_learned', 'level_up'])
+    gear_plan: Object.freeze(['grade_changed', 'gear_changed', 'died', 'party_left', 'source_stalled']),
+    workshop: Object.freeze(['arrived_town', 'arrived_town:own', 'recipe_learned'])
 });
 const BITS = Object.freeze(Object.fromEntries(Object.keys(DECISIONS).map((name, at) => [name, 1 << at])));
 const ALL = Object.values(BITS).reduce((all, bit) => all | bit, 0), PLANE = 0xff;
@@ -400,8 +404,9 @@ function factNames(previousFact, current, planned = false) {
     const names = [];
     const add = name => { if (!names.includes(name)) names.push(name); };
     if (!previousFact('dead') && current.dead) add('died');
-    const level = previousFact('level');
-    if (level !== undefined && level !== current.level) add('level_up');
+    if (previousFact('grade') !== current.grade) add('grade_changed');
+    // Its 0 -> 1 flip only: a build's baseline reads it against its own answer.
+    if (!previousFact('outleveled') && current.outleveled) add('spot_outleveled');
     // The gear a fight turns on (weapon, body armour grade, whole sets: the gear fact).
     if (previousFact('gear') !== current.gear) add('gear_changed');
     // The clan (its id; a baseline kept before the fact was its own has none to compare).

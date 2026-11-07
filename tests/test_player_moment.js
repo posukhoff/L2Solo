@@ -22,8 +22,8 @@ for (const name of ['arrived_town', 'died', 'goal_failed', 'goal_done:goal', 'ba
     assert(Situations.woken(raiseAt(name, 'hunting'), 'build'), `${name} wakes the build at once`);
 for (const name of ['bag', 'party_joined', 'moved_by_world'])
     assert(!Situations.woken(raiseAt(name, 'shopping'), 'build'), `${name} wakes no build`);
-assert(!Situations.woken(raiseAt('level_up', 'hunting'), 'build') && Situations.woken(raiseAt('level_up', 'resting'), 'build'), 'a level waits for the rest');
-assert(Situations.woken(raiseAt('level_up', 'resting'), 'gear_plan') && !Situations.woken(raiseAt('goal_affordable:focus', 'hunting'), 'gear_plan'),
+assert(!Situations.woken(raiseAt('grade_changed', 'hunting'), 'build') && Situations.woken(raiseAt('grade_changed', 'resting'), 'build'), 'a new grade waits for the rest');
+assert(Situations.woken(raiseAt('grade_changed', 'resting'), 'gear_plan') && !Situations.woken(raiseAt('goal_affordable:focus', 'hunting'), 'gear_plan'),
     'the gear plan wakes on the kit, not the purse');
 // The wallet against the decision's thresholds (F3, B7): its goal in reach as the budget stands
 // at or past it, out of money as it falls below the held leaf's funded row; a drift is nothing.
@@ -51,18 +51,18 @@ const cold = (activity, extra = {}) => ({ ...hunter, phase: 'cold', activity, ..
 const waitsFor = (state, ...links) => links.every(link => !Situations.hears(link, Situations.place(state)));
 const hearsAll = (state, ...links) => links.every(link => Situations.hears(link, Situations.place(state)));
 assert(waitsFor(cold('hunting'), 'bag', 'clan_call', 'clan_changed'), 'at work the links wait');
-assert(waitsFor(cold('hunting'), 'level_up', 'gear_changed') && hearsAll(cold('resting'), 'level_up', 'gear_changed'), 'a new level waits for the rest');
+assert(waitsFor(cold('hunting'), 'grade_changed', 'gear_changed') && hearsAll(cold('resting'), 'grade_changed', 'gear_changed'), 'a new grade waits for the rest');
 assert(hearsAll(cold('hunting'), 'died', 'spot_dangerous', 'recovered', 'moved_by_world', 'shots_out', 'stock_low:shots', 'stock_low:potions', 'bag_full',
     'goal_affordable:focus', 'out_of_money'), 'its fight, its place, a condition and its money thresholds do not');
 assert(waitsFor(cold('resting'), 'bag') && hearsAll(cold('resting'), 'clan_changed', 'clan_call'), 'a rest reads the clan');
-assert(waitsFor(cold('shopping'), 'bag', 'clan_call', 'level_up', 'gear_changed', 'recipe_learned', 'clan_changed'), 'a visit works down its list');
+assert(waitsFor(cold('shopping'), 'bag', 'clan_call', 'grade_changed', 'gear_changed', 'recipe_learned', 'clan_changed'), 'a visit works down its list');
 assert.equal(Situations.place({ ...cold('shopping') }, cold('traveling')), 0, 'arriving hears all that waited');
 assert(Situations.readsFacts(cold('traveling'), cold('shopping')), 'the step that arrives in town reads its facts');
 assert(!Situations.readsFacts(cold('shopping'), cold('shopping')) && !Situations.readsFacts(cold('traveling'), cold('traveling')), 'and only that step');
 assert(Situations.readsFacts(cold('grouped', { partyId: 'p' }), cold('grouped', { partyId: 'p' })), 'a party reads its round');
 assert(hearsAll(cold('hunting', { stats: { tradeMeeting: [1] } }), 'clan_changed'), 'nor on the way to a meeting');
-assert(waitsFor(cold('grouped', { partyId: 'p' }), 'level_up'), 'a party fight waits as a hunt');
-assert(hearsAll(cold('resting', { partyId: 'p' }), 'level_up', 'clan_changed'), 'and a party reads at its rest');
+assert(waitsFor(cold('grouped', { partyId: 'p' }), 'grade_changed'), 'a party fight waits as a hunt');
+assert(hearsAll(cold('resting', { partyId: 'p' }), 'grade_changed', 'clan_changed'), 'and a party reads at its rest');
 assert(hearsAll(cold('grouped', { partyId: 'p' }), 'party_joined', 'party_left', 'died', 'moved_by_world'), 'a join, a role, a death do not wait');
 assert(hearsAll(cold('hunting'), 'goal_failed', 'goal_done:goal', 'goal_failed:visit'), 'what its execution proved goes at once');
 assert.equal(Situations.placeName(Situations.place(cold('traveling'))), 'work', 'a hunt or the road is work');
