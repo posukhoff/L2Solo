@@ -425,11 +425,13 @@ function autoInputs(actor, held) {
     const partyId = session?.hotBackgroundPartyId;
     const role = state?.party?.role || stats?.role, huntAt = stats?.huntClock?.at;
     // planForActor reads which spiritshots the bag holds, else the held answer's
-    // kind (choosesBlessed): a stack running out or a new answer switches the plan.
+    // kind, else the earning rule's over its row (choosesBlessed, decidedKind): the
+    // key holds the kind it resolves, so a stack running out or a new answer switches the plan.
     const rank = weaponRankFromActor(actor);
     const holds = kind => Number(actor.backpack?.fetchItemFromSelfId?.(planForKind(kind, rank).selfId)?.fetchAmount?.()) > 0;
     const shotsHeld = shotKind === 'spiritshot' ? 2 * holds('blessedSpiritshot') + holds('spiritshot') : 0;
-    const heldKind = shotKind === 'spiritshot' && !shotsHeld ? heldEarning(session)?.shotKind ?? null : null;
+    const heldKind = shotKind === 'spiritshot' && !shotsHeld ? heldEarning(session)?.shotKind
+        ?? decidedKind(invoke('GameServer/Bot/Population/BotLifeState').cachedState(actor?.fetchId?.())) : null;
     if (held && held.classId === classId && held.level === level && held.weaponId === weaponId
         && held.beginnerReady === beginnerReady && held.equipmentRevision === equipmentRevision && held.spotId === spotId && held.partyId === partyId && held.role === role && held.huntAt === huntAt
         && held.shotsHeld === shotsHeld && held.heldKind === heldKind) return held;

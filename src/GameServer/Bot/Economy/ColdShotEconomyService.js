@@ -119,12 +119,14 @@ function recheck(state, selected) {
         }
     }
     // The worker's purchase rule (ColdOccupationSources.preparePurchase): the
-    // inspected board lines and the NPC shop of each town, one call.
+    // inspected board lines and the NPC shop of the town the bot stands in, one
+    // call; none in the field (a crafter buys only where it stands, ColdMarketService.acquire).
+    const here = state.activity === 'shopping' ? state.currentRegion : null;
     const purchase = (id, amount, query = {}) => {
-        const onlyTown = id === gearId && sourceCode === -3 ? hintedTown : null;
+        if (!here || id === gearId && sourceCode === -3 && hintedTown !== here) return null;
         const npcOffers = query.npc === true && Production.allowsNpcShot(id) ? Source.npcOffersFor(id) : [];
         const best = OfferQuery.cheapestTown(board, id, { amount, cost: trip, excludeOwner: state.characterId,
-            quoteDepth: Price.QUOTE_DEPTH, towns: onlyTown ? [onlyTown] : null, npcOffers,
+            quoteDepth: Price.QUOTE_DEPTH, towns: [here], npcOffers,
             accept: line => !Number(line.enchant || 0) && personalOfferAllowed(line, state) });
         return best?.whole ? { ...best, tripDetails: trip.details?.(best.town), selfId: Number(id) } : null;
     };
@@ -463,11 +465,15 @@ async function execute(state, step, now = Date.now()) {
         && !(await Database.execute(['SELECT recipeId FROM character_recipes WHERE characterId=? AND recipeId=? LIMIT 1',
             [Number(state.characterId), Number(selected.gear[1])]])).length) return state;
     const candidate = recheck(state, selected);
-    // What the act refuses is heard, its recipe marked as a wealth craft's: the search
-    // does not pick it again until the next town look.
-    if (!candidate) return WealthCraft.rejectAccepted(state, state, { kind: 'shot', reason: 'no_basket', recipeId });
+    // In the field a crafter crafts from its bag only (recheck buys nothing there): a craft
+    // that needs a purchase (an input, crystals, gear to crystallize, the recipe) waits for
+    // its town visit, where it buys; as a C4 crafter shops in town.
+    const inTown = state.activity === 'shopping';
+    // What the act refuses in town is heard, its recipe marked as a wealth craft's: the
+    // search does not pick it again until the next town look.
+    if (!candidate) return inTown ? WealthCraft.rejectAccepted(state, state, { kind: 'shot', reason: 'no_basket', recipeId }) : state;
     if (step?.recipeTarget) {
-        if (known) return state;
+        if (known || !inTown && !(Number(state.inventory?.[recipe.recipeItemId]?.amount || 0) > 0)) return state;
         const board = AfkTrade.boardIndex(), scrollId = Number(recipe.recipeItemId);
         const asks = board.list(scrollId, AfkTrade.SELL), bids = board.list(scrollId, AfkTrade.BUY);
         let sale = null;
@@ -482,6 +488,7 @@ async function execute(state, step, now = Date.now()) {
             owned: Number(state.inventory?.[scrollId]?.amount || 0) > 0, scrollQuote: ask }, now);
     }
     if (step?.craft) {
+        if (!inTown && candidate.basket.cashCost + candidate.basket.actualCashFees > 0) return state;
         return known ? craft(state, { ...candidate, maxBatches: Number(step.craft.batches) }, null, now) : state;
     }
     return state;

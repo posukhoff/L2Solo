@@ -144,8 +144,8 @@ const SITUATIONS = Object.freeze({
     'stock_low:potions': link(0),
     bag_full: link(0),
     // The wallet reached the build's threshold (baseline.affordAt): a broke bot's survival
-    // potions, else an unarmed bot's weapon bridge or its focus (both wake the build only:
-    // one name).
+    // potions, else an unarmed bot's weapon bridge, its focus or its gear plan's market
+    // piece (all wake the build only: one name).
     'goal_affordable:potions': link(0),
     'goal_affordable:focus': link(0),
     // A board offer its held build wants (MarketBuyerWaiters: a new SELL line, or a cheaper

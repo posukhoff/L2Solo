@@ -117,10 +117,9 @@ function* prepareNative(state, economy, options) {
         const saleInput = Listing.ownSaleInputs(state, own, { ...options, economy,
             productionKit: shotKit(state, economy, options) });
         const sale = Listing.evaluate(saleInput.state, saleInput.options);
-        // A profitable surplus sale into a standing buy ad (a meeting or a backed shop)
-        // in the town the bot stands in: a C4 seller answers a WTB at his next town
-        // visit, never from the field. Leave the selected purchase/focus intact for review.
-        const answer = canTrade && state.activity === 'shopping' ? Ready.sale(sale.answers, state) : null;
+        // A profitable surplus sale uses a meeting or a backed shop in the town
+        // already reached. Leave the selected purchase/focus intact for review.
+        const answer = canTrade && !options.visit ? Ready.sale(sale.answers, state) : null;
         if (answer) return { take: answer, sell: [], withdraw: [], travel: null, ...bidLimits };
         // Only native acceptance reserves a quote; rejection keeps the plan.
         if (start?.take) return { ...start, ...bidLimits };

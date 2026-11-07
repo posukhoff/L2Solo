@@ -47,6 +47,10 @@ async function main() {
         assert.deepEqual(publish(record(4, 100, 10, [{ lineId: 3, selfId: 99, count: 5, price: 100 }])), [],
             'a hot body is not woken: its wants are not a far bot\'s');
         assert(waiters.owners.has(21), 'a refused wake keeps the want: it wakes once the bot can take it');
+        for (let id = 22; id <= 27; id++) { kernel.upsert(state(id, { phase: 'hot' })); waiters.register(id, [{ itemId: 77, budget: 5000 }]); }
+        kernel.upsert(state(28)); waiters.register(28, [{ itemId: 77, budget: 1500 }]);
+        assert.deepEqual(publish(record(8, 100, 10, [{ lineId: 4, selfId: 77, count: 5, price: 100 }])), [28],
+            'near bots that cannot take the offer do not use up the far buyers\' wakes');
         // A woken want waits for the next build: the same offer again wakes nobody.
         assert.deepEqual(publish(record(5, 80, 10)), [], 'woken wants left the index until the next build');
         waiters.register(1, [{ itemId: 99, budget: 1500 }]);

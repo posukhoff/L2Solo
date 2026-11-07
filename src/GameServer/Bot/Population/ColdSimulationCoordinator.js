@@ -799,17 +799,19 @@ class ColdSimulationCoordinator {
                 if (state?.phase !== 'hot' || !payload.economyDecision || !payload.near || !session?.actor) {
                     this.nearDecisions.dropped++; this.relookOwnLines(id, payload.near?.market); break;
                 }
+                // A newer decision held: its own lines look again at their next situation.
                 if (Number(payload.near.nearSeq || 0) < Number(session.heldNearSeq || 0)) {
-                    this.nearDecisions.refused++; this.relookOwnLines(id, payload.near.market); break;
+                    this.nearDecisions.refused++; break;
                 }
                 this.nearDecisions.accepted++;
                 // The held card is the one compact (accept) the body's view reads.
                 const decision = this.economyDecisions.accept(id, payload.economyDecision);
                 DecisionEvents.receive(session, decision, payload.near);
-                // Its own lines' look (own_lines, taken on this post): applied on the hot
-                // row it was taken on (its revision); a row moved since looks again.
+                // Its own lines' look (own_lines, taken on this post): applied on the hot row
+                // as it stands now (the look's lines carry their own revisions); a row moved
+                // during the write looks again.
                 if (payload.near.market) {
-                    const hotAuthority = { revision: Number(payload.near.revision ?? state.simulation?.revision ?? 0) };
+                    const hotAuthority = { revision: Number(state.simulation?.revision || 0) };
                     AfkMarket.applyReview(id, payload.near.market, { hotAuthority, canCommitReview: () => {
                         const current = LifeState.cachedState(id);
                         return current?.phase === 'hot' && Number(current.simulation?.revision || 0) === hotAuthority.revision;
@@ -1625,9 +1627,9 @@ class ColdSimulationCoordinator {
         return resolvedState;
     }
 
-    // An own_lines look main could not apply (its row moved, the body left, a newer
-    // decision came): the decision's bit was cleared where it was taken, so the look
-    // is asked again where the bot is (line_undercut), else its reprice is lost.
+    // An own_lines look main could not apply (its row moved during the write, the body
+    // left): the decision's bit was cleared where it was taken, so the look is asked
+    // again where the bot is (line_undercut), else its reprice is lost.
     relookOwnLines(id, market) {
         if (market) DecisionEvents.raiseOn(id, 'line_undercut');
     }

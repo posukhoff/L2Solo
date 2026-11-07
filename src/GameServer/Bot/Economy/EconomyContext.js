@@ -1310,11 +1310,15 @@ function buildForState(state, deps) {
             subject: state.characterId, answer: !Trace.on() ? null : { earning_spot: [base.earning?.spotId ?? 'none', state.stats?.earning?.spotId ?? 'none'],
                 build: [network.activity?.key || network.focus?.[0], held?.plan.network?.activity?.key || held?.plan.network?.focus?.[0]] } }) };
     // The money queue's cumulative costs (its money thresholds, Sections.snapshot): the
-    // focus's (goal_affordable:focus) and the held leaf's funded row's (out_of_money).
+    // focus's and the gear plan's market piece's (goal_affordable:focus), the held leaf's
+    // funded row's (out_of_money).
+    const gearPlan = state.stats?.equipmentPlan;
+    const planned = gearPlan?.strategy === 'market' && gearPlan.status === 'active' ? Number(gearPlan.target?.selfId) || 0 : 0;
     let cumulative = base.refillReserve;
     for (const wish of network.queue) {
         cumulative += cashCharge(wish);
         if (wish.key === network.focus?.[0]) context.goalBudget = cumulative;
+        if (planned && !context.plannedBudget && Network.rootItem(wish.key) === planned) context.plannedBudget = cumulative;
         if (wish.key === network.activity?.rootKey && wish.funded) context.leafBudget = cumulative;
     }
     // The build's facts for its baseline: the request's when they were read

@@ -2,8 +2,9 @@
 // Board line claims: a bot that decides a trip for board lines (an errand, a gear
 // purchase's town visit) claims the units it will buy of them; another bot's purchase
 // decision reads those units as gone, the claimant does not; the claim lives while its
-// trip does in the bot's state (bought, refused, lapsed or replaced: released at the
-// write that drops it) and ends with the bot's death, its going near or its removal.
+// trip does in the bot's state (taken at the write that holds the trip; bought, refused or
+// replaced: released at the write that drops it; lapsed: at once) and ends with the
+// bot's death, its going near or its removal.
 // First come wins: the units left stay on the board for others.
 const assert = require('node:assert/strict');
 require('../src/Global');
@@ -44,6 +45,12 @@ assert.equal(Claims.unclaimed(line(2, 9), 2), 6, 'the other errand still claims 
 // A lapsed errand (past its life) leaves the state at the next write: released there.
 Claims.ownerChanged(1, holding({ ...other, at: now - CombinedErrands.ERRAND_MS - 1 }));
 assert.equal(Claims.unclaimed(line(2, 9), 2), 9, 'a lapsed errand holds nothing');
+// Its claim ends the moment it lapses, before any write of its owner.
+const lapsing = { ...errand, at: now - CombinedErrands.ERRAND_MS + 1000 };
+Claims.claimErrand(1, lapsing, [{ line: line(1, 5), count: 5 }]);
+assert.equal(Claims.unclaimed(line(1, 5), 2, now), 0, 'the errand still lives: the claim stands');
+assert.equal(Claims.unclaimed(line(1, 5), 2, now + 1000), 5, 'the errand lapsed: its claim holds nothing');
+Claims.ownerChanged(1, holding(errand));
 // A removed bot (retired, deleted) or one gone near releases everything.
 Claims.claimErrand(1, errand, [{ line: line(1, 5), count: 5 }]);
 Claims.ownerChanged(1, { ...holder, phase: 'hot' });
@@ -60,15 +67,23 @@ const board = { *lines(itemId, storeType, town) {
 Claims.claimErrand(7, { ...errand, selfId: 1864 }, [{ line: line(4, 1, 90), count: 1 }]);
 const visit = { town: 'Giran', startedAt: now, reason: 'upgrade_gear' };
 const travel = { characterId: 1, phase: 'cold', activity: 'traveling', stats: { townVisit: visit } };
-Claims.claimVisit(travel, { type: 'upgrade_gear', target: { itemId: 1864, adena: 150, amount: 2 } }, board);
-assert.equal(Claims.unclaimed(line(5, 4, 95), 2), 2, 'the visit claims what it will buy of the first line left to it');
+const gearGoal = { type: 'upgrade_gear', target: { itemId: 1864, adena: 150, amount: 2 } };
+// The trip's write did not land (the bot's next write holds no such visit): nothing claimed.
+Claims.claimVisit(travel, gearGoal, board);
+assert.equal(Claims.unclaimed(line(5, 4, 95), 2), 4, 'a visit not yet written claims nothing');
+Claims.ownerChanged(1, { ...travel, activity: 'hunting', stats: {} });
+Claims.ownerChanged(1, travel);
+assert.equal(Claims.unclaimed(line(5, 4, 95), 2), 4, 'a visit whose write was dropped never claims');
+Claims.claimVisit(travel, gearGoal, board);
+Claims.ownerChanged(1, travel);
+assert.equal(Claims.unclaimed(line(5, 4, 95), 2), 2, 'the visit written claims what it will buy of the first line left to it');
 assert.equal(Claims.unclaimed(line(6, 5, 200), 2), 5, 'a line above the goal\'s price is not claimed');
 Claims.ownerChanged(1, travel);
 assert.equal(Claims.unclaimed(line(5, 4, 95), 2), 2, 'the visit still open: the claim stands');
 Claims.ownerChanged(1, { ...travel, activity: 'hunting', stats: { townVisit: { ...visit, completed: true } } });
 assert.equal(Claims.unclaimed(line(5, 4, 95), 2), 4, 'the visit completed: released');
 Claims.ownerChanged(7, null);
-assert.deepEqual(Claims.size(), { lines: 0, owners: 0, trips: 0 }, 'nothing left behind');
+assert.deepEqual(Claims.size(), { lines: 0, owners: 0, decided: 0, trips: 0 }, 'nothing left behind');
 const counted = Situations.counts().raised;
 assert.equal(counted['board:claim:taken'], counted['board:claim:released'], 'every claim taken was released');
 console.log('board claims: PASS (claimed units gone for others, released with the trip, a death or a removal)');

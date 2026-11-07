@@ -13,7 +13,9 @@ const MAX_WANTS = 8;
 const WAKES_PER_RECORD = 5;
 
 // Each item keeps an indexed max-heap of budgets. Publication visits only
-// this owner's wants; a new record inspects at most five nodes.
+// this owner's wants; a new record wakes at most five: a want refused (its own
+// record's owner, a near, fenced or failed bot) is passed over without spending
+// one, so buyers below it still hear the offer.
 class ItemWaiters {
     constructor() { this.nodes = []; }
     before(a, b) { return a.budget > b.budget || (a.budget === b.budget && a.sequence < b.sequence); }
@@ -101,16 +103,15 @@ class MarketBuyerWaiters {
             offers.set(itemId, Math.min(offers.get(itemId) ?? Infinity, price));
         }
         const woken = [], held = [];
-        let inspected = 0;
         try {
             for (const [itemId, price] of offers) {
                 const heap = this.items.get(itemId);
-                while (heap?.peek()?.budget >= price && inspected < WAKES_PER_RECORD) {
-                    const node = heap.peek(); heap.remove(node); inspected++;
+                while (heap?.peek()?.budget >= price && woken.length < WAKES_PER_RECORD) {
+                    const node = heap.peek(); heap.remove(node);
                     if (node.ownerId === Number(record.ownerId) || !this.wake(node.ownerId, { itemId, price })) { held.push(node); continue; }
                     this.remove(node.ownerId); woken.push(node.ownerId);
                 }
-                if (inspected === WAKES_PER_RECORD) break;
+                if (woken.length === WAKES_PER_RECORD) break;
             }
         } finally {
             for (const node of held) {

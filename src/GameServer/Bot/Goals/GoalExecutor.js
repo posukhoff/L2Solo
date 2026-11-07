@@ -74,7 +74,8 @@ function beginMarketTravel(state, goal, timestamp = Date.now()) {
         }, timestamp, visitStats(shopTown));
     };
     const travel = trip(town, sale?.shopTown);
-    // A gear purchase's visit claims the board lines it goes for (BoardClaims), as an errand does.
+    // A gear purchase's visit claims the board lines it goes for (BoardClaims), as an errand
+    // does, once the bot's write holds the trip.
     if (buyingGear && travel) invoke('GameServer/Bot/Economy/BoardClaims').claimVisit(travel, goal,
         invoke('GameServer/AfkTrade/AfkTradeService').boardIndex());
     if (travel || !sellingInventory) return travel;

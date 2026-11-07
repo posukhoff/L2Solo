@@ -721,9 +721,7 @@ const occupationPlanner = new ColdOccupationPlanner({
             send('ready', { phase: 'economy_decided', characterId: id, economyDecision: workshop.decision,
                 near: { statsPacket: workshop.statsPacket, personalCraft: workshop.personalCraft,
                     nearSeq: Number(input.state.nearSeq || 0), raiseSeq: Number(input.raiseSeq || 0),
-                    ...(workshop.shots ? { shots: workshop.shots } : {}),
-                    // The look and the row it was taken on (main applies it on that revision only).
-                    ...(workshop.market ? { market: workshop.market, revision: Number(input.state.simulation?.revision || 0) } : {}) } });
+                    ...(workshop.shots ? { shots: workshop.shots } : {}), ...(workshop.market ? { market: workshop.market } : {}) } });
             // Sent once: the slot keeps the workshop.
             workshop.decision = null; workshop.statsPacket = null; workshop.personalCraft = null; workshop.routeRows = null; workshop.shots = null; workshop.market = null;
         }
