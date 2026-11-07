@@ -425,11 +425,7 @@ const occupationPlanner = new ColdOccupationPlanner({
                                 // Workshop entries are only the public subset; learning
                                 // must be priced against the complete native book.
                                 if (!input.bookKnown) throw Error('trade_meeting_preparation_pending');
-                                const Errands = invoke('GameServer/Bot/Population/CombinedErrandPolicy');
-                                const remaining = Errands.pending(input.state, input.timestamp).filter(row =>
-                                    !(Number(row.selfId) === Number(line.selfId) && row.town === request.town
-                                        && ['wealth_craft', 'recipe'].includes(row.purpose)));
-                                const state = Errands.withPending(input.state, remaining);
+                                const state = input.state;
                                 const Wealth = invoke('GameServer/Bot/Economy/WealthCraftDecision');
                                 if (Wealth.eligible(state, { ownLines: input.board.ownerLines(ownId), now: input.timestamp })) {
                                     const prepared = yield* OccupationSources.prepare(state, { ...input, targetRecipe: recipe,
