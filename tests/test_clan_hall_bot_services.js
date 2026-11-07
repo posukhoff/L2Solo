@@ -245,11 +245,12 @@ async function main() {
         assert.equal(Services.cast(null, unbuffed, npc, 1086, at + 10000, true).code, 'manager_busy',
             'manual casts retain their cast interval');
         mp = 10000;
-        // The rebuff's read (VisitNeed.serves): the hall serves a free bot local to it that
-        // lacks its support; a far bot's step is its hall's only on the answer.
+        // The rebuff's read (VisitNeed.serves): the hall serves a free bot that lacks its
+        // support; a far bot's step is its hall's only on the answer, at a free moment of its hunt.
         const owned = Runtime.owned(1);
         assert.equal(Cold.needed(state), false, 'missing buffs alone are no visit');
         assert(Cold.needed(answered(state)), 'a hall answer is the far bot\'s visit');
+        assert.equal(Cold.needed(answered({ ...state, activity: 'shopping' })), false, 'its town visit ends first');
         assert(VisitNeed.serves(state, owned, true, at));
         assert.equal(VisitNeed.serves({ ...state, stats: { ...state.stats, pveEncounter: { hp: 10 } } }, owned, true, at), false);
         assert.equal(
@@ -306,7 +307,7 @@ async function main() {
         assert.strictEqual(Cold.needed({ ...dead, stats: { ...dead.stats, pvpEncounter: { key: 'e1' } } }, at), false,
             'cold: a bot in a PvP fight restarts in town');
         const distantState = { ...state, loc: { locX: 0, locY: 0, locZ: 0 } };
-        assert.equal(VisitNeed.serves(distantState, owned, true, at), false, 'the hall serves from its town only');
+        assert(VisitNeed.serves(distantState, owned, true, at), 'a clan member with no buffs goes to his hall from anywhere');
         assert.equal(VisitNeed.serves({ ...state, stats: { ...state.stats, marketReturn: {} } }, owned, true, at), false);
         await Life.init();
         state = await Life.upsertState(state, 'hall_test_seed');
@@ -431,6 +432,15 @@ async function main() {
         const row = (await Database.execute(['SELECT statsJson FROM bot_life_state WHERE characterId=?', [id]]))[0];
         assert(JSON.parse(row.statsJson).coldCombat.effects.some((e) => e.id === 1086));
         assert.equal(VisitNeed.serves({ ...state, loc: { ...def.spawn } }, owned, true, at + 60000), false, 'fresh buffs: the hall has nothing to serve');
+        // An answer main does not carry out (here: nothing lacking now) drops only the answer.
+        const resting = { ...answered(state), activity: 'resting', stats: { ...answered(state).stats, restUntil: at + 90000 } };
+        const kept = await Cold.resolve(resting, at + 60000);
+        assert(kept.ok && kept.state.stats.rebuff.done, 'the answer is held done');
+        assert.equal(kept.state.activity, 'resting', 'the bot rests on');
+        assert.equal(kept.state.spotId, state.spotId, 'at its spot');
+        assert.equal(kept.state.stats.restUntil, at + 90000, 'to its rest\'s end');
+        assert.deepEqual(kept.state.loc, state.loc, 'no teleport');
+        state = kept.state;
         // The cold worker's view: the published 'clan_halls' row joined with
         // the catalog definition, and an EffectStore that knows no actor (the
         // worker's stub lists nothing).

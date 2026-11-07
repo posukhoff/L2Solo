@@ -59,19 +59,35 @@ function finish(state, timestamp, reason) {
         reason
     );
 }
+// A rebuff's hall answer main does not carry out (no hall it may use, its service
+// closed or no manager, nothing it lacks now): only the answer drops, held done and
+// counted (rebuff:hall:<reason>); the bot goes on as it stood (activity, spot, rest).
+function dropped(state, timestamp, reason) {
+    invoke('GameServer/Bot/Situations').note(`rebuff:hall:${reason}`);
+    return { patch: { stats: state.stats }, events: [], materialize: { exp: 0, sp: 0, adena: 0, items: [] },
+        nextResolveAt: timestamp + 1000, debug: { activity: state.activity, reason: `clan_hall_${reason}`, fights: 0, wins: 0 } };
+}
 async function resolve(original, timestamp = Date.now(), options = {}) {
     if (!needed(original)) return null;
     const Life = invoke('GameServer/Bot/Population/BotLifeState');
     const Resolver = invoke('GameServer/Bot/Population/BackgroundResolver');
     // The rebuff's hall answer is carried out once: the visit it starts, or the
-    // cancel that ends it, holds it done (a failed visit waits for the next situation).
+    // refusal that drops it, holds it done (a failed visit waits for the next situation).
     const asked = Rebuff.pending(original.stats, 'hall');
     const state = asked ? { ...original, stats: { ...original.stats, rebuff: Rebuff.done(asked) } } : original;
     const hall = hallFor(state),
         npc = Services.manager(hall),
         visit = state.stats?.clanHallVisit;
+    const dead = state.activity === 'dead' || Number(state.vitals?.hp) <= 0;
+    // An answer, not a visit under way: checked again where main acts (it was taken on
+    // the worker's hall row, maybe before a party or a fight that changed the bot's buffs).
+    const refused = asked && !visit && (!eligible(state) || !hall ? 'no_hall' : dead ? null
+        : !Services.available(hall, timestamp) || !npc ? 'unavailable'
+            : !Services.missing(actorFor(state, hall), hall, timestamp).length ? 'served' : null);
     let next;
-    if (!eligible(state) || !hall || (visit && (visit.hallId !== hall.id || timestamp >= visit.expiresAt))) {
+    if (refused) {
+        next = dropped(state, timestamp, refused);
+    } else if (!eligible(state) || !hall || (visit && (visit.hallId !== hall.id || timestamp >= visit.expiresAt))) {
         next = finish(state, timestamp, 'clan_hall_visit_cancelled');
     } else if (state.activity === 'dead' || Number(state.vitals?.hp) <= 0) {
         next = Resolver.resolveDeathRecovery(state, timestamp);

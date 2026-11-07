@@ -762,18 +762,18 @@ function nearWorkshop(input) {
 // The rebuff decision (Bot/AI/Rebuff), one rule for a far step and a near body: taken
 // when woken (its last buff ended, a town arrival) on the state and held there
 // (stats.rebuff), its bit cleared: the mind keys it takes, or null. Its reads: the
-// party; its level and karma against a Newbie Guide in reach (BotBuffs); from the
-// field, its clan hall here (VisitNeed.serves, the worker's hall row) and a buffer
-// (a far bot's: one at its spot within its price read, ColdBuffOffer.providerFor; a
-// body's: main's buffers near it, read when it buys, BuffService).
+// party; its level and karma against a Newbie Guide in reach (BotBuffs); its clan
+// hall (VisitNeed.serves, the worker's hall row: its visit waits for a field step,
+// VisitNeed.needed / BotVisit); a buffer (a far bot's: one at its spot in the field
+// within its price read, ColdBuffOffer.providerFor; a body's: main's buffers near
+// it, read when it buys, BuffService).
 function decideRebuff(state, caller, timestamp) {
     if (!Situations.woken(state.stats, 'rebuff')) return null;
-    const stats = state.stats || {}, grouped = !!(state.party?.partyId || state.partyId);
-    const field = state.activity === 'hunting' || state.activity === 'resting', hall = hallOf(state);
+    const stats = state.stats || {}, grouped = !!(state.party?.partyId || state.partyId), hall = hallOf(state);
     const answer = Rebuff.decide(grouped ? { grouped } : {
         guide: BotBuffs.newbieEligible(state.level, stats.karma) && BotBuffs.guideInReach(state.loc),
-        hall: field && VisitNeed.serves(state, hall, hall?.managerPresent === true, timestamp),
-        provider: state.phase === 'hot' || field && state.spotId
+        hall: VisitNeed.serves(state, hall, hall?.managerPresent === true, timestamp),
+        provider: state.phase === 'hot' || !!state.spotId
             && ColdBuffOffer.providerFor(state, kernel.occupancy.members(state.spotId, 'physical'), timestamp)
     }, timestamp);
     return { rebuff: answer, woken: Situations.decided(stats, 'rebuff', { caller, subject: state.characterId, answer: answer.via }) };
@@ -956,10 +956,15 @@ const escrowFor = characterId => escrowByOwner.get(Number(characterId)) || 0;
 // detected (once per raise). The decision is then taken on this row (mode near).
 // applied: the last raise the record applied.
 function nearEvents(id, previous, entry, applied) {
-    const row = entry.state, stats = row.stats ||= {};
+    const row = entry.state, stats = row.stats ||= {}, posted = stats.rebuff;
     // The worker owns the near mind: a post's mind keys are discarded and the
     // record's stand, so a late post cannot roll back a raise.
     for (const key of SavedStats.MIND_KEYS) stats[key] = previous.stats?.[key];
+    // But for the one fact a body's executor writes there: it carried out its held
+    // rebuff answer (HotTownRebuff.takeAnswer, done on main): the same answer is held
+    // done here, or the bot would carry it out again once far.
+    const held = stats.rebuff;
+    if (posted?.done && held && !held.done && posted.at === held.at && posted.via === held.via) stats.rebuff = Rebuff.done(held);
     // Main detected the body's own facts (A1) and named them in the bag.
     entry.raiseSeq = DecisionEvents.takePostedRaise(stats, row.raise, applied, Situations.bodyPlace(row), id);
 }

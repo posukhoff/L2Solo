@@ -2985,7 +2985,8 @@ const BotLifeState = {
         }
         // The buffed fact, at every step (a rest's too): its last value is on the row.
         const buffs = Situations.buffFact(nextState.stats, nextState.stats.coldCombat?.effects, timestamp,
-            { dead: nextActivity === 'dead' || Number(nextState.vitals?.hp) <= 0, grouped: !!(nextState.party?.partyId || nextState.partyId) });
+            { field: Situations.FIELD_ACTIVITIES.has(nextActivity), dead: nextActivity === 'dead' || Number(nextState.vitals?.hp) <= 0,
+                grouped: !!(nextState.party?.partyId || nextState.partyId) });
         if (buffs) hard.push(buffs);
         // The bot's step counter, the clock of its spot marks (SpotRiskPolicy):
         // +1 once per resolved step, whichever thread resolves it (hot actor

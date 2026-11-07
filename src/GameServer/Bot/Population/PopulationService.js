@@ -2215,7 +2215,14 @@ const PopulationService = {
                         .find((objective) => objective?.priority === 'required')
                         || objectiveOf(group[0]);
                     const partyLimits = partyLimitsForObjective(requestedObjective);
-                    if (group.length < partyLimits.minSize) return null;
+                    // Forming's no: the group's open required requests close (attempts +1) and
+                    // wait for their bots' next build, which asks again; none held open on no clock.
+                    const unformable = reason => LifeState.deferUnformablePartyRequests(group
+                        .filter((state) => state.stats?.partyRequest?.status === 'open'
+                            && state.stats?.partyRequest?.priority === 'required')
+                        .map((state) => state.characterId), reason)
+                        .catch((error) => { FailureLog.note('party.unformable_close', error); return 0; });
+                    if (group.length < partyLimits.minSize) return unformable('too_few_members');
 
                     const select = CraftMaterialParty.isObjective(requestedObjective)
                         ? CraftMaterialParty.selectMembers
@@ -2225,17 +2232,7 @@ const PopulationService = {
                         maxSize: partyLimits.maxSize,
                         levelRange: partyLimits.levelRange
                     });
-                    if (selectedMembers.length < partyLimits.minSize) {
-                        const requiredIds = group
-                            .filter((state) => state.stats?.partyRequest?.status === 'open'
-                                && state.stats?.partyRequest?.priority === 'required')
-                            .map((state) => state.characterId);
-                        return LifeState.deferUnformablePartyRequests(requiredIds, 'no_compatible_level_match')
-                            .catch((error) => {
-                                utils.infoWarn('BotPopulation', 'failed to defer unformable party requests: %s', error?.message || error);
-                                return 0;
-                            });
-                    }
+                    if (selectedMembers.length < partyLimits.minSize) return unformable('no_compatible_level_match');
                     return timedStage('candidate_hydration', () => hydratePartyCandidates(selectedMembers)).then((members) => {
                         if (members.length !== selectedMembers.length) { this.partyFormationPending = true; return null; }
                         return timedStage('party_commit', () => createAndCommitBackgroundParty(members)).then((savedParty) => {

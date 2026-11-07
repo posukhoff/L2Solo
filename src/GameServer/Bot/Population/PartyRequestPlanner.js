@@ -6,9 +6,9 @@ const Roles = invoke('GameServer/Bot/AI/BotRoles');
 // No solo ground -> a party (decision 10-30, T106): a healer or buffer
 // (BotRoles) whose solo gate admits no spot near its level
 // (BotRoute.soloGroundMissing) seeks a party instead of farming grey ground
-// alone. Read by the worker's step (no card reuse for it: its request is
-// planned) and by the request below. search: the worker's route search
-// inputs (BotRoute.soloGroundMissing: the routed spot decides).
+// alone. Read by the request below, which only a build a situation woke plans
+// (its held card carries the request between builds). search: the worker's
+// route search inputs (BotRoute.soloGroundMissing: the routed spot decides).
 const NO_SOLO_GROUND = 'no_solo_ground';
 function supportWithoutGround(state, spots, search = null) {
     return (Roles.isHealer(state) || Roles.canBuff(state))
@@ -130,8 +130,9 @@ function partyRequestForPlan(state, plan, timestamp = Date.now(), options = {}) 
     const previous = state?.stats?.partyRequest;
     const supplyPause = Material.supplyPause(state, plan, { ...options, timestamp });
     if (supplyPause) return supplyPause;
-    if (plan?.levelingRecovery) return null;
-    if (!partyRequestEligible(state)) return null;
+    // A bot that cannot ask now (travel, a recovery, a party) keeps a closed request as
+    // it is, its attempts with it: the next build that can asks again.
+    if (plan?.levelingRecovery || !partyRequestEligible(state)) return previous?.status === 'closed' ? previous : null;
     const sharedTarget = previous?.reason === 'shared_target' && ['open', 'closed'].includes(previous.status)
         && plan?.status === 'active' && previous.spotId === plan.next?.spotId
         && Number(previous.npcId) === Number(plan.next?.npcId || plan.targetNpcId)
