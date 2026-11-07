@@ -1,0 +1,9 @@
+test_cold_occupation_planner
+test_henna
+test_unknown_recipe_worker
+test_station_workshop
+test_cold_worker_one_decision
+test_economy_context
+test_party_goal_worker
+test_worker_economy_publication
+test_player_moment
