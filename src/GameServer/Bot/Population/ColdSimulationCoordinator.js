@@ -2101,7 +2101,7 @@ class ColdSimulationCoordinator {
                 state = LifeState.cachedState(id) || applied?.state || state;
                 if (applied?.buyPending) DecisionEvents.raiseOn(id, applied.stale ? 'goal_failed' : 'goal_done:goal');
             } finally {
-                this.economyDecisions.release(id);
+                this.economyDecisions.release(id, LifeState.cachedState(id) !== preparedState);
             }
             // The plan may have just started a trip or changed the money packet.
             await this.step('boardLimits', id, async () => {

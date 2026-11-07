@@ -112,6 +112,7 @@ const GearMarks = require('../AI/GearMarks');
 const PartyWaitFallback = invoke('GameServer/Bot/Population/PartyWaitFallback');
 const Protocol = require('./ColdSimulationProtocol');
 const ColdEconomyDecision = require('./ColdEconomyDecision');
+const ColdEconomyPlan = require('./ColdEconomyPlan');
 const RecomputeGeneration = require('./RecomputeGeneration');
 const PersonalWarehouseIndex = invoke('GameServer/Bot/Economy/PersonalWarehouseIndex');
 const ClanSupplyPolicy = invoke('GameServer/Clan/ClanSupplyPolicy');
@@ -259,7 +260,7 @@ const WORK_STAGES = Object.freeze(['stock', 'recipe', 'ingredient', 'owned', 'qu
 // beside the state (inputKey) and, compared only when that one matches, the
 // digest of the state values the mode reads (valueKey), one per state object.
 // - wish: the route table's inputs (EconomicTrip.key): the rows read nothing else.
-// - occupation (a crafter's workshop decision), action (a town leaf's trip), showcase (a town visit's plan):
+// - occupation (a crafter's workshop decision), action (a taken build's bids in the field), showcase (a town visit's plan):
 //   beside the state, the recipe book and known shot recipes, the escrow, the
 //   route key (the rows), the warehouse and clan supply versions and whether
 //   the board and market copies are whole, the step's stock target, the step's
@@ -344,10 +345,11 @@ const occupationPlanner = new ColdOccupationPlanner({
     create: input => occupationWork(input, (function* () {
         if (input.mode === 'wish') return yield* EconomicTrip.prepare(input.state);
         // A town visit's plan (showcase): its listings, bids and a crafter's craft step, which
-        // the visit selects below (Wealth, Shots) as the field plan does.
-        if (input.mode === 'showcase' && !CraftEligibility.isServiceCrafter(input.state)) return { economyPlan:
+        // the visit selects below (Wealth, Shots). A build's plan in the field (action): its
+        // bids and its leaf's start, no listing, sale or craft.
+        if (input.economy && (input.mode === 'action' || input.mode === 'showcase' && !CraftEligibility.isServiceCrafter(input.state))) return { economyPlan:
             yield* invoke('GameServer/Bot/Population/ColdEconomyPlan').prepare(input.state, input.economy, {
-                visit: true, now: input.timestamp, board: input.board, tripCost: input.economy.trip,
+                visit: input.mode === 'showcase', build: input.mode === 'action', now: input.timestamp, board: input.board, tripCost: input.economy.trip,
                 saleHold: saleHold(input.state.characterId),
                 buyOrderEscrow: input.buyOrderEscrow,
                 npcOffersFor: OccupationSources.npcOffersFor,
@@ -822,12 +824,11 @@ function saleHold(characterId) {
     const record = kernel?.states.get(Number(characterId));
     return record ? (record.saleHold ||= new Map()) : null;
 }
-// The trip of the held town leaf of a bot still in the field (a purchase, a sale): the
-// market plan whose travel main begins (BotAfkMarketService: the goal's market trip),
-// asked once at the step that starts it. Temporary: until main begins the leaf's trip
-// from the card, as it does an improvement's (BotImprovementService.acquisitionTravel).
-function leafTrip(state, timestamp, economy, caller) {
-    return occupationFor(state, timestamp, { economy, caller }, 'action');
+// The start of the held town leaf of a bot still in the field, read off its card
+// (ColdEconomyPlan.leafStart: the leaf's board line through a meeting, else its trip).
+function leafStart(state, timestamp, economy) {
+    const plan = ColdEconomyPlan.leafStart(state, economy, { board: boardReady(), now: timestamp });
+    return plan ? { economyPlan: plan } : null;
 }
 // A far step's workshop decision (Situations workshop), before its build: the mind
 // keys it takes (workshopTaken), or null when it is not woken.
@@ -1700,8 +1701,8 @@ function startKernel(config = {}) {
             // The step's one decision, taken before the round (planLifecycle):
             // the round's consequences run on it, no second ask. A step
             // without one (a party member, karma) decides after the round
-            // below: that is its one decision point. No market plan is asked in
-            // the field: the town visit plans its sales and bids.
+            // below: that is its one decision point. No market plan is asked after
+            // the round: a taken build or a town visit plans it before.
             const stepEconomy = lifecyclePlan?.economy || null;
             let economy = stepEconomy, seenEcho = null, refreshed = null, observedDeps = null;
             const base = roundProjection(state, timestamp, writtenAt, lifecyclePlan);
@@ -1906,11 +1907,11 @@ function startKernel(config = {}) {
                 const leaf = refreshed.economy.network.activity;
                 const { routedState, route, lastFight } = stepTrip(state, routeTrip(state, standingSpot(state), leaf, timestamp), timestamp);
                 // A town visit's plan from the card: its listings and bids (ColdEconomyPlan,
-                // visit); in the field only a town leaf's trip is asked.
+                // visit); in the field the card's town leaf starts (no plan is asked).
                 const occupation = routedState.activity === 'shopping'
                     ? await occupationFor(routedState, timestamp, { economy: refreshed.economy, stock: refreshed.economy.stock('shots'), caller: 'card' }, 'showcase')
                     : routedState.activity === 'hunting' && leaf.activity !== 'hunting'
-                        ? await leafTrip(routedState, timestamp, refreshed.economy, 'card') : null;
+                        ? leafStart(routedState, timestamp, refreshed.economy) : null;
                 rememberWishAdvisory(kernel.states.get(Number(state.characterId)), refreshed.advisory);
                 // economy: worker-local, the step's one decision; the
                 // projection after the round reads it (never posted).
@@ -1981,10 +1982,14 @@ function startKernel(config = {}) {
                 stats: plannedStats
             };
             const { routedState, route, lastFight } = stepTrip(plannedState, routeTrip(plannedState, standingSpot(state), economy.network.activity, timestamp), timestamp);
+            // A town visit plans its listings, bids and craft (showcase); a build taken in the
+            // field posts the bids of the wants it registers once and starts its leaf (action);
+            // a held card in the field only starts its town leaf.
             const preparedOccupation = routedState.activity === 'shopping'
                 ? await occupationFor(routedState, timestamp, { economy, stock: economy.stock('shots'), caller: 'step' }, 'showcase')
-                : routedState.activity === 'hunting' && economy.network.activity?.activity && economy.network.activity.activity !== 'hunting'
-                    ? await leafTrip(routedState, timestamp, economy, 'step') : null;
+                : !nullReuse && ['hunting', 'resting'].includes(routedState.activity)
+                    ? await occupationFor(routedState, timestamp, { economy, stock: economy.stock('shots'), caller: 'build' }, 'action')
+                    : routedState.activity === 'hunting' ? leafStart(routedState, timestamp, economy) : null;
             const seen = { ...routedState, stats: { ...routedState.stats, ...statsPacket } };
             const heldDecision = nullReuse ? ColdEconomyDecision.compact({ data: refreshed.decision.data.slice(0),
                 updatedAt: Number(seen.updatedAt || 0), echo: ColdEconomyDecision.stateEcho(seen), flags: 0 }) : null;

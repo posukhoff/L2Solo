@@ -172,6 +172,12 @@ async function groupedReplacement() {
         assert.equal(Afk.ownerRecords(owner).filter(row => row.kind === 'sell_ad').length, 5);
         assert.equal(Afk.findOwnerProjection(owner), null, 'field quoting opens no physical shop');
         assert.deepEqual(await Database.fetchItems(owner), originalBag);
+        // A build taken in the field posts its bids and starts its leaf only: what to sell and a
+        // craft are its town visit's, so its plan keeps the standing ads and lists nothing new.
+        const built = Plan.decide(state, { ...Decision.economyFor(state), network: { activity: null } },
+            { board: Afk.boardIndex(), now: Date.now(), npcOffersFor: () => [], findSpot: () => null, build: true });
+        assert.deepEqual([built.sell, built.withdraw, built.shot, built.take], [[], [], undefined, undefined],
+            'a build in the field lists, withdraws, sells and crafts nothing');
         state = await Life.upsertState({ ...Life.cachedState(owner), activity: 'shopping' }, 'showcase_visit');
         const visit = prepare();
         assert.equal(visit.shop, 'Giran');

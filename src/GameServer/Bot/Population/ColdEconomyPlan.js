@@ -55,11 +55,36 @@ function* measured(iterator) {
         if (!next?.done) iterator.return();
     }
 }
-function* prepareNative(state, economy, options) {
-    const canAct = !economy.intentPending
+// Whether the bot can trade now: its held build is settled, it stands (not dead,
+// resting, on a trip or at a workbench), no meeting or delivery is pending and no
+// survival floor holds it.
+function canAct(state, economy, now) {
+    return !economy.intentPending
         && !['dead', 'resting', 'traveling', 'crafting'].includes(state.activity)
         && !state.stats?.tradeMeeting && !state.incomingPending
-        && !invoke('GameServer/Bot/Population/SurvivalFloor').forState(state, Number(options.now) || Date.now());
+        && !invoke('GameServer/Bot/Population/SurvivalFloor').forState(state, Number(now) || Date.now());
+}
+// The start of the held town leaf of a bot in the field, read off its card (no
+// market plan is asked): the leaf's own quoted board line through a meeting
+// (ReadyTradeChoice.purchase; a clan craft's key input whatever the leaf), else the
+// trip to the leaf's town, which main begins from the goal it reads off the same
+// card (BotAfkMarketService.executePlan: travel, GoalExecutor.beginMarketTravel).
+// The kernel holds one round for it per decision (its occupation round).
+const TOWN_LEAVES = new Set(['shopping', 'selling', 'improving']);
+function leafStart(state, economy, options = {}) {
+    const leaf = economy?.network?.activity;
+    const take = canAct(state, economy, options.now)
+        ? Ready.purchase(state, economy, options.board) || Ready.clanCraftPurchase(state, economy, options.board) : null;
+    if (take) return { take, sell: [], withdraw: [], travel: null };
+    if (!TOWN_LEAVES.has(leaf?.activity) || !leaf.rootKey) return null;
+    // A purchase whose units all reached the bag has no trip (its goal: none to order).
+    const itemId = Number(leaf.itemId || (typeof leaf.object === 'number' ? leaf.object : leaf.object?.itemId) || 0);
+    if (leaf.activity === 'shopping' && !(itemId > 0
+        && require('./ColdEconomyDecision').remainingToOrder(leaf, state, economy.state || state, itemId) > 0)) return null;
+    return { sell: [], withdraw: [], travel: leaf.rootKey };
+}
+function* prepareNative(state, economy, options) {
+    const canTrade = canAct(state, economy, options.now);
     const own = options.board?.ownerLines(Number(state.characterId)) || [];
     const ctx = Listing.traderContext(state, { ...options, economy });
     const limits = [];
@@ -73,64 +98,73 @@ function* prepareNative(state, economy, options) {
         yield 'owned';
     }
     const bidLimits = limits.length ? { bidLimits: limits } : {};
-    const purchase = canAct && !options.visit
-        ? Ready.purchase(state, economy, options.board) || Ready.clanCraftPurchase(state, economy, options.board) : null;
-    // Main runs the plan's craft (plan.shot) before its sale: the sale keeps
-    // that craft's kit, which the craft consumes or holds (productionInputAmounts),
-    // on top of the gear plan's reserve (ItemDisposition.saleReservations).
-    const saleInput = Listing.ownSaleInputs(state, own, { ...options, economy,
-        productionKit: shotKit(state, economy, options) });
-    const sale = Listing.evaluate(saleInput.state, saleInput.options);
-    // A profitable surplus sale uses a meeting or a backed shop in the town
-    // already reached. Leave the selected purchase/focus intact for review.
-    const answer = canAct && !options.visit ? Ready.sale(sale.answers, state) : null;
-    if (answer) return { take: answer, sell: [], withdraw: [], travel: null, ...bidLimits };
-    // Only native acceptance reserves a quote; rejection keeps the plan.
-    if (purchase) return { take: purchase, sell: [], withdraw: [], travel: null, ...bidLimits };
-    const Town = invoke('GameServer/Bot/Economy/MarketTownPolicy');
-    const townOptions = { context: ctx, tripCost: options.tripCost || ctx.tripCost, timestamp: options.now,
-        prepareTrip: options.prepareTrip, findSpot: options.findSpot, onDecision: options.onTownDecision };
-    const listings = Listing.prioritizeListings(sale.listings, { board: options.board,
-        characterId: state.characterId, timestamp: options.now });
+    // In the field the held town leaf starts as the card says (leafStart: its board line, else its trip).
+    const start = options.visit ? null : leafStart(state, economy, options);
+    // A build's plan in the field (options.build) plans its bids and its leaf's start
+    // only: what to sell, list or withdraw, to whom, and a craft are the town visit's
+    // plan (situations B15).
+    if (options.build && start?.take) return { ...start, ...bidLimits };
     const standingShop = own.find(line => line.kind === 'shop' && line.storeType === SELL);
-    const visitTown = state.activity === 'shopping' && invoke('GameServer/Bot/Economy/ShopPlaces').hasPlaza(state.currentRegion)
-        ? state.currentRegion : null;
-    const heldTown = standingShop?.town || state.stats?.shopTown?.town || visitTown;
-    const shopTown = heldTown || (yield* Town.chooseTown(state, listings.slice(0, 3), townOptions)).town;
-    // Field quotes stay available until a real visit. In its chosen town the
-    // bot promotes its best quotes; an existing shop can be refreshed remotely.
-    const publishShop = !!standingShop || state.activity === 'shopping' && state.currentRegion === shopTown;
-    const sell = [];
-    let showcaseChanged = false;
-    let showcaseRows = 0;
-    for (let at = 0; at < Math.min(8, listings.length); at++) {
-        const row = listings[at];
-        const showcase = publishShop && at < 3;
-        const enchant = Number(row.enchant || 0);
-        const town = showcase ? shopTown : own.find(line => line.storeType === SELL && line.selfId === Number(row.selfId)
-            && Number(line.enchant || 0) === enchant)?.town
-            || (at < 3 ? shopTown : (yield* Town.chooseTown(state, [row], townOptions)).town);
-        const unchanged = own.some(line => line.storeType === SELL && line.selfId === Number(row.selfId)
-            && Number(line.enchant || 0) === enchant
-            && line.count === Number(row.count) && line.price === Number(row.price) && line.town === town
-            && (!publishShop || (showcase ? line.kind === 'shop' : line.kind !== 'shop')));
-        if (showcase) { showcaseRows++; showcaseChanged ||= !unchanged; }
-        // A shop replacement needs its complete desired stock, including
-        // unchanged lines, so it cannot accidentally return the best one.
-        if (showcase || town && !unchanged) {
-            const sigma = sellSigma(row, ctx);
-            sell.push([Number(row.selfId), Number(row.count), Number(row.price), town, enchant, ...(sigma ? [sigma] : [])]);
+    const Town = invoke('GameServer/Bot/Economy/MarketTownPolicy');
+    let plan, shopTown, showcaseRows = 0;
+    if (options.build) {
+        shopTown = standingShop?.town || state.stats?.shopTown?.town || null;
+        plan = { sell: [], withdraw: [], travel: null, ...bidLimits };
+    } else {
+        // Main runs the plan's craft (plan.shot) before its sale: the sale keeps
+        // that craft's kit, which the craft consumes or holds (productionInputAmounts),
+        // on top of the gear plan's reserve (ItemDisposition.saleReservations).
+        const saleInput = Listing.ownSaleInputs(state, own, { ...options, economy,
+            productionKit: shotKit(state, economy, options) });
+        const sale = Listing.evaluate(saleInput.state, saleInput.options);
+        // A profitable surplus sale uses a meeting or a backed shop in the town
+        // already reached. Leave the selected purchase/focus intact for review.
+        const answer = canTrade && !options.visit ? Ready.sale(sale.answers, state) : null;
+        if (answer) return { take: answer, sell: [], withdraw: [], travel: null, ...bidLimits };
+        // Only native acceptance reserves a quote; rejection keeps the plan.
+        if (start?.take) return { ...start, ...bidLimits };
+        const townOptions = { context: ctx, tripCost: options.tripCost || ctx.tripCost, timestamp: options.now,
+            prepareTrip: options.prepareTrip, findSpot: options.findSpot, onDecision: options.onTownDecision };
+        const listings = Listing.prioritizeListings(sale.listings, { board: options.board,
+            characterId: state.characterId, timestamp: options.now });
+        const visitTown = state.activity === 'shopping' && invoke('GameServer/Bot/Economy/ShopPlaces').hasPlaza(state.currentRegion)
+            ? state.currentRegion : null;
+        const heldTown = standingShop?.town || state.stats?.shopTown?.town || visitTown;
+        shopTown = heldTown || (yield* Town.chooseTown(state, listings.slice(0, 3), townOptions)).town;
+        // Field quotes stay available until a real visit. In its chosen town the
+        // bot promotes its best quotes; an existing shop can be refreshed remotely.
+        const publishShop = !!standingShop || state.activity === 'shopping' && state.currentRegion === shopTown;
+        const sell = [];
+        let showcaseChanged = false;
+        for (let at = 0; at < Math.min(8, listings.length); at++) {
+            const row = listings[at];
+            const showcase = publishShop && at < 3;
+            const enchant = Number(row.enchant || 0);
+            const town = showcase ? shopTown : own.find(line => line.storeType === SELL && line.selfId === Number(row.selfId)
+                && Number(line.enchant || 0) === enchant)?.town
+                || (at < 3 ? shopTown : (yield* Town.chooseTown(state, [row], townOptions)).town);
+            const unchanged = own.some(line => line.storeType === SELL && line.selfId === Number(row.selfId)
+                && Number(line.enchant || 0) === enchant
+                && line.count === Number(row.count) && line.price === Number(row.price) && line.town === town
+                && (!publishShop || (showcase ? line.kind === 'shop' : line.kind !== 'shop')));
+            if (showcase) { showcaseRows++; showcaseChanged ||= !unchanged; }
+            // A shop replacement needs its complete desired stock, including
+            // unchanged lines, so it cannot accidentally return the best one.
+            if (showcase || town && !unchanged) {
+                const sigma = sellSigma(row, ctx);
+                sell.push([Number(row.selfId), Number(row.count), Number(row.price), town, enchant, ...(sigma ? [sigma] : [])]);
+            }
+            yield 'stock';
         }
-        yield 'stock';
+        if (!showcaseChanged) sell.splice(0, showcaseRows);
+        const listed = new Set(sale.listings.map(row => `${row.selfId}:${row.enchant || 0}`));
+        const withdraw = own.filter(line => line.storeType === SELL && !listed.has(`${line.selfId}:${line.enchant || 0}`))
+            .slice(0, 8).map(line => line.lineId);
+        plan = { sell, withdraw, ...(showcaseChanged ? { shop: shopTown } : {}), travel: null, ...bidLimits };
     }
-    if (!showcaseChanged) sell.splice(0, showcaseRows);
-    const listed = new Set(sale.listings.map(row => `${row.selfId}:${row.enchant || 0}`));
-    const withdraw = own.filter(line => line.storeType === SELL && !listed.has(`${line.selfId}:${line.enchant || 0}`))
-        .slice(0, 8).map(line => line.lineId);
-    const plan = { sell, withdraw, ...(showcaseChanged ? { shop: shopTown } : {}), travel: null, ...bidLimits };
     // The bids (buy ads: the goal's and the build's watch rows, the standing craft bids
     // still needed) are posted on a town visit too, as a C4 player opens a buy store in
-    // town; the field plan adds the trip its goal names.
+    // town; the field plan adds the held leaf's trip.
     let goal, money;
     {
         const needs = NeedsEvaluator.evaluate(state, { ...options, economy, errand: null, now: options.now, saleTown: shopTown });
@@ -152,7 +186,7 @@ function* prepareNative(state, economy, options) {
         try { batch = buyBatch(lines); }
         // A bug in the buy build, kept apart from a refused line (both leave the buy unprepared).
         catch (error) { FailureLog.note('economy.buy_batch', error); batch = { buyAds: [null] }; }
-        Object.assign(plan, batch, { travel: !options.visit && goal?.plan?.marketTown ? goal.plan.wishKey || null : null });
+        Object.assign(plan, batch, { travel: start?.travel || null });
         // A buy part not prepared (the held build's intent pending, or a
         // line buyBatch refused) is absent from the packet, not a page: a
         // refresh on main's next state copy reads the same build, so only
@@ -168,7 +202,7 @@ function* prepareNative(state, economy, options) {
         }
         // A town visit's plan carries the craft step the visit selected (a crafter crafts
         // in town from what it brought), else the one its held decision prepared.
-        const shot = options.visit && !Object.hasOwn(options, 'preparedCraft') ? heldCraft(economy) && economy.shot
+        const shot = options.build ? null : options.visit && !Object.hasOwn(options, 'preparedCraft') ? heldCraft(economy) && economy.shot
             : decideShot(state, economy, { ...options, ownLines: own });
         if (shot) plan.shot = shot;
     }
@@ -274,4 +308,4 @@ function decideShot(state, economy, options = {}) {
     // a recipe/gear/quote scan by falling through this publication adapter.
     return { unknown: true };
 }
-module.exports = { acts, decide, prepare, fit, buyBatch, decideShot, MAX_BYTES, MAX_SHOT_BYTES, MAX_PLAN_PAYLOAD_BYTES, MAX_SHOT_PAYLOAD_BYTES };
+module.exports = { acts, leafStart, decide, prepare, fit, buyBatch, decideShot, MAX_BYTES, MAX_SHOT_BYTES, MAX_PLAN_PAYLOAD_BYTES, MAX_SHOT_PAYLOAD_BYTES };

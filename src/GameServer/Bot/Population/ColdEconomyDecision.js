@@ -765,7 +765,9 @@ class ColdEconomyDecisions {
         card.held = true;
         this.byId.set(Number(id), card);
     }
-    release(id) { const decision = this.byId.get(Number(id)); if (decision) { decision.held = false; decision.stale = true; } }
+    // A held card ends with its command: stale (served no more) unless the command left
+    // the row it was decided on as it was (moved false: a plan that changed nothing).
+    release(id, moved = true) { const decision = this.byId.get(Number(id)); if (decision) { decision.held = false; decision.stale ||= moved; } }
     forget(id) {
         if (this.byId.delete(Number(id)) && Diagnostics.active()) Diagnostics.count('ready_card', 'eviction', 'owner_release');
     }

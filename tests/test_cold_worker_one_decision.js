@@ -72,7 +72,9 @@ module.exports.stepProbe = async (id) => {
             selectedRoot: plan.economy.network.activity?.rootKey,
             execution: plan.economyPlan?.travel,
             baseline: [plan.statsPacket.wishSections?.at, projection.state.stats.wishSections?.at],
-            fieldPlans: [projection, rest, back].filter(next => next.economyPlan).length,
+            // A round carries its step's plan (the taken build's, asked once before it); none asks another.
+            buildPlan: !!plan.economyPlan,
+            fieldPlans: [projection, rest, back].filter(next => next.economyPlan && next.economyPlan !== plan.economyPlan).length,
             card: { updatedAt: projection.economyDecision?.updatedAt, echo: projection.economyDecision?.echo,
                 projectedAt: Number(projection.state.updatedAt || 0), projectedEcho: ColdEconomyDecision.stateEcho(projection.state) } };
     } finally { Economy.forState = original; }
@@ -267,7 +269,8 @@ parentPort.on('message', message => {
         assert.equal(step.activity, 'hunting', 'the fixture bot hunts this step');
         assert.equal(step.decided, 1, 'a bot without a held decision builds its economy once, before the round');
         assert.equal(step.afterRound, 0, 'the projection after the round builds no economy');
-        assert.equal(step.fieldPlans, 0, 'loot, a rest and its end ask no market plan in the field (the town visit plans it)');
+        assert.equal(step.buildPlan, true, 'a build taken in the field plans its market once');
+        assert.equal(step.fieldPlans, 0, 'loot, a rest and its end ask no market plan in the field');
         // A looted Scroll of Escape is no supply event: the scroll has no line (situations.md B2).
         assert.equal(step.woken, 0, 'on the hunt the round\'s loot wakes no build');
         assert.equal(step.seq[1], step.seq[0], 'and the decision sequence stands');
