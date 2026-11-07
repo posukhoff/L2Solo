@@ -249,6 +249,14 @@ for (let decisionPoint = 0; decisionPoint < 20; decisionPoint++) {
     }
 }
 assert(dumped <= decided * 0.1, `fixed buyers' materials are kept, not dumped at the NPC (${dumped} of ${decided})`);
+// An own line under that price stands for nothing: the bag's units are not
+// added to it at its old ask.
+const cheapLine = new BoardIndex({ groupOf: MarketCounters.counterOf });
+cheapLine.put({ id: 77, ownerId: state.characterId, storeType: 1, kind: 'shop', town: 'Giran', revision: 1,
+    lines: [{ lineId: 77, selfId: 1869, count: 5, price: 150 }] });
+const underFloor = atRate('x50', () => MarketListingPolicy.evaluate(state, options({ board: cheapLine })));
+assert(!underFloor.decisions.some(decision => decision.item.selfId === 1869 && decision.reason === 'kept_line'),
+    'no units join an ask under the fixed buyer\'s price');
 // No room to keep (a third copy of a gear piece): the NPC.
 const gear = { characterId: 4243, level: 40, adena: 50000, stats: { generatedCold: true },
     inventory: { [lowGradeGear.selfId]: { selfId: Number(lowGradeGear.selfId), amount: 1, kind: lowGradeGear.template.kind } } };

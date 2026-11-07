@@ -226,7 +226,11 @@ function evaluate(state, options = {}) {
         reserved: { ...options.reserved, ...craftReservations } });
     const owned = (ctx.board?.ownerLines?.(Number(state.characterId)) || [])
         .filter(line => line.storeType === BoardRules.SELL);
+    // A line at or under what an NPC or a fixed buyer pays the bot stands for
+    // nothing: its units are disposed anew, its own look takes it back.
+    const StaticPricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
     const kept = options.kept || new Map(owned
+        .filter(line => ItemDisposition.isGradeCrystal(line) || line.price > StaticPricing.botSellPrice(line.selfId))
         .map(line => [`${line.selfId}:${line.enchant || 0}`, line.price]));
     const keptCounts = options.keptCounts || listedAmounts(owned.filter(line => line.custodyPolicy === 1));
     const liquidate = invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state);

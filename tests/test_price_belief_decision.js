@@ -192,6 +192,13 @@ const forbiddenLine = { ownerId: 1, recordId: 99, lineId: 99, selfId: 999999, st
 assert.equal(MarketPricing.look({}, [forbiddenLine], { ...marketContext,
     reviewReasons: new Map([[99, 4]]), canSell: () => false }).withdrawals.length, 1,
     'known protection can withdraw an unknown-price item without inventing a prior');
+// An own ask at or under what an NPC or a fixed buyer pays goes back at its
+// look, forecast or not: no bot sells another below its sure exit.
+const floor = invoke('GameServer/Bot/Economy/StaticMerchantPricing').botSellPrice(STEM);
+const underFloor = { ownerId: 1, recordId: 98, lineId: 98, selfId: STEM, storeType: SELL,
+    count: 1, price: floor, revision: 1, pricing: { price: floor, seenCounter: 0 } };
+assert.equal(MarketPricing.look({}, [underFloor], { ...marketContext, reviewReasons: new Map([[98, 4]]) })
+    ?.withdrawals.length, 1, 'an ask at the sure exit is taken back');
 assert.equal(PriceDecision.marketFor(STEM, { board: emptyBoard, ownerId: 1, timestamp: now }).known, false,
 'split listings never manufacture demand');
 emptyBoard.put({ id: 11, ownerId: 2, storeType: BUY, revision: 1, town: 'Giran',

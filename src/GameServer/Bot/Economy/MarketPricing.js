@@ -416,7 +416,9 @@ function look(state, lines, ctx) {
                 const quote = stockQuotePrice(belief, market,
                     (line.custodyPolicy === 1 || marketOnly) && ctx.ownStock?.known !== false,
                     marketOnly && chosen.npc);
-                if (quote === null) continue;
+                // Without a forecast a line stands, unless it asks no more than
+                // an NPC or a fixed buyer pays (chooseAsk's npc): it goes back.
+                if (quote === null) { if (chosen.npc && !marketOnly) withdrawals.push(move); continue; }
                 chosen = { ...chosen, price: quote, npc: false };
             }
             if (chosen.npc) { withdrawals.push(move); continue; }
