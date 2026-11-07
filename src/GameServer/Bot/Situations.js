@@ -58,8 +58,9 @@ const link = (waits, heard = NOW) => Object.freeze({ waits, heard });
 // plane a far bot hears it on (heard: NOW, at its next STOP, in TOWN). The decisions
 // each wakes are declared below (DECISIONS).
 const SITUATIONS = Object.freeze({
-    // Its own state (detect). A level moved, or the rest of the kit (worn gear,
-    // hennas, skills, class, the craft): read apart, a level up wins a step that moved both.
+    // Its own state (detect). A level moved; the gear a fight turns on (the worn
+    // weapon, the body armour's grade, the armour sets worn whole: not a ring, an
+    // enchant, hennas, skills, the craft or karma).
     level_up: link(WORK | VISIT, STOP),
     gear_changed: link(WORK | VISIT, TOWN),
     recipe_learned: link(WORK | VISIT, STOP),
@@ -399,11 +400,10 @@ function factNames(previousFact, current, planned = false) {
     const names = [];
     const add = name => { if (!names.includes(name)) names.push(name); };
     if (!previousFact('dead') && current.dead) add('died');
-    if (previousFact('build') !== current.build) {
-        // A baseline kept before the level was its own fact reads as gear.
-        const level = previousFact('level');
-        add(level !== undefined && level !== current.level ? 'level_up' : 'gear_changed');
-    }
+    const level = previousFact('level');
+    if (level !== undefined && level !== current.level) add('level_up');
+    // The gear a fight turns on (weapon, body armour grade, whole sets: the gear fact).
+    if (previousFact('gear') !== current.gear) add('gear_changed');
     // The clan (its id; a baseline kept before the fact was its own has none to compare).
     const clan = previousFact('clan');
     if (clan !== undefined && clan !== current.clan) add('clan_changed');

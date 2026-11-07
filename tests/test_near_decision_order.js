@@ -171,6 +171,13 @@ const spot = () => Events.held(session)?.network.activity?.spotId;
         decided.stats = { ...handed.stats, wishSections: { ...Sections.semanticFacts(decided) } };
         Events.detectNear(body, decided);
         assert.equal(body.nearRaise, null, 'a received decision advances the baseline');
+        // New gear is the gear a fight turns on: a ring is none, a weapon is.
+        const worn = (selfId, slot) => ({ [selfId]: { selfId, amount: 1, equipped: true, slot, enchant: 0 } });
+        Events.detectNear(body, { ...decided, inventory: worn(875, 4) });
+        assert.equal(body.nearRaise, null, 'a ring is no new gear');
+        Events.detectNear(body, { ...decided, inventory: worn(124, 7) });
+        assert.deepEqual(body.nearRaise.names.map(({ name }) => name), ['gear_changed'], 'a weapon is');
+        body.nearRaise = null;
         // New gear waits for the town; the body's arrival in town is its stop there.
         const town = { woken: 0, earning: { spotId: 'held' } };
         Events.takePostedRaise(town, { seq: 1, names: [{ name: 'gear_changed', payload: null, seq: 1 }] }, 0, hunting);

@@ -86,8 +86,8 @@ function kitFact(view) {
 // The kit part of the far reader (stateView), without the bag scan.
 function kitView(state) {
     const stats = state.stats || {};
-    return { kitHashes: CombatProfile.kitEvents(state), craftLevel: Number(state.craftLevel ?? stats.dwarvenCraftLevel) || 0,
-        craftStationId: stats.craftStationId ?? null,
+    return { kitHashes: CombatProfile.kitEvents(state), gear: CombatProfile.gearOf(state),
+        craftLevel: Number(state.craftLevel ?? stats.dwarvenCraftLevel) || 0, craftStationId: stats.craftStationId ?? null,
         soulCrystalQuest: !!stats.soulCrystalQuest, closesTowns: Karma.closesTowns(stats.karma) };
 }
 function kit(state) {
@@ -189,7 +189,8 @@ function relationTargetIds(state, memory = null) {
 // world changed is the fact that differs from the copy kept with the
 // decision (Situations.detect, factNames). The raw values are read from a state (stateView):
 // the saved one of a far bot, the posted row of a near one. view: the kit
-// fields (kitView), recipes (the sorted
+// fields (kitView; build: the whole kit, the build's caches' key; gear: the gear a
+// fight turns on, ColdCombatProfile.gearOf, gear_changed), recipes (the sorted
 // known recipe ids, null: none read), party (null: none; its partyId and
 // role are the fact, its leaderId is not), clanId,
 // relationTargets ([friend, enemy] ids; null: read here from memory), activity,
@@ -201,7 +202,7 @@ function relationTargetIds(state, memory = null) {
 // cleanup count, PartyMarketBreak.bagFact).
 // memory: the bot's interaction memory rows, null when the caller read none.
 function factsOf(view, memory = null) {
-    return { build: kitFact(view), level: view.kitHashes?.[2] ?? null, recipes: view.recipes ? hash(view.recipes) : null,
+    return { build: kitFact(view), gear: view.gear ?? 0, level: view.kitHashes?.[2] ?? null, recipes: view.recipes ? hash(view.recipes) : null,
         relations: hash([view.clanId, ...(view.relationTargets || relationTargetIds(view, memory))]), clan: view.clanId,
         party: hash([view.party?.partyId, view.party?.role]),
         occupation: hash([view.spotId, view.activity === 'resting' ? 'hunting' : view.activity]),
