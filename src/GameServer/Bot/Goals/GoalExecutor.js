@@ -74,6 +74,9 @@ function beginMarketTravel(state, goal, timestamp = Date.now()) {
         }, timestamp, visitStats(shopTown));
     };
     const travel = trip(town, sale?.shopTown);
+    // A gear purchase's visit claims the board lines it goes for (BoardClaims), as an errand does.
+    if (buyingGear && travel) invoke('GameServer/Bot/Economy/BoardClaims').claimVisit(travel, goal,
+        invoke('GameServer/AfkTrade/AfkTradeService').boardIndex());
     if (travel || !sellingInventory) return travel;
     // A bot that cannot pay the gatekeeper to its sale town sells in the town
     // its Scroll of Escape reaches, as a player short of Adena would.

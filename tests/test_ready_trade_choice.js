@@ -93,8 +93,9 @@ try {
     invoke('GameServer/Bot/Economy/MarketListingPolicy').evaluate = oldEvaluate; }
 console.log('PASS ready trade selection');
 
-// Surplus sales may interrupt a prepared personal purchase, while the wish
-// and its selected quote remain ready after the physical sale is fulfilled.
+// In town, surplus sales into a standing buy ad may interrupt a prepared personal
+// purchase, while the wish and its selected quote remain ready after the physical sale
+// is fulfilled; in the field the bot answers no buy ad (it waits for its town visit).
 const Listing = invoke('GameServer/Bot/Economy/MarketListingPolicy');
 const evaluate = Listing.evaluate;
 const buying = structuredClone(economy);
@@ -112,9 +113,11 @@ try {
         return next.value;
     };
     for (const phase of ['hot', 'cold']) {
-        const seller = { ...state, phase, activity: 'hunting', inventory: { 1864: { amount: 2 } } };
+        const seller = { ...state, phase, activity: 'shopping', inventory: { 1864: { amount: 2 } } };
         assert.deepEqual(prepare(seller).take, [3, 1864, 2, 88, 89, 2, 100],
             'the profitable surplus sale is allowed while the personal purchase is selected');
+        assert.deepEqual(prepare({ ...seller, activity: 'hunting' }).take, [1, 1869, 2, 77, 78, 4, 237],
+            'in the field the buy ad waits for the town visit');
         assert.deepEqual(prepare({ ...seller, inventory: {} }).take, [1, 1869, 2, 77, 78, 4, 237],
             'after the sale the same personal purchase resumes');
         assert.deepEqual(buying, original, 'the temporary deal never replaces the wish or selected purchase');

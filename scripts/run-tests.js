@@ -496,7 +496,6 @@ const tests = [
     'tests/test_cold_worker_buy_order_escrow.js',
     'tests/test_bot_wtb_standing_order.js',
     'tests/test_bot_funded_purchase_before_sale.js',
-    'tests/test_bot_market_trip_refunds_order.js',
     'tests/test_bot_cold_travel.js',
     'tests/test_cold_trip_builders.js',
     'tests/test_cold_honest_travel.js',

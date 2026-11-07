@@ -102,7 +102,7 @@ function* prepareNative(state, economy, options) {
     const start = options.visit ? null : leafStart(state, economy, options);
     // A build's plan in the field (options.build) plans its bids and its leaf's start
     // only: what to sell, list or withdraw, to whom, and a craft are the town visit's
-    // plan (situations B15).
+    // plan, as a C4 player sells and lists when he stands in town.
     if (options.build && start?.take) return { ...start, ...bidLimits };
     const standingShop = own.find(line => line.kind === 'shop' && line.storeType === SELL);
     const Town = invoke('GameServer/Bot/Economy/MarketTownPolicy');
@@ -117,9 +117,10 @@ function* prepareNative(state, economy, options) {
         const saleInput = Listing.ownSaleInputs(state, own, { ...options, economy,
             productionKit: shotKit(state, economy, options) });
         const sale = Listing.evaluate(saleInput.state, saleInput.options);
-        // A profitable surplus sale uses a meeting or a backed shop in the town
-        // already reached. Leave the selected purchase/focus intact for review.
-        const answer = canTrade && !options.visit ? Ready.sale(sale.answers, state) : null;
+        // A profitable surplus sale into a standing buy ad (a meeting or a backed shop)
+        // in the town the bot stands in: a C4 seller answers a WTB at his next town
+        // visit, never from the field. Leave the selected purchase/focus intact for review.
+        const answer = canTrade && state.activity === 'shopping' ? Ready.sale(sale.answers, state) : null;
         if (answer) return { take: answer, sell: [], withdraw: [], travel: null, ...bidLimits };
         // Only native acceptance reserves a quote; rejection keeps the plan.
         if (start?.take) return { ...start, ...bidLimits };

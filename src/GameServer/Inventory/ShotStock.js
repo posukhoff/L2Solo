@@ -129,7 +129,8 @@ function planForState(state, options = {}) {
     const classId = Number(state?.stats?.classId || state?.classId || 0), rank = weapon ? itemRank(weapon.selfId) : 'none';
     const spirit = classWantsSpiritshots(classId);
     if (options.blessed === true && !spirit) return null;
-    const blessed = spirit && (options.blessed ?? choosesBlessed(state?.stats?.earning, rank, selfId => heldAmount(state, selfId)));
+    const blessed = spirit && (options.blessed ?? choosesBlessed(state?.stats?.earning, rank, selfId => heldAmount(state, selfId),
+        () => decidedKind(state) === 'blessedSpiritshot'));
     return weaponPlan(blessed ? 'blessedSpiritshot' : spirit ? 'spiritshot' : 'soulshot', weapon);
 }
 // The shot kind the earning decision chooses for the bot (EquipmentIncomeRoute.spotRates, held as
@@ -193,12 +194,13 @@ function heldAmount(state, selfId) {
 // The one shot read of a spiritshot class, cold (planForState) and hot
 // (planForActor): it fires what its bag holds (`held(selfId)`), Blessed first;
 // holding neither, the kind its held earning answer chose (earning.shotKind,
-// decidedKind); no answer that names one: Spiritshot. A reader never weighs
-// the kind itself: the earning decision owns it.
-function choosesBlessed(earning, rank, held) {
+// decidedKind). An answer held from before the decision named its kind has none:
+// the earning decision's own rule answers it (`decided()`: decidedKind) until its
+// next answer names one. A reader never weighs the kind otherwise.
+function choosesBlessed(earning, rank, held, decided) {
     if (held(BLESSED_SPIRITSHOT_BY_RANK[rank]) > 0) return true;
     if (held(SPIRITSHOT_BY_RANK[rank]) > 0) return false;
-    return earning?.shotKind === 'blessedSpiritshot';
+    return earning?.shotKind ? earning.shotKind === 'blessedSpiritshot' : decided();
 }
 
 // What a bot pays for a shot (StaticMerchantPricing.botBuyPrice): the one
@@ -365,7 +367,10 @@ function planForActor(actor) {
     // lazy: cycle World loads the inventory stack.
     if (!invoke('GameServer/World/World').isBotSession(actor?.session)) return planForKind('spiritshot', rank);
     const held = selfId => Math.max(0, Number(actor?.backpack?.fetchItemFromSelfId?.(selfId)?.fetchAmount?.()) || 0);
-    return planForKind(choosesBlessed(heldEarning(actor?.session), rank, held) ? 'blessedSpiritshot' : 'spiritshot', rank);
+    // lazy: cycle BotLifeState loads the inventory stack.
+    const row = () => invoke('GameServer/Bot/Population/BotLifeState').cachedState(actor?.fetchId?.());
+    return planForKind(choosesBlessed(heldEarning(actor?.session), rank, held,
+        () => decidedKind(row()) === 'blessedSpiritshot') ? 'blessedSpiritshot' : 'spiritshot', rank);
 }
 // A body's held earning answer (its row's stats, DecisionEvents.statsFor).
 // lazy: cycle DecisionEvents requires this module at its top.

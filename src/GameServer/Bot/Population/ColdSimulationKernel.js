@@ -56,7 +56,6 @@ const CraftMaterialPartyRoute = require('./CraftMaterialPartyRoute');
 const CraftMaterialParty = require('./CraftMaterialParty');
 const PartySpotRiskPolicy = require('./PartySpotRiskPolicy');
 const PartyHuntingTarget = require('./PartyHuntingTarget');
-const PurchaseFunding = require('../Economy/PurchaseFunding');
 const EconomyDiagnostics = require('../Economy/EconomyDiagnostics');
 const ColdEconomyDecision = require('./ColdEconomyDecision');
 const BotErrands = require('./BotErrands');
@@ -216,11 +215,10 @@ function deterministicRandom(state = {}) {
 
 // The facts the kernel reads from its worker tables: the
 // party a bot leads ('parties'), that party's member states (the kernel's
-// own records), the adena its buy orders hold (the board), whether its clan
-// hall needs a visit ('clan_halls') and whether the player waits for it at a
+// own records), whether its clan hall needs a visit ('clan_halls') and whether the player waits for it at a
 // meeting point ('meetings'). A caller without a kernel (BotLifeState, a
 // test) reads none.
-const NO_FACTS = Object.freeze({ leaderParty: () => null, partyMembers: () => [], buyOrderEscrow: () => 0,
+const NO_FACTS = Object.freeze({ leaderParty: () => null, partyMembers: () => [],
     hallNeeded: () => false, playerWaiting: () => false });
 
 // party: the party row this bot leads, or null. The fixed clock its next
@@ -395,14 +393,6 @@ function lifecycleKind(state = {}, facts = NO_FACTS) {
     // preparation metadata; the pure hunt resolver cannot perform that work.
     if (plan.clanGoal?.clanId && (ClanCrystalSupply ||= require('../Economy/ClanCrystalSupply')).requirement(state)) return 'command';
     if ((BotCrystallization ||= require('../Economy/BotCrystallization')).ready(state)) return 'command';
-    if (String(plan.strategy || '') === 'market') {
-        const price = Math.max(0, Number(plan.market?.price || 0));
-        const reserve = Math.max(0, Number(plan.market?.reserve || 0));
-        if (state.activity !== 'hunting'
-            || (price > 0 && (plan.weaponBridge ? PurchaseFunding.budget(state, PurchaseFunding.tripEscrow(plan, facts.buyOrderEscrow(state.characterId)))
-                : PurchaseFunding.spendable(state, PurchaseFunding.tripEscrow(plan, facts.buyOrderEscrow(state.characterId)),
-                    { itemId: plan.target?.selfId })) >= price)) return 'command';
-    }
     // A published clan wait steps again on its row's next change (ClanPartyDuty.held).
     if ((ClanPartyDuty ||= require('./ClanPartyDuty')).waiting(state)) return ClanPartyDuty.held(state) ? 'event_driven' : 'resolver';
     if (!SIMPLE_ACTIVITIES.has(String(state.activity || ''))) return 'command';
@@ -544,6 +534,8 @@ class RetainedStateMap extends Map {
         super();
         this.shotIndex = shotIndex;
         this.now = now;
+        // cardChanged(record): told when a record's held card is new, replaced or dropped (worker).
+        this.cardChanged = null;
         this.#skillDtos = require('worker_threads').isMainThread ? null
             : new (require('./SkillDtoInterner').SkillDtoInterner)();
         Object.defineProperty(this, 'locationIndex', { value: sources.index, enumerable: true });
@@ -593,6 +585,11 @@ class RetainedStateMap extends Map {
         const wishAdvisory = ColdEconomyDecision.advisoryPublicationHolds(record.state, incomingAdvice, previousAdvice)
             ? incomingAdvice : ColdEconomyDecision.advisoryPublicationHolds(record.state, previousAdvice) ? previousAdvice : null;
         if (this.#skillDtos && record && (wishAdvisory || record.wishAdvisory)) record.wishAdvisory = wishAdvisory;
+        // The board wants follow the held card (the worker's cardChanged): a first row
+        // registers the card it restored, a card dropped or replaced here its own.
+        if (this.#skillDtos && record && (!current || (record.wishAdvisory?.eventProof || null) !== (previousAdvice?.eventProof || null))) {
+            this.cardChanged?.(record);
+        }
         if (this.#skillDtos) {
             let staged;
             try {
@@ -700,8 +697,6 @@ class ColdSimulationKernel {
         // each member's party id.
         this.parties = new Map();
         this.partyByMember = new Map();
-        // The adena a bot's buy orders hold (the worker sums its board rows).
-        this.escrowOf = typeof options.buyOrderEscrow === 'function' ? options.buyOrderEscrow : () => 0;
         // The clan hall rule over the bot's hall row (the worker's 'clan_halls'),
         // the player's meeting waits ('meetings') and a raid boss's row ('raids').
         this.hallNeedOf = typeof options.hallNeeded === 'function' ? options.hallNeeded : () => false;
@@ -915,10 +910,6 @@ class ColdSimulationKernel {
             if (member) members.push(member);
         }
         return members;
-    }
-
-    buyOrderEscrow(characterId) {
-        return Number(this.escrowOf(Number(characterId)) || 0);
     }
 
     // Whether this cold bot needs its clan hall now (lifecycleKind, the command).
@@ -1159,24 +1150,33 @@ class ColdSimulationKernel {
 
     // A board situation of a far bot (the worker's board diff: offer_posted from
     // MarketBuyerWaiters, line_undercut and goal_done:line on its own lines): raised at
-    // the bot's next step (planLifecycle reads record.boardWake.raises, one payload a
-    // name) and kept until a step that raised it commits (onCommitAck, completeCommand:
-    // its seq). A bot with no step coming (a craft shop) takes one command step for it.
-    // A worker restart loses a wake not yet committed (counted board:wake:lost by
+    // the bot's next solo step (planLifecycle reads record.boardWake.raises; a party
+    // member's waits for the step its own decisions are taken on again) and kept until a
+    // step that raised it commits (onCommitAck, completeCommand: its seq), name by name:
+    // one heard again after that step read it (heard: its seq) stays. An offer keeps the
+    // cheapest heard. A bot with no step coming (a craft shop) takes one command step for
+    // it. A worker restart loses a wake not yet committed (counted board:wake:lost by
     // shutdown). payload: plain data ({ itemId, price } for an offer). True when taken.
     boardWake(characterId, name, payload = null) {
         const id = Number(characterId), record = this.states.get(id), state = record?.state;
-        if (this.stopping || state?.phase !== 'cold' || state.party?.partyId || state.partyId || this.checkpointErrors.has(id)) return false;
-        record.boardWake = { seq: (Number(record.boardWake?.seq) || 0) + 1, raises: { ...record.boardWake?.raises, [name]: payload } };
-        if (lifecycleKind(state, this) === 'event_driven') {
+        if (this.stopping || state?.phase !== 'cold' || this.checkpointErrors.has(id)) return false;
+        const wake = record.boardWake, seq = (Number(wake?.seq) || 0) + 1, held = wake?.raises?.[name];
+        const kept = held && !(Number(payload?.price) < Number(held.price)) ? held : payload;
+        record.boardWake = { seq, raises: { ...wake?.raises, [name]: kept }, heard: { ...wake?.heard, [name]: seq } };
+        if (!state.party?.partyId && !state.partyId && lifecycleKind(state, this) === 'event_driven') {
             this.raiseWakeups.add(id);
             if (!this.busy(id)) this.requeue(id, this.now());
         }
         return true;
     }
-    // The board wake a committed step raised is answered (its seq; a newer one waits).
+    // The board wake a committed step raised is answered (its seq): the names heard
+    // after it wait for the next step.
     boardWakeAnswered(record, seq) {
-        if (record && seq && record.boardWake?.seq === seq) record.boardWake = null;
+        const wake = record?.boardWake;
+        if (!wake || !seq) return;
+        const left = Object.keys(wake.heard).filter(name => wake.heard[name] > seq);
+        record.boardWake = left.length ? { seq: wake.seq, raises: Object.fromEntries(left.map(name => [name, wake.raises[name]])),
+            heard: Object.fromEntries(left.map(name => [name, wake.heard[name]])) } : null;
     }
 
     // dueAt and kind: the due time and lifecycleKind of the stored state when

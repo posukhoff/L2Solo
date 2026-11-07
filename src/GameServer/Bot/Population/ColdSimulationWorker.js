@@ -199,17 +199,22 @@ const buyerWaiters = new MarketBuyerWaiters({
     wake: (id, offer) => kernel?.boardWake(id, 'offer_posted', offer) === true,
     capped: () => Situations.note('board:wait:capped')
 });
-// A build taken (the step's own, its commit pending): its card's watch rows are the
-// bot's board wants, replacing the last build's; each pays at most its worth a unit
-// and the wallet above its operating reserve now, and only below the cheapest line
-// the build saw (an offer it already passed over is no news).
+// The bot's board wants follow its held card (record.wishAdvisory): a card held anew (a
+// build taken, a card restored on a record's first row: a worker restart, a bot back
+// from a fence) registers its watch rows, replacing the last card's; no card, no wants.
+// Each pays at most its worth a unit and the wallet above its operating reserve as it
+// stands then, and only below the cheapest line on the board then (an offer the build
+// already passed over is no news; a card restored before the board copy is in has no
+// such cap). The kernel calls it from its record (StateStore.cardChanged).
 const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
-function registerWants(state, economy) {
+function registerWants(record) {
+    const state = record?.state;
+    if (!state) return;
     const id = Number(state.characterId);
     const spendable = PurchaseFunding.budget(state, escrowFor(id)) - PurchaseFunding.operatingReserve(state);
-    buyerWaiters.register(id, (economy?.watchList || []).map(row => {
-        const seen = Number(boardIndex.first(Number(row.itemId), 1, { excludeOwner: id })?.price);
-        return { itemId: Number(row.itemId), budget: Math.min(Number(row.worth) || 0, spendable, seen > 0 ? seen - 1 : Infinity) };
+    buyerWaiters.register(id, (record.wishAdvisory?.card?.watch || []).map(([itemId, , worth]) => {
+        const seen = Number(boardIndex.first(Number(itemId), 1, { excludeOwner: id })?.price);
+        return { itemId: Number(itemId), budget: Math.min(Number(worth) || 0, spendable, seen > 0 ? seen - 1 : Infinity) };
     }));
 }
 const boardFollower = boardIndex.follower();
@@ -720,7 +725,9 @@ const occupationPlanner = new ColdOccupationPlanner({
             send('ready', { phase: 'economy_decided', characterId: id, economyDecision: workshop.decision,
                 near: { statsPacket: workshop.statsPacket, personalCraft: workshop.personalCraft,
                     nearSeq: Number(input.state.nearSeq || 0), raiseSeq: Number(input.raiseSeq || 0),
-                    ...(workshop.shots ? { shots: workshop.shots } : {}), ...(workshop.market ? { market: workshop.market } : {}) } });
+                    ...(workshop.shots ? { shots: workshop.shots } : {}),
+                    // The look and the row it was taken on (main applies it on that revision only).
+                    ...(workshop.market ? { market: workshop.market, revision: Number(input.state.simulation?.revision || 0) } : {}) } });
             // Sent once: the slot keeps the workshop.
             workshop.decision = null; workshop.statsPacket = null; workshop.personalCraft = null; workshop.routeRows = null; workshop.shots = null; workshop.market = null;
         }
@@ -1237,7 +1244,9 @@ function rememberWishAdvisory(owner, advisory, seen = null) {
         if (diagnostic) economyDiagnostics.count('card', 'drop', `remember:${why}`);
         advisory = null;
     }
+    const changed = (advisory?.eventProof || null) !== (owner.wishAdvisory?.eventProof || null);
     owner.wishAdvisory = advisory;
+    if (changed) registerWants(owner);
 }
 
 // The own_lines decision (Situations), far and near: taken when woken, over every own
@@ -1672,7 +1681,6 @@ function startKernel(config = {}) {
         resolveParty: (options) => BackgroundPartyResolver.resolve(options),
         partySession: { partyMinSize: Config.partyMinSize },
         partyMinSize: Config.partyMinSize,
-        buyOrderEscrow: escrowFor,
         hallNeeded,
         playerWaiting: id => playerWaits.has(id),
         raidRow: id => tables.rows('raids').get(id) || null,
@@ -1865,8 +1873,9 @@ function startKernel(config = {}) {
                 if (stats.situationSeq !== state.stats?.situationSeq) state = { ...state, stats };
             };
             // The board's situations since its last step (kernel boardWake): an offer its
-            // build wants, its own lines undercut or filled.
-            const boardWake = record?.boardWake || null;
+            // build wants, its own lines undercut or filled; a party member's wait for its
+            // solo step.
+            const boardWake = !state.party?.partyId && !state.partyId ? record?.boardWake || null : null;
             for (const [name, payload] of Object.entries(boardWake?.raises || {})) raise(name, payload);
             const boardWakeSeq = boardWake ? { boardWakeSeq: boardWake.seq } : {};
             const leaf = card?.card?.activity;
@@ -2009,7 +2018,6 @@ function startKernel(config = {}) {
                 : ColdEconomyDecision.advisory(economy, seen, preparationState.activity, deps);
             rememberWishAdvisory(kernel.states.get(Number(state.characterId)), advice, seen, deps);
             if (nullReuse && economyDiagnostics.active()) economyDiagnostics.count('advisory', 'reuse', 'lifecycle');
-            if (!nullReuse) registerWants(state, economy);
             const stepPlan = {
                 ...boardWakeSeq,
                 ...(preparedOccupation?.economyPlan ? { economyPlan: preparedOccupation.economyPlan } : {}),
@@ -2123,6 +2131,7 @@ function startKernel(config = {}) {
         frame => Protocol.envelope('command_request', epoch, { requests: [{ kind: 'meeting', characterId: id, commandId: token, frame }] },
             `meeting-result:${id}:${token}:3`), result.dependencies);
     kernel.buyerEvents = buyerWaiters;
+    kernel.states.cardChanged = registerWants;
     // Craft input prices read the npc_offers snapshot, as main's table.
     invoke('GameServer/Bot/Economy/ShotMarketIndex').configure({ board: boardReady, stateFor: id => kernel.states.get(Number(id))?.state });
     EconomyContext.configure({

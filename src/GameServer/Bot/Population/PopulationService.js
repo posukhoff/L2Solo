@@ -9,7 +9,6 @@ const Metrics = invoke('GameServer/Bot/Population/PopulationMetrics');
 const Database = invoke('Database');
 const Status  = invoke('GameServer/Bot/Population/PopulationStatus');
 const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
-const PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
 const LifeEvents = invoke('GameServer/Bot/Population/BotLifeEvents');
 const SpotProfiles = invoke('GameServer/Bot/Population/SpotProfiles');
 const SpotService = invoke('GameServer/Bot/AI/SpotService');
@@ -322,36 +321,6 @@ async function marketTravelWithRefund(state, goal, timestamp = Date.now()) {
     const refunded = remote?.withdrawn ? remote.state || state : null;
     if (!refunded || refunded.phase !== 'cold' || joinedBackgroundParty(refunded)) return null;
     return GoalExecutor.beginMarketTravel(refunded, goal, timestamp);
-}
-
-// What the bot may pay for its market plan's target: the wallet with the
-// plan's own buy-order escrow, after the higher wishes (a weapon bridge: all).
-function marketPlanBudget(state, plan) {
-    const escrow = PurchaseFunding.tripEscrow(plan, BotAfkMarketService.buyOrderEscrow(state.characterId));
-    return plan.weaponBridge ? PurchaseFunding.budget(state, escrow)
-        : PurchaseFunding.spendable(state, escrow, { itemId: plan.target?.selfId });
-}
-
-function canResumeAffordableMarketPlan(state) {
-    const plan = state?.stats?.equipmentPlan;
-    const targetId = Number(plan?.target?.selfId || 0);
-    const targetSlot = Number(plan?.target?.slot || 0);
-    const requiredClanPurchase = plan?.clanGoal?.priority === 'required';
-    if (!['hunting', 'party_wait'].includes(state?.activity)
-        || plan?.status !== 'active'
-        || plan?.strategy !== 'market'
-        || (![7, 14].includes(targetSlot) && !requiredClanPurchase)
-        || targetId <= 0) return false;
-
-    const price = Number(plan.market?.price || 0);
-    const reserve = Math.max(0, Number(plan.market?.reserve || 0));
-    if (price <= 0 || marketPlanBudget(state, plan) < price) return false;
-
-    const combinationRequirement = (plan.combine?.requirements || [])
-        .find((entry) => Number(entry.selfId) === targetId);
-    const required = Math.max(1, Number(combinationRequirement?.amount || 1));
-    const owned = Number(state.inventory?.[String(targetId)]?.amount || 0);
-    return owned < required || LifeState.marketPurchaseBlocker(state, { selfId: targetId }, 1) === null;
 }
 
 function canResumeWarehouseMarketSale(state) {
@@ -3031,9 +3000,7 @@ const PopulationService = {
                 .hold(updatedState.characterId, workerRequest.precomputedPlan.economyDecision);
             Config.developerDiagnostics && Metrics.recordBackgroundResolve();
             Config.developerDiagnostics && Metrics.recordCombat(result.debug);
-            const recoveredForMarket = state.activity === 'resting'
-                && (canResumeAffordableMarketPlan(updatedState)
-                    || canResumeWarehouseMarketSale(updatedState));
+            const recoveredForMarket = state.activity === 'resting' && canResumeWarehouseMarketSale(updatedState);
             const cleanupTrip = cleanupAfterFight
                 ? inventoryCleanupTravelState(PartyMarketBreak.withoutStartedTrip(state, updatedState), startedAt)
                 : null;
@@ -3425,26 +3392,6 @@ const PopulationService = {
                 return { ok: !!saved, state: checked?.state || saved || state,
                     reason: saved ? 'equipment_improvement_travel' : 'state_write_rejected' };
             }
-            // Worker-owned recovery finishes before the main economy command.
-            // Reconsider a funded weapon purchase before applying another fight,
-            // which could immediately put the buyer back into recovery again.
-            if (!joinedBackgroundParty(state) && !state.stats?.pveEncounter && !state.stats?.pvpEncounter
-                && canResumeAffordableMarketPlan(state)) {
-                const goal = await GoalService.review(state);
-                const current = LifeState.cachedState(state.characterId) || state;
-                if (current !== state || joinedBackgroundParty(current) || current.phase !== 'cold') {
-                    return { ok: false, reason: 'state_changed', state: current };
-                }
-                const travel = await marketTravelWithRefund(state, goal?.current, Date.now());
-                const latest = LifeState.cachedState(state.characterId) || current;
-                if (!travel && latest !== current) return { ok: false, reason: 'state_changed', state: latest };
-                if (travel) {
-                    const saved = await LifeState.upsertState(travel, 'goal_market_travel_before_combat');
-                    const checked = saved && await BotAfkMarketService.reviewPurchaseLimits(saved);
-                    return { ok: !!saved, state: checked?.state || saved || state,
-                        reason: saved ? 'goal_market_travel' : 'state_write_rejected' };
-                }
-            }
             return await this.resolveColdState(state, request, options);
         } catch (error) {
             if (!(error instanceof WorkerCommandAdmissionRefusal)) throw error;
@@ -3579,7 +3526,6 @@ PopulationService.arrivalPointForState = (state, spot) => SpotService.arrivalPoi
 PopulationService.walkerAppearance = walkerAppearance;
 PopulationService.marketListingIntent = marketListingIntent;
 PopulationService.openMarketListing = openMarketListing;
-PopulationService.canResumeAffordableMarketPlan = canResumeAffordableMarketPlan;
 PopulationService.partyLimitsForObjective = partyLimitsForObjective;
 PopulationService.requiresClanEquipmentParty = requiresClanEquipmentParty;
 PopulationService.partyObjectivesShareRoute = partyObjectivesShareRoute;

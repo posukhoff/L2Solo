@@ -1,12 +1,14 @@
 'use strict';
 // The board's buyers (worker): what each bot's held build
 // wants from player supply (its card's watch rows: item, the most it pays a unit),
-// registered when the build is taken (register) and replaced by its next build, no
-// clock. A new SELL line, or a cheaper one, wakes at most five buyers of its item whose
-// budget reaches its price (recordChanged → wake: offer_posted, which wakes the build);
-// a woken want leaves the index until the next build registers it again. At most
-// MAX_WANTS per bot (the rest counted: board:wait:capped). Beside it the owners' own
-// lines (lineEvents): the same record change raises their own-line situations.
+// registered while the card is held (register, from the worker's held card: a build
+// taken, a card restored on a record's first row) and dropped with it, no clock. A new
+// SELL line, or a cheaper one, wakes at most five buyers of its item whose budget
+// reaches its price (recordChanged → wake: offer_posted, which wakes the build); a
+// woken want leaves the index until the build it wakes holds its next card, a want
+// whose wake is refused (a bot that cannot take it now) stays. At most MAX_WANTS per
+// bot (the rest counted: board:wait:capped). Beside it the owners' own lines
+// (lineEvents): the same record change raises their own-line situations.
 const MAX_WANTS = 8;
 const WAKES_PER_RECORD = 5;
 
@@ -65,8 +67,8 @@ class MarketBuyerWaiters {
         }
         this.owners.delete(ownerId);
     }
-    // A build taken: its wants replace the bot's. wants: [{ itemId, budget }] (budget: the
-    // most it pays a unit, as the build read its wallet).
+    // A card held: its wants replace the bot's. wants: [{ itemId, budget }] (budget: the
+    // most it pays a unit, as the wallet read when the card was held).
     register(ownerId, wants = []) {
         this.remove(ownerId);
         const byItem = new Map();
@@ -105,9 +107,8 @@ class MarketBuyerWaiters {
                 const heap = this.items.get(itemId);
                 while (heap?.peek()?.budget >= price && inspected < WAKES_PER_RECORD) {
                     const node = heap.peek(); heap.remove(node); inspected++;
-                    if (node.ownerId === Number(record.ownerId)) { held.push(node); continue; }
-                    this.remove(node.ownerId);
-                    if (this.wake(node.ownerId, { itemId, price })) woken.push(node.ownerId);
+                    if (node.ownerId === Number(record.ownerId) || !this.wake(node.ownerId, { itemId, price })) { held.push(node); continue; }
+                    this.remove(node.ownerId); woken.push(node.ownerId);
                 }
                 if (inspected === WAKES_PER_RECORD) break;
             }
@@ -124,10 +125,13 @@ class MarketBuyerWaiters {
 // The own-line situations of a board record's change (record: BoardIndex.recordOf;
 // previous: its indexed lines before; board: the index with the record put): a bot
 // owner's line filled (its fills moved: a sale, a bid answered; a line sold out leaves
-// the record and raises none) raises goal_done:line on it; a SELL line new or cheaper
-// raises line_undercut on the bot owners of the same item's dearer SELL lines where it
-// sells (its town; an unplaced line every town), at most WAKES_PER_RECORD a record from
-// the cheapest up, the rest told to capped(). wake(ownerId, name).
+// the record and raises none) raises goal_done:line on it; a new SELL line raises
+// line_undercut on the bot owners of the same item's dearer SELL lines where it sells
+// (its town; an unplaced line every town), at most WAKES_PER_RECORD a line from the
+// cheapest up, each owner past them told to capped(). A C4 seller sees a new stall or
+// shout of his item when it appears; a rival's price change he sees at his own next
+// look (his town arrival, arrived_town), so a reprice raises none: two sellers of one
+// item do not undercut each other at machine speed. wake(ownerId, name).
 function lineEvents(record, previous, board, wake, capped = () => {}) {
     const ownerId = Number(record.ownerId), old = new Map(previous.map(line => [line.lineId, line]));
     if (record.botOwned && record.lines.some(line => line.fills > Number(old.get(Number(line.lineId))?.fills ?? line.fills))) {
@@ -136,12 +140,13 @@ function lineEvents(record, previous, board, wake, capped = () => {}) {
     if (Number(record.storeType) !== 1) return;
     const woken = new Set();
     for (const line of record.lines) {
-        const before = old.get(Number(line.lineId));
-        if (before && before.selfId === Number(line.selfId) && Number(line.price) >= before.price) continue;
+        if (old.has(Number(line.lineId))) continue;
+        let raised = 0;
         for (const other of board.lines(Number(line.selfId), 1, record.town)) {
             if (!(other.price > Number(line.price)) || !other.botOwned || other.ownerId === ownerId || woken.has(other.ownerId)) continue;
-            if (woken.size === WAKES_PER_RECORD) { capped(); return; }
             woken.add(other.ownerId);
+            if (raised === WAKES_PER_RECORD) { capped(); continue; }
+            raised++;
             wake(other.ownerId, 'line_undercut');
         }
     }

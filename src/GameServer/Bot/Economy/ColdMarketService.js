@@ -20,7 +20,6 @@ const EconomicValuation = require('./EconomicValuation');
 const PriceDecision = require('./PriceDecision');
 const Trace = require('../DecisionTrace');
 const BoardClaims = require('./BoardClaims');
-const Situations = require('../Situations');
 
 function purchaseObservation(state, selfId, requested, budget, phase, reason, extra) {
     if (!Diagnostics.active()) return;
@@ -337,7 +336,7 @@ function planPurchase(state, selfId, amount, options = {}) {
         return personalOfferAllowed(line, state);
     };
     // The units other bots' errands claim are gone for this buyer (BoardClaims).
-    const countOf = line => BoardClaims.unclaimed(line, state?.characterId, timestamp);
+    const countOf = line => BoardClaims.unclaimed(line, state?.characterId);
     const acceptFill = (line, count) => {
         const refused = priceRefused(state, line, count, board);
         if (refused) options.onPriceRefusal?.(line, count);
@@ -649,7 +648,7 @@ async function acquire(state, selfId, amount, options = {}) {
     if (options.persist === false) return { state: next, bought: false, units: 0, traveling: !!travel, plan, errandAt: errand.at };
     const saved = await LifeState.upsertState(next, travel ? `market_errand_${errand.purpose}` : 'market_errand_kept');
     // The trip decided: its board lines are the bot's until the errand ends (BoardClaims).
-    if (saved) BoardClaims.claim(state.characterId, errand, plan.lines, Situations.note);
+    if (saved) BoardClaims.claimErrand(state.characterId, errand, plan.lines);
     return { state: saved || next, bought: false, units: 0, traveling: !!travel && !!saved, plan, errandAt: saved ? errand.at : null };
 }
 

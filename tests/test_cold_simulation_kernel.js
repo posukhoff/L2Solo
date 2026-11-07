@@ -16,7 +16,7 @@ const { beginHuntingTrip } = require('../src/GameServer/Bot/Population/HuntingTr
 
 // The facts a kernel gives the free functions (its parties table, its
 // states, the board's escrow) for a bot that leads `party`.
-const leading = (party, members = []) => ({ leaderParty: () => party, partyMembers: () => members, buyOrderEscrow: () => 0,
+const leading = (party, members = []) => ({ leaderParty: () => party, partyMembers: () => members,
     hallNeeded: () => false, playerWaiting: () => false });
 
 function state(characterId = 1, overrides = {}) {
@@ -403,10 +403,6 @@ const everStepped = (kernel, id) => startedSteps.get(kernel).some(ids => ids.inc
         'a finished service must still preserve the clan assembly wait before solo hunting');
     assert.strictEqual(lifecycleKind(state(2, { activity: 'party_wait', stats: { clanPartyObjective: clanDuty } })), 'resolver',
         'actual clan assembly must remain in the pure worker wait path');
-    assert.strictEqual(lifecycleKind(state(2, { activity: 'party_wait', adena: 1000, stats: {
-        clanPartyObjective: clanDuty,
-        equipmentPlan: { strategy: 'market', market: { price: 500, reserve: 100 } }
-    } })), 'command', 'a funded weapon bridge must recover from a stale party-wait state');
     for (const plan of [{ status: 'complete' }, { status: 'deferred', strategy: 'none' },
         { status: 'active', strategy: 'craft' }]) {
         assert.strictEqual(lifecycleKind(state(2, { stats: {
@@ -416,13 +412,12 @@ const everStepped = (kernel, id) => startedSteps.get(kernel).some(ids => ids.inc
     assert.strictEqual(lifecycleKind(state(2, { stats: { craftReturn: { loc: {} },
         equipmentPlan: { strategy: 'craft', status: 'ready_to_craft' } } })), 'command',
     'ready crafting still uses the main-thread crafting workflow');
-    assert.strictEqual(lifecycleKind(state(2, { stats: { equipmentPlan: { strategy: 'market' } } })), 'resolver');
-    // A wallet of 1000 above its survival reserve (the kit the table's use asks for) funds the piece.
+    // A funded market plan is the build's trip (its card's town leaf): the bot hunts on the resolver.
     const fundedWallet = invoke('GameServer/Bot/Economy/PurchaseFunding').operatingReserve(state(2)) + 1000;
     assert.strictEqual(lifecycleKind(state(2, {
         adena: fundedWallet,
         stats: { equipmentPlan: { strategy: 'market', market: { price: 500, reserve: 100 } } }
-    })), 'command');
+    })), 'resolver');
     assert.strictEqual(lifecycleKind(state(2, { party: { partyId: 'party' } }), leading({ partyId: 'party', leaderId: 2 })), 'party');
 
     // The worker's own hunting pick is the target for the native solo
