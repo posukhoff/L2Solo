@@ -5,7 +5,8 @@
 // clock. A new SELL line, or a cheaper one, wakes at most five buyers of its item whose
 // budget reaches its price (recordChanged → wake: offer_posted, which wakes the build);
 // a woken want leaves the index until the next build registers it again. At most
-// MAX_WANTS per bot (the rest counted: board:wait:capped).
+// MAX_WANTS per bot (the rest counted: board:wait:capped). Beside it the owners' own
+// lines (lineEvents): the same record change raises their own-line situations.
 const MAX_WANTS = 8;
 const WAKES_PER_RECORD = 5;
 
@@ -120,4 +121,30 @@ class MarketBuyerWaiters {
     }
 }
 
-module.exports = { MarketBuyerWaiters, MAX_WANTS };
+// The own-line situations of a board record's change (record: BoardIndex.recordOf;
+// previous: its indexed lines before; board: the index with the record put): a bot
+// owner's line filled (its fills moved: a sale, a bid answered; a line sold out leaves
+// the record and raises none) raises goal_done:line on it; a SELL line new or cheaper
+// raises line_undercut on the bot owners of the same item's dearer SELL lines where it
+// sells (its town; an unplaced line every town), at most WAKES_PER_RECORD a record from
+// the cheapest up, the rest told to capped(). wake(ownerId, name).
+function lineEvents(record, previous, board, wake, capped = () => {}) {
+    const ownerId = Number(record.ownerId), old = new Map(previous.map(line => [line.lineId, line]));
+    if (record.botOwned && record.lines.some(line => line.fills > Number(old.get(Number(line.lineId))?.fills ?? line.fills))) {
+        wake(ownerId, 'goal_done:line');
+    }
+    if (Number(record.storeType) !== 1) return;
+    const woken = new Set();
+    for (const line of record.lines) {
+        const before = old.get(Number(line.lineId));
+        if (before && before.selfId === Number(line.selfId) && Number(line.price) >= before.price) continue;
+        for (const other of board.lines(Number(line.selfId), 1, record.town)) {
+            if (!(other.price > Number(line.price)) || !other.botOwned || other.ownerId === ownerId || woken.has(other.ownerId)) continue;
+            if (woken.size === WAKES_PER_RECORD) { capped(); return; }
+            woken.add(other.ownerId);
+            wake(other.ownerId, 'line_undercut');
+        }
+    }
+}
+
+module.exports = { MarketBuyerWaiters, MAX_WANTS, lineEvents };

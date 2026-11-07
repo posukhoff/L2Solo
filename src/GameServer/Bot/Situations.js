@@ -151,7 +151,14 @@ const SITUATIONS = Object.freeze({
     // A board offer its held build wants (MarketBuyerWaiters: a new SELL line, or a cheaper
     // one, within the want's budget), raised at the bot's next step (payload { itemId,
     // price }): it answers the trade it hears, as a C4 player answers a WTS shout.
-    offer_posted: link(0)
+    offer_posted: link(0),
+    // Its own board lines (the worker's board diff): a SELL line of the same item posted
+    // or repriced below its own in its town (an unplaced ad counts in every town), as a
+    // C4 seller sees a cheaper store or WTS shout; one of its own lines filled (a sale, a
+    // bid answered). Heard at its next stop: a hunting player looks at his store when he
+    // sits down or reaches town.
+    line_undercut: link(0, STOP),
+    'goal_done:line': link(0, STOP)
 });
 const hears = (name, where) => !(SITUATIONS[name].waits & where);
 // One reason with no decision of its own (a step's market review): is it heard here, counted as a raise.
@@ -184,6 +191,9 @@ function woke(name, where) {
 // gained in the field is read there) and at a recipe learned, held between: levels, worn
 // gear, prices, the board and its own fills wake it not. A bot that is no service crafter
 // takes it as none. It has no held key: only its raises wake it.
+// own_lines: the prices of its own board lines (MarketPricing.look over every own
+// priced line), taken at a town arrival (it sees the stores), a line undercut and a
+// line filled; held between: prices, deals and the clock wake it not. No held key.
 const DECISIONS = Object.freeze({
     earning_spot: Object.freeze(['grade_changed', 'spot_outleveled', 'gear_changed', 'died', 'recovered', 'spot_disappoints', 'contest_lost', 'spot_empty',
         'spot_dangerous', 'spot_unreachable', 'moved_by_world', 'party_left', 'shots_out', 'goal_affordable:potions',
@@ -193,7 +203,8 @@ const DECISIONS = Object.freeze({
         'goal_done:visit', 'goal_failed:visit', 'stock_low:shots', 'stock_low:potions', 'bag_full', 'source_stalled', 'clan_call',
         'clan_changed', 'spot_empty', 'goal_moved', 'player_command', 'offer_posted']),
     gear_plan: Object.freeze(['grade_changed', 'gear_changed', 'clan_changed', 'source_stalled']),
-    workshop: Object.freeze(['arrived_town', 'arrived_town:own', 'recipe_learned'])
+    workshop: Object.freeze(['arrived_town', 'arrived_town:own', 'recipe_learned']),
+    own_lines: Object.freeze(['arrived_town', 'arrived_town:own', 'line_undercut', 'goal_done:line'])
 });
 const BITS = Object.freeze(Object.fromEntries(Object.keys(DECISIONS).map((name, at) => [name, 1 << at])));
 const ALL = Object.values(BITS).reduce((all, bit) => all | bit, 0), PLANE = 0xff;

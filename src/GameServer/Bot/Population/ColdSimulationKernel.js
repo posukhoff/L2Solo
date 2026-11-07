@@ -720,10 +720,6 @@ class ColdSimulationKernel {
         this.buyerEvents = null;
         // Bots with no step coming whose row a raise woke: one command step answers it.
         this.raiseWakeups = new Set();
-        // Own line observations: <=8 numeric {deals, at} rows per stepping bot.
-        // A step ended without a commit, hot handoff/remove and shutdown discard
-        // them; never saved.
-        this.lookSeen = new Map();
         // Steps by bot, in start order (a Map keeps insertion order): the
         // stall check reads only the oldest entries.
         this.inFlight = new Map();
@@ -1092,7 +1088,6 @@ class ColdSimulationKernel {
         this.states.delete(id);
         this.buyerEvents?.remove(id);
         this.raiseWakeups.delete(id);
-        this.lookSeen.delete(id);
         this.versions.set(id, Number(this.versions.get(id) || 0) + 1);
         this.heap.remove(this.scheduleTokens.get(id)?.heapEntry);
         this.scheduleTokens.delete(id);
@@ -1140,8 +1135,7 @@ class ColdSimulationKernel {
             scheduleTokens: this.scheduleTokens.size, ownerHeapNodes: this.heap.size,
             inFlight: this.inFlight.size, dirty: this.dirty.size,
             commanding: this.commanding.size, commandStartedAt: this.commandStartedAt.size,
-            partyRuns: this.partyRuns.size, partyRequirementProgress: this.partyRequirementProgress.size,
-            lookSeen: this.lookSeen.size
+            partyRuns: this.partyRuns.size, partyRequirementProgress: this.partyRequirementProgress.size
         };
     }
 
@@ -1163,16 +1157,17 @@ class ColdSimulationKernel {
         return !!entry && isSchedulableKind(lifecycleKind(entry.state, this));
     }
 
-    // A board offer that woke a far bot's build (MarketBuyerWaiters): raised as
-    // offer_posted at the bot's next step (planLifecycle reads record.boardWake) and
-    // kept until a step that raised it commits (onCommitAck, completeCommand: its
-    // seq). A bot with no step coming (a craft shop) takes one command step for it.
+    // A board situation of a far bot (the worker's board diff: offer_posted from
+    // MarketBuyerWaiters, line_undercut and goal_done:line on its own lines): raised at
+    // the bot's next step (planLifecycle reads record.boardWake.raises, one payload a
+    // name) and kept until a step that raised it commits (onCommitAck, completeCommand:
+    // its seq). A bot with no step coming (a craft shop) takes one command step for it.
     // A worker restart loses a wake not yet committed (counted board:wake:lost by
-    // shutdown). offer: { itemId, price }. True when taken.
-    boardWake(characterId, offer = null) {
+    // shutdown). payload: plain data ({ itemId, price } for an offer). True when taken.
+    boardWake(characterId, name, payload = null) {
         const id = Number(characterId), record = this.states.get(id), state = record?.state;
         if (this.stopping || state?.phase !== 'cold' || state.party?.partyId || state.partyId || this.checkpointErrors.has(id)) return false;
-        record.boardWake = { seq: (Number(record.boardWake?.seq) || 0) + 1, itemId: Number(offer?.itemId) || 0, price: Number(offer?.price) || 0 };
+        record.boardWake = { seq: (Number(record.boardWake?.seq) || 0) + 1, raises: { ...record.boardWake?.raises, [name]: payload } };
         if (lifecycleKind(state, this) === 'event_driven') {
             this.raiseWakeups.add(id);
             if (!this.busy(id)) this.requeue(id, this.now());
@@ -1675,7 +1670,6 @@ class ColdSimulationKernel {
             const id = Number(characterId), active = this.inFlight.get(id);
             this.inFlight.delete(id);
             this.dirty.delete(id);
-            this.lookSeen.delete(id);
             if (!active) continue;
             this.partyRequirementProgress.delete(String(active.partyId || active.state?.party?.partyId || ''));
             // No review runs the plan a sent proposal stamped.
@@ -2771,7 +2765,6 @@ class ColdSimulationKernel {
         this.buyerEvents?.clear();
         // A board wake no step committed is lost with this worker (a restart re-plans).
         for (const record of this.states.values()) if (record.boardWake) (Situations ||= require('../Situations')).note('board:wake:lost');
-        this.lookSeen.clear();
         this.commanding.clear();
         this.commandStartedAt.clear();
         await this.resolveChain.catch(() => null);

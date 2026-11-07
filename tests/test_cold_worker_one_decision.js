@@ -58,13 +58,22 @@ module.exports.stepProbe = async (id) => {
         // at the rest, then a trip arrives in town.
         const round = (from, patch, at) => kernel.projectResolve(from, { patch, debug: {}, events: [],
             materialize: { exp: 0, sp: 0, adena: 0, items: [] }, nextResolveAt: at + 60000 }, at, plan);
+        const Situations = invoke('GameServer/Bot/Situations');
+        // Its own lines are looked at only at their situations (own_lines): none of the
+        // field rounds, once at the arrival in town, its bit cleared on the state committed.
+        const looks = () => Situations.counts().decided.own_lines?.[0] || 0;
+        const looked = looks();
+        // (The rounds reuse the step's packet, made before its look: as the next step's
+        // plan would be, made on the committed state, it carries the look's bit cleared.)
+        if (plan.statsPacket.woken !== undefined) plan.statsPacket = { ...plan.statsPacket, woken: plan.statsPacket.woken & ~Situations.BITS.own_lines };
         const rest = await round(projection.state, { activity: 'resting' }, timestamp + 1000);
         const back = await round(rest.state, { activity: 'hunting' }, timestamp + 1500);
+        const fieldLooks = looks() - looked;
         const town = await round({ ...rest.state, activity: 'traveling' }, { activity: 'shopping' }, timestamp + 2000);
-        const Situations = invoke('GameServer/Bot/Situations');
+        const ownLines = [fieldLooks, looks() - looked - fieldLooks, Number(Situations.woken(town.state.stats, 'own_lines'))];
         const built = next => Number(Situations.woken(next.state.stats, 'build'));
         const raised = next => [built(next), Number(next.state.stats.decisionSeq || 0)];
-        return { decided, afterRound, activity: state.activity,
+        return { decided, afterRound, activity: state.activity, ownLines,
             woken: built(projection),
             seq: [Number(plan.statsPacket.decisionSeq || 0), Number(projection.state.stats.decisionSeq || 0)],
             rest: raised(rest), town: raised(town),
@@ -276,6 +285,7 @@ parentPort.on('message', message => {
         assert.equal(step.seq[1], step.seq[0], 'and the decision sequence stands');
         assert.equal(step.rest[0], 0, 'nor does the round that ends at the rest');
         assert.equal(step.town[0], 1, 'the arrival in town wakes the build: its shopping moment (arrived_town)');
+        assert.deepEqual(step.ownLines, [0, 1, 0], 'its own lines: no look in the field, one at the arrival in town, held after');
         assert.equal(step.baseline[1], step.baseline[0], 'the projected state keeps the baseline of the step decision');
         assert.equal(step.card.updatedAt, step.card.projectedAt, 'main gets the step card stamped to the projected state');
         assert.deepEqual(step.card.echo, step.card.projectedEcho, 'main gets the step card with the projected decision echo');

@@ -31,7 +31,6 @@ const AfkMarket = invoke('GameServer/Bot/Economy/BotAfkMarketService');
 const ColdBuffService = invoke('GameServer/Bot/Economy/ColdBuffService');
 const World = invoke('GameServer/World/World');
 const EconomyContext = invoke('GameServer/Bot/Economy/EconomyContext');
-const HotBoardReview = invoke('GameServer/Bot/Economy/HotBoardReviewService');
 const Protocol = require('./ColdSimulationProtocol');
 const { ColdEconomyDecisions, echoHolds } = require('./ColdEconomyDecision');
 const { TTL_MS: COMPETITION_TTL_MS } = require('./ColdCompetitionActions');
@@ -144,7 +143,7 @@ class ColdSimulationCoordinator {
         // Always on (PopulationStatus.nearText): the near decisions the bodies
         // took, refused as older than the held one, or dropped (the bot cooled
         // or has no body before its decision arrived).
-        this.nearDecisions = { accepted: 0, refused: 0, dropped: 0 };
+        this.nearDecisions = { accepted: 0, refused: 0, dropped: 0, linesStale: 0 };
         this.workerMaxInFlight = null;
         this.restartCount = 0;
         this.loadedAt = 0;
@@ -801,7 +800,18 @@ class ColdSimulationCoordinator {
                 // The held card is the one compact (accept) the body's view reads.
                 const decision = this.economyDecisions.accept(id, payload.economyDecision);
                 DecisionEvents.receive(session, decision, payload.near);
-                if (decision?.feasibility) HotBoardReview.preparedOwner(id);
+                // Its own lines' look (own_lines, taken on this post): applied on the hot
+                // row it was taken for; a row moved since waits for the next look.
+                if (payload.near.market) {
+                    const hotAuthority = { revision: Number(state.simulation?.revision || 0) };
+                    AfkMarket.applyReview(id, payload.near.market, { hotAuthority, canCommitReview: () => {
+                        const current = LifeState.cachedState(id);
+                        return current?.phase === 'hot' && Number(current.simulation?.revision || 0) === hotAuthority.revision;
+                    } }).catch(error => {
+                        if (['stale_market_review', 'hot_handoff_fenced'].includes(error.message)) this.nearDecisions.linesStale++;
+                        else FailureLog.note('situations.own_lines_hot', error);
+                    });
+                }
                 // The body acts on its new decision at its next turn, not at its next tick.
                 invoke('GameServer/Bot/BotAI').wakeup(session);
             }

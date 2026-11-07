@@ -1431,15 +1431,7 @@ const everStepped = (kernel, id) => startedSteps.get(kernel).some(ids => ids.inc
     assert.strictEqual(marketProposal.market.updates, undefined, 'unchanged quotes send no metadata update');
     assert.strictEqual(marketProposal.nextState.stats.priceBeliefs, undefined, 'line knowledge does not ride in bot stats');
     assert.strictEqual(marketKernel.beginCommand(40, 'market_review'), null, 'board review command kind is retired');
-    marketKernel.lookSeen.set(40, new Map([[6, { deals: 3, at: now }]]));
-    marketKernel.fence(40);
-    assert.strictEqual(marketKernel.lookSeen.has(40), false, 'hot handoff deletes worker line observations');
-    marketKernel.upsert({ state: state(41) });
-    marketKernel.lookSeen.set(41, new Map([[7, { deals: 3, at: now }]]));
-    marketKernel.remove(41);
-    assert.strictEqual(marketKernel.lookSeen.has(41), false);
     await marketKernel.shutdown();
-    assert.strictEqual(marketKernel.lookSeen.size, 0);
 
     {
         // A commit ack naming a review: the bot waits for the review command

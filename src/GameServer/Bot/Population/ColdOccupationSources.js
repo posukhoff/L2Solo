@@ -57,25 +57,8 @@ function* reservations(state) {
     return Disposition.reservedEquipmentAmounts(state);
 }
 
-function* feasibility(state, { board, read = () => {} }, reserved = null) {
-    reserved ||= yield* reservations(state);
-    if (!reserved || !board) return null;
-    const Look = invoke('GameServer/Bot/Economy/BoardLook'), lines = board.ownerLines(state.characterId);
-    if (lines.length > Look.MAX_OWNED_LINES) return null;
-    let hash = 0x811c9dc5, blocked = 0, at = 0;
-    for (const line of lines) {
-        read(line.selfId); hash = Look.lineFingerprint(hash, line);
-        if (line.storeType === 1 && Look.indexedFeasibility(state, line, reserved) === false) blocked |= 1 << at;
-        at++; yield 'owned';
-    }
-    return [hash, blocked, lines.length];
-}
-
-// Whether a cold look may keep an own SELL line on sale: the mask's rule
-// (feasibility) on the state it looks at, its reservations read once at the
-// first line asked. A built mask describes its build's state and keys only the
-// lines, not the reservations and item flags its bits read, so a held build's
-// mask is no answer for a later state.
+// Whether a look may keep an own SELL line on sale (BoardLook.indexedFeasibility) on
+// the state it looks at, its reservations read once at the first line asked.
 function canSell(state, lines) {
     const Look = invoke('GameServer/Bot/Economy/BoardLook');
     let reserved;
@@ -171,7 +154,6 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
     if (admission) readScope(admission.scopeFor(craftLevel));
     const reserved = yield* reservations(state);
     if (!reserved) return noPlan('unknown_reservations', state, onNoPlan);
-    const preparedFeasibility = targetRecipe ? null : yield* feasibility(state, { board, read }, reserved);
     const targetItems = targetRecipe ? new Set([Number(targetRecipe.productId), Number(targetRecipe.recipeItemId),
         ...(targetRecipe.materials || []).map(row => Number(row.selfId))]) : null;
     const ownStock = new Map(), routes = [];
@@ -290,12 +272,12 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
             }
         }
     };
-    return { context, feasibility: preparedFeasibility, options: { reserved, ownStock, prepareExits, preparePurchase, prepareTrip: ensureTrip, gearRowsFor,
+    return { context, options: { reserved, ownStock, prepareExits, preparePurchase, prepareTrip: ensureTrip, gearRowsFor,
         unknownRecipes: () => admission ? admission.rowsFor(craftLevel) : [],
         ownLines: board?.ownerLines(Number(state.characterId)) || [] } };
 }
 
-module.exports = { initialise, prepare, exitValue, craftLabour, reservations, feasibility, canSell, tripDetails, regionalTown, QUOTE_DEPTH, recipeIndex,
+module.exports = { initialise, prepare, exitValue, craftLabour, reservations, canSell, tripDetails, regionalTown, QUOTE_DEPTH, recipeIndex,
     fixedBuyerOffersFor,
     hasNpcSellerInTown: town => { initialise(); return npcOfferView?.hasSellerInTown(town) || false; },
     npcOffersFor,

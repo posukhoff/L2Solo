@@ -6,7 +6,7 @@
 require('../src/Global');
 const assert = require('node:assert/strict');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
-const { MarketBuyerWaiters, MAX_WANTS } = require('../src/GameServer/Bot/Economy/MarketBuyerWaiters');
+const { MarketBuyerWaiters, MAX_WANTS, lineEvents } = require('../src/GameServer/Bot/Economy/MarketBuyerWaiters');
 const { ColdSimulationKernel } = require('../src/GameServer/Bot/Population/ColdSimulationKernel');
 
 async function main() {
@@ -16,7 +16,7 @@ async function main() {
         resolveSolo: () => ({ patch: {}, events: [], materialize: { items: [] }, nextResolveAt: now + 60000 }),
         emit: () => true });
     let capped = 0;
-    const waiters = new MarketBuyerWaiters({ wake: (id, offer) => kernel.boardWake(id, offer), capped: () => capped++ });
+    const waiters = new MarketBuyerWaiters({ wake: (id, offer) => kernel.boardWake(id, 'offer_posted', offer), capped: () => capped++ });
     kernel.buyerEvents = waiters;
     const state = (id, overrides = {}) => ({ characterId: id, phase: 'cold', activity: 'hunting', level: 1,
         adena: 2000, inventory: {}, vitals: { hp: 100 }, stats: {},
@@ -35,7 +35,8 @@ async function main() {
         for (let id = 100; id < 104; id++) { kernel.upsert(state(id)); waiters.register(id, [{ itemId: 1000 + id, budget: 1500 }]); }
         kernel.upsert(state(21, { phase: 'hot' })); waiters.register(21, [{ itemId: 99, budget: 1500 }]);
         assert.deepEqual(publish(record(1)), [1, 2, 3, 4, 5], 'a new offer wakes five buyers of its item');
-        assert.deepEqual(kernel.states.get(1).boardWake, { seq: 1, itemId: 99, price: 100 }, 'raised at the next step: the offer');
+        assert.deepEqual(kernel.states.get(1).boardWake, { seq: 1, raises: { offer_posted: { itemId: 99, price: 100 } } },
+            'raised at the next step: the offer');
         assert.equal(kernel.inFlight.size + kernel.commanding.size, 0, 'a wake starts no step: the bot hears it at its next one');
         assert.deepEqual(publish(record(1)), [], 'a metadata refresh is not a new offer');
         assert.deepEqual(publish(record(1, 100, 9)), [], 'a sale wakes no buyer');
@@ -61,7 +62,33 @@ async function main() {
         assert.equal(capped, 1, 'the wants past the cap are counted');
         kernel.remove(103);
         assert.deepEqual(publish(record(6, 100, 10, [{ lineId: 3, selfId: 1103, count: 5, price: 100 }])), [], 'a removed bot waits no more');
-        console.log('market buyer waiters: PASS (wants of the build, bounded wakes at the next step, no clock)');
+        // The owners' own lines: a cheaper SELL line where theirs sell raises line_undercut on
+        // the dearer bot owners (five a record from the cheapest up, the rest counted); a fill of
+        // an own line raises goal_done:line on its owner; a dearer line or another town none.
+        const raised = [];
+        let undercutCapped = 0;
+        const lines = new BoardIndex();
+        const put = row => {
+            const previous = lines.records.get(row.id) || [];
+            lines.put(row);
+            lineEvents(row, previous, lines, (id, name) => raised.push([id, name]), () => undercutCapped++);
+        };
+        const stall = (id, ownerId, price, town = 'Giran', fills = 0) => ({ id, ownerId, storeType: 1, town, botOwned: true,
+            lines: [{ lineId: id, selfId: 57 + 1000, count: 5, price, fills }] });
+        for (let n = 0; n < 7; n++) put(stall(10 + n, 300 + n, 200 + n));
+        put(stall(30, 400, 150, 'Dion'));
+        raised.length = 0;
+        put(stall(40, 500, 250));
+        assert.deepEqual(raised, [], 'a dearer line undercuts nobody');
+        put(stall(41, 501, 100));
+        assert.deepEqual(raised, [300, 301, 302, 303, 304].map(id => [id, 'line_undercut']), 'the five cheapest dearer owners, in its town only');
+        assert.equal(undercutCapped, 1, 'the owners past five are counted');
+        raised.length = 0;
+        put(stall(41, 501, 100));
+        assert.deepEqual(raised, [], 'the same line again is no news');
+        put(stall(10, 300, 200, 'Giran', 1));
+        assert.deepEqual(raised, [[300, 'goal_done:line']], 'its own line filled');
+        console.log('market buyer waiters: PASS (wants of the build, bounded wakes at the next step, no clock; own-line situations)');
     } finally {
         await kernel.shutdown();
         assert.equal(waiters.items.size, 0);

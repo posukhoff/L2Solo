@@ -472,7 +472,7 @@ module.exports = {
             || session.coldLifeState?.stats?.tradeMeeting || invoke('GameServer/Bot/Population/BotLifeState').cachedState(bot.fetchId())?.stats?.tradeMeeting) {
             return;
         }
-        invoke('GameServer/Bot/Economy/HotBoardReviewService').naturalBreak(session, 2);
+        invoke('GameServer/AfkTrade/TradeMeetingService').breakChanged(session, 2);
         if (session.partyCompanion === true && session.followPlayerSession && !session.companionShopping) {
             session.plan = 'following';
             session.shoppingTarget = undefined;

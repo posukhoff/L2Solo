@@ -13,7 +13,6 @@ const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
 const Policy = require('../src/GameServer/Social/InteractionMemoryPolicy');
 const { ColdSimulationKernel } = require('../src/GameServer/Bot/Population/ColdSimulationKernel');
 const { MarketBuyerWaiters } = require('../src/GameServer/Bot/Economy/MarketBuyerWaiters');
-const { SeenLines } = require('../src/GameServer/Bot/Economy/BoardLook');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
 const now = 1e12;
 const dependencies = { board: new BoardIndex(), spots: invoke('GameServer/Bot/Population/SpotProfiles').ensure(), timestamp: now };
@@ -63,7 +62,6 @@ async function run() {
     await entered;
     assert.equal(kernel.dirty.size, 8);
     assert.equal(kernel.partyRuns.size, 1, 'party state is retained while its actual resolver waits');
-    for (let id = 1; id <= 10; id++) kernel.lookSeen.set(id, new SeenLines().set(id, { deals: 1, at: now }));
     for (let id = 1; id <= 10; id++) {
         if (id % 2) {
             const fenced = kernel.fence(id);
