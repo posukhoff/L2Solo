@@ -163,14 +163,12 @@ function* prepareNative(state, economy, options) {
     const limits = [];
     // A selected trade can keep succeeding or retrying for several visits.
     // It must not bypass corrections of the owner's other standing bids.
-    if (!options.showcaseOnly) {
-        const bidCtx = economy.trip?.details ? { ...ctx, travelDetails: economy.trip.details } : ctx;
-        for (const line of own.filter(row => row.storeType === 3 && row.count > 0 && row.pricing).slice(0, MAX_BUYS)) {
-            const ceiling = Math.min(Alternative.forLine(line, bidCtx), Alternative.cashCap(line, bidCtx));
-            if (Number.isSafeInteger(ceiling) && ceiling >= 0 && ceiling < line.price)
-                limits.push([line.lineId, line.recordId, line.revision, line.count, line.price, ceiling]);
-            yield 'owned';
-        }
+    const bidCtx = economy.trip?.details ? { ...ctx, travelDetails: economy.trip.details } : ctx;
+    for (const line of own.filter(row => row.storeType === 3 && row.count > 0 && row.pricing).slice(0, MAX_BUYS)) {
+        const ceiling = Math.min(Alternative.forLine(line, bidCtx), Alternative.cashCap(line, bidCtx));
+        if (Number.isSafeInteger(ceiling) && ceiling >= 0 && ceiling < line.price)
+            limits.push([line.lineId, line.recordId, line.revision, line.count, line.price, ceiling]);
+        yield 'owned';
     }
     const bidLimits = limits.length ? { bidLimits: limits } : {};
     const purchase = canAct && !options.showcaseOnly
@@ -228,8 +226,11 @@ function* prepareNative(state, economy, options) {
     const withdraw = own.filter(line => line.storeType === SELL && !listed.has(`${line.selfId}:${line.enchant || 0}`))
         .slice(0, 8).map(line => line.lineId);
     const plan = { sell, withdraw, ...(showcaseChanged ? { shop: shopTown } : {}), travel: null, ...bidLimits };
+    // The bids (buy ads: the goal's and the build's watch rows, the standing craft bids
+    // still needed) are posted on a town visit too, as a C4 player opens a buy store in
+    // town; the field plan adds the trip its goal names.
     let goal, money;
-    if (!options.showcaseOnly) {
+    {
         const needs = NeedsEvaluator.evaluate(state, { ...options, economy, errand: null, now: options.now, saleTown: shopTown });
         goal = needs[0];
         const buyState = { ...state, adena: Funding.budget(state, options.buyOrderEscrow || 0) };
@@ -249,7 +250,7 @@ function* prepareNative(state, economy, options) {
         try { batch = buyBatch(lines); }
         // A bug in the buy build, kept apart from a refused line (both leave the buy unprepared).
         catch (error) { FailureLog.note('economy.buy_batch', error); batch = { buyAds: [null] }; }
-        Object.assign(plan, batch, { travel: goal?.plan?.marketTown ? goal.plan.wishKey || null : null });
+        Object.assign(plan, batch, { travel: !options.showcaseOnly && goal?.plan?.marketTown ? goal.plan.wishKey || null : null });
         // A buy part not prepared (the held build's intent pending, or a
         // line buyBatch refused) is absent from the packet, not a page: a
         // refresh on main's next state copy reads the same build, so only
@@ -263,13 +264,11 @@ function* prepareNative(state, economy, options) {
             if (unprepared === 'intent_incoming') plan.d = 1;
             if (Diagnostics.active()) Diagnostics.count('economy_plan', 'deferred', unprepared);
         }
-        const shot = decideShot(state, economy, { ...options, ownLines: own });
+        // A town visit's plan carries the craft step its held decision prepared (the
+        // served card's): a crafter crafts in town from what it brought.
+        const shot = options.showcaseOnly ? heldCraft(economy) && economy.shot : decideShot(state, economy, { ...options, ownLines: own });
         if (shot) plan.shot = shot;
     }
-    // A town visit's showcase carries the craft step its held decision prepared
-    // (the served card's): a crafter crafts in town from what it brought (temporary:
-    // until the town plan owns the visit's craft).
-    else if (heldCraft(economy)) plan.shot = economy.shot;
     // A complete buy batch is indivisible. Optional work is retained by the
     // existing dirty preparation owner; absent buyAds means not prepared.
     if (Buffer.byteLength(JSON.stringify({ buyAds: plan.buyAds, buyKit: plan.buyKit, buyCaps: plan.buyCaps,
