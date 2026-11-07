@@ -432,7 +432,7 @@ function resolved(state, deps, production = true) {
     // Production sources and recipe books belong to the full wish review.
     if (production) {
         if (typeof deps.knownRecipes === 'function') deps.knownRecipes = deps.knownRecipes(state.characterId);
-        if (!deps.fixedProductionOffersFor) deps.fixedProductionOffersFor = invoke('GameServer/Bot/Population/ColdOccupationSources').fixedBuyerOffersFor;
+        if (!deps.fixedProductionOffersFor) deps.fixedProductionOffersFor = invoke('GameServer/Bot/Economy/StaticMerchantPricing').fixedBuyersOf;
         if (!deps.producerSource && deps.board) deps.producerSource = defaultProducerSource;
         if (typeof deps.producerSource === 'function') {
             const source = deps.producerSource(state, deps.board);

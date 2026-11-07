@@ -50,6 +50,9 @@ function* prepareBasket(recipe, planFor, ownedFor = () => null, batches = 1, con
             landed: Number(plan.landed), lines: plan.lines, npc: plan.npc, npcPrice: plan.npcPrice, source: plan.gear });
         cashCost += Number(plan.cost);
         ownedValue += Number(plan.ownedValue || 0);
+        // A bought input is worth at least its own exit once held: crafting it
+        // gives up that sale, so a cheap ask is no margin of the craft.
+        if (context.inputValue) ownedValue += Math.max(0, missing * (yield* context.inputValue(selfId)) - Number(plan.cost));
         processingHours += Number(plan.processingHours || 0);
         extraMp += Number(plan.extraMp || 0);
         residualValue += Number(plan.residualValue || 0);

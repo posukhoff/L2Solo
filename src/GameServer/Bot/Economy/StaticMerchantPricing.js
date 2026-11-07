@@ -30,12 +30,15 @@ function botPriceFor(store, line) {
     return Math.min(price, ceiling);
 }
 
-// Configured supply is independent of the board: bots keep its original
-// price until 3.6. Index it once per loaded config and effective Adena rate.
+// Configured supply and fixed buyers are independent of the board: bots keep
+// their original price until 3.6. Indexed once per loaded config and
+// effective Adena rate (the inputs of every price below).
 let fixedConfig = null;
 let fixedRate = null;
 let sellers = new Map();
 let fixedMinimums = new Map();
+let buyers = new Map();
+const EMPTY = Object.freeze([]);
 function refreshFixedOffers() {
     const config = invoke('GameServer/Bot/MerchantStoreConfigs');
     const rate = BotEconomyPricing.economyRate();
@@ -44,6 +47,7 @@ function refreshFixedOffers() {
     fixedRate = rate;
     sellers = new Map();
     fixedMinimums = new Map();
+    buyers = new Map();
     for (const [name, store] of Object.entries(config)) {
         if (Number(store?.storeType) !== SELL) continue;
         for (const line of store.items || []) {
@@ -57,6 +61,35 @@ function refreshFixedOffers() {
             }
         }
     }
+    // After the supply: a buyer's price is capped by it (botPriceFor).
+    for (const [buyerName, store] of Object.entries(config)) {
+        if (Number(store?.storeType) !== BUY || !store.town) continue;
+        for (const line of store.items || []) {
+            const id = Number(line.selfId), price = botPriceFor(store, line);
+            if (!(price > 0) || !Number.isFinite(price)) continue;
+            if (!buyers.has(id)) buyers.set(id, []);
+            buyers.get(id).push(Object.freeze({ type: 'static', buyerName, town: store.town,
+                staticId: buyers.get(id).length + 1, price, count: Math.max(0, Number(line.count || 0)), repeatable: true }));
+        }
+    }
+}
+
+// The enabled fixed buyers of an item, by town: authored exits a bot sells to
+// at the configured price (the wish graph, the producer, the sale floor).
+function fixedBuyersOf(selfId) {
+    if (production.buyersDisabled()) return EMPTY;
+    refreshFixedOffers();
+    return buyers.get(Number(selfId)) || EMPTY;
+}
+
+// What a bot is sure to get for one unit: the NPC buyback or the best enabled
+// fixed buyer, whichever pays more (a fixed buyer pays at the Adena rate, the
+// NPC does not). The one floor of a bot's ask and the base of its owned
+// item's exit value: no bot sells another below what an NPC pays it.
+function botSellPrice(selfId) {
+    let price = NpcSellRules.npcBuyPrice(basePrice(Number(selfId)));
+    for (const offer of fixedBuyersOf(selfId)) price = Math.max(price, offer.price);
+    return price;
 }
 
 // The cheapest repeatable supply of an item: NPC shops and the configured city
@@ -143,5 +176,5 @@ function botBuyPrice(id) {
     return Number.isFinite(npc) ? npc : Math.max(0, Number(ItemTemplateIndex.find(DataCache.items, id)?.template?.price || 0));
 }
 
-module.exports = { BUYBACK_RATIO, botPriceFor, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
+module.exports = { BUYBACK_RATIO, botPriceFor, botSellPrice, fixedBuyersOf, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
     priceFor, sellersOf };

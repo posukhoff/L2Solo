@@ -14,10 +14,8 @@
 // value (a sale below it is a loss weighted 1 + caution; waiting is no loss,
 // only a delay), commitment the patience on the discount. Buying mirrors it.
 const TendencyRoll = require('../AI/TendencyRoll');
-const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const { SELL, BUY, compareLines } = require('../../AfkTrade/BoardIndex');
-const DataCache = invoke('GameServer/DataCache');
-const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const StaticMerchantPricing = require('./StaticMerchantPricing');
 const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const PriceBelief = invoke('GameServer/Bot/Economy/PriceBelief');
 
@@ -57,10 +55,8 @@ function purchaseCost(price, reference, caution) {
     return price <= reference ? price : reference + (1 + caution) * (price - reference);
 }
 
-function buyback(selfId) {
-    const item = ItemTemplateIndex.find(DataCache.items, Number(selfId));
-    return NpcSellRules.npcBuyPrice(Number(item?.template?.price || 0));
-}
+// The floor of every ask: what an NPC or a fixed buyer pays the bot.
+const buyback = selfId => StaticMerchantPricing.botSellPrice(selfId);
 
 function saleOutcome({ units, applicableUnits, willingUnits, cheaperUnits, price,
     residualUnitValue = 0, delayHours = 0, discountRate = 0 } = {}) {

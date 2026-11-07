@@ -6,6 +6,7 @@ const BotMarketPricing = invoke('GameServer/Bot/Economy/BotMarketPricing');
 const C4RecipeItems = invoke('GameServer/Items/C4RecipeItems');
 const C4EnchantScrolls = invoke('GameServer/Items/C4EnchantScrolls');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const StaticMerchantPricing = require('./StaticMerchantPricing');
 const { CRYSTAL_IDS } = invoke('GameServer/Items/C4EnchantRules');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const ClanSimulationConfig = invoke('GameServer/Clan/ClanSimulationConfig');
@@ -283,11 +284,12 @@ function useBoard(source) { boardSource = source; }
 
 // The board's foreign buyers of these items, per item [best bid, units bid]
 // (both threads read the same lines): a new or better bid raises one, a filled
-// or withdrawn one only lowers it. A bid at or below the NPC buyback is no buyer.
+// or withdrawn one only lowers it. A bid at or below what an NPC or a fixed
+// buyer pays (the floor of the bot's own ask) is no buyer.
 function buyersOf(board, ids, characterId) {
     return ids.map(id => {
         let best = 0, units = 0;
-        const buyback = NpcSellRules.npcBuyPrice(Number(templateFor(id)?.template?.price || 0));
+        const buyback = StaticMerchantPricing.botSellPrice(id);
         for (const line of board.list(id, 3) || []) {
             if (Number(line.ownerId) === Number(characterId) || !(Number(line.price) > buyback)) continue;
             best = Math.max(best, Number(line.price) || 0); units += Number(line.count) || 0;

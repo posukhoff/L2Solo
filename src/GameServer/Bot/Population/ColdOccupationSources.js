@@ -15,12 +15,12 @@ const OfferQuery = require('../Economy/OfferQuery');
 const ShotSalePolicy = require('../Economy/ProductionSalePolicy');
 const { QUOTE_DEPTH } = Price;
 const EMPTY = Object.freeze([]);
-let fixedBuy, npcOfferView, mpRates, townByName, townOrdinal, gearByRank;
+let ready = false, npcOfferView, mpRates, townByName, townOrdinal, gearByRank;
 const npcOffersFor = id => npcOfferView?.offersFor(id) || EMPTY;
 
 function initialise() {
-    if (fixedBuy) return;
-    fixedBuy = new Map(); mpRates = new Map();
+    if (ready) return;
+    ready = true; mpRates = new Map();
     gearByRank = new Map();
     townByName = new Map(); townOrdinal = new Map();
     for (const town of Object.values(Towns.towns)) { townOrdinal.set(town.name, townOrdinal.size); townByName.set(town.name, town); }
@@ -29,16 +29,6 @@ function initialise() {
     npcOfferView = require('../../Knowledge/GameDataCatalogue').native().npcTownOffers();
     require('../../Knowledge/CrystalCatalog').coldGearByRank(Data.items || [],
         item => invoke('GameServer/Bot/Economy/MarketCounters').counterOf(item.selfId), gearByRank);
-    for (const [buyerName, store] of Object.entries(invoke('GameServer/Bot/MerchantStoreConfigs'))) {
-        if (Number(store.storeType) !== 3 || !store.town) continue;
-        for (const line of store.items || []) {
-            const id = Number(line.selfId), price = StaticPricing.botPriceFor(store, line);
-            if (!(price > 0) || !Number.isFinite(price)) continue;
-            if (!fixedBuy.has(id)) fixedBuy.set(id, []);
-            fixedBuy.get(id).push(Object.freeze({ type: 'static', buyerName, town: store.town,
-                staticId: fixedBuy.get(id).length + 1, price, count: Math.max(0, Number(line.count || 0)), repeatable: true }));
-        }
-    }
     // Exact native seated recovery is static in class/level on this branch.
     const Rest = invoke('GameServer/Bot/Population/ColdRest');
     require('../../Knowledge/RecoveryCatalog').seatedMpRates(Data.classTemplates, Rest, mpRates);
@@ -100,31 +90,22 @@ function recipeIndex(board) {
     return invoke('GameServer/Bot/Economy/RecipeProductionIndex').forBoard(board, {
         fixedBuyer: recipe =>
         !!require('../Economy/ShotTradeDemand').forecast(recipe.productId)
-        || !Production.buyersDisabled() && String(ItemIndex.find(Data.items, recipe.productId)?.template?.kind || '').startsWith('Other.Material')
-            && !!fixedBuy.get(Number(recipe.productId))?.length });
-}
-
-// The same enabled fixed material buyers feed production actions and the
-// finite wish graph. These are supported authored exits, not player forecasts.
-function fixedBuyerOffersFor(id) {
-    initialise();
-    return Production.buyersDisabled() ? EMPTY : fixedBuy.get(Number(id)) || EMPTY;
+        || String(ItemIndex.find(Data.items, recipe.productId)?.template?.kind || '').startsWith('Other.Material')
+            && StaticPricing.fixedBuyersOf(recipe.productId).length > 0 });
 }
 
 // One value of an owned item for the wish and the producer (user 2026-10-10,
-// Q1): what the bot gets selling one unit now. NPC buyback, the top
-// QUOTE_DEPTH board bids of others and the enabled fixed buyers.
+// Q1): what the bot gets selling one unit now. Its sure NPC exit (the NPC
+// buyback or a fixed buyer, StaticMerchantPricing.botSellPrice, the floor of
+// its own ask) and the top QUOTE_DEPTH board bids of others.
 function* exitValue(state, id, board = null) {
-    initialise();
-    const item = ItemIndex.find(Data.items, Number(id));
-    let value = invoke('GameServer/Items/NpcSellRules').npcBuyPrice(Number(item?.template?.price || 0));
+    let value = StaticPricing.botSellPrice(id);
     let count = 0;
     for (const line of board?.list(Number(id), 3) || []) {
         if (count++ === QUOTE_DEPTH) break;
         if (Number(line.ownerId) === Number(state.characterId)) { yield 'quote'; continue; }
         value = Math.max(value, Number(line.price || 0)); yield 'quote';
     }
-    for (const exit of fixedBuyerOffersFor(id)) { value = Math.max(value, exit.price); yield 'quote'; }
     return Number.isFinite(value) ? Math.max(0, value) : NaN;
 }
 
@@ -216,8 +197,8 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
                 trip: trip(line.town), tripDetails: details, repeatable: false });
             yield 'quote';
         }
-        if (!Production.buyersDisabled() && String(template?.template?.kind || '').startsWith('Other.Material')) {
-            for (const exit of fixedBuyerOffersFor(recipe.productId)) {
+        if (String(template?.template?.kind || '').startsWith('Other.Material')) {
+            for (const exit of StaticPricing.fixedBuyersOf(recipe.productId)) {
                 const details = yield* ensureTrip(exit.town);
                 result.push({ ...exit, trip: trip(exit.town), tripDetails: details }); yield 'quote';
             }
@@ -290,15 +271,14 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
             }
         }
     };
-    return { context, feasibility: preparedFeasibility, options: { reserved, ownStock, prepareExits, preparePurchase, prepareTrip: ensureTrip, gearRowsFor,
+    return { context, feasibility: preparedFeasibility, options: { board, reserved, ownStock, prepareExits, preparePurchase, prepareTrip: ensureTrip, gearRowsFor,
         unknownRecipes: () => admission ? admission.rowsFor(craftLevel) : [],
         ownLines: board?.ownerLines(Number(state.characterId)) || [] } };
 }
 
 module.exports = { initialise, prepare, exitValue, craftLabour, reservations, feasibility, canSell, tripDetails, regionalTown, QUOTE_DEPTH, recipeIndex,
-    fixedBuyerOffersFor,
     hasNpcSellerInTown: town => { initialise(); return npcOfferView?.hasSellerInTown(town) || false; },
     npcOffersFor,
     catalogCounts: () => ({ npcItems: npcOfferView?.itemCount || 0,
         npcQuotes: npcOfferView?.quoteCount || 0,
-        staticBuyItems: fixedBuy?.size || 0, teleportEdges: Routes.teleportPoints().length, townPairs: townByName?.size || 0 }) };
+        teleportEdges: Routes.teleportPoints().length, townPairs: townByName?.size || 0 }) };
