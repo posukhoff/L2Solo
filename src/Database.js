@@ -2092,6 +2092,13 @@ function applySchemaMigrations() {
             WHERE mindJson LIKE '%stockTargets%' AND json_valid(mindJson);
             UPDATE bot_life_state SET statsJson = json_remove(statsJson, '$.stockTargets')
             WHERE statsJson LIKE '%stockTargets%' AND json_valid(statsJson);
+        `)],
+        // The workshop decision's own-production income (stats.craftIncome) went: no C4
+        // crafter crafts full time from NPC-bought inputs, so it held none for every bot,
+        // and nothing reads the old row.
+        ['drop-craft-income', () => connection.exec(`
+            UPDATE bot_life_state SET mindJson = json_remove(mindJson, '$.craftIncome')
+            WHERE mindJson LIKE '%craftIncome%' AND json_valid(mindJson);
         `)]
     ];
     const migrate = (apply, record) => {
