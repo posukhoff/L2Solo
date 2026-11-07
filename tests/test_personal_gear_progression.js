@@ -124,7 +124,7 @@ function verify() {
     const sale = Listing.evaluate(spare, { board: new BoardIndex(), now: timestamp, slots: 0,
         keptAmounts: {}, knowledgeEnabled: false });
     assert.equal(sale.warehouse.length, 0, 'surplus never becomes personal warehouse clutter');
-    assert(sale.npc.some(row => row.selfId === 1864 && row.count === 10));
+    assert(!sale.npc.some(row => row.selfId === 1864), 'Stem a fixed buyer pays more for rides in the bag to that buyer');
     assert(sale.npc.some(row => row.selfId === 1049 && row.count === 2));
     assert.equal(Disposition.warehouseCandidates(spare).length, 0);
     const clanSurplus = { ...spare, stats: { ...spare.stats, clanId: 1 } };
@@ -264,8 +264,8 @@ function verify() {
     assert.deepEqual(captured.activity.craftReservations, [[1864, 8]], 'physical craft reservations survive worker IPC');
     const protectedSale = Listing.evaluate(spare, { board: new BoardIndex(), now: timestamp, slots: 0,
         keptAmounts: {}, economy: { ...ctx, craftReservations: Object.fromEntries(captured.activity.craftReservations) } });
-    assert.equal(protectedSale.npc.find(row => row.selfId === 1864)?.count, 2,
-        'the main-thread market sells only the unused ingredient surplus');
+    assert.equal(protectedSale.decisions.filter(row => row.item.selfId === 1864)
+        .reduce((sum, row) => sum + row.item.count, 0), 2, 'the main-thread market disposes only the unused ingredient surplus');
     const spoilBoard = new BoardIndex();
     // Low-id bids must not hide a demanded high-id recipe from a spoiler.
     for (let id = 1; id < 30; id++) spoilBoard.put({ id: 100 + id, ownerId: 990121, storeType: 3, kind: 'buy_ad',
