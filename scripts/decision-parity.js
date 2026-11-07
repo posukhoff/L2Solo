@@ -36,7 +36,7 @@ module.exports.decisionOracle = async ids => {
     const assert = require('node:assert/strict');
     const Economy = invoke('GameServer/Bot/Economy/EconomyContext'), original = Economy.forState;
     const result = [];
-    for (const [at, id] of ids.entries()) {
+    for (const id of ids) {
         const entry = kernel.states.get(id), state = entry.state, timestamp = Number(state.updatedAt || 1e12) + 1;
         let seen, built, cost;
         Economy.forState = (value, deps) => { seen = structuredClone(value); const start = performance.now();

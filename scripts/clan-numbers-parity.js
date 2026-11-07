@@ -45,7 +45,7 @@ const epoch = 'clan-numbers-parity', timestamp = Date.now();
 const observer = String.raw`
 module.exports.clanOracle = async ids => {
     const result = [];
-    for (const [at, id] of ids.entries()) {
+    for (const id of ids) {
         const entry = kernel.states.get(id), state = entry.state;
         let built, seen;
         const projected = await LifeStateProjector.prepareResolve(state, { patch: {}, materialize: { exp: 0, sp: 0, adena: 0, items: [] },

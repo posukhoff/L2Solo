@@ -36,7 +36,7 @@ module.exports.decisionOracle = async ids => {
     const Economy = invoke('GameServer/Bot/Economy/EconomyContext'), original = Economy.forState;
     const result = [];
     const planner = require('./ColdEconomyPlan'), oldEdges = planner.edges, oldDecide = planner.decide;
-    for (const [at, id] of ids.entries()) {
+    for (const id of ids) {
         const entry = kernel.states.get(id), state = entry.state, timestamp = Number(state.updatedAt || 1e12) + 1;
         let seen, built, addedMs = 0;
         planner.edges = (...args) => { const start = performance.now(); const value = oldEdges(...args); addedMs += performance.now() - start; return value; };

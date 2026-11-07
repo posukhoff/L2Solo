@@ -4,14 +4,16 @@ const Diagnostics = require('../Economy/EconomyDiagnostics');
 const FailureLog = require('../../../FailureLog');
 
 const { performance } = require('node:perf_hooks');
-// The answer of a job that gave none (stopped, cancelled, failed, a stale owner): no
-// mode reads more than that it is not known; an action job's is null.
+// The answer of a job that gave none (asked or cancelled while stopping, cancelled,
+// failed, retired for a stale owner), in every mode, action included: no reader takes
+// more from it than that it is not known. Only an action build that finished with no
+// plan answers null (finish).
 const UNANSWERED = Object.freeze({ known: false });
 const MAX_CONTEXTS = 64, MAX_OWNERS = 8, OWNER_UNITS = 4, MAX_UNITS = 32, SLICE_MS = 4;
-// One job per bot per mode (input.mode, 'occupation' when none): an ask of
-// one mode never replaces another mode's answer.
-const MODES = Object.freeze(['occupation', 'near', 'page', 'action', 'showcase', 'craft_market', 'meeting', 'wish']);
-const keyOf = (id, mode) => `${mode || 'occupation'}:${Number(id)}`;
+// One job per bot per mode (input.mode, required): an ask of one mode never
+// replaces another mode's answer.
+const MODES = Object.freeze(['near', 'page', 'action', 'showcase', 'craft_market', 'meeting', 'wish']);
+const keyOf = (id, mode) => `${mode}:${Number(id)}`;
 
 // Incomplete contexts stay in the working pool (slots, MAX_CONTEXTS) through
 // yield. A finished job leaves the pool as a card (cards): its answer, the
@@ -62,8 +64,10 @@ class ColdOccupationPlanner {
 
     request(id, input, { awaitResult = true } = {}) {
         id = Number(id);
+        const mode = input?.mode;
+        if (!MODES.includes(mode)) throw Error(`occupation_mode_unknown:${mode}`);
         if (!id || this.stopped) return Promise.resolve(UNANSWERED);
-        const mode = input?.mode || 'occupation', key = keyOf(id, mode);
+        const key = keyOf(id, mode);
         const existing = this.waiting.get(key) || this.slots.get(key) || this.cards.get(key);
         const fingerprint = this.inputKey(input);
         if (existing && existing.fingerprint === fingerprint && !existing.dirty && this.valuesOf(existing) === this.valueKey(input)) {

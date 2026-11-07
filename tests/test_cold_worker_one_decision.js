@@ -357,8 +357,9 @@ parentPort.on('message', message => {
         worker.postMessage({ ...Protocol.envelope('pause', epoch, {}, 'workshop'), workshopProbe: id });
         const workshopResponse = await wait(message => message.probeId === 'workshop');
         if (workshopResponse.error) throw Error(workshopResponse.error);
-        assert.deepEqual(workshopResponse.value.counts, [0, 1, 0, 1],
-            'a crafter takes its workshop at a recipe learned (once its book or listing is known), never for a moved wallet');
+        assert.deepEqual(workshopResponse.value.counts, [1, 0, 0, 1],
+            'a crafter takes its workshop at a recipe learned (as none while main has not loaded its book: no later step '
+            + 'takes it again), never for a listing or a wallet that moved');
         worker.postMessage({ ...Protocol.envelope('pause', epoch, {}, 'page'), pageProbe: id });
         const pageResponse = await wait(message => message.probeId === 'page'); if (pageResponse.error) throw Error(pageResponse.error);
         assert.deepEqual(pageResponse.value, { own: false, main: true, none: false },

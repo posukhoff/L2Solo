@@ -701,20 +701,22 @@ const occupationPlanner = new ColdOccupationPlanner({
 // The workshop decision, one rule for a far step (decideWorkshop) and a near body's
 // decision (nearWorkshop): woken, it is taken and held. Its answer is a service
 // crafter's listing on its known book (CraftShopService.listing, stats.workshop; fees
-// priced over every rival's public row); a bot that is no service crafter takes none.
-// The stats keys it takes; null while a service crafter holds neither a known recipe
-// book (main's recipes table) nor a listing: not taken, its bit stays woken and the
-// next step or post takes it; counted (workshop:unknown:no_book).
+// priced over every rival's public row); a bot that is no service crafter takes none,
+// and so does a service crafter whose book main has not loaded (no recipes table row):
+// it keeps the listing it holds, if any, until its next town arrival or recipe learned,
+// as its bit is cleared either way (a held bit would end every hunting window);
+// counted once per such take (workshop:no_book). The stats keys it takes.
 function workshopTaken(state, caller) {
     const stats = state.stats || {};
     const crafter = CraftEligibility.isServiceCrafter(state);
     const book = crafter ? RecipeBookCodec.unpack(recipeKnowledgeOf(state).recipeBook) : null;
-    if (crafter && !book && !Array.isArray(stats.workshop?.entries)) { Situations.note('workshop:unknown:no_book'); return null; }
+    const noBook = crafter && !book;
+    if (noBook) Situations.note('workshop:no_book');
     const workshop = book ? CraftShopService.listing(state, book,
         recipeId => [...publicWorkshopIndex.fees(recipeId, Number(state.characterId))]) : stats.workshop;
     return { ...(workshop !== stats.workshop ? { workshop } : {}),
         woken: Situations.decided(stats, 'workshop', { caller, subject: state.characterId,
-            answer: Trace.on() ? `${workshop?.entries?.length || 0}` : null }) };
+            answer: Trace.on() ? (noBook ? 'no_book' : `${workshop?.entries?.length || 0}`) : null }) };
 }
 // A near body's workshop (mode near): taken when woken, on the post's state, which
 // then holds it for the build. Beside it the sale-feasibility mask of its own lines
@@ -830,7 +832,7 @@ function personalCraftBidReviewDue(state) {
     return require('./CraftMarketReview').personalBidDue(state, kernel.states.get(Number(state.characterId)), boardReady());
 }
 // A far step's workshop decision (Situations workshop), before its build: the mind
-// keys it takes, or null when it is not woken or not taken (workshopTaken).
+// keys it takes (workshopTaken), or null when it is not woken.
 function decideWorkshop(state, caller) {
     return Situations.woken(state.stats, 'workshop') ? workshopTaken(state, caller) : null;
 }
@@ -1753,15 +1755,13 @@ function startKernel(config = {}) {
                 // Merged before the event check, whose dirty bits follow it.
                 ? { ...base, statsPacket: lifecyclePlan.statsPacket, statsPacketBeforeResolve: true }
                 : { ...base,
-                    // The workshop is asked by economyFor, only for a build.
                     economyDepsFor: async projected => ({ spots: planningSpots, routeRows: await occupationFor(projected, timestamp, { caller: 'member' }, 'wish'),
                         board: boardReady(), buyOrderEscrow: escrowFor(state.characterId), goalRevision: goalRevision(state.characterId), caller: 'member' }),
                     economyFor: async (projected, deps) => {
                         observedDeps = deps;
                         // The workshop decision first when woken (the far step's order). The build
                         // plans on a new projection holding its keys (a state is replaced, not
-                        // edited: the workshop's ask digested this one, stateDigests); the projector
-                        // writes them under the build's packet.
+                        // edited); the projector writes them under the build's packet.
                         const workshop = decideWorkshop(projected, projected.party?.partyId || projected.partyId ? 'party' : 'karma');
                         const planned = workshop ? { ...projected, stats: { ...projected.stats, ...workshop } } : projected;
                         // The step's one gate, a party member's and
