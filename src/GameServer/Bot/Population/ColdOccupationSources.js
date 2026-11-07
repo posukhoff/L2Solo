@@ -230,6 +230,9 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
     // search prices the same input for batches 1..64 and across recipes.
     // A board change of a read item invalidates the request (planner
     // validation), so a table never outlives the board it was read from.
+    // A crafter buys its inputs and recipe only in the town it stands in (no
+    // errand to another town, ColdMarketService.acquire; temporary: cross-town
+    // craft errands return when the market is redesigned): none in the field.
     const purchaseTables = new Map();
     const preparePurchase = function* (owner, id, amount, query = {}) {
         read(id);
@@ -237,14 +240,13 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
         const tableKey = `${Number(owner.characterId)}:${Number(id)}:${npc ? 1 : 0}`;
         let table = purchaseTables.get(tableKey);
         if (!table) {
+            const here = owner.activity === 'shopping' ? owner.currentRegion : null;
             // Static NPC stock is the only unlimited ingredient source admitted here.
-            const npcOffers = npc ? npcOffersFor(id) : EMPTY;
-            const towns = new Set(npcOffers.map(offer => offer.town));
-            // Every town of the list: an amount reads past the first asks until one town holds it.
-            for (const town of board?.towns(id, 1) || []) towns.add(town);
-            for (const town of towns) { if (townOrdinal.has(town)) yield* ensureTrip(town); yield 'quote'; }
+            const npcOffers = npc && here ? npcOffersFor(id).filter(offer => offer.town === here) : EMPTY;
+            if (here && townOrdinal.has(here)) yield* ensureTrip(here);
+            yield 'quote';
             // The units other bots' errands claim are gone for this buyer (BoardClaims).
-            table = OfferQuery.townTable(board, id, { quoteDepth: QUOTE_DEPTH, excludeOwner: owner.characterId,
+            table = OfferQuery.townTable(board, id, { towns: [here], quoteDepth: QUOTE_DEPTH, excludeOwner: owner.characterId,
                 accept: line => !Number(line.enchant || 0) && personalOfferAllowed(line, owner),
                 countOf: line => BoardClaims.unclaimed(line, owner.characterId), npcOffers, cost: trip });
             purchaseTables.set(tableKey, table);

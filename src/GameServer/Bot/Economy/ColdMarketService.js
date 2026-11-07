@@ -408,11 +408,11 @@ function planPurchase(state, selfId, amount, options = {}) {
 // One new-purchase journey gate, shared by visible/cold goals and errands.
 // Accepted obligations have their own custody/route owner; this gate does
 // not cancel them or charge an already justified town visit twice.
-// A craft's inputs travel on the basket that chose them: its value already paid the trip.
-const BASKET_PURPOSES = new Set(['wealth_craft', 'recipe', 'craft_input']);
+// A craft's inputs and recipe: the basket that chose them already paid for them.
+const CRAFT_PURPOSES = new Set(['wealth_craft', 'recipe', 'craft_input']);
 function worthwhileTravel(state, plan, options = {}) {
     if (!plan || !(plan.units > 0)) return false;
-    if (BASKET_PURPOSES.has(options.purpose)) return true;
+    if (CRAFT_PURPOSES.has(options.purpose)) return true;
     if (options.purpose === 'raid_supply' && require('../Population/RaidSupplyPolicy').held(state)?.id === options.raidPreparationId) return true;
     if (options.purpose === 'clan') return true;
     const context = options.economy || ColdEconomyDecision.economyFor(state);
@@ -612,8 +612,11 @@ function savedRoute(errand) {
 }
 
 // A cold bot needs `amount` of an item for `purpose` (a shot restock, a
-// crafter's input, a clan order...): it buys where it stands when that town
-// is the cheapest with the trip, else it keeps an errand and goes there.
+// clan order...): it buys where it stands when that town is the cheapest
+// with the trip, else it keeps an errand and goes there. A crafter's input or
+// recipe is bought only in the town it stands in, never on an errand (the
+// craft is made from the bag, as a C4 crafter does; temporary: cross-town
+// craft errands return when the market is redesigned).
 // Returns { state, bought, units, traveling, plan }; `persist` false leaves
 // the state unsaved (a caller that saves it). A bot in a party keeps the
 // errand: its party's market break takes it there (NeedsEvaluator).
@@ -621,9 +624,10 @@ async function acquire(state, selfId, amount, options = {}) {
     // ARCH-NOTE: a saved cap outlives the packet that admitted it. Recheck
     // at planning, arrival and each debit using the originating valuation.
     options = { ...options, currentFunding: true };
-    const visitTown = state.stats?.travel?.townName || (state.activity === 'shopping' ? state.currentRegion : null);
+    const here = state.activity === 'shopping' ? state.currentRegion : null, craft = CRAFT_PURPOSES.has(options.purpose);
+    const visitTown = craft ? here : state.stats?.travel?.townName || here;
     const local = visitTown ? planPurchase(state, selfId, amount, { ...options, towns: [visitTown] }) : null;
-    const plan = local || planPurchase(state, selfId, amount, options);
+    const plan = local || (craft ? null : planPurchase(state, selfId, amount, options));
     if (Diagnostics.active()) purchaseObservation(state, selfId, amount, options.money, 'acquire_request', plan ? 'planned' : 'no_source',
         Trace.detailed(state.characterId) ? { planned: Number(plan?.units || 0), caller: options.purpose || 'acquire', town: plan?.town } : undefined);
     if (!plan) return { state, bought: false, units: 0, traveling: false, plan: null };

@@ -210,7 +210,7 @@ async function obtainRecipe(state, selected, now) {
     const offer = affordableOffer();
     if (!offer) return state;
     try {
-        // The recipe is bought in its seller's town: a trip, or here (one purchase path).
+        // The recipe is bought here or not at all (one purchase path: no crafter errand).
         const bought = await ColdMarket().acquire(state, itemId, 1, { money: maxSpend, maxPrice: maxSpend,
             valueHours, npc: false, purpose: 'recipe', timestamp: now, quoteDepth: 5, towns: [offer.town],
             sourcePlan: { selfId: itemId, town: offer.town, cost: Number(offer.price),
@@ -254,9 +254,8 @@ function consumeMaterials(state, materials) {
 }
 
 // Buys what is missing of a craft input on the one purchase path
-// (ColdMarketService.acquire): here when this town is the cheapest with the
-// trip, else an errand and a trip, and the craft waits. Returns { state,
-// ready }: ready once the bot holds the amount.
+// (ColdMarketService.acquire): in the town the bot stands in, never on an
+// errand. Returns { state, ready }: ready once the bot holds the amount.
 const hotState = state => LifeState.hotRow(state.characterId) || (state.phase === 'hot' ? state : null);
 
 // A held plan is bought up to its dearest unit, whatever cap came with it.

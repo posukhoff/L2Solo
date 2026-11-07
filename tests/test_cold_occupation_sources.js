@@ -61,12 +61,17 @@ const bounded = drain(prepared.options.preparePurchase(owner, 1864, 6, { npc: fa
 assert.equal(bounded.value.units, 6, 'the purchase view reads the asks until the amount is met');
 assert.equal(bounded.value.whole, true);
 assert.equal(drain(prepared.options.preparePurchase(owner, 1864, 7, { npc: false })).value.whole, false);
-// The stack past the first asks is in a town no first ask names: its trip is known too.
+// A crafter buys only in the town it stands in: a stack in another town is no source,
+// and in the field it buys nothing.
 for (let at = 0; at < 5; at++) board.put({ id: 210 + at, ownerId: 410 + at, storeType: 1, kind: 'sell_ad', town: 'Giran', revision: 1,
     lines: [{ lineId: 310 + at, selfId: 1866, count: 1, price: 100 + at }] });
 board.put({ id: 216, ownerId: 416, storeType: 1, kind: 'sell_ad', town: 'Dion', revision: 1, lines: [{ lineId: 316, selfId: 1866, count: 8, price: 200 }] });
 const elsewhere = drain(Sources.prepare(owner, { board, timestamp: 1000, read: () => {} })).value;
-assert.equal(drain(elsewhere.options.preparePurchase(owner, 1866, 8, { npc: false })).value.town, 'Dion');
+const here = drain(elsewhere.options.preparePurchase(owner, 1866, 8, { npc: false })).value;
+assert.equal(here.town, 'Giran');
+assert.equal(here.whole, false, 'the Dion stack is not bought from Giran');
+const field = drain(Sources.prepare(state, { board, timestamp: 1000, read: () => {} })).value;
+assert.equal(drain(field.options.preparePurchase(state, 1864, 1, { npc: false })).value, null, 'no purchase in the field');
 assert.equal(drain(prepared.options.preparePurchase(owner, 1785, 1, { npc: false })).value, null);
 const npc = drain(prepared.options.preparePurchase(owner, 1785, 1, { npc: true })).value;
 assert(npc.whole && npc.npc === 1 && npc.town);
@@ -89,14 +94,14 @@ const routeRows = drain(EconomicTrip.prepare(state)).value;
 const routeKey = EconomicTrip.key(state);
 const reusedSources = drain(Sources.prepare(state, { board, timestamp: 1000, economy: { routeKey, routeRows } })).value;
 const freshSources = drain(Sources.prepare(state, { board, timestamp: 1000 })).value;
-const reusedPurchase = drain(reusedSources.options.preparePurchase(state, 1864, 1, { npc: false }));
-const freshPurchase = drain(freshSources.options.preparePurchase(state, 1864, 1, { npc: false }));
-assert.deepEqual(reusedPurchase.value, freshPurchase.value, 'occupation/actions share the accepted wish route table');
-assert(freshPurchase.stages.includes('edge') && !reusedPurchase.stages.includes('edge'),
+const reusedTrip = drain(reusedSources.options.prepareTrip('Giran'));
+const freshTrip = drain(freshSources.options.prepareTrip('Giran'));
+assert.deepEqual(reusedTrip.value, freshTrip.value, 'occupation/actions share the accepted wish route table');
+assert(freshTrip.stages.includes('edge') && !reusedTrip.stages.includes('edge'),
     'the ready shared table removes repeated geometry, not source or spending revalidation');
 const staleSources = drain(Sources.prepare(state, { board, timestamp: 1000,
     economy: { routeKey: 'obsolete', routeRows } })).value;
-assert(drain(staleSources.options.preparePurchase(state, 1864, 1, { npc: false })).stages.includes('edge'),
+assert(drain(staleSources.options.prepareTrip('Giran')).stages.includes('edge'),
     'a changed route key cannot suppress actual route preparation');
 const protectedState = { ...owner, stats: { ...owner.stats, equipmentPlan: { strategy: 'craft', status: 'active',
     target: { selfId: 3000 }, materials: [{ selfId: 1864, amount: 40 }] } } };
