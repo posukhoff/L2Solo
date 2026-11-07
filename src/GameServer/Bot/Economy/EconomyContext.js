@@ -8,7 +8,6 @@ const Floor = require('../Population/SurvivalFloor');
 
 const GearThreat = require('./GearThreat');
 
-const ItemIndex = require('../../Item/ItemTemplateIndex');
 const Valuation = require('./EconomicValuation');
 const Providers = require('./WishProviders');
 const Sections = require('./DecisionSections');
@@ -1526,8 +1525,8 @@ function lazySpotValue(state, plan, deps) {
     return (...args) => (reader ||= SpotEconomics.create(state,
         { ...deps, timestamp: plan.timestamp, persona: plan.persona, deathHours: plan.deathHours, hunt: buildHunt(plan.hunt) }))(...args);
 }
-const buyback = id => invoke('GameServer/Items/NpcSellRules')
-    .npcBuyPrice(Number(ItemIndex.find(DataCache.items, id)?.template?.price || 0));
+// An item's floor: what the bot is sure to get for a unit (NPC or fixed buyer).
+const buyback = id => invoke('GameServer/Bot/Economy/StaticMerchantPricing').botSellPrice(id);
 // One reader's context over a plan. `built` carries the building call's own
 // readers (prices with their memo, kit, spot value, trip, the projection);
 // a later view makes its own from the plan. The state is the caller's, held

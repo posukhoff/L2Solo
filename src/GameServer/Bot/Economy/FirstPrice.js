@@ -3,7 +3,6 @@ const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const NpcShopPriceScale = require('../../World/Generics/NpcShopPriceScale');
 const DataCache = invoke('GameServer/DataCache');
 const ProgressionRates = invoke('GameServer/ProgressionRates');
-const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const HuntEfficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const SpotValueTable = invoke('GameServer/Bot/AI/SpotValueTable');
@@ -92,7 +91,8 @@ function dropPrice(id, item, spots, timestamp) {
 }
 
 // `made`: the price comes from making the item (a crafted one, a crystal), not
-// from hunting it. The floor is the NPC buy-back for every item. The ceiling
+// from hunting it. The floor is what a bot is sure to get for every item
+// (StaticMerchantPricing.botSellPrice: the NPC or a fixed buyer). The ceiling
 // is the NPC shop price, and a made item has it only where an NPC sells it: the
 // NPC is then the buyer's other source. A D+ shot or a crystal that no NPC
 // sells has no ceiling (E91, user 2026-10-07: the market balances it); with
@@ -101,7 +101,7 @@ function dropPrice(id, item, spots, timestamp) {
 function withinWalls(item, price, { made = false } = {}) {
     const base = Number(item.template?.price || 0);
     if (base > 0) {
-        const floor = NpcSellRules.npcBuyPrice(base);
+        const floor = invoke('GameServer/Bot/Economy/StaticMerchantPricing').botSellPrice(item.selfId);
         const open = made && !Number.isFinite(invoke('GameServer/Bot/Economy/BotMarketPricing').npcPrice({ selfId: item.selfId }));
         const ceiling = open ? Infinity : NpcShopPriceScale.price(base, ProgressionRates.profile().multiplier);
         price = Math.min(ceiling, Math.max(floor, price));
@@ -214,7 +214,7 @@ function priceOf(id, options, depth) {
         || craftPrice(id, item, options, depth)
         || crystalPrice(id, item, options)
         || noGradeShotPrice({ ...item, selfId: id })
-        || { price: NpcSellRules.npcBuyPrice(Number(item.template.price)), source: 'buyback' };
+        || { price: invoke('GameServer/Bot/Economy/StaticMerchantPricing').botSellPrice(id), source: 'buyback' };
 }
 
 function firstPrice(itemId, { spots = [], timestamp = Date.now() } = {}) {

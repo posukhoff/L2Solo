@@ -274,9 +274,10 @@ function nearBest(candidates, rollKey) {
     return near[near.length - 1];
 }
 
-// The ask: { price, value, money, npc } with npc true when the NPC buy-back
-// now is worth more than any ask (price is then the buy-back). value is the
-// bot's utility per unit, money the Adena per unit discounted by the wait.
+// The ask: { price, value, money, npc } with npc true when no ask is worth
+// more than the floor (market.buyback: an NPC's or a fixed buyer's price);
+// price and money are then what the NPC sale pays now (market.npcBuyback).
+// value is the bot's utility per unit, money the Adena per unit discounted by the wait.
 // `current`: the line's ask now; it stands while it is still among the
 // near-best ones (the roll is for a new ask, not for a jitter of the old).
 function chooseAsk(belief, market, trader, rollKey, current = 0) {
@@ -286,10 +287,11 @@ function chooseAsk(belief, market, trader, rollKey, current = 0) {
         && Number.isSafeInteger(market.units) && market.units >= 0 && Number.isFinite(market.delayHours)
         && market.delayHours >= 0 && !market.truncated;
     const npcValue = saleUtility(market.buyback, reference, trader.caution);
+    const npcPays = market.npcBuyback ?? market.buyback;
     if (!known) {
         // An unavailable forecast does not invalidate an already accepted line.
         return current > market.buyback ? { price: current, value: NaN, money: NaN, npc: false, npcValue, known: false }
-            : { price: market.buyback, value: npcValue, money: market.buyback, npc: true, npcValue, known: false };
+            : { price: npcPays, value: npcValue, money: npcPays, npc: true, npcValue, known: false };
     }
     const valueAt = (price) => {
         const landed = price + market.ownTrip;
@@ -325,7 +327,7 @@ function chooseAsk(belief, market, trader, rollKey, current = 0) {
     let bestValue = -Infinity;
     for (const candidate of candidates) bestValue = Math.max(bestValue, candidate.value);
     if (!candidates.length || bestValue <= npcValue) {
-        return { price: market.buyback, value: npcValue, money: market.buyback, npc: true, npcValue, known: true };
+        return { price: npcPays, value: npcValue, money: npcPays, npc: true, npcValue, known: true };
     }
     const standing = current > market.buyback ? valueAt(current) : null;
     if (standing && standing.value >= bestValue - NEAR_BEST * Math.abs(bestValue)) return { ...standing, npc: false, npcValue };

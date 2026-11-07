@@ -9,6 +9,7 @@ const OfferQuery = require('./OfferQuery');
 // Loaded once: a require() per cheapestPurchase resolved the path on disk each call (~55% of it).
 const production = require('./ProductionPolicy');
 const { SELL, BUY } = require('../../AfkTrade/BoardIndex');
+const Karma = require('../../Karma');
 
 const BUYBACK_RATIO = 0.9;
 
@@ -31,10 +32,12 @@ function botPriceFor(store, line) {
 }
 
 // Configured supply and fixed buyers are independent of the board: bots keep
-// their original price until 3.6. Indexed once per loaded config and
-// effective Adena rate (the inputs of every price below).
+// their original price until 3.6. Indexed once per loaded config, item
+// templates (a buyer takes only materials, and a price reads the template)
+// and effective Adena rate: the inputs of every price below.
 let fixedConfig = null;
 let fixedRate = null;
+let fixedItems = null;
 let sellers = new Map();
 let fixedMinimums = new Map();
 let buyers = new Map();
@@ -42,9 +45,10 @@ const EMPTY = Object.freeze([]);
 function refreshFixedOffers() {
     const config = invoke('GameServer/Bot/MerchantStoreConfigs');
     const rate = BotEconomyPricing.economyRate();
-    if (fixedConfig === config && fixedRate === rate) return;
+    if (fixedConfig === config && fixedRate === rate && fixedItems === DataCache.items) return;
     fixedConfig = config;
     fixedRate = rate;
+    fixedItems = DataCache.items;
     sellers = new Map();
     fixedMinimums = new Map();
     buyers = new Map();
@@ -73,6 +77,7 @@ function refreshFixedOffers() {
             if (!(price > 0) || !Number.isFinite(price)) continue;
             if (!buyers.has(id)) buyers.set(id, []);
             buyers.get(id).push(Object.freeze({ type: 'static', buyerName, town: store.town,
+                locX: Number(store.locX || 0), locY: Number(store.locY || 0),
                 staticId: buyers.get(id).length + 1, price, count: Math.max(0, Number(line.count || 0)), repeatable: true }));
         }
     }
@@ -93,10 +98,23 @@ const npcBuyback = selfId => NpcSellRules.npcBuyPrice(basePrice(Number(selfId)))
 // fixed buyer, whichever pays more (a fixed buyer pays at the Adena rate, the
 // NPC does not). The one floor of a bot's ask and the base of its owned
 // item's exit value: no bot sells another below what an NPC pays it.
+// Our choice, not C4: C4's floor is the NPC buyback alone; the fixed buyers
+// are our design (an unlimited Adena source of the background economy), and
+// a rational seller does not sell below an unlimited buyer. A trip to the
+// buyer is not netted: at the Adena rate its fee is small against a stack.
 function botSellPrice(selfId) {
     let price = npcBuyback(selfId);
     for (const offer of fixedBuyersOf(selfId)) price = Math.max(price, offer.price);
     return price;
+}
+
+// Whether a bot's bag carries an item to a fixed buyer instead of the NPC: a
+// fixed buyer pays more than the NPC and the bot may enter its town (karma
+// closes towns). The one rule of the sale decision that keeps it
+// (MarketListingPolicy), the sale trip that goes there and sells it
+// (StaticBuyerService) and the funding sale that leaves it out (WishProviders).
+function carriedToBuyer(state, selfId) {
+    return !Karma.closesTowns(state?.stats?.karma) && botSellPrice(selfId) > npcBuyback(selfId);
 }
 
 // The cheapest repeatable supply of an item: NPC shops and the configured city
@@ -183,5 +201,5 @@ function botBuyPrice(id) {
     return Number.isFinite(npc) ? npc : Math.max(0, Number(ItemTemplateIndex.find(DataCache.items, id)?.template?.price || 0));
 }
 
-module.exports = { BUYBACK_RATIO, botPriceFor, botSellPrice, npcBuyback, fixedBuyersOf, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
+module.exports = { BUYBACK_RATIO, botPriceFor, botSellPrice, carriedToBuyer, npcBuyback, fixedBuyersOf, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
     priceFor, sellersOf };

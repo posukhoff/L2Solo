@@ -8,34 +8,14 @@ const DataCache = invoke('GameServer/DataCache');
 const Recipes = invoke('GameServer/Items/C4RecipeItems');
 const CraftShopService = invoke('GameServer/Bot/Economy/CraftShopService');
 const StaticMerchantPricing = require('./StaticMerchantPricing');
-const MerchantStoreConfigs = invoke('GameServer/Bot/MerchantStoreConfigs');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const PurchaseFunding = require('./PurchaseFunding');
 const Karma = require('../../Karma');
-let staticIndex = null;
 // Lazy: ColdOccupationSources reads this module while it loads.
 function exitValue(...args) { return require('../Population/ColdOccupationSources').exitValue(...args); }
-function staticExits(recipe, template) {
-    if (require('./ProductionPolicy').buyersDisabled()
-        || !String(template?.template?.kind || '').startsWith('Other.Material')) return [];
-    if (!staticIndex) {
-        staticIndex = new Map();
-        for (const [buyerName, store] of Object.entries(MerchantStoreConfigs)) {
-            if (Number(store?.storeType) !== 3 || !store.town) continue;
-            for (const line of store.items || []) {
-                const id = Number(line.selfId);
-                if (!staticIndex.has(id)) staticIndex.set(id, []);
-                staticIndex.get(id).push({ buyerName, store, line });
-            }
-        }
-    }
-    const result = [];
-    for (const { buyerName, store, line } of staticIndex.get(Number(recipe.productId)) || []) {
-        const price = StaticMerchantPricing.botPriceFor(store, line);
-        if (Number.isFinite(price) && price > 0) result.push({ type: 'static', price,
-            count: Math.max(0, Number(line.count || 0)), town: store.town, buyerName, repeatable: true });
-    }
-    return result;
+// A material product's fixed buyers: StaticMerchantPricing's one index.
+function staticExits(recipe) {
+    return StaticMerchantPricing.fixedBuyersOf(recipe.productId);
 }
 function exitsFor(state, recipe, template, trip, options, existingOutput) {
     const result = [];

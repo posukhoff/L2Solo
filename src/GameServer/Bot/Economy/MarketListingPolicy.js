@@ -227,17 +227,19 @@ function evaluate(state, options = {}) {
     const owned = (ctx.board?.ownerLines?.(Number(state.characterId)) || [])
         .filter(line => line.storeType === BoardRules.SELL);
     // A line at or under what an NPC or a fixed buyer pays the bot stands for
-    // nothing: its units are disposed anew, its own look takes it back.
+    // nothing: its own look takes it back, and until then the bag's units are
+    // disposed anew but not listed beside it.
     const StaticPricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
+    const underFloor = new Set(owned.filter(line => !ItemDisposition.isGradeCrystal(line)
+        && line.price <= StaticPricing.botSellPrice(line.selfId)).map(line => `${line.selfId}:${line.enchant || 0}`));
     const kept = options.kept || new Map(owned
-        .filter(line => ItemDisposition.isGradeCrystal(line) || line.price > StaticPricing.botSellPrice(line.selfId))
+        .filter(line => !underFloor.has(`${line.selfId}:${line.enchant || 0}`))
         .map(line => [`${line.selfId}:${line.enchant || 0}`, line.price]));
     const keptCounts = options.keptCounts || listedAmounts(owned.filter(line => line.custodyPolicy === 1));
     const liquidate = invoke('GameServer/Bot/AI/PersonalGearProgression').adventurer(state);
     // What is not listed: the warehouse, or for an adventurer the NPC, unless
-    // a fixed buyer pays more than the NPC: then it rides in the bag to that
-    // buyer's town (the sale trip goes there, MarketTownPolicy.saleTown).
-    const carried = item => StaticPricing.botSellPrice(item.selfId) > StaticPricing.npcBuyback(item.selfId);
+    // the bag carries it to a fixed buyer (the rule the sale trip there reads).
+    const carried = item => StaticPricing.carriedToBuyer(state, item.selfId);
     const parked = item => !liquidate ? 'warehouse' : carried(item) ? 'keep' : 'npc';
     const decisions = [];
     const forBoard = [];
@@ -307,7 +309,7 @@ function evaluate(state, options = {}) {
         }
         const remaining = item.count - held;
         if (!remaining) continue;
-        const listingCount = standing ? 0 : stackable ? remaining : 1;
+        const listingCount = standing || underFloor.has(keptKey) ? 0 : stackable ? remaining : 1;
         if (listingCount) dispose(saleLot(item, held, listingCount), true);
         if (remaining > listingCount) dispose(saleLot(item, held + listingCount, remaining - listingCount), false);
     }

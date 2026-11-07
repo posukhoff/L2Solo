@@ -206,13 +206,16 @@ function openingTown(state, items, timestamp = Date.now()) {
     return { town, shopTown: { town, at: timestamp } };
 }
 
-// Where a bot's sale trip goes: the town of a buyer bidding on its bag (the
-// static and buy-ad buyers, until step 3.6); else the town of its shop, which
-// never moves (N51, E46); else the town its shop will open in (openingTown).
+// Where a bot's sale trip goes: the town of the buyers paying its bag most,
+// the buy ads it answers or the fixed buyers of what it carries (a carried
+// stack grows until its buyers' town wins: the bag does not keep it forever);
+// else the town of its shop, which never moves (N51, E46); else the town its
+// shop will open in (openingTown).
 function saleTown(state, timestamp = Date.now()) {
     if (Karma.closesTowns(state?.stats?.karma)) return { town: Karma.TOWN_NAME, shopTown: null };
-    const buyerTown = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService').bestTownFor(state)?.town
-        || invoke('GameServer/Bot/Economy/StaticBuyerService').bestTownFor(state)?.town;
+    const board = invoke('GameServer/Bot/Economy/ColdMarketBuyStoreService').bestTownFor(state);
+    const fixed = invoke('GameServer/Bot/Economy/StaticBuyerService').bestTownFor(state);
+    const buyerTown = (fixed && !(board?.value >= fixed.value) ? fixed : board)?.town;
     if (buyerTown) return { town: buyerTown, shopTown: null };
     const shop = invoke('GameServer/AfkTrade/AfkTradeService').findOwnerProjection(state?.characterId)?.shop;
     if (shop?.town) return { town: shop.town, shopTown: null };

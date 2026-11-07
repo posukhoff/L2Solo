@@ -99,7 +99,8 @@ async function run() {
         assert.strictEqual(market.buyback, sure, `the ask floor is the best NPC or fixed buyer at x${rate}`);
         const ask = PriceDecision.chooseAsk({ mu: Math.log(sure / 2), K: 0 }, market,
             { wait: 0, assertiveness: 0.5, caution: 0.5, understanding: 0.3 }, ['floor', rate]);
-        assert(ask.price >= sure, `a low belief asks no less than the fixed buyer at x${rate}`);
+        assert(ask.npc && ask.price === Pricing.npcBuyback(1864) && ask.money === ask.price,
+            `a low belief lists nothing under the fixed buyer; the NPC answer pays what the NPC pays at x${rate}`);
         let step, exit = Sources.exitValue({ characterId: 1 }, 1864, null);
         do step = exit.next(); while (!step.done);
         assert.strictEqual(step.value, sure, `an owned item is worth the same exit at x${rate}`);
