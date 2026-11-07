@@ -77,6 +77,7 @@ function canSell(state, lines) {
 }
 
 const EconomicTrip = require('../Economy/EconomicTrip');
+const BoardClaims = require('../Economy/BoardClaims');
 const { regionalTown, details: tripDetails } = EconomicTrip;
 function recipeIndex(board) {
     initialise();
@@ -242,8 +243,10 @@ function* prepare(state, { board, timestamp, read = () => {}, readScope = () => 
             // Every town of the list: an amount reads past the first asks until one town holds it.
             for (const town of board?.towns(id, 1) || []) towns.add(town);
             for (const town of towns) { if (townOrdinal.has(town)) yield* ensureTrip(town); yield 'quote'; }
+            // A line other bots' errands claim whole is gone for this buyer (BoardClaims).
             table = OfferQuery.townTable(board, id, { quoteDepth: QUOTE_DEPTH, excludeOwner: owner.characterId,
-                accept: line => !Number(line.enchant || 0) && personalOfferAllowed(line, owner), npcOffers, cost: trip });
+                accept: line => !Number(line.enchant || 0) && personalOfferAllowed(line, owner) && !BoardClaims.gone(line, owner.characterId),
+                npcOffers, cost: trip });
             purchaseTables.set(tableKey, table);
         }
         const best = OfferQuery.cheapestIn(table, amount);

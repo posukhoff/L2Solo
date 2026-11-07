@@ -185,6 +185,8 @@ let planningSpots = [];
 invoke('GameServer/Bot/AI/SpotValueTable').useSpots(() => planningSpots);
 // The sale retry reads the buyers of a bot's unsold goods on this thread's board.
 invoke('GameServer/Bot/Economy/ItemDisposition').useBoard(() => boardReady());
+// The bots' claimed board lines: main's 'board_claims' table (BoardClaims).
+require('../Economy/BoardClaims').useRows(() => tables.rows('board_claims'));
 let planningNpcOfferRows = [];
 const tables = new TableMirror({ actorProjectorRole: workerProjectorRole });
 // Planning producers import this same collector; its worker cap is64 rows.

@@ -19,6 +19,8 @@ const EconomicTrip = require('./EconomicTrip');
 const EconomicValuation = require('./EconomicValuation');
 const PriceDecision = require('./PriceDecision');
 const Trace = require('../DecisionTrace');
+const BoardClaims = require('./BoardClaims');
+const Situations = require('../Situations');
 
 function purchaseObservation(state, selfId, requested, budget, phase, reason, extra) {
     if (!Diagnostics.active()) return;
@@ -332,7 +334,8 @@ function planPurchase(state, selfId, amount, options = {}) {
         // personal wish certificate for a bilateral conditional advertisement.
         // Use backed shops and NPC stock; do not keep restaging an ineligible meeting.
         if (options.purpose === 'raid_supply' && (line?.conditional || line?.custodyPolicy === 1)) return false;
-        return personalOfferAllowed(line, state);
+        // A line other bots' errands claim whole is gone for this buyer (BoardClaims).
+        return personalOfferAllowed(line, state) && !BoardClaims.gone(line, state?.characterId, timestamp);
     };
     const acceptFill = (line, count) => {
         const refused = priceRefused(state, line, count, board);
@@ -644,6 +647,8 @@ async function acquire(state, selfId, amount, options = {}) {
     // errandAt: this call left the errand (a clan credit travels with it).
     if (options.persist === false) return { state: next, bought: false, units: 0, traveling: !!travel, plan, errandAt: errand.at };
     const saved = await LifeState.upsertState(next, travel ? `market_errand_${errand.purpose}` : 'market_errand_kept');
+    // The trip decided: its board lines are the bot's until the errand ends (BoardClaims).
+    if (saved) BoardClaims.claim(state.characterId, errand, plan.lines, Situations.note);
     return { state: saved || next, bought: false, units: 0, traveling: !!travel && !!saved, plan, errandAt: saved ? errand.at : null };
 }
 
