@@ -203,9 +203,13 @@ const WAKES = Object.freeze(Object.fromEntries(Object.keys(SITUATIONS).map(name 
 // anywhere; a rest its stop; the town, a stall, a meeting, the arrival in town and
 // a body near a player elsewhere all of them.
 const planesAt = where => where === WORK || where === BODY ? 0 : where === REST ? STOP : STOP | TOWN;
-// A decision's held answer in the mind (situations.md §10): with none the decision
-// reads woken (no stored raise), until it decides and holds one.
-const HELD = Object.freeze({ earning_spot: 'earning', build: 'wishSections', gear_plan: 'equipmentPlan', workshop: 'craftIncome' });
+// A decision's held answer in the mind: with none the decision reads woken (no
+// stored raise), until it decides and holds one. The gear plan has no such key: a
+// bot holds no stats.equipmentPlan once its target is bought and worn or its owner
+// drops it (a class transition, a clan goal), and that is the plan carried out, not
+// a review never taken: the next build plans on, and only its situations (or a
+// row with no bits yet, a new bot) wake the full review.
+const HELD = Object.freeze({ earning_spot: 'earning', build: 'wishSections', workshop: 'craftIncome' });
 const unheld = stats => Object.entries(HELD).reduce((bits, [decision, key]) => stats?.[key] === undefined ? bits | BITS[decision] : bits, 0);
 // A row saved before the store kept no bits: every decision reads woken, once.
 const wokenBits = stats => (stats?.woken === undefined ? ALL : Number(stats.woken) || 0) | unheld(stats);

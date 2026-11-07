@@ -29,6 +29,13 @@ for (const name of ['bag', 'party_joined', 'moved_by_world'])
 assert(!Situations.woken(raiseAt('grade_changed', 'hunting'), 'build') && Situations.woken(raiseAt('grade_changed', 'resting'), 'build'), 'a new grade waits for the rest');
 assert(Situations.woken(raiseAt('grade_changed', 'resting'), 'gear_plan') && !Situations.woken(raiseAt('goal_affordable:focus', 'hunting'), 'gear_plan'),
     'the gear plan wakes on the kit, not the purse');
+// A plan carried out (its piece bought and worn: no plan held) is no situation: a town visit's
+// step raised on it keeps the gear review asleep; a row with no bits yet (a new bot) reads it woken.
+{
+    const done = Situations.raise({ woken: 0, wishSections: {}, earning: {} }, 'goal_done:visit', null, at('shopping'));
+    assert(Situations.woken(done, 'build') && !Situations.woken(done, 'gear_plan'), 'a finished plan wakes no gear review');
+    assert(Situations.woken({}, 'gear_plan'), 'a new bot takes its first gear review');
+}
 // The wallet against the decision's thresholds (F3, B7): its goal in reach as the budget stands
 // at or past it, out of money as it falls below the held leaf's funded row; a drift is nothing.
 // The build it wakes re-arms them; the agenda's move over the held baseline spends the passed ones.
