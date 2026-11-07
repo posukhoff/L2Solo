@@ -31,6 +31,12 @@ const duplicate = { ...recipe, productCount: 1, successRate: 100,
 const basket = Policy.basketFor(duplicate, purchase, () => ({ count: 6, unitValue: 2 }));
 assert.deepEqual(basket.owned, [{ selfId: 1458, count: 6, unitValue: 2 }]);
 assert.deepEqual(basket.purchases.map(row => row.count), [4], 'aggregate requirements before allocating one physical stock');
+// An input bought under its own exit (a cheap ask, a fixed buyer paying more)
+// costs the craft that exit: the craft gives up selling it.
+const exitFloor = Policy.basketFor(duplicate, purchase, () => null, 1,
+    { ...context, inputValue: function* () { return 5; } });
+assert.equal(exitFloor.cashCost, 20, 'the cash paid stays the ask');
+assert.equal(exitFloor.cost, 50, 'ten bought units cost their exit of 5 each');
 const withTrips = Policy.basketFor({ ...duplicate, materials: [{ selfId: 1458, amount: 1 }, { selfId: 1785, amount: 1 }] },
     (id, amount) => ({ ...purchase(id, amount), landed: 12, tripDetails: { hours: .25, fees: 3 } }), undefined, 1, context);
 assert.equal(withTrips.travelHours, .25);

@@ -12,6 +12,8 @@ const Shops = invoke('GameServer/World/Generics/NpcShopBuyLists');
 const MarketSnapshot = invoke('GameServer/Bot/Economy/MarketSnapshot');
 const PurchaseItems = invoke('GameServer/World/Generics/PurchaseItems');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const PriceDecision = invoke('GameServer/Bot/Economy/PriceDecision');
+const Sources = invoke('GameServer/Bot/Population/ColdOccupationSources');
 
 DataCache.init();
 const originals = {
@@ -89,6 +91,18 @@ async function run() {
         }
         assert.strictEqual(botLines(Configs['4manda']).find((line) => line.selfId === 1864).price,
             TradeService.ratedPrice(1864, 0.8), 'resource liquidity without a cheaper NPC source keeps its authored price');
+        // No bot sells another below what an NPC pays it (at x50 a fixed buyer
+        // pays 40 times the NPC): the floor of its ask is its item's exit value.
+        const sure = Math.max(NpcSellRules.npcBuyPrice(templates.get(1864).template.price),
+            ...Pricing.fixedBuyersOf(1864).map(offer => offer.price));
+        const market = PriceDecision.marketFor(1864, {});
+        assert.strictEqual(market.buyback, sure, `the ask floor is the best NPC or fixed buyer at x${rate}`);
+        const ask = PriceDecision.chooseAsk({ mu: Math.log(sure / 2), K: 0 }, market,
+            { wait: 0, assertiveness: 0.5, caution: 0.5, understanding: 0.3 }, ['floor', rate]);
+        assert(ask.price >= sure, `a low belief asks no less than the fixed buyer at x${rate}`);
+        let step, exit = Sources.exitValue({ characterId: 1 }, 1864, null);
+        do step = exit.next(); while (!step.done);
+        assert.strictEqual(step.value, sure, `an owned item is worth the same exit at x${rate}`);
     }
 
     ProgressionRates.profile = () => ({ adena: 1, multiplier: 1 });
