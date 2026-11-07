@@ -124,7 +124,7 @@ function verify() {
     const sale = Listing.evaluate(spare, { board: new BoardIndex(), now: timestamp, slots: 0,
         keptAmounts: {}, knowledgeEnabled: false });
     assert.equal(sale.warehouse.length, 0, 'surplus never becomes personal warehouse clutter');
-    assert(sale.npc.some(row => row.selfId === 1864 && row.count === 10));
+    assert(!sale.npc.some(row => row.selfId === 1864), 'Stem a fixed buyer pays more for rides in the bag to that buyer');
     assert(sale.npc.some(row => row.selfId === 1049 && row.count === 2));
     assert.equal(Disposition.warehouseCandidates(spare).length, 0);
     const clanSurplus = { ...spare, stats: { ...spare.stats, clanId: 1 } };
