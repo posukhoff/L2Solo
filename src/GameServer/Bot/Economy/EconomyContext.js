@@ -771,7 +771,8 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     const spotTable = bestSpotId ? Table.value(bestSpotId, tableRole, state.level, hunt.useShots !== false) : null;
     const bestTable = spotTable || Table.best(tableRole, state.level, hunt.useShots !== false);
     const ShotStock = invoke('GameServer/Inventory/ShotStock');
-    const shotPlan = ShotStock.planForState(state);
+    // The shot kind of this build's own earning answer when it took the decision (its search).
+    const shotPlan = ShotStock.planForState(income.searched ? { ...state, stats: { ...state.stats, earning: income.earning } } : state);
     const shotItemId = shotPlan.selfId;
     const potion = HealingPotionStock.purchasePotionFor(state), potionItemId = potion.selfId;
     const hourAdena = Hunt.huntHour(hunt, state);
