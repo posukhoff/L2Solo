@@ -182,8 +182,9 @@ function bidSale(state, offer, { board, persona, timestamp = Date.now(), asks = 
         gross: after.receipts + after.residualValue - before.receipts - before.residualValue };
 }
 
-// What the seller of `units` of an item in `town` competes with: { buyback,
-// buyersPerHour, lot, rivals [{ landed, units }], npcLanded, ownTrip }.
+// What the seller of `units` of an item in `town` competes with: { buyback
+// (its ask's floor, StaticMerchantPricing.botSellPrice), npcBuyback (what the
+// NPC sale pays now), buyersPerHour, lot, rivals [{ landed, units }], npcLanded, ownTrip }.
 // tripCost(town): a buyer's trip there in Adena (OfferOrder.tripCost of the
 // trader); npcOffers: the NPC shops selling the item ({ price, town }).
 function marketFor(selfId, { board = null, ownerId = 0, town = null, units = 1, tripCost = null,
@@ -222,6 +223,7 @@ function marketFor(selfId, { board = null, ownerId = 0, town = null, units = 1, 
         && demand.availability.from <= timestamp && demand.availability.until >= timestamp);
     return {
         buyback: buyback(id),
+        npcBuyback: StaticMerchantPricing.npcBuyback(id),
         known: supported && !truncated,
         applicableUnits: supported ? demand.applicableUnits : NaN,
         delayHours: supported ? Number(demand.delayHours ?? 0) : NaN,

@@ -282,7 +282,9 @@ function disposition(item, ctx, { town = null, room = 1, stockQuote = false, sta
         if (result.known) options.push({ action, value: result.valueHours });
     };
     const loss = (price, count) => Math.max(0, reference - price) * count * ctx.trader.caution * moneyPrice;
-    if (!marketOnly) add('npc', { receipts: market.buyback * units, riskHours: loss(market.buyback, units) });
+    // The NPC sale pays the plain NPC price: a fixed buyer's dearer price is
+    // the item's floor and residual (kept for its town), not this sale's.
+    if (!marketOnly) add('npc', { receipts: market.npcBuyback * units, riskHours: loss(market.npcBuyback, units) });
     if (room > 0) add('keep', { monetaryResidual: units * (useful > 0 ? useful : market.buyback) });
     if (quote) add('list', { monetaryResidual: units * (useful > 0 ? useful : market.buyback) });
     if (gain > 0 && ask.known) {

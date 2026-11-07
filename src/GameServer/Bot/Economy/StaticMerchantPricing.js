@@ -82,12 +82,15 @@ function fixedBuyersOf(selfId) {
     return buyers.get(Number(selfId)) || EMPTY;
 }
 
+// What an ordinary NPC pays for one unit, in every town (C4: half the price).
+const npcBuyback = selfId => NpcSellRules.npcBuyPrice(basePrice(Number(selfId)));
+
 // What a bot is sure to get for one unit: the NPC buyback or the best enabled
 // fixed buyer, whichever pays more (a fixed buyer pays at the Adena rate, the
 // NPC does not). The one floor of a bot's ask and the base of its owned
 // item's exit value: no bot sells another below what an NPC pays it.
 function botSellPrice(selfId) {
-    let price = NpcSellRules.npcBuyPrice(basePrice(Number(selfId)));
+    let price = npcBuyback(selfId);
     for (const offer of fixedBuyersOf(selfId)) price = Math.max(price, offer.price);
     return price;
 }
@@ -176,5 +179,5 @@ function botBuyPrice(id) {
     return Number.isFinite(npc) ? npc : Math.max(0, Number(ItemTemplateIndex.find(DataCache.items, id)?.template?.price || 0));
 }
 
-module.exports = { BUYBACK_RATIO, botPriceFor, botSellPrice, fixedBuyersOf, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
+module.exports = { BUYBACK_RATIO, botPriceFor, botSellPrice, npcBuyback, fixedBuyersOf, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
     priceFor, sellersOf };

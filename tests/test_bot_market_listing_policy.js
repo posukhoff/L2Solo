@@ -239,6 +239,16 @@ assert(withoutMarket.decisions.every(decision => decision.priced.market.known ==
     && decision.priced.ask.known === false), 'unknown forecasts stay explicit for the entire unchanged bag');
 assert(withoutMarket.decisions.every(decision => ['npc', 'warehouse'].includes(decision.action)),
     'only immediate NPC liquidation or remaining physical goods have supported outcomes');
+// A material a fixed buyer pays more for than the NPC (x50: 8000 against 100
+// for Iron Ore) is kept for that buyer: the NPC sale is only the roll's small
+// floor every option keeps (it was half the rolls when it was valued at the floor).
+let dumped = 0, decided = 0;
+for (let decisionPoint = 0; decisionPoint < 20; decisionPoint++) {
+    for (const decision of atRate('x50', () => MarketListingPolicy.evaluate(state, options({ decisionPoint }))).decisions) {
+        decided++; if (decision.action === 'npc') dumped++;
+    }
+}
+assert(dumped <= decided * 0.1, `fixed buyers' materials are kept, not dumped at the NPC (${dumped} of ${decided})`);
 // No room to keep (a third copy of a gear piece): the NPC.
 const gear = { characterId: 4243, level: 40, adena: 50000, stats: { generatedCold: true },
     inventory: { [lowGradeGear.selfId]: { selfId: Number(lowGradeGear.selfId), amount: 1, kind: lowGradeGear.template.kind } } };
