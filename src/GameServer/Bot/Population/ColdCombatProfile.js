@@ -1129,24 +1129,28 @@ function spotSpawns(spot = {}, npcId) {
 }
 
 // The one owner of "which monster of a spot a kill takes": the cold roll
-// (npcForSpot) draws from it and the planners' expectation
-// (SpotRewardExpectation.killShare) reads its chances. entries: the kill's
+// (npcForSpot) draws from it and the spot table's mob numbers
+// (generate-spot-table spotMob) read its chances. entries: the kill's
 // candidates (huntable, after the hunters' matchup filter: entry.match);
-// encounterEntries: the huntable ones before that filter. An untargeted
-// kill draws from entries by killWeight. A targeted kill
-// (options.preferredNpcId among entries: an active plan's next hunt,
-// PartyHuntingTarget.planTargetNpcId, or a material party) takes its
-// target, unless an aggressive other monster of the encounter engages first (interruption, 0.25 by default): a direct-drop
-// plan travels to the intended monster, but it is still a real hunting
-// ground, so the bot is not immune to the rest of the encounter table; an
-// interrupted kill draws from those aggressive others by killWeight.
-function killDraw(entries, encounterEntries, options = {}) {
+// exposed: the groups that may engage the hunters first. An untargeted kill
+// draws from entries by killWeight. A targeted kill (options.preferredNpcId
+// among entries: an active plan's next hunt, PartyHuntingTarget.planTargetNpcId,
+// or a material party) takes its target, unless an aggressive other group of
+// exposed engages first (interruption, 0.25 by default; an interrupted kill
+// draws from those by killWeight). Aggression is not erased by what the
+// hunters prefer to fight (exposed: the huntable encounter before an
+// efficiency filter), but a solo hunter judged for survival stands where the
+// spawns it takes are, as on an untargeted hunt (the bot takes only the spawns
+// it can, user 10-29): exposed is then entries, and what comes at it first is
+// a group at a pull it survives, whatever it targeted (our choice; a C4 player
+// keeps clear of the aggressive packs it cannot take).
+function killDraw(entries, exposed, options = {}) {
     const preferredNpcId = number(options.preferredNpcId);
     const preferred = preferredNpcId > 0
         ? entries.find((entry) => number(entry.selfId) === preferredNpcId) || null
         : null;
     const interrupters = preferred
-        ? encounterEntries.filter((entry) => number(entry.selfId) !== preferredNpcId
+        ? exposed.filter((entry) => number(entry.selfId) !== preferredNpcId
             && ItemTemplateIndex.find(DataCache.npcs, entry.selfId)?.template?.hostile === true)
         : [];
     const interruption = Math.max(0, Math.min(1, number(options.aggressiveInterruptionChance, 0.25)));
@@ -1220,8 +1224,9 @@ function npcForSpot(spot = {}, rng = Math.random, options = {}) {
         }) || candidates[0];
     };
     // One draw with the hunt tables' (killDraw, killChances): a direct-drop
-    // plan travels to its monster, yet nearby aggressive mobs may engage first.
-    const draw = killDraw(entries, encounterEntries, options);
+    // plan travels to its monster, yet nearby aggressive mobs may engage first:
+    // for a solo hunter judged for survival, only the groups and pulls it takes.
+    const draw = killDraw(entries, options.soloSafety ? entries : encounterEntries, options);
     const { preferred } = draw;
     const selected = preferred && (!draw.interrupters.length || rng() >= draw.interruption)
         ? preferred
