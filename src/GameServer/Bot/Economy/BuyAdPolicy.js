@@ -159,8 +159,19 @@ function bidFor(state, goal, { money = Infinity, ...options } = {}) {
     };
 }
 
+// One acquisition path per root at a time: while the held goal is a purchase the bot
+// makes at a shop (an NPC or a board quote), no bid of the same root holds that money.
+// The root's key, else null. C4: a player walking to the NPC with that money closes his
+// WTB for the same project; his next store asks again once the purchase is made.
+function heldPurchaseRoot(goal) {
+    return ['upgrade_gear', 'buy_craft_material'].includes(goal?.type)
+        && (nativeGoal(goal) || goal.plan?.priceSource === 'offer') ? goal.plan?.wishKey || null : null;
+}
+
 function linesFor(state, goal, { money = Infinity, watchList, ...options } = {}) {
-    const goals = (watchList || require('../Population/ColdEconomyDecision').economyFor(state).watchList).map(row => ({ type: 'buy_craft_material',
+    const held = heldPurchaseRoot(goal);
+    const goals = (watchList || require('../Population/ColdEconomyDecision').economyFor(state).watchList)
+        .filter(row => !held || row.key !== held).map(row => ({ type: 'buy_craft_material',
         target: { itemId: row.itemId, amount: row.amount },
         intent: row, plan: { estimatedCost: row.worth, purpose: row.kind, valueRate: row.valueRate } }));
     if (!nativeGoal(goal) && !watchList?.some(row => row.key) && goal?.target?.itemId

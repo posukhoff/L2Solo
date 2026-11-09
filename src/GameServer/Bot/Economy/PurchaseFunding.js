@@ -163,6 +163,12 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
         revision: Number(state.simulation?.revision), wishKey: state.stats?.wishFocus?.[0] });
     return available;
 }
+// What a purchase may pay now: the planner's rule (spendable over the bag and the money
+// the bot's own buy orders hold, escrow) paid from the bag. One rule for the planner and
+// every buyer: hot and cold, main and the native writer.
+function payable(state = {}, escrow = 0, options = {}, captureOutput = null) {
+    return Math.min(budget(state), spendable(state, escrow, options, captureOutput));
+}
 // Finite action utility supplies a funding ratio, never an extra purse.
 // Native writers still reread the current money packet and physical wallet.
 // A shot, potion or scroll restock: survival first (the kit's cost), the rest
@@ -265,5 +271,5 @@ function packetFor(network, hour, reserve) {
     }
     return packet;
 }
-module.exports = { itemRate, budget, operatingReserve, shortfall, surplus, spendable, clanCredit, stockAllowance, survivalTranche, quoteScale, forOpportunity, nativeTerms, companionTerms, budgetFor, packetAfterPurchase, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, stampRatio, goalTerms, stockTerms,
+module.exports = { itemRate, budget, operatingReserve, shortfall, surplus, spendable, payable, clanCredit, stockAllowance, survivalTranche, quoteScale, forOpportunity, nativeTerms, companionTerms, budgetFor, packetAfterPurchase, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, stampRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }), resetCounters: () => { moneyPacketMissing = 0; } };

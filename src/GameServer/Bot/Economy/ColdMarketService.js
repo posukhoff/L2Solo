@@ -37,8 +37,9 @@ function purchaseObservation(state, selfId, requested, budget, phase, reason, ex
 const ERRAND_MS = CombinedErrands.ERRAND_MS;
 // The reasons a gear buy fails on the item itself: no offer at the step's price, the line
 // gone, the supply retired, the bot's gear rules refusing it (already held, a shield under
-// a two-hander). A price change, an arrow or war-ticket limit, a full bag or weight and a
-// failed write are not the item failing: they mark nothing (their facts have other owners).
+// a two-hander). A price change, an arrow or war-ticket limit, a full bag or weight, a
+// failed write and a purse short of the step's price (funding_short) are not the item
+// failing: they mark nothing (their facts have other owners).
 const GEAR_SOURCE_FAILED = new Set(['no_affordable_offer', 'low_tier_offer_missing', 'offer_changed',
     'configured_supply_retired', 'already_owned', 'incompatible_loadout']);
 
@@ -262,6 +263,11 @@ function arrivalStep(goal) {
     return unitPrice > 0 ? { unitPrice, amount: Math.max(1, Math.ceil(Number(goal.target.amount) || 1)) } : null;
 }
 
+// The money the bot's own buy orders hold (its buy shop's escrow) is its own, as the
+// planner counts it: a purchase pays PurchaseFunding.payable over the bag and that escrow
+// at its place in the money queue (the queue's higher rows already hold the bids' money).
+const ownEscrow = state => invoke('GameServer/Bot/Economy/BotAfkMarketService').buyOrderEscrow(state.characterId);
+
 // price: the unit price this money buys at (a board line's, else the NPC's).
 function purchaseMoney(state, plan, spent = 0, price = plan.npcPrice) {
     const wallet = PurchaseFunding.budget(state);
@@ -271,7 +277,7 @@ function purchaseMoney(state, plan, spent = 0, price = plan.npcPrice) {
         // The treasury part was already credited by ClanMarketService. It
         // is excluded from personal free money before adding its remainder.
         const clanPart = Math.min(wallet, Math.max(0, Number(plan.tag?.clanPart || 0) - spent));
-        funded = clanPart + PurchaseFunding.spendable({ ...state, adena: wallet - clanPart }, 0,
+        funded = clanPart + PurchaseFunding.spendable({ ...state, adena: wallet - clanPart }, ownEscrow(state),
             { free: true, ownClanErrand: { clanId: plan.tag?.clanId, selfId: plan.selfId } });
     } else {
         const terms = fundingTerms(plan);
@@ -288,7 +294,7 @@ function purchaseMoney(state, plan, spent = 0, price = plan.npcPrice) {
                 options.quoteScale = PurchaseFunding.quoteScale(context.price?.(plan.selfId), Number(price));
             }
         }
-        funded = PurchaseFunding.spendable(state, 0, options);
+        funded = PurchaseFunding.spendable(state, ownEscrow(state), options);
     }
     return Math.max(0, Math.floor(Math.min(wallet, limit, funded)));
 }
@@ -837,12 +843,25 @@ const ColdMarketService = {
         });
         const missed = reason => refreshAfter(retryAfterFailedPurchase(state, goal, reason));
         if (!arrival) return missed('arrival_step_gone');
-        // What the bot may spend (PurchaseFunding.spendable): its wallet above
-        // the operating reserve, at the goal root's place in the money queue.
-        // A buy ad's escrow is not in the wallet a shop is paid from.
+        // What the bot may pay (ownEscrow) at the goal root's place in the money queue
+        // (a weapon bridge: the whole bag).
         let refusedOffer = false, overPlanPrice = false;
         const budget = activeMaterialPurchase ? 0 : goal.plan?.weaponBridge ? PurchaseFunding.budget(state)
-            : PurchaseFunding.spendable(state, 0, PurchaseFunding.goalTerms(goal));
+            : PurchaseFunding.payable(state, ownEscrow(state), PurchaseFunding.goalTerms(goal));
+        // A purse short of one unit at the card's price is refused for money, not for a
+        // missing seller: the visit ends and nothing is marked; the build it wakes reads the
+        // same purse (the planner's rule), so it funds the step again only once money moved.
+        const fundingShort = money => {
+            if (money >= arrival.unitPrice) return null;
+            MarketTelemetry.fundingShort();
+            purchaseObservation(state, goal.target.itemId, arrival.amount, money, 'purchase_goal', 'funding_short',
+                { unitPrice: arrival.unitPrice, town: state.currentRegion });
+            return refreshAfter(finishBlockedPurchase(state, 'funding_short'));
+        };
+        if (!activeMaterialPurchase) {
+            const short = fundingShort(budget);
+            if (short) return short;
+        }
         const offer = activeMaterialPurchase ? null : MarketOpportunity.bestOffer(goal.target.itemId, {
             town: state.currentRegion, budget,
             buyerCharacterId: state.characterId,
@@ -868,8 +887,11 @@ const ColdMarketService = {
             // incoming since; native funding at the root's queue place.
             const terms = { ...goalFunding(goal), purpose: goal.plan?.purpose || 'supply',
                 selfId: Number(goal.target.itemId) };
+            const money = purchaseMoney(state, terms);
+            const short = fundingShort(money);
+            if (short) return short;
             const plan = planPurchase(state, terms.selfId, arrival.amount, {
-                ...terms, money: purchaseMoney(state, terms), towns: [state.currentRegion], maxPrice: arrival.unitPrice,
+                ...terms, money, towns: [state.currentRegion], maxPrice: arrival.unitPrice,
                 npcOnly: goal.plan?.sourceType === 'npc'
                     && invoke('GameServer/Bot/Economy/BotCrystallization').inputAmount(state, terms.selfId) > 0
             });

@@ -42,10 +42,15 @@ function currentState(session, bot, town, economy = null) {
     };
 }
 
+// What a body may pay at a shop: PurchaseFunding.payable over its own buy orders' escrow,
+// as a cold buyer pays.
+const payable = (state, terms) => PurchaseFunding.payable(state,
+    invoke('GameServer/Bot/Economy/BotAfkMarketService').buyOrderEscrow(state.characterId), terms);
+
 // The purchase writers refuse a wallet with no money packet: such a companion
 // plans nothing until its first worker decision writes one.
 function companionBudget(state, itemId) {
-    return Array.isArray(state.stats?.money) ? PurchaseFunding.spendable(state, 0, PurchaseFunding.companionTerms(itemId)) : 0;
+    return Array.isArray(state.stats?.money) ? payable(state, PurchaseFunding.companionTerms(itemId)) : 0;
 }
 
 function affordableOffers(target, state, town) {
@@ -92,7 +97,7 @@ function checkedPlan(session, state, town, options = {}) {
         // The leaf's funded root funds it (the card leaf's r), as for a cold goal (PurchaseFunding.goalTerms).
         const ratio = PurchaseFunding.leafRatio(leaf);
         const funding = ratio > 0 ? { valueRate: ratio } : {};
-        const budget = Math.min(PurchaseFunding.spendable(fundedState, 0, PurchaseFunding.goalTerms({ plan: funding }, selfId)) / amount,
+        const budget = Math.min(payable(fundedState, PurchaseFunding.goalTerms({ plan: funding }, selfId)) / amount,
             economy.worth(selfId) ?? Infinity);
         const offer = MarketOpportunity.bestHotOffer(selfId, { town: town.name, buyerCharacterId: state.characterId, budget,
             accept: row => Number(row.count) >= amount && (row.sourceType === 'private_store' && row.store?.kind === 'player'

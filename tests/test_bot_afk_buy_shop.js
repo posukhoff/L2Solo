@@ -93,8 +93,82 @@ async function autonomousSale() {
     console.log('PASS autonomous buy-shop sale: native decision, escrow, seller receipt, buyer settlement, replay and conservation');
 }
 
+// A visit that buys a root's input at an NPC (a D weapon for a luxury jewel's crystals)
+// while the build also watches the root itself and a stock item. The bids hold no money
+// the purchase was funded with: no bid for the root while its input is bought, and the
+// buyer reads the planner's purse (its own bids' escrow counted, paid from the bag), so
+// the higher-ranked stock bid's money is not subtracted twice. A purse short of the
+// step's price is refused for money: the visit ends, nothing is marked.
+async function heldPurchaseVisit() {
+    const Policy = invoke('GameServer/Bot/Economy/BuyAdPolicy');
+    const Pricing = invoke('GameServer/Bot/Economy/MarketPricing');
+    const Funding = invoke('GameServer/Bot/Economy/PurchaseFunding');
+    const ColdMarket = invoke('GameServer/Bot/Economy/ColdMarketService');
+    const Events = invoke('GameServer/Bot/AI/DecisionEvents');
+    const GearMarks = invoke('GameServer/Bot/AI/GearMarks');
+    const ROOT = 'power:854:4', INPUT = 90, STOCK = 1867, STOCK_PRICE = 400000, JEWEL_PRICE = 600000;
+    const price = Number(invoke('GameServer/Bot/Economy/MarketOpportunity').npcOffers(INPUT, 'Giran')[0].price);
+    // The stock root ranks first (its bid's money is its funded row), the root next.
+    const packet = [36000, 1e-6, 0, 0, 2, STOCK_PRICE, STOCK, 1, STOCK_PRICE + price + JEWEL_PRICE, 854];
+    const goal = { type: 'buy_craft_material', target: { itemId: INPUT, itemName: 'Input', amount: 1, adena: price },
+        plan: { wishKey: ROOT, sourceType: 'npc', estimatedCost: price, valueRate: 1, purpose: 'gear',
+            expectedBenefit: 'market_buy_craft_material', marketTown: 'Giran' } };
+    const terms = Funding.goalTerms(goal);
+    const watch = [{ itemId: 854, amount: 1, worth: JEWEL_PRICE, key: ROOT, recipeId: 0, valueHours: 1, valueRate: 1 },
+        { itemId: STOCK, amount: 1, worth: STOCK_PRICE, key: `resale:${STOCK}`, recipeId: 0, valueHours: 1, valueRate: 2 }];
+    const trip = () => 0; trip.details = () => ({ known: true, hours: 0, fees: 0 });
+    const Towns = invoke('GameServer/Bot/Economy/MarketTownPolicy');
+    const raised = [], raiseOn = Events.raiseOn, previousBid = Pricing.bid, buyAdTown = Towns.buyAdTown;
+    // The visit's town: its bids open the buy shop where the bot stands.
+    Towns.buyAdTown = () => 'Giran';
+    Events.raiseOn = async (who, name, payload) => { raised.push([who, name, payload]); return null; };
+    Pricing.bid = selfId => { const unit = selfId === 854 ? JEWEL_PRICE : STOCK_PRICE;
+        return { price: unit, count: 1, purchaseCap: unit, pricing: { price: unit } }; };
+    const visit = async (id, bag) => {
+        await bot(id);
+        const cash = (await DB.fetchItems(id)).find(item => Number(item.selfId) === 57);
+        await DB.updateItemAmount(id, cash.id, bag);
+        const state = await Life.upsertState({ ...await Life.refreshInventory(Life.snapshot(id)), adena: bag,
+            stats: { ...Life.snapshot(id).stats, money: packet } }, 'held_purchase_fixture');
+        const lines = Policy.linesFor(state, goal, { watchList: watch, board: Afk.boardIndex(), townFor: () => 'Giran',
+            npcOffersFor: () => [], economy: { moneyPrice: 1e-6, hourAdena: 36000, worth: () => STOCK_PRICE, trip,
+                persona: { traits: {} }, network: { moneyPrice: 1e-6 } } });
+        await Market.executePlan(state, { ...Plan.buyBatch(lines), buyShop: Afk.BUY }, { reviewGoal: false });
+        return { lines, state: Life.snapshot(id) };
+    };
+    try {
+        // Bag: the stock bid, the input and half the stock bid again: a buyer that
+        // subtracts the escrowed stock bid's funded row from the bag it left is short.
+        const funded = await visit(9114, price + STOCK_PRICE * 3 / 2);
+        assert.deepEqual(funded.lines.map(line => line.selfId), [STOCK], 'no bid for the root while the visit buys its input');
+        assert.equal(Market.buyOrderEscrow(9114), STOCK_PRICE, 'only the stock bid holds money');
+        const escrow = Market.buyOrderEscrow(9114);
+        assert.equal(Funding.payable(funded.state, escrow, terms), Funding.spendable(funded.state, escrow, terms),
+            'the buyer pays what the planner funds');
+        assert(Funding.spendable(funded.state, escrow, terms) >= price, 'the planner funds the input');
+        const bought = await ColdMarket.tryPurchase(funded.state, goal);
+        assert.equal(bought.purchased, true, 'the input is bought in the visit that posted the bids');
+        assert.equal(Native.amount(await DB.fetchItems(9114), INPUT), 1);
+
+        // A bag short of the input: refused for money, the visit ends, nothing marked.
+        raised.length = 0;
+        const short = await visit(9115, price / 2);
+        const refused = await ColdMarket.tryPurchase(short.state, goal);
+        assert.equal(refused.purchased, false);
+        assert.equal(refused.reason, 'funding_short');
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(GearMarks.keys(Life.snapshot(9115).stats), [], 'a refusal for money marks no item');
+        assert.deepEqual(raised.map(([, name, payload]) => [name, payload?.kind]), [['goal_failed', undefined]],
+            'the step fails once, no source failure');
+        assert(Funding.spendable(short.state, Market.buyOrderEscrow(9115), terms) < price,
+            'the build reads the same short purse: it funds the step again only once money moves');
+    } finally { Events.raiseOn = raiseOn; Pricing.bid = previousBid; Towns.buyAdTown = buyAdTown; }
+    console.log('PASS held purchase visit: no root bid beside its input buy, one purse for planner and buyer, funding_short marks nothing');
+}
+
 async function run() {
     DB.init(); invoke('GameServer/DataCache').init(); await Life.init();
+    await heldPurchaseVisit();
     await bot(9101);
     await apply(9101);
     assert.equal(shop(9101)?.storeType, Afk.BUY);
