@@ -161,14 +161,14 @@ function playerSummary(lines) {
 function workerDueSummary(lines, start, end) {
     const part = list => {
         const counts = StepLateness.empty();
-        let maxMs = 0;
+        let maxMs = 0, maxBot = null;
         for (const line of list) {
             const window = line.coordinator?.stepLate;
             if (!window) continue;
             StepLateness.add(counts, window.counts);
-            maxMs = Math.max(maxMs, Number(window.maxMs) || 0);
+            if (Number(window.maxMs) > maxMs) [maxMs, maxBot] = [Number(window.maxMs), window.maxBot || null];
         }
-        return StepLateness.summary(counts, maxMs);
+        return { ...StepLateness.summary(counts, maxMs), maxBot };
     };
     const windows = lines.filter(line => line.coordinator?.stepLate?.steps > 0);
     const drained = windows.find(line => line.coordinator.stepLate.maxMs <= 1000);
@@ -378,7 +378,8 @@ function print(s) {
     console.log(`  bots ${JSON.stringify(r.bots)}, ${r.warmupMinutes} min warm-up, window ${s.windowMinutes} min`
         + `; process ${s.processCores} cores, recorder ${s.recorderMainPct} % of main, cold due max ${s.coldDueMax}`);
     if (s.workerDue) {
-        const due = (x) => `p50 ${x.p50Ms} / p99 ${x.p99Ms} / max ${x.maxMs} ms over ${x.steps} steps`;
+        const due = (x) => `p50 ${x.p50Ms} / p99 ${x.p99Ms} / max ${x.maxMs} ms${x.maxBot ? ` (bot ${x.maxBot.characterId}`
+            + `${x.maxBot.eventWaitMs ? `, ${x.maxBot.eventWaitMs} ms event wait off` : ''})` : ''} over ${x.steps} steps`;
         console.log(`  worker due (commit past due): steady ${due(s.workerDue.steady)}; boot ${due(s.workerDue.boot)}`
             + `, drained ${s.workerDue.drainedS ?? '-'} s`);
     }

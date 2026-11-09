@@ -134,7 +134,7 @@ function heapSnapshotOptions() {
     return { execArgv: ['--heapsnapshot-near-heap-limit=1', `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`] };
 }
 
-const emptyBusyWindow = () => ({ activeMs: 0, idleMs: 0, maxElu: 0, lagMs: 0, lateMaxMs: 0 });
+const emptyBusyWindow = () => ({ activeMs: 0, idleMs: 0, maxElu: 0, lagMs: 0, lateMax: null });
 
 class ColdSimulationCoordinator {
     constructor(options = {}) {
@@ -474,10 +474,12 @@ class ColdSimulationCoordinator {
         window.idleMs += Number(payload.eluIdleMs) || 0;
         window.maxElu = Math.max(window.maxElu, Number(payload.eventLoopUtilization) || 0);
         window.lagMs = Math.max(window.lagMs, Number(payload.eventLoopLagMaxMs) || 0);
-        window.lateMaxMs = Math.max(window.lateMaxMs, Number(payload.stepLateMaxMs) || 0);
+        const late = payload.stepLateMax;
+        if (Number(late?.maxMs) > Number(window.lateMax?.maxMs || 0)) window.lateMax = late;
     }
 
-    // Also closes the window of step lateness (stepLateWindow): the steps committed since the last line.
+    // Also closes the window of step lateness (stepLateWindow): the steps committed since the last line,
+    // the latest one's bot (maxBot) and main's event wait that came off its lateness.
     takeBusyWindow() {
         const window = this.busyWindow;
         this.busyWindow = emptyBusyWindow();
@@ -485,7 +487,8 @@ class ColdSimulationCoordinator {
         if (Array.isArray(counts)) {
             const since = StepLateness.since(counts, this.stepLateTaken);
             this.stepLateTaken = counts.slice();
-            this.stepLateWindow = { ...StepLateness.summary(since, window.lateMaxMs), counts: since };
+            this.stepLateWindow = { ...StepLateness.summary(since, window.lateMax?.maxMs), counts: since,
+                maxBot: window.lateMax ? { characterId: window.lateMax.characterId, eventWaitMs: window.lateMax.eventWaitMs } : null };
         }
         window.due = this.stepLateWindow;
         return window;

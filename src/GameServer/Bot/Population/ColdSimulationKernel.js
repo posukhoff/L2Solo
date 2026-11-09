@@ -475,6 +475,7 @@ function playerWaitingTransition(state, kind = null, facts = NO_FACTS) {
 function lateFrom(entry) {
     return Math.max(Number(entry.dueAt || 0), Number(entry.queuedAt || 0));
 }
+const NO_STEP_LATE = Object.freeze({ maxMs: 0, characterId: 0, eventWaitMs: 0 });
 
 // A bot that matters to a player goes first in the due queue (DueHeap's player head,
 // dueCandidates): one the player waits for at a meeting, or one within the activation
@@ -753,9 +754,9 @@ class ColdSimulationKernel {
         // on this thread's own commit acks (onCommitAck); 0 until the first.
         this.stepLeadMs = 0;
         // Each committed step's lateness (StepLateness: ack minus due), cumulative,
-        // and the longest since the last heartbeat took it (takeStepLateMax).
+        // and the longest since the last heartbeat took it, with its bot (takeStepLateMax).
         this.stepLate = StepLateness.empty();
-        this.stepLateMaxMs = 0;
+        this.stepLateMax = NO_STEP_LATE;
         this.partyRuns = new Map();
         this.dirty = new Map();
         this.commanding = new Set();
@@ -2758,9 +2759,14 @@ class ColdSimulationKernel {
             this.inFlight.delete(id);
             // Its decisions are recorded once, by the step main committed: a refused one re-runs on the moved row.
             Trace.settle(id, result.ok);
+            // Main's wait for the step's future events (a step run early by its lead
+            // holds its commit until its events' time): not work, not lateness.
+            const elapsedMs = Math.max(0, this.now() - active.startedAt);
+            const eventWaitMs = Number.isFinite(result.eventWaitMs)
+                && result.eventWaitMs >= 0 && result.eventWaitMs <= elapsedMs ? result.eventWaitMs : 0;
             // A committed step ends the bot's (its party run's) faults in a row.
             if (result.ok) {
-                this.noteStepLate(active.lateFrom);
+                this.noteStepLate(active.lateFrom, id, eventWaitMs);
                 this.clearFault(id);
                 if (active.partyId) this.clearFault(`party:${active.partyId}`);
                 // Its grievances are written: counted once.
@@ -2771,9 +2777,6 @@ class ColdSimulationKernel {
             // output, not work. A party's shared start and wait are one sample.
             if (result.ok && !(active.partyId && sampledParties.has(active.partyId))) {
                 if (active.partyId) sampledParties.add(active.partyId);
-                const elapsedMs = Math.max(0, this.now() - active.startedAt);
-                const eventWaitMs = Number.isFinite(result.eventWaitMs)
-                    && result.eventWaitMs >= 0 && result.eventWaitMs <= elapsedMs ? result.eventWaitMs : 0;
                 this.measureStepLead(elapsedMs - eventWaitMs);
             }
             // An ok ack without the state carries the commit's numbers: main's
@@ -2831,19 +2834,21 @@ class ColdSimulationKernel {
         return accepted;
     }
 
-    // A committed step's lateness: this ack's time past lateFrom (none for a step with no due).
-    noteStepLate(from) {
+    // A committed step's lateness: this ack's time past lateFrom, less main's wait for
+    // its future events (none for a step with no due).
+    noteStepLate(from, characterId, eventWaitMs = 0) {
         if (!Number.isFinite(from) || from <= 0) return;
-        const lateMs = Math.max(0, this.now() - from);
+        const lateMs = Math.max(0, this.now() - from - eventWaitMs);
         this.stepLate[StepLateness.bucketOf(lateMs)] += 1;
-        this.stepLateMaxMs = Math.max(this.stepLateMaxMs, lateMs);
+        if (lateMs > this.stepLateMax.maxMs) this.stepLateMax = { maxMs: lateMs, characterId: Number(characterId), eventWaitMs };
     }
 
-    // The longest lateness since the last call (the worker's heartbeat).
+    // The longest lateness since the last call (the worker's heartbeat): { maxMs, characterId,
+    // eventWaitMs } of the latest step, the wait main added and that came off it.
     takeStepLateMax() {
-        const maxMs = this.stepLateMaxMs;
-        this.stepLateMaxMs = 0;
-        return maxMs;
+        const max = this.stepLateMax;
+        this.stepLateMax = NO_STEP_LATE;
+        return max;
     }
 
     // One-sided average of start -> commit ack, excluding event waits (STEP_LEAD_*).
