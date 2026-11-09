@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 // What a player SEES of hot bots. Two players log in at a quiet town, then the window opens:
-// - the fighter teleports to a busy hunting spot, is given a level for its mobs and fights there
+// - the fighter teleports to a busy hunting spot, is given a level and the GM's buffs (it has no
+//   gear; at its mobs' level it died every 20 s and killed one mob in 4 min) and fights there
 //   (clicks the nearest free mob, as a player does; revived where it fell) for FIGHT_MS, so
 //   kill-steals and target conflicts show;
 // - the watcher teleports to Giran's gatekeeper landing (C4 teleport destination 59) and stands
@@ -29,7 +30,7 @@ const FLORAN = { locX: 17144, locY: 170156, locZ: -3504 };
 // Spot 28_-31 (south of the Dwarven Village): the save's fullest, 25 hunters of levels 22-27.
 const SPOT = { locX: 173785, locY: -184306, locZ: -1896 };
 const GIRAN_LANDING = { locX: 83400, locY: 147943, locZ: -3404 };
-const FIGHTER_LEVEL = 30;
+const FIGHTER_LEVEL = 40;
 const FIGHT_MS = 10 * 60000;
 const SAMPLE_MS = 5000;
 // The fighter takes mobs this close, at most this many levels above it, and is taken back to the
@@ -62,7 +63,8 @@ const GROUPS = {
     charInfo: ['CharInfo'],
     chat: ['Speak'],
     party: ['AskForTeamUp', 'JoinParty', 'PartySmallWindowAll', 'PartySmallWindowDeleteAll', 'PartySmallWindowUpdate'],
-    trade: ['TradeStart', 'TradeDone', 'PrivateStoreMsg']
+    trade: ['TradeStart', 'TradeDone'],
+    store: ['PrivateStoreMsg']
 };
 
 const int = (buffer, offset) => (buffer.length >= offset + 4 ? buffer.readInt32LE(offset) : null);
@@ -572,6 +574,7 @@ module.exports = {
         try {
             await step('the fighter has a level for the spot', async () => {
                 await setup.setLevel(fighter, FIGHTER_LEVEL);
+                setup.fullBuff(fighter);
                 if (fighter.actor.fetchLevel() !== FIGHTER_LEVEL) throw new Error(`level ${fighter.actor.fetchLevel()}`);
             });
             for (const [client, view, loc, what] of [[fighter, views[0], SPOT, 'the spot'], [watcher, views[1], GIRAN_LANDING, "Giran's landing"]]) {
@@ -592,6 +595,7 @@ module.exports = {
                         mob = null;
                         await new Promise(resolve => setTimeout(resolve, 3000));
                         setup.revive(fighter);
+                        setup.fullBuff(fighter);
                         continue;
                     }
                     if (away(fighter.loc(), SPOT) > LEASH) {
