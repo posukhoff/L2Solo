@@ -63,7 +63,9 @@ class ColdCommitQueue {
         this.targetMs = Math.max(100, Number(options.targetMs) || 2000);
         this.hardMs = Math.max(this.targetMs, Number(options.hardMs) || 5000);
         this.p1TargetMs = Math.max(10, Number(options.p1TargetMs) || 100);
-        this.overdueMs = Math.max(100, Number(options.overdueMs) || 500);
+        // An ordinary row commits at the latest this long after it was queued, even when no full window or
+        // target age asks for it: what a step's commit adds to its lateness past its due.
+        this.overdueMs = Math.max(100, Number(options.overdueMs) || 250);
         this.maxRows = Math.max(1, Math.min(32, Number(options.maxRows) || 32));
         this.maxEntries = Math.max(4, Number(options.maxEntries) || 1024);
         this.maxBytes = Math.max(256 * 1024, Number(options.maxBytes) || 4 * 1024 * 1024);
