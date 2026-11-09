@@ -162,6 +162,27 @@ async function heldPurchaseVisit() {
             'the step fails once, no source failure');
         assert(Funding.spendable(short.state, Market.buyOrderEscrow(9115), terms) < price,
             'the build reads the same short purse: it funds the step again only once money moves');
+
+        // The root ranks above a stock bid whose escrow the purse counts: bag and escrow cover
+        // the input, the bag alone does not. The build's check of the shop step and the buyer
+        // read one purse: both refuse it, so no build sends the bot back for it.
+        await bot(9116);
+        const purse = (await DB.fetchItems(9116)).find(item => Number(item.selfId) === 57);
+        await DB.updateItemAmount(9116, purse.id, price + STOCK_PRICE / 2);
+        await Life.upsertState({ ...await Life.refreshInventory(Life.snapshot(9116)), adena: price + STOCK_PRICE / 2 }, 'held_purchase_fixture');
+        await apply(9116, [[STOCK, 1, STOCK_PRICE]]);
+        const escrow16 = Market.buyOrderEscrow(9116), bag16 = await wallet(9116);
+        assert.equal(escrow16, STOCK_PRICE);
+        assert(bag16 < price && bag16 + escrow16 >= price, 'the bag alone is short of the input');
+        const rootFirst = [36000, 1e-6, 0, 0, 1, price + JEWEL_PRICE, 854, 0.5, price + JEWEL_PRICE + STOCK_PRICE, STOCK];
+        const held = await Life.upsertState({ ...await Life.refreshInventory(Life.snapshot(9116)), adena: bag16,
+            stats: { ...Life.snapshot(9116).stats, money: rootFirst } }, 'held_purchase_fixture');
+        const known = { tripCost: Object.assign(() => 0, { details: () => ({ known: true, hours: 0, fees: 0 }) }), buyOrderEscrow: escrow16 };
+        const leaf = { activity: 'shopping', kind: 'buy', itemId: INPUT, amount: 1, unitPrice: price, sourceType: 'npc', town: 'Giran', r: 1 };
+        assert.equal(invoke('GameServer/Bot/Economy/EconomyContext').leafCheck(held, leaf, known, {}).reason, 'check:short',
+            'the build does not fund a shop step the bag cannot pay');
+        assert.equal((await ColdMarket.tryPurchase(held, goal)).reason, 'funding_short', 'the buyer refuses it for money');
+        assert.deepEqual(GearMarks.keys(Life.snapshot(9116).stats), [], 'and marks nothing');
     } finally { Events.raiseOn = raiseOn; Pricing.bid = previousBid; Towns.buyAdTown = buyAdTown; }
     console.log('PASS held purchase visit: no root bid beside its input buy, one purse for planner and buyer, funding_short marks nothing');
 }

@@ -323,8 +323,9 @@ const LEAF_CHECKS = Object.freeze({
         if (holds ? offer.unitPrice > leaf.unitPrice : offer.unitPrice !== leaf.unitPrice) return OFFER_PRICE;
         if (offer.availableUnits < remaining) return OFFER_UNITS;
         // The purse is read by the step's place in the money queue: its value per unit
-        // stops a dearer seller, not a tight purse.
-        return Funding.spendable(state, deps.buyOrderEscrow, Funding.nativeTerms(holds ? { ...held, valueHours: undefined } : held, leaf.itemId))
+        // stops a dearer seller, not a tight purse. The buyer's own rule (payable: its
+        // bids' escrow counted, paid from the bag), so a step funded here is paid there.
+        return Funding.payable(state, deps.buyOrderEscrow, Funding.nativeTerms(holds ? { ...held, valueHours: undefined } : held, leaf.itemId))
             >= remaining * offer.unitPrice + trade.route.fees ? '' : SHORT;
     },
     selling: (state, leaf, deps, input) => {

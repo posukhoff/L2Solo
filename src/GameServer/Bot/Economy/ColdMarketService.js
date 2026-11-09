@@ -277,7 +277,7 @@ function purchaseMoney(state, plan, spent = 0, price = plan.npcPrice) {
         // The treasury part was already credited by ClanMarketService. It
         // is excluded from personal free money before adding its remainder.
         const clanPart = Math.min(wallet, Math.max(0, Number(plan.tag?.clanPart || 0) - spent));
-        funded = clanPart + PurchaseFunding.spendable({ ...state, adena: wallet - clanPart }, ownEscrow(state),
+        funded = clanPart + PurchaseFunding.payable({ ...state, adena: wallet - clanPart }, ownEscrow(state),
             { free: true, ownClanErrand: { clanId: plan.tag?.clanId, selfId: plan.selfId } });
     } else {
         const terms = fundingTerms(plan);
@@ -294,9 +294,9 @@ function purchaseMoney(state, plan, spent = 0, price = plan.npcPrice) {
                 options.quoteScale = PurchaseFunding.quoteScale(context.price?.(plan.selfId), Number(price));
             }
         }
-        funded = PurchaseFunding.spendable(state, ownEscrow(state), options);
+        funded = PurchaseFunding.payable(state, ownEscrow(state), options);
     }
-    return Math.max(0, Math.floor(Math.min(wallet, limit, funded)));
+    return Math.max(0, Math.floor(Math.min(limit, funded)));
 }
 
 function purchaseTerms(state, plan, spent = 0) {
