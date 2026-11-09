@@ -116,9 +116,13 @@ async function main() {
         assert.equal(attacks.at(-1), 100);
 
         // The cold material hunt names its monster as well as its ground.
-        // An ordinary closer mob cannot silently replace that occupation.
+        // On ground that spawns it, an ordinary closer mob cannot silently replace that occupation.
         const previousActivity = session.heldEconomy.network.activity;
         session.heldEconomy.network.activity = { activity: 'hunting', itemId: 1874, amount: 1, npcId: 150 };
+        const materialGround = { id: 'material_ground', npcEntries: [{ selfId: 101, count: 3 }, { selfId: 150, count: 3 }] };
+        const Spots = invoke('GameServer/Bot/AI/SpotService'), catalogueSpot = Spots.findById;
+        replace(Spots, 'findById', function (id) { return id === materialGround.id ? materialGround : catalogueSpot.call(this, id); });
+        session.currentSpot = { id: materialGround.id };
         session.currentTargetId = undefined;
         bot.moving = false;
         available = [npc(101, 30), npc(150, 200)];

@@ -237,6 +237,15 @@ function limitTargetCandidates(session, bot, candidates) {
         .map((entry) => entry.npc);
 }
 
+// The scorer's most frequent refusal among a scan's candidates.
+function commonReason(candidates) {
+    const counts = new Map();
+    for (const { evaluation } of candidates) counts.set(evaluation.reason, (counts.get(evaluation.reason) || 0) + 1);
+    let top = 'unknown', most = 0;
+    for (const [reason, count] of counts) if (count > most) { top = reason; most = count; }
+    return top;
+}
+
 function findPreferredMonster(session, bot, radius, options = {}) {
     const scanStartedAt = Date.now();
     const allNearbyNpcs = World.fetchNpcsInRadius(bot.fetchLocX(), bot.fetchLocY(), radius);
@@ -244,20 +253,33 @@ function findPreferredMonster(session, bot, radius, options = {}) {
     // economy context of their own (standalone scans may precede admission).
     const leaf = isSoloHunter(session)
         ? session.heldEconomy?.network.activity || session.activationEconomyDecision?.activity : null;
-    const materialNpc = invoke('GameServer/Bot/Population/ColdEconomyDecision').materialHunt(leaf)
-        ? Number(leaf.npcId || 0) : 0;
+    // A material or item hunt takes only its planned mob where the bot's spot spawns
+    // it; elsewhere the bot hunts the spot's mobs, as the cold kill draw does
+    // (ColdCombatProfile.spotSpawns, PartyHuntingTarget.competitionNpcId) and as a
+    // C4 player farming a drop on other ground fights what stands before him.
+    const ground = invoke('GameServer/Bot/Population/ColdEconomyDecision').materialHunt(leaf)
+        && session.currentSpot && SpotService.findById(session.currentSpot.id);
+    const materialNpc = ground && invoke('GameServer/Bot/Population/ColdCombatProfile').spotSpawns(ground, leaf.npcId)
+        ? Number(leaf.npcId) : 0;
     // Far-visible actors still choose a plausible nearby target, but do not
     // multiply the expensive claim scan by every NPC in a dense spawn cell.
-    const eligibleNearbyNpcs = allNearbyNpcs
-        .filter(npc => !materialNpc || Number(npc.fetchSelfId?.()) === materialNpc)
-        .filter(npc => !options.spotOnly || SpotService.containsLocation(options.spotOnly, botLocation(npc))
+    // Each gate in turn; the one that empties the list is why the scan found nothing.
+    const gates = [
+        ['no_mob', npc => npc.fetchAttackable() && !npc.isDead()],
+        ['protected', npc => !BotRaidSafety.isProtectedRaidEntity(npc) && BotHuntingTargetPolicy.canHunt(npc)],
+        ['material', npc => !materialNpc || Number(npc.fetchSelfId?.()) === materialNpc],
+        ['off_ground', npc => !options.spotOnly || SpotService.containsLocation(options.spotOnly, botLocation(npc))
             || (options.nearbyRadius > 0
-                && SpotService.distance2d(botLocation(bot), botLocation(npc)) <= options.nearbyRadius))
-        .filter((npc) => !options.excludeTargetId || npc.fetchId() !== options.excludeTargetId)
-        .filter((npc) => !BotRaidSafety.isProtectedRaidEntity(npc))
-        .filter((npc) => !invoke('GameServer/Bot/AI/HotResourceCompetition').blockedTarget(session, npc))
-        .filter((npc) => BotHuntingTargetPolicy.canHunt(npc))
-        .filter((npc) => npc.fetchAttackable() && !npc.isDead());
+                && SpotService.distance2d(botLocation(bot), botLocation(npc)) <= options.nearbyRadius)],
+        ['excluded', npc => !options.excludeTargetId || npc.fetchId() !== options.excludeTargetId],
+        ['contested', npc => !invoke('GameServer/Bot/AI/HotResourceCompetition').blockedTarget(session, npc)]
+    ];
+    let eligibleNearbyNpcs = allNearbyNpcs, empty = allNearbyNpcs.length ? null : 'no_mob';
+    for (const [gate, keep] of gates) {
+        if (empty) break;
+        eligibleNearbyNpcs = eligibleNearbyNpcs.filter(keep);
+        if (!eligibleNearbyNpcs.length) empty = gate;
+    }
     const nearbyNpcs = limitTargetCandidates(session, bot, eligibleNearbyNpcs);
     // The bot stands before each mob and its pack: this scan's idle mobs are all a pull can bring.
     const pack = SpotService.idlePack(allNearbyNpcs);
@@ -360,10 +382,17 @@ function findPreferredMonster(session, bot, radius, options = {}) {
     const scan = HuntingVisibility.select(session, 'solo', bot, ordered, candidate => candidate.npc,
         ready ? { start: ready.start, tail: ready.tail } : {});
     session.huntTargetScanPending = scan.pending;
-    session.huntingTargetScan = { at: Date.now(), loc: botLocation(bot), radius,
-        attackableNpcs: eligibleNearbyNpcs.length, eligibleAttackableNpcs: ranked.length };
     const readinessCandidate = options.readyOnly ? scan.candidate : null;
     const selected = options.readyOnly && !scan.candidate?.readiness.ready ? null : scan.candidate;
+    if (!selected && !empty) {
+        empty = !candidates.length ? 'claimed' : !ranked.length ? `ineligible:${commonReason(candidates)}`
+            : scan.pending ? 'pending_sight' : scan.candidate ? 'not_ready' : 'out_of_sight';
+    }
+    // target_scan:empty:<gate>: a body's scans turning up nothing, once per gate it
+    // enters (a stuck body rescans every tick; the count is its streaks, not its ticks).
+    if (empty && empty !== session.huntingTargetScan?.empty) Diagnostics.count('target_scan', 'empty', empty);
+    session.huntingTargetScan = { at: Date.now(), loc: botLocation(bot), radius,
+        attackableNpcs: eligibleNearbyNpcs.length, eligibleAttackableNpcs: ranked.length, empty };
     session.lastEncounterReadiness = readinessCandidate ? {
         ...readinessCandidate.readiness,
         targetId: readinessCandidate.npc.fetchId(),

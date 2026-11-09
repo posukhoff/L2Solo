@@ -479,6 +479,28 @@ test('a deferred purchase still hunts a safe local mob without taking a recovery
     } finally { while (restores.length > restoreAt) restores.pop()(); }
 });
 
+test('a drop hunt narrows the targets only where its spot spawns the planned mob, as the cold kill draw does', () => {
+    const drop = { activity: 'hunting', spotId: alternative.id, itemId: 167, amount: 1, npcId: 990202 };
+    const planned = point => ({ ...npcNear(point), fetchId: () => 990202, fetchSelfId: () => 990202,
+        fetchName: () => 'Planned mob', fetchLocX: () => point.locX + 600 });
+    const restoreAt = restores.length;
+    try {
+        for (const [entries, expected] of [[[990101], 990101], [[990101, 990202], 990202]]) {
+            const here = { ...primary, npcEntries: entries.map(selfId => ({ selfId, count: 5 })) };
+            const spots = [here, alternative];
+            stub(Spots, 'ensureIndexed', () => spots);
+            const f = fixture(primary.center, drop, { huntSpot: { spotId: primary.id } });
+            f.session.currentSpot = here;
+            available = entries.length > 1 ? [npcNear(primary.center), planned(primary.center)] : [npcNear(primary.center)];
+            f.tick();
+            assert.deepEqual(f.session.attacks, [expected], entries.length > 1
+                ? 'on ground that spawns it the planned mob wins over a nearer one'
+                : 'on ground without the planned mob the hunter takes the spot\'s mob instead of standing idle');
+            assert.deepEqual(f.session.trips, []);
+        }
+    } finally { while (restores.length > restoreAt) restores.pop()(); }
+});
+
 test('deferred scroll restocking can hunt a safe local mob below the ordinary level floor', () => {
     const f = fixture(primary.center, { activity: 'shopping', rootKey: 'stock:scrolls',
         itemId: 736, amount: 1, town: 'Aden' });
