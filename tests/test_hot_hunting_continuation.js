@@ -479,23 +479,35 @@ test('a deferred purchase still hunts a safe local mob without taking a recovery
     } finally { while (restores.length > restoreAt) restores.pop()(); }
 });
 
-test('a drop hunt narrows the targets only where its spot spawns the planned mob, as the cold kill draw does', () => {
+test('a drop hunt prefers its planned mob on the spot and otherwise hunts the spot\'s other mobs, as the cold kill draw does', () => {
     const drop = { activity: 'hunting', spotId: alternative.id, itemId: 167, amount: 1, npcId: 990202 };
-    const planned = point => ({ ...npcNear(point), fetchId: () => 990202, fetchSelfId: () => 990202,
-        fetchName: () => 'Planned mob', fetchLocX: () => point.locX + 600 });
+    const planned = (point, level = 57) => ({ ...npcNear(point), fetchId: () => 990202, fetchSelfId: () => 990202,
+        fetchName: () => 'Planned mob', fetchLocX: () => point.locX + 600, fetchLevel: () => level });
+    const BotManager = invoke('GameServer/Bot/BotManager');
+    // Another solo hunter already fighting the planned mob.
+    const rival = { plan: 'hunting', currentTargetId: 990202, actor: { state: { fetchDead: () => false } } };
+    const cases = [
+        { why: 'on ground without the planned mob the hunter takes the spot\'s mob instead of standing idle',
+            entries: [990101], mobs: [npcNear(primary.center)], expected: 990101 },
+        { why: 'on ground that spawns it the planned mob wins over a nearer one',
+            mobs: [npcNear(primary.center), planned(primary.center)], expected: 990202 },
+        { why: 'a planned mob another hunter fights leaves the hunter the spot\'s other mob',
+            mobs: [npcNear(primary.center), planned(primary.center)], sessions: [rival], expected: 990101 },
+        { why: 'a planned mob the hunter cannot take leaves it the spot\'s other mob',
+            mobs: [npcNear(primary.center), planned(primary.center, 70)], expected: 990101 }
+    ];
     const restoreAt = restores.length;
     try {
-        for (const [entries, expected] of [[[990101], 990101], [[990101, 990202], 990202]]) {
+        for (const { why, entries = [990101, 990202], mobs, sessions = [], expected } of cases) {
             const here = { ...primary, npcEntries: entries.map(selfId => ({ selfId, count: 5 })) };
             const spots = [here, alternative];
             stub(Spots, 'ensureIndexed', () => spots);
+            stub(BotManager, 'sessions', sessions);
             const f = fixture(primary.center, drop, { huntSpot: { spotId: primary.id } });
             f.session.currentSpot = here;
-            available = entries.length > 1 ? [npcNear(primary.center), planned(primary.center)] : [npcNear(primary.center)];
+            available = mobs;
             f.tick();
-            assert.deepEqual(f.session.attacks, [expected], entries.length > 1
-                ? 'on ground that spawns it the planned mob wins over a nearer one'
-                : 'on ground without the planned mob the hunter takes the spot\'s mob instead of standing idle');
+            assert.deepEqual(f.session.attacks, [expected], why);
             assert.deepEqual(f.session.trips, []);
         }
     } finally { while (restores.length > restoreAt) restores.pop()(); }

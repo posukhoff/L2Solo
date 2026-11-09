@@ -251,23 +251,16 @@ function findPreferredMonster(session, bot, radius, options = {}) {
     const allNearbyNpcs = World.fetchNpcsInRadius(bot.fetchLocX(), bot.fetchLocY(), radius);
     // Target scans read the already held advice; they never prepare an
     // economy context of their own (standalone scans may precede admission).
-    const leaf = isSoloHunter(session)
-        ? session.heldEconomy?.network.activity || session.activationEconomyDecision?.activity : null;
-    // A material or item hunt takes only its planned mob where the bot's spot spawns
-    // it; elsewhere the bot hunts the spot's mobs, as the cold kill draw does
-    // (ColdCombatProfile.spotSpawns, PartyHuntingTarget.competitionNpcId) and as a
-    // C4 player farming a drop on other ground fights what stands before him.
-    const ground = invoke('GameServer/Bot/Population/ColdEconomyDecision').materialHunt(leaf)
-        && session.currentSpot && SpotService.findById(session.currentSpot.id);
-    const materialNpc = ground && invoke('GameServer/Bot/Population/ColdCombatProfile').spotSpawns(ground, leaf.npcId)
-        ? Number(leaf.npcId) : 0;
+    // The mob a solo hunt prefers: its gear plan's next hunt, else its hunting leaf's.
+    const plannedNpc = isSoloHunter(session) ? invoke('GameServer/Bot/Population/PartyHuntingTarget').soloNpcId(
+        DecisionEvents.statsFor(session).equipmentPlan,
+        session.heldEconomy?.network.activity || session.activationEconomyDecision?.activity) : 0;
     // Far-visible actors still choose a plausible nearby target, but do not
     // multiply the expensive claim scan by every NPC in a dense spawn cell.
     // Each gate in turn; the one that empties the list is why the scan found nothing.
     const gates = [
         ['no_mob', npc => npc.fetchAttackable() && !npc.isDead()],
-        ['protected', npc => !BotRaidSafety.isProtectedRaidEntity(npc) && BotHuntingTargetPolicy.canHunt(npc)],
-        ['material', npc => !materialNpc || Number(npc.fetchSelfId?.()) === materialNpc],
+        ['protected', npc => BotHuntingTargetPolicy.canHunt(npc)],
         ['off_ground', npc => !options.spotOnly || SpotService.containsLocation(options.spotOnly, botLocation(npc))
             || (options.nearbyRadius > 0
                 && SpotService.distance2d(botLocation(bot), botLocation(npc)) <= options.nearbyRadius)],
@@ -373,6 +366,14 @@ function findPreferredMonster(session, bot, radius, options = {}) {
             .sort((first, second) => second.evaluation.score - first.evaluation.score);
         for (const candidate of ranked) candidate.evaluation.reasons.push('easier_ground');
     }
+    // The planned mob comes first among the fights the bot would take, when it is free
+    // and stands on the bot's spot: the cold kill draw prefers it only among its spot's
+    // spawns (ColdCombatProfile.killDraw). None of them takeable (claimed, refused, not
+    // there), the bot fights the spot's other mobs, as a C4 player farming a drop
+    // fights what stands before him rather than wait for his mob.
+    const planned = candidate => !candidate.claimed && candidate.scoreContext.npcSpotId === currentSpotId
+        && Number(candidate.npc.fetchSelfId?.()) === plannedNpc;
+    if (plannedNpc && ranked.some(planned)) ranked = [...ranked.filter(planned), ...ranked.filter(candidate => !planned(candidate))];
     // Prefer a fight we can finish, but retain a visible unready candidate
     // so the caller can recover instead of wandering while exhausted.
     // A solo scan's matchup is the bot's own: readiness reads the same profiles and views.
@@ -386,11 +387,15 @@ function findPreferredMonster(session, bot, radius, options = {}) {
     const selected = options.readyOnly && !scan.candidate?.readiness.ready ? null : scan.candidate;
     if (!selected && !empty) {
         empty = !candidates.length ? 'claimed' : !ranked.length ? `ineligible:${commonReason(candidates)}`
-            : scan.pending ? 'pending_sight' : scan.candidate ? 'not_ready' : 'out_of_sight';
+            : scan.pending ? undefined : scan.candidate ? 'not_ready' : 'out_of_sight';
     }
     // target_scan:empty:<gate>: a body's scans turning up nothing, once per gate it
     // enters (a stuck body rescans every tick; the count is its streaks, not its ticks).
-    if (empty && empty !== session.huntingTargetScan?.empty) Diagnostics.count('target_scan', 'empty', empty);
+    // A scan whose sight checks wait for the next batch, and a fight's look for a free
+    // mob, end no streak and start none.
+    const was = session.huntingTargetScan?.empty || null;
+    if (options.freeOnly || empty === undefined) empty = was;
+    else if (empty && empty !== was) Diagnostics.count('target_scan', 'empty', empty);
     session.huntingTargetScan = { at: Date.now(), loc: botLocation(bot), radius,
         attackableNpcs: eligibleNearbyNpcs.length, eligibleAttackableNpcs: ranked.length, empty };
     session.lastEncounterReadiness = readinessCandidate ? {
