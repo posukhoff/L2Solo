@@ -340,20 +340,22 @@ console.log('PASS selected purchase is payable by the money packet rows (FX-E3 r
     assert.equal(crafted('power:300:6', { itemId: 300, slot: 6 }).activity?.itemId, 301, 'fixture: a kit piece\'s input goes to its seller');
     assert.notEqual(crafted('resale:300', { itemId: 300, kind: 'resale' }).activity?.itemId, 301, 'a resale craft\'s input is weighed on its value');
 }
-// A shop step is paid from the bag: the money the bot's own bids hold buys nothing at a
-// shop. A queue funded over the bag and that escrow takes no step the bag cannot pay (the
-// buyer would refuse it for money and the bot come back for it); the wallet waits for it
-// (bagShort), and once the bag pays it the same build takes it.
+// A shop step is paid from the bag: the money the bot's bids for other items hold buys
+// nothing at a shop. A queue funded over the bag and that escrow takes no step the bag cannot
+// pay (the buyer would refuse it for money and the bot come back for it); the wallet waits
+// for it (bagShort), and once the bag pays it the same build takes it. The bot's own bid for
+// the piece itself is withdrawn by the visit that buys it: its money pays the step.
 {
     const piece = { key: 'power:120:6', need: 'power', object: { itemId: 120, slot: 6 }, valueHours: 1, price: 100, progressionPriority: 3,
         paths: [{ kind: 'buy', activity: 'shopping', executable: true, quoted: true, town: 'Giran', itemId: 120, price: 100,
             unitPrice: 100, costHours: .01, availableUnits: 1, tripHours: 0, tripFees: 0 }] };
-    const build = bag => new WishNetwork().build({ ...input, characterId: 7, wallet: 1000, bag, inputKey: `bag:${bag}`,
-        previous: { focus: null, dormant: [] }, roots: [piece.key], nodes: [piece] });
+    const build = (bag, rootBids = null) => new WishNetwork().build({ ...input, characterId: 7, wallet: 1000, bag, rootBids,
+        inputKey: `bag:${bag}:${rootBids ? 'bid' : ''}`, previous: { focus: null, dormant: [] }, roots: [piece.key], nodes: [piece] });
     const escrowed = build(50);
     assert.equal(escrowed.queue.find(wish => wish.key === piece.key)?.funded, true, 'fixture: the queue funds the piece');
     assert.notEqual(escrowed.activity?.itemId, 120, 'a step the bag cannot pay is no step');
     assert.equal(escrowed.bagShort, 100, 'the wallet waits for the step');
     assert.equal(build(1000).activity?.itemId, 120, 'a bag that pays it takes it');
+    assert.equal(build(50, new Map([[120, 60]])).activity?.itemId, 120, 'its own bid\'s money pays it');
 }
 console.log('PASS a shop step the bag cannot pay is not taken; the wallet waits for it');

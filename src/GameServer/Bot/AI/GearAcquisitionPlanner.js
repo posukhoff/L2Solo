@@ -1264,10 +1264,11 @@ function npcEquipmentBridgePlan(state = {}, options = {}) {
 }
 
 // Funded = the bot can pay for the bridge now (weaponBridgeFunded for a
-// weapon; the armour from what its NPC buyer pays for that item, PurchaseFunding.payable).
+// weapon; the armour from what it may spend on that item, escrow included: its own order
+// for it holds its money, withdrawn by the visit that buys it).
 function bridgeFunded(plan, state, options = {}) {
     return plan.weaponBridge ? weaponBridgeFunded(plan, state, options)
-        : Number(plan.market?.price) <= PurchaseFunding.payable(state, options.buyOrderEscrow, { itemId: plan.target?.selfId });
+        : Number(plan.market?.price) <= PurchaseFunding.spendable(state, options.buyOrderEscrow, { itemId: plan.target?.selfId });
 }
 
 // Why a party member leaves its party to fix its kit: it has no usable

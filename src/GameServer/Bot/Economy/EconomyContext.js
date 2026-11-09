@@ -1076,6 +1076,16 @@ function buildShadow(seen, held, routeKey, versions) {
     else linkCount('routeRows', linkJudged(!!held && held.plan.routeKey !== routeKey, Sections.movedInput('routeRows', seen.routeRows, versions)));
     seen.routeRows = linkOwn('routeRows', versions);
 }
+// The money the bot's own bids hold per item (count x price of its buy lines, its escrow):
+// a shop step of a root may pay with its own bids' money (WishNetwork). O(its lines).
+function ownBids(board, characterId) {
+    const held = new Map();
+    for (const line of board?.ownerLines?.(Number(characterId)) || []) {
+        if (Number(line.storeType) !== BoardRules.BUY) continue;
+        held.set(Number(line.selfId), (held.get(Number(line.selfId)) || 0) + positive(line.count) * positive(line.price));
+    }
+    return held;
+}
 function buildForState(state, deps) {
     const diagnostic = Diagnostics.active();
     const inputSequence = Number(state.stats?.decisionSeq || 0);
@@ -1291,7 +1301,7 @@ function buildForState(state, deps) {
         stockFor: context.stockFor,
         completionKey: context.completionKey,
         characterId: state.characterId, decisionSeq: state.stats?.decisionSeq, activityLeaf: state.stats?.activityLeaf,
-        wallet: context.wallet, bag: Funding.budget(state), refillReserve: base.refillReserve,
+        wallet: context.wallet, bag: Funding.budget(state), rootBids: ownBids(sourceBoard, state.characterId), refillReserve: base.refillReserve,
         reconsider,
         // Diagnostics only: the events that re-weigh (network:reconsider), 'quiet' for none.
         reconsiderReasons: !diagnostic ? null : [decide ? 'woken' : 'quiet'],

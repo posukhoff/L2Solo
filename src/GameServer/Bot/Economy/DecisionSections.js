@@ -127,9 +127,9 @@ function unspent(baseline, wallet) {
 // rule: it re-opens buying them and the spots that need them), an unarmed bot's
 // weapon bridge (its price from the whole wallet, WishProviders' survival wish), its
 // focus (the goal's cumulative cost) or, when nearer, the gear plan's market piece (its
-// cumulative cost in the money queue), or the cheapest shop step the queue funds but the
-// bag cannot pay (network.bagShort: the wallet with the escrow it holds now reaches it
-// once the bag pays the step); all wake the same decision, so all are kind focus.
+// cumulative cost in the money queue), or the least bag a shop step the queue funds but
+// the bag cannot pay needs (network.bagShort: the wallet with the escrow it holds now
+// reaches it once the bag pays the step); all wake the same decision, so all are kind focus.
 // Re-armed by each build. wallet: PurchaseFunding.budget with the escrow in it.
 function affordAtOf(context, wallet, escrow = 0) {
     const potions = context.stock?.('potions');
