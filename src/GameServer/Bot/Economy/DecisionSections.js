@@ -127,9 +127,11 @@ function unspent(baseline, wallet) {
 // rule: it re-opens buying them and the spots that need them), an unarmed bot's
 // weapon bridge (its price from the whole wallet, WishProviders' survival wish), its
 // focus (the goal's cumulative cost) or, when nearer, the gear plan's market piece (its
-// cumulative cost in the money queue); all wake the same decision, so all are kind
-// focus. Re-armed by each build.
-function affordAtOf(context, wallet) {
+// cumulative cost in the money queue), or the cheapest shop step the queue funds but the
+// bag cannot pay (network.bagShort: the wallet with the escrow it holds now reaches it
+// once the bag pays the step); all wake the same decision, so all are kind focus.
+// Re-armed by each build. wallet: PurchaseFunding.budget with the escrow in it.
+function affordAtOf(context, wallet, escrow = 0) {
     const potions = context.stock?.('potions');
     if (potions && potions.current < potions.line) {
         // The search's broke rule's own threshold (EquipmentIncomeRoute.drinksAt, cannotDrink).
@@ -139,7 +141,8 @@ function affordAtOf(context, wallet) {
     const bridge = context.weaponBridge;
     if (bridge?.price > wallet) return { at: bridge.price, kind: 'focus' };
     // A C4 player goes to buy the piece he planned as soon as he can pay for it.
-    const at = Math.min(...[context.goalBudget, context.plannedBudget].filter(cost => cost > wallet));
+    const step = context.network?.bagShort > 0 ? context.network.bagShort + Math.max(0, Number(escrow) || 0) : 0;
+    const at = Math.min(...[context.goalBudget, context.plannedBudget, step].filter(cost => cost > wallet));
     return Number.isFinite(at) ? { at, kind: 'focus' } : null;
 }
 function baselineIdentity(baseline) {
@@ -168,7 +171,7 @@ function incomeError(state, persona) {
 // semanticFacts(state) when its caller already has them.
 function snapshot(state, context, money = null, facts = null) {
     const wallet = PurchaseFunding.budget(state, money?.buyOrderEscrow || 0);
-    const afford = affordAtOf(context, wallet);
+    const afford = affordAtOf(context, wallet, money?.buyOrderEscrow);
     return { at: Number(context.timestamp), ...(afford ? { affordAt: afford } : {}),
         ...(context.leafBudget > 0 && context.leafBudget <= wallet ? { fundedAt: context.leafBudget } : {}),
         ...(facts || semanticFacts(state)), ...supplyFacts(state, context.statsPacket.kitRates, context.earning),

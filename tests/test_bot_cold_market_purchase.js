@@ -284,7 +284,6 @@ async function run() {
         plan: { expectedBenefit: 'market_search_for_weapon', marketTown: 'Giran' }
     });
     assert.strictEqual(lowTierPlayerPurchase.purchased, false);
-    assert(Funding.payable(lowTierNative.state, 0, { itemId: 2 }) < 900, 'the unchanged cheaper quote is still outside the real queue');
     // A purse short of the card's price is refused for money: no seller is looked up or marked.
     assert.strictEqual(lowTierPlayerPurchase.reason, 'funding_short');
     assert.strictEqual(Native.amount(await Database.fetchItems(88), 57), 1000);

@@ -680,7 +680,9 @@ class WishNetwork {
     // `remembered: false` builds without touching the per-actor cache (a
     // caller that holds the result itself, or a one-off proposal). The worker
     // never retains (RETAIN_ACTORS).
-    build({ actorKey, inputKey, characterId, decisionSeq = 0, activityLeaf = 0, nodes, roots, wallet = 0, refillReserve = 0,
+    // wallet: the money the queue orders (the bag and the bot's own bids' escrow); bag: what a
+    // shop is paid from (PurchaseFunding.budget of the state), the wallet when no bid holds any.
+    build({ actorKey, inputKey, characterId, decisionSeq = 0, activityLeaf = 0, nodes, roots, wallet = 0, bag = wallet, refillReserve = 0,
         playedHours = 0, persona = {}, previous = {}, hourAdena = 0, riskWeight = 1, moneyPaths = [], remembered = true,
         caller = 'wish_network', trigger = 'request', stockFor = null, completionKey = null, reconsider = true,
         reconsiderReasons = null, onReadyCraftProof = null }) {
@@ -901,10 +903,22 @@ class WishNetwork {
         // A step that spends no money stays available toward an unsupported
         // wish (farming its material); only money waits for a step now.
         const unfundable = new Set(queue.filter(wish => !fundable(wish)).map(wish => wish.key));
+        // A shop step is paid as every buyer pays (PurchaseFunding.payable): its root's queue
+        // place funds it, the bag pays it; money its own bids hold buys nothing at a shop. A
+        // step the bag cannot pay is no step: the cheapest such is the wallet's wait (bagShort,
+        // goal_affordable:focus), so a buyer's funding_short never sends the bot back to it.
+        let bagShort = 0;
+        const bagPays = leaf => {
+            const cost = nonnegative(leaf.price);
+            if (leaf.kind !== 'buy' || cost <= nonnegative(bag)) return true;
+            bagShort = bagShort ? Math.min(bagShort, cost) : cost;
+            return false;
+        };
         const candidates = [...leaves.values()].filter(leaf => wishes.find(wish => wish.key === leaf.rootKey)?.progressionPriority === activePriority
                 || leaf.funding && leaf.rootKey === unfunded?.key)
             .filter(leaf => leaf.funding || !queue.some(wish => wish.key === leaf.rootKey)
-            || funded.has(leaf.rootKey) || leaf.price === 0 && (leaf.rootKey === unfunded?.key || unfundable.has(leaf.rootKey)));
+            || funded.has(leaf.rootKey) || leaf.price === 0 && (leaf.rootKey === unfunded?.key || unfundable.has(leaf.rootKey)))
+            .filter(bagPays);
         // A cheap intermediate material cannot claim the whole upgrade's
         // benefit as an instantaneous income. Use the complete chosen path.
         const heldLeaf = individual && activityLeaf ? candidates.find(leaf => leafId(leaf) === activityLeaf) : null;
@@ -950,7 +964,7 @@ class WishNetwork {
             }
             if (heldActivity && activity !== heldActivity && decisionSeq === inputDecisionSeq) { decisionSeq++; activityLeaf = 0; }
         }
-        const result = { inputKey, queue, moneyPrice, available, gap, hourAdena,
+        const result = { inputKey, queue, moneyPrice, available, gap, hourAdena, bagShort,
             quantityPrepared: !!stockFor,
             focus, dormant, activity, demands, plans, decisionSeq,
             activityLeaf: individual && activity ? leafId(activity) : 0 };

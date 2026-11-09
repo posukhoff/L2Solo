@@ -92,7 +92,7 @@ function canTradeRemotely(state, goal) {
         // The offer as the buyer weighs it: its price and its trip there (б5, C7).
         const offer = MarketOpportunity.bestOffer(goal.target?.itemId, {
             town: goal.plan?.marketTown || null,
-            budget: PurchaseFunding.spendable(state, reserved, PurchaseFunding.goalTerms(goal)),
+            budget: PurchaseFunding.payable(state, reserved, PurchaseFunding.goalTerms(goal)),
             buyerCharacterId: state.characterId,
             cost: invoke('GameServer/Bot/Economy/ColdMarketService').tripFrom(state)
         });

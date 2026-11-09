@@ -1291,7 +1291,7 @@ function buildForState(state, deps) {
         stockFor: context.stockFor,
         completionKey: context.completionKey,
         characterId: state.characterId, decisionSeq: state.stats?.decisionSeq, activityLeaf: state.stats?.activityLeaf,
-        wallet: context.wallet, refillReserve: base.refillReserve,
+        wallet: context.wallet, bag: Funding.budget(state), refillReserve: base.refillReserve,
         reconsider,
         // Diagnostics only: the events that re-weigh (network:reconsider), 'quiet' for none.
         reconsiderReasons: !diagnostic ? null : [decide ? 'woken' : 'quiet'],
