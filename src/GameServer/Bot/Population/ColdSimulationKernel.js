@@ -48,6 +48,10 @@ const nextTurn = require('../../EventLoopTurn');
 const STEP_LEAD_RISE = 0.25;
 const STEP_LEAD_FALL = 0.02;
 const STEP_LEAD_MAX_MS = 5000;
+// With a player online a finished step goes to main once it has waited here this long (the batching age
+// with no player is flushTargetMs): the same as main's overdue commit, so a step's send and its commit each add about
+// this to its lateness while the player is in the world.
+const PLAYER_FLUSH_TARGET_MS = 250;
 const BackgroundPartyLifecycle = require('./BackgroundPartyLifecycle');
 const PartyGoalCalculation = require('./PartyGoalCalculation');
 const Protocol = require('./ColdSimulationProtocol');
@@ -708,6 +712,7 @@ class ColdSimulationKernel {
         this.maxInFlight = Math.max(1, Math.min(128, Number(options.maxInFlight) || 32));
         this.flushTargetMs = Math.max(100, Number(options.flushTargetMs) || 2000);
         this.flushHardMs = Math.max(this.flushTargetMs, Number(options.flushHardMs) || 5000);
+        this.player = false;
         this.partySession = options.partySession || {};
         this.partyMinSize = Math.max(2, Number(options.partyMinSize) || 2);
         this.maxAtomicPartySize = Math.max(
@@ -2746,7 +2751,7 @@ class ColdSimulationKernel {
         if (ageMs >= this.flushHardMs) {
             return this.flush(null, true, { reason: 'hard_age' });
         }
-        if (ageMs >= this.flushTargetMs) {
+        if (ageMs >= (this.player ? Math.min(this.flushTargetMs, PLAYER_FLUSH_TARGET_MS) : this.flushTargetMs)) {
             return this.flush(null, false, { reason: 'target_age' });
         }
         return 0;
@@ -3032,6 +3037,12 @@ class ColdSimulationKernel {
         return this.maxInFlight;
     }
 
+    // Main's pressure: the window size and whether a player is online (the batching age follows it).
+    setPressure({ maxInFlight, player }) {
+        this.player = player === true;
+        return this.setMaxInFlight(maxInFlight);
+    }
+
     async shutdown() {
         this.stopping = true;
         this.partyRequirementProgress.clear();
@@ -3134,6 +3145,7 @@ class ColdSimulationKernel {
 module.exports = {
     ColdSimulationKernel,
     DueHeap,
+    PLAYER_FLUSH_TARGET_MS,
     deterministicRandom,
     finishPartyRouteTravelState,
     lifecycleKind,

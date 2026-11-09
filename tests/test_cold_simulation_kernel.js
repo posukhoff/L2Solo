@@ -1337,6 +1337,25 @@ const everStepped = (kernel, id) => startedSteps.get(kernel).some(ids => ids.inc
     timerKernel.dirty.set(747, pendingOf(747));
     assert.strictEqual(timerKernel.flushDue(), 8);
     assert.strictEqual(timerMessages.pop().payload.capacityBlocked, true);
+    // With a player online one finished step of an unfilled window goes to main after 250 ms, not the 2 s
+    // batching age; with no player it keeps the 2 s age.
+    let ageNow = now;
+    const ageMessages = [];
+    const ageKernel = recordingKernel({ resolveSolo: resolver, now: () => ageNow, maxInFlight: 16,
+        flushTargetMs: 2000, flushHardMs: 5000, emit: (type, payload) => ageMessages.push({ type, payload }) });
+    for (const id of [760, 761]) {
+        ageKernel.upsert({ state: state(id) });
+        ageKernel.inFlight.set(id, { state: state(id), startedAt: ageNow });
+    }
+    ageKernel.dirty.set(760, { ...pendingOf(760), enqueuedAt: ageNow });
+    ageNow += 300;
+    assert.strictEqual(ageKernel.flushDue(), 0, 'no player: a lone finished step waits for the 2 s batching age');
+    ageKernel.setPressure({ maxInFlight: 16, player: true });
+    assert.strictEqual(ageKernel.flushDue(), 1, 'player online: a lone finished step goes to main after 250 ms');
+    assert.strictEqual(ageMessages.pop().payload.proposals[0].characterId, 760);
+    ageKernel.dirty.set(761, { ...pendingOf(761), enqueuedAt: ageNow });
+    ageNow += 200;
+    assert.strictEqual(ageKernel.flushDue(), 0, 'player online: a step younger than 250 ms still waits');
 
     // An atomic clan party needs the entire small player window. A few free
     // slots must not leave the completed owners waiting for the ordinary timer.

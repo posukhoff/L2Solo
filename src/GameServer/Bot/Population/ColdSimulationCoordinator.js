@@ -168,6 +168,7 @@ class ColdSimulationCoordinator {
         // or has no body before its decision arrived).
         this.nearDecisions = { accepted: 0, refused: 0, dropped: 0, linesStale: 0 };
         this.workerMaxInFlight = null;
+        this.workerPlayer = null;
         this.restartCount = 0;
         this.loadedAt = 0;
         this.restartTimer = null;
@@ -2295,8 +2296,9 @@ class ColdSimulationCoordinator {
     syncWorkerPressure() {
         if (!this.worker || !this.ready) return null;
         const pressure = this.desiredWorkerPressure();
-        if (this.workerMaxInFlight === pressure.maxInFlight) return pressure;
+        if (this.workerMaxInFlight === pressure.maxInFlight && this.workerPlayer === pressure.player) return pressure;
         this.workerMaxInFlight = pressure.maxInFlight;
+        this.workerPlayer = pressure.player;
         this.post('throttle', {
             maxInFlight: pressure.maxInFlight,
             lagMs: pressure.lagMs,
@@ -2336,6 +2338,7 @@ class ColdSimulationCoordinator {
         this.tableChannel.detach(this);
         this.worker = null;
         this.workerMaxInFlight = null;
+        this.workerPlayer = null;
         this.ready = false;
         this.snapshotsLoaded = false;
         this.waiters.forEach((waiter) => waiter.reject(new Error('cold_worker_exited')));

@@ -130,7 +130,7 @@ const EquipmentIncomeRoute = invoke('GameServer/Bot/Economy/EquipmentIncomeRoute
 const LevelingRoutes = invoke('GameServer/Bot/AI/LevelingRoutes');
 const { SpotContestOutbox } = require('./SpotContestOutbox');
 const FailureLog = require('../../../FailureLog');
-const { ColdSimulationKernel } = require('./ColdSimulationKernel');
+const { ColdSimulationKernel, PLAYER_FLUSH_TARGET_MS } = require('./ColdSimulationKernel');
 const PartyGoalCalculation = require('./PartyGoalCalculation');
 const { beginHuntingTrip } = require('./HuntingTravel');
 const PveEncounter = require('./ColdPveEncounter');
@@ -2336,7 +2336,8 @@ function startKernel(config = {}) {
             }, 'x'.repeat(160));
             return new (invoke('GameServer/Bot/Population/ColdCompetitionFrameSizer').ColdCompetitionFrameSizer)(message, []);
         } });
-    flushTimer = setInterval(() => kernel.flushDue(), Math.max(50, Math.min(250, Number(config.flushTargetMs) || 2000)));
+    // Half the shortest batching age: a finished step waits at most 1.5 times its age.
+    flushTimer = setInterval(() => kernel.flushDue(), Math.max(50, Math.min(PLAYER_FLUSH_TARGET_MS, Number(config.flushTargetMs) || 2000) / 2));
     heartbeatTimer = setInterval(() => {
         // Read and reset first: the beat's own work (the review, the send) counts in the next beat; a
         // sample counts the whole timer interval, so the resolution comes off (0 = no delay).
@@ -2500,7 +2501,7 @@ async function handle(message) {
         kernel?.traceBot(payload.characterId, payload.main);
         break;
     case 'throttle':
-        kernel?.setMaxInFlight(payload.maxInFlight);
+        kernel?.setPressure(payload);
         break;
     case 'diagnostics_resync':
         economyDiagnostics.requestFull();
