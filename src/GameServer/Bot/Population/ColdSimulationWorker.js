@@ -1255,6 +1255,21 @@ ClanSupplyPolicy.useRowSource(id => tables.rows('clan_supplies').get(id), () => 
 PersonalWarehouseIndex.useRowSource(id => tables.rows('personal_warehouse').get(id), () => tables.ready('personal_warehouse'));
 let eventLoopDelay = null;
 const LAG_RESOLUTION_MS = 20;
+// The worker's turns with diagnostics (the run summary's turn length): loop delay at 5 ms, which tells one
+// turn from the next (a step's phases yield between them), over TURN_WINDOW_MS windows with the GC pauses by
+// kind in each. A window closes at the first beat past its length; every beat carries the last closed one
+// (main's summary line takes it; the perf report reads each window once by its end, `at`).
+const TURN_RESOLUTION_MS = 5;
+const TURN_WINDOW_MS = 30000;
+let turnDelay = null, turnWindowStartedAt = 0, turnWindow = null;
+function takeTurnWindow(at) {
+    if (!turnDelay || at - turnWindowStartedAt < TURN_WINDOW_MS) return turnWindow;
+    const Telemetry = invoke('GameServer/Bot/Population/WorkerHeapTelemetry');
+    turnWindow = { at, ms: at - turnWindowStartedAt, ...Telemetry.loopDelay(turnDelay, TURN_RESOLUTION_MS), gc: heapTelemetry.pauses() };
+    turnDelay.reset();
+    turnWindowStartedAt = at;
+    return turnWindow;
+}
 
 // The owner notices moved counters only during its own natural resolve.
 const MarketPricing = invoke('GameServer/Bot/Economy/MarketPricing');
@@ -1768,12 +1783,17 @@ function startKernel(config = {}) {
     Config.decisionTrace = config.decisionTrace === true;
     // Busy share and heap after GC are two of the goal's three numbers (read with diagnostics off): always on, one
     // major-GC observer and two clock reads per heartbeat.
-    heapTelemetry = invoke('GameServer/Bot/Population/WorkerHeapTelemetry').observe();
+    heapTelemetry = invoke('GameServer/Bot/Population/WorkerHeapTelemetry').observe({ pauses: Config.developerDiagnostics });
     previousElu = performance.eventLoopUtilization();
     // The longest loop delay per heartbeat is the health line's spike number (workerLag): always on,
     // a native histogram on a LAG_RESOLUTION_MS timer.
     eventLoopDelay = monitorEventLoopDelay({ resolution: LAG_RESOLUTION_MS });
     eventLoopDelay.enable();
+    if (Config.developerDiagnostics) {
+        turnDelay = monitorEventLoopDelay({ resolution: TURN_RESOLUTION_MS });
+        turnDelay.enable();
+        turnWindowStartedAt = Date.now();
+    }
     // The decision trace's records go to main (ColdSimulationCoordinator), which owns the history writer.
     Trace.connect(batch => {
         if (shuttingDown) return false;
@@ -2345,7 +2365,8 @@ function startKernel(config = {}) {
             caches: { spotValue: SpotValueTable.cacheStats(), kitProfiles: ColdCombatProfile.kitStoreSize() },
             heapUsed: process.memoryUsage().heapUsed,
             rss: process.memoryUsage().rss,
-            eventLoopLagP95Ms: lagP95Ms
+            eventLoopLagP95Ms: lagP95Ms,
+            turn: takeTurnWindow(Date.now())
             } : {})
         };
         // A beat main did not take: its frame stays the outbox's for the next beat;
@@ -2501,6 +2522,7 @@ async function handle(message) {
         outbox?.stop();
         stopTimers();
         eventLoopDelay?.disable();
+        turnDelay?.disable();
         heapTelemetry?.close();
         send('drained', await kernel?.shutdown() || {}, message.msgId);
         parentPort.close();
