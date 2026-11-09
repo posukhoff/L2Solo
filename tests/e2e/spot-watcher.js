@@ -11,15 +11,17 @@ const path = require('path');
 // - the watcher teleports to Giran's gatekeeper landing (C4 teleport destination 59) and stands
 //   there: the bots that arrive by teleport and walk off.
 // For each player a recorder keeps what its client was sent: every SAMPLE_MS a line with every body
-// in view (CharInfo shown, not deleted): position, state, plan, target, weapon/shield, HP/MP, party,
-// karma, nearest mob; the server packets by name; chat lines, party/trade invites, PvP first hits,
-// the fighter's mobs (who hit them, who took the kill); per sample the mobs in view and the bodies
-// that target each (shared: 2+ bodies, contested: 2+ sides), bodies with no target and for how
-// long, target switches away from a live mob. Every activation attempt near the players
-// (PopulationService.requestActivation, wrapped for the run) is logged with its outcome. The hot
-// bots' target search (HuntingState.findPreferredMonster, seen through the World.fetchNpcsInRadius
-// it opens with and the targetScan timing it closes with, both wrapped for the run) is counted per
-// minute: calls, ms on main, scans at the expanded radius.
+// in view (CharInfo shown, no DeleteOb since, in the world and in the client's range: a body that
+// teleported away gets no DeleteOb, its viewer only its TeleportToLocation): position, state, plan,
+// town, target, weapon/shield, HP/MP, party, karma, nearest mob on its floor; the server packets by
+// name; chat lines, party/trade invites, PvP first hits, the fighter's mobs (who hit them, who took
+// the kill); per sample the mobs in view and the bodies that target each (shared: 2+ bodies,
+// contested: 2+ sides), bodies with no target and for how long (hunters, out of town in a hunting
+// plan, apart from town bodies), target switches away from a live mob. Every activation attempt
+// near the players (PopulationService.requestActivation, wrapped for the run) is logged with its
+// outcome. The hot bots' target search (HuntingState.findPreferredMonster, seen through the
+// World.fetchNpcsInRadius it opens with and the targetScan timing it closes with, both wrapped for
+// the run) is counted per minute: calls, ms on main, scans at the expanded radius.
 // Output in the run folder: spot-watcher-<label>.jsonl per player, spot-watcher-summary.json.
 // The run ends after FIGHT_MS, or a minute before the window closes.
 // Run: node scripts/perf.js run --save=312ebb2e-e9ee-417c-ae0e-5a58f2923b37 --scenario=script
@@ -45,7 +47,7 @@ const ENGAGE_MS = 40000;
 const RETURN_MS = 120000;
 const RETURN_NEAR = 150;
 const RETURN_FAR = 600;
-// Bodies this close stand in one another.
+// Bodies this close stand in one another (not a pair fighting each other or one mob: melee range).
 const STACKED = 50;
 // A body that moved less than this between two samples stood still.
 const STILL = 20;
@@ -53,7 +55,12 @@ const STILL = 20;
 const MOB_SEARCH = 3000;
 // A mob no one hit for this long has left the view: its fight is settled without a kill.
 const MOB_FORGET_MS = 120000;
-const { CLIENT_VISIBILITY_RADIUS, SPOT_CELL_SIZE } = invoke('GameServer/World/WorldConstants');
+const { CLIENT_VISIBILITY_RADIUS, SPOT_CELL_SIZE, inClientView } = invoke('GameServer/World/WorldConstants');
+// A mob on another floor is not near: the spot catalogue's floor bound (SpotService), the farthest
+// height a mob assists or aggroes across.
+const SAME_FLOOR = Math.max(invoke('GameServer/Npc/SocialAggro').MAX_ASSIST_Z_DIFFERENCE, invoke('GameServer/Npc/NpcAggro').MAX_AGGRO_Z_DIFFERENCE);
+// The AI plans of a body out hunting (BotAI); in a town it is not hunting whatever its plan.
+const HUNTING_PLANS = new Set(['hunting', 'pk_hunting']);
 // HuntingState's widened scan for a solo hunter with no target for 2 ticks (its local one is 2500).
 const EXPANDED_RADIUS = Math.ceil(SPOT_CELL_SIZE * Math.SQRT2);
 
@@ -118,11 +125,11 @@ class View {
         this.bodySamples = 0;
         this.idle = { standing: 0, seated: 0 };
         this.stacked = 0;
-        this.ghosts = new Set();
+        this.outOfView = { ids: new Set(), rows: 0 };
         this.mobDistance = { all: [], hunting: [] };
         this.deaths = 0;
         this.targets = { mobSamples: 0, shared: 0, contested: 0, playerMob: 0, playerMobShared: 0, playerMobContested: 0,
-            liveSamples: 0, noTarget: 0, huntingSamples: 0, huntingNoTarget: 0, streaks: [] };
+            liveSamples: 0, noTarget: 0, huntingSamples: 0, huntingNoTarget: 0, townSamples: 0, townNoTarget: 0, streaks: [] };
         this.listener = entry => this.packet(entry);
         client.waiters.add(this.listener);
     }
@@ -253,8 +260,9 @@ class View {
     body(id) {
         let body = this.bodies.get(id);
         if (!body) {
-            body = { samples: 0, idle: 0, idleSince: null, longestIdleMs: 0, history: [], returns: 0, weapon: undefined,
-                shield: undefined, reEquips: 0, charInfo: 0, lastTarget: null, noTargetSince: null, switches: 0 };
+            body = { samples: 0, lastAt: null, idle: 0, idleSince: null, longestIdleMs: 0, history: [], returns: 0, weapon: undefined,
+                shield: undefined, reEquips: 0, charInfo: 0, lastTarget: null, noTargetSince: null, huntNoTargetSince: null,
+                longestHuntNoTargetMs: 0, switches: 0 };
             this.bodies.set(id, body);
         }
         return body;
@@ -263,26 +271,30 @@ class View {
     sample(now = Date.now()) {
         const World = invoke('GameServer/World/World');
         const Life = invoke('GameServer/Bot/Population/BotLifeState');
+        const { townAt } = invoke('GameServer/Bot/AI/TownTransitPolicy');
         const me = this.client.actor;
         const here = locOf(me);
-        const rows = [];
+        const rows = [], outOfView = [];
         for (const mobId of [...this.mobs.keys()]) if (now - this.mobs.get(mobId).lastAt > MOB_FORGET_MS) this.settle(mobId, false);
         for (const id of this.shown.keys()) {
-            const actor = actorById(this.client.session, id);
-            if (!actor) { this.ghosts.add(id); rows.push({ id, ghost: true }); continue; }
-            const loc = locOf(actor);
+            // Only the world's body: a cooled one lives on only as the session's stale reference.
+            const actor = World.registeredActorById(id)?.actor;
+            const loc = actor ? locOf(actor) : null;
+            if (!actor || !inClientView(here.locX, here.locY, loc.locX, loc.locY)) { outOfView.push(id); continue; }
             const state = actor.state;
             const session = actor.session;
             const paperdoll = actor.backpack?.paperdoll || {};
             const target = Number(actor.fetchDestId?.()) || null;
+            const town = townAt(loc);
             const mob = World.fetchNpcsInRadius(loc.locX, loc.locY, MOB_SEARCH)
-                .filter(npc => npc.fetchAttackable?.() && !npc.isDead?.())
+                .filter(npc => npc.fetchAttackable?.() && !npc.isDead?.() && Math.abs(npc.fetchLocZ() - loc.locZ) <= SAME_FLOOR)
                 .reduce((best, npc) => Math.min(best, away(loc, locOf(npc))), Infinity);
             rows.push({ id, name: actor.fetchName(), bot: String(session?.accountId || '').startsWith('bot_'), level: actor.fetchLevel(),
                 classId: actor.fetchClassId?.(), loc, distance: round(away(loc, here)),
                 moving: state.fetchTowards() || false, seated: state.fetchSeated(), dead: state.fetchDead(),
                 hitting: state.fetchHits(), casting: state.fetchCasts(), combat: state.fetchCombats(),
-                plan: session?.plan || null, activity: Life.cachedState(id)?.activity || null,
+                plan: session?.plan || null, activity: Life.cachedState(id)?.activity || null, town,
+                hunter: !town && HUNTING_PLANS.has(session?.plan),
                 target, targetIsCharacter: target ? this.isCharacter(target) : null,
                 weapon: paperdoll[7]?.selfId || paperdoll[14]?.selfId || null, shield: paperdoll[8]?.selfId || null,
                 hp: round(actor.fetchHp()), maxHp: round(actor.fetchMaxHp()), mp: round(actor.fetchMp()), maxMp: round(actor.fetchMaxMp()),
@@ -290,14 +302,15 @@ class View {
                 store: actor.fetchPrivateStoreType?.() || 0, nearestMob: Number.isFinite(mob) ? round(mob) : null });
         }
         this.samples += 1;
-        const live = rows.filter(row => !row.ghost);
+        this.outOfView.rows += outOfView.length;
+        outOfView.forEach(id => this.outOfView.ids.add(id));
         const mobs = new Map(World.fetchNpcsInRadius(here.locX, here.locY, CLIENT_VISIBILITY_RADIUS)
             .filter(npc => npc.fetchAttackable?.() && !npc.isDead?.()).map(npc => [npc.fetchId(), npc]));
-        for (const row of live) this.account(row, live, now, mobs);
+        for (const row of rows) this.account(row, rows, now, mobs);
         const mine = Number(me.fetchDestId?.()) || null;
-        const targeted = this.contests(live, mobs, mine);
+        const targeted = this.contests(rows, mobs, mine);
         this.write({ type: 'sample', player: { id: this.id, loc: here, hp: round(me.fetchHp()), mp: round(me.fetchMp()),
-            target: mine, dead: me.isDead() }, mobsInView: mobs.size, targeted, bodies: rows });
+            target: mine, dead: me.isDead() }, mobsInView: mobs.size, targeted, bodies: rows, outOfView });
     }
 
     // The mobs in view that bodies target: shared by 2+ bodies, contested by 2+ sides (a party is one).
@@ -326,6 +339,12 @@ class View {
 
     account(row, live, now, mobs) {
         const body = this.body(row.id);
+        // Back in view after a gap: its streaks and its path restart.
+        if (body.lastAt !== null && now - body.lastAt > 2 * SAMPLE_MS) {
+            if (body.noTargetSince !== null) this.targets.streaks.push(body.lastAt - body.noTargetSince);
+            Object.assign(body, { idleSince: null, noTargetSince: null, huntNoTargetSince: null, history: [] });
+        }
+        body.lastAt = now;
         const last = body.history[body.history.length - 1];
         this.bodySamples += 1;
         body.samples += 1;
@@ -342,10 +361,11 @@ class View {
             }
         }
         if (!idle || row.seated) body.idleSince = null;
-        if (live.some(other => other !== row && away(other.loc, row.loc) < STACKED)) this.stacked += 1;
+        const fighting = other => other.target === row.id || row.target === other.id || (row.target && other.target === row.target);
+        if (live.some(other => other !== row && away(other.loc, row.loc) < STACKED && !fighting(other))) this.stacked += 1;
         if (row.nearestMob !== null) {
             this.mobDistance.all.push(row.nearestMob);
-            if (row.plan === 'hunting') this.mobDistance.hunting.push(row.nearestMob);
+            if (row.hunter) this.mobDistance.hunting.push(row.nearestMob);
         }
         if (body.weapon !== undefined && (body.weapon !== row.weapon || body.shield !== row.shield)) {
             body.reEquips += 1;
@@ -356,13 +376,20 @@ class View {
         // No target: alive, no store; a streak ends when it takes one.
         if (!row.dead && !row.store) {
             this.targets.liveSamples += 1;
-            if (row.plan === 'hunting') this.targets.huntingSamples += 1;
+            if (row.hunter) this.targets.huntingSamples += 1;
+            if (row.town) this.targets.townSamples += 1;
             if (!row.target) {
                 this.targets.noTarget += 1;
-                if (row.plan === 'hunting') this.targets.huntingNoTarget += 1;
+                if (row.hunter) this.targets.huntingNoTarget += 1;
+                if (row.town) this.targets.townNoTarget += 1;
                 body.noTargetSince ??= now;
             }
         }
+        // A hunter's streak with no target: it ends when it takes one, dies, opens a store or stops hunting.
+        if (row.hunter && !row.dead && !row.store && !row.target) {
+            body.huntNoTargetSince ??= now;
+            body.longestHuntNoTargetMs = Math.max(body.longestHuntNoTargetMs, now - body.huntNoTargetSince);
+        } else body.huntNoTargetSince = null;
         if ((row.target || row.dead || row.store) && body.noTargetSince !== null) {
             this.targets.streaks.push(now - body.noTargetSince);
             body.noTargetSince = null;
@@ -394,7 +421,7 @@ class View {
         for (const line of this.chat) chatKinds[line.kind] = (chatKinds[line.kind] || 0) + 1;
         return {
             label: this.label, minutes: Math.round(minutes * 10) / 10, samples: this.samples, bodiesSeen: this.bodies.size,
-            ghosts: this.ghosts.size,
+            outOfView: { bodies: this.outOfView.ids.size, rows: this.outOfView.rows },
             idle: { share: this.bodySamples ? Math.round((this.idle.standing + this.idle.seated) / this.bodySamples * 1000) / 1000 : 0,
                 standingShare: this.bodySamples ? Math.round(this.idle.standing / this.bodySamples * 1000) / 1000 : 0,
                 bodiesIdleStanding60s: bodies.filter(([, body]) => body.longestIdleMs >= 60000).map(([id, body]) => ({ id, ms: body.longestIdleMs })) },
@@ -415,12 +442,15 @@ class View {
             targetConflicts: this.conflicts,
             targets: (() => {
                 const t = this.targets, share = (a, b) => (b ? Math.round(a / b * 1000) / 1000 : 0);
-                const ongoing = bodies.filter(([, body]) => body.noTargetSince !== null).map(([, body]) => Date.now() - body.noTargetSince);
+                const ongoing = bodies.filter(([, body]) => body.noTargetSince !== null).map(([, body]) => body.lastAt - body.noTargetSince);
                 const bodyHours = this.bodySamples * SAMPLE_MS / 3600000;
                 return { mobSamples: t.mobSamples, sharedShare: share(t.shared, t.mobSamples), contestedShare: share(t.contested, t.mobSamples),
                     playerMob: { samples: t.playerMob, shared: t.playerMobShared, contested: t.playerMobContested },
-                    noTarget: { share: share(t.noTarget, t.liveSamples), huntingShare: share(t.huntingNoTarget, t.huntingSamples),
-                        streakMs: quantiles([...t.streaks, ...ongoing]), ongoingOver60s: ongoing.filter(ms => ms >= 60000).length },
+                    noTarget: { share: share(t.noTarget, t.liveSamples), huntingSamples: t.huntingSamples,
+                        huntingShare: share(t.huntingNoTarget, t.huntingSamples), townSamples: t.townSamples, townShare: share(t.townNoTarget, t.townSamples),
+                        streakMs: quantiles([...t.streaks, ...ongoing]), ongoingOver60s: ongoing.filter(ms => ms >= 60000).length,
+                        huntersOver60s: bodies.filter(([, body]) => body.longestHuntNoTargetMs >= 60000)
+                            .map(([id, body]) => ({ id, ms: body.longestHuntNoTargetMs })).sort((a, b) => b.ms - a.ms) },
                     switches: { total: bodies.reduce((sum, [, body]) => sum + body.switches, 0),
                         perBodyHour: bodyHours ? Math.round(bodies.reduce((sum, [, body]) => sum + body.switches, 0) / bodyHours * 10) / 10 : 0,
                         top: top(new Map(bodies.map(([id, body]) => [id, body.switches]).filter(([, n]) => n))) } };
