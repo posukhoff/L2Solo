@@ -322,8 +322,9 @@ class ColdSimulationCoordinator {
             onPause: () => this.setPauseReason('commit_queue_high_water', true),
             onResume: () => this.setPauseReason('commit_queue_high_water', false),
             // A full worker window commits at once only within the governor's budget (with a
-            // player 50 ms/s): about 1.85 ms of main per row, so 40-50 steps/s would take 75-90 ms/s
-            // of main. Asks one DB slice, admitted while a third of it is left, charged what it took.
+            // player 80 ms/s): about 1.2-1.85 ms of main per row, so 40-50 steps/s would take 50-90 ms/s
+            // of main. Asks one DB slice, admitted while a third of it is left, charged what it took;
+            // it commits half the worker's window (windowRows), so one such commit is one short turn.
             admitWindowFlush: () => {
                 const pressure = this.desiredWorkerPressure();
                 if (pressure.lagMs >= Math.max(1, Number(Config.schedulerLagThrottleMs) || 40)) return null;
@@ -336,6 +337,7 @@ class ColdSimulationCoordinator {
                 });
                 return admission.ok ? admission.lease : null;
             },
+            windowRows: () => Math.ceil((Number(this.workerMaxInFlight) || this.desiredWorkerPressure().maxInFlight) / 2),
             completeWindowFlush: (lease, durationMs) => {
                 invoke('GameServer/Bot/Population/BackgroundWorkGovernor').complete(lease, { durationMs });
             }

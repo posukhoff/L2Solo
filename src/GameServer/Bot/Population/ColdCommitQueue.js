@@ -58,6 +58,8 @@ class ColdCommitQueue {
         // The governor's lease for a full-window commit (null: not now) and its charge.
         this.admitWindowFlush = options.admitWindowFlush || (() => null);
         this.completeWindowFlush = options.completeWindowFlush || (() => {});
+        // Rows one full-window commit takes (the caller's half window): one turn of main.
+        this.windowRows = options.windowRows || (() => this.maxRows);
         this.capacityPressure = false;
         this.now = options.now || Date.now;
         this.targetMs = Math.max(100, Number(options.targetMs) || 2000);
@@ -324,8 +326,8 @@ class ColdCommitQueue {
         const timestamp = this.now();
         for (const group of this.laneGroups(lane, groups)) {
             if (groupReadyAt(group) > timestamp) continue;
+            // A party cannot be split: one larger than the batch goes alone (atomic parties are capped at nine).
             if (selected.length && selected.length + group.length > limit) break;
-            if (!selected.length && group.length > limit) break;
             const groupMemoryEvents = group.reduce((count, candidate) =>
                 count + (candidate.result?.memoryEvents?.length || 0), 0);
             if (selected.length && memoryEvents + groupMemoryEvents > MAX_MEMORY_EVENTS) break;
@@ -398,7 +400,7 @@ class ColdCommitQueue {
         if (!batch.length && this.capacityPressure && this.size() && this.nextDueAt(true) <= this.now()) {
             windowLease = this.admitWindowFlush();
             if (windowLease) {
-                batch = this.takeBatch(true);
+                batch = this.takeBatch(true, Math.max(1, Math.min(this.maxRows, Number(this.windowRows()) || this.maxRows)));
                 if (batch.length) this.lastBatchReason = 'window';
             } else {
                 DiagnosticConfig.developerDiagnostics && (this.counters.windowDenied += 1);

@@ -2489,8 +2489,9 @@ class ColdSimulationKernel {
             active.grievances = grievances.length;
             this.dirty.set(Number(characterId), proposal);
             DiagnosticConfig.developerDiagnostics && (this.stats.resolved += 1);
-            if (priority !== 'P2' || this.dirty.size >= this.maxBatch) {
-                this.flush(priority, false, { reason: priority !== 'P2' ? 'priority' : 'batch' });
+            if (priority !== 'P2' || this.dirty.size >= this.maxBatch || this.halfWindowDone()) {
+                this.flush(priority, false, { reason: priority !== 'P2' ? 'priority'
+                    : this.dirty.size >= this.maxBatch ? 'batch' : 'half_window' });
             }
         } catch (error) {
             if (!this.resolverSourceCurrent(source)) return;
@@ -2717,6 +2718,12 @@ class ColdSimulationKernel {
         return sent;
     }
 
+    // Half the window has finished and waits to be sent: it goes to main at once and commits
+    // while the other half runs (flush asks main to commit at once from half the window sent).
+    halfWindowDone() {
+        return this.dirty.size >= Math.ceil(this.maxInFlight / 2);
+    }
+
     flushDue() {
         const now = this.now();
         const oldest = Math.min(...[...this.dirty.values()].map((proposal) => Number(proposal.enqueuedAt || now)), now);
@@ -2732,6 +2739,9 @@ class ColdSimulationKernel {
         }
         if (this.dirty.size >= this.maxBatch) {
             return this.flush(null, false, { reason: 'batch' });
+        }
+        if (this.halfWindowDone()) {
+            return this.flush(null, false, { reason: 'half_window' });
         }
         if (ageMs >= this.flushHardMs) {
             return this.flush(null, true, { reason: 'hard_age' });
