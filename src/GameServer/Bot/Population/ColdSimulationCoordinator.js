@@ -2268,7 +2268,7 @@ class ColdSimulationCoordinator {
         );
         const player = Number(scheduler.realPlayers || 0) > 0 || scheduler.mode === 'player';
         const idleLimit = Math.max(1, Math.min(128, Number(Config.coldWorkerMaxInFlight) || 32));
-        const playerLimit = Math.max(1, Math.min(idleLimit, Number(Config.coldWorkerPlayerMaxInFlight) || 8));
+        const playerLimit = Math.max(1, Math.min(idleLimit, Number(Config.coldWorkerPlayerMaxInFlight) || 16));
         const lagLimit = Math.max(1, Math.min(playerLimit, Number(Config.coldWorkerLagMaxInFlight) || 2));
         const throttleMs = Math.max(0, Number(Config.schedulerLagThrottleMs) || 0);
         const abortMs = Math.max(0, Number(Config.schedulerLagAbortMs) || 0);

@@ -2676,11 +2676,14 @@ class ColdSimulationKernel {
                 active.proposed = proposed.get(Number(proposal.characterId));
             }
         }
-        // Sent proposals keep their in-flight slots until the commit ACK. With
-        // the window full and every step in it sent (a command waits on main
-        // too), nothing more comes before an ack: main commits what it holds at
-        // once. A party waiting for slots asks the same.
+        // Sent proposals keep their in-flight slots until the commit ACK. Main
+        // commits what it holds at once when half the window waits on it: the
+        // other half runs while that half commits, so the worker does not idle
+        // through main's commit (with the window full and every step in it sent,
+        // a command waiting on main too, nothing more comes before an ack). A
+        // party waiting for slots asks the same.
         const capacityBlocked = this.partyCapacityBlocked === true
+            || this.sentSteps() >= Math.ceil(this.maxInFlight / 2)
             || this.inFlight.size + this.commanding.size >= this.maxInFlight && this.everyStepSent();
         // Each proposal's measured size travels with it, so the main commit
         // queue need not serialise it again (the list fits the 16 KiB left
@@ -2704,6 +2707,13 @@ class ColdSimulationKernel {
     everyStepSent() {
         for (const active of this.inFlight.values()) if (!active.pendingCommitId) return false;
         return true;
+    }
+
+    // Steps of the window sent to main and waiting for its commit (at most maxInFlight entries).
+    sentSteps() {
+        let sent = 0;
+        for (const active of this.inFlight.values()) if (active.pendingCommitId) sent += 1;
+        return sent;
     }
 
     flushDue() {
