@@ -143,6 +143,20 @@ async function main() {
         assert.equal(action.state.adena,state.adena-symbol.price);assert(Profile.profileFor(action.state).base.str>plain.base.str);
         console.log('PASS paid native class henna and actual cold stat effect');
 
+        // A far bot's held henna, drawn on its town visit, ends its held step: the bot does not
+        // walk back to the symbol maker on its next step with its slots full or the dye spent.
+        const Situations = invoke('GameServer/Bot/Situations');
+        state=await seed([{selfId:symbol.dyeSelfId,name:'Dye',amount:symbol.dyeAmount*2}],{classId:3,activity:'shopping',
+            stats:{decisionSeq:7,activityLeaf:12345,wishDirty:0,woken:0,wishSections:{at:1}}});
+        assert(!Situations.woken(state.stats,'build'));
+        const hennaCard={riskWeight:1,activity:{activity:'improving',improvement:{kind:'henna',symbolId:symbol.id,riskHours:0}}};
+        const drawn=await invoke('GameServer/Bot/Economy/BotImprovementService').reviewCold(state,{decide:()=>hennaCard});
+        assert.equal(drawn.changed,true);assert.equal(drawn.state.stats.hennas[0],symbol.id);
+        const row=Life.cachedState(state.characterId);
+        assert(Situations.woken(row.stats,'build'),'the drawn henna wakes the build: it chooses the step after it');
+        assert.equal(drawn.state.simulation.revision,row.simulation.revision,'the visit writes on after the raise');
+        console.log('PASS a drawn cold henna ends its held step');
+
         state=await seed([],{level:52});
         action=await apply(state,{kind:'crystal_quest',starterId:4629});state=action.state;
         assert.equal(state.stats.soulCrystalQuest,true);assert.equal(state.inventory[4629].amount,1);
