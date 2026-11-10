@@ -34,12 +34,14 @@ const norm = x => path.basename(x).replace(/^(test_)?/,'test_').replace(/(\.js)?
 const nonempty = x => typeof x === 'string' && x.trim().length > 0;
 const strings = x => Array.isArray(x) && x.length > 0 && x.every(nonempty);
 function validateBrief(b, state) {
-    if (!b || b.base !== state.base || !nonempty(b.symptom) || !nonempty(b.owner) || !strings(b.scope) ||
+    if (!b || b.base !== state.base || !nonempty(b.symptom) || !strings(b.evidence)) fail('Brief needs exact base, symptom/goal and evidence refs.');
+    if (state.kind === 'fix' && b.cause?.status === 'guess' && nonempty(b.cause.explanation)) return;
+    if (!nonempty(b.owner) || !strings(b.scope) ||
         !strings(b.acceptance) || !strings(b.evidence) || !strings(b.tests) || !Array.isArray(b.nonGoals) ||
         !b.nonGoals.every(nonempty)) fail('Brief needs exact base, symptom/goal, owner, scope, acceptance, evidence refs, tests and nonGoals.');
     if (state.kind === 'fix' && (!b.cause || !['guess','verified'].includes(b.cause.status) ||
         !nonempty(b.cause.explanation))) fail('Fix brief requires cause {status: guess|verified, explanation}.');
-    if (state.kind === 'fix' && b.cause.status === 'verified' && !strings(b.cause.evidence)) fail('Verified cause needs concrete evidence handles.');
+    if (state.kind === 'fix' && b.cause.status === 'verified' && (!strings(b.cause.evidence) || !strings(b.regressions) || !b.regressions.every(t=>b.tests.map(norm).includes(norm(t))))) fail('Verified cause needs evidence handles and regression tests listed in tests.');
 }
 function select(base, brief) {
     const changes = git('diff','--name-status','--no-renames',base,'HEAD').split('\n').filter(Boolean);
@@ -115,13 +117,15 @@ function main() {
     }
     if (command === 'record-regression') {
         const test=opt('--test'), old=opt('--old'), evidence=opt('--evidence');
-        if (!test || !old || !evidence || !state.brief.tests.map(norm).includes(norm(test))) fail('record-regression requires a brief test, --old <base SHA>, --evidence <old expected failure and new pass reference>.');
+        if (!test || !old || !evidence || !state.brief.regressions?.map(norm).includes(norm(test))) fail('record-regression requires a brief test, --old <base SHA>, --evidence <old expected failure and new pass reference>.');
         if (old!==state.base) fail('Old-code evidence must identify the task base SHA.');
-        state.evidence.regression={head,old,test:norm(test),evidence,at:now()}; save(state); return;
+        state.evidence.regressions=(state.evidence.regressions||[]).filter(r=>r.head===head && r.test!==norm(test));
+        state.evidence.regressions.push({head,old,test:norm(test),evidence,at:now()}); save(state); return;
     }
     if (command === 'verify') {
         const plan=select(state.base,state.brief);
-        console.log(JSON.stringify({head,risk:state.risk,...plan},null,2));
+        const {normal,tests,...details}=plan;
+        console.log(JSON.stringify({head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,...(flag('--show-tests')?{tests}:{})},null,2));
         if (plan.critical && state.risk!=='critical') fail('Escalate to critical route before verification.');
         if (flag('--rules')) {
             console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
@@ -197,13 +201,17 @@ function main() {
         const full=runs.some(r=>r.workflow==='PR checks');
         const covered=new Set([...runs.flatMap(r=>r.tests),...(e.local?.head===head?e.local.tests:[])]);
         const missing=plan.tests.filter(t=>!covered.has(t));
-        if (missing.length) reasons.push('Missing selected tests: '+missing.join(', '));
+        if (missing.length) reasons.push('Missing '+missing.length+' selected tests: '+missing.slice(0,20).join(', ')+(missing.length>20?' ... (verify --show-tests)':''));
         if (!plan.tests.length && !full) reasons.push('Empty selection requires full CI.');
         if (plan.warnings.length && (!full || !e.review?.selectionAcknowledged)) reasons.push('Uncertain selection needs full CI and explicit review --selection-ack.');
         if (e.rules?.head!==head) reasons.push('Mechanical rules-check missing for HEAD (verify --rules).');
         if (e.check?.head!==head && !full) reasons.push('Syntax/table check missing (verify --check or PR checks).');
         if (state.risk==='critical' && !full) reasons.push('Critical task requires full PR checks on its SHA.');
-        if (state.kind==='fix' && e.regression?.head!==head) reasons.push('Record old-code failure/new-code pass evidence for HEAD.');
+        if (state.kind==='fix') {
+            const proven=new Set((e.regressions||[]).filter(r=>r.head===head && r.old===state.base).map(r=>r.test));
+            const missingRegression=state.brief.regressions.map(norm).filter(t=>!proven.has(t));
+            if(missingRegression.length) reasons.push('Missing old-code failure/new-code pass evidence: '+missingRegression.join(', '));
+        }
         if (!reasons.length) { e.ready={head,at:now(),policy:state.policy}; save(state); }
         else if(e.ready) { delete e.ready; save(state); }
         console.log(JSON.stringify({head,taskReady:!reasons.length,reasons,selectionWarnings:plan.warnings,releaseGate:'Full CI on integration head and existing release gates still required.'},null,2));
