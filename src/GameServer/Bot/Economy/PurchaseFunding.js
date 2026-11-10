@@ -23,12 +23,21 @@ function shortfall(state = {}, price = 0, reserve = 0, escrow = 0) {
 function surplus(state = {}, price = 0, reserve = 0) {
     return Math.max(0, budget(state) - nonnegative(price) - nonnegative(reserve));
 }
+// The funded row a rank r names: its ratio as given (a rank read from the packet) or as the
+// packet rounds it (significant), else -1.
+function fundedRow(packet, r) {
+    if (!(Number(r) > 0) || !Number.isFinite(Number(r))) return -1;
+    const exact = Number(r), rank = significant(exact);
+    for (let row = 0, rows = Packet.fundedRows(packet); row < rows; row++) {
+        const ratio = Packet.fundedRatio(packet, row);
+        if (ratio === exact || ratio === rank) return row;
+    }
+    return -1;
+}
 // The rank r when it is one of the packet's funded rows (its ratio as the packet keeps it), else null.
 function fundedRank(packet, r) {
-    if (!(Number(r) > 0) || !Number.isFinite(Number(r))) return null;
-    const rank = significant(Number(r));
-    for (let row = 0, rows = Packet.fundedRows(packet); row < rows; row++) if (Packet.fundedRatio(packet, row) === rank) return rank;
-    return null;
+    const row = fundedRow(packet, r);
+    return row < 0 ? null : Packet.fundedRatio(packet, row);
 }
 // The money a spend at rank r may take: the wallet above the reserve and the money the
 // queue holds for the funded rows ahead of it. The rows stand in queue order, tier first,
@@ -38,12 +47,9 @@ function fundedRank(packet, r) {
 // funds a root only from what the roots ahead of it leave. Infinity (a companion's errand)
 // stands ahead of the whole queue.
 function budgetFor(packet, wallet, escrow, r, capture = null) {
-    const rank = r === Infinity ? Infinity : fundedRank(packet, r);
-    let prior = 0;
-    for (let row = 0, rows = rank === Infinity ? 0 : Packet.fundedRows(packet); row < rows; row++) {
-        if (Packet.fundedRatio(packet, row) === rank) break;
-        prior = Packet.fundedCumulative(packet, row);
-    }
+    const rows = r === Infinity ? 0 : Packet.fundedRows(packet), own = r === Infinity ? -1 : fundedRow(packet, r);
+    const ahead = own < 0 ? rows : own;
+    const prior = ahead > 0 ? Packet.fundedCumulative(packet, ahead - 1) : 0;
     if (capture) capture.priorityReserve = nonnegative(prior);
     return Math.max(0, nonnegative(wallet) + nonnegative(escrow) - nonnegative(Packet.refillReserve(packet)) - prior);
 }
