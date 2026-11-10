@@ -69,11 +69,12 @@ function select(base, brief) {
     if (critical) warnings.push('Critical surface: require critical route and integration/release gates.');
     return { files, tests: [...selected].sort(), normal: [...normal].sort(),
         geodataOnly: [...selected].filter(t=>!normal.has(t)).sort(),
+        optionalGeodata: [...selected].filter(t=>normal.has(t)&&geo.has(t)).sort(),
         domains: domains.map(x=>x[2]), warnings, critical,
         preferredCI: selected.size>96 || warnings.length ? 'PR checks + uncovered Picked tests' : 'Picked tests or PR checks' };
 }
 function main() {
-    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land> <slug> [options]');
+    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land|close> <slug> [options]');
     if (!fs.existsSync(path.join(root,'package.json')) || !fs.existsSync(path.join(root,'src'))) fail('Use a real L2Solo game checkout, not the workflow snapshot.');
     const stateDir = path.join(git('rev-parse','--path-format=absolute','--git-common-dir'),'l2solo-workflow');
     fs.mkdirSync(stateDir,{recursive:true});
@@ -92,6 +93,12 @@ function main() {
     const state=JSON.parse(fs.readFileSync(file,'utf8'));
     if (command === 'status') { console.log(JSON.stringify({...state,policyCurrent:state.policy===digest(),head:sha()},null,2)); return; }
     if (state.policy!==digest()) fail('Policy digest changed; coordinator must re-evaluate and create a fresh task record.');
+    if (command === 'close') {
+        if (!flag('--refuted') || state.kind!=='fix' || state.brief?.cause?.status!=='guess' || !opt('--evidence')) fail('close requires a guess fix, --refuted and --evidence <reference>.');
+        state.closed={reason:'refuted',evidence:opt('--evidence'),at:now()};
+        save(state); console.log(JSON.stringify(state.closed)); return;
+    }
+    if (state.closed) fail('Task closed: '+state.closed.reason+'; use a new slug for new evidence.');
     if (command === 'record-brief') {
         const p=opt('--file');
         if (!p) fail('record-brief requires --file <brief.json>');
@@ -130,6 +137,14 @@ function main() {
         const {normal,tests,...details}=plan;
         console.log(JSON.stringify({head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,...(flag('--show-tests')?{tests}:{})},null,2));
         if (plan.critical && state.risk!=='critical') fail('Escalate to critical route before verification.');
+        if (flag('--raw-geodata')) {
+            const test=norm(opt('--test')||'');
+            if(!plan.optionalGeodata.includes(test)) fail('Choose one selected optional-geodata test with --test.');
+            // Explicit local command; caller must provide raw map and avoid concurrent perf/trace.
+            console.log(run(process.execPath,[path.join(root,'scripts/run-tests.js'),'--geodata','--only='+test,'--keep-going']));
+            state.evidence.rawGeodata=(state.evidence.rawGeodata||[]).filter(r=>r.head===head&&r.test!==test);
+            state.evidence.rawGeodata.push({head,test,at:now()}); save(state); return;
+        }
         if (flag('--rules')) {
             console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
             state.evidence.rules={head,at:now()}; save(state); return;
@@ -204,6 +219,9 @@ function main() {
         const full=runs.some(r=>r.workflow==='PR checks');
         const covered=new Set([...runs.flatMap(r=>r.tests),...(e.local?.head===head?e.local.tests:[])]);
         const missing=plan.tests.filter(t=>!covered.has(t));
+        const raw=new Set((e.rawGeodata||[]).filter(r=>r.head===head).map(r=>r.test));
+        const missingRaw=plan.optionalGeodata.filter(t=>!raw.has(t));
+        if(missingRaw.length) reasons.push('Missing optional raw-geodata evidence: '+missingRaw.join(', '));
         if (missing.length) reasons.push('Missing '+missing.length+' selected tests: '+missing.slice(0,20).join(', ')+(missing.length>20?' ... (verify --show-tests)':''));
         if (!plan.tests.length && !full) reasons.push('Empty selection requires full CI.');
         if (plan.warnings.length && (!full || !e.review?.selectionAcknowledged)) reasons.push('Uncertain selection needs full CI and explicit review --selection-ack.');
