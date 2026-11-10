@@ -4,7 +4,8 @@ const CombinedErrands = require('../Population/CombinedErrandPolicy');
 const Packet = require('./StatsPacket');
 const BoardRules = require('../../AfkTrade/BoardRules');
 // One wallet rule for hot/cold purchases. Value rates are hours per adena;
-// higher-valued funded wishes keep their cumulative costs before a spend.
+// every funded row ahead of a spend in queue order keeps its cost; a spend that is no funded
+// row gets only the money above every funded row (budgetFor).
 const nonnegative = value => Math.max(0, Number(value) || 0);
 let moneyPacketMissing = 0;
 function budget(state = {}, escrow = 0) {
@@ -184,7 +185,7 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
 // What a purchase may pay now: the planner's rule (spendable over the bag and the money
 // the bot's own buy orders hold, escrow) paid from the bag. One rule for the planner and
 // every buyer: hot and cold, main and the native writer. stepBids: the money of the bids
-// the step's buyer takes back before it pays (bidMoney of the card's `bids`).
+// the step's buyer takes back before it pays (the card's `bids`, at most STEP_BIDS).
 function payable(state = {}, escrow = 0, options = {}, captureOutput = null, stepBids = 0) {
     return Math.min(budget(state) + nonnegative(stepBids), spendable(state, escrow, options, captureOutput));
 }
@@ -317,5 +318,5 @@ function packetFor(network, hour, reserve) {
     }
     return packet;
 }
-module.exports = { itemRate, budget, operatingReserve, shortfall, surplus, spendable, payable, ownBids, bidMoney, STEP_BIDS, stepBids, clanCredit, stockAllowance, survivalTranche, quoteScale, forOpportunity, nativeTerms, companionTerms, budgetFor, packetAfterPurchase, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, stampRatio, goalTerms, stockTerms,
+module.exports = { itemRate, budget, operatingReserve, shortfall, surplus, spendable, payable, ownBids, STEP_BIDS, stepBids, clanCredit, stockAllowance, survivalTranche, quoteScale, forOpportunity, nativeTerms, companionTerms, budgetFor, packetAfterPurchase, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, stampRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }), resetCounters: () => { moneyPacketMissing = 0; } };
