@@ -254,7 +254,9 @@ module.exports.rebuffProbe = async (id) => {
     try {
         const state = { ...saved.state, loc: { locX: guide.locX + 1000, locY: guide.locY, locZ: guide.locZ },
             stats: Situations.raise({ ...saved.state.stats }, 'arrived_town', null, Situations.OPEN, id) };
-        kernel.states.set(id, { ...saved, wishAdvisory: null, state });
+        // (No camp in this world takes its kit: its earning answer names none, and its ask for one
+        // was answered so before, Situations.spotAsk: in town it asks no spot again.)
+        kernel.states.set(id, { ...saved, wishAdvisory: null, spotAsk: { at: -1, none: true }, state });
         const plan = await kernel.planLifecycle({ state, timestamp: Date.now() });
         const main = mainRow(state, plan);
         return { built: plan.buildTaken === true, via: main.rebuff?.via ?? null, done: !!main.rebuff?.done,
@@ -322,9 +324,11 @@ module.exports.cellsProbe = async (id) => {
     let at = Date.now() + 20000;
     const out = [];
     try {
-        // An Artisan (a class line that crafts hears its workshop), its workshop held.
+        // An Artisan (a class line that crafts hears its workshop), its workshop held; its ask for a
+        // spot answered before (no camp here takes its kit, Situations.spotAsk): a spot it is refused
+        // leaves it asking nothing again.
         const start = saved.state;
-        kernel.states.set(id, { ...saved, wishAdvisory: null, state: { ...start, phase: 'cold', activity: 'hunting',
+        kernel.states.set(id, { ...saved, wishAdvisory: null, spotAsk: { at: -1, none: true }, state: { ...start, phase: 'cold', activity: 'hunting',
             stats: { ...start.stats, classId: 56, woken: (Number(start.stats.woken) || 0) & ~Situations.BITS.workshop } } });
         for (const [name, payload] of [['spot_unreachable', { spotId: marked, reason: 'route_unavailable' }],
             ['goal_affordable:potions'], ['karma_changed'], ['source_stalled'], ['player_command', { spotId: commanded, at }]]) {
