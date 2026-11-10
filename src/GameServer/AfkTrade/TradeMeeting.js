@@ -3,6 +3,7 @@ const BeginnerShots = require('../Items/C4BeginnerShots');
 // Native board custody. Every method is called within Database's one write
 // transaction, using its existing inventory, settlement and fencing owners.
 const Intent = require('../Bot/Economy/TradeIntent');
+const Packet = require('../Bot/Economy/StatsPacket');
 const MeetingAnchor = require('./MeetingAnchor');
 const MAX_COMMITMENTS = 8;
 const ascii = value => typeof value === 'string' && /^[\x20-\x7e]*$/.test(value);
@@ -151,8 +152,11 @@ function create(io) {
             // that buys nothing pays its fare from the wallet (the debit below),
             // as every trip.
             const outgoing = sum(totals[side], party.route.fee);
-            if (life && pays) funding(id, { row: life }, outgoing, { r: Math.min(...request.lines.filter(line => line.payer === side)
-                .map(line => line.certificate ? Intent.decode(line.certificate).valueRate : Infinity)), survivalCost: party.survivalCost });
+            // The side pays at its lowest-ranked certificate's place in its money queue (that root's row).
+            const lowest = request.lines.filter(line => line.payer === side && line.certificate).map(line => Intent.decode(line.certificate))
+                .reduce((low, intent) => !low || intent.valueRate < low.valueRate ? intent : low, null);
+            if (life && pays) funding(id, { row: life }, outgoing, { ...(lowest ? { r: lowest.valueRate, root: Packet.rootId(lowest.key) } : { r: Infinity }),
+                survivalCost: party.survivalCost });
             // A public bid is evidence of the owner's need, not collateral.
             for (const line of request.lines.filter(line => line.payer === side && line.adId)) {
                 const ad = one('SELECT * FROM afk_trade_shops WHERE id=?', [line.adId]);
