@@ -21,7 +21,7 @@ const INTEGRATION = process.env.HYGIENE_BRANCH || 'ivan/batch-6';
 const KEEP = new Set([INTEGRATION, 'ivan/next-release', 'perf-tooling', 'main', 'ivan/perf-remote']);
 const STALE_DAYS = 1;
 // Outside planning/: CLAUDE.md is read by every session and agent (KB); perf runs: only the baseline and the newest are kept.
-const CLAUDE_MD_KB = 40;
+const CLAUDE_MD_KB = 14; // compact entry point; detailed policy lives in .claude/workflow/
 
 // The closed list (CLAUDE.md "Where things are"): every file allowed under planning/ with its KB budget. Any other file
 // fails. A new file only with the maintainer's ok, added to CLAUDE.md's list and here together.

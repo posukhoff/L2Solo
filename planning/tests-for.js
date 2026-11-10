@@ -12,7 +12,8 @@ const args = process.argv.slice(2);
 const range = args.find(a => a.includes('..'));
 const opt = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
 const root = path.resolve(opt('--root') || path.join(__dirname, '..'));
-const DEPTH = Number(opt('--depth') || 2);
+const DEPTH = Number(opt('--depth') ?? 2);
+if (!Number.isInteger(DEPTH) || DEPTH < 0) { console.error('Invalid --depth'); process.exit(2); }
 const HUB = 25; // a module loaded by more than this many src modules stops the walk
 if (!range) { console.log('usage: node planning/tests-for.js <base>..<head> [--root <tree>] [--depth 2]'); process.exit(2); }
 
