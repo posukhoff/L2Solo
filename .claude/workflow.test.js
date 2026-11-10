@@ -3,13 +3,14 @@
 const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').replace(/^#![^\n]*\n/,'');
 const execute=new Function('require','process','__dirname','console',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
-let current=head;
+let current=head, notAncestor=false;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:()=>true,readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
 const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'?'Picked tests':'PR checks',jobs:id==='2'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
 const exec=(p,a)=>{
     if(p==='git'){
-        if(a[0]==='status'||a[0]==='merge-base')return '';
+        if(a[0]==='status')return '';
+        if(a[0]==='merge-base'){if(current===landed&&notAncestor)throw Error('not ancestor');return '';}
         if(a[0]==='rev-parse'){
             if(a.includes('--git-common-dir'))return '/git';
             if(a[1]==='--verify')return base;
@@ -56,6 +57,6 @@ expect('geodata gap',cmd('ready','x'),1,'test_geodata.js');
 expect('picked CI',cmd('record-ci','x','--run','2'),0,'');
 expect('ready',cmd('ready','x'),0,'"taskReady": true');
 current=other;expect('different tree rejected',cmd('record-land','x'),1,'differs');
-current=landed;expect('same tree receipt',cmd('record-land','x'),0,'reviewedHead');
+current=landed;notAncestor=true;expect('same tree receipt on a squash outside the base history',cmd('record-land','x'),0,'reviewedHead');notAncestor=false;
 current=head;expect('blocked review invalidates ready',cmd('record-review','x','--result','blocked','--evidence','new blocker'),0,'');
 current=landed;expect('no stale landing',cmd('record-land','x'),1,'No ready receipt');

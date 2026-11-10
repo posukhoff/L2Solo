@@ -104,17 +104,20 @@ function main() {
     validateBrief(state.brief,state);
     if (state.kind==='fix' && state.brief.cause.status!=='verified') fail('Cause is a hypothesis. Verify it before implementation/verification.');
 
-    clean();
-    try { git('merge-base','--is-ancestor',state.base,'HEAD'); } catch { fail('Task base is not an ancestor of HEAD.'); }
-    const head=sha();
-    if (head===state.base) fail('No committed task changes yet.');
+    // A squash lands on the integration branch, whose history need not hold the task base (a
+    // review-fix task on a topic branch): the receipt is the reviewed tree, not the ancestry.
     if (command === 'record-land') {
+        clean(); const head=sha();
         const receipt=state.evidence.ready;
         if (!receipt || !receipt.head) fail('No ready receipt; run ready on the reviewed task checkout first.');
         if (git('rev-parse',head+'^{tree}')!==git('rev-parse',receipt.head+'^{tree}')) fail('Landed tree differs from verified tree; reverify integrated result, do not transfer evidence.');
         state.evidence.landed={head,reviewedHead:receipt.head,tree:git('rev-parse',head+'^{tree}'),at:now()};
         save(state); console.log(JSON.stringify(state.evidence.landed,null,2)); return;
     }
+    clean();
+    try { git('merge-base','--is-ancestor',state.base,'HEAD'); } catch { fail('Task base is not an ancestor of HEAD.'); }
+    const head=sha();
+    if (head===state.base) fail('No committed task changes yet.');
     if (command === 'record-regression') {
         const test=opt('--test'), old=opt('--old'), evidence=opt('--evidence');
         if (!test || !old || !evidence || !state.brief.regressions?.map(norm).includes(norm(test))) fail('record-regression requires a brief test, --old <base SHA>, --evidence <old expected failure and new pass reference>.');
