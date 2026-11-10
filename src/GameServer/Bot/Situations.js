@@ -355,9 +355,9 @@ function stepMind(packet, before, after) {
     const from = storedBits(before), to = storedBits(after), fromWait = Number(before?.waiting) || 0, toWait = Number(after?.waiting) || 0;
     return { ...keys, mind: { cleared: from & ~to, woken: to & ~from, waitCleared: fromWait & ~toWait, waiting: toWait & ~fromWait } };
 }
-// A packet's mind (stepMind) on stats, a copy the caller owns (BotLifeState.prepareResolve):
-// over base, the mind its round started from (the planned state on the worker, main's row),
-// then what the round raised over base (round: the stats after the round's patch: an arrival's
+// A packet's mind (stepMind) on stats, a copy the caller owns (BotLifeState.prepareResolve),
+// once per step: over base, the mind its round started from (main's row; the worker's rounds
+// start from the planned state that holds it and land only the keys), then what the round raised over base (round: the stats after the round's patch: an arrival's
 // contest_lost on its whole stats copy). Written on stats; returns it.
 function landMind(stats, mind, base, round = stats) {
     const from = storedBits(base), fromWait = Number(base?.waiting) || 0;

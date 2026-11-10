@@ -307,6 +307,37 @@ module.exports.arrivalProbe = async (id) => {
             woken: Situations.woken(projection.state.stats, 'earning_spot'), marked: Risk.isMarked(projection.state.stats, spot.id) };
     } finally { arrivalContest = contest; kernel.states.set(id, saved); }
 };
+// A hunt window after a step whose own situation took a decision (a player's command heard
+// at the step: its earning spot taken, what waited for it cleared): a new grade a later round
+// gains waits for the rest through the window's next round and its end, and wakes the earning
+// spot at the rest.
+module.exports.windowProbe = async (id) => {
+    const saved = kernel.states.get(id), Data = invoke('GameServer/DataCache');
+    const spot = planningSpots.find(row => Number(row.minLevel) <= 40 && Number(row.maxLevel) >= 40) || planningSpots[0];
+    const waits = state => !!(Number(state.stats.waiting) & Situations.BITS.earning_spot);
+    const round = (exp, at, activity = 'hunting') => ({ patch: { activity }, debug: activity === 'hunting' ? { attemptedFights: 1 } : {},
+        events: [], materialize: { exp, sp: 0, adena: 0, items: [] }, nextResolveAt: at + 60000 });
+    try {
+        const at = Date.now() + 40000;
+        // One level under C (40), hunting its ground; its earning spot waits for its stop.
+        const hunting = { ...saved.state, phase: 'cold', activity: 'hunting', level: 39, exp: Number(Data.experience[38]),
+            spotId: spot.id, loc: { ...spot.center }, stats: { ...saved.state.stats, woken: 0, waiting: 0, classProgressionLevel: 39 } };
+        const state = { ...hunting, stats: Situations.raise({ ...hunting.stats }, 'grade_changed', null, Situations.place(hunting), id) };
+        kernel.states.set(id, { ...saved, wishAdvisory: null, state,
+            stepWake: { seq: 1, raises: { player_command: { spotId: String(spot.id), at } }, heard: { player_command: 1 } } });
+        const plan = await kernel.planLifecycle({ state, timestamp: at });
+        const { projectRound } = kernel.soloWindow;
+        const first = await projectRound(plan.plannedState, round(0, at), at, plan, at);
+        const levelUp = await projectRound(first, round(Number(Data.experience[first.level]) - Number(first.exp) + 1, at + 1000), at + 1000, plan, at);
+        const next = await projectRound(levelUp, round(0, at + 2000), at + 2000, plan, at);
+        // The window's end: the step's projection of its last round, then its rest.
+        const end = await kernel.projectResolve(next, round(0, at + 3000), at + 3000, plan);
+        const rest = await kernel.projectResolve(end.state, round(0, at + 4000, 'resting'), at + 4000, plan);
+        return { planned: plan.plannedState.activity, took: [waits(state), waits(plan.plannedState)], levels: [first.level, levelUp.level],
+            runsOn: !Situations.anyWoken(levelUp.stats), waits: [waits(levelUp), waits(next), waits(end.state)],
+            rested: Situations.woken(rest.state.stats, 'earning_spot') };
+    } finally { kernel.states.set(id, saved); }
+};
 // A situation raised where the bot stands wakes the decisions that declare it, and its next
 // decision point takes them: a far bot's step (raised at its place in the field), a near body's
 // post (its bag heard where the body stands; one heard at a stop waits for its rest's end).
@@ -387,7 +418,7 @@ const loaded = new Module(workerData.workerPath, module);
 loaded.filename = workerData.workerPath; loaded.paths = Module._nodeModulePaths(path.dirname(workerData.workerPath));
 loaded._compile(fs.readFileSync(workerData.workerPath, 'utf8') + workerData.observer, workerData.workerPath);
 parentPort.on('message', message => {
-    const probe = ['stepProbe', 'pendingProbe', 'heldProbe', 'kitProbe', 'workshopProbe', 'rebuffProbe', 'askProbe', 'arrivalProbe', 'occupationProbe', 'pageProbe', 'cellsProbe'].find(name => message[name]);
+    const probe = ['stepProbe', 'pendingProbe', 'heldProbe', 'kitProbe', 'workshopProbe', 'rebuffProbe', 'askProbe', 'arrivalProbe', 'windowProbe', 'occupationProbe', 'pageProbe', 'cellsProbe'].find(name => message[name]);
     if (!probe) return;
     loaded.exports[probe](message[probe]).then(value => parentPort.postMessage({ probeId: message.msgId, value }))
         .catch(error => parentPort.postMessage({ probeId: message.msgId, error: error.stack }));
@@ -512,6 +543,13 @@ parentPort.on('message', message => {
         if (arrivalResponse.error) throw Error(arrivalResponse.error);
         assert.deepEqual(arrivalResponse.value, { built: true, decided: true, woken: true, marked: true },
             'a bot turned away at the spot it arrives at on the step that took its earning spot keeps that decision woken, the spot marked');
+        worker.postMessage({ ...Protocol.envelope('pause', epoch, {}, 'window'), windowProbe: id });
+        const windowResponse = await wait(message => message.probeId === 'window');
+        if (windowResponse.error) throw Error(windowResponse.error);
+        console.log(JSON.stringify(windowResponse.value));
+        assert.deepEqual(windowResponse.value, { planned: 'hunting', took: [true, false], levels: [39, 40], runsOn: true,
+            waits: [true, true, true], rested: true }, 'a grade a hunt window\'s round gains after a step that took the earning '
+            + 'spot waits through the window\'s later rounds and its end, and wakes the earning spot at the rest');
         worker.postMessage({ ...Protocol.envelope('pause', epoch, {}, 'page'), pageProbe: id });
         const pageResponse = await wait(message => message.probeId === 'page'); if (pageResponse.error) throw Error(pageResponse.error);
         assert.deepEqual(pageResponse.value, { own: false, main: true, none: false },

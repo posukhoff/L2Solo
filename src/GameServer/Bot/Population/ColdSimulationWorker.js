@@ -1299,6 +1299,15 @@ function roundProjection(state, timestamp, writtenAt, plan) {
         // arrival as no event (ColdEconomyDecision.stepLeaf, Situations.detect).
         stepPlan: plan ?? null };
 }
+// The step's packet on the worker's own projections: its keys, not its mind. Its rounds go on
+// from the planned state, which holds that change already (Situations.stepMind's after); main
+// lands it once, on its row. Landed again on a hunt window's later round it would drop a raise
+// an earlier round left waiting (a level's new grade, heard at the rest).
+function plannedPacket(plan) {
+    const keys = { ...plan.statsPacket };
+    delete keys.mind;
+    return keys;
+}
 // What the step's decision counts its own item's progress from (a material
 // hunt's), for a leaf that does not carry it.
 function heldAtStep(plan) {
@@ -1869,7 +1878,7 @@ function startKernel(config = {}) {
                 : await LifeStateProjector.prepareResolve(state, result, raidPreparing
                 ? { ...base, statsPacket: {}, statsPacketBeforeResolve: true } : stepEconomy
                 // Merged before the event check, whose dirty bits follow it.
-                ? { ...base, statsPacket: lifecyclePlan.statsPacket, statsPacketBeforeResolve: true }
+                ? { ...base, statsPacket: plannedPacket(lifecyclePlan), statsPacketBeforeResolve: true }
                 : { ...base,
                     economyDepsFor: async projected => ({ spots: planningSpots, routeRows: await occupationFor(projected, timestamp, { caller: 'member' }, 'wish'),
                         board: boardReady(), buyOrderEscrow: escrowFor(state.characterId), caller: 'member' }),
@@ -1972,7 +1981,7 @@ function startKernel(config = {}) {
             // One round of a window: the step's projection without what follows it
             // (ColdSoloWindow, the window's end has it).
             projectRound: (state, result, timestamp, plan, writtenAt) => LifeStateProjector.prepareResolve(state, result,
-                { ...roundProjection(state, timestamp, writtenAt, plan), statsPacket: plan.statsPacket, statsPacketBeforeResolve: true }),
+                { ...roundProjection(state, timestamp, writtenAt, plan), statsPacket: plannedPacket(plan), statsPacketBeforeResolve: true }),
             readers: plan => ({
                 // What the held leaf's execution proved (EconomyContext.leafOutcome): the
                 // window ends, its step raises it.
