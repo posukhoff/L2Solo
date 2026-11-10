@@ -53,7 +53,7 @@ Each as the question a review asks (each answered: ok with evidence, violation f
 
 ## Routes and stopping conditions
 
-Read `.claude/workflow/routes.md` before starting. Fast: localized fix, no shared-rule or runtime risk. Standard: normal gameplay change. Critical: cross-thread/state ownership, database/schema, shared decision mechanism, global economy, table generation, performance claim, or cross-module architecture. Escalate when uncertain; do not downgrade merely to avoid checks.
+Read `.claude/workflow/routes.md` and `.claude/workflow/evidence.md` before starting. Record the evidence brief before implementation: a bug hypothesis must be verified with concrete trace/test/source handles, not passed as a presumed cause. Implementer spot-checks the decisive handle; investigate again only if contradicted. Fast: localized fix, no shared-rule or runtime risk. Standard: normal gameplay change. Critical: cross-thread/state ownership, database/schema, shared decision mechanism, global economy, table generation, performance claim, or cross-module architecture. Escalate when uncertain; do not downgrade merely to avoid checks.
 
 Coordinator: use `node .claude/workflow.js start <slug> --base <ref> --risk <fast|standard|critical>` from the primary game checkout. The CLI records evidence, not automatic authorization to merge. Use `verify`, `record-review`, `record-ci`, `ready` (see routes.md). Existing integration/release Git policy remains in force. Never push to shared origin or open a PR without the existing explicit authorization (the one standing ask: fast-forward `ivan/next-release` to origin when release commits or a develop update land on it, git.md); never expose secrets.
 

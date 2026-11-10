@@ -12,21 +12,28 @@ Escalate if changed files reveal a more risky surface, or if the owner/cause is 
 
 Every traced run: automated named invariants and task counters; investigate misses. Full exploratory audit once at release boundary and on a material unexplained anomaly. Do not discard an observed invariant violation. Coverage/unchecked cells and final world acceptance are unchanged. This pilot does not implement the automated invariant extractor: retain current manual checks until equivalent automation exists.
 
-## CLI pilot
+## CLI V3 (pilot)
 
 Install the workflow files in the primary local game checkout, preserving your local planning directory. Run from that checkout, or pass `--root /absolute/game/worktree` and run the script by absolute path. Do not run on the workflow-only snapshot.
 
 ```sh
-node .claude/workflow.js start party-fix --base ivan/batch-6 --risk standard
+node .claude/workflow.js start party-fix --base ivan/batch-6 --risk standard --kind fix
+node .claude/workflow.js record-brief party-fix --file /path/to/brief.json
 node .claude/workflow.js status party-fix
 node .claude/workflow.js verify party-fix --root /path/to/topic-worktree
 node .claude/workflow.js verify party-fix --root /path/to/topic-worktree --local
 node .claude/workflow.js verify party-fix --root /path/to/topic-worktree --check
+node .claude/workflow.js verify party-fix --root /path/to/topic-worktree --rules
+node .claude/workflow.js record-regression party-fix --root /path/to/topic-worktree --test test_example.js --old <base-sha> --evidence 'old expected assertion failure; new pass; log reference'
 node .claude/workflow.js record-review party-fix --root /path/to/topic-worktree --result pass --evidence "review report identifier"
 node .claude/workflow.js record-ci party-fix --root /path/to/topic-worktree --run 123456789
 node .claude/workflow.js ready party-fix --root /path/to/topic-worktree
+# After normal squash/landing, only if integration tree is exactly the verified tree:
+node .claude/workflow.js record-land party-fix --root /path/to/integration-worktree
 ```
 
-Start records base SHA, instruction digest, route, and creation time in Git's common directory (`l2solo-workflow/<slug>.json`), shared across worktrees. No branch is created or pushed. Create your normal worktree from the recorded base. Verification requires a clean committed tree and base ancestry; default mode prints selected tests and warnings only. Explicit --local runs syntax, rules-check and up to 8 non-geodata selected tests; never use while a benchmark/trace is running. A broad or geodata set goes to existing Picked tests CI. No automated merge, push, server, table rebuild or release. Record-ci checks GitHub's run status, workflow and exact head SHA, and what the run covered: PR checks needs all 12 test shards green; Picked tests needs every selected test in its list (branch `tests/<sha>/<a,b>`, or a throwaway child commit of HEAD that adds only `ci-tests.txt`). Picked tests runs neither `npm run check` nor rules-check: `verify --check` (or `--local`) records them; ready asks for them unless PR checks ran on HEAD. Run `status` with `--root` to see a worktree's HEAD. The policy digest covers CLAUDE.md and `.claude/workflow/*.md` only: editing them invalidates every open task record (finish policy edits before starting tasks). Ready reports task-level evidence, not integration/release authorization; full CI remains required on the integration head. Changing code invalidates prior evidence. Changing policy requires a fresh task record or explicit coordinator re-evaluation. Keep sensitive data out of evidence text.
+Start records base SHA, instruction digest, route, and creation time in Git's common directory (`l2solo-workflow/<slug>.json`), shared across worktrees. No branch is created or pushed. Create your normal worktree from the recorded base. Verification requires a clean committed tree and base ancestry; default mode prints selected tests and warnings only. Explicit --local runs syntax, rules-check and up to 8 non-geodata selected tests; never use while a benchmark/trace is running. A broad or geodata set goes to existing Picked tests CI. No automated merge, push, server, table rebuild or release. Record-ci checks GitHub's run status, workflow and exact head SHA, and what the run covered: PR checks needs all 12 distinct test shards green and only covers its default suite; Picked tests contributes the tests actually listed; readiness checks the union of successful runs (branch `tests/<sha>/<a,b>`, or a throwaway child commit of HEAD that adds only `ci-tests.txt`). Picked tests runs neither `npm run check` nor rules-check: `verify --check` (or `--local`) records them; ready always asks for rules-check; PR checks covers syntax/table check only. Run `status` with `--root` to see a worktree's HEAD. The policy digest covers CLAUDE.md, workflow reference documents and the local verification/cleanup scripts; edits invalidate open task records. See evidence.md for V3 gates. Ready reports task-level evidence, not integration/release authorization; full CI remains required on the integration head. Changing code invalidates prior evidence. Changing policy requires a fresh task record or explicit coordinator re-evaluation. Keep sensitive data out of evidence text.
+
+See evidence.md for required brief, regression evidence and exact-tree landing receipt.
 
 Test selector is deliberately conservative: dependency depth 2 + domain tests; it flags uncertain changes, deleted files and unmatched cases for coordinator selection and CI. It is not proof of completeness. Review evidence is a recorded human/agent verdict, not a cryptographic attestation. Use the existing runner and Git policy for actual landing.
