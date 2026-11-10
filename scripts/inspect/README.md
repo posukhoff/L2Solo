@@ -32,3 +32,12 @@ close --refuted --evidence <reference> closes a fix whose cause is still a hypot
 ## Pilot
 
 Compare census/timeline/refusal/flip/funding outputs with the original scratch scripts for DT-123, DT-200 or RM-31 and report discrepancies. Capture duration, data scanned, tool calls, verifier tokens and whether evidence was sufficient. Do not change game behaviour based on diagnostic flags alone. Validate trace field variants against actual saved runs; add fixtures for any missed signature.
+
+## V5 SQLite pilot
+Run with Node >=22.13 (node:sqlite), completed snapshot only. Read-only connection + query_only. No player names in output; IDs still identify local records. Keep DB and results local.
+```sh
+node scripts/inspect/db-query.test.js
+node scripts/inspect/db-query.js /path/to/run market --from 1794234572584 --to 1794236672584 --item 90
+node scripts/inspect/db-query.js /path/to/run custody --bot 2001410,2000320
+```
+Use actual observedFrom/To from census for the market window; example dates are illustrative, not a verified run. Market aggregates and later-sale candidates (EXISTS avoids multiplied rows), includes top trade IDs/event keys. Later sale is NOT a matched physical item. Custody reads last deposit/liquidation and current plan from snapshot, requires chronological order and matching target for candidate; no proof of ownership or plan lifetime. Test uses in-memory SQLite. Trace census/refusals/flips default to 10 results, timeline/funding 50; --limit expands. For synthetic was evidence the marker is retained. Compare against manual SQL on real snapshots before release use. No automatic invariant or server-log parsing yet.

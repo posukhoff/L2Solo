@@ -4,7 +4,7 @@
 const fs=require('node:fs'), path=require('node:path');
 const phases=new Set(['funding','purchase_goal','buy_request','native_funding','buy_ad_reconcile','plan_compute']);
 const order=(a,b)=>a.at-b.at||a.ordinal-b.ordinal;
-const evidence=r=>({file:r.file,line:r.line,at:r.at,thread:r.thread,bot:r.bot,kind:r.kind,name:r.name,phase:r.phase,reason:r.reason,decision:r.decision,answer:r.answer,was:r.was,caller:r.caller,woke:r.woke,wishKey:r.wishKey,item:r.item,synthetic:r.synthetic});
+const evidence=r=>({file:r.file,line:r.line,at:r.at,thread:r.thread,bot:r.bot,kind:r.kind,name:r.name,phase:r.phase,reason:r.reason,decision:r.decision,answer:r.answer,was:r.was,caller:r.caller,woke:r.woke,wishKey:r.wishKey,item:r.item,synthetic:r.synthetic,synthetic:r.synthetic});
 const inc=(m,k)=>m.set(k,(m.get(k)||0)+1);
 const ranked=(m,n)=>[...m].sort((a,b)=>b[1]-a[1]||String(a[0]).localeCompare(String(b[0]))).slice(0,n).map(([key,count])=>({key,count}));
 const positive=n=>Number.isSafeInteger(n)&&n>0;
@@ -127,7 +127,7 @@ function analyze(rows,opt,quality={files:[],headers:0,malformed:0,invalid:0}){
 function options(argv){
     const [run,query,...rest]=argv;
     if(!run||!['census','timeline','refusals','flips','funding'].includes(query))throw Error('Usage: run-query.js <completed-run-dir> <census|timeline|refusals|flips|funding> [--bot ID] [--decision NAME] [--from ISO|epoch-ms] [--to ISO|epoch-ms] [--limit N] [--threshold N] [--all]');
-    const opt={query,limit:50};
+    const opt={query,limit:query==='timeline'||query==='funding'?50:10};
     const stamp=x=>/^\d+$/.test(x)?Number(x):Date.parse(x);
     for(let i=0;i<rest.length;i++){
         const k=rest[i];if(k==='--all'){opt.all=true;continue;}
