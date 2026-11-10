@@ -115,12 +115,14 @@ function logPartyFailure(partyId, step, result, timestamp = Date.now()) {
 }
 
 // A player's scan made these bots bodies; each one placed already inside that player's view
-// counts once (activationsInView): the activation ring's lead past the view did not hold.
+// counts once (lateInViewActivations): the activation ring's lead past the view did not hold.
+// Called only for a settled player (activationSettled): right after an arrival or a budget cut
+// bodies land in the view by nature and say nothing of the lead.
 function countActivatedInView(result, playerLoc) {
     const World = invoke('GameServer/World/World');
     for (const state of result.states || [result.state]) {
         const actor = state?.characterId ? ActorQueries.byId(World, state.characterId)?.actor : null;
-        if (actor && inClientView(actor.fetchLocX(), actor.fetchLocY(), playerLoc.locX, playerLoc.locY)) Metrics.recordActivationInView();
+        if (actor && inClientView(actor.fetchLocX(), actor.fetchLocY(), playerLoc.locX, playerLoc.locY)) Metrics.recordLateInViewActivation();
     }
 }
 
@@ -887,6 +889,10 @@ const PopulationService = {
     phasePolicyNext: null,
     // The last activation scan left near rows cold for its budget (activateNearPlayers).
     activationRowsLeft: false,
+    // Real players whose last activation scan placed every near row (none left to the per-scan
+    // budget) and who did not log in or teleport since (requestPhaseScan): only their scans count
+    // late in-view bodies. A gone player's id stays (real players are few; a login drops it).
+    activationSettled: new Set(),
     seedTimer: null,
     classProgressionMigrationTimer: null,
     nextStateRetentionAt: 0,
@@ -1235,8 +1241,10 @@ const PopulationService = {
 
     // A scan now, not at the next interval: a real player's teleport or login (the
     // crowd where the client loads is shown while it loads) or the rest of a scan its
-    // budget cut. Coalesced: one asked while one runs runs once after it.
-    requestPhaseScan() {
+    // budget cut. Coalesced: one asked while one runs runs once after it. arrivedId: the player
+    // who logged in or teleported (not settled until a scan places all its near rows).
+    requestPhaseScan(arrivedId) {
+        if (arrivedId) this.activationSettled.delete(arrivedId);
         if (!this.phasePolicyTimer) return;
         if (this.phasePolicyRunning) {
             this.phasePolicyRerun = true;
@@ -1741,7 +1749,7 @@ const PopulationService = {
         const players = this.realPlayerSessions();
         // Where the players stand for this scan: the cold worker steps the bots inside first.
         PlayerRings.publish(players.map(session => ({ characterId: session.actor?.fetchId?.(),
-            locX: session.actor?.fetchLocX?.(), locY: session.actor?.fetchLocY?.() })), Number(Config.activationRadius) || 9000);
+            locX: session.actor?.fetchLocX?.(), locY: session.actor?.fetchLocY?.() })), Number(Config.activationRadius));
         if (players.length === 0) return Promise.resolve([]);
 
         const activated = [];
@@ -1756,6 +1764,11 @@ const PopulationService = {
                     locY: actor.fetchLocY(),
                     locZ: actor.fetchLocZ()
                 };
+                const playerId = actor.fetchId();
+                const settled = this.activationSettled.has(playerId);
+                // This player's own budget cut, read after its rows (activationRowsLeft is the scan's).
+                const rowsLeftBefore = this.activationRowsLeft;
+                this.activationRowsLeft = false;
                 // Craft shops are persistent town infrastructure. They must not
                 // compete with the ambient-density budget, otherwise a full row
                 // of public stations can only appear in several policy ticks.
@@ -1820,7 +1833,7 @@ const PopulationService = {
                                 });
                                 logPartyFailure(state?.party?.partyId, 'activation', result);
                                 if (!result.ok) continue;
-                                countActivatedInView(result, loc);
+                                if (settled) countActivatedInView(result, loc);
                                 activated.push(result);
                                 if (!craft) ambientActivated.push(...Array(result.count || 1).fill(result));
                             }
@@ -1829,7 +1842,12 @@ const PopulationService = {
                                 this.activationRowsLeft = true;
                             }
                         };
-                        return tryRows().then(() => this.showWalkersNear(loc, activated, ambientActivated));
+                        return tryRows().then(() => this.showWalkersNear(loc, activated, ambientActivated, Date.now(), settled));
+                    })
+                    .then(() => {
+                        if (this.activationRowsLeft) this.activationSettled.delete(playerId);
+                        else this.activationSettled.add(playerId);
+                        this.activationRowsLeft = this.activationRowsLeft || rowsLeftBefore;
                     });
             });
         });
@@ -1838,8 +1856,9 @@ const PopulationService = {
     },
 
     // Walkers near a player appear on their road within the same activation budget
-    // (HotActivation). Only the small walker list is read.
-    showWalkersNear(loc, activated = [], ambientActivated = [], timestamp = Date.now()) {
+    // (HotActivation). Only the small walker list is read. countInView: the player is settled
+    // (activationSettled), so a walker placed inside its view counts as late.
+    showWalkersNear(loc, activated = [], ambientActivated = [], timestamp = Date.now(), countInView = false) {
         return LifeState.walkersNear(loc, Config.activationRadius, timestamp).reduce((chain, state) => chain.then(() => {
             if (!state || state.phase !== 'cold' || BotErrands.busyWith(state, ACTIVATION_BUSY_FLAGS)) return null;
             if (ambientActivated.length >= Config.maxActivationsPerScan) {
@@ -1849,7 +1868,7 @@ const PopulationService = {
             return this.requestActivation(state, 'near_player', { readyOnActivation: true, playerLoc: loc })
                 .then((result) => {
                     if (!result.ok) return;
-                    countActivatedInView(result, loc);
+                    if (countInView) countActivatedInView(result, loc);
                     activated.push(result);
                     ambientActivated.push(result);
                 });

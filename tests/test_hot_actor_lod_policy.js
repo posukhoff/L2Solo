@@ -62,6 +62,19 @@ assert.strictEqual(Policy.evaluate(visible, [player], 2000).tier, 'visible', 'ou
 assert.strictEqual(Policy.evaluate(visible, [player], 2000).playerVisible, false);
 visible.actor = actor(2002, 9001);
 assert.strictEqual(Policy.evaluate(visible, [player], 2000).tier, 'preload', 'beyond the keep radius a body only waits to cool');
+// The launcher sets the activation radius alone: one at the cooldown radius still leaves a body
+// 1400 past the ring before it stops thinking, so it does not flip hot and cold at the edge.
+{
+    const PopulationConfig = invoke('GameServer/Bot/Population/PopulationConfig');
+    const savedActivation = PopulationConfig.activationRadius;
+    PopulationConfig.activationRadius = 9500;
+    visible.actor = actor(2002, 10900);
+    assert.strictEqual(Policy.evaluate(visible, [player], 2000).tier, 'visible', 'a wide activation ring keeps its hysteresis');
+    visible.actor = actor(2002, 10901);
+    assert.strictEqual(Policy.evaluate(visible, [player], 2000).tier, 'preload', 'and no more than the hysteresis');
+    PopulationConfig.activationRadius = savedActivation;
+    visible.actor = actor(2002, 9001);
+}
 assert.strictEqual(Policy.evaluate(botSession(2009, 100), [botSession(2010, 0), playerSession(1009, 0, { online: false })], 2000).playerVisible,
     false, 'other bots and offline players do not see it');
 assert.strictEqual(Policy.nextTickDelay(visible, { tier: 'preload' }), 30000, 'outer preload remains lightweight');
