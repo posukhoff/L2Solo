@@ -2,9 +2,9 @@
 
 ## Cause gate and handoff
 
-An audit reports an observed symptom and a hypothesis separately. Mark each bug in problems.md with cause: guess or cause: verified plus a trace/test/code reference. A guess can enter the investigation queue, not implementation. Critical release blockers still get immediate triage. For fixes, a planner/coordinator verifies the cause before handing off: concrete observation, causal chain, rule owner, evidence handles and expected player-visible outcome. Briefs carry exact base SHA and evidence, not only conclusions. The implementer spot-checks a decisive handle; do not repeat the investigation unless evidence contradicts the brief or the source changes. Keep owner/mechanism scopes disjoint across concurrent worktrees; coordinator resolves overlap before edits. Review checks the scoped diff and evidence, not all unrelated backlog items.
+Separate symptom from hypothesis in problems.md: cause: guess or verified + trace/test/source ref. Guesses enter investigation, not implementation; critical blockers get immediate triage. Verify causal chain and owner before handoff. Briefs carry exact base and evidence handles; implementer spot-checks a decisive handle, reinvestigates only if contradicted. Coordinator resolves overlapping owner scopes before edits; review stays scoped.
 
-Start with --kind fix (default), feature or chore. Record the brief before implementing. A fix with cause.status=guess is investigation-only. The CLI validates shape and requires a verified claim and references, **not the truth of the claim**. The coordinator must inspect evidence. A new brief resets task evidence; changed policy invalidates the task record. Use new slug after re-evaluation, preserve old receipt. Record source and trace identifiers rather than secrets or huge logs. Sample:
+Start with --kind fix (default), feature or chore. A guess is investigation-only. CLI validates shape, not truth; coordinator inspects evidence. New brief resets task evidence; changed policy requires new slug. Keep evidence handles, not secrets/log dumps. Sample:
 
 ```json
 {
@@ -32,6 +32,5 @@ A guess brief needs only base, symptom, evidence and cause hypothesis; complete 
 - ready is task evidence, not merge authorization. record-land records exact tree equality after the normal squash; no automatic push/merge. If batch integration changes the tree, do not transfer evidence: reverify the integrated result. Final full integration CI still mandatory.
 - Digest includes entry point, references and the local scripts used for verification/cleanup. It does not pin all map files; use exact file/line/trace handles and re-evaluate if they change.
 
-## Pilot measurements
-
-Record actual stage duration, model/token usage where available, cause corrections, review rounds, CI dispatches and repeated investigation. Compare on similar tasks; a single counter fix is not a representative architecture benchmark. No automated old-code restoration, trace query library or runtime invariant extractor yet. Task records have a single coordinator writer; do not issue concurrent updates to the same slug.
+## Pilot
+Measure time, tokens, cause corrections, review rounds, CI and repeat investigations on comparable tasks. No automatic old-code restoration, trace query or invariant extractor yet. Single coordinator writer per slug.
