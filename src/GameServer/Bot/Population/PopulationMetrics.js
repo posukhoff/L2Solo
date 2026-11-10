@@ -33,6 +33,10 @@ function emptyCounters() {
         // Activations refused (HotActivation: in_transit, no_safe_activation_placement), by reason in
         // activationRefusalReasons; counted with or without developerDiagnostics.
         activationRefusals: 0,
+        // Bots a player's scan made bodies already inside that player's view: the ring's lead
+        // past the view (activationRadius) was too short for them; counted with or without
+        // developerDiagnostics.
+        activationsInView: 0,
         // Walkers whose road point stood off the ground and were placed by a step back
         // toward the run's start (ActivationPlacement.roadAnchor).
         walkerRoadStepBacks: 0,
@@ -274,6 +278,10 @@ const PopulationMetrics = {
         this.counters.activationRefusals += 1;
         const key = String(reason || 'unknown');
         this.interval.activationRefusalReasons.set(key, Number(this.interval.activationRefusalReasons.get(key) || 0) + 1);
+    },
+
+    recordActivationInView() {
+        this.counters.activationsInView += 1;
     },
 
     recordWalkerRoadStepBack() {

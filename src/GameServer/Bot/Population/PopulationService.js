@@ -43,6 +43,7 @@ const BotPersona = invoke('GameServer/Bot/AI/BotPersona');
 const PersonaPartyPolicy = invoke('GameServer/Bot/Population/PersonaPartyPolicy');
 const PlayerActivitySignal = invoke('GameServer/Bot/Population/PlayerActivitySignal');
 const ActorQueries = require('../../World/ActorSpatialQueries');
+const { inClientView } = invoke('GameServer/World/WorldConstants');
 const FloorAwareActivationPolicy = invoke('GameServer/Bot/Population/FloorAwareActivationPolicy');
 const ColdSimulationCoordinator = invoke('GameServer/Bot/Population/ColdSimulationCoordinator');
 const BackgroundWorkGovernor = invoke('GameServer/Bot/Population/BackgroundWorkGovernor');
@@ -111,6 +112,16 @@ function logPartyFailure(partyId, step, result, timestamp = Date.now()) {
     partyFailureLogAt.set(key, timestamp);
     utils.infoWarn('BotPopulation', 'party %s deferred %s reason=%s%s',
         step, partyId, reason, detail ? ` detail=${detail}` : '');
+}
+
+// A player's scan made these bots bodies; each one placed already inside that player's view
+// counts once (activationsInView): the activation ring's lead past the view did not hold.
+function countActivatedInView(result, playerLoc) {
+    const World = invoke('GameServer/World/World');
+    for (const state of result.states || [result.state]) {
+        const actor = state?.characterId ? ActorQueries.byId(World, state.characterId)?.actor : null;
+        if (actor && inClientView(actor.fetchLocX(), actor.fetchLocY(), playerLoc.locX, playerLoc.locY)) Metrics.recordActivationInView();
+    }
 }
 
 // The spot of a commanded bot, from its request's route: the trip the
@@ -1809,6 +1820,7 @@ const PopulationService = {
                                 });
                                 logPartyFailure(state?.party?.partyId, 'activation', result);
                                 if (!result.ok) continue;
+                                countActivatedInView(result, loc);
                                 activated.push(result);
                                 if (!craft) ambientActivated.push(...Array(result.count || 1).fill(result));
                             }
@@ -1837,6 +1849,7 @@ const PopulationService = {
             return this.requestActivation(state, 'near_player', { readyOnActivation: true, playerLoc: loc })
                 .then((result) => {
                     if (!result.ok) return;
+                    countActivatedInView(result, loc);
                     activated.push(result);
                     ambientActivated.push(result);
                 });
@@ -1848,7 +1861,7 @@ const PopulationService = {
         const HotPartyLifecycle = invoke('GameServer/Bot/Population/HotPartyLifecycle');
         const now = Date.now();
         const players = this.realPlayerSessions();
-        const cooldownRadius = Math.max(Config.cooldownRadius, Config.activationRadius);
+        const cooldownRadius = Config.keepHotRadius();
         const seenParties = new Set();
         // The nearest player distance of each hot bot, once: the filter and the
         // sort read it (the sort recomputed every player distance per comparison).
