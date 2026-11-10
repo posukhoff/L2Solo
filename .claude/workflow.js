@@ -38,6 +38,11 @@ function select(base) {
     const selected = new Set(raw.split('\n').filter(x => /^test_.*\.js$/.test(x)));
     const domains = domainPatterns.filter(([p]) => files.some(x => p.test(x)));
     for (const [,p] of domains) for (const name of list) if (p.test(name)) selected.add(name);
+    // Only files the runner knows (scripts/run-tests.js lists): a notRunTests file or a stray name fails --only.
+    const runner = path.join(root,'scripts/run-tests.js');
+    const suite = new Set([...run(process.execPath,[runner,'--list']).split('\n'), ...run(process.execPath,[runner,'--geodata','--list']).split('\n')]
+        .filter(Boolean).map(x => path.basename(x)));
+    for (const name of [...selected]) if (!suite.has(name)) selected.delete(name);
     const warnings = [];
     if (changes.some(x => /^D\t/.test(x))) warnings.push('Deleted file: inspect former callers and tests.');
     if (files.some(x => !x.endsWith('.js'))) warnings.push('Non-JS data/config change: add relevant tests explicitly.');
@@ -72,6 +77,12 @@ function main() {
         const plan=select(state.base);
         console.log(JSON.stringify({head,risk:state.risk,...plan},null,2));
         if (plan.critical && state.risk!=='critical') fail('Escalate to critical route before verification.');
+        if (flag('--check')) {
+            // The gates Picked tests does not run: syntax, table freshness, the mechanical rules.
+            console.log(run('npm',['run','check']));
+            console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
+            state.evidence.check={head,at:now()}; save(state); return;
+        }
         if (!flag('--local')) return;
         if (plan.warnings.length || plan.tests.length>8) fail('Selection needs coordinator/CI; no broad local test run.');
         const only=plan.tests.join(',');
@@ -81,7 +92,7 @@ function main() {
         console.log(run('npm',['run','check']));
         console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
         console.log(run(process.execPath,[runner,'--only='+only,'--keep-going']));
-        state.evidence.local={head,at:now(),tests:plan.tests}; save(state); return;
+        state.evidence.local={head,at:now(),tests:plan.tests}; state.evidence.check={head,at:now()}; save(state); return;
     }
     if (command === 'record-review') {
         const result=opt('--result'), evidence=opt('--evidence');
@@ -91,9 +102,33 @@ function main() {
     if (command === 'record-ci') {
         const id=opt('--run');
         if (!/^\d+$/.test(id||'')) fail('record-ci requires numeric --run <id>');
-        const ci=JSON.parse(run('gh',['run','view',id,'-R','posukhoff/L2Solo','--json','headSha,status,conclusion,url,workflowName']));
+        const ci=JSON.parse(run('gh',['run','view',id,'-R','posukhoff/L2Solo','--json','headSha,headBranch,status,conclusion,url,workflowName,jobs']));
+        const listSha=ci.headSha;
+        // A long Picked tests list runs on a throwaway child commit that adds only ci-tests.txt (testing.md): it tests HEAD.
+        if (ci.headSha!==head && ci.workflowName==='Picked tests') {
+            try {
+                git('fetch','-q','fork',ci.headSha);
+                if (git('rev-parse',ci.headSha+'^')===head && git('diff','--name-only',head,ci.headSha)==='ci-tests.txt') ci.headSha=head;
+            } catch { /* not a list commit of HEAD: refused below */ }
+        }
         if (ci.headSha!==head || ci.status!=='completed' || ci.conclusion!=='success' || !['PR checks','Picked tests'].includes(ci.workflowName)) fail('CI must be successful, completed, expected workflow and exact task SHA.');
-        state.evidence.ci={head,id,url:ci.url,workflow:ci.workflowName,at:now()}; save(state); return;
+        // A green run proves only what it ran. PR checks: all 12 shards (GitHub sometimes creates fewer jobs).
+        // Picked tests: the files it ran (its branch tests/<sha>/<a,b> or the list commit's ci-tests.txt) cover the selection.
+        const norm = x => path.basename(x).replace(/^(test_)?/,'test_').replace(/(\.js)?$/,'.js');
+        let covered;
+        if (ci.workflowName==='PR checks') {
+            const shards=(ci.jobs||[]).filter(j => /^Node tests \(\d+\/12\)$/.test(j.name) && j.conclusion==='success').length;
+            if (shards!==12) fail(`PR checks ran ${shards} of 12 test shards successfully: re-run it.`);
+            covered='all';
+        } else {
+            const fromBranch=String(ci.headBranch||'').split('/').slice(2).join('/');
+            const text=fromBranch || run('git',['show',listSha+':ci-tests.txt']).replace(/#.*$/gm,'');
+            const ran=new Set(text.split(/[\s,]+/).filter(Boolean).map(norm));
+            const missing=select(state.base).tests.filter(t => !ran.has(t));
+            if (missing.length) fail('Picked tests did not run the selected tests: '+missing.join(', '));
+            covered=[...ran].sort();
+        }
+        state.evidence.ci={head,id,url:ci.url,workflow:ci.workflowName,tests:covered,at:now()}; save(state); return;
     }
     if (command === 'ready') {
         const plan=select(state.base), e=state.evidence;
@@ -102,6 +137,7 @@ function main() {
         if (e.review?.head!==head || e.review.result!=='pass') reasons.push('No passing scoped review for HEAD.');
         if (e.local?.head!==head && e.ci?.head!==head) reasons.push('No successful tests recorded for HEAD.');
         if (plan.warnings.length && e.ci?.head!==head) reasons.push('Uncertain selection needs CI and explicit coordinator review.');
+        if (e.check?.head!==head && !(e.ci?.head===head && e.ci.workflow==='PR checks')) reasons.push('npm run check and rules-check not recorded for HEAD (verify --check).');
         if (state.risk==='critical' && (e.ci?.head!==head || e.ci.workflow!=='PR checks')) reasons.push('Critical task requires full PR checks on its SHA.');
         console.log(JSON.stringify({head,taskReady:!reasons.length,reasons,selectionWarnings:plan.warnings,releaseGate:'Full CI on integration head and existing release gates still required.'},null,2));
         if (reasons.length) process.exitCode=1; return;

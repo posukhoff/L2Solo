@@ -2,7 +2,7 @@
 'use strict';
 // Planning and workspace hygiene (maintainer, 2026-11-06): no stray files, no unbounded growth.
 // Run at every task boundary: `node planning/hygiene.js` (exit 1 = something to prune before going on).
-//   1. planning/ is a closed list (ALLOWED, the same as CLAUDE.md's): a file outside it or over its KB budget fails.
+//   1. planning/ is a closed list (ALLOWED, the same as the list in .claude/workflow/git.md): a file outside it or over its KB budget fails.
 //   2. The step plan (target-architecture/step.md) whose work is merged and measured is deleted (history lives in git).
 //   3. Worktrees under .claude/worktrees whose branch is merged into the integration/release branch, with a clean tree,
 //      are listed for removal (`--remove` removes them; never one with uncommitted changes or unmerged commits).
@@ -17,14 +17,16 @@ const { execSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const PLANNING = __dirname;
 const INTEGRATION = process.env.HYGIENE_BRANCH || 'ivan/batch-6';
-// Branches whose worktrees are never removed here (the integration branch itself; perf-tooling per CLAUDE.md).
+// Branches whose worktrees are never removed here (the integration branch itself; perf-tooling per .claude/workflow/git.md).
 const KEEP = new Set([INTEGRATION, 'ivan/next-release', 'perf-tooling', 'main', 'ivan/perf-remote']);
 const STALE_DAYS = 1;
-// Outside planning/: CLAUDE.md is read by every session and agent (KB); perf runs: only the baseline and the newest are kept.
+// Outside planning/: CLAUDE.md is read by every session and agent (KB), the workflow reference by role (KB together);
+// perf runs: only the baseline and the newest are kept.
 const CLAUDE_MD_KB = 14; // compact entry point; detailed policy lives in .claude/workflow/
+const WORKFLOW_KB = 40;
 
-// The closed list (CLAUDE.md "Where things are"): every file allowed under planning/ with its KB budget. Any other file
-// fails. A new file only with the maintainer's ok, added to CLAUDE.md's list and here together.
+// The closed list (.claude/workflow/git.md "Where things are"): every file allowed under planning/ with its KB budget. Any other file
+// fails. A new file only with the maintainer's ok, added to git.md's list and here together.
 const ALLOWED = {
     'hygiene.js': 10,
     'rules-check.js': 7,
@@ -66,7 +68,7 @@ function walk(dir, out = []) {
 for (const file of walk(PLANNING)) {
     const budget = ALLOWED[file];
     const kb = Math.ceil(fs.statSync(path.join(PLANNING, file)).size / 1024);
-    if (budget === undefined) problems.push(`file outside the closed list: planning/${file} (${kb} KB): delete it (a new file needs the maintainer's ok in CLAUDE.md's list)`);
+    if (budget === undefined) problems.push(`file outside the closed list: planning/${file} (${kb} KB): delete it (a new file needs the maintainer's ok in .claude/workflow/git.md's list)`);
     else if (kb > budget) problems.push(`planning/${file}: ${kb} KB over its budget ${budget} KB: prune (done items, history, detail to its owner)`);
 }
 
@@ -127,6 +129,10 @@ if (fs.existsSync(wtDir)) for (const e of fs.readdirSync(wtDir, { withFileTypes:
 }
 const claudeKb = Math.ceil(fs.statSync(path.join(ROOT, 'CLAUDE.md')).size / 1024);
 if (claudeKb > CLAUDE_MD_KB) problems.push(`CLAUDE.md: ${claudeKb} KB over its budget ${CLAUDE_MD_KB} KB: merge duplicate rules, cut history`);
+const workflowDir = path.join(ROOT, '.claude', 'workflow');
+const workflowKb = fs.existsSync(workflowDir) ? Math.ceil(fs.readdirSync(workflowDir).filter(f => f.endsWith('.md'))
+    .reduce((sum, f) => sum + fs.statSync(path.join(workflowDir, f)).size, 0) / 1024) : 0;
+if (workflowKb > WORKFLOW_KB) problems.push(`.claude/workflow/*.md: ${workflowKb} KB over its budget ${WORKFLOW_KB} KB: merge duplicate rules, cut history`);
 const runsDir = path.join(ROOT, 'tmp/perf/runs');
 // Perf runs kept (maintainer, 2026-11-06): the last release's end (its sha in BASELINE_RUNS) and the newest measurement
 // (the newest sha's runs per scenario). Everything else is listed for deletion.

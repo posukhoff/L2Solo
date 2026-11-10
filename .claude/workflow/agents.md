@@ -13,7 +13,7 @@
   .claude/worktrees/<topic> -b ivan/<topic> <head>`). Editing agents run in parallel only on disjoint files; work on
   overlapping files (the same module, its tests) runs one after another. Read-only agents need no worktree.
 - A brief names the plan it works under (the roadmap's release, the step file, `target-architecture/situations.md` for
-  the maintainer's answers; the mechanism is population.md "Situations"), carries the paths of this file, the map and the plan, and holds at most 4
+  the maintainer's answers; the mechanism is population.md "Situations"), carries the paths of CLAUDE.md (/Users/iposukhoff/L2Solo/CLAUDE.md), the workflow reference (/Users/iposukhoff/L2Solo/.claude/workflow/), the map and the plan, and holds at most 4
   items (plan items or findings) so each gets its cause hunt. The main session checks the brief against the plan for
   contradictions (e.g. a plan step that needs a run vs a brief that forbids a server) before sending it. The agent
   labels each change stays (part of the target) / temporary (the comment and the commit name what replaces it, e.g.
@@ -38,7 +38,7 @@
 - A plan item (a situation, a wake, a design choice) that fails rule 0, 1, 2 or 14 is dropped or replaced with the
   reason, before or after it is implemented; being decided does not settle it. Before a step is implemented its plan
   (wakes, decisions, commits) is checked against those rules first.
-- A review agent's brief says "read the pinned CLAUDE.md and relevant references; verify policy digest and answer applicable hard rules first".
+- A review agent's brief says "read /Users/iposukhoff/L2Solo/CLAUDE.md and the relevant /Users/iposukhoff/L2Solo/.claude/workflow/ references from disk (the copy in your context may be older); check the task's policy digest (`node /Users/iposukhoff/L2Solo/.claude/workflow.js status <slug>`) and answer every hard rule first (ok with evidence, violation file:line, or N/A with its reason)".
 - Review findings are triaged before any fix (fix now / temporary / belongs to step N / reject with reason); rule 0
   first: a fix that costs more than the harm it prevents is rejected (or the feature that caused it removed). A number
   that improves past what the fix explains (a counter dropping to 0) is checked for a hidden cause (a card held forever

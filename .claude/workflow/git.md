@@ -28,15 +28,15 @@
   that says what changed in the game. A fix found after the push is its own commit naming the bug it fixes, never "fix
   the fix", test-only or WIP commits. Standing ask: push `ivan/next-release` to `origin` when release commits or a
   develop update land on it (fast-forward, never force; a pushed commit is never reworded). Never push anything else to
-  `origin` (the prune script's deletions excepted; `ivan/perf-remote` stays there, unmerged by my choice), open a PR or
+  `origin` (`ivan/perf-remote` stays there, unmerged by my choice), open a PR or
   merge without my explicit ask.
 - Pushing the integration/work branch and `ci-*` / `tests/*` / `tables/*` branches to `fork` is allowed without asking,
-  never with force (a force push of a rebased integration branch to the fork only with my ok).
+  never with force (prune's `--force-with-lease` ref deletion of a finished branch is a deletion, not a history rewrite; a force push of a rebased integration branch to the fork only with my ok).
 - Before a session's work: `git fetch --multiple fork origin` (I may have pushed from another machine).
 - At each task boundary (a task finished, before the next roadmap item, before a PR): `git fetch origin`;
   `git log ivan/next-release..origin/develop` non-empty = Slava's work landed. Then: fast-forward or merge develop into
   `ivan/next-release` in a scratch worktree, the Picked tests of `tests-for.js` on the merge diff, the architecture pass
-  on that diff (Releases), push it; then merge it into the integration branch (the only merge commit there): conflicts keep both
+  on that diff (release.md "Releases"), push it; then merge it into the integration branch (the only merge commit there): conflicts keep both
   intents; where Slava fixed code we rewrote, port his fix's intent into our code with a test of what the player sees.
 - Branch hygiene: inspect `.claude/prune-branches.sh --dry-run` after CI/PR; apply explicitly with `--apply`. Temporary fork refs require completed runs for the exact SHA, older than one day. Shared-origin and local branch cleanup is manual. Never touch other people's branches in origin.
 - Never bare `git stash` (shared across worktrees); set work aside with a WIP commit.

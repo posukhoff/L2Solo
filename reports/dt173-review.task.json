@@ -1,0 +1,27 @@
+{
+  "slug": "dt173-review",
+  "base": "6aa4f7dc9d585063779af0351876773491da20e7",
+  "risk": "fast",
+  "policy": "c446a98b7bacdfa063c6c1cc9bcf93b703c8f0caa60408d265c0b310b3deaadf",
+  "created": "2026-11-10T20:56:33.183Z",
+  "evidence": {
+    "check": {
+      "head": "61ee2b18a8c59bf4972c6b55b92db82d9eb3fed3",
+      "at": "2026-11-10T21:21:34.103Z"
+    },
+    "review": {
+      "head": "61ee2b18a8c59bf4972c6b55b92db82d9eb3fed3",
+      "result": "pass",
+      "evidence": "coordinator review of 61ee2b18a (test stubs only, 4 lines); round-2 agent review passed 002500336",
+      "at": "2026-11-10T21:18:58.525Z"
+    },
+    "ci": {
+      "head": "61ee2b18a8c59bf4972c6b55b92db82d9eb3fed3",
+      "id": "42902635371",
+      "url": "https://github.com/posukhoff/L2Solo/actions/runs/42902635371",
+      "workflow": "PR checks",
+      "tests": "all",
+      "at": "2026-11-10T21:19:00.433Z"
+    }
+  }
+}

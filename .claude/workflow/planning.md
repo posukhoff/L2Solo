@@ -20,9 +20,9 @@
   them. A file over budget is pruned (done items, history, detail to its owner), not given a bigger budget without my
   ok, never squeezed by dropping words.
 - No unbounded growth: `node planning/hygiene.js` at every task boundary (exit 1 = prune first). It fails on a file
-  outside the list or over its KB budget and on CLAUDE.md over 40 KB, lists stale worktrees, stray files and perf runs
+  outside the list or over its KB budget and on CLAUDE.md over 14 KB or `.claude/workflow/*.md` over 40 KB together, lists stale worktrees, stray files and perf runs
   beyond the kept sets; `--remove` removes clean merged or stale worktrees (branches stay). A new planning file only
-  with my ok (added to the list here and to `ALLOWED`).
+  with my ok (added to the list in git.md "Where things are" and to `ALLOWED`).
 - Planning files are for agents, not for me: I read reports in chat, never these files. Dense: one item per line, no
   hard wraps or blank lines, no headings or prose for a human reader, file:line instead of description; content stays
   exact (ids, file:line, numbers, reasons), code names in backticks (`check.js` finds stale names by them).

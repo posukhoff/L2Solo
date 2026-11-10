@@ -11,7 +11,7 @@
   the step's target rates and rule 14's player rates (town trips per bot-hour and the share that buy and sell nothing,
   deaths, income and EXP per hour, bots stuck, goals completed) and the threads: longest turn of main and the worker,
   worker lag (oldest due step: p50/p99/max, boot and steady) against their limits.md targets; a miss is a defect, not a
-  number; a branch runs alone only when its counter regresses. After a batch's review fixes, its perf runs (Perf runs).
+  number; a branch runs alone only when its counter regresses. After a batch's review fixes, its perf runs (release.md "Perf runs").
 - Coverage: after every traced run `node planning/coverage.js <trace> --root <tree>` prints decision × situation × place
   × mode with the empty cells; each empty cell is closed by a test, a run scenario or an "unchecked" line with the
   reason. A cold traced run has a player online (`tests/e2e/online-player.js`); a hot traced run lasts ≥ 20 min.

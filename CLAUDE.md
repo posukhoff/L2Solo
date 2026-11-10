@@ -4,7 +4,7 @@ Node.js >=22.5, CommonJS, SQLite, Lineage II C4. Hot bots execute near the playe
 
 ## Read only what your role needs
 
-Start with this file, `planning/architecture/README.md` and the touched area of the architecture map. Read the relevant sections, not all planning files. The workflow reference lives in `.claude/workflow/` in the primary local checkout (not the game-code branch). Resolve paths from the actual checkout; do not assume a worktree contains local planning. A task brief names the base SHA, route, policy digest and relevant files. Do not use newer policy or map silently for older work: check the recorded SHA/digest and resolve drift with the coordinator.
+Start with this file, `planning/architecture/README.md` and the touched area of the architecture map. Read the relevant sections, not all planning files. The workflow reference lives in `.claude/workflow/` in the primary local checkout (not the game-code branch): /Users/iposukhoff/L2Solo/.claude/workflow/; this file is /Users/iposukhoff/L2Solo/CLAUDE.md. Both are git-excluded, so an agent in a worktree reads them by these absolute paths. Resolve paths from the actual checkout; do not assume a worktree contains local planning. A task brief names the base SHA, route, policy digest and relevant files. Do not use newer policy or map silently for older work: check the recorded SHA/digest and resolve drift with the coordinator.
 
 | Work | Additional reading |
 |---|---|
@@ -17,7 +17,7 @@ The files above are under `.claude/workflow/`. This entry point and routes.md co
 
 ### Hard rules (every change; a review answers each one for the diff)
 
-Each as the question a review asks; detail in the sections after.
+Each as the question a review asks (each answered: ok with evidence, violation file:line, or N/A with its reason); detail in coding.md.
 0. Need: for each added piece of code, state, message, special case or test: what breaks for a player or the server
    without it (a number or a concrete case)? Nothing observable → do not add it. Of two correct fixes take the cheaper
    per bot per step, then the one adding less mechanism (state, paths, special cases; not fewer lines); deleting is a
@@ -47,7 +47,7 @@ Each as the question a review asks; detail in the sections after.
     co-author/session lines? (`node planning/rules-check.js <base>..<head> --root <tree>`: the mechanical part.)
 14. Trade: one line per change: its cost, what a C4 player does here, what it gives up (simulation, realism,
     performance). A review asks "would a player do this?" as it asks the cost.
-15. Direction: toward the target architecture (below), neutral, or away? Away only with its reason, a problems.md line
+15. Direction: toward the target architecture (coding.md "Target architecture"), neutral, or away? Away only with its reason, a problems.md line
     and the named replacement; a review counts it like a violation otherwise.
 
 
@@ -55,8 +55,8 @@ Each as the question a review asks; detail in the sections after.
 
 Read `.claude/workflow/routes.md` before starting. Fast: localized fix, no shared-rule or runtime risk. Standard: normal gameplay change. Critical: cross-thread/state ownership, database/schema, shared decision mechanism, global economy, table generation, performance claim, or cross-module architecture. Escalate when uncertain; do not downgrade merely to avoid checks.
 
-Coordinator: use `node .claude/workflow.js start <slug> --base <ref> --risk <fast|standard|critical>` from the primary game checkout. The CLI records evidence, not automatic authorization to merge. Use `verify`, `record-review`, `record-ci`, `ready` (see routes.md). Existing integration/release Git policy remains in force. Never push to shared origin or open a PR without the existing explicit authorization; never expose secrets.
+Coordinator: use `node .claude/workflow.js start <slug> --base <ref> --risk <fast|standard|critical>` from the primary game checkout. The CLI records evidence, not automatic authorization to merge. Use `verify`, `record-review`, `record-ci`, `ready` (see routes.md). Existing integration/release Git policy remains in force. Never push to shared origin or open a PR without the existing explicit authorization (the one standing ask: fast-forward `ivan/next-release` to origin when release commits or a develop update land on it, git.md); never expose secrets.
 
-For every change: identify cause and owner, search relevant copies, preserve player-visible behaviour unless deliberately changed, prove fixes with a failing-old-code test, run the existing required gates. Review checks applicable hard rules with evidence; mark others N/A with reason. Never weaken a hard invariant. Scope a second review to fixes and related regressions. After two rounds, unresolved blockers stop the task for a coordinator decision. New unrelated findings enter problems.md; do not silently expand the task.
+For every change: identify cause and owner, search relevant copies, preserve player-visible behaviour unless deliberately changed, prove fixes with a failing-old-code test, run the existing required gates. Review answers every hard rule: applicable ones with evidence, others N/A with the reason. Never weaken a hard invariant. Scope a second review to fixes and related regressions. After two rounds, unresolved blockers stop the task for a coordinator decision. New unrelated findings enter problems.md; do not silently expand the task.
 
 Planning remains local, single-writer, current-state only; completed items are pruned. Record stable decisions in their owning map and keep the task evidence outside planning. Git and CI rules are in git.md/testing.md. Release acceptance and final A/B are unchanged.
