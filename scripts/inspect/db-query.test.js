@@ -16,6 +16,16 @@ try{
  ins.run(2,100,'hunt','14_29',JSON.stringify({...stats,lastNpcLiquidation:{at:5,sold:[[90,1,700000]]}}),'bad');
  const c=custody(db,{bots:[1,2],limit:10});
  assert.equal(c.bots[0].custodySignal.candidate,true);assert.equal(c.bots[1].custodySignal.candidate,false);assert.equal(c.bots[1].jsonQuality.mindParsed,false);
+ // Real shape (9d6bf579a): an NPC buy records 'Item <id>', a board sale the real name; one item, one row.
+ const named=(id,at,channel,name,buyer,seller)=>db.prepare('INSERT INTO market_trades VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'n'+id,at,channel,channel,1785,name,1,10,10,buyer,seller);
+ named(20,10,'npc_buy','Item 1785',7,null);named(21,11,'bot_wts','Soul Ore',8,9);named(22,12,'bot_wts','Soul Ore',9,7);named(23,13,'bot_wts','Soul Ore',10,8);
+ const one=market(db,{from:10,to:30,limit:10,item:1785});
+ assert.deepEqual(one.sellbacks.map(x=>[x.itemName,x.buysWithLaterSale]),[['Soul Ore',2]],'buys of one item with later sales count in one row');
+ assert.equal(one.totals.every(x=>x.itemName==='Soul Ore'),true);
+ assert.deepEqual(custody(db,{bots:[1,999],limit:10}).missing,[999]);
+ // With the history attached, custody dates the bot's own buy of the deposited item.
+ db.exec("ATTACH DATABASE ':memory:' AS h; CREATE TABLE h.market_trades AS SELECT * FROM main.market_trades");
+ assert.deepEqual(custody(db,{bots:[1],limit:10}).bots[0].trades.map(t=>[t.id,t.buyerCharacterId,t.sellerCharacterId]),[[1,1,null],[2,2,1],[3,3,1],[4,4,1]]);
  assert.throws(()=>args(['/tmp','market']),/requires/);assert.throws(()=>args(['/tmp','custody','--bot','1,foo']),/requires/);
  console.log('PASS market window, non-multiplying sale candidates, custody chronology and invalid inputs');
 }finally{db.close();}

@@ -3,11 +3,11 @@
 const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').replace(/^#![^\n]*\n/,'');
 const execute=new Function('require','process','__dirname','console',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
-let optionalRaw=false;
+let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false;
 let current=head, notAncestor=false;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
-const fsFake={existsSync:()=>true,readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
-const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'?'Picked tests':'PR checks',jobs:id==='2'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
+const fsFake={existsSync:()=>true,mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
+const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':id==='6'?'tests/b/+test_basic':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'||id==='6'?'Picked tests':'PR checks',jobs:id==='2'||id==='6'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
 const exec=(p,a)=>{
     if(p==='git'){
         if(a[0]==='status')return '';
@@ -20,19 +20,25 @@ const exec=(p,a)=>{
         }
         if(a[0]==='diff')return 'M\tsrc/foo.js';
     }
+    if(p==='gh'&&a[1]==='download'){
+        const files=receiptMode==='noMap'?[{test:'tests/test_basic.js',skipRaw:'1',geodataFiles:0,status:'passed'}]:[{test:'tests/test_basic.js',skipRaw:'0',geodataFiles:142,status:'passed'}];
+        store.set('/tmp/raw/raw-geodata-1/raw-geodata-receipt.json',JSON.stringify({sha:head,files}));return '';
+    }
     if(p==='gh')return JSON.stringify(gh(a[2]));
     if(p==='node'){
         if(a[0].endsWith('tests-for.js'))return 'test_basic.js\ntest_geodata.js';
         if(a[0].endsWith('rules-check.js'))return 'ok';
         if(a.includes('--geodata')&&a.includes('--list'))return optionalRaw?'tests/test_geodata.js\ntests/test_basic.js':'tests/test_geodata.js';
         if(a.includes('--geodata')&&a.some(x=>x.startsWith('--only=')))return 'raw pass';
+        const only=a.find(x=>x.startsWith('--only='));
+        if(only&&only.includes('+test_basic'))return runnerDropsPlus?'tests/test_basic.js':'+tests/test_basic.js';
         if(a.some(x=>x.startsWith('--only=')))return 'tests/test_geodata.js';
         return 'tests/test_basic.js';
     }
     if(p==='npm')return 'ok';
     throw Error('unexpected '+p+' '+a.join(' '));
 };
-const req=x=>x==='node:fs'?fsFake:x==='node:path'?pathFake:x==='node:crypto'?{createHash:()=>({update(){},digest:()=>'policy-hash'})}:x==='node:child_process'?{execFileSync:exec}:null;
+const req=x=>x==='node:os'?{tmpdir:()=>'/tmp'}:x==='node:fs'?fsFake:x==='node:path'?pathFake:x==='node:crypto'?{createHash:()=>({update(){},digest:()=>'policy-hash'})}:x==='node:child_process'?{execFileSync:exec}:null;
 function cmd(...args){
     const proc={argv:['node','workflow.js',...args],execPath:'node',pid:1,exitCode:0},logs=[];
     execute(req,proc,'/home/.claude',{log:x=>logs.push(String(x)),error:x=>logs.push(String(x))});
@@ -79,3 +85,13 @@ expect('stale guess',cmd('record-brief','stale','--file','/guess.json'),0,'false
 store.set('/home/.claude/../.claude/workflow/routes.md','changed policy');
 {const st=JSON.parse(store.get('/git/l2solo-workflow/stale.json'));st.policy='older-policy';store.set('/git/l2solo-workflow/stale.json',JSON.stringify(st));}
 expect('a refuted guess under an older policy can still be closed',cmd('close','stale','--refuted','--evidence','proof'),0,'"policyCurrent":false');
+
+// Raw-map CI: a Picked +name run counts only with a receipt of a map-present pass, through a runner that kept the mark.
+current=head;optionalRaw=true;
+expect('raw ci start',cmd('start','rawci','--base','main','--risk','standard'),0,'policy-hash');
+store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:['fixed'],tests:['test_basic.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',evidence:['trace 1']}}));
+expect('raw ci brief',cmd('record-brief','rawci','--file','/brief.json'),0,'true');
+receiptMode='noMap';expect('a green run without the map is no raw evidence',cmd('record-ci','rawci','--run','6'),1,'No raw-map receipt');
+receiptMode='ok';runnerDropsPlus=true;expect('a runner that drops the mark is refused',cmd('record-ci','rawci','--run','6'),1,'does not keep the raw-map mark');
+runnerDropsPlus=false;expect('raw map receipt recorded',cmd('record-ci','rawci','--run','6'),0,'');
+expect('raw ci evidence in status',cmd('status','rawci'),0,'"source": "ci"');

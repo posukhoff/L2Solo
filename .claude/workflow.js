@@ -30,7 +30,8 @@ const domainPatterns = [
     [/(population|activation|placement|hot|cold|worker|situations|party|clan)/i, /(activation|placement|hot_cold|worker|situations|party|clan|population)/i, 'population'],
     [/(database|sqlite|persist|save|migration)/i, /(database|sqlite|persist|save|migration)/i, 'persistence']
 ];
-const norm = x => path.basename(x).replace(/^(test_)?/,'test_').replace(/(\.js)?$/,'.js');
+// A leading + (Picked tests' raw-map mark) is not part of the file name.
+const norm = x => path.basename(String(x).replace(/^\+/,'')).replace(/^\+/,'').replace(/^(test_)?/,'test_').replace(/(\.js)?$/,'.js');
 const nonempty = x => typeof x === 'string' && x.trim().length > 0;
 const strings = x => Array.isArray(x) && x.length > 0 && x.every(nonempty);
 function validateBrief(b, state) {
@@ -197,15 +198,40 @@ function main() {
         } else {
             const fromBranch=String(ci.headBranch||'').split('/').slice(2).join('/');
             const text=fromBranch || run('git',['show',listSha+':ci-tests.txt']).replace(/#.*$/gm,'');
-            const ran=new Set(text.split(/[\s,]+/).filter(Boolean).map(norm));
+            const names=text.split(/[\s,]+/).filter(Boolean);
+            const ran=new Set(names.map(norm)), rawAsked=new Set(names.filter(x=>x.startsWith('+')).map(norm));
             if (!String(ci.headBranch).startsWith('tests/') || !ran.size) fail('Invalid Picked tests ref/list.');
             const runner=path.join(root,'scripts/run-tests.js');
-            const actual=run(process.execPath,[runner,'--only='+[...ran].join(','),'--list']).split('\n').filter(Boolean).map(norm);
+            const listed=run(process.execPath,[runner,'--only='+names.join(','),'--list']).split('\n').filter(Boolean);
+            const actual=listed.map(norm);
+            if (rawAsked.size) {
+                // The runner keeps the + of a raw-map file (its CI plan hands it on); a runner without it lost the mode.
+                const kept=new Set(listed.filter(x=>x.startsWith('+')).map(norm));
+                const lost=[...rawAsked].filter(t=>!kept.has(t));
+                if (lost.length) fail('Runner at HEAD does not keep the raw-map mark for: '+lost.join(', '));
+                // A raw-map receipt per shard (artifact raw-geodata-<n>): the file ran with the map present and passed.
+                const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'l2-raw-'));
+                try {
+                    run('gh',['run','download',id,'-R','posukhoff/L2Solo','-p','raw-geodata-*','-D',dir]);
+                    const receipts=[];
+                    const walk=d=>{for(const f of fs.readdirSync(d)){const p=path.join(d,f);if(fs.statSync(p).isDirectory())walk(p);else if(f.endsWith('.json'))receipts.push(JSON.parse(fs.readFileSync(p,'utf8')));}};
+                    walk(dir);
+                    const proven=new Set();
+                    for (const r of receipts) {
+                        if (r.sha && r.sha!==listSha) fail('Raw-map receipt names another commit: '+r.sha);
+                        for (const f of r.files||[]) if (f.status==='passed' && f.skipRaw==='0' && f.geodataFiles>0) proven.add(norm(f.test));
+                    }
+                    const missing=[...rawAsked].filter(t=>!proven.has(t));
+                    if (missing.length) fail('No raw-map receipt (map present, passed) for: '+missing.join(', '));
+                    state.evidence.rawGeodata=(state.evidence.rawGeodata||[]).filter(r=>r.head===head&&!rawAsked.has(r.test));
+                    for (const t of rawAsked) state.evidence.rawGeodata.push({head,test:t,source:'ci',run:id,at:now()});
+                } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+            }
             const count=Math.min(12,Math.ceil(actual.length/8));
             const jobs=ci.jobs||[];
             if (!jobs.some(j=>j.name==='Plan' && j.conclusion==='success')) fail('Picked tests missing successful Plan job.');
-            const names=new Set(jobs.filter(j=>j.conclusion==='success').map(j=>j.name));
-            for(let i=1;i<=count;i++) if(!names.has('Tests ('+i+'/'+count+')')) fail('Picked tests missing successful shard '+i+'/'+count);
+            const passed=new Set(jobs.filter(j=>j.conclusion==='success').map(j=>j.name));
+            for(let i=1;i<=count;i++) if(!passed.has('Tests ('+i+'/'+count+')')) fail('Picked tests missing successful shard '+i+'/'+count);
             covered=actual.sort();
         }
         state.evidence.ciRuns=(state.evidence.ciRuns||[]).filter(r=>r.head===head && r.id!==id);

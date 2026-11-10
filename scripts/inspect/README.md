@@ -41,3 +41,14 @@ node scripts/inspect/db-query.js /path/to/run market --from 1794234572584 --to 1
 node scripts/inspect/db-query.js /path/to/run custody --bot 2001410,2000320
 ```
 Use actual observedFrom/To from census for the market window; example dates are illustrative, not a verified run. Market aggregates and later-sale candidates (EXISTS avoids multiplied rows), includes top trade IDs/event keys. Later sale is NOT a matched physical item. Custody reads last deposit/liquidation and current plan from snapshot, requires chronological order and matching target for candidate; no proof of ownership or plan lifetime. Test uses in-memory SQLite. Trace census/refusals/flips default to 10 results, timeline/funding 50; --limit expands. For synthetic was evidence the marker is retained. Compare against manual SQL on real snapshots before release use. No automatic invariant or server-log parsing yet.
+
+## V5 pilot fixes and server.log/timeline queries (validated on runs 9d6bf579a)
+- db-query opens snapshots `immutable=1` (no -shm/-wal access; refuses a non-empty -wal) and attaches `world.history.sqlite` the same way for custody trades. Content hashes and -shm mtimes unchanged by a query.
+- market groups by item id: NPC buys record `Item <id>`, board trades the real name; grouping by name split item 1785 into 42 + 72 later-sale candidates (now 114, as the manual SQL).
+- custody reports `missing` IDs and the bot's own market trades of deposited items (2001410: trade 7457 buys item 90 at 18:21:30, deposit 18:21:32, NPC sale 18:27:02).
+```sh
+node scripts/inspect/log-query.test.js
+node scripts/inspect/log-query.js /path/to/run activations --near 82684,183551 --radius 1600
+node scripts/inspect/log-query.js /path/to/run counters --keys activations,lateInViewActivations,cooldowns
+```
+server.log lines (developerDiagnostics only) carry no timestamp and name bots by name: `BotPopulation :: requested activation for <name> reason= activity= plan= spot= loc=x,y,z playerDist= ready=` (HotActivation.js) and `BotPopulation :: cooled <name> reason=` (Cooldown.js). Times are the window between `summary` lines, mapped to the perf timeline (`<run>/<rec>/timeline-*.jsonl`, `type: summary`, `population.metrics.counters/delta`) only when each summary's `activations` equals the timeline delta at the same position; else unknown. counters reads the timeline (timestamped), not server.log.
