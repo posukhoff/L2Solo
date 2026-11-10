@@ -1803,7 +1803,10 @@ function publishDeferredPartyRequests(rows) {
 
 // Forming found no party for these open requests, required or preferred (no group, no
 // level match, its verdict's no): each is closed (PartyRequestPlanner.closed) and held
-// until the bot's next build, which asks again; no clock reopens it.
+// until the bot's next build, which asks again; no clock reopens it. The bot hunts on
+// where its route sends it (BotRoute.huntSpot: a support with no solo ground its held
+// answer's grey ground); a refusal never leaves it without a spot. Its next build comes
+// at its own situations (a town arrival, new gear or grade, a party left).
 function deferUnformablePartyRequests(characterIds = [], reason = 'no_compatible_level_match') {
     const ids = [...new Set((characterIds || []).map((id) => Number(id)).filter(Boolean))].slice(0, 500);
     if (!ids.length) return Promise.resolve(0);

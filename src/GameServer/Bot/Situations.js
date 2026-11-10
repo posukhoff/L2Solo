@@ -343,6 +343,11 @@ function raise(stats, name, payload = null, where = OPEN, subject = 0) {
     }
     return stats;
 }
+// The mind keys a raise writes (raise, writeFacts; a far row's, BotLifeState.raiseOnRow).
+const RAISED_KEYS = Object.freeze(['woken', 'waiting', 'situationSeq', 'activityLeaf', 'earning', 'spotMarks', 'gearMarks']);
+// What a raise wrote on stats against the stats it was raised over (before): its changed mind keys, for a
+// carrier that applies another copy over the raised one (the worker step's packet, ColdSimulationWorker.stepTrip).
+const raisedOver = (before, stats) => Object.fromEntries(RAISED_KEYS.filter(key => stats[key] !== before?.[key]).map(key => [key, stats[key]]));
 // The decisions a raise's facts took (player_command: the player decided the earning
 // spot): decided as that caller (counted, traced; one taken while it slept counts as
 // unwoken under that caller), their bits cleared woken and waiting on every plane.
@@ -779,5 +784,5 @@ function detectParty(party, held, { deaths = 0, leaderLevel = 1, marks = [] } = 
 module.exports = {
     PARTY_DECISIONS, partyHeld, partyWoken, raiseParty, partyDecided, partySpotAnswer, detectParty, outleveledSpot,
     buffFact, FIELD_ACTIVITIES, OPEN, REST, place, bodyPlace, gated, field, reactive, onVisit, readsFacts, arrivesInTown,
-    DECISIONS, ALL, FIRST, raise, delta, forgets, withOwnFacts, planes, took, leftParty, applyFacts, spotAsk, counted, note, stop, woken, raised, anyWoken, decided, counts, COUNT_KEYS,
+    DECISIONS, ALL, FIRST, RAISED_KEYS, raise, raisedOver, delta, forgets, withOwnFacts, planes, took, leftParty, applyFacts, spotAsk, counted, note, stop, woken, raised, anyWoken, decided, counts, COUNT_KEYS,
     placeName: where => NAMES.get(where), SITUATIONS, BITS, detect, factNames, movesSpot };

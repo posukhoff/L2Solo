@@ -6,7 +6,7 @@
 // one pick (the habit, below); the costly verdict (ground and matchup) is asked lazily, in that order.
 // Goals and their callers:
 // - income: the earning decision's search (EquipmentIncomeRoute.find, worker): the bot's hour at a spot
-//   over the walk there;
+//   over the walk there; with no pick in its window, easier ground (easierGround, the leveling goal's too);
 // - source: the gear plan's source of an item (GearAcquisitionPlanner.bestSourceForState: the plan's pick
 //   at plan time, BotRoute.huntSpot's plan step at route time): the source's yield per effort;
 // - leveling: a bot with no held answer (leveling, via SpotProfiles.findForState: a protected starter, a
@@ -114,6 +114,30 @@ function explicitClanRaidSpot(state = {}, profile = null) {
         && String(plan.next?.spotId || '') === spotId;
 }
 
+// Easier ground: where a solo bot hunts when its kit may hunt nothing near its level, one rule for the
+// leveling goal (its recovery) and the earning search (EquipmentIncomeRoute.find, its window gave no pick):
+// the spots below the level's near window (SpotProfiles.lowerSpots, by the level mix) its kit may survive
+// (survives: BotTargetMatchup.soloSpotUpperBound, the optimistic damage prefilter) and the goal accepts
+// (accept(spot): its own cheap clauses; none: every one), not excluded; by value (value(spot): a SpotEconomics
+// row, its valueHours; a spot with none ranks after every valued one: the table has no row past the
+// deep-blue gap), ties by the closest level, then density, then id; the costly verdict (allowed(spot): the
+// ground and matchup) asked in that order for the first EASIER_CHECKS. A C4 player outgunned at his level
+// farms lower mobs alone. The habit only among spots of a positive value. Returns the pick ({ spot, value })
+// or null: none passed (counted by the caller: spot_list:pick:none, earning:no_spot).
+// ARCH-NOTE: ALT optimistic damage prefilter preserves exact-safe camps: naked L50 catalogue fixture
+// finds 100% of best safe income with 8 exact probes (default 128 found none).
+const EASIER_CHECKS = 128;
+function easierGround(state, { profiles, targetLevel, excluded, survives, accept = null, value = null, allowed, mode, count = false }) {
+    const Spots = invoke('GameServer/Bot/Population/SpotProfiles'); // lazy: cycle its search calls this goal
+    const lower = Spots.lowerSpots(profiles, targetLevel)
+        .filter(spot => survives(spot) && !excluded.has(String(spot.id)) && (!accept || accept(spot)))
+        .map(spot => ({ spot, value: value?.(spot)?.valueHours ?? -Infinity }))
+        .sort((a, b) => b.value - a.value || Math.abs(a.spot.avgLevel - targetLevel) - Math.abs(b.spot.avgLevel - targetLevel)
+            || b.spot.density - a.spot.density || String(a.spot.id).localeCompare(String(b.spot.id)));
+    return rank(state, { candidates: lower, sorted: true, value: candidate => candidate.value },
+        { excluded, allowed: (candidate, spot) => allowed(spot), maxChecks: EASIER_CHECKS, mode, count }).pick;
+}
+
 // The leveling goal: the spot a bot hunts when no held answer names one (options: the route options of the
 // caller, as SpotProfiles.findForState builds them: profiles (the catalogue), currentSpot (the spot it
 // stands on, null: none), excludedSpotIds, repelled (SpotRecords.reader), matchupProfiles, spotEconomics, list
@@ -198,18 +222,10 @@ function leveling(state, options = {}) {
     // same combat checks; otherwise a perfectly healthy bot repeats missing_spot forever.
     if (!routeCandidates.length && soloSearch) {
         const recoveryState = { ...state, stats: { ...state.stats, equipmentPlan: null } };
-        const spotValue = options.spotEconomics;
-        const maybeSurvives = invoke('GameServer/Bot/AI/BotTargetMatchup').soloSpotUpperBound(options.matchupProfiles);
         const recoveryAllowed = LevelingRoutes.spotAllowedReaderFor(recoveryState, options);
-        // ARCH-NOTE: ALT optimistic damage prefilter preserves exact-safe camps: naked L50 catalogue fixture
-        // finds 100% of best safe income with 8 exact probes (default 128 found none). Value first, ties as
-        // the near-level fallback: closest level, then density; the habit only among spots of a positive value.
-        const lower = Spots.lowerSpots(profiles, targetLevel).filter(spot => maybeSurvives(spot) && !excluded.has(String(spot.id)))
-            .map(spot => ({ spot, value: spotValue?.(spot)?.valueHours ?? -Infinity }))
-            .sort((a, b) => b.value - a.value || Math.abs(a.spot.avgLevel - targetLevel) - Math.abs(b.spot.avgLevel - targetLevel)
-                || b.spot.density - a.spot.density || String(a.spot.id).localeCompare(String(b.spot.id)));
-        const easier = rank(state, { candidates: lower, sorted: true, value: candidate => candidate.value },
-            { excluded, allowed: (candidate, spot) => recoveryAllowed(spot), maxChecks: 128, mode: options.mode, count: ctx.count }).pick;
+        const easier = easierGround(state, { profiles, targetLevel, excluded, mode: options.mode, count: ctx.count,
+            survives: invoke('GameServer/Bot/AI/BotTargetMatchup').soloSpotUpperBound(options.matchupProfiles),
+            value: options.spotEconomics, allowed: recoveryAllowed });
         routeCandidates = easier ? [easier.spot] : [];
         fitting = [];
         Diagnostics.count('spot_list', 'pick', routeCandidates.length ? 'recovery' : 'none');
@@ -225,4 +241,4 @@ function leveling(state, options = {}) {
     return fallback && withRoute(fallback);
 }
 
-module.exports = { rank, leveling, explicitClanRaidSpot, HABIT_BAND };
+module.exports = { rank, leveling, easierGround, explicitClanRaidSpot, HABIT_BAND };

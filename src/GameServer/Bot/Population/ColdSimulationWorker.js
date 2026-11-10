@@ -1362,14 +1362,20 @@ function lookOwnLines(state, timestamp, economy, visit) {
 // the round then ends that fight with no new one, and the held choice waits on
 // the record for the next step.
 // A route that asks the decision again (BotRoute.trip: no spot it may take, none
-// under it) raises its situation on the step's state, which the step carries.
+// under it) raises its situation on the step's state, which the step carries, and on
+// its packet (raised: what the raise wrote, Situations.raisedOver, merged last): main
+// applies the packet, the decisions the step took before this raise, over the round's
+// stats, so a raise left off it lost its bits there and its ask (once per answer) waited forever.
 function stepTrip(state, route, timestamp) {
+    let raised = null;
     if (route?.ask) {
-        state = { ...state, stats: Situations.raise({ ...state.stats }, route.ask, null, Situations.place(state), state.characterId) };
+        const stats = Situations.raise({ ...state.stats }, route.ask, null, Situations.place(state), state.characterId);
+        raised = Situations.raisedOver(state.stats, stats);
+        state = { ...state, stats };
         route = null;
     }
-    if (PveEncounter.holdsTrip(state, route, timestamp)) return { routedState: state, route: null, lastFight: true };
-    return { routedState: beginHuntingTrip(state, route, timestamp) || state, route, lastFight: false };
+    if (PveEncounter.holdsTrip(state, route, timestamp)) return { routedState: state, route: null, lastFight: true, raised };
+    return { routedState: beginHuntingTrip(state, route, timestamp) || state, route, lastFight: false, raised };
 }
 // The step's solo trip (BotRoute.trip): to the bot's one held choice, kept in its
 // kernel record; the crowd is met at arrival (SpotContest). { route, huntKeys: the
@@ -2091,7 +2097,7 @@ function startKernel(config = {}) {
                 if (economyDiagnostics.active()) economyDiagnostics.count('advisory', 'reuse', 'lifecycle');
                 const leaf = refreshed.economy.network.activity;
                 const trip = routeTrip(state, standingSpot(state), leaf, timestamp);
-                const { routedState, route, lastFight } = stepTrip(state, trip.route, timestamp);
+                const { routedState, route, lastFight, raised } = stepTrip(state, trip.route, timestamp);
                 // A town visit's plan from the card: its listings and bids (ColdEconomyPlan,
                 // visit); in the field the card's town leaf starts (no plan is asked).
                 const occupation = routedState.activity === 'shopping'
@@ -2104,7 +2110,7 @@ function startKernel(config = {}) {
                 // The workshop taken on this step rides the step's packet, as in a build: a
                 // step main executes (a town visit) reads the packet, not this state.
                 return { ...stepWakeSeq, statsPacket: { ...stepStatsPacket(state, refreshed.economy, timestamp), ...workshopKeys, ...rebuffKeys, ...earningKeys,
-                    ...trip.huntKeys }, economy: refreshed.economy,
+                    ...trip.huntKeys, ...raised }, economy: refreshed.economy,
                     ...(occupation?.economyPlan ? { economyPlan: occupation.economyPlan } : {}),
                     activityPick: { activity: leaf.activity, spotId: leaf.spotId, npcId: leaf.npcId },
                     economyDecision: refreshed.decision, previousPlan, acquisitionPlan: previousPlan,
@@ -2156,9 +2162,9 @@ function startKernel(config = {}) {
             // it stays as it stands (a rest goes on, a clan wait holds).
             const plannedState = { ...state, stats: plannedStats };
             const trip = routeTrip(plannedState, standingSpot(state), economy.network.activity, timestamp);
-            const { routedState, route, lastFight } = stepTrip(plannedState, trip.route, timestamp);
+            const { routedState, route, lastFight, raised } = stepTrip(plannedState, trip.route, timestamp);
             // The spot it goes to when sent to hunt: the trip's own held choice on the planned state.
-            if (trip.huntKeys) statsPacket = { ...statsPacket, ...trip.huntKeys };
+            if (trip.huntKeys || raised) statsPacket = { ...statsPacket, ...trip.huntKeys, ...raised };
             // A town visit plans its listings, bids and craft (showcase); a build taken in the
             // field posts the bids of the wants it registers once and starts its leaf (action);
             // a held card in the field only starts its town leaf.

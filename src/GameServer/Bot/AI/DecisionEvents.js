@@ -259,12 +259,10 @@ function raiseOn(characterId, name, payload = null, reason = `situation_${name}`
     } else afterPreparation();
     return Promise.resolve(null);
 }
-// The mind keys a row raise writes (BotLifeState.raiseOnRow).
-const RAISED_KEYS = Object.freeze(['woken', 'waiting', 'situationSeq', 'activityLeaf', 'earning', 'spotMarks', 'gearMarks']);
 // A state the caller writes after its raise landed (raised: the raised row's
 // state): built on the raised row's revision, carrying its raised mind.
 const withRaise = (state, raised) => ({ ...state, simulation: raised.simulation,
-    stats: { ...state.stats, ...Object.fromEntries(RAISED_KEYS.map(key => [key, raised.stats?.[key]])) } });
+    stats: { ...state.stats, ...Object.fromEntries(Situations.RAISED_KEYS.map(key => [key, raised.stats?.[key]])) } });
 // A far bot's rejection: goal_failed with its held step dropped, raised on its
 // row (raiseFar); the caller's own write carries only its own fields. null (at
 // once) when the rejection is not the held decision's, else a promise of the
