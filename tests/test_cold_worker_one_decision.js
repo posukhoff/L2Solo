@@ -50,7 +50,7 @@ module.exports.stepProbe = async (id) => {
         const decided = builds;
         // (This fixture's worker holds no spot catalogue: the step's trip asks the earning spot
         // again, spot_empty on its packet. The rounds below read only their own situations.)
-        const asked = Situations.BITS.earning_spot | Situations.BITS.build;
+        const { BITS } = invoke('GameServer/Bot/Situations'), asked = BITS.earning_spot | BITS.build;
         if (plan.statsPacket.woken !== undefined) plan.statsPacket = { ...plan.statsPacket, woken: plan.statsPacket.woken & ~asked };
         const state = plan.plannedState || entry.state;
         const projection = await kernel.projectResolve(state, { patch: {}, debug: {}, events: [],
