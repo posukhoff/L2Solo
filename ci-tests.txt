@@ -1,0 +1,9 @@
+bot_town_travel
++bot_activation_placement
+cold_honest_travel
+town_transit_policy
+bot_population_policy
+trip_payment
+bot_skill_books
+purchase_funding_checks
+wish_network
