@@ -6,7 +6,7 @@
   locally, one file at a time, when no perf measurement or traced run is on the laptop (else as Picked tests on the
   fork); `npm run check`.
 - Per landing on the integration branch (a squashed step or a merged branch): full PR checks on the fork, with fresh
-  tables if their inputs changed. Parallel fix agents each end with tests and CI and name the counters to watch.
+  tables if their inputs changed. Topic agents end with targeted tests and counters to watch; full CI runs on the reviewed integration candidate.
 - Per batch: the main session runs one traced server for all merged branches (agents do not each run one) and reports
   the step's target rates and rule 14's player rates (town trips per bot-hour and the share that buy and sell nothing,
   deaths, income and EXP per hour, bots stuck, goals completed) and the threads: longest turn of main and the worker,
@@ -34,8 +34,7 @@
 
 ## Tests on this laptop
 
-- Never the root `npm test`, `npm run test:geodata` or a broad batch (hours here; bigger sets go to CI as Picked
-  tests); no table generator, not even a few spots. Always `npm run check`.
+- Never root `npm test`, `npm run test:geodata`, broad batches or table generators here. Use Picked CI. `npm run check` per commit (or full CI); dev-local feedback is not commit verification.
 - Known local-only failures: `tests/test_saved_games_history_recovery.js` (config/local.ini interferes) and the
   geodata tests in a worktree without geodata; both pass on CI.
 
@@ -49,7 +48,7 @@ pushing.
   only the failed files and the tests of what the fixes touch. GitHub sometimes creates fewer than 12 jobs: re-run.
 - Picked tests (`.github/workflows/tests.yml`, a push starts it): `git push fork HEAD:refs/heads/tests/$sha/<a,b,c>`
   (x = `tests/test_x.js`); each file runs as in PR checks, 8 files a shard. A long list: a throwaway commit on top with
-  `ci-tests.txt` (one name per line) pushed to `tests/$sha`, never on the work branch. This is how a red file is
+  `ci-tests.txt` (one name per line, `+name` for optional raw-map tests) pushed to `tests/list-$sha`, never on the work branch. The separate name avoids a ref collision with `tests/$sha/<list>`. This is how a red file is
   re-checked after a fix.
 - Bot tables (`.github/workflows/tables.yml`, ~20 min): `git push fork HEAD:refs/heads/tables/<what>/$sha`, `what` =
   `all` | `spot` | `hunt` | `probe`; `gh run download <run-id> -R posukhoff/L2Solo`, copy `spot-table/*.json` →
