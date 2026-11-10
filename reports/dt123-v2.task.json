@@ -16,5 +16,11 @@
       "status": "guess",
       "explanation": "when two offers for different items reach one bot before its step, the dearer item's offer_posted payload is replaced, so a quote mark on that item is not cleared and the bot keeps skipping a seller it could use"
     }
+  },
+  "closed": {
+    "reason": "refuted",
+    "evidence": "cause gate 2026-11-10: offer_posted payload read by nothing (Situations.raisedFacts → GearMarks.forgetQuotes), proof scratchpad dt123/proof.js",
+    "policyCurrent": false,
+    "at": "2026-11-10T22:11:58.805Z"
   }
 }

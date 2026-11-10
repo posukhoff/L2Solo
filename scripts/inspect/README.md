@@ -17,6 +17,14 @@ Reads all 8 known rotations oldest first, one file at a time, then sorts matchin
 
 Verifier handoff: attach query command, run ID, output counts and decisive file:line records to brief; spot-check original trace and code. Reuse evidence, never infer cause from a high count alone. Preserve final release A/B and manual invariant checks.
 
+## Validated on real runs (pilot 2026-11-10, runs 9d6bf579a)
+
+- Refusal raises carry no step (`raise goal_failed` has `place`, `woke`, `reason`, no `wishKey`): refusals now report `buildAnswers`, the bot's latest `decided build` answers in force at the peak (2001410: `power:852:1:item:90:shopping` ×190).
+- `decided` records carry `was` on the first observed record of a bot: flips seed the sequence from it (hunt_spot A-B-A 233 → 350 in the cold run, 161 → 239 hot; changes 1365 → 2294, matching the earlier scratch count 2304). A `null` answer is counted as `(none)`.
+- Funding includes `buy_ad_reconcile` and `plan_compute`: the bid posted between a build and its buy (RM-31) is in the chain.
+- Each query reads a 9 MB trace in ~0.3 s. Keep `--limit 5-10` for refusals and flips in agent context (50 entries of flips ≈ 155 KB).
+- Not covered (still scratch work): server.log signals (activations, dbFailureOps, forced trips), SQLite (market churn, purse/custody snapshots), joins with the earning answer.
+
 ## Workflow changes
 
 close --refuted --evidence <reference> closes a fix whose cause is still a hypothesis; no implementation readiness. Optional geodata: selected tests present in both default and --geodata lists require explicit raw-map evidence for exact HEAD. Use verify --raw-geodata --test <name> in a dedicated worktree with installed raw geodata (one at a time, never during perf/trace). It invokes runner --geodata --only=<name>; existing CI does not prove optional raw-map blocks. This is deliberately local pilot; CI raw-map support needs a separate change in the game branch. This conservative gate may select too many raw-map files for local execution; if so stop and add explicit raw-map CI support before adopting the gate for that route. Do not silently bypass it. No automatic repin: policy changes still invalidate open tasks. No auto push or merge.

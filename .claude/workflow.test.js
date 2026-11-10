@@ -74,3 +74,8 @@ expect('refuted guess',cmd('record-brief','refuted','--file','/guess.json'),0,'f
 expect('refuted close',cmd('close','refuted','--refuted','--evidence','proof'),0,'refuted');
 expect('closed blocks verification',cmd('verify','refuted'),1,'Task closed');
 expect('closed blocks rewrite',cmd('record-brief','refuted','--file','/guess.json'),1,'Task closed');
+expect('stale start',cmd('start','stale','--base','main','--risk','standard'),0,'policy-hash');
+expect('stale guess',cmd('record-brief','stale','--file','/guess.json'),0,'false');
+store.set('/home/.claude/../.claude/workflow/routes.md','changed policy');
+{const st=JSON.parse(store.get('/git/l2solo-workflow/stale.json'));st.policy='older-policy';store.set('/git/l2solo-workflow/stale.json',JSON.stringify(st));}
+expect('a refuted guess under an older policy can still be closed',cmd('close','stale','--refuted','--evidence','proof'),0,'"policyCurrent":false');

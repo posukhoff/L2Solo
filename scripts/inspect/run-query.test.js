@@ -29,6 +29,27 @@ assert.equal(q('census',{from:1000,to:3000}).quality.records,3);
 assert.equal(analyze([r(1,{kind:'decided',bot:1,decision:'x',answer:'A'}),r(2,{kind:'decided',bot:1,decision:'x',answer:'B'}),r(3,{kind:'restart'}),r(4,{kind:'decided',bot:1,decision:'x',answer:'A'})],{query:'flips'}).entries[0].flips,0);
 assert.throws(()=>options(['/tmp/run','timeline']),/requires --bot/);
 assert.throws(()=>options(['/tmp/run','census','--limit','0']),/Invalid/);
+// Real trace shapes (9d6bf579a runs): a refusal raise names no step, the build answer before it does;
+// a first record's `was` is the answer held before the trace saw the bot; a null answer is "no spot";
+// the bid posting (buy_ad_reconcile) belongs to the purse story.
+{
+ const real=[
+  r(100,{kind:'decided',bot:7,decision:'build',answer:'power:852:1:item:90:shopping'}),
+  ...[1,2,3,4,5,6].map(i=>r(100+i*10,{kind:'raise',bot:7,name:'goal_failed',place:'visit',woke:'build',reason:'impossible'})),
+  r(500,{kind:'decided',bot:8,decision:'hunt_spot',answer:'B',was:'A'}),
+  r(600,{kind:'decided',bot:8,decision:'hunt_spot',answer:'A'}),
+  r(700,{kind:'decided',bot:9,decision:'hunt_spot',answer:'A'}),
+  r(800,{kind:'decided',bot:9,decision:'hunt_spot',answer:null}),
+  r(900,{kind:'decided',bot:9,decision:'hunt_spot',answer:'A'}),
+  r(1000,{kind:'detail',bot:7,phase:'buy_ad_reconcile',reason:'changed'})
+ ];
+ const ref=analyze(real,{query:'refusals'}).entries[0];
+ assert.deepEqual([ref.bot,ref.stepKnown,ref.buildAnswers[0].key,ref.buildAnswers[0].count],[7,false,'power:852:1:item:90:shopping',6]);
+ const fl=analyze(real,{query:'flips'}).entries;
+ assert.equal(fl.find(e=>e.bot===8).flips,1,'the was of the first record starts the sequence');
+ assert.equal(fl.find(e=>e.bot===9).flips,1,'a null answer is an answer');
+ assert.equal(analyze(real,{query:'funding',bot:7}).records.some(x=>x.phase==='buy_ad_reconcile'),true);
+}
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'l2-query-'));
 try{
  fs.writeFileSync(path.join(dir,'decision-trace.jsonl.1'),'{"type":"decision_trace_header"}\n{"at":1,"kind":"raise","bot":1}\n');

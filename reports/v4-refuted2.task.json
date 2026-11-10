@@ -1,0 +1,25 @@
+{
+  "slug": "v4-refuted2",
+  "base": "66d99ecd17a25e9ab6b85643b1f5ddf6fd80ae67",
+  "risk": "critical",
+  "kind": "fix",
+  "policy": "f150221730444f4c319687016fba946b0c7025402f55312e6bd9b5a690bbb232",
+  "created": "2026-11-10T22:10:14.595Z",
+  "evidence": {},
+  "brief": {
+    "base": "66d99ecd17a25e9ab6b85643b1f5ddf6fd80ae67",
+    "symptom": "problems.md DT-123: one offer_posted payload is kept across items (the cheapest), so the offer of a marked item can be lost",
+    "evidence": [
+      "src/GameServer/Bot/Population/ColdSimulationKernel.js stepWake (kept = cheaper payload regardless of itemId)"
+    ],
+    "cause": {
+      "status": "guess",
+      "explanation": "when two offers for different items reach one bot before its step, the dearer item's offer_posted payload is replaced, so a quote mark on that item is not cleared and the bot keeps skipping a seller it could use"
+    }
+  },
+  "closed": {
+    "reason": "refuted",
+    "evidence": "scratchpad/dt123/proof.js: offer_posted payload read by nothing",
+    "at": "2026-11-10T22:10:14.786Z"
+  }
+}

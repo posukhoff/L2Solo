@@ -2,9 +2,9 @@
 'use strict';
 // Read-only offline trace reports. No live server, DB writes, network or guessed causes.
 const fs=require('node:fs'), path=require('node:path');
-const phases=new Set(['funding','purchase_goal','buy_request','native_funding']);
+const phases=new Set(['funding','purchase_goal','buy_request','native_funding','buy_ad_reconcile','plan_compute']);
 const order=(a,b)=>a.at-b.at||a.ordinal-b.ordinal;
-const evidence=r=>({file:r.file,line:r.line,at:r.at,thread:r.thread,bot:r.bot,kind:r.kind,name:r.name,phase:r.phase,reason:r.reason,decision:r.decision,answer:r.answer,was:r.was,caller:r.caller,woke:r.woke,wishKey:r.wishKey,item:r.item});
+const evidence=r=>({file:r.file,line:r.line,at:r.at,thread:r.thread,bot:r.bot,kind:r.kind,name:r.name,phase:r.phase,reason:r.reason,decision:r.decision,answer:r.answer,was:r.was,caller:r.caller,woke:r.woke,wishKey:r.wishKey,item:r.item,synthetic:r.synthetic});
 const inc=(m,k)=>m.set(k,(m.get(k)||0)+1);
 const ranked=(m,n)=>[...m].sort((a,b)=>b[1]-a[1]||String(a[0]).localeCompare(String(b[0]))).slice(0,n).map(([key,count])=>({key,count}));
 const positive=n=>Number.isSafeInteger(n)&&n>0;
@@ -32,7 +32,7 @@ function *readRows(dir,quality) {
 function analyze(rows,opt,quality={files:[],headers:0,malformed:0,invalid:0}){
     const limit=opt.limit||50, kinds=new Map(), groups=new Map(), bots=new Set(), details=new Set();
     let min=Infinity,max=-Infinity,total=0,matched=0,detailCount=0,retained=0;
-    const restart=[], cap=500000;
+    const restart=[], cap=500000, builds=new Map();
     const keep=(key,row)=>{
         if(++retained>cap)throw Error('More than 500000 matching records; narrow --from/--to, --bot or --decision.');
         if(!groups.has(key))groups.set(key,[]);
@@ -44,6 +44,9 @@ function analyze(rows,opt,quality={files:[],headers:0,malformed:0,invalid:0}){
         if(positive(r.bot))bots.add(r.bot);
         if(r.kind==='detail'){detailCount++;if(positive(r.bot))details.add(r.bot);}
         if(r.kind==='restart')restart.push(r.at);
+        // A refusal raise names no step; the bot's latest build answer before it does (refusals).
+        if(opt.query==='refusals'&&r.kind==='decided'&&r.decision==='build'&&positive(r.bot)&&typeof r.answer==='string'){
+            if(!builds.has(r.bot))builds.set(r.bot,[]);builds.get(r.bot).push(r);}
         if(opt.bot!==undefined&&r.bot!==opt.bot&&!(opt.query==='timeline'&&r.kind==='meeting'&&r.target===opt.bot))continue;
         if(opt.query==='census'){
             inc(kinds,JSON.stringify([r.kind,r.phase??r.decision??r.name??null]));matched++;
@@ -61,7 +64,7 @@ function analyze(rows,opt,quality={files:[],headers:0,malformed:0,invalid:0}){
             const step=r.wishKey??(r.item!==undefined?'item:'+r.item:null);
             matched++;keep(JSON.stringify([r.bot,r.kind,r.name??r.phase,r.reason,step]),r);
         }else if(opt.query==='flips'){
-            if(r.kind!=='decided'||!positive(r.bot)||typeof r.decision!=='string'||typeof r.answer!=='string'||(opt.decision&&r.decision!==opt.decision))continue;
+            if(r.kind!=='decided'||!positive(r.bot)||typeof r.decision!=='string'||!(typeof r.answer==='string'||r.answer===null)||(opt.decision&&r.decision!==opt.decision))continue;
             matched++;keep(JSON.stringify([r.bot,r.decision]),r);
         }
     }
@@ -86,7 +89,14 @@ function analyze(rows,opt,quality={files:[],headers:0,malformed:0,invalid:0}){
                 if(right-left+1>peak){peak=right-left+1;peakStart=left;peakEnd=right;}
             }
             const [bot,kind,event,reason,step]=JSON.parse(key);
-            out.push({bot,kind,event,reason,step,stepKnown:step!==null,count:list.length,peakPer60s:peak,
+            // The build answers in force at the peak's refusals (latest build at or before each), most frequent first.
+            const answers=new Map(), own=(builds.get(bot)||[]).sort(order);
+            if(step===null&&own.length)for(let i=peakStart,j=0;i<=peakEnd;i++){
+                while(j+1<own.length&&own[j+1].at<=list[i].at)j++;
+                if(own[j].at<=list[i].at)inc(answers,own[j].answer);
+            }
+            const buildAnswers=ranked(answers,3);
+            out.push({bot,kind,event,reason,step,stepKnown:step!==null,buildAnswers,count:list.length,peakPer60s:peak,
                 candidate:peak>(opt.threshold??5),first:evidence(list[0]),peakEvidence:[evidence(list[peakStart]),evidence(list[peakEnd])]});
         }
         result={threshold:opt.threshold??5,groups:out.length,entries:out.sort((a,b)=>b.peakPer60s-a.peakPer60s||b.count-a.count).slice(0,limit)};
@@ -94,8 +104,12 @@ function analyze(rows,opt,quality={files:[],headers:0,malformed:0,invalid:0}){
         const out=[], resets=restart.sort((a,b)=>a-b);
         for(const [key,list] of groups){
             list.sort(order);let a=null,b=null,changes=0,flips=0,ri=0;const examples=[];
-            for(const row of list){
+            const answer=x=>x===null||x===undefined?'(none)':String(x);
+            for(const raw of list){
+                const row={...raw,answer:answer(raw.answer)};
                 while(ri<resets.length&&resets[ri]<=row.at){a=b=null;ri++;}
+                // The first observed record of a segment carries the answer it replaced (was).
+                if(!b&&raw.was!==undefined&&answer(raw.was)!==row.answer)b={...raw,answer:answer(raw.was),synthetic:'was'};
                 if(b?.answer===row.answer)continue;
                 if(b)changes++;
                 if(a&&a.answer===row.answer&&b.answer!==row.answer){
