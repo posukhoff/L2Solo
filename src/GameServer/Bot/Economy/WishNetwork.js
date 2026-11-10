@@ -488,10 +488,13 @@ function createSolver({ nodes, hourAdena = 0, riskWeight = 1, stockFor = null, w
             if (!choice) continue;
             if (allocation && path.kind === 'crystallize') {
                 const inputs = path.grossRequirements || path.requirements || [];
+                // The held units the native command may break: the stock less this build's
+                // claims, at most what the crystallize owner frees (path.freeUnits: a bag a
+                // deferred preparation holds is stock of the root but not free to break).
                 const physicalBatches = Math.min(...inputs.map(input => {
                     const id = input.key.startsWith('item:') ? Number(input.key.slice(5)) : 0;
-                    const physical = id ? Math.max(0, nonnegative(stockFor(id, allocation.rootKey)?.owned)
-                        - (allocation.used.get(id) || 0)) : 0;
+                    const physical = id ? Math.min(Math.max(0, nonnegative(stockFor(id, allocation.rootKey)?.owned)
+                        - (allocation.used.get(id) || 0)), nonnegative(path.freeUnits?.[id] ?? Infinity)) : 0;
                     return input.once ? physical >= Number(input.amount || 1) ? Infinity : 0
                         : Math.floor(physical / Number(input.amount || 1));
                 }));
