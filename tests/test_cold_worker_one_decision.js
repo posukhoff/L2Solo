@@ -48,6 +48,10 @@ module.exports.stepProbe = async (id) => {
     try {
         const plan = await kernel.planLifecycle({ state: entry.state, timestamp });
         const decided = builds;
+        // (This fixture's worker holds no spot catalogue: the step's trip asks the earning spot
+        // again, spot_empty on its packet. The rounds below read only their own situations.)
+        const asked = Situations.BITS.earning_spot | Situations.BITS.build;
+        if (plan.statsPacket.woken !== undefined) plan.statsPacket = { ...plan.statsPacket, woken: plan.statsPacket.woken & ~asked };
         const state = plan.plannedState || entry.state;
         const projection = await kernel.projectResolve(state, { patch: {}, debug: {}, events: [],
             materialize: { exp: 0, sp: 0, adena: 0, items: [{ selfId: 736, amount: 1 }] },
