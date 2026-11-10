@@ -44,6 +44,17 @@ function validateBrief(b, state) {
         !nonempty(b.cause.explanation))) fail('Fix brief requires cause {status: guess|verified, explanation}.');
     if (state.kind === 'fix' && b.cause.status === 'verified' && (!strings(b.cause.evidence) || !strings(b.regressions) || !b.regressions.every(t=>b.tests.map(norm).includes(norm(t))))) fail('Verified cause needs evidence handles and regression tests listed in tests.');
 }
+// Advisory feedback only; never replaces the integration selection.
+function devPlan(base, brief) {
+    const runner=path.join(root,'scripts/run-tests.js');
+    const normal=new Set(run(process.execPath,[runner,'--list']).split('\n').filter(Boolean).map(norm));
+    const geo=new Set(run(process.execPath,[runner,'--geodata','--list']).split('\n').filter(Boolean).map(norm));
+    const direct=run(process.execPath,[path.join(home,'planning/tests-for.js'),base+'..HEAD','--root',root,'--depth','0']).split('\n').filter(x=>/^test_.*\.js$/.test(x));
+    const tests=[...new Set([...brief.tests.map(norm),...direct])].sort();
+    const unsupported=tests.filter(x=>!normal.has(x)&&!geo.has(x));
+    if(unsupported.length) fail('Dev test not in runner: '+unsupported.join(', '));
+    return {tests,raw:tests.filter(x=>geo.has(x)),local:tests.filter(x=>normal.has(x)&&!geo.has(x)),note:'Development feedback only. Full verify/ready requirements unchanged.'};
+}
 function select(base, brief) {
     const changes = git('diff','--name-status','--no-renames',base,'HEAD').split('\n').filter(Boolean);
     const files = changes.map(x => x.split('\t').at(-1));
@@ -75,7 +86,7 @@ function select(base, brief) {
         preferredCI: selected.size>96 || warnings.length ? 'PR checks + uncovered Picked tests' : 'Picked tests or PR checks' };
 }
 function main() {
-    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land|close> <slug> [options]');
+    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land|record-rebase|close> <slug> [options]');
     if (!fs.existsSync(path.join(root,'package.json')) || !fs.existsSync(path.join(root,'src'))) fail('Use a real L2Solo game checkout, not the workflow snapshot.');
     const stateDir = path.join(git('rev-parse','--path-format=absolute','--git-common-dir'),'l2solo-workflow');
     fs.mkdirSync(stateDir,{recursive:true});
@@ -114,6 +125,31 @@ function main() {
     validateBrief(state.brief,state);
     if (state.kind==='fix' && state.brief.cause.status!=='verified') fail('Cause is a hypothesis. Verify it before implementation/verification.');
 
+    // Update the task's base after a coordinator-reviewed rebase. Never transfer SHA receipts.
+    if (command === 'record-rebase') {
+        clean();
+        if(state.evidence.landed) fail('Already landed; start a new task.');
+        const baseRef=opt('--base'),fromRef=opt('--from-head'),reason=opt('--evidence');
+        if(!baseRef||!fromRef||baseRef.startsWith('-')||fromRef.startsWith('-')||!nonempty(reason)) fail('record-rebase requires --base <new parent> --from-head <old tip> --evidence <cause/owner/scope recheck>');
+        const newBase=git('rev-parse','--verify',baseRef+'^{commit}');
+        const oldHead=git('rev-parse','--verify',fromRef+'^{commit}');
+        const newHead=sha();
+        if(newBase===state.base||newHead===newBase||oldHead===state.base||newHead===oldHead) fail('Expected a changed base and nonempty rebased task.');
+        try {
+            git('merge-base','--is-ancestor',state.base,oldHead);
+            git('merge-base','--is-ancestor',state.base,newBase);
+            git('merge-base','--is-ancestor',newBase,newHead);
+        } catch { fail('Rebase ancestry not established; use a new task/brief.'); }
+        const files=(a,b)=>git('diff','--name-only','--no-renames',a,b).split('\n').filter(Boolean).sort();
+        if(JSON.stringify(files(state.base,oldHead))!==JSON.stringify(files(newBase,newHead))) fail('Task paths changed during rebase; replan and record a new brief.');
+        const previous={base:state.base,head:oldHead,brief:state.brief,evidence:state.evidence,at:now()};
+        const brief={...state.brief,base:newBase,evidence:[...state.brief.evidence,'Rebase recheck: '+reason]};
+        if(brief.cause?.status==='verified') brief.cause={...brief.cause,evidence:[...brief.cause.evidence,'Rebase recheck: '+reason]};
+        state.base=newBase;state.brief=brief;validateBrief(brief,state);
+        (state.rebases ||= []).push({previous,newBase,newHead,reason,at:now()});
+        state.evidence={};save(state);
+        console.log(JSON.stringify({base:newBase,head:newHead,priorEvidenceArchived:true,ready:false,note:'Re-run tests, rules, regression and review against new base/head.'},null,2));return;
+    }
     // A squash lands on the integration branch, whose history need not hold the task base (a
     // review-fix task on a topic branch): the receipt is the reviewed tree, not the ancestry.
     if (command === 'record-land') {
@@ -136,9 +172,21 @@ function main() {
         state.evidence.regressions.push({head,old,test:norm(test),evidence,at:now()}); save(state); return;
     }
     if (command === 'verify') {
+        if(flag('--dev')||flag('--dev-local')){
+            const dev=devPlan(state.base,state.brief);
+            console.log(JSON.stringify({base:state.base,head,...dev},null,2));
+            if(flag('--dev-local')){
+                if(!dev.local.length||dev.local.length>8) fail('Dev-local needs 1-8 non-geodata tests; use Picked CI.');
+                console.log(run(process.execPath,[path.join(root,'scripts/run-tests.js'),'--only='+dev.local.join(','),'--keep-going']));
+                state.evidence.local={head,at:now(),tests:dev.local};save(state);
+            }
+            return;
+        }
         const plan=select(state.base,state.brief);
         const {normal,tests,...details}=plan;
-        console.log(JSON.stringify({head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,...(flag('--show-tests')?{tests}:{})},null,2));
+        const pickedAfterFull=[...plan.geodataOnly,...plan.optionalGeodata.map(t=>'+'+t)];
+        console.log(JSON.stringify({base:state.base,head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,pickedAfterFull,
+            listCommitRecommended:Buffer.byteLength('tests/'+head+'/'+pickedAfterFull.join(','))>240,...(flag('--show-tests')?{tests}:{})},null,2));
         if (plan.critical && state.risk!=='critical') fail('Escalate to critical route before verification.');
         if (flag('--raw-geodata')) {
             const test=norm(opt('--test')||'');

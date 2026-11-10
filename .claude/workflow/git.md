@@ -23,6 +23,7 @@
   a fix for the released game goes into `main`. The integration branch of the release being built is
   `ivan/batch-<n>` or the landing branch the session names (local + fork); a worktree branch lands on it as one commit
   per step, squashed by the main session (`git merge --squash`), never a merge commit or the agent's commit series.
+- One coordinator lands queued reviewed topics; agents do not chase the moving batch. Freeze integration parent for candidate CI/landing. If moved, rebuild/recheck cause, owner and scope; `record-rebase --base <parent> --from-head <old-tip> --evidence <recheck>` archives and clears receipts. No blind reset --soft onto moving ref. Full CI after review/candidate freeze by default; overlap only for expected wall-time gain.
 - No regroup (maintainer 2026-11-10): the integration branch's commits go to `ivan/next-release` as they are, so each
   lands in its final form: one per step or bug, review fixes and their tests folded in before it is pushed, a message
   that says what changed in the game. A fix found after the push is its own commit naming the bug it fixes, never "fix

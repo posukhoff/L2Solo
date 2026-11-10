@@ -1,10 +1,10 @@
 'use strict';
 // Isolated contract tests. Fake Git, runner, gh and filesystem; no network/game writes.
 const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').replace(/^#![^\n]*\n/,'');
-const execute=new Function('require','process','__dirname','console',source);
+const execute=new Function('require','process','__dirname','console','Buffer',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
 let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false, receiptSha='head';
-let current=head, notAncestor=false;
+let current=head, notAncestor=false, rebasePathsMatch=true;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:()=>true,mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
 const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':id==='6'?'tests/b/+test_basic':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'||id==='6'?'Picked tests':'PR checks',jobs:id==='2'||id==='6'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
@@ -14,11 +14,11 @@ const exec=(p,a)=>{
         if(a[0]==='merge-base'){if(current===landed&&notAncestor)throw Error('not ancestor');return '';}
         if(a[0]==='rev-parse'){
             if(a.includes('--git-common-dir'))return '/git';
-            if(a[1]==='--verify')return base;
+            if(a[1]==='--verify')return a[2].startsWith('new-parent')?other:a[2].startsWith('old-topic')?head:base;
             if(a[1]==='HEAD')return current;
             if(a[1].endsWith('^{tree}'))return a[1].startsWith(other)?'other-tree':'same-tree';
         }
-        if(a[0]==='diff')return 'M\tsrc/foo.js';
+        if(a[0]==='diff')return a.includes('--name-only')?(a.includes(other)&&!rebasePathsMatch?'src/other.js':'src/foo.js'):'M\tsrc/foo.js';
     }
     if(p==='gh'&&a[1]==='download'){
         const files=receiptMode==='noMap'?[{test:'tests/test_basic.js',skipRaw:'1',geodataFiles:0,status:'passed'}]:[{test:'tests/test_basic.js',skipRaw:'0',geodataFiles:142,status:'passed'}];
@@ -42,7 +42,7 @@ const exec=(p,a)=>{
 const req=x=>x==='node:os'?{tmpdir:()=>'/tmp'}:x==='node:fs'?fsFake:x==='node:path'?pathFake:x==='node:crypto'?{createHash:()=>({update(){},digest:()=>'policy-hash'})}:x==='node:child_process'?{execFileSync:exec}:null;
 function cmd(...args){
     const proc={argv:['node','workflow.js',...args],execPath:'node',pid:1,exitCode:0},logs=[];
-    execute(req,proc,'/home/.claude',{log:x=>logs.push(String(x)),error:x=>logs.push(String(x))});
+    execute(req,proc,'/home/.claude',{log:x=>logs.push(String(x)),error:x=>logs.push(String(x))},Buffer);
     return {code:proc.exitCode,log:logs.join('\n')};
 }
 function expect(label,result,code,contains){
@@ -100,3 +100,18 @@ receiptSha='null';expect('a receipt with a null commit is refused',cmd('record-c
 receiptSha='other';expect('a receipt of another commit is refused',cmd('record-ci','rawci','--run','6'),1,'another commit');
 receiptSha='head';expect('raw map receipt recorded',cmd('record-ci','rawci','--run','6'),0,'');
 expect('raw ci evidence in status',cmd('status','rawci'),0,'"source": "ci"');
+
+current=head;optionalRaw=false;
+expect('dev feedback only',cmd('verify','rawci','--dev'),0,'Development feedback only');
+expect('dev-local runs non-map tests',cmd('verify','rawci','--dev-local'),0,'test_basic.js');
+expect('integration plan retains map tests',cmd('verify','rawci'),0,'pickedAfterFull');
+current=landed;
+expect('rebase needs explicit recheck',cmd('record-rebase','rawci','--base','new-parent','--from-head','old-topic'),1,'requires');
+rebasePathsMatch=false;
+expect('rebase changed task scope refused',cmd('record-rebase','rawci','--base','new-parent','--from-head','old-topic','--evidence','checked owner and cause'),1,'Task paths changed');
+rebasePathsMatch=true;
+expect('rebase records new base',cmd('record-rebase','rawci','--base','new-parent','--from-head','old-topic','--evidence','checked owner and cause'),0,'"priorEvidenceArchived": true');
+const rebased=JSON.parse(store.get('/git/l2solo-workflow/rawci.json'));
+if(rebased.base!==other||rebased.brief.base!==other||Object.keys(rebased.evidence).length||!rebased.rebases[0].previous.evidence.rawGeodata)throw Error('rebase did not archive and clear evidence');
+console.log('PASS rebase clears old SHA evidence and retains history');
+expect('rebased task not ready without fresh proof',cmd('ready','rawci'),1,'No passing scoped review');

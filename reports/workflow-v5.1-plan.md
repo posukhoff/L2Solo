@@ -1,0 +1,8 @@
+# V5.1 speed pilot
+Based on V5 stabilization d9048e7e4. Keep all quality/release gates.
+- Parallel topic work, one coordinator, stable candidate parent for final integration. Cheap targeted tests early; full CI after scoped review/candidate freeze by default. Overlap when expected wall-time gain warrants possible discarded run.
+- record-rebase <slug> --base <new parent> --from-head <old topic tip> --evidence <coordinator recheck>: after actual rebase, validates ancestry and identical changed path set, updates brief base, archives old state and clears ALL evidence. Path equality is not patch equivalence: compare old/new diff, confirm cause/owner/scope, rerun regression, review, rules and CI on new SHA. No auto rebase/merge/push. Changed paths require replan/new brief; changed policy requires new record.
+- verify --dev / --dev-local: brief + direct dependency tests, bounded local non-map execution (no syntax/rules receipt). Full verify reports pickedAfterFull (mandatory map and +optional), listCommitRecommended for long refs. Prefer ci-tests.txt for long/multi-shard lists. Full gates unchanged.
+- Round 2 gets prior findings, exact repair diff, new tests. Expand for changed owner/scope/evidence.
+- Measure elapsed, active agent time, CI critical-path wait vs overlap, superseded runs, rebase count, review rounds.
+- Pathfinding: CI jobs 130194299232, 130200262131, 130209223844 assert worker_geodata_error_fallback instead of worker_geodata at test_companion_pathfinding_worker.js:127 within ~0.55s, then timeout 180s. Finally lacks worker/timer cleanup. Separate game-branch cleanup and diagnostic patch; actual worker error code/root cause unverified. Never suppress assertions or increase timeout.
