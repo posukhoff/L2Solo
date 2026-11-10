@@ -30,9 +30,20 @@ function fundedRank(packet, r) {
     for (let row = 0, rows = Packet.fundedRows(packet); row < rows; row++) if (Packet.fundedRatio(packet, row) === rank) return rank;
     return null;
 }
+// The money a spend at rank r may take: the wallet above the reserve and the money the
+// queue holds for the funded rows ahead of it. The rows stand in queue order, tier first,
+// then value per Adena, so a row of a higher tier may hold a lower ratio: a funded root's
+// own row reads the money above the rows before it, any other rank (an unfunded root, a
+// later tier, a side purchase: -Infinity) the money above every funded row, as the network
+// funds a root only from what the roots ahead of it leave. Infinity (a companion's errand)
+// stands ahead of the whole queue.
 function budgetFor(packet, wallet, escrow, r, capture = null) {
+    const rank = r === Infinity ? Infinity : fundedRank(packet, r);
     let prior = 0;
-    for (let row = 0, rows = Packet.fundedRows(packet); row < rows; row++) if (Packet.fundedRatio(packet, row) > r) prior = Packet.fundedCumulative(packet, row);
+    for (let row = 0, rows = rank === Infinity ? 0 : Packet.fundedRows(packet); row < rows; row++) {
+        if (Packet.fundedRatio(packet, row) === rank) break;
+        prior = Packet.fundedCumulative(packet, row);
+    }
     if (capture) capture.priorityReserve = nonnegative(prior);
     return Math.max(0, nonnegative(wallet) + nonnegative(escrow) - nonnegative(Packet.refillReserve(packet)) - prior);
 }
@@ -140,7 +151,7 @@ function spendable(state = {}, escrow = 0, options = {}, captureOutput = null) {
     if (Packet.hasMoney(packet) && !options.upperBound && options.valueHours !== undefined) {
         reason = 'finite_value';
         queueBudget = Math.min(worth(packet, options.valueHours),
-            budgetFor(packet, wallet, 0, fundedRank(packet, options.r) ?? Packet.moneyPrice(packet), capture));
+            budgetFor(packet, wallet, 0, fundedRank(packet, options.r) ?? -Infinity, capture));
     }
     // A side purchase (T177) carries its own value per Adena and takes only the
     // money no queue row holds.
@@ -188,6 +199,15 @@ function bidMoney(own, items) {
     let money = 0;
     for (const id of items || []) money += own.get(Number(id)) || 0;
     return money;
+}
+// A shop step names at most this many of its root's bids (the card keeps them).
+const STEP_BIDS = 8;
+// The money a shop step's buyer takes back to pay it (BotAfkMarketService.freeStepBids):
+// what the bot's own bids (own: ownBids) on the step's named bids hold, the first STEP_BIDS
+// of them. One reading for the build that admits the step (WishNetwork), the held step's
+// check (EconomyContext) and every buyer (payable's stepBids), hot and cold.
+function stepBids(own, bids) {
+    return own?.size && bids?.length ? bidMoney(own, bids.slice(0, STEP_BIDS)) : 0;
 }
 // Finite action utility supplies a funding ratio, never an extra purse.
 // Native writers still reread the current money packet and physical wallet.
@@ -291,5 +311,5 @@ function packetFor(network, hour, reserve) {
     }
     return packet;
 }
-module.exports = { itemRate, budget, operatingReserve, shortfall, surplus, spendable, payable, ownBids, bidMoney, clanCredit, stockAllowance, survivalTranche, quoteScale, forOpportunity, nativeTerms, companionTerms, budgetFor, packetAfterPurchase, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, stampRatio, goalTerms, stockTerms,
+module.exports = { itemRate, budget, operatingReserve, shortfall, surplus, spendable, payable, ownBids, bidMoney, STEP_BIDS, stepBids, clanCredit, stockAllowance, survivalTranche, quoteScale, forOpportunity, nativeTerms, companionTerms, budgetFor, packetAfterPurchase, packetFor, packetRowWishes, PACKET_ROWS, significant, rootRatio, leafRatio, stampRatio, goalTerms, stockTerms,
     summary: () => Diagnostics.active() ? ({ moneyPacketMissing }) : ({ enabled: false }), resetCounters: () => { moneyPacketMissing = 0; } };
