@@ -12,6 +12,7 @@ const ColdTrip = invoke('GameServer/Bot/Population/ColdTrip');
 const Profit = require('./CraftProfitPolicy');
 const Production = require('./ProductionPolicy');
 const Workshops = require('./CraftWorkshopService');
+const FailureLog = require('../../../FailureLog');
 
 
 const isStationService = state => CraftShopService.isStationService(state);
@@ -403,7 +404,9 @@ async function craft(state, random = Math.random) {
         });
     } catch (error) {
         let failure = error;
-        if (station.workshop && error.economyCommand) {
+        // The original token recovers a craft whose delivery is unknown; a named refusal
+        // rolled back and spent nothing, so its outcome is known and there is nothing to recover.
+        if (station.workshop && error.economyCommand && !FailureLog.refusal(error)) {
             try {
                 result = await Workshops.craft(crafter.id, recipe.recipeId, state.characterId,
                     { original: error.economyCommand });

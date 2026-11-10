@@ -29,6 +29,7 @@ const EconomyContext = invoke('GameServer/Bot/Economy/EconomyContext');
 const World = invoke('GameServer/World/World');
 const TownTransitPolicy = invoke('GameServer/Bot/AI/TownTransitPolicy');
 const InventoryCleanup = require('../CompanionInventoryCleanup');
+const FailureLog = invoke('FailureLog');
 
 const MAX_RESTOCK_ATTEMPTS = 3;
 
@@ -442,7 +443,9 @@ async function craftAtWorkshop(session, bot, target) {
         let result;
         try { result = await Workshops.craft(station.characterId, recipe.recipeId, bot.fetchId(), options); }
         catch (error) {
-            if (!error.economyCommand) throw error;
+            // Only an unknown delivery is recovered through the original token; a named
+            // refusal rolled back and spent nothing.
+            if (!error.economyCommand || FailureLog.refusal(error)) throw error;
             session.workshopOriginal = error.economyCommand;
             result = await Workshops.craft(station.characterId, recipe.recipeId, bot.fetchId(), { original: error.economyCommand });
         }

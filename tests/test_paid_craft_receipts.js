@@ -131,7 +131,8 @@ async function run() {
     let visibleCommits = 0;
     Database.craftForCustomer = async (...args) => {
         const result = await actualCraft(...args);
-        if (++visibleCommits === 1) throw Error('hot_adapter_lost_response');
+        // A lost reply after the commit: an unknown outcome, not a named refusal (a bare code).
+        if (++visibleCommits === 1) throw Error('hot adapter lost response');
         return result;
     };
     try { await Shopping.craftAtWorkshop(session, actor, selected); }
