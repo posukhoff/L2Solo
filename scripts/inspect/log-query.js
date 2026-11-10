@@ -28,17 +28,25 @@ function readLog(run){
     });
     return {acts,cools,summaries};
 }
-// Each server.log summary is the timeline summary at the same position when their activation
-// deltas agree; else times stay unknown.
+// Each server.log summary is the timeline summary at the same position when every counter both
+// carry (the summary's numeric fields that are timeline deltas: activations, combatActions, …)
+// agrees; else times stay unknown. A line's time is then an estimated interval: after the summary
+// before it, before the summary after it.
 function windows(log,tl){
-    const ok=log.summaries.length>0&&log.summaries.length<=tl.summaries.length&&log.summaries.every((s,k)=>
-        Number(s.fields.activations)===Number(tl.summaries[k]?.population?.metrics?.delta?.activations));
+    let compared=0;
+    const ok=log.summaries.length>0&&log.summaries.length<=tl.summaries.length&&log.summaries.every((s,k)=>{
+        const delta=tl.summaries[k]?.population?.metrics?.delta||{};
+        const keys=Object.keys(s.fields).filter(key=>key in delta&&/^-?\d+$/.test(s.fields[key]));
+        compared=Math.max(compared,keys.length);
+        return keys.length>0&&keys.every(key=>Number(s.fields[key])===Number(delta[key]));
+    });
     const at=k=>ok&&k>=0&&k<log.summaries.length?tl.summaries[k].t:null;
-    const win=line=>{let k=0;while(k<log.summaries.length&&log.summaries[k].line<line)k++;return {after:at(k-1),before:at(k)};};
-    return {verified:ok,win};
+    const win=line=>{let k=0;while(k<log.summaries.length&&log.summaries[k].line<line)k++;
+        return {estimatedWindow:{notBefore:at(k-1),notAfter:at(k)}};};
+    return {verified:ok,compared,win};
 }
 function activations(run,o){
-    const log=readLog(run),tl=timeline(run),{verified,win}=windows(log,tl);
+    const log=readLog(run),tl=timeline(run),{verified,compared,win}=windows(log,tl);
     const near=o.near?([x,y])=>Math.hypot(x-o.near[0],y-o.near[1])<=o.radius:()=>true;
     const acts=log.acts.filter(a=>near(a.loc)&&(!o.name||a.name===o.name));
     const count=(rows,f)=>Object.entries(rows.reduce((m,r)=>(m[f(r)]=(m[f(r)]||0)+1,m),{})).sort((a,b)=>b[1]-a[1]).slice(0,o.limit);
@@ -49,11 +57,11 @@ function activations(run,o){
     for(const c of log.cools)if(byName.has(c.name))byName.get(c.name).push({event:'cooled',line:c.line,reason:c.reason,...win(c.line)});
     const repeats=[...byName].map(([name,ev])=>({name,activations:ev.filter(e=>e.event==='activated').length,events:ev.sort((a,b)=>a.line-b.line)}))
         .filter(r=>r.activations>=2).sort((a,b)=>b.activations-a.activations);
-    return {query:'activations',source:'server.log',timeMapped:verified,timelineFiles:tl.files,filter:{near:o.near||null,radius:o.radius||null,name:o.name||null},
+    return {query:'activations',source:'server.log',timeMapped:verified,countersCompared:compared,timelineFiles:tl.files,filter:{near:o.near||null,radius:o.radius||null,name:o.name||null},
         total:log.acts.length,matched:acts.length,cooled:log.cools.length,byReason:count(acts,a=>a.reason),byPlan:count(acts,a=>a.plan),
         playerDist:{under1600:acts.filter(a=>a.playerDist<1600).length,under6000:acts.filter(a=>a.playerDist<6000).length},
         cells,repeatedBots:repeats.length,repeats:repeats.slice(0,o.limit),
-        notes:['Lines come only with developerDiagnostics on; names, not ids (resolve with db-query custody).','Times are windows between summaries (~30 s), mapped to the perf timeline only when the activation deltas agree.']};
+        notes:['Lines come only with developerDiagnostics on; names, not ids (resolve with db-query custody).','estimatedWindow is an interval between summaries (~30 s), not an event time; mapped to the perf timeline only when every shared counter of each summary agrees, else null.']};
 }
 function counters(run,o){
     const tl=timeline(run);

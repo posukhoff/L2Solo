@@ -47,15 +47,23 @@ function market(db,o){
     return {query:'market',window:{from:o.from,to:o.to},item:o.item??null,totals,sellbacks,evidence,notes:['History is bounded by explicit inclusive timestamps.','Later sale of same item type by buyer is a candidate, not matching item identity or quantity; not proof of a loop.','Sums count recorded trades, not net adena creation.']};
 }
 function parse(text){if(text==null)return null;try{return JSON.parse(text);}catch{return null;}}
-// The bot's own market trades of the items it deposited, from the history snapshot when one is
-// attached (alias h): they date the buy before the deposit and any later board sale.
-function tradesOf(db,bot,ids){
-    if(!ids.length||!db.prepare("SELECT 1 FROM pragma_database_list WHERE name='h'").get())return null;
-    return all(db,'SELECT id,eventKey,occurredAt,channel,selfId,quantity,unitPrice,buyerCharacterId,sellerCharacterId FROM h.market_trades WHERE (buyerCharacterId=? OR sellerCharacterId=?) AND selfId IN ('+ids.map(()=>'?').join(',')+') ORDER BY occurredAt,id LIMIT 20',bot,bot,...ids);
+// The bot's own market trades of the items it deposited, around the deposit and the liquidation,
+// from the history snapshot when one is attached (alias h): the last trades up to the deposit (the
+// buy that brought the item), every trade between the deposit and the liquidation, the first after.
+const AROUND=3, BETWEEN=20;
+function tradesOf(db,bot,ids,deposit,liquidation){
+    if(!ids.length||!Number.isFinite(deposit?.at)||!db.prepare("SELECT 1 FROM pragma_database_list WHERE name='h'").get())return null;
+    const cols='SELECT id,eventKey,occurredAt,channel,selfId,quantity,unitPrice,buyerCharacterId,sellerCharacterId FROM h.market_trades WHERE (buyerCharacterId=? OR sellerCharacterId=?) AND selfId IN ('+ids.map(()=>'?').join(',')+')';
+    const end=Number.isFinite(liquidation?.at)&&liquidation.at>deposit.at?liquidation.at:deposit.at;
+    const before=all(db,cols+' AND occurredAt<=? ORDER BY occurredAt DESC,id DESC LIMIT ?',bot,bot,...ids,deposit.at,AROUND).reverse();
+    const between=all(db,cols+' AND occurredAt>? AND occurredAt<=? ORDER BY occurredAt,id LIMIT ?',bot,bot,...ids,deposit.at,end,BETWEEN+1);
+    const after=all(db,cols+' AND occurredAt>? ORDER BY occurredAt,id LIMIT ?',bot,bot,...ids,end,AROUND);
+    return {window:{depositAt:deposit.at,liquidationAt:Number.isFinite(liquidation?.at)?liquidation.at:null},before,between:between.slice(0,BETWEEN),after,betweenTruncated:between.length>BETWEEN};
 }
 function custody(db,o){
     const marks=o.bots.map(()=>'?').join(',');
-    const rows=all(db,'SELECT characterId,adena,activity,spotId,statsJson,mindJson FROM bot_life_state WHERE characterId IN ('+marks+') ORDER BY characterId LIMIT ?',...o.bots,o.limit);
+    const found=all(db,'SELECT characterId,adena,activity,spotId,statsJson,mindJson FROM bot_life_state WHERE characterId IN ('+marks+') ORDER BY characterId',...o.bots);
+    const rows=found.slice(0,o.limit);
     const bots=rows.map(r=>{
         const stats=parse(r.statsJson),mind=parse(r.mindJson);
         const plan=stats?.equipmentPlan,deposit=stats?.lastWarehouseDeposit,liquidation=stats?.lastNpcLiquidation;
@@ -69,11 +77,11 @@ function custody(db,o){
             planStrategy:plan?.strategy??null,planTarget:target,lastDeposit:deposit??null,lastLiquidation:liquidation??null,
             custodySignal:{overlapItemIds:overlap,ordered,matchingTarget:target!==null&&deposit?.projectTarget===target,
                 candidate:overlap.length>0&&ordered&&target!==null&&deposit?.projectTarget===target},
-            trades:tradesOf(db,r.characterId,[...depositIds]),
+            trades:tradesOf(db,r.characterId,[...depositIds],deposit,liquidation),
             jsonQuality:{statsParsed:stats!==null,mindParsed:mind!==null}};
     });
-    const found=new Set(rows.map(r=>r.characterId));
-    return {query:'custody',bots,requested:o.bots.length,returned:bots.length,missing:o.bots.filter(id=>!found.has(id)),notes:['Snapshot at end of saved run, not event history.','Same item type in last deposit and later liquidation with matching plan target is a candidate only; confirm quantity, identity and plan lifetime from trace.','money array emitted as stored; do not infer units without the source contract.','trades: the bot\'s market trades of deposited items (history snapshot); an NPC liquidation is not a market trade.']};
+    const present=new Set(found.map(r=>r.characterId));
+    return {query:'custody',bots,requested:o.bots.length,returned:bots.length,missing:o.bots.filter(id=>!present.has(id)),truncated:found.length>rows.length,notes:['Snapshot at end of saved run, not event history.','Same item type in last deposit and later liquidation with matching plan target is a candidate only; confirm quantity, identity and plan lifetime from trace.','money array emitted as stored; do not infer units without the source contract.','trades: the bot\'s market trades of deposited items (history snapshot); an NPC liquidation is not a market trade.']};
 }
 function main(){
     const o=args(process.argv.slice(2)),file=o.query==='market'?'world.history.sqlite':'world.sqlite';

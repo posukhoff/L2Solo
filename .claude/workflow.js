@@ -218,7 +218,8 @@ function main() {
                     walk(dir);
                     const proven=new Set();
                     for (const r of receipts) {
-                        if (r.sha && r.sha!==listSha) fail('Raw-map receipt names another commit: '+r.sha);
+                        // The receipt must name the commit the run tested (GITHUB_SHA): none or another is no evidence.
+                        if (r.sha!==listSha) fail('Raw-map receipt names '+(r.sha?'another commit: '+r.sha:'no commit')+'; expected '+listSha+'.');
                         for (const f of r.files||[]) if (f.status==='passed' && f.skipRaw==='0' && f.geodataFiles>0) proven.add(norm(f.test));
                     }
                     const missing=[...rawAsked].filter(t=>!proven.has(t));

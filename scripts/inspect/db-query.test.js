@@ -23,9 +23,18 @@ try{
  assert.deepEqual(one.sellbacks.map(x=>[x.itemName,x.buysWithLaterSale]),[['Soul Ore',2]],'buys of one item with later sales count in one row');
  assert.equal(one.totals.every(x=>x.itemName==='Soul Ore'),true);
  assert.deepEqual(custody(db,{bots:[1,999],limit:10}).missing,[999]);
- // With the history attached, custody dates the bot's own buy of the deposited item.
+ // With the history attached, custody shows the bot's trades around its deposit (at 10) and
+ // liquidation (at 20): the last ones up to the deposit, those between, the first after; not the
+ // oldest of all history.
  db.exec("ATTACH DATABASE ':memory:' AS h; CREATE TABLE h.market_trades AS SELECT * FROM main.market_trades");
- assert.deepEqual(custody(db,{bots:[1],limit:10}).bots[0].trades.map(t=>[t.id,t.buyerCharacterId,t.sellerCharacterId]),[[1,1,null],[2,2,1],[3,3,1],[4,4,1]]);
+ const old=db.prepare('INSERT INTO h.market_trades VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
+ for(let i=0;i<25;i++)old.run(100+i,'old'+i,-1000+i,'npc','npc_buy',90,'item90',1,100,100,1,null);
+ const t=custody(db,{bots:[1],limit:10}).bots[0].trades;
+ assert.deepEqual(t.before.map(x=>x.id),[123,124,1],'the last trades up to the deposit, the buy at 10 last');
+ assert.deepEqual(t.between.map(x=>x.id),[2],'sales between deposit and liquidation');
+ assert.deepEqual(t.after.map(x=>x.id),[3,4]);assert.equal(t.betweenTruncated,false);
+ const lim=custody(db,{bots:[1,2,999],limit:1});
+ assert.deepEqual([lim.returned,lim.truncated,lim.missing],[1,true,[999]],'missing ids and a limit cut are told apart');
  assert.throws(()=>args(['/tmp','market']),/requires/);assert.throws(()=>args(['/tmp','custody','--bot','1,foo']),/requires/);
  console.log('PASS market window, non-multiplying sale candidates, custody chronology and invalid inputs');
 }finally{db.close();}

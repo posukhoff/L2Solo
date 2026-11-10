@@ -3,7 +3,7 @@
 const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').replace(/^#![^\n]*\n/,'');
 const execute=new Function('require','process','__dirname','console',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
-let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false;
+let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false, receiptSha='head';
 let current=head, notAncestor=false;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:()=>true,mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
@@ -22,7 +22,8 @@ const exec=(p,a)=>{
     }
     if(p==='gh'&&a[1]==='download'){
         const files=receiptMode==='noMap'?[{test:'tests/test_basic.js',skipRaw:'1',geodataFiles:0,status:'passed'}]:[{test:'tests/test_basic.js',skipRaw:'0',geodataFiles:142,status:'passed'}];
-        store.set('/tmp/raw/raw-geodata-1/raw-geodata-receipt.json',JSON.stringify({sha:head,files}));return '';
+        const receipt={files};if(receiptSha==='head')receipt.sha=head;else if(receiptSha==='null')receipt.sha=null;else if(receiptSha==='other')receipt.sha=other;
+        store.set('/tmp/raw/raw-geodata-1/raw-geodata-receipt.json',JSON.stringify(receipt));return '';
     }
     if(p==='gh')return JSON.stringify(gh(a[2]));
     if(p==='node'){
@@ -93,5 +94,9 @@ store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],ow
 expect('raw ci brief',cmd('record-brief','rawci','--file','/brief.json'),0,'true');
 receiptMode='noMap';expect('a green run without the map is no raw evidence',cmd('record-ci','rawci','--run','6'),1,'No raw-map receipt');
 receiptMode='ok';runnerDropsPlus=true;expect('a runner that drops the mark is refused',cmd('record-ci','rawci','--run','6'),1,'does not keep the raw-map mark');
-runnerDropsPlus=false;expect('raw map receipt recorded',cmd('record-ci','rawci','--run','6'),0,'');
+runnerDropsPlus=false;
+receiptSha='missing';expect('a receipt without a commit is refused',cmd('record-ci','rawci','--run','6'),1,'names no commit');
+receiptSha='null';expect('a receipt with a null commit is refused',cmd('record-ci','rawci','--run','6'),1,'names no commit');
+receiptSha='other';expect('a receipt of another commit is refused',cmd('record-ci','rawci','--run','6'),1,'another commit');
+receiptSha='head';expect('raw map receipt recorded',cmd('record-ci','rawci','--run','6'),0,'');
 expect('raw ci evidence in status',cmd('status','rawci'),0,'"source": "ci"');

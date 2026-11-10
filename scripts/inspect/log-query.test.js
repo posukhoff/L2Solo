@@ -16,12 +16,17 @@ try{
  fs.writeFileSync(path.join(run,'rec','timeline-1.jsonl'),[JSON.stringify({type:'summary',t:'T0',reason:'start'}),s('T1',2,2),s('T2',1,3)].join('\n'));
  const a=activations(run,{limit:10,near:[82684,183551],radius:1600});
  assert.equal(a.timeMapped,true);assert.equal(a.total,3);assert.equal(a.matched,2);
- assert.deepEqual(a.repeats[0].events.map(e=>[e.event,e.after]),[['activated','T1'],['cooled','T1'],['activated','T2']]);
+ assert.deepEqual(a.repeats[0].events.map(e=>[e.event,e.estimatedWindow.notBefore,e.estimatedWindow.notAfter]),[['activated','T1','T2'],['cooled','T1','T2'],['activated','T2',null]]);
  const c=counters(run,{keys:['activations','improvementRetired']});
  assert.deepEqual([c.series[0].last.total,c.series[0].peakDelta.delta,c.series[1].last.total],[3,2,3]);
  // A summary that does not match the timeline leaves times unknown instead of guessing.
  fs.writeFileSync(path.join(run,'rec','timeline-1.jsonl'),[s('T1',5,5),s('T2',1,6)].join('\n'));
- const u=activations(run,{limit:10});assert.equal(u.timeMapped,false);assert.equal(u.repeats[0].events[0].after,null);
+ const u=activations(run,{limit:10});assert.equal(u.timeMapped,false);assert.equal(u.repeats[0].events[0].estimatedWindow.notBefore,null);
+ fs.writeFileSync(path.join(run,'rec','timeline-1.jsonl'),[s('T1',2,2),s('T2',1,3)].join('\n'));
+ fs.writeFileSync(path.join(run,'server.log'),fs.readFileSync(path.join(run,'server.log'),'utf8').replace('activations=1 lateInViewActivations=1','activations=1 lateInViewActivations=1 cooldowns=4'));
+ const t2=JSON.parse(fs.readFileSync(path.join(run,'rec','timeline-1.jsonl'),'utf8').split('\n')[1]);t2.population.metrics.delta.cooldowns=5;
+ fs.writeFileSync(path.join(run,'rec','timeline-1.jsonl'),[s('T1',2,2),JSON.stringify(t2)].join('\n'));
+ assert.equal(activations(run,{limit:10}).timeMapped,false,'one disagreeing shared counter refuses the mapping');
  assert.throws(()=>args([run,'counters']),/requires --keys/);assert.throws(()=>args([run,'activations','--near','1,2']),/radius/);
  console.log('PASS server.log activations, cooled pairs, timeline-mapped windows, counters series and refusal of an unverified mapping');
 }finally{fs.rmSync(run,{recursive:true,force:true});}
