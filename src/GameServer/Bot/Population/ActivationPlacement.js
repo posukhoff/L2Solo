@@ -15,7 +15,8 @@ const ROAD_STEPS = 12;
 // competes for, in sight of it, inside its spot, never within BODY_GAP of another
 // body. The mobs: of that species within MOB_SCAN of its cold place and MOB_FLOOR of
 // its floor, the MOB_ANCHORS nearest; with none placed, within HUNTER_RADIUS of its cold
-// place. Any other bot (in town, a raid, off its spot) is placed within the wider
+// place. A party member stands by its leader (HotPartyLifecycle gives the point and
+// radius). Any other bot (in town, a raid, off its spot) is placed within the wider
 // activationPlacementRadius, which leaves room past activationMinPlayerDistance from a
 // player standing on its anchor. Our choice. Temporary: until the territory rework
 // places the cold place and the body by territory.
@@ -168,9 +169,12 @@ function resolve(state, options = {}) {
         if (!loc || (raid && !SpotService.containsLocation(savedSpot, loc)) || !connected(from, loc)) return null;
         return { loc, spot: SpotService.findCurrentSpot(loc) || null };
     };
-    // A solo hunter on its held spot (not a party rally, a raid, a store, a walker or a
-    // summoned bot): by a mob it hunts; else around its cold place below.
-    const hunter = !fixed && !summoned && !raid && !road && options.preferAnchor !== true && onHeldSpot(state, savedSpot);
+    // A solo hunter on its held spot: by a mob it hunts; else around its cold place below.
+    // A party member is not one: its party stands together, so it is placed around the
+    // point its caller gives (its leader's), as are a party's rally, a raid, a store, a
+    // walker and a summoned bot.
+    const hunter = !fixed && !summoned && !raid && !road && options.preferAnchor !== true
+        && !state?.party?.partyId && onHeldSpot(state, savedSpot);
     const mobs = hunter ? huntedMobs(state, savedSpot) : [];
     for (let i = 0; mobs.length && i < Config.activationPlacementAttempts; i++) {
         const mob = grounded(mobs[i % mobs.length].locX, mobs[i % mobs.length].locY, mobs[i % mobs.length].locZ);
