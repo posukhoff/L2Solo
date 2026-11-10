@@ -307,6 +307,15 @@ try {
         assert.strictEqual((await PopulationService.showWalkersNear(landingPoint, [], [], Date.now())).length, 1,
             'a teleport arrival is shown though the player stands on its landing');
         assert.ok(gap(placedAt(spawned[0]), landingPoint) <= 300, 'at its landing');
+        // A walker that set out on foot, a player standing by the start of its run: kept cold,
+        // never shown beside him (only a teleport arrival is).
+        spawned = [];
+        const setOut = cachedWalker(4209, { stats: { karma: 100 } }, spotTravel(NEAR_DRAGON_VALLEY), Date.now() - 500);
+        assert.strictEqual(setOut.stats.travel.method, 'walk');
+        const start = ColdTrip.positionAt(setOut, Date.now());
+        assert.ok(gap(start, setOut.stats.travel.run.from) < 100, 'it stands by where it set out');
+        await PopulationService.showWalkersNear(start, [], [], Date.now());
+        assert.strictEqual(spawned.length, 0, 'a walker on foot is not shown beside the player');
 
         cachedWalker(4203, {}, spotTravel(NEAR_DRAGON_VALLEY), Date.now() - tripMs + 1500);
         spawned = [];

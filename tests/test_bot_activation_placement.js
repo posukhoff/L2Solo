@@ -208,6 +208,10 @@ try {
     Geo.getHeight = () => -112;
     Math.random = () => 0;
     assert.strictEqual(Placement.resolve(hunter).loc.locZ, -112, 'on the floor under its place');
+    // A roof 70 over its cold place, the floor 80 under it and a lower floor 400 under it:
+    // shown on the floor right under, never on the lower one.
+    Geo.getCellData = (x, y, z) => ({ z: [70, -80, -400].reduce((a, b) => Math.abs(b - z) < Math.abs(a - z) ? b : a), nswe: 15 });
+    assert.strictEqual(Placement.resolve(hunter).loc.locZ, -80, 'on the floor right under its place');
     // A hunter's cold place on ground with no room (pressed into rock, nothing roomy around
     // it): shown at its spot's spawn point that has room, and the recovery is counted.
     Geo.getHeight = () => 0;
@@ -220,6 +224,14 @@ try {
     assert.ok(rallied, 'a hunter in rock is shown');
     assert.ok(Math.hypot(rallied.loc.locX - spawnPoint.locX, rallied.loc.locY - spawnPoint.locY) <= 600, 'by its spot\'s spawn point');
     assert.strictEqual(Metrics.counters.spotPlaceRecoveries, recoveries + 1);
+    // The spawn point nearest it lies outside its spot's cells: shown by the nearest one inside.
+    const inside = { locX: -2000, locY: 0, locZ: 0 };
+    const inField = Spots.containsLocation;
+    Spots.findById = () => ({ ...field, arrivalPoints: [spawnPoint, inside] });
+    Spots.containsLocation = (spot, loc) => loc.locX < 1000 && inField(spot, loc);
+    const inSpot = Placement.resolve(hunter);
+    assert.ok(Math.hypot(inSpot.loc.locX - inside.locX, inSpot.loc.locY - inside.locY) <= 600, 'by its spot\'s spawn point inside the spot');
+    Spots.containsLocation = inField;
     Spots.findById = () => field;
     // A party whose leader's place a player stands on: the leader steps aside past the 450 a
     // body keeps from him, the others around it, rather than the whole party refused.

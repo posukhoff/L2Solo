@@ -67,9 +67,14 @@ function floor(loc, above, below = FLOOR_BELOW) {
     // getCellData loads the region; hasGeo alone only checks the loaded cache.
     let cell = Geo.getCellData(locX, locY, locZ);
     if (!Geo.hasGeo(locX, locY)) return null;
-    // The nearest layer is over the window (a roof): the nearest to the middle of the
-    // window's lower half is the floor under it, when one is there.
-    if (cell.z > locZ + above) cell = Geo.getCellData(locX, locY, locZ - below / 2);
+    // The nearest layer is over the window (a roof): the floor under it is the layer
+    // nearest the point mirrored below by the roof's gap (the layer right under the point
+    // whenever it lies within three times that gap), else the layer nearest the middle of
+    // the window's lower half.
+    if (cell.z > locZ + above) {
+        const under = Geo.getCellData(locX, locY, 2 * locZ - cell.z);
+        cell = under.z <= locZ + above && under.z >= locZ - below ? under : Geo.getCellData(locX, locY, locZ - below / 2);
+    }
     if (!cell.nswe || !Number.isFinite(cell.z) || cell.z > locZ + above || cell.z < locZ - below) return null;
     return { locX, locY, locZ: cell.z };
 }
@@ -235,7 +240,7 @@ function resolve(state, options = {}) {
     };
     // A place a body cannot stand on recovers where the bot can be: a walker on the first
     // ground stepped back along its road, a raid body or a bot on its spot at the spot's
-    // nearest spawn point that stands. Without one (a bot in town, a group member around
+    // nearest spawn point that stands inside the spot. Without one (a bot in town, a group member around
     // its lead off a raid) the place's floor is sampled around as it is. Each recovery
     // that places a body is counted by kind.
     const recovery = road ? (finiteLocation(options.roadFrom) ? 'road' : null)
@@ -244,7 +249,10 @@ function resolve(state, options = {}) {
     if (anchor && recovery && !raid && !clear(anchor)) anchor = null;
     if (anchor || !recovery) return anchor ? around(anchor) : null;
     anchor = recovery === 'road' ? roadStepBack(source, options.roadFrom)
-        : finiteLocation(source) ? spotRally(savedSpot, source, raid ? rally : point => ground(point, PLACE_ABOVE)) : null;
+        : finiteLocation(source) ? spotRally(savedSpot, source, raid ? rally : (point) => {
+            const loc = ground(point, PLACE_ABOVE);
+            return loc && SpotService.containsLocation(savedSpot, loc) ? loc : null;
+        }) : null;
     const placement = anchor && around(anchor);
     if (placement) {
         if (recovery === 'road') Metrics.recordWalkerRoadStepBack();
