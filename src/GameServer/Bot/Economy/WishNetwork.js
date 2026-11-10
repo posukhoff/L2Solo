@@ -914,8 +914,11 @@ class WishNetwork {
         // save its root's own bids (on its item or an item of its paths): the step names them
         // (`bids`) and its buyer takes them back before it pays when the bag alone is short
         // (BotAfkMarketService.freeStepBids). A step the bag and those bids cannot pay is no
-        // step: the least bag such a step needs is its wait (bagShort, goal_affordable:focus),
-        // so a buyer's funding_short never sends the bot back to it. The board holds one bid
+        // step: the least bag such a step needs is its wait (bagShort, goal_affordable:focus).
+        // The buyer's terms (escrow, refill reserve, earlier rows) can still be shorter than
+        // this bag test: its funding_short marks the item (GearMarks) so the next build does
+        // not take it again. Temporary: until a shop step is admitted only at the terms its
+        // buyer pays. The board holds one bid
         // per item, the first root's in the queue whose watch rows need it
         // (TradeIntent.watchRows): another root's bid on an item of this root's paths is not
         // this root's money. A bid no watch row needs (its root's own item, a bid the next
