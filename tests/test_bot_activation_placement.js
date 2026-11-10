@@ -26,6 +26,7 @@ try {
     Spots.findCurrentSpot = () => null;
     if (process.env.L2NODE_SKIP_RAW_GEODATA_TESTS !== '1') {
         invoke('GameServer/Geodata/VirtualObstacles/index').init();
+        assert.fail('PROBE: the raw map block ran');
         // Real Giran geodata and the exact coordinates from EloraMoss's activation.
         assert(Math.abs(Geo.getHeight(roof.locX, roof.locY, anchor.locZ) - anchor.locZ) > 64,
             'the captured roof XY must not resolve to the street layer');
