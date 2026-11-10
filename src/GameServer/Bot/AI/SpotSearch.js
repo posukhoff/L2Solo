@@ -38,7 +38,8 @@ const spotIdOf = spot => spot.id;
 //   profiles are candidates: the goal's own list decided it) }.
 // ctx: { excluded (spot ids), repelled(spotId) (a camp known held against the bot: SpotRecords.reader, on the
 //   worker; counted spot:repelled per candidate it drops), allowed(candidate, spot) (the costly verdict), maxChecks (the first n of the
-//   order are asked), verdicts (a Map shared by the ranks of one search), habit (default: a solo bot's;
+//   order are asked; a counted search left with no pick while more were admitted: spot:search:capped), verdicts (a Map
+//   shared by the ranks of one search), habit (default: a solo bot's;
 //   off for a party's ground, a clan's operation), mode, count (the pick is the bot's answer: the earning
 //   decision's, the route's; a check that only asks whether a source exists, or a plan-time comparison,
 //   counts nothing) }.
@@ -75,6 +76,8 @@ function rank(state, goal, { excluded = null, repelled = null, allowed = null, m
     let at = 0;
     while (at < checked && !verdict(ranked[at])) at++;
     const best = at < checked ? ranked[at] : null;
+    // The checks ran out, not the candidates: its "none" is the cap's (a limit hit, counted).
+    if (!best && count && ranked.length > checked) noteCapped();
     const result = { pick: best, best, ranked, verdict };
     if (!best || !(habit ?? solo(state, mode))) return result;
     const top = valueOf(best);
@@ -100,6 +103,7 @@ function rank(state, goal, { excluded = null, repelled = null, allowed = null, m
 
 const noteHabit = () => invoke('GameServer/Bot/Situations').note('spot:habit:other');
 const noteRepelled = () => invoke('GameServer/Bot/Situations').note('spot:repelled');
+const noteCapped = () => invoke('GameServer/Bot/Situations').note('spot:search:capped');
 
 // A bot's raid ground it is sent to (a clan raid objective or its clan-owned raid plan's spot).
 function explicitClanRaidSpot(state = {}, profile = null) {
@@ -121,8 +125,8 @@ function explicitClanRaidSpot(state = {}, profile = null) {
 // (accept(spot): its own cheap clauses; none: every one), not excluded; by value (value(spot): a SpotEconomics
 // row, its valueHours; a spot with none ranks after every valued one: the table has no row past the
 // deep-blue gap), ties by the closest level, then density, then id; the costly verdict (allowed(spot): the
-// ground and matchup) asked in that order for the first EASIER_CHECKS. A C4 player outgunned at his level
-// farms lower mobs alone. The habit only among spots of a positive value. Returns the pick ({ spot, value })
+// ground and matchup) asked in that order for the first EASIER_CHECKS (more left unasked with none passed:
+// spot:search:capped, rank). A C4 player outgunned at his level farms lower mobs alone. The habit only among spots of a positive value. Returns the pick ({ spot, value })
 // or null: none passed (counted by the caller: spot_list:pick:none, earning:no_spot).
 // ARCH-NOTE: ALT optimistic damage prefilter preserves exact-safe camps: naked L50 catalogue fixture
 // finds 100% of best safe income with 8 exact probes (default 128 found none).

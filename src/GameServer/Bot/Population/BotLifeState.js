@@ -3002,8 +3002,14 @@ const BotLifeState = {
         // Both threads: a worker step that decided before its round merges
         // that decision's packet here, so the event check below writes its
         // dirty bits after it (seen by the next decision point).
+        // Its bits land as the step's change over the state the round started from, then
+        // what the round raised (Situations.landMind): a raise after the decision stands.
         const beforeResolvePacket = options.statsPacketBeforeResolve === true && options.statsPacket;
-        if (beforeResolvePacket) Object.assign(nextState.stats, beforeResolvePacket);
+        if (beforeResolvePacket) {
+            const { mind, ...keys } = beforeResolvePacket, round = mind && { woken: nextState.stats.woken, waiting: nextState.stats.waiting };
+            Object.assign(nextState.stats, keys);
+            if (mind) Situations.landMind(nextState.stats, mind, state.stats, round);
+        }
         let hard = [];
         if (Situations.readsFacts(state, nextState)) {
             // A round records its rewards/resources/sample immediately. It
