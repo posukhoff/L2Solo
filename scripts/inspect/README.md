@@ -19,7 +19,7 @@ Verifier handoff: attach query command, run ID, output counts and decisive file:
 
 ## Workflow changes
 
-close --refuted --evidence <reference> closes a fix whose cause is still a hypothesis; no implementation readiness. Optional geodata: selected tests present in both default and --geodata lists require explicit raw-map evidence for exact HEAD. Use verify --raw-geodata --test <name> in a dedicated worktree with installed raw geodata (one at a time, never during perf/trace). It invokes runner --geodata --only=<name>; existing CI does not prove optional raw-map blocks. This is deliberately local pilot; CI raw-map support needs a separate change in the game branch. No automatic repin: policy changes still invalidate open tasks. No auto push or merge.
+close --refuted --evidence <reference> closes a fix whose cause is still a hypothesis; no implementation readiness. Optional geodata: selected tests present in both default and --geodata lists require explicit raw-map evidence for exact HEAD. Use verify --raw-geodata --test <name> in a dedicated worktree with installed raw geodata (one at a time, never during perf/trace). It invokes runner --geodata --only=<name>; existing CI does not prove optional raw-map blocks. This is deliberately local pilot; CI raw-map support needs a separate change in the game branch. This conservative gate may select too many raw-map files for local execution; if so stop and add explicit raw-map CI support before adopting the gate for that route. Do not silently bypass it. No automatic repin: policy changes still invalidate open tasks. No auto push or merge.
 
 ## Pilot
 

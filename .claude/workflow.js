@@ -93,12 +93,12 @@ function main() {
     const state=JSON.parse(fs.readFileSync(file,'utf8'));
     if (command === 'status') { console.log(JSON.stringify({...state,policyCurrent:state.policy===digest(),head:sha()},null,2)); return; }
     if (state.policy!==digest()) fail('Policy digest changed; coordinator must re-evaluate and create a fresh task record.');
+    if (state.closed) fail('Task closed: '+state.closed.reason+'; use a new slug for new evidence.');
     if (command === 'close') {
         if (!flag('--refuted') || state.kind!=='fix' || state.brief?.cause?.status!=='guess' || !opt('--evidence')) fail('close requires a guess fix, --refuted and --evidence <reference>.');
         state.closed={reason:'refuted',evidence:opt('--evidence'),at:now()};
         save(state); console.log(JSON.stringify(state.closed)); return;
     }
-    if (state.closed) fail('Task closed: '+state.closed.reason+'; use a new slug for new evidence.');
     if (command === 'record-brief') {
         const p=opt('--file');
         if (!p) fail('record-brief requires --file <brief.json>');

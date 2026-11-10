@@ -121,6 +121,9 @@ function options(argv){
         const v=rest[++i], key=k.slice(2);opt[key]=['from','to'].includes(key)?stamp(v):key==='decision'?v:Number(v);
     }
     if(!positive(opt.limit)||opt.limit>1000||opt.bot!==undefined&&!positive(opt.bot)||opt.threshold!==undefined&&!positive(opt.threshold)||opt.from!==undefined&&!Number.isFinite(opt.from)||opt.to!==undefined&&!Number.isFinite(opt.to)||(opt.from??-Infinity)>(opt.to??Infinity))throw Error('Invalid numeric option/window');
+    if(opt.decision&&!['timeline','flips'].includes(query))throw Error('--decision is only valid for timeline/flips');
+    if(opt.threshold!==undefined&&query!=='refusals')throw Error('--threshold is only valid for refusals');
+    if(opt.all&&query!=='timeline')throw Error('--all is only valid for timeline');
     if(['timeline','funding'].includes(query)&&opt.bot===undefined)throw Error(query+' requires --bot');
     return {dir:path.join(path.resolve(run),'logs'),opt};
 }

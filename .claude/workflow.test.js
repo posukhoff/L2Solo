@@ -3,6 +3,7 @@
 const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').replace(/^#![^\n]*\n/,'');
 const execute=new Function('require','process','__dirname','console',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
+let optionalRaw=false;
 let current=head, notAncestor=false;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:()=>true,readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
@@ -23,7 +24,9 @@ const exec=(p,a)=>{
     if(p==='node'){
         if(a[0].endsWith('tests-for.js'))return 'test_basic.js\ntest_geodata.js';
         if(a[0].endsWith('rules-check.js'))return 'ok';
-        if(a.includes('--geodata')||a.some(x=>x.startsWith('--only=')))return 'tests/test_geodata.js';
+        if(a.includes('--geodata')&&a.includes('--list'))return optionalRaw?'tests/test_geodata.js\ntests/test_basic.js':'tests/test_geodata.js';
+        if(a.includes('--geodata')&&a.some(x=>x.startsWith('--only=')))return 'raw pass';
+        if(a.some(x=>x.startsWith('--only=')))return 'tests/test_geodata.js';
         return 'tests/test_basic.js';
     }
     if(p==='npm')return 'ok';
@@ -60,3 +63,14 @@ current=other;expect('different tree rejected',cmd('record-land','x'),1,'differs
 current=landed;notAncestor=true;expect('same tree receipt on a squash outside the base history',cmd('record-land','x'),0,'reviewedHead');notAncestor=false;
 current=head;expect('blocked review invalidates ready',cmd('record-review','x','--result','blocked','--evidence','new blocker'),0,'');
 current=landed;expect('no stale landing',cmd('record-land','x'),1,'No ready receipt');
+
+current=head;optionalRaw=true;
+expect('optional raw map not covered by ordinary CI',cmd('ready','x'),1,'Missing optional raw-geodata evidence');
+expect('explicit raw map test',cmd('verify','x','--raw-geodata','--test','test_basic.js'),0,'raw pass');
+expect('raw map evidence recorded',cmd('status','x'),0,'"rawGeodata"');
+expect('refuted start',cmd('start','refuted','--base','main','--risk','standard'),0,'policy-hash');
+store.set('/guess.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],cause:{status:'guess',explanation:'hypothesis'}}));
+expect('refuted guess',cmd('record-brief','refuted','--file','/guess.json'),0,'false');
+expect('refuted close',cmd('close','refuted','--refuted','--evidence','proof'),0,'refuted');
+expect('closed blocks verification',cmd('verify','refuted'),1,'Task closed');
+expect('closed blocks rewrite',cmd('record-brief','refuted','--file','/guess.json'),1,'Task closed');
