@@ -20,6 +20,6 @@
   {"key":"2.fixed-buy-stores","title":"Fixed buy stores (decide with Slava): RM-15","P":"high","S":"high","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"2.field-trade-both","title":"Field trade both ways, contention as trade: economy.md \"Leanings\"","P":"mid","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"2.one-free-units","title":"One free-units and bids rule: DT-118, DT-145, DT-149, DT-151, DT-162, DT-165, DT-186, DT-188, DT-144, DT-213, DT-218, DT-224, DT-233, DT-240, DT-254, DT-256, DT-258","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"2.design-inputs","title":"Design inputs: ECO-2, ECO-3, ECO-4, ECO-5, ECO-6, ECO-7, ECO-8, ECO-10 (bid worth), ECO-13, ECO-14, ECO-15, ECO-16, SR-6, SR-7, SR-10, BA-3, PL-11, DT-63, DT-64, DT-66, DT-68, DT-74, RM-14, town-5, DT-22, DT-79, DT-40, PL-6, RA-12, DT-70, DV-6, RM-41, RM-46, DT-219, DT-222, DT-229, DT-249, DT-252","P":"mid","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"2.design-inputs","title":"Design inputs: ECO-2, ECO-3, ECO-4, ECO-5, ECO-6, ECO-7, ECO-8, ECO-17, ECO-13, ECO-14, ECO-15, ECO-16, SR-6, SR-7, SR-10, BA-3, PL-11, DT-63, DT-64, DT-66, DT-68, DT-74, RM-14, town-5, DT-22, DT-79, DT-40, PL-6, RA-12, DT-70, DV-6, RM-41, RM-46, DT-219, DT-222, DT-229, DT-249, DT-252","P":"mid","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
