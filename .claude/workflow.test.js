@@ -4,7 +4,7 @@ const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').re
 const execute=new Function('require','process','__dirname','console','Buffer',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
 let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false, receiptSha='head';
-let current=head, notAncestor=false, rebasePathsMatch=true, samePatch=false, baseTouchesTask=true, pidSeq=0;
+let current=head, notAncestor=false, rebasePathsMatch=true, samePatch=false, baseTouchesTask=true, pidSeq=0, remoteHead=landed, remoteFetched=true;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:()=>true,mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
 const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':id==='6'?'tests/b/+test_basic':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'||id==='6'?'Picked tests':'PR checks',jobs:id==='2'||id==='6'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
@@ -18,6 +18,8 @@ const exec=(p,a)=>{
             if(a[1]==='HEAD')return current;
             if(a[1].endsWith('^{tree}'))return a[1].startsWith(other)?'other-tree':'same-tree';
         }
+        if(a[0]==='ls-remote')return remoteHead?remoteHead+'\trefs/heads/'+a[2].replace('refs/heads/','')+'\n'+remoteHead+'\trefs/heads/'+a[2].replace('refs/heads/','')+'-other':'';
+        if(a[0]==='cat-file'){if(!remoteFetched)throw Error('missing object');return '';}
         if(a[0]==='patch-id')return samePatch?'pid-same x':'pid-'+(pidSeq++)+' x';
         if(a[0]==='diff'&&a.includes('--')&&!baseTouchesTask)return '';
         if(a[0]==='diff')return a.includes('--name-only')?(a.includes(other)&&!rebasePathsMatch?'src/other.js':'src/foo.js'):'M\tsrc/foo.js';
@@ -68,13 +70,16 @@ expect('regression',cmd('record-regression','x','--test','test_basic.js','--old'
 expect('geodata gap',cmd('ready','x'),1,'test_geodata.js');
 expect('picked CI',cmd('record-ci','x','--run','2'),0,'');
 expect('ready',cmd('ready','x'),0,'"taskReady": true');
-expect('landing names the integration ref',cmd('record-land','x'),1,'requires --ref');
-expect('different tree rejected',cmd('record-land','x','--ref','int-other'),1,'does not hold the verified tree');
-notAncestor=true;expect('same tree receipt on a squash outside the base history',cmd('record-land','x','--ref','int-landed'),0,'reviewedHead');notAncestor=false;
-if(JSON.parse(store.get('/git/l2solo-workflow/x.json')).evidence.landed.head!==landed)throw Error('landing must record the ref head');
-console.log('PASS landing records the integration ref head');
+const land=()=>cmd('record-land','x','--remote','fork','--branch','batch');
+expect('landing names the remote branch',cmd('record-land','x'),1,'requires --remote');
+remoteHead='';expect('a missing remote branch is refused',land(),1,'has no branch');
+remoteHead=other;expect('a remote holding another tree is refused (a stale local ref cannot pass)',land(),1,'does not hold the verified tree');
+remoteHead=landed;remoteFetched=false;expect('an unfetched remote head is refused',land(),1,'is not fetched');remoteFetched=true;
+notAncestor=true;expect('same tree receipt on a squash outside the base history',land(),0,'reviewedHead');notAncestor=false;
+{const l=JSON.parse(store.get('/git/l2solo-workflow/x.json')).evidence.landed;if(l.head!==landed||l.remote!=='fork'||l.branch!=='batch')throw Error('landing must record the remote head');}
+console.log('PASS landing records the remote branch head');
 current=head;expect('blocked review invalidates ready',cmd('record-review','x','--result','blocked','--evidence','new blocker'),0,'');
-expect('no stale landing',cmd('record-land','x','--ref','int-landed'),1,'No ready receipt');
+expect('no stale landing',land(),1,'No ready receipt');
 
 current=head;optionalRaw=true;
 expect('optional raw map not covered by ordinary CI',cmd('ready','x'),1,'Missing optional raw-geodata evidence');
@@ -129,20 +134,23 @@ expect('move brief',cmd('record-brief','mv','--file','/brief.json'),0,'true');
 expect('move review',cmd('record-review','mv','--result','pass','--evidence','r1'),0,'');
 expect('move regression',cmd('record-regression','mv','--test','test_basic.js','--old',base,'--evidence','old fail'),0,'');
 current=landed;samePatch=true;
-expect('same patch restack carries the review',cmd('record-rebase','mv','--base','new-parent','--from-head','old-topic','--evidence','restack'),0,'"samePatch": true');
+expect('same patch on a base that changed the task files',cmd('record-rebase','mv','--base','new-parent','--from-head','old-topic','--evidence','restack'),0,'"baseChangedTaskFiles"');
 {const st=JSON.parse(store.get('/git/l2solo-workflow/mv.json'));
- if(st.evidence.review?.head!==landed||st.evidence.review.carriedFrom!==head)throw Error('review not carried to the new head');
- if(st.evidence.regressions||st.evidence.ciRuns)throw Error('old-code evidence or CI carried although the base touched the task files');}
-console.log('PASS same-patch restack: review carried, CI and touched old-code evidence dropped');
-expect('restacked task still needs CI and rules',cmd('ready','mv'),1,'Mechanical rules-check missing');
+ if(Object.keys(st.evidence).length)throw Error('nothing may carry when the base changed the task files: '+Object.keys(st.evidence));
+ if(!st.rebases.at(-1).touched.length)throw Error('the changed task files must be named');}
+console.log('PASS a base that changed the task files carries no review, old-code evidence or CI');
+expect('that task needs a new review',cmd('ready','mv'),1,'No passing scoped review');
 current=head;samePatch=false;
 expect('move2 start',cmd('start','mv2','--base','main','--risk','standard'),0,'policy-hash');
 expect('move2 brief',cmd('record-brief','mv2','--file','/brief.json'),0,'true');
 expect('move2 review',cmd('record-review','mv2','--result','pass','--evidence','r1'),0,'');
 expect('move2 regression',cmd('record-regression','mv2','--test','test_basic.js','--old',base,'--evidence','old fail'),0,'');
 current=landed;samePatch=true;baseTouchesTask=false;
-expect('untouched files carry old-code evidence',cmd('record-rebase','mv2','--base','new-parent','--from-head','old-topic','--evidence','restack'),0,'"oldCodeEvidence": "carried"');
+expect('untouched task files carry review and old-code evidence',cmd('record-rebase','mv2','--base','new-parent','--from-head','old-topic','--evidence','restack'),0,'"baseChangedTaskFiles": []');
 {const st=JSON.parse(store.get('/git/l2solo-workflow/mv2.json'));
- if(st.evidence.regressions?.[0]?.old!==other||st.evidence.regressions[0].head!==landed)throw Error('regression not carried to the new base/head');}
-console.log('PASS same-patch restack carries old-code evidence when the task files are unchanged');
+ if(st.evidence.review?.head!==landed||st.evidence.review.carriedFrom!==head)throw Error('review not carried to the new head');
+ if(st.evidence.regressions?.[0]?.old!==other||st.evidence.regressions[0].head!==landed)throw Error('regression not carried to the new base/head');
+ if(st.evidence.ciRuns||st.evidence.rules)throw Error('SHA receipts must not carry');}
+console.log('PASS same patch on an unchanged context carries review and old-code evidence, never SHA receipts');
+expect('carried task still needs CI and rules',cmd('ready','mv2'),1,'Mechanical rules-check missing');
 samePatch=false;baseTouchesTask=true;

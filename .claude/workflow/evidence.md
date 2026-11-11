@@ -29,7 +29,7 @@ A guess brief needs only base, symptom, evidence and cause hypothesis; complete 
 - Picked tests: require exact SHA or single-parent list commit adding only ci-tests.txt, successful Plan and expected shards.
 - Always run local mechanical rules-check for HEAD (verify --rules); PR checks includes syntax/table check but not planning/rules-check.js. --selection-ack records reviewer judgement for uncertain selection; full CI also required in that case. Broad selection >96 prefers full CI and a Picked run for any uncovered geodata tests; no automatic dispatch.
 - Fixes record the expected old assertion failure and new pass (base SHA and evidence reference) with record-regression; manual evidence, not an automated old-code execution. Every named regression test needs its own receipt; regression tests are a subset of brief tests. Preserve existing independent review, simulation and release A/B requirements.
-- ready is task evidence, not merge authorization. `record-land --ref <fetched integration ref>` records that the ref holds the verified tree; no automatic push/merge. If batch integration changes the tree, do not transfer evidence: reverify the integrated result. Final full integration CI still mandatory.
+- ready is task evidence, not merge authorization. `record-land --remote <r> --branch <b>` records that the remote branch holds the verified tree; no automatic push/merge. If batch integration changes the tree, do not transfer evidence: reverify the integrated result. Final full integration CI still mandatory.
 - Digest includes entry point, references and the local scripts used for verification/cleanup. It does not pin all map files; use exact file/line/trace handles and re-evaluate if they change.
 
 ## Pilot

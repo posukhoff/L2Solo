@@ -1,6 +1,6 @@
 # workflow V5.1 stabilization (11-11, 06:30-09:30 UTC+2 day session)
 
-Source: `reports/workflow-v5.1-pilot.md` (night pilot, branch `ivan/workflow-v5.1-pilot`). Fork only: nothing pushed to origin, no PR, no V6. Changes are edits of existing stages (record-land, record-rebase, CI dispatch, the cost rules of agents.md), not new stages. Token numbers below come from transcripts (per-message usage, deduped by message id; `reports/tools/token-usage.py`). "Input-equivalent" weights input 1, cache write 1.25, cache read 0.1, output 5 (relative list prices); it compares cost, not context size.
+Source: `reports/workflow-v5.1-pilot.md` (night pilot, branch `ivan/workflow-v5.1-pilot`). Independent-audit fixes applied (record-rebase, record-land, token-usage); **V5.1 is frozen at this commit**: no new functions, stages or tools. Fork only: nothing pushed to origin, no PR, no V6. Changes are edits of existing stages (record-land, record-rebase, CI dispatch, the cost rules of agents.md), not new stages. Token numbers below come from transcripts: per-message usage, kept by each message's own timestamp, counted once per message id across files (`reports/tools/token-usage.py`; the first version filtered by transcript start and undercounted the night's subagents by ~7 %). "Input-equivalent" weights input 1, cache write 1.25, cache read 0.1, output 5 (relative list prices); it compares cost, not context size.
 
 ## 1. What was fixed, and at which SHAs
 
@@ -10,13 +10,13 @@ Source: `reports/workflow-v5.1-pilot.md` (night pilot, branch `ivan/workflow-v5.
 | DT-243 (release 1a, maintainer decision) | **9e189d2b2** | a goal that cannot pay the money floor is parked: the build takes the next funded goal; it returns when fundable; survival stock keeps its tier (3 review rounds, see §3) |
 | RA1-7 (audit) | **95a12356b** | dead comments and an ignored argument removed in the cold worker (Sonnet) |
 | findings-1a.md missing in the published report | 70b34b8dc on `ivan/workflow-v5.1-pilot` | the shared `info/exclude` ignores new files under `planning/`; added with `-f` |
-| `record-land` | V5.1 branch (§6) | requires `--ref <fetched integration ref>` and checks that the ref holds the verified tree; records the ref's head. Proven live: refused DT-214 before the push, recorded after |
-| `record-rebase` | V5.1 branch | equal patch-id (a restack/reorder) carries the review, and the old-code evidence when the new base left the task's files unchanged; CI/rules/ready never carry. Proven live: DT-243 onto DT-214 and RA1-7 onto DT-243 kept review + regressions, needed only CI |
+| `record-land` | V5.1 branch (§6) | requires `--remote <r> --branch <b>`; reads the remote's actual head with `git ls-remote`, refuses a head that is not fetched, a missing branch or another tree, and records the remote head (audit fix: a stale local ref can no longer pass). The earlier `--ref` form was proven live on DT-214 (refused before the push, recorded after) |
+| `record-rebase` | V5.1 branch | equal patch-id on a new base that left the task's files unchanged carries the review and the old-code evidence; if the base changed those files nothing carries and the changed files are named (audit fix: the review is redone in the new context); CI/rules/ready never carry. Proven live: DT-243 onto DT-214 and RA1-7 onto DT-243 (task files untouched by the base) kept review + regressions and needed only CI |
 | CI dispatch | `.claude/ci-dispatch.sh` | PR checks + the Picked list from `verify`, through the existing `gpush.sh` retries (the night's push failures were its flaky ssh-agent signing); stops on a failed verify (the night's empty-list mistake) |
 | Stacking / CI timing | git.md | stack only on a reviewed task with green PR checks; full CI after a passed review unless overlap clearly saves time (the existing rule I had dropped in the morning edit, restored) |
 | Token rules | agents.md | reports ≤ 250 words; briefs carry handles; targeted tests; a fix round is a new narrow agent (never resumed); cheaper model for low-risk mechanical work; the coordinator hands off past ~200 k context |
 
-`.claude/workflow.test.js`: 47 → 62 PASS (ref-checked landing, same-patch carry with and without touched files). Workflow docs stay within their 40 KB budget (text replaced, not added).
+`.claude/workflow.test.js`: 47 → 65 PASS (all earlier cases kept or rewritten for the new rules; regressions: missing remote branch, remote holding another tree, unfetched remote head, base that changed the task files carries nothing, unchanged context carries review + old-code evidence and never SHA receipts). `reports/tools/token-usage.test.py` PASS (per-message window, [from, to) bounds, one count per message id across files, broken lines). Workflow docs stay within their 40 KB budget (text replaced, not added).
 
 ## 2. Time and token problems removed
 
@@ -33,10 +33,10 @@ Measured (night 00:45-06:30 UTC; transcripts):
 
 | | messages | cache read | cache write | output | input-equivalent |
 |---|---|---|---|---|---|
-| subagents (54 transcripts) | 2642 | 305.1 M | 8.12 M | 1.70 M | ≈ 49 M |
+| subagents | 2702 | 320.7 M | 9.41 M | 1.73 M | ≈ 52.5 M |
 | coordinator | 547 | 251.6 M | 0.85 M | 0.37 M | ≈ 28 M (avg context ~460 k per turn) |
 
-By role: implementers 101 M cache read / 0.54 M out; verifiers 64.5 / 0.43; reviewers 53.3 / 0.37; audit 44.6 / 0.13; analyses 28.1 / 0.13. Median context per message: verifier 114 k, implementer 93 k, reviewer 78 k. **Cost = context × turns; the coordinator alone was ~36 % of the night.** Uncached input is negligible (5 k); mandatory docs are ~5 k tokens of the ~80-150 k contexts.
+Median context per subagent message ~119 k (verifier 114 k, implementer 93 k, reviewer 78 k in the per-role split). **Cost = context × turns; the coordinator alone was ~35 % of the night.** Uncached input is negligible (5 k); mandatory docs are ~5 k tokens of the ~80-150 k contexts.
 
 Measured CI (night): of 48 PR-checks runs started, 19 useful (on a SHA that landed), 4 superseded, 19 cancelled (restacks), 5 failed (3 real causes); Picked 47 started, 20 useful, 16 superseded, 9 cancelled. Day: DT-214 and DT-243 landed on their first CI after review; RA1-7 needed a second CI after a re-pick (the cost of parallel tasks on one base).
 
@@ -47,7 +47,7 @@ Measured, day tasks (input-equivalent per agent):
 | DT-214 | impl Opus 867 k; r1 Opus 332 k; dead-code deletion Sonnet 112 k; fix Sonnet 220 k; r2 Sonnet 56 k | 2 (r1 blocked: unreachable revision queue) | 1.2 M Opus + 0.39 M Sonnet |
 | DT-243 | impl 493 k; r1 314 k; fix 358 k; r2 297 k; fix 232 k; r3 133 k (all Opus) | 3 (deviation: the coordinator decided after the 2-round limit) | 1.83 M |
 | RA1-7 | impl Sonnet 109 k; review Sonnet 53 k | 1 | 0.16 M Sonnet |
-| coordinator (day, 84 turns) | — | — | 7.4 M (avg context **821 k** per turn) |
+| coordinator (day 06:30-07:35 UTC, 91 turns) | — | — | 8.0 M (avg context **826 k** per turn); day subagents together 3.8 M (255 messages, avg context 68 k) |
 
 Hypotheses (not proven):
 - Sonnet on low-risk work is ~5-10× cheaper per task than Opus: the per-agent units are 3-8× lower, but the tasks were simpler and the Opus/Sonnet price ratio for these models is not in the transcripts. Quality signal (positive, small sample): Sonnet stopped correctly on RA1-5 (a behaviour change hidden in rounding), reviewed correctly, deleted correctly; one slip (a `sed -i` backup file left untracked).
@@ -64,7 +64,7 @@ Hypotheses (not proven):
 
 Faster: CI per landing (no flake reruns), restacks (one command, review carried), landings (ref-checked, gpush retries).
 Still bottlenecks:
-1. **Coordinator context.** ~821 k per turn by the end; it dominates cost. Action: a fresh coordinator per batch with a handoff note (the rule is now in agents.md; this session should be the last long one).
+1. **Coordinator context.** ~826 k per turn by the end; it dominates cost. Action: a fresh coordinator per batch with a handoff note (the rule is now in agents.md; this session should be the last long one).
 2. **Review rounds on critical economy changes.** 3 of 4 first reviews blocked; each round costs 0.3 M+. Action: implementer briefs that name the invariants the reviewer will probe (stock, queue membership) — partly done in the fix briefs.
 3. **Policy-digest churn.** Every docs/CLI edit invalidates open records (5 re-records today). Action: batch policy edits; freeze them while tasks are open.
 4. **Critical-route over-trigger.** A comment-only cleanup in ColdSimulationWorker required critical (full PR checks + selection-ack). Kept (no relaxation), noted.

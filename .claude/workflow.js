@@ -138,23 +138,24 @@ function main() {
         const newHead=sha();
         if(newBase===state.base||newHead===newBase||oldHead===state.base||newHead===oldHead) fail('Expected a changed base and nonempty rebased task.');
         const files=(a,b)=>git('diff','--name-only','--no-renames',a,b).split('\n').filter(Boolean).sort();
-        // The same change moved onto another base (a restack or reorder): the review judged this
-        // diff, so it carries; old-code evidence carries only when the base did not change the task's
-        // files. SHA receipts (CI, rules, checks, ready) never carry.
+        // The same change moved onto another base (a restack or reorder) whose commits left the task's
+        // files unchanged: the review and the old-code evidence judged the same code, so they carry.
+        // When the base changed those files nothing carries (the context moved). SHA receipts never carry.
         const pid=patchId(state.base,oldHead);
         if(pid && pid===patchId(newBase,newHead)) {
             try { git('merge-base','--is-ancestor',newBase,newHead); } catch { fail('New head does not contain the new base.'); }
             const paths=files(state.base,oldHead);
             const sameOldCode=!git('diff','--name-only',state.base,newBase,'--',...paths);
             const previous={base:state.base,head:oldHead,brief:state.brief,evidence:state.evidence,at:now()};
+            const touched=sameOldCode?[]:git('diff','--name-only',state.base,newBase,'--',...paths).split('\n').filter(Boolean);
             const carried={};
-            if(state.evidence.review?.head===oldHead) carried.review={...state.evidence.review,head:newHead,carriedFrom:oldHead,patchId:pid};
+            if(sameOldCode&&state.evidence.review?.head===oldHead) carried.review={...state.evidence.review,head:newHead,carriedFrom:oldHead,patchId:pid};
             if(sameOldCode) carried.regressions=(state.evidence.regressions||[]).filter(r=>r.head===oldHead&&r.old===state.base).map(r=>({...r,head:newHead,old:newBase,carriedFrom:oldHead}));
             const brief={...state.brief,base:newBase,evidence:[...state.brief.evidence,'Restack (same patch '+pid.slice(0,12)+'): '+reason]};
             state.base=newBase;state.brief=brief;validateBrief(brief,state);
-            (state.rebases ||= []).push({previous,newBase,newHead,reason,patchId:pid,sameOldCode,at:now()});
+            (state.rebases ||= []).push({previous,newBase,newHead,reason,patchId:pid,sameOldCode,touched,at:now()});
             state.evidence=carried;save(state);
-            console.log(JSON.stringify({base:newBase,head:newHead,samePatch:true,carried:Object.keys(carried),oldCodeEvidence:sameOldCode?'carried':'re-run (the base changed the task files)',note:'Run CI and rules on the new head.'},null,2));return;
+            console.log(JSON.stringify({base:newBase,head:newHead,samePatch:true,carried:Object.keys(carried),baseChangedTaskFiles:touched,note:sameOldCode?'Run CI and rules on the new head.':'The new base changed the task files: review them in the new context, old-code evidence, CI and rules again.'},null,2));return;
         }
         try {
             git('merge-base','--is-ancestor',state.base,oldHead);
@@ -173,13 +174,16 @@ function main() {
     // A squash lands on the integration branch, whose history need not hold the task base (a
     // review-fix task on a topic branch): the receipt is the reviewed tree, not the ancestry.
     if (command === 'record-land') {
-        const ref=opt('--ref');
-        if (!ref || ref.startsWith('-')) fail('record-land requires --ref <integration ref> (fetch it first: the landing is what the integration branch holds).');
+        const remote=opt('--remote'), branch=opt('--branch');
+        if (!remote || !branch || remote.startsWith('-') || branch.startsWith('-')) fail('record-land requires --remote <name> --branch <integration branch>: the landing is what the remote branch holds.');
         const receipt=state.evidence.ready;
         if (!receipt || !receipt.head) fail('No ready receipt; run ready on the reviewed task checkout first.');
-        const head=git('rev-parse','--verify',ref+'^{commit}');
-        if (git('rev-parse',head+'^{tree}')!==git('rev-parse',receipt.head+'^{tree}')) fail('The integration ref '+ref+' ('+head.slice(0,9)+') does not hold the verified tree; push or fetch first, do not transfer evidence.');
-        state.evidence.landed={ref,head,reviewedHead:receipt.head,tree:git('rev-parse',head+'^{tree}'),at:now()};
+        const line=git('ls-remote',remote,'refs/heads/'+branch).split('\n').find(l=>l.endsWith('\trefs/heads/'+branch));
+        const head=line?.split('\t')[0];
+        if (!/^[0-9a-f]{40}$/.test(head||'')) fail('Remote '+remote+' has no branch '+branch+'.');
+        try { git('cat-file','-e',head+'^{commit}'); } catch { fail('Remote head '+head.slice(0,9)+' is not fetched; fetch it, do not transfer evidence.'); }
+        if (git('rev-parse',head+'^{tree}')!==git('rev-parse',receipt.head+'^{tree}')) fail('Remote '+remote+'/'+branch+' ('+head.slice(0,9)+') does not hold the verified tree; push first, do not transfer evidence.');
+        state.evidence.landed={remote,branch,head,reviewedHead:receipt.head,tree:git('rev-parse',head+'^{tree}'),at:now()};
         save(state); console.log(JSON.stringify(state.evidence.landed,null,2)); return;
     }
     clean();
