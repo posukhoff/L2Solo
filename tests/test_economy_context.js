@@ -520,6 +520,28 @@ async function run() {
         assert(sources.has(990001) && !sources.has(990002), 'only the kept scope subscribes its sources');
     } finally { ScopedProviders.build = build; }
     console.log('PASS candidate read scopes');
+    // The build writes the bot's craft hold (stats.craftHold) into its stats packet: the selected
+    // root's craft inputs; a later build on another root keeps the row of a craft still wished
+    // for (the shot stock waits in its queue) and releases one the queue no longer holds.
+    {
+        const Reservations = invoke('GameServer/Bot/Economy/CraftInputReservations'), walk = Reservations.selectedCraftNeeds;
+        const bot = { ...base, characterId: 907, phase: 'hot', adena: 0, stats: { ...base.stats, classId: 56, playedHours: 2 } };
+        const at = (stats, needs) => {
+            Reservations.selectedCraftNeeds = () => needs;
+            try { return Economy.forState({ ...bot, stats: { ...bot.stats, ...stats } }, { timestamp: Date.now() }); }
+            finally { Reservations.selectedCraftNeeds = walk; Economy.forget(bot.characterId); }
+        };
+        const crafting = at({}, [[1458, 10]]);
+        assert.deepEqual(crafting.statsPacket.craftHold, [[crafting.network.activity.rootKey, [[1458, 10]]]],
+            'the build holds the selected craft\'s inputs');
+        const wished = [['stock:shots', [[1785, 3]]]];
+        const hunting = at({ craftHold: wished }, []);
+        assert(hunting.network.queue.some(row => row.key === 'stock:shots'), 'fixture: the shot stock is still wished for');
+        assert.deepEqual(hunting.statsPacket.craftHold, wished, 'a build on another root keeps the craft still wished for');
+        const gone = at({ craftHold: [['stock:gone', [[1785, 3]]]] }, []);
+        assert.deepEqual(gone.statsPacket.craftHold, [], 'a craft no longer wished for is released');
+    }
+    console.log('PASS the build holds a wished craft\'s inputs');
     // The build's memos (inventory row keys, the kit fact) end with it: a row
     // changed after the build (a new bag: states are replaced, not edited in
     // place) reads fresh.

@@ -1,8 +1,9 @@
 'use strict';
 
-// Retain physical inputs of the selected native craft or equipment exchange DAG.
-// A missing recipe/material remains an errand; it does not release the
-// ingredients already collected toward that profitable equipment funding.
+// Retain physical inputs of the crafts the bot still wishes for (the selected native
+// craft or equipment exchange DAG, and the ones it selected before). A missing
+// recipe/material remains an errand; it does not release the ingredients already
+// collected toward that profitable equipment funding.
 
 // The selected root's craft inputs before the bag caps them: [id, need]
 // rows by id. One walk per build: the compact network keeps them (craftNeeds).
@@ -26,22 +27,42 @@ function selectedCraftNeeds(network) {
     visit(plan);
     return [...needs].sort((a, b) => a[0] - b[0]);
 }
-// The needs capped by the bag the reader reads: {id: amount}. A built network and a
-// card's view carry the needs (craftNeeds) and are capped here, never at the decision:
-// an input bought after it is the craft's as one held then.
-function selectedCraftAmounts(state, network) {
+
+// The bot's standing craft hold (stats.craftHold): [[rootKey, [[id, need], ...]], ...], oldest
+// first, at most CRAFT_HOLD_ROOTS roots. Written only by the build (its stats packet), read by
+// every sale through ItemDisposition.saleCandidates. Inputs bought for a craft the bot still
+// wishes for stay out of every sale until a build no longer wishes for that craft: a root
+// switch alone (a hunt taken while the shot stock still waits) releases nothing. The build's
+// rule (pure): the selected root's craft needs replace that root's row (none: the row goes);
+// every other row stays while its root is still one of the build's wishes (its queue) and goes
+// once it is not (the stock filled, the product owned, the gear or grade moved the wish away);
+// past the cap the oldest row goes, told to dropped(). Equal rows give the previous object back,
+// so a build that changed nothing writes nothing new. Our choice after C4 play: a player who
+// bought Soul Ore for his shots and goes to level keeps it until he stops making those shots.
+const CRAFT_HOLD_ROOTS = 4;
+function nextHold(previous, network, dropped = null) {
+    const root = network?.activity?.rootKey || network?.focus?.[0] || null;
+    const needs = network?.craftNeeds || selectedCraftNeeds(network);
+    const wished = new Set((network?.queue || []).map(row => row.key));
+    const rows = (Array.isArray(previous) ? previous : []).filter(row => row[0] !== root && wished.has(row[0]));
+    if (root && needs.length) rows.push([root, needs.map(([id, need]) => [Number(id), Number(need)])]);
+    if (rows.length > CRAFT_HOLD_ROOTS) {
+        dropped?.(rows.length - CRAFT_HOLD_ROOTS);
+        rows.splice(0, rows.length - CRAFT_HOLD_ROOTS);
+    }
+    if (!rows.length) return Array.isArray(previous) && previous.length ? [] : previous;
+    return JSON.stringify(rows) === JSON.stringify(previous) ? previous : rows;
+}
+// The hold over the bag a reader walks: {id: amount}, per item the largest need of any held
+// root, capped by what that bag holds (a bag with escrow lines in it holds them too).
+function holdAmounts(state) {
     const reserved = {};
-    for (const [id, need] of network?.craftNeeds || selectedCraftNeeds(network)) reserved[id] = Math.min(Number(state.inventory?.[id]?.amount || 0), need);
+    for (const [, needs] of Array.isArray(state?.stats?.craftHold) ? state.stats.craftHold : [])
+        for (const [id, need] of needs || []) {
+            const amount = Math.min(Number(state.inventory?.[id]?.amount || 0), Number(need) || 0);
+            if (amount > 0) reserved[id] = Math.max(reserved[id] || 0, amount);
+        }
     return reserved;
 }
-// The held units of given needs as [id, amount] rows: the held build's craft inputs.
-function heldCraftRows(state, needs) {
-    const rows = [];
-    for (const [id, need] of needs || []) {
-        const amount = Math.min(Number(state.inventory?.[id]?.amount || 0), need);
-        if (amount > 0) rows.push([id, amount]);
-    }
-    return rows;
-}
 
-module.exports = { selectedCraftNeeds, selectedCraftAmounts, heldCraftRows };
+module.exports = { CRAFT_HOLD_ROOTS, selectedCraftNeeds, nextHold, holdAmounts };

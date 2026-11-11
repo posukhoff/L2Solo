@@ -17,6 +17,9 @@ const Pricing = invoke('GameServer/Bot/Economy/MarketPricing');
 const Providers = invoke('GameServer/Bot/Economy/WishProviders');
 const { BoardIndex } = require('../src/GameServer/AfkTrade/BoardIndex');
 const Native = require('./helpers/nativeMarketFixture');
+const Reservations = invoke('GameServer/Bot/Economy/CraftInputReservations');
+// A bag whose bot holds the craft inputs a build wrote for this network (stats.craftHold).
+const holding = (s, network) => ({ ...s, stats: { ...s.stats, craftHold: Reservations.nextHold(s.stats?.craftHold, network) } });
 const sellerId = 938002, buyerId = 938001;
 const point = { locX: 83396, locY: 147904, locZ: -3400 };
 const saleOptions = { unlimited: true, keptAmounts: {} };
@@ -202,13 +205,14 @@ async function run() {
     // A bag is replaced, never edited in place (its sale list is kept per bag).
     const customer = state(); customer.inventory[1458] = { ...stock.inventory[1458], acceptedCustomer: true };
     assert.equal(count(customer), 0, 'accepted customer stock cannot be sold');
+    // The standing craft hold as a build wrote it (a literal row): its inputs stay off every sale.
+    assert.equal(count({ ...state(), stats: { classId: 0, craftHold: [['stock:shots', [[1458, 12]]]] } }), 8,
+        'inputs held for a craft the bot still wishes for are not listed');
     const selected = { kind: 'luxury_exchange', grossRequirements: [{ key: 'item:1458', amount: 12 }],
         requirements: [{ key: 'item:1458', amount: 12 }] };
     const network = { activity: { rootKey: 'power:95:14' },
         queue: [{ key: 'power:95:14', plan: { requirements: [{ key: 'item:95', plan: selected }] } }] };
-    const selectedReserve = Disposition.selectedCraftAmounts(state(), network);
-    assert.equal(selectedReserve[1458], 12, 'selected wish DAG protects the physical luxury input');
-    assert.equal(count(state(), { reserved: selectedReserve }), 8);
+    assert.equal(count(holding(state(), network)), 8, 'selected wish DAG protects the physical luxury input');
     // Gear bought to be crystallized waits for its conversion, never on the board or at the
     // NPC: a shot kit's source gear and the selected exchange's crystallization input are
     // held from every sale pass while their plan holds them (this step and the next), the
@@ -225,16 +229,13 @@ async function run() {
     const crystallize = { kind: 'crystallize', grossRequirements: [{ key: `item:${shield}`, amount: 1 }] };
     const exchangeNetwork = { activity: { rootKey: 'power:95:14' }, queue: [{ key: 'power:95:14', plan: { kind: 'luxury_exchange',
         grossRequirements: [{ key: 'item:1458', amount: 12 }], requirements: [{ key: 'item:1458', plan: crystallize }] } }] };
-    const crystallizeReserve = Disposition.selectedCraftAmounts(gearBag, exchangeNetwork);
-    assert.equal(crystallizeReserve[shield], 1, 'the selected crystallization holds its source gear');
-    assert.equal(listed(gearBag, { reserved: crystallizeReserve }), 1, 'the other shield is sold');
+    assert.equal(listed(holding(gearBag, exchangeNetwork)), 1, 'the selected crystallization holds its source gear, the other shield is sold');
     // A shot stock crafted at a workshop from D crystals and soul ore: the held step buys the
     // crystals, and the town visit served by the card decided with none in the bag (hot or
     // cold) keeps the crystals it then bought for the craft; it never lists them again.
     {
         const { WishNetwork } = require('../src/GameServer/Bot/Economy/WishNetwork');
         const Decision = require('../src/GameServer/Bot/Population/ColdEconomyDecision');
-        const Reservations = require('../src/GameServer/Bot/Economy/CraftInputReservations');
         const buy = (id, price) => ({ key: `item:${id}`, object: id, price,
             paths: [{ kind: 'buy', activity: 'shopping', price, executable: true }] });
         const shots = new WishNetwork().build({ actorKey: 'shot-workshop', inputKey: 'shot-workshop', remembered: false,
@@ -247,9 +248,10 @@ async function run() {
             roots: ['stock:shots'], wallet: 10e6, hourAdena: 100000, stockFor: () => ({ owned: 0, incoming: 0 }) });
         assert.equal(shots.activity.rootKey, 'stock:shots');
         assert.equal(shots.activity.activity, 'shopping', 'the held step buys a craft input');
-        const decided = { ...state(), inventory: {}, stats: { classId: 46 } };
-        const card = Decision.compact(structuredClone(Decision.capture({ network: { ...shots,
-            craftNeeds: Reservations.selectedCraftNeeds(shots) } }, decided)));
+        // The build's write: the selected craft's inputs, uncapped (its stats packet's craftHold).
+        const needs = Reservations.selectedCraftNeeds(shots);
+        const decided = { ...state(), inventory: {}, stats: { classId: 46, craftHold: [['stock:shots', needs]] } };
+        const card = Decision.compact(structuredClone(Decision.capture({ network: shots }, decided)));
         const bought = { ...decided, inventory: inventory(1458, 5) };
         for (const read of [Decision.view, Decision.nearView]) {
             const economy = read(bought, card, { board: quoteOptions.board, timestamp: quoteOptions.now });
@@ -257,6 +259,44 @@ async function run() {
             assert.equal(sale.listings.find(row => row.selfId === 1458)?.count || 0, 0,
                 'crystals bought for the held craft after its decision stay out of the visit\'s sale');
         }
+        // The build that bought the crystals moves to a hunt while the shot stock still waits in
+        // its queue: they stay out of the step's listing (no root switch releases them). A
+        // build that no longer wishes for the stock releases them: they are listed again.
+        const hunt = new WishNetwork().build({ actorKey: 'shot-hunt', inputKey: 'shot-hunt', remembered: false,
+            nodes: [{ key: 'level:40', need: 'power', valueHours: 5000, price: 0,
+                paths: [{ activity: 'hunting', kind: 'experience', costHours: .01 }] },
+            { key: 'stock:shots', need: 'power', object: { itemId: 1463, amount: 300, kind: 'shots' }, valueHours: 50,
+                price: 0, paths: [{ requirements: [{ key: 'item:1463', amount: 300 }] }] },
+            { key: 'item:1463', object: 1463, price: 20000, paths: [{ kind: 'buy', activity: 'shopping', price: 20000 }] }],
+            roots: ['level:40', 'stock:shots'], wallet: 0, hourAdena: 100000, stockFor: () => ({ owned: 0, incoming: 0 }) });
+        assert.equal(hunt.activity.rootKey, 'level:40', 'fixture: the next build hunts');
+        assert(hunt.queue.some(row => row.key === 'stock:shots'), 'fixture: the shot stock is still wished for');
+        const crystals = { ...decided, inventory: inventory(1458, 10) };
+        const listedOnHunt = s => {
+            const huntCard = Decision.compact(structuredClone(Decision.capture({ network: hunt }, s)));
+            const economy = Decision.view(s, huntCard, { board: quoteOptions.board, timestamp: quoteOptions.now });
+            return Listing.evaluate(s, { ...quoteOptions, economy }).listings.find(row => row.selfId === 1458)?.count || 0;
+        };
+        assert.equal(listedOnHunt(crystals), 0, 'crystals bought for the shots stay off the shop while the shots are wished for');
+        assert.equal(listedOnHunt({ ...crystals, stats: { ...crystals.stats, craftHold: [] } }), 10, 'a build that no longer wishes for the shots lists the crystals');
+    }
+    // The hold's rule (CraftInputReservations.nextHold): the selected craft writes its row, other
+    // wished roots keep theirs, an unwished root's row goes, past four roots the oldest goes
+    // (counted), and a build that changes nothing gives the same rows back.
+    {
+        const network = (root, keys, needs = []) => ({ activity: { rootKey: root }, queue: keys.map(key => ({ key })),
+            ...(needs.length ? { craftNeeds: needs } : {}) });
+        const a = Reservations.nextHold(undefined, network('a', ['a'], [[1458, 10]]));
+        assert.deepEqual(a, [['a', [[1458, 10]]]], 'the selected craft writes its inputs');
+        assert.equal(Reservations.nextHold(a, network('a', ['a'], [[1458, 10]])), a, 'an unchanged hold is the same rows');
+        const b = Reservations.nextHold(a, network('b', ['a', 'b']));
+        assert.equal(b, a, 'another root selected keeps a still wished craft');
+        assert.deepEqual(Reservations.nextHold(b, network('b', ['b'])), [], 'a craft no longer wished for is released');
+        let dropped = 0, hold;
+        for (const root of ['c1', 'c2', 'c3', 'c4', 'c5'])
+            hold = Reservations.nextHold(hold, network(root, ['c1', 'c2', 'c3', 'c4', 'c5'], [[1785, 3]]), n => { dropped += n; });
+        assert.deepEqual(hold.map(row => row[0]), ['c2', 'c3', 'c4', 'c5'], 'past four roots the oldest goes');
+        assert.equal(dropped, 1, 'the dropped root is told');
     }
     Supplies.useRowSource(id => id === 42 ? [42, 1, [[1458, 3]], 1] : undefined);
     assert.equal(count(state(1458, { clanId: 42, equipmentPlan: exchange })), 5,
