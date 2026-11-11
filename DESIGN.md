@@ -46,9 +46,13 @@ Seed decisions M1–M6 carry no `allows`, so they authorize nothing.
 
 ## Investigation status
 
-RM-51, RM-52, RM-53, DT-263 and DT-264 carry `why: investigation: cause unverified`, so a hypothesis is not a cause. A cause becomes verified only through `lc resolve`, which needs V5.1 evidence: a regression test (old fails, new passes) in a task whose brief names the id, or a run verdict naming it.
+RM-51, RM-52, RM-53, DT-263 and DT-264 carry `why: investigation: cause unverified`; the line states an observation, not a cause.
 
-Limit: `assign` clears `why`. Moving such an issue again needs the note set again; no CLI feature was added for this (maintainer 11-11).
+A cause is verified in V5.1 before implementation: the task brief's `cause.status: verified` needs evidence handles and regression tests. lc neither verifies nor promotes a cause. `lc resolve` comes after landing and only records that the issue's own result exists (a V5.1 regression test, or a run verdict naming the id); it does not prove the cause.
+
+V5.2 is not applied to the open V5.1 tasks of release 1a. lc reads whichever record a task has and never writes one.
+
+Limit: `assign` clears `why`. Moving such an issue again needs the note set again; no CLI feature was added for this.
 
 ## Triage (3)
 
