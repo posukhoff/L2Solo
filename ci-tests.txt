@@ -1,0 +1,16 @@
+clan_war_return_geodata
+companion_equipment_shopping
+companion_pathfinding_worker
+town_movement
+town_npc_routing
+town_trade_navigation
++bot_activation_placement
++c4_forest_of_the_dead
++c4_seven_signs_dungeon_teleports
++c4_swamp_of_screams
++pathfinding_worker_pool
++player_move_destination_height
++player_transition_recovery
++ti_magic_shop_transition
++town_npc_approach
++town_transit_policy
