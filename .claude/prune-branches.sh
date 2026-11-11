@@ -12,6 +12,10 @@ mode="${1:---dry-run}"
 [[ "$mode" == "--dry-run" || "$mode" == "--apply" ]] || { echo "usage: $0 [--dry-run|--apply]" >&2; exit 2; }
 git fetch -q --prune --multiple fork origin
 keep=(main ivan/next-release perf-tooling ivan/lifecycle-data ivan/workflow-v5.2 ivan/workflow ivan/workflow-v2)
+# Branches lc names: an open release's integration branch has no commit of its own at first and reads as merged, and
+# a closed release's branch is what lc checks a landed task against. A failed read aborts.
+lcb=$(node -e 'const {context,load}=require("./.claude/lc.js");const {d}=load(context({repo:process.cwd()}));const b=new Set();for(const r of Object.values(d.releases))if(r.branch)b.add(r.branch);for(const a of Object.values(d.archive))if(a.manifest&&a.manifest.branch)b.add(a.manifest.branch);console.log([...b].join("\n"))') || { echo "cannot read the release branches from lc" >&2; exit 1; }
+keep+=(${(f)lcb})
 refs=$(git ls-remote --heads fork)
 # One query for the recent runs (one call per branch took ~1 s each: 460 branches, ~10 min). A failed query aborts.
 runs=$(gh run list -R posukhoff/L2Solo --limit 1000 --json headBranch,headSha,status,createdAt)
