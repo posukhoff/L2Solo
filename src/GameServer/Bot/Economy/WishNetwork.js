@@ -118,27 +118,30 @@ function choose(rows, weight, roll) {
 // (wish.worth, set where a transformation brings the item): an exchange or a craft
 // dearer than the item it yields is below the floor like any other wish. Our choice:
 // a C4 player buys the piece he needs, not a recipe that costs a multiple of it.
+const flooredValue = (wish, floor) => wish.progressionPriority > 0
+    ? Math.max(wish.valueHours, Math.min(wish.price, wish.worth ?? Infinity) * floor) : wish.valueHours;
+// Read on the floored value itself, not on the ratio: a required piece at its own
+// price passes exactly.
+const paysFloor = (wish, floor, value = flooredValue(wish, floor)) => value / wish.price >= floor
+    || wish.progressionPriority > 0 && value >= wish.price * floor;
 function moneyQueue(wishes, wallet, refillReserve = 0, floor = 0) {
     let available = Math.max(0, nonnegative(wallet) - nonnegative(refillReserve));
     const queue = wishes.filter(wish => wish.valueHours > 0 && wish.price > 0)
         .map(wish => {
-            const valueHours = wish.progressionPriority > 0
-                ? Math.max(wish.valueHours, Math.min(wish.price, wish.worth ?? Infinity) * floor) : wish.valueHours;
+            const valueHours = flooredValue(wish, floor);
             return { ...wish, valueHours, ratio: valueHours / wish.price };
         })
         .sort((a, b) => nonnegative(b.progressionPriority) - nonnegative(a.progressionPriority)
             || b.ratio - a.ratio || a.key.localeCompare(b.key));
-    // Read on the floored value itself, not on the ratio: a required piece at its own
-    // price passes exactly.
-    const paysFloor = wish => wish.ratio >= floor || wish.progressionPriority > 0 && wish.valueHours >= wish.price * floor;
+    const pays = wish => paysFloor(wish, floor, wish.valueHours);
     let moneyPrice = nonnegative(floor), cutoffFound = false, gap = null, awaitingKit = null;
     for (const wish of queue) {
         // An unsupported wish keeps its place and interest, never the money; one below
         // the floor neither, nor does the money wait for it.
-        if (!fundable(wish) || !paysFloor(wish)) {
+        if (!fundable(wish) || !pays(wish)) {
             wish.funded = false;
             // Kit before stock: stock nobody can supply is not what the money waits for (T178).
-            if (paysFloor(wish) && wish.progressionPriority > 0 && (!awaitingKit || awaitingKit.key.startsWith('stock:') && !wish.key.startsWith('stock:'))) awaitingKit = wish;
+            if (pays(wish) && wish.progressionPriority > 0 && (!awaitingKit || awaitingKit.key.startsWith('stock:') && !wish.key.startsWith('stock:'))) awaitingKit = wish;
             continue;
         }
         // The first gap holds the marginal price of money. Smaller desires
@@ -773,10 +776,19 @@ class WishNetwork {
             }
         }
         wishes = wishes.filter(kept);
-        const gearPriority = Math.max(0, ...wishes.filter(wish => wish.object?.slot).map(wish => wish.progressionPriority));
+        const floor = hourAdena > 0 ? 1 / hourAdena : 0;
+        // A required goal that pays no money floor even with the whole focus on it (an exchange
+        // or a craft dearer than its item's worth) holds no money, no funding gap and so no
+        // step (moneyQueue). It stays wanted in the queue, and the tiers are read without it:
+        // the build takes the next goal the money funds, and the goal is back the build it pays
+        // the floor (a cheaper path, a dearer item). Read on its own value, never the focus: the
+        // same inputs park the same goals, so the focus does not swing between the two.
+        const parked = new Set(wishes.filter(wish => wish.progressionPriority > 0 && !wish.key.startsWith('stock:')
+            && !paysFloor(wish, floor)));
+        const gearPriority = Math.max(0, ...wishes.filter(wish => wish.object?.slot && !parked.has(wish)).map(wish => wish.progressionPriority));
         if (gearPriority) {
             const budget = Math.max(0, wallet - refillReserve);
-            const readyGear = wishes.some(wish => wish.object?.slot && wish.progressionPriority === gearPriority
+            const readyGear = wishes.some(wish => wish.object?.slot && !parked.has(wish) && wish.progressionPriority === gearPriority
                 && fundable(wish) && Math.max(cashCharge(wish), nonnegative(byKey.get(wish.key).price)) <= budget);
             // A finite profitable craft can pay for the kit. Once a kit piece
             // is affordable, spend on it before starting another earning trial.
@@ -791,7 +803,6 @@ class WishNetwork {
         // So does required stock whose road its goods do not carry (EconomicValuation.roadCarried,
         // at the bot's own hour): no trip for a few potions; they ride along on a visit
         // made for something else, or are bought where the bot stands.
-        const floor = hourAdena > 0 ? 1 / hourAdena : 0;
         const roadless = wish => {
             const plan = wish.plan, entries = plan?.tripEntries || [];
             if (!(wish.progressionPriority > 0) || !entries.length) return false;
@@ -804,14 +815,17 @@ class WishNetwork {
                 amount, wanted, valueHours: nonnegative(wish.valueHours) * amount / wanted }, road);
         };
         const unsupplied = wish => wish.key.startsWith('stock:') && (!fundable(wish) || roadless(wish));
-        const doable = wishes.filter(wish => !unsupplied(wish));
+        const doable = wishes.filter(wish => !unsupplied(wish) && !parked.has(wish));
         const activePriority = Math.max(0, ...(doable.length ? doable : wishes).map(wish => wish.progressionPriority));
         // An errand leaves the goal alone (decision 10-26): stock takes the money and
-        // the step, the focus stays on what the bot is after.
-        const goals = doable.filter(wish => !wish.key.startsWith('stock:'));
+        // the step, the focus stays on what the bot is after. With no other goal, that is
+        // the parked one.
+        const free = doable.filter(wish => !wish.key.startsWith('stock:'));
+        const goals = free.length ? free : wishes.filter(wish => parked.has(wish));
         const goalPriority = Math.max(0, ...goals.map(wish => wish.progressionPriority));
         const tiers = wishes;
-        if (activePriority) wishes = wishes.filter(wish => wish.progressionPriority === activePriority || unsupplied(wish));
+        if (activePriority) wishes = wishes.filter(wish => wish.progressionPriority === activePriority || unsupplied(wish)
+            || parked.has(wish) && wish.progressionPriority > activePriority);
         const focusWishes = goals.length ? goals.filter(wish => wish.progressionPriority === goalPriority)
             : (doable.length ? doable : wishes).filter(wish => wish.progressionPriority === activePriority);
         const loyalty = Math.min(1, nonnegative(persona.traits?.commitment ?? 0.5));
