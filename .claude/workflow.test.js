@@ -84,6 +84,7 @@ expect('regression',cmd('record-regression','x','--test','test_basic.js','--old'
 expect('geodata gap',cmd('ready','x'),1,'test_geodata.js');
 expect('picked CI',cmd('record-ci','x','--run','2'),0,'');
 expect('ready',cmd('ready','x'),0,'"taskReady": true');
+expect('ready reports the ci part lc reads',cmd('ready','x'),0,'"ci": {');
 const land=()=>cmd('record-land','x','--remote','fork','--branch','batch');
 expect('landing names the remote branch',cmd('record-land','x'),1,'requires --remote');
 remoteHead='';expect('a missing remote branch is refused',land(),1,'has no branch');

@@ -62,7 +62,7 @@ function world() {
     sh(['add', 'game.js']); sh(['commit', '-q', '-m', 'base']);
     sh(['remote', 'add', 'fork', fork]); sh(['remote', 'add', 'origin', origin]);
     const seed = path.join(dir, 'seed.json'); fs.writeFileSync(seed, JSON.stringify(SEED));
-    const stub = path.join(dir, 'workflow-stub.js'); // V5.1 `verify` stand-in: prints the selection a test sets
+    const stub = path.join(dir, 'workflow-stub.js'); // `workflow.js ready` stand-in for refusal cases; the contract test below runs the real workflow.js
     fs.writeFileSync(stub, "process.stdout.write(require('fs').readFileSync(process.env.LC_STUB_PLAN, 'utf8'));\n");
     const plan = path.join(dir, 'plan.json');
     const env = { ...process.env, LC_WORKFLOW_DIR: wf, LC_RUNS: runs, LC_WORKFLOW_JS: stub, LC_STUB_PLAN: plan };
@@ -122,6 +122,7 @@ test('import is lossless, runs once, and a re-import compares clean: ids, aliase
 test('decisions authorize only what they name; rules, deps, cycles, ids and drops refuse', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     const vague = w.decide('economy fixes are fine');
+    w.no(/--allow action is one of/, 'decide', '--date', '2026-11-12', '--text', 'x', '--allow', 'action=archive-anything,issue=S3');
     w.no(/needs --decision/, 'assign', 'RM-45', '--to', '3.cold-command-dropped');
     w.no(/M\d+ does not allow rule-override/, 'assign', 'RM-45', '--to', '3.cold-command-dropped', '--decision', vague);
     const m = w.decide('RM-45 technical part may sit in 3', 'action=rule-override,issue=RM-45,rule=M1');
@@ -194,18 +195,14 @@ test('a release end to end: per-issue results, complete CI, run provenance, beha
     w.no(/not waived/, 'gate', '1b.1', 'report', '--ref', 'r.md', '--waive', '--decision', g);
     // CI completeness, as V5.1 selects it
     landedTask(w, 'rel-ci', w.base, head, 'ivan/batch-1b1');
-    fs.writeFileSync(w.plan, JSON.stringify({ head, geodataOnly: ['test_geo.js', 'test_geo2.js'], optionalGeodata: ['test_raw.js'] }));
-    w.no(/Picked tests miss test_geo2\.js/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
-    fs.writeFileSync(w.plan, JSON.stringify({ head, geodataOnly: ['test_geo.js'], optionalGeodata: ['test_raw.js', 'test_raw2.js'] }));
-    w.no(/raw-geodata evidence misses test_raw2\.js/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
-    fs.writeFileSync(w.plan, JSON.stringify({ head: w.base, geodataOnly: [], optionalGeodata: [] }));
-    w.no(/not the frozen head/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
-    const noPr = landedTask(w, 'rel-ci2', w.base, head, 'ivan/batch-1b1'); noPr.evidence.ciRuns = noPr.evidence.ciRuns.filter(x => x.workflow !== 'PR checks'); fs.writeFileSync(path.join(w.wf, 'rel-ci2.json'), JSON.stringify(noPr));
-    w.no(/no full PR checks/, 'gate', '1b.1', 'ci', '--task', 'rel-ci2', '--root', w.repo);
-    const oldRules = landedTask(w, 'rel-ci3', w.base, head, 'ivan/batch-1b1', [], { rules: { head: w.base } });
-    w.no(/rules-check is not on/, 'gate', '1b.1', 'ci', '--task', 'rel-ci3', '--root', w.repo); assert.ok(oldRules);
-    fs.writeFileSync(w.plan, JSON.stringify({ head, geodataOnly: ['test_geo.js'], optionalGeodata: ['test_raw.js'] }));
-    w.ok('gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
+    const ready = ci => fs.writeFileSync(w.plan, JSON.stringify({ head, taskReady: false, reasons: [], ci: { full: true, rules: true, missing: [], missingRaw: [], ...ci } }, null, 2) + '\nRETRO DUE: x\n');
+    ready({ missing: ['test_geo2.js'] }); w.no(/CI misses test_geo2\.js/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
+    ready({ missingRaw: ['test_raw2.js'] }); w.no(/raw-geodata evidence misses test_raw2\.js/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
+    ready({ full: false }); w.no(/no full PR checks/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
+    ready({ rules: false }); w.no(/rules-check is not on/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
+    fs.writeFileSync(w.plan, JSON.stringify({ head: w.base, ci: { full: true, rules: true, missing: [], missingRaw: [] } })); w.no(/not the frozen head/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
+    fs.writeFileSync(w.plan, JSON.stringify({ head, taskReady: true })); w.no(/reports no ci part/, 'gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
+    ready({}); w.ok('gate', '1b.1', 'ci', '--task', 'rel-ci', '--root', w.repo);
     // trace: provenance, profile, artifacts, evidence files that name the run
     const cov = file(w, 'cov.txt', `coverage ${s9}`), inv = file(w, 'inv.json', `{"run":"${s9}"}`);
     const tv = file(w, 'tv.md', `${s9}-script-final ${s9}\nverdict: pass\n`);
@@ -225,10 +222,11 @@ test('a release end to end: per-issue results, complete CI, run provenance, beha
     w.ok('gate', '1b.1', 'trace', '--run', `${s9}-script-final`, '--coverage', cov, '--invariants', inv, '--verdict', tv);
     // A/B: both scenarios on both sides, one save, diagnostics, A an ancestor
     const b1 = run(w, `${s9}-script-ab`, { sha: head }), b2 = run(w, `${s9}-hot-ab`, { sha: head, scenario: 'hot', minutes: 20 });
-    const a9 = w.base.slice(0, 9), a1 = run(w, `${a9}-script-ab`, { sha: w.base }), a2 = run(w, `${a9}-hot-ab`, { sha: w.base, scenario: 'hot', minutes: 20 });
+    const old = w.sh(['commit-tree', w.sh(['rev-parse', w.base + '^{tree}']), '-p', w.base, '-m', 'the version players have: not an ancestor of the head']);
+    const a9 = old.slice(0, 9), a1 = run(w, `${a9}-script-ab`, { sha: old }), a2 = run(w, `${a9}-hot-ab`, { sha: old, scenario: 'hot', minutes: 20 });
     const abv = file(w, 'ab.md', `${s9} ${b1} ${b2} ${a1} ${a2}\nverdict: pass\n`);
     w.no(/no A run fits.*hot/, 'gate', '1b.1', 'ab', '--run', b1, '--run', b2, '--base-run', a1, '--verdict', abv);
-    const a3 = run(w, `${a9}-hot-other-save`, { sha: w.base, scenario: 'hot', minutes: 20, save: 'save-2' });
+    const a3 = run(w, `${a9}-hot-other-save`, { sha: old, scenario: 'hot', minutes: 20, save: 'save-2' });
     w.no(/share one named save/, 'gate', '1b.1', 'ab', '--run', b1, '--run', b2, '--base-run', a1, '--base-run', a3, '--verdict', abv);
     w.ok('gate', '1b.1', 'ab', '--run', b1, '--run', b2, '--base-run', a1, '--base-run', a2, '--verdict', abv);
     w.no(/no "behaviour: preserved" line/, 'gate', '1b.1', 'behaviour', '--verdict', file(w, 'bh0.md', `${s9} ${b1} ${b2}\n`));
@@ -340,30 +338,6 @@ test('split keeps the old id, aliases and history; steps are reset and reordered
     assert.deepStrictEqual(dueTails(d).due.map(i => i.id), ['DT-90']);
 });
 
-test('the V5.1 task ledger: landed, landed by patch-id, superseded, abandoned, release gate; records untouched', () => {
-    const w = world(); w.ok('import', '--decisions', w.seed);
-    w.sh(['branch', 'ivan/batch-9', w.base]);
-    const h1 = commit(w, 'ivan/batch-9', 'fix a');
-    landedTask(w, 'dt201c', w.base, h1, 'ivan/batch-9');
-    w.sh(['branch', 'wf-test', w.base]); const ht = commit(w, 'wf-test', 'workflow test'); landedTask(w, 'v3-clitest2', w.base, ht, 'wf-test');
-    fs.writeFileSync(path.join(w.wf, 'dt201.json'), JSON.stringify({ slug: 'dt201', base: w.base, created: '2026-11-11T00:00:00Z', evidence: {} }));
-    w.sh(['checkout', '-q', '-b', 'side', w.base]); fs.writeFileSync(path.join(w.repo, 'game.js'), 'fix a'); w.sh(['commit', '-qam', 'same change elsewhere']);
-    const same = w.sh(['rev-parse', 'HEAD']);
-    fs.writeFileSync(path.join(w.wf, 'other-name.json'), JSON.stringify({ slug: 'other-name', base: w.base, created: '2026-11-13T00:00:00Z', evidence: { review: { head: same } } }));
-    fs.writeFileSync(path.join(w.wf, 'n-shaman.json'), JSON.stringify({ slug: 'n-shaman', base: w.base, created: '2026-11-10T00:00:00Z', evidence: {} }));
-    fs.writeFileSync(path.join(w.wf, 'release-1b-ci.json'), JSON.stringify({ slug: 'release-1b-ci', base: w.base, created: '2026-11-12T00:00:00Z', evidence: {} }));
-    const before = fs.readdirSync(w.wf).map(f => fs.readFileSync(path.join(w.wf, f), 'utf8')).join();
-    const out = w.ok('tasks', '--verbose', '--apply');
-    assert.match(out, /dt201 superseded by dt201c/);
-    assert.match(out, /other-name landed by dt201c · same patch-id/);
-    assert.match(out, /n-shaman abandoned/);
-    assert.match(out, /release-1b-ci release-gate/);
-    assert.match(out, /dt201c landed · record-land ivan\/batch-9 .* on an integration branch/);
-    assert.match(out, /v3-clitest2 landed-test · .* on no integration branch/);
-    assert.strictEqual(fs.readdirSync(w.wf).map(f => fs.readFileSync(path.join(w.wf, f), 'utf8')).join(), before);
-    assert.match(w.sh(['show', 'refs/heads/ivan/lifecycle-data:tasks.jsonl']), /"slug":"dt201","class":"superseded"/);
-});
-
 test('context, not files: show pages a step within its budget and loses no line; growth is diagnosed, never cut', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     for (let n = 0; n < 12; n++) w.ok('add', '--sec', 'parties', '--origin', 'x 11-11', '--rule', '9', '--sites', `\`Mod${n}.js\``, '--what', 'w'.repeat(120), '--fix', 'f', '--id', `DT-${400 + n}`, '--to', '1b.1');
@@ -402,4 +376,52 @@ test('start names open issues that share a module with the V5.2 brief cause chai
     rec.brief.cause = { status: 'verified', explanation: 'x', chain: ['PartyStay.js:10 symptom', 'PartyStay.decide 20 decides on main'], excluded: ['none plausible: x'] };
     fs.writeFileSync(path.join(w.wf, 'p1.json'), JSON.stringify(rec));
     assert.match(w.ok('start', '1b.1', '--task', 'p1'), /same cause\?: DT-600 at triage names PartyStay from p1's cause chain/);
+});
+
+test('a hand-edited roadmap.md is replaced only on --overwrite-roadmap and its copy kept; an investigation note survives a move', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed); w.ok('render', '--write');
+    const rf = path.join(w.repo, 'planning/roadmap.md');
+    fs.appendFileSync(rf, '| Row by an agent | low | low | |\n');
+    w.no(/rows live in lc .*--overwrite-roadmap/, 'render', '--write');
+    const out = w.ok('render', '--write', '--overwrite-roadmap');
+    assert.strictEqual(fs.readFileSync(rf, 'utf8'), ROADMAP);
+    assert.match(fs.readFileSync(out.match(/kept at (\S+);/)[1], 'utf8'), /Row by an agent/);
+    const { context, load, save } = require('./lc.js');
+    const cx = context({ repo: w.repo }); const { sha, d } = load(cx);
+    d.issues.find(i => i.id === 'DT-49').why = 'investigation: cause unverified'; save(cx, sha, d, 'test: note');
+    w.ok('assign', 'DT-49', '--to', '1b.2');
+    assert.match(w.ok('show', 'DT-49'), /at 1b\.2 .* investigation: cause unverified/);
+});
+
+test('contract: records written by the real workflow.js pass lc land, resolve and gate ci', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    // a minimal game checkout and policy home the real workflow.js accepts
+    const home = path.join(w.dir, 'home'), put = (f, text) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); };
+    for (const f of ['workflow.js', 'workflow/evidence.md', 'workflow/routes.md']) put(path.join(home, '.claude', f), fs.readFileSync(path.join(__dirname, f)));
+    put(path.join(home, 'planning/tests-for.js'), "console.log('test_basic.js');\n"); put(path.join(home, 'planning/rules-check.js'), "console.log('ok');\n");
+    put(path.join(w.repo, 'package.json'), '{}'); put(path.join(w.repo, 'src/foo.js'), '1\n'); put(path.join(w.repo, 'tests/test_basic.js'), '\n');
+    put(path.join(w.repo, 'scripts/run-tests.js'), "const a = process.argv; console.log(a.includes('--needs-geodata') ? 'false' : a.includes('--geodata') ? '' : 'tests/test_basic.js');\n");
+    w.sh(['add', '-A']); w.sh(['commit', '-qm', 'game base']); const base = w.sh(['rev-parse', 'HEAD']);
+    const bin = path.join(w.dir, 'bin'), ghJson = path.join(w.dir, 'gh.json'); put(path.join(bin, 'gh'), '#!/bin/sh\ncat "$GH_FAKE"\n'); fs.chmodSync(path.join(bin, 'gh'), 0o755);
+    const wfEnv = { ...w.env, PATH: bin + path.delimiter + process.env.PATH, GH_FAKE: ghJson };
+    const wf = (...a) => { try { return execFileSync(process.execPath, [path.join(home, '.claude/workflow.js'), ...a, '--root', w.repo], { env: wfEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { assert.fail(`workflow ${a.join(' ')}: ${e.stdout}${e.stderr}`); } };
+    Object.assign(w.env, { LC_WORKFLOW_DIR: path.join(w.repo, '.git/l2solo-workflow'), LC_WORKFLOW_JS: path.join(home, '.claude/workflow.js'), PATH: wfEnv.PATH, GH_FAKE: ghJson });
+    w.sh(['branch', 'ivan/batch-1b1', base]); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
+    w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', base);
+    wf('start', 'p1', '--base', base, '--risk', 'standard', '--kind', 'fix');
+    w.sh(['checkout', '-q', 'ivan/batch-1b1']); fs.writeFileSync(path.join(w.repo, 'src/foo.js'), '2\n'); w.sh(['commit', '-qam', 'fix']); const head = w.sh(['rev-parse', 'HEAD']);
+    const brief = path.join(w.dir, 'brief.json');
+    fs.writeFileSync(brief, JSON.stringify({ base, symptom: 'DT-44 and DT-49: forming retries', owner: 'forming', scope: ['src/foo.js'], acceptance: ['a'], evidence: ['trace'], tests: ['test_basic.js'], regressions: ['test_basic.js'], nonGoals: [],
+        cause: { status: 'verified', explanation: 'x', evidence: ['src/foo.js:1'], chain: ['src/foo.js:1 symptom', 'src/foo.js:1 first wrong decision'], excluded: ['none plausible: one line'] } }));
+    wf('record-brief', 'p1', '--file', brief); wf('verify', 'p1', '--rules');
+    wf('record-regression', 'p1', '--test', 'test_basic.js', '--old', base, '--evidence', 'old fails at :1, new passes');
+    fs.writeFileSync(ghJson, JSON.stringify({ headSha: head, headBranch: 'ci-x', status: 'completed', conclusion: 'success', url: 'u', workflowName: 'PR checks', jobs: Array.from({ length: 12 }, (_, n) => ({ name: `Node tests (${n + 1}/12)`, conclusion: 'success' })) }));
+    wf('record-ci', 'p1', '--run', '7'); wf('record-review', 'p1', '--result', 'pass', '--evidence', 'review ok');
+    assert.match(wf('ready', 'p1'), /"taskReady": true/);
+    w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']); wf('record-land', 'p1', '--remote', 'fork', '--branch', 'ivan/batch-1b1');
+    w.ok('start', '1b.1', '--task', 'p1'); w.ok('land', '1b.1');
+    w.ok('resolve', 'DT-44', '--test', 'test_basic.js'); w.ok('resolve', 'DT-49', '--test', 'test_basic.js');
+    w.ok('freeze', '1b.1');
+    assert.match(w.ok('gate', '1b.1', 'ci', '--task', 'p1', '--root', w.repo), /1b\.1 ci ✓/);
+    assert.match(w.ok('get', '1b.1', 'gates'), /"ci":\{"at":"[^"]+","task":"p1","runs":\["7"\]\}/);
 });

@@ -17,7 +17,9 @@ const patchId = (a, b) => execFileSync('git', ['patch-id', '--stable'], { cwd: r
 const fail = msg => { throw new Error(msg); };
 const digest = () => {
     const h = crypto.createHash('sha256');
-    for (const file of ['CLAUDE.md', '.claude/workflow.js','planning/tests-for.js','planning/rules-check.js','planning/hygiene.js','.claude/prune-branches.sh', ...fs.readdirSync(path.join(home,'.claude/workflow')).filter(x => x.endsWith('.md')).sort().map(x => '.claude/workflow/' + x)]) {
+    // Only what defines evidence: the CLI and its two contracts. Entry point, references, hygiene and cleanup scripts
+    // change without voiding open task records.
+    for (const file of ['.claude/workflow.js','.claude/workflow/evidence.md','.claude/workflow/routes.md']) {
         h.update(file + '\0'); h.update(fs.readFileSync(path.join(home,file)));
     }
     return h.digest('hex');
@@ -372,7 +374,7 @@ function main() {
         }
         if (!reasons.length) { e.ready={head,at:now(),policy:state.policy}; save(state); }
         else if(e.ready) { delete e.ready; save(state); }
-        console.log(JSON.stringify({head,taskReady:!reasons.length,reasons,selectionWarnings:plan.warnings,releaseGate:'Full CI on integration head and existing release gates still required.'},null,2));
+        console.log(JSON.stringify({head,taskReady:!reasons.length,reasons,ci:{full,missing,missingRaw,rules:e.rules?.head===head},selectionWarnings:plan.warnings,releaseGate:'Full CI on integration head and existing release gates still required.'},null,2));
         retroCheck();
         if (reasons.length) process.exitCode=1; return;
     }

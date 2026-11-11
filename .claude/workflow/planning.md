@@ -15,6 +15,7 @@
   `place`, `dep`, `defer`, `land`, `resolve`, `close`, `drop`), then `lc render --write`. `lc absorb` is temporary
   compatibility for agents not yet on lc. New issues enter triage; `place` uses only unambiguous rules (a row naming
   the issue, or a maintainer placement rule). An unknown root cause is an investigation, not leave to implement.
+  Lifecycle data changes only by lc commands: no script calls lc's `save`; a correction no command covers waits for one.
 - One queue: `roadmap.md` (rendered), numbered releases; a row is a lc step: a label plus ids or a plan file. Done means
   archived by lc (land, resolve and close; or drop with its reason and authority) and gone from the views.
 - A roadmap step's plan lives in `target-architecture/step.md` and is deleted when the step lands; its binding
@@ -23,7 +24,7 @@
 - The map holds the current state only: an area line is rewritten to the new state, a paid problem's line is deleted;
   no history, no "was/now", no step or decision ids.
 - One writer: only one agent at a time edits planning/ (the only editing agent, or the main session). Agents running in
-  parallel put their planning edits (problem lines, map clauses, limits rows) in their report; the main session applies
+  parallel put their planning edits (new issues for `lc add`, map clauses, limits rows) in their report; the main session applies
   them. Sizes are guides, never gates: hygiene prints a size note, nobody trims text to fit; growth is diagnosed (who
   reads it, how often: context-cost) and fixed at its cause. roadmap.md and problems.md have no size guide: lc keeps all open data; the
   context is budgeted (lc show pages a step's pack; growth is diagnosed by lc status/check with an owner action per

@@ -2,7 +2,7 @@
 
 Production since the cutover 2026-11-11 (lifecycle-data db1ea74d7): planning/roadmap.md and problems.md are rendered by lc; the shadow-mode and cutover-readiness notes below are history.
 
-lc.js is outside the policy digest on purpose: an lc fix must not void open workflow.js tasks (`workflow.js:117`); `.claude/lc.test.js` guards it (`node --test .claude/lc.test.js`, ~70 s, needs git). Rules it enforces are stated in planning.md and git.md.
+The policy digest is workflow.js + evidence.md + routes.md; lc.js is outside it, so an lc fix does not void open tasks; `.claude/lc.test.js` guards it (`node --test .claude/lc.test.js`, ~70 s, needs git). Rules it enforces are stated in planning.md and git.md.
 
 Built on frozen Workflow V5.1, which it does not change. CLI: `lc.js` (970 lines, node only) and `lc.test.js` (9
 behaviour tests on scratch repos with a bare fork and origin). Data: the ref `ivan/lifecycle-data`, an orphan branch
@@ -29,8 +29,8 @@ that is never checked out.
 | Item | How lc meets it | Test |
 |---|---|---|
 | P0 close | an issue in a landed step needs its own result (`lc resolve`): a V5.1 regression test (old fails, new passes, on the landed head) whose brief names the id, or a run of a commit holding the landing whose verdict has "ID: resolved". `close` refuses the unresolved, or `--carry` moves them | close: … never archived |
-| P0 ci | needs the V5.1 record of the frozen full SHA to hold PR checks and rules-check; `workflow.js verify` (read only) names the selection; Picked runs must cover its geodata-only tests and raw evidence its optional geodata tests | end to end (incomplete CI, wrong head, old rules) |
-| P0 trace/ab | run.json resolved to one full commit equal to the frozen head; directory names it; not dirty; exit 0; scenario, script and window fit the profile; artifacts present (trace adds world.sqlite); coverage, invariants and verdict files name the run and head; "verdict: pass" required; sha256 of each kept. A/B: both scenarios on both sides, A an ancestor, one save, diagnostics on | end to end (wrong SHA, dirty, short, missing artifact, misnamed, fake or failed verdict) |
+| P0 ci | asks `workflow.js ready` (the one owner of CI completeness) on the frozen head and requires its `ci` part: full PR checks, rules-check, no missing selected or raw-geodata tests | end to end (incomplete CI, wrong head, old rules) |
+| P0 trace/ab | run.json resolved to one full commit equal to the frozen head; directory names it; not dirty; exit 0; scenario, script and window fit the profile; artifacts present (trace adds world.sqlite); coverage, invariants and verdict files name the run and head; "verdict: pass" required; sha256 of each kept. A/B: both scenarios on both sides, A any other commit (the version players have), one save, diagnostics on | end to end (wrong SHA, dirty, short, missing artifact, misnamed, fake or failed verdict) |
 | P0 no bypass | code gates cannot be waived (`--waive`/`--decision` refused); `lc gates` cannot drop ci, trace, ab or report | end to end |
 | P0 validated ≠ published | `close` archives as `validated, published: null`. `lc publish` only records a publication someone made with the maintainer's authorization: a decision that allows `publish` for that release, plus origin's branch containing the head | end to end |
 | P1 render | temp → data → rename; refuses on a moved fork even when the data is unchanged | views |
@@ -38,64 +38,9 @@ that is never checked out.
 | P1 decisions | `decide --allow action=…,issue=…,to=…`; every `--decision` is checked against the action and subject (rule-override, scope-add, cap, order, land-no-code, drop, split, publish, gates, placement-rule) | decisions … |
 | P1 place | only one naming row or one explicit `lc placement` rule (itself authorized); the section heuristic is gone | views |
 | P1 writers | fork check before write, push after, `sync` with conflict refs | writers |
-| P1 tools | `split` (old id, aliases and history stay; new id records `split from`), `tails` (due two releases on), `step set|move|drop`, `dep` | split …, ledger |
+| P1 tools | `split` (old id, aliases and history stay; new id records `split from`), `tails` (due two releases on), `step set|move|drop`, `dep` | split … |
 | P1 rc-tools | `land` and `check-candidate` read B from `RC_BRANCH` or `lc get $RC_RELEASE branch`; no default | manual (tmp/rc-tools) |
 
-## Maintainer decisions recorded (M7–M14, all 2026-11-11)
+## History
 
-| Decision | Content | Effect in data |
-|---|---|---|
-| M7 | RC-2, RC-4, SF-2 → 3.main-writes-far | assigned there; the "Situation raises" row no longer names them |
-| M8 | M2 scope | overrides bound to the eight; DT-226 → triage "investigate before classification" |
-| M9 | ECO-10 → ECO-10 (own move, §3) + ECO-17 (bid worth, §2); ECO-14 (= RM-33) → ECO-14 (refusals, §2) + ECO-18 (fault counting, §3) | all file:line and text kept across the parts; the ECO-14 fix line now reads "input to the economy redesign; no fix chosen" (its old fix went with ECO-18) |
-| M10 | caps 11 / 8 | both releases are at their cap |
-| M11 | arch gates ci, trace, ab, behaviour, report | `behaviour` needs a verdict naming the recorded A/B runs plus "behaviour: preserved" |
-| M12 | cutover only after 1a and a separate acceptance | — |
-| M13 | historical approval of closing RM-20 after its world test | RM-20 archived as `completed` (not dropped) with run, verdict and log evidence; follow-ups RM-47..50 |
-| M14 | routing of the 1a RC findings | RM-47/48/54 trace gaps; RM-51/52/53, DT-263 behaviour bugs; RM-55 flaky tests; DT-265 uncounted failures; DT-266 run tooling; DT-264 sure-price owner; RM-49, RM-50 triage |
-
-Seed decisions M1–M6 carry no `allows`, so they authorize nothing.
-
-## Investigation status
-
-RM-51, RM-52, RM-53, DT-263 and DT-264 carry `why: investigation: cause unverified`; the line states an observation, not a cause.
-
-A cause is verified in V5.1 before implementation: the task brief's `cause.status: verified` needs evidence handles and regression tests. lc neither verifies nor promotes a cause. `lc resolve` comes after landing and only records that the issue's own result exists (a V5.1 regression test, or a run verdict naming the id); it does not prove the cause.
-
-V5.2 is not applied to the open V5.1 tasks of release 1a. lc reads whichever record a task has and never writes one.
-
-Limit: `assign` clears `why`. Moving such an issue again needs the note set again; no CLI feature was added for this.
-
-## Triage (3)
-
-- **DT-226** (M8): investigate first.
-- **RM-49**: its only site, `ClanPartyHelp.request`, is what 1b.2 replaces with `clan_call`. It becomes obsolete or re-aimed after 1b.2, and is not added to 1b.2.
-- **RM-50**: checked, a fixture rather than a growth defect, so not split. At x50, level 1 needs a ledger of ≥ 6.54 M; worlds hold at most 4.38 M, with no blocked advance.
-
-## V5.1 task ledger (`tasks.jsonl`)
-
-The ledger serves history and cleanup only. `land`, `resolve` and `gate` read each task's own V5.1 record, never this ledger, so a patch-id match is not review, CI or regression evidence.
-
-| Class | Count | Rule |
-|---|---|---|
-| landed | 53 | 34 own record-land on an integration branch, 19 by patch-id |
-| superseded | 35 | |
-| abandoned | 5 | |
-| refuted | 2 | |
-| release-gate | 1 | |
-
-## Cutover readiness (2026-11-11 20:20)
-
-- **No lost ids.** All 452 original ids are open or archived (RM-20). All 464 ids in today's planning are open in data. `onlyInData` holds ECO-17 and ECO-18.
-- **Exact diff.** `cutover/preview.diff on fork `ivan/lifecycle`` (planning → render) has 9 roadmap rows, 6 changed problem lines and 2 new ones. Nothing else differs.
-- **Not ready.** The 1a RC still runs: a hot B run is in progress, and its log and session were active at 20:10. It plans new 1b lines (crash, the 2001104 loop) and V5.2.
-- **Planning files** are untouched by lc (maintainer: no edits while the RC works).
-- **Sequence after 1a closes:**
-  1. `lc sync`
-  2. `lc absorb` (the RC's new lines and edits)
-  3. `lc check`
-  4. `render --out`
-  5. compare with the planning files
-  6. acceptance
-  7. prune both views to budget (roadmap 13/12 KB, problems 117/108 KB); `render --write` refuses until then
-  8. `render --write`
+Decisions M1–M18, the shadow period, the cutover (lifecycle-data db1ea74d7) and the 11-11 audits are in `git log` of `ivan/lifecycle-data` and `lc show <id>`. The V5.1 task ledger was removed (nothing read it).

@@ -22,7 +22,7 @@
   the map, then the PR.
 - Map refresh before the PR: `node planning/architecture/check.js` (after the release commits land on
   `ivan/next-release`) lists map names gone from the code; one agent updates the touched entries from each file's
-  "Checked at" sha, deletes paid problem lines, updates limits.md, fixes what check.js lists and sets "Checked at"
+  "Checked at" sha, closes paid issues through lc (never by deleting lines), updates limits.md, fixes what check.js lists and sets "Checked at"
   to the release head.
 - Architecture passes: after every develop update merged in, one read-only agent reviews that diff against these rules
   and the map (parallel paths, call-site patches, a rule with two owners, a decision on the wrong thread, limits,

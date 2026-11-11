@@ -14,7 +14,7 @@ const { execSync, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const PLANNING = __dirname;
-const INTEGRATION = process.env.HYGIENE_BRANCH || 'ivan/batch-6';
+const INTEGRATION = process.env.HYGIENE_BRANCH || 'ivan/next-release'; // landed work reaches it at each release (git.md)
 // Branches whose worktrees are never removed here (the integration branch itself; perf-tooling per .claude/workflow/git.md).
 const KEEP = new Set([INTEGRATION, 'ivan/next-release', 'perf-tooling', 'main', 'ivan/perf-remote']);
 const STALE_DAYS = 1;
@@ -145,7 +145,7 @@ if (fs.existsSync(workflowDir)) {
 const lc = path.join(ROOT, '.claude', 'lc.js'); // after the cutover the views must be the lc render
 if (fs.existsSync(lc)) {
     try { execFileSync(process.execPath, [lc, 'render', '--check', '--repo', ROOT], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
-    catch (e) { const msg = String(e.stderr || '').trim(); if (/not the lc render/.test(msg)) problems.push(msg.replace(/^lc: /, 'planning views ')); }
+    catch (e) { problems.push('lc render --check: ' + (String(e.stderr || e.message).trim().split('\n')[0] || 'failed')); }
 }
 const runsDir = path.join(ROOT, 'tmp/perf/runs');
 // Perf runs kept (maintainer, 2026-11-06): the last release's end (its sha in BASELINE_RUNS) and the newest measurement

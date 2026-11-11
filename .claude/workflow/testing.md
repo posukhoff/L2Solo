@@ -25,7 +25,7 @@
   frozen state, repeating events); progress by level band and class; deaths by cause and spot; economy sanity (adena
   created vs destroyed, runaway or empty wallets, item counts, absurd prices, buy-sell loops); party and clan
   lifecycles; PvP/karma; gear and supplies (unequipped upgrades, no shots, overweight); DB writes and growth, CPU hot
-  paths, memory growth; hot vs cold rates. Findings become problems.md lines or fix batches, ranked by severity.
+  paths, memory growth; hot vs cold rates. Findings become lc issues (`lc add`) or fix batches, ranked by severity.
 - A review-fix round re-runs the server only when its fixes can move the batch's rates; else CI is enough. A fix is
   proven by a test failing on the old code plus CI; a question about a run is answered from its saved DB and trace
   before any new run. One traced run on the release's final head feeds the audit and coverage.

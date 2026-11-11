@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 // lc: L2Solo issue and release lifecycle. One git ref holds the open issues, one manifest per release, the
-// maintainer's decisions, the V5.1 task ledger and the archive; planning/roadmap.md and planning/architecture/problems.md
+// maintainer's decisions and the archive; planning/roadmap.md and planning/architecture/problems.md
 // are rendered from it. A write is one commit: checked against the fork's copy, moved by compare-and-swap
 // (`update-ref new old`), then pushed without force; a refused push undoes the local move. V5.1 task records are read
 // as evidence, never written. lc never pushes to origin and never opens a PR. No server, database, scheduler or lock.
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
@@ -86,7 +87,7 @@ function load(cx) {
         const [meta, name] = line.split('\t');
         files[name] = cx.git(['cat-file', 'blob', meta.split(' ')[2]]);
     }
-    const d = { meta: JSON.parse(files['meta.json']), issues: jsonl(files['issues.jsonl']), decisions: jsonl(files['decisions.jsonl']), tasks: jsonl(files['tasks.jsonl']), releases: {}, archive: {} };
+    const d = { meta: JSON.parse(files['meta.json']), issues: jsonl(files['issues.jsonl']), decisions: jsonl(files['decisions.jsonl']), releases: {}, archive: {} };
     for (const [name, text] of Object.entries(files)) {
         let m;
         if ((m = name.match(/^releases\/(.+)\.json$/))) d.releases[m[1]] = JSON.parse(text);
@@ -111,11 +112,9 @@ function upgrade(d) { // data written by older lc versions
         m.version = 2;
     }
     if (m.version < 3) { m.budgets ||= { ...DEFAULT_BUDGETS }; m.cutover ??= false; m.version = 3; }
-    d.tasks ||= [];
 }
 function encode(d, extra = {}) {
     const files = { 'meta.json': JSON.stringify(d.meta, null, 1) + '\n', 'issues.jsonl': lines(d.issues), 'decisions.jsonl': lines(d.decisions), ...extra };
-    if (d.tasks.length) files['tasks.jsonl'] = lines(d.tasks);
     for (const [k, r] of Object.entries(d.releases)) files[`releases/${k}.json`] = manifestText(r);
     for (const [k, a] of Object.entries(d.archive)) {
         if (a.manifest) files[`archive/${k}.json`] = manifestText(a.manifest);
@@ -194,6 +193,7 @@ function cycles(edges) {
     for (const n of edges.keys()) visit(n, []);
     return out;
 }
+const ACTIONS = ['rule-override', 'scope-add', 'cap', 'order', 'land-no-code', 'drop', 'split', 'publish', 'gates', 'placement-rule']; // every action lc checks
 const rulesFor = (d, i, r) => (d.meta.rules || []).filter(x => x.sec === i.sec && r && !x.only.includes(r.group));
 // A decision authorizes only the actions it names, on the subjects it names (issue, step, release, value, ...).
 const allows = (dec, action, subject) => (dec?.allows || []).some(a => a.action === action && Object.entries(a).every(([k, v]) => k === 'action' || String(subject[k]) === String(v)));
@@ -387,7 +387,7 @@ function importPlanning(cx, opt) {
     const read = f => fs.readFileSync(path.join(cx.planning, f), 'utf8');
     const ptext = read(VIEWS.problems), rtext = read(VIEWS.roadmap);
     const p = parseProblems(ptext), r = parseRoadmap(rtext);
-    const d = { meta: { version: 3, budgets: { ...DEFAULT_BUDGETS }, cutover: false, problemsHead: p.head, problemsTail: p.tail, sections: p.sections, roadmapHead: r.head, roadmapTail: r.tail, groups: r.groups, rules: [], placement: [], profiles: PROFILES, gates: { default: ['ci', 'trace', 'ab', 'report'], plan: [] }, lastRender: {} }, issues: [], decisions: [], tasks: [], releases: r.releases, archive: {} };
+    const d = { meta: { version: 3, budgets: { ...DEFAULT_BUDGETS }, cutover: false, problemsHead: p.head, problemsTail: p.tail, sections: p.sections, roadmapHead: r.head, roadmapTail: r.tail, groups: r.groups, rules: [], placement: [], profiles: PROFILES, gates: { default: ['ci', 'trace', 'ab', 'report'], plan: [] }, lastRender: {} }, issues: [], decisions: [], releases: r.releases, archive: {} };
     if (opt.decisions) {
         const seed = JSON.parse(fs.readFileSync(opt.decisions, 'utf8'));
         d.decisions = seed.decisions; d.meta.rules = seed.rules || [];
@@ -576,7 +576,10 @@ C.render = (cx, { opt }) => {
     for (const [k, f] of Object.entries(VIEWS)) {
         const p = path.join(cx.planning, f), cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
         const known = [sha1(views[k]), last[k]?.cur, last[k]?.prev, last[k]?.absorbed].filter(Boolean); // a half-finished earlier render is not a hand edit
-        if (cur !== null && !known.includes(sha1(cur))) why.push(`${f} was edited by hand since the last render: lc absorb first`);
+        if (cur !== null && !known.includes(sha1(cur))) {
+            if (k === 'roadmap' && opt['overwrite-roadmap']) { const keep = path.join(os.tmpdir(), `roadmap.hand.${Date.now()}.md`); fs.writeFileSync(keep, cur); notes.push(`hand-edited roadmap.md kept at ${keep}; rows live in lc (step add/set)`); }
+            else why.push(k === 'roadmap' ? `${f} was edited by hand: its rows live in lc (lc step add/set, lc assign); then lc render --write --overwrite-roadmap replaces the file (the hand copy is kept)` : `${f} was edited by hand since the last render: lc absorb first`);
+        }
         if (b[k] != null && Math.ceil(views[k].length / 1024) > b[k]) notes.push(`${f} is ${Math.ceil(views[k].length / 1024)} KB, over the old ${b[k]} KB budget: a grep index, not reading; agents read lc show`);
     }
     if (why.length) fail(why.join('\n'));
@@ -649,7 +652,7 @@ function place(d, i, target, opt) { // the one assignment rule; refuses what nee
             if (overridden(d, i, rule)) continue;
             i.overrides = [...new Set([...(i.overrides || []), authorize(d, opt.decision, 'rule-override', { issue: i.id, rule: rule.decision })])];
         }
-        i.at = target; delete i.tail; delete i.why;
+        i.at = target; delete i.tail; if (!/^investigation/.test(i.why || '')) delete i.why; // an investigation note stays until V5.2 verifies the cause
     }
     delete i.tagx;
     for (const { s } of st.values()) if (s.key !== i.at) stripMention(s, idsOf(i)); // a row names only what it holds
@@ -726,7 +729,7 @@ C.decide = (cx, { opt }) => { // --allow "action=assign,issue=RC-2,to=3.x" (repe
     const { sha, d } = need(cx);
     const id = `M${Math.max(0, ...d.decisions.map(x => +x.id.slice(1))) + 1}`;
     const allowsList = list(opt.allow).map(s => Object.fromEntries(s.split(',').map(kv => { const [k, ...v] = kv.split('='); return [k.trim(), v.join('=').trim()]; })));
-    for (const a of allowsList) if (!a.action) fail(`--allow needs action=...: ${JSON.stringify(a)}`);
+    for (const a of allowsList) if (!ACTIONS.includes(a.action)) fail(`--allow action is one of ${ACTIONS.join(', ')}: ${JSON.stringify(a)}`);
     d.decisions.push({ id, date: one(opt, 'date', 'YYYY-MM-DD'), text: one(opt, 'text', 'the decision as said'), ...(allowsList.length ? { allows: allowsList } : {}) });
     write(cx, sha, d, `lc decide ${id}: ${opt.text}`, id);
 };
@@ -867,23 +870,20 @@ C.freeze = (cx, { pos }) => { // the frozen head is the fork's actual tip, nothi
     Object.assign(r, { st: 'frozen', head, frozenAt: cx.now });
     write(cx, sha, d, `lc freeze ${r.key} at ${head.slice(0, 9)}`, `${r.key} frozen at ${head.slice(0, 9)}`);
 };
-function ciComplete(cx, r, slug, root) { // the release's full CI on the frozen head, as V5.1 selects it
-    const t = task(cx, slug), e = t.evidence || {}, head = r.head;
-    if (e.rules?.head !== head) fail(`${slug}: rules-check is not on ${head.slice(0, 9)}`);
-    const runs = (e.ciRuns || []).filter(x => x.head === head);
-    if (!runs.some(x => x.workflow === 'PR checks')) fail(`${slug}: no full PR checks on ${head.slice(0, 9)}`);
-    if (!root || root === true) fail('--root <worktree at the frozen head> lets V5.1 name the selection');
-    let plan;
-    try { plan = JSON.parse(execFileSync(process.execPath, [cx.workflowJs, 'verify', slug, '--root', String(root)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })); }
-    catch (e2) { fail(`V5.1 verify ${slug} failed: ${firstLine(e2)}`); }
-    if (plan.head !== head) fail(`V5.1 verify ran on ${String(plan.head).slice(0, 9)}, not the frozen head`);
-    const covered = new Set(runs.flatMap(x => (x.tests || []).map(norm)));
-    const missing = (plan.geodataOnly || []).map(norm).filter(x => !covered.has(x));
-    if (missing.length) fail(`${slug}: Picked tests miss ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`);
-    const raw = new Set((e.rawGeodata || []).filter(x => x.head === head).map(x => norm(x.test)));
-    const rawMissing = (plan.optionalGeodata || []).map(norm).filter(x => !raw.has(x));
-    if (rawMissing.length) fail(`${slug}: raw-geodata evidence misses ${rawMissing.slice(0, 8).join(', ')}`);
-    return { task: slug, runs: runs.map(x => x.id), picked: (plan.geodataOnly || []).length, raw: (plan.optionalGeodata || []).length };
+function ciComplete(cx, r, slug, root) { // "CI is complete" has one owner, workflow.js `ready`; lc reads its verdict on the frozen head
+    const t = task(cx, slug), head = r.head;
+    if (!root || root === true) fail('--root <worktree at the frozen head> lets the workflow name the selection');
+    let out;
+    try { out = execFileSync(process.execPath, [cx.workflowJs, 'ready', slug, '--root', String(root)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (e) { out = String(e.stdout || ''); if (!out.includes('"ci"')) fail(`workflow ready ${slug} failed: ${firstLine(e)}`); } // exit 1 = not task-ready; the ci part is still reported
+    let v; try { v = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1)); } catch { fail(`workflow ready ${slug}: unreadable answer`); }
+    if (!v.ci) fail(`workflow ready ${slug} reports no ci part (workflow.js older than this lc)`);
+    if (v.head !== head) fail(`workflow ready ran on ${String(v.head).slice(0, 9)}, not the frozen head ${head.slice(0, 9)}`);
+    if (!v.ci.rules) fail(`${slug}: rules-check is not on ${head.slice(0, 9)}`);
+    if (!v.ci.full) fail(`${slug}: no full PR checks on ${head.slice(0, 9)}`);
+    if (v.ci.missing.length) fail(`${slug}: CI misses ${v.ci.missing.slice(0, 8).join(', ')}${v.ci.missing.length > 8 ? ' …' : ''}`);
+    if (v.ci.missingRaw.length) fail(`${slug}: raw-geodata evidence misses ${v.ci.missingRaw.slice(0, 8).join(', ')}`);
+    return { task: slug, runs: (t.evidence?.ciRuns || []).filter(x => x.head === head).map(x => x.id) };
 }
 C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the frozen head; no decision waives a code gate
     const { sha, d } = need(cx); const r = release(d, pos[0]); const g = pos[1];
@@ -905,7 +905,7 @@ C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the 
         const B = many(opt.run).map(x => runInfo(cx, x)), A = many(opt['base-run']).map(x => runInfo(cx, x));
         if (!B.length || !A.length) fail('--run <B side, repeatable> and --base-run <A side, repeatable>');
         for (const x of B) if (x.full !== r.head) fail(`B run ${x.base} is of ${x.sha9}, not the frozen head ${sha9}`);
-        for (const x of A) { if (x.full === r.head) fail(`A run ${x.base} is of the frozen head`); if (!cx.ok(['merge-base', '--is-ancestor', x.full, r.head])) fail(`A run ${x.base} (${x.sha9}) is not an ancestor of ${sha9}`); }
+        for (const x of A) if (x.full === r.head) fail(`A run ${x.base} is of the frozen head`); // A is the version players have (release.md): any other commit
         const all = [...B, ...A];
         if (new Set(all.map(x => x.save)).size !== 1 || !all[0].save) fail('A/B runs must share one named save');
         for (const x of all) { needArtifacts(x, prof.ab.artifacts); if (prof.ab.diagnostics && !x.diagnostics) fail(`run ${x.base}: diagnostics off`); }
@@ -980,37 +980,6 @@ C.placement = (cx, { opt }) => { // lc placement --to <step> [--sec s] [--prefix
     d.meta.placement = [...(d.meta.placement || []), rule];
     write(cx, sha, d, `lc placement ${JSON.stringify(rule)}`);
 };
-function classifyTasks(cx, d) { // landed, superseded, abandoned or release-gate for every V5.1 record; the records stay as they are
-    if (!fs.existsSync(cx.workflowDir)) fail(`no V5.1 records at ${cx.workflowDir}`);
-    const recs = fs.readdirSync(cx.workflowDir).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(cx.workflowDir, f), 'utf8')));
-    const fam = s => { const x = s.replace(/^(n\d*|s)-/, ''); const m = x.match(/^([a-z]+\d+)/); return m ? m[1] : x.split('-')[0]; };
-    const heads = t => [...new Set([...Object.values(t.evidence || {}).flatMap(v => Array.isArray(v) ? v.map(x => x.head) : [v?.head]), ...(t.rebases || []).map(x => x.previous?.head)].filter(h => h && h !== t.base))];
-    const pid = (a, b) => { try { return execFileSync('git', ['patch-id', '--stable'], { cwd: cx.repo, encoding: 'utf8', input: execFileSync('git', ['diff', '--no-renames', a, b], { cwd: cx.repo, maxBuffer: 1 << 28 }) }).trim().split(/\s+/)[0] || null; } catch { return null; } };
-    const integration = cx.git(['for-each-ref', '--format=%(refname)', 'refs/heads/ivan/batch-*', 'refs/heads/ivan/next-release', `refs/remotes/${cx.remote}/ivan/batch-*`, `refs/remotes/${cx.remote}/ivan/next-release`, 'refs/remotes/origin/develop', 'refs/remotes/origin/main', 'refs/heads/main']).split('\n').filter(Boolean);
-    const onIntegration = h => integration.some(r => cx.ok(['merge-base', '--is-ancestor', h, r])); // a record-land on a test branch is not a landing
-    const landed = recs.filter(t => t.evidence?.landed && onIntegration(t.evidence.landed.head));
-    const landedPid = new Map(landed.map(t => [pid(t.base, t.evidence.landed.head), t.slug]).filter(([p]) => p));
-    const gateSlugs = new Set([...Object.values(d.releases), ...Object.values(d.archive).map(a => a.manifest).filter(Boolean)].map(r => r.gates?.ci?.task).filter(Boolean));
-    return recs.sort((a, b) => a.slug.localeCompare(b.slug)).map(t => {
-        if (t.evidence?.landed) return landed.includes(t) ? { slug: t.slug, class: 'landed', evidence: `record-land ${t.evidence.landed.branch || '(no branch)'} ${t.evidence.landed.head.slice(0, 9)}, on an integration branch` }
-            : { slug: t.slug, class: 'landed-test', evidence: `record-land ${t.evidence.landed.branch || '(no branch)'} ${t.evidence.landed.head.slice(0, 9)} is on no integration branch` };
-        if (t.closed) return { slug: t.slug, class: t.closed.reason === 'refuted' ? 'refuted' : 'closed', evidence: `V5.1 close: ${t.closed.reason}` };
-        if (gateSlugs.has(t.slug) || /^release-/.test(t.slug)) return { slug: t.slug, class: 'release-gate', evidence: 'holds a release CI record; kept open' };
-        for (const h of heads(t)) { const p = pid(t.base, h); if (p && landedPid.has(p)) return { slug: t.slug, class: 'landed', by: landedPid.get(p), evidence: `same patch-id as ${landedPid.get(p)} (head ${h.slice(0, 9)})` }; }
-        const later = landed.filter(x => fam(x.slug) === fam(t.slug) && x.created > t.created).sort((a, b) => a.created.localeCompare(b.created));
-        if (later.length) return { slug: t.slug, class: 'superseded', by: later[0].slug, evidence: `family ${fam(t.slug)}: ${later[0].slug} landed after it (${later[0].created.slice(0, 16)})` };
-        return { slug: t.slug, class: 'abandoned', evidence: `no landing in family ${fam(t.slug)}; created ${String(t.created).slice(0, 16)}${heads(t).length ? '' : ', no commit recorded'}` };
-    });
-}
-C.tasks = (cx, { opt }) => {
-    const { sha, d } = need(cx); const rows = classifyTasks(cx, d);
-    const counts = rows.reduce((m, x) => (m[x.class] = (m[x.class] || 0) + 1, m), {});
-    if (opt.verbose) for (const x of rows) console.log(`${x.slug} ${x.class}${x.by ? ' by ' + x.by : ''} · ${x.evidence}`);
-    console.log(JSON.stringify(counts));
-    if (!opt.apply) return;
-    d.tasks = rows.map(x => ({ ...x, at: cx.now }));
-    write(cx, sha, d, `lc tasks: ${JSON.stringify(counts)}\n\nV5.1 records unchanged; this ledger classifies them`);
-};
 C.sync = (cx) => { // brings this copy and the fork's together without force; a divergence is kept aside, never lost
     const local = rev(cx, cx.ref), tip = remoteTip(cx, cx.ref);
     if (!tip) { if (!local) fail('no lifecycle data here or on the fork'); cx.git(['push', '-q', cx.remote, `${local}:${cx.ref}`]); cx.tryGit(['update-ref', cx.tracking, local]); console.log(`pushed ${local.slice(0, 9)}`); return; }
@@ -1032,13 +1001,13 @@ C.get = (cx, { pos }) => { // for scripts: lc get <release> branch|head|base|st
     if (v === undefined || v === null) fail(`${pos[0]} has no ${pos[1]}`);
     console.log(typeof v === 'object' ? JSON.stringify(v) : v);
 };
-C.help = () => console.log(`lc status | check | show <id|step|release> | get <release> <field> | tails | tasks [--apply --verbose]
+C.help = () => console.log(`lc status | check | show <id|step|release> | get <release> <field> | tails
 issues:   add --sec --origin --rule --sites --what --fix [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--fixed-by)
 releases: release add|set | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
           resolve <id> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
           publish <rel> --decision M --branch <origin branch>   (records a publication; lc never pushes origin)
-views:    render --out <dir> | render --check | render --write | absorb [--apply]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
+views:    render --out <dir> | render --check | render --write [--overwrite-roadmap] | absorb [--apply]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
 
 function main(argv) {
     const [cmd, ...rest] = argv; const a = parseArgs(rest);
@@ -1046,7 +1015,7 @@ function main(argv) {
     if (cmd === 'help' || !cmd) return f();
     f(context(a.opt), a);
 }
-module.exports = { main, context, load, save, check, dueTails, parseProblems, parseRoadmap, renderProblems, renderRoadmap, classifyTasks, Refusal };
+module.exports = { main, context, load, save, check, dueTails, parseProblems, parseRoadmap, renderProblems, renderRoadmap, Refusal };
 if (require.main === module) {
     try { main(process.argv.slice(2)); }
     catch (e) { if (e instanceof Refusal) { console.error('lc: ' + e.message); process.exitCode = 2; } else throw e; }

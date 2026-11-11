@@ -8,7 +8,7 @@
 - Planning, a closed list (`planning/hygiene.js` `ALLOWED` fails on any other file): `roadmap.md` the one queue
   (numbered releases, rows cite ids); `architecture/`: `README.md` (index, how the map is kept, category passes), area
   maps `bot-ai.md` `combat.md` `economy.md` `population.md` (with the situations mechanism) `persistence.md` `world.md`
-  `tables.md` `e2e.md`, `limits.md`, `problems.md` (every open problem), `findings-<release>.md`, `check.js`; `target-architecture/`: `plan.md`
+  `tables.md` `e2e.md`, `limits.md`, `problems.md` (every open problem, rendered by lc), `check.js`; `target-architecture/`: `plan.md`
   (principles and large plans), `situations.md` (maintainer answers still binding), `economy.md` (release 7 design),
   `memory.md` (memory census), `step.md` (the open roadmap step's plan, only while one is open),
   `decision-registry.js/.json`; `perf-tooling/test-recipe.md`; `hygiene.js`, `rules-check.js`, `tests-for.js`,
