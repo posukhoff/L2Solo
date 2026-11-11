@@ -178,7 +178,53 @@
   "plan": []
  },
  "lastRender": {
-  "problems": "a8622f17e109b0537def43bf90d1ad1e494a62a0",
-  "roadmap": "c34f6f12caec58be8b355a214c8a5bc8d8c0f752"
- }
+  "problems": {
+   "cur": "a8622f17e109b0537def43bf90d1ad1e494a62a0",
+   "prev": null
+  },
+  "roadmap": {
+   "cur": "c34f6f12caec58be8b355a214c8a5bc8d8c0f752",
+   "prev": null
+  }
+ },
+ "profiles": {
+  "trace": {
+   "sides": [
+    {
+     "scenario": "script",
+     "script": "tests/e2e/online-player.js",
+     "minutes": 30
+    }
+   ],
+   "artifacts": [
+    "run.json",
+    "server.log",
+    "summary.json",
+    "logs",
+    "world.sqlite"
+   ]
+  },
+  "ab": {
+   "sides": [
+    {
+     "scenario": "script",
+     "script": "tests/e2e/online-player.js",
+     "minutes": 30
+    },
+    {
+     "scenario": "hot",
+     "minutes": 20
+    }
+   ],
+   "diagnostics": true,
+   "artifacts": [
+    "run.json",
+    "server.log",
+    "summary.json",
+    "logs"
+   ]
+  }
+ },
+ "placement": [],
+ "version": 2
 }
