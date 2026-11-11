@@ -12,6 +12,6 @@
  "cap": null,
  "gates": {},
  "steps": [
-
+  {"key":"1b.0c","title":"1b.0c bug: a melee bot stands 8 s beside its drop after a kill (AI-16)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
