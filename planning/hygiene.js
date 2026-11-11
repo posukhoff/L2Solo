@@ -100,7 +100,11 @@ for (const block of git('worktree list --porcelain').split('\n\n')) {
         ahead = Number(git(`rev-list --count ${INTEGRATION}..${branch}`));
         dirty = execSync(`git -C ${JSON.stringify(wt)} status --porcelain`, { encoding: 'utf8' }).trim().length > 0;
     } catch (_) { continue; }
-    if (ahead === 0 && !dirty) merged.push({ wt, branch });
+    // A branch that was created and never committed to is someone's new work, not a merged topic: listed only once its
+    // folder is a day old.
+    const untouched = ahead === 0 && git(`reflog show --format=%H ${branch}`).split('\n').filter(Boolean).length <= 1;
+    if (untouched) { const days = (Date.now() - fs.statSync(wt).mtimeMs) / 86400000; if (!dirty && days > STALE_DAYS) stale.push({ wt, branch, days: Math.floor(days) }); }
+    else if (ahead === 0 && !dirty) merged.push({ wt, branch });
     else if (!dirty) {
         // Squash-merged topics never read as merged: a clean worktree with no commit for STALE_DAYS is listed for review.
         const last = Number(git(`log -1 --format=%ct ${branch}`));
