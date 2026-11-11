@@ -1,0 +1,19 @@
+{
+ "key": "1b.0",
+ "group": "1b",
+ "order": 15,
+ "type": "fix",
+ "st": "planned",
+ "title": "1b.0 bug: server exit on a DoT kill",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M18"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+
+ ]
+}
