@@ -34,7 +34,7 @@
 
 - Measured with `scripts/perf.js`, recipe and baseline save in `planning/perf-tooling/test-recipe.md`; reason the cost
   with numbers first (counts per step, bytes per row).
-- `tmp/perf/runs` keeps the last release's end (`BASELINE_RUNS` in `planning/hygiene.js`) and the newest measurement;
+- `tmp/perf/runs` keeps the last release's end (`BASELINE_RUNS` in `planning/hygiene.js`), the newest measurement and every run whose commit an open issue cites (its evidence until the issue closes);
   hygiene lists the rest for deletion (an A/B side still needed moves to the scratchpad first). A release's runs are the
   next release's "before"; re-run a "before" only when the perf tool, the world or the machine changed. Per side one
   cold run when a comparable run exists (two after a restart-card VERSION bump); a second only when the numbers sit
