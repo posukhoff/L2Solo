@@ -1,0 +1,47 @@
+{
+ "base": "f3eec5444f82dd3c8a2f04aeb5c88bab06aadf7c",
+ "symptom": "shop step for item 90 refused for money on arrival and re-taken (bot 2001410: 190 refusals in 39 s)",
+ "owner": "PurchaseFunding money-row lookup (fundedRow/itemRate) and StatsPacket rows",
+ "cause": {
+  "status": "verified",
+  "explanation": "fundedRow matched rows by ratio and itemRate by item, so the bid for the jewel's other slot (same ratio, same item) read the first slot's funded row and spent the money the input purchase needed",
+  "evidence": [
+   "src/GameServer/Bot/Economy/PurchaseFunding.js:29-37,114-119 at 8b36104c6",
+   "trace 9d6bf579a bot 2000320 at 1794335616485: item-854 bid priorityReserve 0, available 4,784,141 = the item-90 step's row"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Economy/StatsPacket.js",
+  "src/GameServer/Bot/Economy/PurchaseFunding.js",
+  "src/GameServer/Bot/Economy/BuyAdPolicy.js",
+  "src/GameServer/Bot/Economy/BotAfkMarketService.js",
+  "src/GameServer/Bot/Economy/ReadyTradeChoice.js",
+  "src/GameServer/Bot/Economy/TradeIntent.js",
+  "src/Database.js",
+  "src/GameServer/AfkTrade/TradeMeeting.js",
+  "src/GameServer/Bot/Economy/ColdMarketService.js",
+  "src/GameServer/Bot/Economy/EconomyContext.js"
+ ],
+ "nonGoals": [
+  "spends that name no root (problem line)"
+ ],
+ "acceptance": [
+  "each funded row carries its root id; a spend that names its root reads only its row",
+  "a packet without ids reads as before"
+ ],
+ "evidence": [
+  "RM-31 implementer report (owner fix) 2026-11-10"
+ ],
+ "tests": [
+  "test_bot_afk_buy_shop.js",
+  "test_purchase_funding_checks.js",
+  "test_production_purchase_meeting.js",
+  "test_companion_equipment_shopping.js"
+ ],
+ "regressions": [
+  "test_bot_afk_buy_shop.js",
+  "test_purchase_funding_checks.js",
+  "test_production_purchase_meeting.js",
+  "test_companion_equipment_shopping.js"
+ ]
+}

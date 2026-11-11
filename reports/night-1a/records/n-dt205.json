@@ -1,0 +1,47 @@
+{
+  "slug": "n-dt205",
+  "base": "9c37ae3365ab8925c34e060392a77c9fe0f4c005",
+  "risk": "critical",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T02:43:38.576Z",
+  "evidence": {},
+  "brief": {
+    "base": "9c37ae3365ab8925c34e060392a77c9fe0f4c005",
+    "symptom": "a body near the player never hears offer_posted: a hot bot whose held card wants item X ignores a new or cheaper SELL line of X within its budget while hot; its far twin wakes its build and goes to buy; its refused-quote marks end only at GearMarks.LIFETIME",
+    "owner": "worker board-diff wake delivery: ColdSimulationWorker lineWake (far: kernel.stepWake; near: Situations.raise on the near mind + occupationOwnerChanged); MarketBuyerWaiters' wake bypasses it",
+    "cause": {
+      "status": "verified",
+      "explanation": "MarketBuyerWaiters' wake is wired to kernel.stepWake (ColdSimulationWorker.js:200-203), which refuses non-cold rows (ColdSimulationKernel.js:1233-1235); hot bodies register wants (ColdSimulationWorker.js:212-220, 1312-1336) and are refused on every matching offer; nothing else wakes a near build on a board change",
+      "evidence": [
+        "run 12962fed3-script-online-player-20261111-035637: offer_posted 1119 raises, 0 at place body; line_undercut reaches bodies via lineWake (trace lines 15307/16599/25174)",
+        "ColdSimulationWorker.js:945-954 lineWake",
+        "tests/test_market_buyer_waiters.js:47-53 pins the old refusal"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/Population/ColdSimulationWorker.js",
+      "src/GameServer/Bot/Economy/MarketBuyerWaiters.js",
+      "src/GameServer/Bot/AI/GearMarks.js"
+    ],
+    "nonGoals": [
+      "replaying an offer missed before the fix at hot→cold handover",
+      "WAKES_PER_RECORD, budgets, registerWants' budget rule",
+      "offer_posted payload (DT-123 refuted)"
+    ],
+    "acceptance": [
+      "a hot body whose held card watches X hears offer_posted for a SELL line of X within budget: raised on its near mind, quote marks forgotten, a near decision published, its want leaves the index",
+      "far bots unchanged; at most 5 wakes per record hot and cold together; a refused wake spends none",
+      "no offer_posted on a static merchant row, or merchants hold no wants"
+    ],
+    "evidence": [
+      "DT-205 verifier report 2026-11-11 (scratchpad/dt205)"
+    ],
+    "tests": [
+      "test_market_buyer_waiters.js"
+    ],
+    "regressions": [
+      "test_market_buyer_waiters.js"
+    ]
+  }
+}

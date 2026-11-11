@@ -1,0 +1,32 @@
+{
+ "base": "95427f498c3b035321099536a0cfd46105cf29b0",
+ "symptom": "each kill makes main capture every rewarded bot's full actor state (combat profile, all inventory rows, routeState JSON) only to feed progressStats, which reads four stats fields and the persona",
+ "owner": "NpcDied reward loop (main) feeding EconomicValuation.progressStats",
+ "cause": {
+  "status": "verified",
+  "explanation": "NpcDied.js 228-243 calls EconomyContext.stateForActor (81-101) per rewarded bot (up to 9 per party kill); progressStats reads only stats.economyClock, playedHours, frustration, lifelongKills, timing and the persona",
+  "evidence": [
+   "rules audit 11-11 RA2-1 (scratchpad/rules-audit-1a.md)",
+   "NpcDied.js 228-243, EconomyContext.js 81-101 at d53b2571f"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Actor/Generics/NpcDied.js"
+ ],
+ "nonGoals": [
+  "recordNearFight's stats copy",
+  "other stateForActor callers (RA-10, RA2-4)"
+ ],
+ "acceptance": [
+  "kill rewards update the same progress fields as before; no actor capture per rewarded bot"
+ ],
+ "evidence": [
+  "RA2-1"
+ ],
+ "tests": [
+  "test_npc_died_progress.js"
+ ],
+ "regressions": [
+  "test_npc_died_progress.js"
+ ]
+}

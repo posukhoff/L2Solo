@@ -1,0 +1,92 @@
+START 02:50 EET
+02:55 pathfinding: 4 Picked runs of cleanup branch e6e239bfd pushed (capture error code, check fast failure)
+02:55 stack built on 6c1455b5e: dt197 7fd38c51f, dt208 77c041ed0, rm31 18a0738ed (1 conflict TradeMeeting.js:155 merged by coordinator: DT-197 pays-only + RM-31 lowest-certificate root), earnspot 51389c436, dt202 94a592729+cad378003; npm check ok; 5 records n-* with briefs
+02:56 5 reviews r1 spawned in parallel; PR checks dispatched on all 5 stacked heads (overlap with review: expected gain ~queue time)
+02:57 pathfinding: cleanup branch alone 4/4 green (no repro in isolation); dispatched 3 runs equipment_shopping→pathfinding and 1 run of the original 4-file order
+02:58 planning edits applied (DT-174/DT-200/DT-123 deleted, DT-173 → field case, DT-211..221 added, roadmap 1a rows updated); problems.md 109/108 KB until the 5 tasks land
+02:59 n-dt197 review r1 PASS (168 s, 92374 tok, 18 tools)
+03:00 n-dt208 review r1 PASS (196 s, 103124 tok, 22 tools); findings logged as problem line instead of restacking (a test change in s2 would invalidate s3-s5 CI)
+03:04 n-dt197 PR checks 42935333433 FAILED 3 files (test_bot_cold_market_purchase, test_bid_sale, test_ready_trade_choice); n-rm31 review BLOCKED (rule 5); cancelled queued PR checks of s2..s5 (would test commits that must change). Lesson: a stack makes one early failure invalidate all later CI; CI capacity ~1 PR checks run at a time. Re-plan: independent tasks land first, each rebased with record-rebase
+03:05 n2-dt202: moved onto batch-1a (patch-ids identical, review kept), PR checks 42936251621 + Picked list (6 geo + 10 raw) dispatched
+03:05 n2-dt208 cf1658623 and n2-earnspot edc72fcb8 stacked on n-dt202 (patch-ids identical, reviews kept); PR checks 42936371985, 42936386824 queued
+03:07 DT-214 cause: f3 run fails 'autonomous Giran route: PATH_BUDGET' fast (cleanup works, no 180 s hang). PathfindingWorker.js:26 town-corridor wall-clock budget 150 ms (limits.md 'Corridor budget'); local measure scratchpad/pf/measure.js: the Giran->Groot 30000-node corridor request takes ~150 ms worker time, PATH_BUDGET in 10 of 12 laptop requests; on CI it lands on either side. Decision needed (gameplay/perf): sliced resumable search (target) vs weighted heuristic for town errands vs budget change
+03:12 n2-dt202 PR checks 42936251621 green (7 min); Picked list 42936306971 failed (inspect) → rerun failed job; n-dt197 test fix d6dd8f238 (315 s, cumulative 169234 tok): 3 tests pinned old free-money fare; n-pfclean review pass (42 s, 59655 tok)
+03:12 n-rm31 round-1 fix 83a5881f9 on s2-dt208 (415 s, cumulative 313234 tok): meetingTerms helper used by worker and native accept; companion names root; test fails on behaviour. Needs restack onto landed dt197/dt208 later. n-dt197 r2 review spawned
+03:16 dt202 Picked list failed again on flaky companion_pathfinding_worker (PATH_BUDGET) → 2nd rerun; n-dt197 r2 PASS (28 s, 59425 tok); n-dt211 done 0a89c667e on s6 (791 s, 97858 tok; brief file was empty at first read: coordinator shell-quoting error)
+03:17 stack2 on n-earnspot: dt197 32ac0225d, rm31 775493071, dt211 cd54d6685, pfclean a6e5ea421 (all clean, identical patch-ids); records n3-*; PR checks dispatched for the 4
+03:18 LANDED n2-dt202 52eb1107c (2 commits) on batch-1a; dt202 Picked needed 2 reruns of flaky pathfinding. n2-dt208 + n2-earnspot PR checks failed: test_selected_purchase_meeting (DT-208 change) → DT-208 implementer resumed
+03:20 restack 3 (dt208 moved to the end; it failed CI): on 52eb1107c earnspot 1ff7b2b4a, dt197 32ac85f1b, rm31 12eae9ab7, dt211 dabc14fb5, pfclean 0d1081133; 4 queued PR checks of stack2 cancelled; 5 new PR checks dispatched; records n4-*
+03:20 n-dt211 r1 PASS (126 s, 82520 tok, 19 tools)
+03:21 n-rm31 r2 BLOCKED rule 11 (162 s, 97524 tok): no test pins the round-1 fixes; round limit reached → coordinator decision: add the two tests + narrow review of the test delta (deviation logged); rm31 moved after dt211/pfclean: restack 4 dt211 319b71f19, pfclean 7668e09c7 on dt197 32ac85f1b; 6 queued runs cancelled; new PR checks + Picked lists dispatched
+03:29:03 earnspot PR 42938130814 green, Picked list-1ff7b2b4a 42938234151 green; dt197 PR 42938143577 green, Picked queued; dt211 Picked 42938393129 green; pfclean Picked 42938416094 failed PATH_BUDGET (DT-214 flaky) → rerun. DT-208 test fix 9a80c2f19 (302 s, cumulative 231386 tok; test only: bid lifts worth; new no-step assertion). RM-31 tests ba38c9a3a (416 s, cumulative 334921 tok; 2 tests fail on 18a0738ed)
+03:31:29 LANDED n4-earnspot 1ff7b2b4a (regressions: 3 tests run on base+head tests locally, all fail on old; selection-ack after full PR checks)
+03:33:47 restack 5: rm31 b6faac7b2 (src identical to 12eae9ab7) on pfclean 7668e09c7, dt208 d17e0fbbe (src identical to 77c041ed0) on top; records n6-rm31/n6-dt208; PR 42939778929/42939782542 + Picked lists; narrow reviews spawned (rm31 r3 test delta, dt208 r2 test delta)
+03:39:01 LANDED n4-dt197 32ac85f1b (Picked needed 1 rerun: DT-214) and n5-dt211 319b71f19; rm31 r3 narrow PASS (174 s, 69734 tok); dt208 r2 narrow PASS (268 s, 85269 tok; info: EconomyContext.js:1481 held worth unpinned → DT-222 line). pfclean record was fast route; CLI demands critical (test touches critical surface?) → re-record
+03:40:13 LANDED n6-pfclean 7668e09c7 (escalated fast→critical: CLI demanded; brief needed verified cause+regression). CLI defect: record-land records the checkout HEAD, ignores --ref; it recorded the landing before my push (push had failed). Pushes fail when chained after fetch in one shell call, succeed standalone.
+03:42:02 rm31 b6faac7b2 PR 42939778929 FAILED test_bot_economy_thresholds (helper nativeEconomyPolicyAssertions walks raw packet triples; RM-31 appends root ids) → RM-31 implementer resumed (test helper). dt208 on rm31 failed only the same file → dt208 cherry-picked onto 7668e09c7 as f3eec5444 (n7-dt208), PR 42940759901 + Picked list; old-code regressions verified locally
+03:48:04 LANDED n7-dt208 f3eec5444 (PR 42940759901 + Picked 42940769146 green first try). RM-31 helper fix ed4b7ebd7 (295 s, cumulative 346488 tok; test-only: nativeEconomyPolicyAssertions + escrow test via StatsPacket accessors) → cherry-picked 12962fed3 on f3eec5444 (n7-rm31), CI dispatched. RM-3 cherry-pick conflicts (Actor teardown already in via edb09cd3a; planning hunks) → port task
+03:56:29 LANDED n7-rm31 12962fed3 (PR 42941536021 + Picked 42941544312 green first try; r4 narrow pass 158 s 62618 tok; regressions verified locally on f3eec5444). RM-3 port d059fd0ba (364 s, 87193 tok): tables stale (EffectTicker/C4SkillEffects/ToggleSkills are table inputs). Traced cold run on 12962fed3 starting
+03:59:20 traced cold run n1a-cold on 12962fed3 started 03:58; RM-3 rebased b8318f184 on 12962fed3, tables/all/b8318f184 pushed, review spawned; shaman b842ebdb0/9008fe288 cherry-pick conflicts → deferred (gameplay + tables + RM-32 re-measure). DT-201 verifier (565 s, 223113 tok): mechanism verified for bot 2001088 (card step re-decides bids from the card view, A-B-A), population share unmeasured; brief night-dt201.json, record dt201 (critical), implementer spawned on 12962fed3. hygiene --remove + removed 21 of my stale worktrees
+04:06:34 RM-3 review r1 PASS (314 s, 95594 tok; finding 1 applied by coordinator: toggle tick refreshStats removed → 6d04301e4); tables b8318f184 cancelled, tables/all/6d04301e4 42943635586 running; DT-187 CLOSED by evidence (verifier 757 s, 196461 tok: 0 improving repeat pairs after DT-200a vs 45); DT-146 implementer spawned (record dt146 standard)
+04:16:29 DT-146 implementer done 28de18d79 (799 s, 166706 tok; test fails on old 'the exchange is made on the visit that collects its banked crystals 0!==1'); PR 42944838524 + Picked list dispatched; review spawned. DT-203/DT-207 agents running (need-first)
+04:17:36 DT-203 verified+fixed 83b6b46df (568 s, 116618 tok; test fails on old 'the body skips the stall that refused it at 1200'); stacked as 7acdd329c on dt146 28de18d79 (record dt203b), PR 42944968673 + Picked; review spawned
+04:18:25 DT-201 implementer done be5c6e581 (1104 s, 229431 tok; old fails 'a served step prepares no bids'); stacked f7ee39c65 on dt203b (record dt201b critical), PR 42945054075 + Picked; critical review spawned
+04:20:47 DT-207 verified+fixed ab37cdf74 (768 s, 141154 tok); stacked 7c7d6e441 on dt201b; CI + review
+04:20:55 DT-203 r1 PASS (194 s, 86263 tok)
+04:28:21 DT-146 r1 BLOCKED (508 s, 130634 tok): F1 craft progress telemetry reads post-release state (false 'obtained' life events, visible in whispers) → implementer resumed. Stack over dt146 (dt203b/dt201b/dt207) built before dt146's review → cancelled 5 CI runs, restacked: dt203c 83b6b46df on batch, dt207c 126a74c0d, dt201c 537c4ec40; CI dispatched. DT-207 r1 PASS (263 s, 116682 tok). RM-3 tables run 42943635586 green → commit 1556ca7f1 (rotation 6 values changed for toggle classes)
+04:29:31 DT-201 r1 (599 s, 207617 tok): code correct, blocked on rule-4 listing only (main reconcile copy) → DT-231 amended [r1a], stale comment fixed → 4dde46367 (dt201d), CI 42946337384; economy.md updated
+04:34:01 n1a-cold run done 04:32 (12962fed3-script-online-player-20261111-035637) → analysis agent spawned. DT-146 F1/F2 fixed eed71b515 (434 s, cumulative 193375 tok) → stacked 4ab2856b6 on dt201d (dt146c), CI 42946857566; scoped r2 review (resumed reviewer)
+04:34:47 LANDED dt203c 83b6b46df (PR 42946039974 + Picked 42946047404 green first try). dt207c Picked failed DT-214 → rerun
+04:35:02 DT-146 r2 PASS (54 s)
+04:35:50 RM-3 stacked 9c37ae336 (rm3c, CLI demanded critical for tables; my ci.sh pushed an empty Picked list → cancelled, redone with 3 geo + 18 raw; ci.sh now stops on verify failure); PR 42947048883
+04:36:41 dt207c PR 42946058063 green; Picked 42946065508 failed DT-214 twice → 3rd attempt
+04:40:09 LANDED dt207c 126a74c0d (Picked needed 4 attempts: DT-214 ×3) and dt201d 4dde46367 (PR 42946337384 + Picked 42946345334 green first try)
+04:42:19 LANDED dt146c 4ab2856b6 (PR 42946857566; Picked 42946866317 a2: DT-214)
+04:42:51 LANDED rm3c 9c37ae336 (2 commits: fix + tables; PR 42947048883 + Picked 42947094353 green first try)
+04:44:28 DT-205 verifier (403 s, 132828 tok): verified (hot bodies never hear offer_posted; lineWake path exists; merchant risk); 3 implementers spawned on 9c37ae336: n-dt205 (critical), n-dt231 (critical, need-first), n-shaman (port b842ebdb0+9008fe288, tables after)
+04:47:30 DT-204/230 verifier (630 s, 191366 tok): verified + repro (hot buyer admitted against cachedState); implementer spawned n-dt204 (standard). New lines owed: waitForShoppingMeeting copies cachedState over session; hot buyer meeting price refusal marks nothing
+04:50:53 run analysis (904 s + 49 s, 247025 tok): health OK (EXP +2.9%, adena +12.9% vs B; deaths 9 vs 10), fixes confirmed (item-90 loop gone, DT-208 buys -42%, off-earning hunts 5 vs 77, lateInView 4 vs 22); REGRESSION? worker lag p99 19.3 s vs 1 s (buildForState spikes; laptop noisy) → profile agent; party requests +41%; C1 1 case (deferred plan). Closed by evidence: RM-22, RM-23, DT-169, DT-181; RM-32 measured (gap 18-26% L30-39, no churn) → maintainer question; shaman port: already in 88dcecbb0 (agent 302 s, 67570 tok). problems.md pruned to budget (evidence moved out of my new lines)
+04:54:22 lag profile agent: machine noise (CPU starvation of the whole process: sample gaps on both threads; buildForState CPU per chunk 4512 vs C 4506); quiet re-run pending
+05:03:19 DT-204 implementer done d68fab586 (old fails: refused 600 → null instead of 700; reverse case 700 vs 600); CI dispatched; review next
+05:07:07 DT-205 implementer done b944beeec (old: worker test times out 'native economy publication timed out'; merchants hold no wants: adena 0); CI on own base (not stacked on unreviewed DT-204); review next
+05:08:23 DT-231 implementer done 7cda4390b (measured 4/17 = 24% traced reconciles from main card view; 3 tests that pinned main bidding rewritten to post via executePlan); CI + review
+05:09:12 DT-204 r1 PASS (333 s, 105141 tok)
+05:10:12 LANDED n-dt204 d68fab586 (PR 42950137669 + Picked 42950144988 green first try)
+05:10:59 dt205/dt231 restacked on d68fab586: dt205b bcbefefdf, dt231b 704addfb0 (old-base CI cancelled; b944beeec Picked had failed DT-214); CI dispatched
+05:15:23 DT-231 r1 PASS (403 s, 130629 tok)
+05:17:21 DT-205 r1 PASS with design finding (boardWake in economy index, owner = kernel) → coordinator: fix now (resumed implementer); DT-231 cherry-picked alone on d68fab586 → 22e3e1fb3 (dt231c), CI 42951693609; maps for DT-205 updated
+05:24:18 DT-205 r1 fix f0bbc4c14 (375 s, cumulative 238198 tok; kernel.situationWake + 'situation' setter tag); stacked 242299cf8 on dt231c (dt205c), CI; scoped r2 review read-only. QUIET run n1a-quiet on 242299cf8 started (no local tests; load 2.4)
+05:25:36 LANDED dt231c 22e3e1fb3 (PR 42951693609; Picked 42951701347 a2: DT-214)
+05:26:33 DT-205 r2 PASS (127 s, read-only during quiet run); rules audit 3 agents spawned (read-only, no node)
+05:34:39 LANDED dt205c 242299cf8 (PR 42952526197; Picked 42952535511 a4: DT-214 ×3; the test alone green on 242299cf8 and 22e3e1fb3)
+05:36:20 rules audit 10-15 done (560 s, 196031 tok): 5 findings (RA3-1 refusals by message text [tail]; RA3-2 ~57 comments cite unresolvable ids [r1a]; RA3-3 Trade lines missing; RA3-4 commit bodies cite steps; RA3-5 internal-pinning tests); no AI lines in release-1 commits
+05:38:10 rules audit 5-9 done: 4 findings + purity-R11 extension (RA2-1 kill rebuilds full actor state per rewarded bot [r1a]; RA2-2 stay-trip ends untraced [r1a]; RA2-3 memory events 2nd tx; RA2-4 hot hunter per-tick capture)
+05:39:33 rules audit 0-4 done (706 s, 259051 tok). Audit report scratchpad/rules-audit-1a.md (17 findings + 1 extension). problems.md: 6 r1a audit lines added; 4 low-value tails (DT-225/226/236/237) moved to the night report to stay in budget
+06:01:22 QUIET run 242299cf8 done 06:00: workerDue steady p99 1000 ms (B/C 1000), max 3096 (B 1197, C 1304); worker turn p99 82 (77/74) max 440 (341/313); main p99 25; processCores 0.95, starved 0 → the 19 s lag was noise. Analysis (resumed), RA1-1 verifier, DT-239 verifier spawned
+06:05:54 QUIET analysis (244 s, cumulative 288231 tok): lag noise confirmed; fixes effective (board:replace -42% vs B, A-B-A 0, DT-205 13 body raises, user_info 0, lux missing 0); BLOCKER: new 1/s loop on stock:shots:item:1458 (2000638, 2001422 in Dion; D crystals at ~3x worth, 3.4 M + 2.4 M) → verifier spawned; C1 2 hits; party requests still +40%
+06:07:16 RA1-1 verifier: gap real but latent (no symptom in 30-min runs: 47 holds/28 cleared, solo picks during holds = before) → [tail] line with departure fix
+06:10:44 DT-239 verifier (520 s, 171313 tok): verified (nullReuse served step reopens closed party request; DT-208 tripled no-leaf cards) → implementer spawned (critical). DT-196 verifier (535 s, 142207 tok): narrowed to offer_posted re-roll of held farm leaf; fix after loop1458 verdict
+06:20:36 DT-239 implementer done d53b2571f (old: served step reopens ['open',...] vs closed); CI + review
+06:22:23 loop1458 verifier (929 s, 236492 tok): NOT a regression (same loop at 12962fed3: 2001724; back-to-back buys in B/C too); cause guess: card craftReservations decision-time {} blocks fallback → bought inputs listed by the same visit; implementer DT-242 (decisive check first) + DT-196 implementer spawned
+06:27:24 LANDED n-dt239 d53b2571f (PR 42958595820 + Picked 42958603706 green first try; r1 pass 218 s 100296 tok)
+06:28:30 planning: DT-239 line deleted, DT-242/243/244 added, roadmap row updated; problems.md trimmed to budget
+06:30:01 RA2-1 and RA2-2 implementers spawned on d53b2571f (standard)
+06:40:17 DT-242 confirmed by probe + fixed 9bbbb18ce (747 s, 173192 tok); cherry-picked 95427f498c3b035321099536a0cfd46105cf29b0 on d53b2571f (dt242b), CI; review next
+06:41:14 RA2-2 done 8127aa389 (608 s, 123289 tok; expiry traced at return; 2 r2-clock warnings → coordinator classified in decision-registry); CI + review
+06:41:33 RA2-1 done 1325817b8 (651 s, 108182 tok; ~190 µs + 7.9 KB per rewarded bot removed); CI + review
+06:42:14 RA2-1 PR checks 42960921040 (no Picked tests selected); ci.sh fixed for empty lists
+06:44:47 RA2-2 r1 BLOCKED (184 s, 90086 tok): 4 GoalExecutor ends untraced + expiry copy → implementer round 2; its CI cancelled
+06:51:15 LANDED dt242b 95427f498 (PR 42960733798 + Picked 42960742854 green first try; r1 pass 438 s 139952 tok)
+06:51:58 DT-196 done 4eff8ae7a (1745 s, 191585 tok; offerWake mind fact; WishNetwork beating()); stacked d981990b1c6e6fadc334e840af7e4376b29567d4 on RA2-1 d8cf46c47 (dt196b), CI; critical review next
+06:57:55 LANDED ra21b d8cf46c47 (PR 42961924520 green; no Picked tests selected). RA2-2 r1 fix c3dcadc23 (1445 s cumulative 164055 tok; trace moved to the row commit listener)
+06:58:37 RA2-2 cherry-picked c2965c444 on d8cf46c47 (ra22b), registry updated, CI 42962654171; r2 scoped review
+07:04:53 LANDED dt196b d981990b1 (PR 42961976722 + Picked 42961984303 green first try; r1 pass 636 s 170707 tok)
+07:05:13 RA2-2 re-picked 1a7619d3e on d981990b1 (ra22c), CI 42963378873. QUIET2 run on 1a7619d3e starting
+07:13:08 LANDED ra22c 1a7619d3e (PR 42963378873; Picked 42963387900 a2: DT-214). batch-1a = 1a7619d3e = QUIET2 run SHA
+07:42:10 QUIET2 run done 07:41 (1a7619d3e-script-online-player-20261111-070521) → analysis (resumed)
+07:46:14 QUIET2 analysis (211 s, cum 314381 tok): DT-239 fixed (no-build opens 0, opens 950), DT-196 works (same answer 70%, conversion 67%), health OK; crystal loop remains in another shape (2000465 1785 ↔ selling, 92 goal_failed) and crystal board volume 11.3k units/55 M vs B 5.9k/29.7 M → verifier spawned; RA2-2 0 records (no stay trip occurred); C1 2 hits
+07:57:17 MAINTAINER 11-11: DT-214 → slice the corridor search across worker turns (150 ms per turn)
+07:59:38 MAINTAINER 11-11: DT-243 → an unfundable top goal yields to the next funded goal. Loop verifier (751 s, 197306 tok): ping-pong pre-existing (B 178 flips, 1a 59), ended by itself; crystal round-trip residual (DT-242 class, owner unverified); recommend ship with 2 problems lines
+08:01:11 MAINTAINER 11-11: RM-32 closed (gap within class spread, C4-like)
+08:02:38 MAINTAINER 11-11: DT-202 rest accepted, closed
+08:05:40 MAINTAINER 11-11: DT-196 focus rule kept (label our choice → DT-249); problems budget → findings-1a.md (16 KB): 16 night tails + 11 audit tails + 5 moved lines moved; planning.md/git.md/hygiene.js updated

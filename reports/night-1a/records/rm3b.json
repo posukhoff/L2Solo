@@ -1,0 +1,53 @@
+{
+  "slug": "rm3b",
+  "base": "4ab2856b6b298f6cc74b653f206b3a73533e0b7d",
+  "risk": "standard",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T02:35:12.512Z",
+  "evidence": {
+    "review": {
+      "head": "9c37ae3365ab8925c34e060392a77c9fe0f4c005",
+      "result": "pass",
+      "evidence": "r1 pass on b8318f184 (314 s, 95594 tok); finding 1 (toggle tick refreshStats removed + comment) applied by coordinator, tests effect_ticker/toggle_skills/toggle_skill_matrix/c4_effect_lifetimes pass; tables commit from fork run 42943635586",
+      "selectionAcknowledged": false,
+      "at": "2026-11-11T02:35:12.821Z"
+    }
+  },
+  "brief": {
+    "base": "4ab2856b6b298f6cc74b653f206b3a73533e0b7d",
+    "symptom": "combat.user_info TypeError on an NPC target (final run d87ce9a05 x14): an expiring effect sent UserInfo of a debuffed NPC to the caster; a character got its UserInfo twice",
+    "owner": "EffectTicker refresh (the receiver of a character's UserInfo after an effect change)",
+    "cause": {
+      "status": "verified",
+      "explanation": "EffectTicker.refreshStats sent UserInfo to the target's session or else the caster's, so an NPC target built UserInfo and threw (fetchPaperdollId), and refreshEffects sent it again for a character",
+      "evidence": [
+        "test_effect_ticker at 12962fed3: TypeError fetchPaperdollId at EffectTicker.js:363 via Timeout; 'no expiry fails to send UserInfo' 1 vs 0; 'the character gets its UserInfo once' 2 vs 1",
+        "final run d87ce9a05 combat.user_info x14"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Effects/EffectTicker.js",
+      "src/GameServer/Skills/C4SkillEffects.js",
+      "src/GameServer/Skills/ToggleSkills.js",
+      "data/Bots"
+    ],
+    "nonGoals": [
+      "other effect refresh copies (DT-227)",
+      "CubicControl UserInfo to others (DT-228)"
+    ],
+    "acceptance": [
+      "no combat.user_info failure on an NPC effect expiry",
+      "a character gets its UserInfo once per effect change, to its own client"
+    ],
+    "evidence": [
+      "RM-3 port report and review 2026-11-11"
+    ],
+    "tests": [
+      "test_effect_ticker.js"
+    ],
+    "regressions": [
+      "test_effect_ticker.js"
+    ]
+  }
+}

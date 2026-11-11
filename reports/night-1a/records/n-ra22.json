@@ -1,0 +1,43 @@
+{
+  "slug": "n-ra22",
+  "base": "d53b2571f86accc47feb6abd33443475d2c9a183",
+  "risk": "standard",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T04:29:09.518Z",
+  "evidence": {},
+  "brief": {
+    "base": "d53b2571f86accc47feb6abd33443475d2c9a183",
+    "symptom": "a clan-duty stay trip (a member leaves its party to unload and comes back) writes no trace at departure or at its ends (returned, clan_party_return_wait, craft_warehouse_party_unavailable, ticket expiry): a stranded waiter is invisible",
+    "owner": "PopulationService.applyPartyStayTrips / resumePartyMarketBreak and PartyMarketBreak.pending",
+    "cause": {
+      "status": "verified",
+      "explanation": "only a refused departure is counted (party:stay_trip:refused); the leave shows as a generic party_left raise and a return as a party joined record; the other ends and the 15-min ticket expiry (pending() filters it silently) record nothing",
+      "evidence": [
+        "rules audit 11-11 RA2-2 (scratchpad/rules-audit-1a.md)",
+        "PopulationService.js 360-425, PartyMarketBreak.js 66 at d53b2571f"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/Population/PopulationService.js",
+      "src/GameServer/Bot/Population/PartyMarketBreak.js"
+    ],
+    "nonGoals": [
+      "changing the stay-trip rule or the ticket lifetime"
+    ],
+    "acceptance": [
+      "a stay trip's departure and each end (returned, return wait, unavailable, expired) leave one decision-trace record; expiry counted"
+    ],
+    "evidence": [
+      "RA2-2"
+    ],
+    "tests": [
+      "test_clan_party_market_return.js",
+      "test_bot_party_market_break.js"
+    ],
+    "regressions": [
+      "test_clan_party_market_return.js",
+      "test_bot_party_market_break.js"
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "slug": "ra22b",
+  "base": "d8cf46c47991dacc16ff5ad0e281488122b318c1",
+  "risk": "standard",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T04:58:06.870Z",
+  "evidence": {
+    "review": {
+      "head": "c2965c444832b57959bf143140a1cd13b742799a",
+      "result": "pass",
+      "evidence": "r1 blocked (184 s, 90086 tok) → fix c3dcadc23; r2 scoped pass (~10 min, cumulative); c2965c444 same patch",
+      "selectionAcknowledged": false,
+      "at": "2026-11-11T05:01:29.166Z"
+    }
+  },
+  "brief": {
+    "base": "d8cf46c47991dacc16ff5ad0e281488122b318c1",
+    "symptom": "a clan-duty stay trip (a member leaves its party to unload and comes back) writes no trace at departure or at its ends (returned, clan_party_return_wait, craft_warehouse_party_unavailable, ticket expiry): a stranded waiter is invisible",
+    "owner": "PopulationService.applyPartyStayTrips / resumePartyMarketBreak and PartyMarketBreak.pending",
+    "cause": {
+      "status": "verified",
+      "explanation": "only a refused departure is counted (party:stay_trip:refused); the leave shows as a generic party_left raise and a return as a party joined record; the other ends and the 15-min ticket expiry (pending() filters it silently) record nothing",
+      "evidence": [
+        "rules audit 11-11 RA2-2 (scratchpad/rules-audit-1a.md)",
+        "PopulationService.js 360-425, PartyMarketBreak.js 66 at d53b2571f"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/Population/PopulationService.js",
+      "src/GameServer/Bot/Population/PartyMarketBreak.js",
+      "src/GameServer/Bot/Population/BotLifeState.js",
+      "src/GameServer/Bot/Goals/GoalExecutor.js"
+    ],
+    "nonGoals": [
+      "changing the stay-trip rule or the ticket lifetime"
+    ],
+    "acceptance": [
+      "a stay trip's departure and each end (returned, return wait, unavailable, expired) leave one decision-trace record; expiry counted"
+    ],
+    "evidence": [
+      "RA2-2"
+    ],
+    "tests": [
+      "test_bot_party_market_break.js"
+    ],
+    "regressions": [
+      "test_bot_party_market_break.js"
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+{
+ "base": "319b71f19e0cfbd852d771f0a1f4d78ebb2a4178",
+ "symptom": "test_companion_pathfinding_worker fails 3 of 5 Picked runs, then holds its shard 180 s",
+ "owner": "tests/test_companion_pathfinding_worker.js cleanup",
+ "scope": [
+  "tests/test_companion_pathfinding_worker.js"
+ ],
+ "nonGoals": [
+  "the PATH_BUDGET cause (150 ms corridor budget, decision pending)"
+ ],
+ "acceptance": [
+  "a failed assertion releases workers and timers so the file fails in seconds",
+  "the assertion message names the worker error code"
+ ],
+ "evidence": [
+  "Picked 42935402835: fails fast with 'autonomous Giran route: PATH_BUDGET'; 42934623575..42934637670 4/4 green"
+ ],
+ "tests": [
+  "test_companion_pathfinding_worker.js"
+ ],
+ "cause": {
+  "status": "verified",
+  "explanation": "on an assertion failure test_companion_pathfinding_worker.js left its pathfinding worker threads and timers alive, so the process never exited and CI killed it at the 180 s file timeout; the assertion itself is DT-214 (Giran corridor over the 150 ms budget -> PATH_BUDGET -> worker_geodata_error_fallback)",
+  "evidence": [
+   "CI 42935402835: with the cleanup the same PATH_BUDGET failure ends in ~23 s instead of the 180 s timeout",
+   "scratchpad/pf/measure.js: 10/12 Giran->Groot corridor requests over 150 ms on the laptop"
+  ]
+ },
+ "regressions": [
+  "test_companion_pathfinding_worker.js"
+ ]
+}

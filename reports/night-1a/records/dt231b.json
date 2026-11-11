@@ -1,0 +1,53 @@
+{
+  "slug": "dt231b",
+  "base": "bcbefefdfd86f5e4817159f7563149d1aeb4e841",
+  "risk": "critical",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T03:10:30.688Z",
+  "evidence": {
+    "review": {
+      "head": "704addfb06ba7c40541935d6ee9f8581e586209b",
+      "result": "pass",
+      "evidence": "r1 pass on 7cda4390b (403 s, 130629 tok); findings → DT-231 (canTradeRemotely withdraw), DT-232 widened, map fixed; restacked 704addfb0 same patch; critical: full PR checks required",
+      "selectionAcknowledged": true,
+      "at": "2026-11-11T03:15:23.061Z"
+    }
+  },
+  "brief": {
+    "base": "bcbefefdfd86f5e4817159f7563149d1aeb4e841",
+    "symptom": "main re-decides buy-ad bids from the card view on every cold town step that ends without a purchase (finishColdMarketStep → BotAfkMarketService.reconcile → reconcileBuyAds → buyLines → BuyAdPolicy.linesFor with economyFor(state).watchList), so the build↔card bid flip of DT-201 can survive on main",
+    "owner": "bids are the economy build's decision (ColdEconomyPlan); main's reconcile only executes or withdraws",
+    "cause": {
+      "status": "verified",
+      "explanation": "BotAfkMarketService.reconcileBuyAds, for a buy goal the bot can bid on remotely, re-decided bids via buyLines → linesFor with no watchList (main's card view) and published them; callers finishColdMarketStep ~3180 (town step without a purchase), openMarketListing ~513, marketTravelWithRefund",
+      "evidence": [
+        "run 12962fed3 trace: 17 buy_ad_reconcile changed, 13 after worker plans, 4 (24%) from main with no plan within 1 s (lines 8301, 8480, 29375, 40712)",
+        "bot 2001600: build bid 1463x1310@412 (line 23212, Dion); main posted Gludio 1463x1530@520 + 1458x10@3190 = the card's wish_need requested (line 40621)",
+        "bot 2001728: main rewrote record 67787 to 1464x2696@314 = card requested 2696",
+        "test at 9c37ae336: 'a town step without a purchase leaves the build's bids as posted' (records 8/9 replaced by 10 from the card view)"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/Population/PopulationService.js",
+      "src/GameServer/Bot/Economy/BotAfkMarketService.js"
+    ],
+    "nonGoals": [
+      "withdraw/re-post on a goal switch to a non-bidding purchase (DT-233)",
+      "buy-ad town choice",
+      "intentRevision row rewrites"
+    ],
+    "acceptance": [
+      "a cold town step that ends without a purchase changes no buy ad the build did not decide: no republish from the card view; a withdraw main must do (an NPC trip that needs the escrow) still happens"
+    ],
+    "evidence": [
+      "DT-201 review finding 1"
+    ],
+    "tests": [
+      "test_bot_afk_buy_shop.js"
+    ],
+    "regressions": [
+      "test_bot_afk_buy_shop.js"
+    ]
+  }
+}

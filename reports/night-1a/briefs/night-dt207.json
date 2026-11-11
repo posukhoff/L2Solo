@@ -1,0 +1,39 @@
+{
+ "base": "f7ee39c656f91bd3f96c9842a025a9c69bc6adcb",
+ "symptom": "the hot board/store buy catch never counts a broken invariant (cold counts it as economy.cold_board_buy) and classifies refusals by its own rule: a live player store's changed line marks no quote on a hot bot while the bot-store versions do",
+ "owner": "GearMarks (SELLER_REFUSALS/FUNDING_REFUSALS owner): one classifier buyRefusal for hot ShoppingState.equipmentPurchaseFailed and cold ColdMarketService.buyOffer",
+ "cause": {
+  "status": "verified",
+  "explanation": "hot equipmentPurchaseFailed checked only fundingRefused/sellerRefused and warned on anything else without FailureLog; cold buyOffer used BOARD_BUY_REFUSALS and Database.refused and counted the rest; PrivateStoreTrade's private_store_* codes were in no set",
+  "evidence": [
+   "ShoppingState.js:229-238, :996 at 12962fed3",
+   "ColdMarketService.js:149-150, :211-222 at 12962fed3",
+   "PrivateStoreTrade.js:47,60,92,103,107",
+   "test at 12962fed3: 'a broken meeting invariant is counted' 0 vs 1; 'a live store's changed line marks its quote' [] vs [[1,'Giran',500]]"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/AI/GearMarks.js",
+  "src/GameServer/Bot/AI/States/ShoppingState.js",
+  "src/GameServer/Bot/Economy/ColdMarketService.js"
+ ],
+ "nonGoals": [
+  "NPC gear buy failures uncounted hot and cold",
+  "hot supply-purchase and sell-to-buyer catches",
+  "post-commit throw inside the hot try"
+ ],
+ "acceptance": [
+  "hot and cold give the same verdict for the same buy error",
+  "a broken invariant is counted (economy.hot_board_buy / economy.cold_board_buy); meeting, money and writer refusals are not; a seller refusal marks its quote, a live store's changed line too"
+ ],
+ "evidence": [
+  "DT-207 implementer report 2026-11-11"
+ ],
+ "tests": [
+  "test_hot_shopping_trade_meeting.js",
+  "test_bot_cold_market_purchase.js"
+ ],
+ "regressions": [
+  "test_hot_shopping_trade_meeting.js"
+ ]
+}

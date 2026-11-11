@@ -1,0 +1,37 @@
+{
+ "base": "6c1455b5ecac2b88202db6ab591deb3c3f2a67bb",
+ "symptom": "44 bots re-landed at the same gatekeeper point in 25 min (hot run 9d6bf579a); late in-view counter counted C4 teleport arrivals",
+ "owner": "BotLifeState.writeColdRow cooling writer; PopulationService late in-view counter",
+ "cause": {
+  "status": "verified",
+  "explanation": "a body cooled in town on its town trip was written as resting with no spot and no trip, the cold step rested and routed back through the gatekeeper; the counter counted a gatekeeper landing (a C4 spawn) as late",
+  "evidence": [
+   "src/GameServer/Bot/Population/BotLifeState.js ~1559-1567, ~2295-2311 at 8b36104c6",
+   "log-query activations on run 9d6bf579a-hot: 193 near the landing 82684,183551, 44 re-activated"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Population/BotLifeState.js",
+  "src/GameServer/Bot/Goals/GoalExecutor.js",
+  "src/GameServer/Bot/Population/PopulationService.js",
+  "src/GameServer/Bot/Population/PopulationMetrics.js",
+  "src/GameServer/Bot/Population/PopulationStatus.js"
+ ],
+ "nonGoals": [
+  "cold-only same-spot SoE loop (37 bots, problem line)",
+  "bodyTrip of a body cooled before it reaches town"
+ ],
+ "acceptance": [
+  "a body cooled in town on its town trip is written as its cold visit there",
+  "a gatekeeper landing in view is not counted late"
+ ],
+ "evidence": [
+  "DT-202 planner and implementer reports 2026-11-10"
+ ],
+ "tests": [
+  "test_cold_honest_travel.js"
+ ],
+ "regressions": [
+  "test_cold_honest_travel.js"
+ ]
+}

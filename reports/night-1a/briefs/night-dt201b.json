@@ -1,0 +1,40 @@
+{
+ "base": "7acdd329ca5012958b416d1c36cf46e9335013aa",
+ "symptom": "board:replace buy-ad writes 1.3-1.9x v0.1.2 (4511 vs 3008 script, 3759 vs 1933 hot, ~8.7 s DB a run); a bot in town re-posts its buy ads every 1-2 s with the item set flipping A-B-A and the ad's town moving",
+ "owner": "ColdEconomyPlan.prepareNative bid block (ColdEconomyPlan.js 165-190): bids are the economy build's decision",
+ "cause": {
+  "status": "verified",
+  "explanation": "since 85e4c0672 the town-visit plan carries bids; a card step in town (no situation, no build) asks for that visit plan from the card view (ColdSimulationWorker.js ~2104, caller 'card', 'showcase'), whose watch rows carry no key/valueRate (ColdEconomyDecision.js 463-464, card stores [itemId, amount, worth, kind] at :353), so BuyAdPolicy.linesFor bids a different item set than the build; builds and card steps alternate ~1/s in town, sameBuyOrder (BotBuyShopService.js 16-20, gate :72) fails and every step writes board:replace. The card step re-decides the build's bids without a situation (rule 2).",
+  "evidence": [
+   "run 6c1455b5e-script-online-player-20261111-015741 trace bot 2001088: 14 re-posts in 50 s, 8 A-B-A; build plans bid {864,887,4050} (lines 31420, 31665), card plan in the same decisionSeq bids {887} (31548); buy_ad_reconcile changed at 31448, 31533, 31681, 32054, 32113, 32203, 32267, 32416; town Rune\u2192Gludio\u2192Dion\u2192Giran\u2192Oren",
+   "21ef29385 ColdSimulationWorker ~1992-2004: a card step in town asked no plan (showcaseOnly, no bids)",
+   "of 22 traced plan-following re-posts 20 changed the item set, none only price/count (scratchpad/dt201/plans.py, aba.py)",
+   "population share of the increase not measured (sample ~1/64): checked by the run after the fix"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Population/ColdEconomyPlan.js",
+  "src/GameServer/Bot/Population/ColdSimulationWorker.js",
+  "src/GameServer/Bot/Population/ColdEconomyDecision.js"
+ ],
+ "nonGoals": [
+  "withdraw/re-post when the goal switches to a non-bidding purchase (stock:shots / NPC buy)",
+  "intentRevision row rewrites (Database.js ~4682)",
+  "buy-ad town choice policy",
+  "RM-31 funding roots",
+  "the higher count of standing buy ads"
+ ],
+ "acceptance": [
+  "a bot in town whose steps alternate build/card writes no board:replace on card steps: its held ads stand until the next build",
+  "a build step in town still posts bids when its bid set or town differs from the held ads (85e4c0672 kept)"
+ ],
+ "evidence": [
+  "DT-201 cause verifier report 2026-11-11 (scratchpad/dt201)"
+ ],
+ "tests": [
+  "test_bot_afk_buy_shop.js"
+ ],
+ "regressions": [
+  "test_bot_afk_buy_shop.js"
+ ]
+}

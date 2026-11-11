@@ -1,0 +1,58 @@
+{
+  "slug": "n3-dt197",
+  "base": "edc72fcb8a329efc6f3906bb81af4d3887a9dec0",
+  "risk": "critical",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T01:16:46.781Z",
+  "evidence": {
+    "review": {
+      "head": "32ac0225d9592adb7082825180c89e88b21e5dde",
+      "result": "pass",
+      "evidence": "r1 pass on 7fd38c51f (92374 tok) + r2 pass on test delta d6dd8f238 (59425 tok); restacked onto edc72fcb8 with identical patch-id e87a407e",
+      "selectionAcknowledged": false,
+      "at": "2026-11-11T01:17:13.918Z"
+    }
+  },
+  "brief": {
+    "base": "edc72fcb8a329efc6f3906bb81af4d3887a9dec0",
+    "symptom": "1225 of 2879 stocked conditional-meeting sell lines (run 9d6bf579a) could never be bought: a seller's gatekeeper fare was checked against free money (0 with any unfunded wish)",
+    "owner": "TripPayment fare rule read by MeetingFare.sellerCanReach, ColdSimulationWorker meeting preparation, native TradeMeeting accept",
+    "cause": {
+      "status": "verified",
+      "explanation": "MeetingFare.sellerCanReach, the worker's meeting preparation and the native accept funded a pure seller's fare with spendable({free:true}), which is 0 for any bot with an unfunded wish; C4 and our trip rule pay a fare from the wallet",
+      "evidence": [
+        "src/GameServer/AfkTrade/MeetingFare.js sellerCanReach at 8b36104c6",
+        "src/GameServer/AfkTrade/TradeMeeting.js ~150 funding free:totals[side]===0",
+        "src/GameServer/Bot/Population/ColdSimulationWorker.js ~496-503",
+        "scratchpad fare-count.js on run 9d6bf579a: 1225/2879 lines refused, 0 after"
+      ]
+    },
+    "scope": [
+      "src/GameServer/AfkTrade/MeetingFare.js",
+      "src/GameServer/AfkTrade/TradeMeeting.js",
+      "src/GameServer/Bot/Population/ColdSimulationWorker.js",
+      "src/GameServer/Bot/Travel/TripPayment.js"
+    ],
+    "nonGoals": [
+      "a buyer's fare (stays in purchase funding)",
+      "EconomyContext:300 and WishProviders:1421 inline fare copies (problem line)"
+    ],
+    "acceptance": [
+      "a seller with an unfunded wish and the fare in its wallet is offered and its meeting commits",
+      "a seller with less than the fare is refused"
+    ],
+    "evidence": [
+      "DT-197 implementer report 2026-11-10"
+    ],
+    "tests": [
+      "test_party_trade_admission.js",
+      "test_same_point_trade_meetings.js",
+      "test_personal_shot_meeting_worker.js"
+    ],
+    "regressions": [
+      "test_party_trade_admission.js",
+      "test_same_point_trade_meetings.js"
+    ]
+  }
+}

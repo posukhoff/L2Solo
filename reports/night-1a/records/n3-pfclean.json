@@ -1,0 +1,38 @@
+{
+  "slug": "n3-pfclean",
+  "base": "cd54d668586da6a0c231dfc4c11ea296f5515249",
+  "risk": "fast",
+  "kind": "chore",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T01:16:52.197Z",
+  "evidence": {
+    "review": {
+      "head": "a6e5ea421df18fa6d7359c98a0c530815f58cf73",
+      "result": "pass",
+      "evidence": "scoped review pass on e6e239bfd (59655 tok); restacked with identical patch-id 4489754d",
+      "selectionAcknowledged": false,
+      "at": "2026-11-11T01:17:14.104Z"
+    }
+  },
+  "brief": {
+    "base": "cd54d668586da6a0c231dfc4c11ea296f5515249",
+    "symptom": "test_companion_pathfinding_worker fails 3 of 5 Picked runs, then holds its shard 180 s",
+    "owner": "tests/test_companion_pathfinding_worker.js cleanup",
+    "scope": [
+      "tests/test_companion_pathfinding_worker.js"
+    ],
+    "nonGoals": [
+      "the PATH_BUDGET cause (150 ms corridor budget, decision pending)"
+    ],
+    "acceptance": [
+      "a failed assertion releases workers and timers so the file fails in seconds",
+      "the assertion message names the worker error code"
+    ],
+    "evidence": [
+      "Picked 42935402835: fails fast with 'autonomous Giran route: PATH_BUDGET'; 42934623575..42934637670 4/4 green"
+    ],
+    "tests": [
+      "test_companion_pathfinding_worker.js"
+    ]
+  }
+}

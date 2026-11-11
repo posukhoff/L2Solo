@@ -1,0 +1,46 @@
+{
+  "slug": "n-shaman",
+  "base": "9c37ae3365ab8925c34e060392a77c9fe0f4c005",
+  "risk": "critical",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T02:43:39.015Z",
+  "evidence": {},
+  "brief": {
+    "base": "9c37ae3365ab8925c34e060392a77c9fe0f4c005",
+    "symptom": "Orc Shaman parties dissolve and re-form every ~30 s: after the profession change the Orc Shaman profile judges the Orc Mystic staff unarmed (weapon_bridge) and the session review releases the member; an unfunded weapon bridge also releases a party member at once",
+    "owner": "BotEquipmentCompatibility interim weapons (the Gladiator mechanism) and GearAcquisitionPlanner.equipmentBridgeReason (weaponBridgeFunded)",
+    "cause": {
+      "status": "verified",
+      "explanation": "ready fixes b842ebdb0 and 9008fe288 (ivan/shaman-weapon), maintainer-planned for release 1a (roadmap 'Ready'); their tests pin the behaviour",
+      "evidence": [
+        "b842ebdb0, 9008fe288 commit messages and tests (test_bot_orc_mystic_starter_weapon, test_bot_weapon_bridge_affordable)",
+        "RM-32: Orc Shaman L20-25 0.99 M EXP/h vs Scavenger 2.56 M (run 11-09)"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/AI/BotEquipmentCompatibility.js",
+      "src/GameServer/Bot/AI/GearAcquisitionPlanner.js",
+      "data/Bots"
+    ],
+    "nonGoals": [
+      "the buffer solo rule vs C4 (RM-32 second half)",
+      "DT-132 rewording unless ColdTrip is touched"
+    ],
+    "acceptance": [
+      "an Orc Shaman/Overlord/Warcryer keeps the Orc Mystic's staff as an interim weapon until the kit replaces it (no weapon_bridge release, no party churn)",
+      "a weapon bridge releases a party member only when funded"
+    ],
+    "evidence": [
+      "roadmap 1a Ready row"
+    ],
+    "tests": [
+      "test_bot_orc_mystic_starter_weapon.js",
+      "test_bot_weapon_bridge_affordable.js"
+    ],
+    "regressions": [
+      "test_bot_orc_mystic_starter_weapon.js",
+      "test_bot_weapon_bridge_affordable.js"
+    ]
+  }
+}

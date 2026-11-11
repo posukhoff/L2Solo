@@ -1,0 +1,43 @@
+{
+ "base": "cf1658623db84e063e34231cf79914de0d6e664e",
+ "symptom": "233 A-B-A hunt-spot flips in 0.58 h (cold run 9d6bf579a); arrivals 1.1 to 2.84 per bot-hour",
+ "owner": "BotRoute.huntSpot chooser, EconomyContext.foundation, WishProviders leaf spot, EquipmentIncomeRoute.spotUseOf",
+ "cause": {
+  "status": "verified",
+  "explanation": "planSource ran before the held earning answer for any gear step; foundation priced the old held answer or a table row when the search found none; the money/level leaf copied that spot; spotUseOf fell back to the best-EXP row",
+  "evidence": [
+   "src/GameServer/Bot/Population/BotRoute.js:481-496 at 9d6bf579a",
+   "src/GameServer/Bot/Economy/EconomyContext.js:802-814",
+   "src/GameServer/Bot/Economy/WishProviders.js:1287",
+   "scratchpad flips2.js/aba.js on run 9d6bf579a: 232 of 233 A-B-A with the earning answer on one side"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Population/BotRoute.js",
+  "src/GameServer/Bot/Economy/EconomyContext.js",
+  "src/GameServer/Bot/Economy/WishProviders.js",
+  "src/GameServer/Bot/Economy/EquipmentIncomeRoute.js",
+  "src/GameServer/Bot/AI/BotHuntEfficiency.js"
+ ],
+ "nonGoals": [
+  "the build re-ranking its root on offer_posted/goal_done (problem line)",
+  "ShotStock.js:286 Table.best fallback"
+ ],
+ "acceptance": [
+  "a solo bot hunts at its earning answer unless its current step farms the plan's item",
+  "after a search that finds nothing no leaf names a spot"
+ ],
+ "evidence": [
+  "earning spot planner and implementer reports 2026-11-10"
+ ],
+ "tests": [
+  "test_spot_source_targets.js",
+  "test_held_earning_spot.js",
+  "test_npc_purchase_basket.js"
+ ],
+ "regressions": [
+  "test_spot_source_targets.js",
+  "test_held_earning_spot.js",
+  "test_npc_purchase_basket.js"
+ ]
+}

@@ -1,0 +1,35 @@
+{
+ "base": "242299cf89866df0311c690311e4bf95cc5068f2",
+ "symptom": "party_progress request opens 999 (C) / 1030 (B) \u2192 1452 (NEW), forming_refused closes 632 \u2192 1025: a bot with a no-leaf card reopens a party request forming closed on every served step (~50 s) instead of at its next build",
+ "owner": "the cold worker step's party request on a served card (ColdSimulationWorker nullReuse path); contract owned by PartyRequestPlanner: a closed request is held until the bot's next build",
+ "cause": {
+  "status": "verified",
+  "explanation": "the nullReuse served step (card with no leaf, ColdEconomyDecision.refusal completedNull) calls partyRequestForPlan (ColdSimulationWorker ~2124-2141), which reopens a request forming closed; the normal served path holds it (~2116). f3eec5444 removed money leaves of ~330 jewel plans, so no-leaf cards grew 135 \u2192 468 bots and the loop ~3x",
+  "evidence": [
+   "runs 6c1455b5e / 12962fed3 decision-trace: party_progress opens with no build in the 3 s before 226 vs 685, 100% after a no-leaf build answer (scratchpad/dt239/p3.js, p4.js)",
+   "bot 2000092: close 1794362759644, reopen 1794362766280 with no build",
+   "partyFormation on main 30.9 s \u2192 50.2 s; tests/test_party_request_worker_deferral.js pins 'held until the next build'"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Population/ColdSimulationWorker.js"
+ ],
+ "nonGoals": [
+  "f3eec5444's floor",
+  "the no-leaf top goal side effect (separate line)",
+  "re-judging LFP on assembly events"
+ ],
+ "acceptance": [
+  "a bot with a no-leaf card and a request closed by forming keeps it closed with attempts unchanged across served steps; its next build asks again",
+  "no change for bots whose cards have a leaf"
+ ],
+ "evidence": [
+  "DT-239 verifier report 2026-11-11 (scratchpad/dt239)"
+ ],
+ "tests": [
+  "test_cold_worker_one_decision.js"
+ ],
+ "regressions": [
+  "test_cold_worker_one_decision.js"
+ ]
+}

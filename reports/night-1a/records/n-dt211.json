@@ -1,0 +1,43 @@
+{
+  "slug": "n-dt211",
+  "base": "cad378003182677acf61011848787f1ba785e95d",
+  "risk": "critical",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T00:59:20.024Z",
+  "evidence": {},
+  "brief": {
+    "base": "cad378003182677acf61011848787f1ba785e95d",
+    "symptom": "a near body that stops being current (cooled, logged off, dead) during the native improvement write returns before the end-of-step raise, uncounted; the cold row may then run the same improvement again (refused write, rarely a second paid draw)",
+    "owner": "BotImprovementService.reviewHot commit path (end of a held improvement step)",
+    "cause": {
+      "status": "verified",
+      "explanation": "reviewHot's .then starts with `if (!current()) return result;` (src/GameServer/Bot/Economy/BotImprovementService.js:139 at 6c1455b5e), before stepDone; when the body is no longer current the committed improvement raises nothing and the held step survives in the cold row. Pre-existing since d4322a214; DT-200a added the raise on every other success path",
+      "evidence": [
+        "src/GameServer/Bot/Economy/BotImprovementService.js:139 at 6c1455b5e",
+        "dt200a round-2 review 2026-11-10 (F2)",
+        "git log -S: line present since d4322a214"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/Economy/BotImprovementService.js"
+    ],
+    "nonGoals": [
+      "refreshing the gone body's backpack or stats",
+      "DT-187 refusal marks"
+    ],
+    "acceptance": [
+      "a committed improvement whose body stopped being current during the write still ends its held step once (raiseOn on the row), counted as the other raises are",
+      "no double raise when the body is current"
+    ],
+    "evidence": [
+      "dt200a review report F2"
+    ],
+    "tests": [
+      "test_bot_improvements.js"
+    ],
+    "regressions": [
+      "test_bot_improvements.js"
+    ]
+  }
+}

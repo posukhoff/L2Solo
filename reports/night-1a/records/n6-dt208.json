@@ -1,0 +1,44 @@
+{
+  "slug": "n6-dt208",
+  "base": "b6faac7b2ff9d67be6cb5facb4163f544cdfb466",
+  "risk": "critical",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T01:32:46.561Z",
+  "evidence": {},
+  "brief": {
+    "base": "b6faac7b2ff9d67be6cb5facb4163f544cdfb466",
+    "symptom": "item 90 (4.16 M) bought 104 times in 35 min for a luxury exchange to an earring worth 1.1-1.8 M",
+    "owner": "WishNetwork.moneyQueue priority floor",
+    "cause": {
+      "status": "verified",
+      "explanation": "moneyQueue floors a priority root's value at price x floor and skips the ratio test for priority wishes, so a kit piece is funded at any price; the only executable path for 852/854 is the 4.16 M exchange",
+      "evidence": [
+        "src/GameServer/Bot/Economy/WishNetwork.js:118,134,137 at 8b36104c6",
+        "offline count dt208/count.js: 1056 exchange roots in 414 bots funded only via the floor"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/Economy/WishNetwork.js",
+      "src/GameServer/Bot/Economy/EconomyContext.js"
+    ],
+    "nonGoals": [
+      "ordinary buys keep today's floor (maintainer 11-10)",
+      "the C-crystal part of the bot luxury recipe"
+    ],
+    "acceptance": [
+      "an exchange or craft path is funded only up to the root item's worth",
+      "ordinary NPC buys unchanged (offline count: 0 lose funding)"
+    ],
+    "evidence": [
+      "DT-208 planner and implementer reports 2026-11-10"
+    ],
+    "tests": [
+      "test_wish_network.js",
+      "test_selected_purchase_meeting.js"
+    ],
+    "regressions": [
+      "test_wish_network.js"
+    ]
+  }
+}

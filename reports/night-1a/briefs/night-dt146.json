@@ -1,0 +1,36 @@
+{
+ "base": "12962fed3de8ba9e09c0ba3fbcdc7b9c469820a2",
+ "symptom": "a far bot holding a luxury exchange whose inputs are partly banked is refused at the town visit (improvement_missing_materials), then the same visit withdraws the inputs and re-deposits them",
+ "owner": "PopulationService cold town-visit step order (applyColdResolve: held improvement vs BotWarehouse.releaseCold / depositCold)",
+ "cause": {
+  "status": "verified",
+  "explanation": "the far visit runs BotImprovementService.reviewCold (PopulationService.js ~3009-3020) before BotWarehouse.releaseCold (~3030, inside the ColdShotEconomyService.review chain from ~3026) and depositCold (~3032-3035): the exchange is validated against the bag before the visit releases the banked inputs. How the decision saw the inputs as held is not established (the ready gate requires !awaitingIncoming, WishNetwork.js 870-871); the order is the verified fact.",
+  "evidence": [
+   "run 6c1455b5e bot 2001248: goal_failed impossible T=1794357109942 (luxury_exchange power:852:1, needs 195x1458, bag 50); lastWarehouseWithdrawal T+1 ms [[1458,245]]; lastWarehouseDeposit T+5 ms 195x1458 target 852; bag 50, warehouse 239 at end",
+   "server.log 6c1455b5e: luxury_exchange:improvement_missing_materials:1 (counter rose between summaries 67 and 68, matching T)",
+   "PopulationService.js order at f3eec5444 (scratchpad/dt187/PS.js)"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Population/PopulationService.js"
+ ],
+ "nonGoals": [
+  "an improvement refusal mark (DT-187 closed: 0 repeats after DT-200a)",
+  "enchant missing_materials without warehouse use (DT-226)",
+  "crystallize source_changed single refusals",
+  "hot-body warehouse order"
+ ],
+ "acceptance": [
+  "a far bot in town holding a luxury exchange whose inputs are partly banked performs the exchange on that visit: no improvement_missing_materials, no withdraw-then-redeposit of the same inputs",
+  "the visit's other effects (shot review, deposit of what the plan does not use) keep their results"
+ ],
+ "evidence": [
+  "DT-146/DT-187 verifier report 2026-11-11 (scratchpad/dt187)"
+ ],
+ "tests": [
+  "test_cold_visit_improvement_order.js"
+ ],
+ "regressions": [
+  "test_cold_visit_improvement_order.js"
+ ]
+}

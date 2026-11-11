@@ -1,0 +1,46 @@
+{
+  "slug": "dt203",
+  "base": "12962fed3de8ba9e09c0ba3fbcdc7b9c469820a2",
+  "risk": "standard",
+  "kind": "fix",
+  "policy": "aaaf34f9766cb664cc4cd65cf20bc89f5396da1dc08c2d926f4a74bda1623ef9",
+  "created": "2026-11-11T02:16:55.314Z",
+  "evidence": {},
+  "brief": {
+    "base": "12962fed3de8ba9e09c0ba3fbcdc7b9c469820a2",
+    "symptom": "two stalls refusing one item before the worker answers a hot bot: only the first refused stall is marked, the bot may walk back to the second stall that just refused it (cold marks every refusal)",
+    "owner": "DecisionEvents.nearBag / entryOf (keys of a hot bot's waiting raises, session.nearRaise)",
+    "cause": {
+      "status": "verified",
+      "explanation": "entryOf keyed a gear_errand goal_failed by item only (goal_failed|gear_errand|<item>); nearBag skips a second raise with the same key while the first waits (at >= 0 && !fact → continue), so the second refusal's quote mark is neither written on the body's stats nor raised to the worker",
+      "evidence": [
+        "DecisionEvents.js:103-104 entryOf, :117-119 nearBag skip at 12962fed3",
+        "ShoppingState.js:229-235 raise {kind gear_errand, key itemId, town, price, reason}",
+        "Situations.js:459-463 raisedFacts → GearMarks.withMark",
+        "CompanionEquipmentShopping.js:162-166 and OfferQuery.js:40 read GearMarks.refused",
+        "ColdMarketService.js:877-878 cold raises every refusal",
+        "test at 12962fed3: 'the body skips the stall that refused it at 1200'"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/AI/DecisionEvents.js"
+    ],
+    "nonGoals": [
+      "hot bestOffer admits against cachedState stats lagging the session's",
+      "trace payloads on raise records"
+    ],
+    "acceptance": [
+      "two refused stalls for one item (same town, different prices) raised while waiting are both marked on the body and both reach the worker",
+      "the same stall refusing twice adds nothing; a gear errand stays its own entry beside a plain goal_failed"
+    ],
+    "evidence": [
+      "DT-203 implementer report 2026-11-11"
+    ],
+    "tests": [
+      "test_near_decision_order.js"
+    ],
+    "regressions": [
+      "test_near_decision_order.js"
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+ "base": "242299cf89866df0311c690311e4bf95cc5068f2",
+ "symptom": "cold bots re-take stock:shots:item:1458:shopping every ~1 s: each pass buys a few D crystals at the cheapest board quote and the same visit lists them in the bot's showcase (sometimes below cost); 2000638 drained 3.43 M and 2001422 2.36 M in minutes (run 242299cf8); the same loop at smaller scale in 12962fed3 (2001724) and earlier runs",
+ "owner": "the sale reservation of the held step's craft inputs: ColdEconomyDecision card craftReservations (CraftInputReservations.heldCraftRows), read by MarketListingPolicy.evaluate, MarketPricing, BotWarehouseService",
+ "cause": {
+  "status": "guess",
+  "explanation": "the card stamps craftReservations = heldCraftRows(seen, network.craftNeeds) capped by the bag at decision time (ColdEconomyDecision.js:312-313, view :462); an empty {} is truthy, so MarketListingPolicy.evaluate (:223-226) never falls back to selectedCraftAmounts; inputs bought after the decision are listed by the same visit's sale, the step never fills, market_batch_continue keeps the bot in town (PopulationService.js:3086-3102)",
+  "evidence": [
+   "QUIET market_trades: 2000638 166 trades / 705 units / 3,427,048; showcase line 1458 count 697 (initialCount 5, created 03:55:41)",
+   "QUIET decision-trace 37926-37956: goal_done:visit \u2192 build takes the same step",
+   "NEW 12962fed3: 2001724 five 1-s passes 7x1458 at 7615, showcase 22 \u2192 46",
+   "decisive check pending: network.craftNeeds contains 1458/1785 for this stock:shots root; the visit pass reads the card view"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Population/ColdEconomyDecision.js",
+  "src/GameServer/Bot/Economy/CraftInputReservations.js",
+  "src/GameServer/Bot/Economy/MarketListingPolicy.js",
+  "src/GameServer/Bot/Economy/MarketPricing.js",
+  "src/GameServer/Bot/Economy/BotWarehouseService.js"
+ ],
+ "nonGoals": [
+  "stock:shots crystal valuation vs crystallization worth",
+  "sale price below cost basis",
+  "funding_short re-take after the wallet drains (separate line)",
+  "market_batch_continue cadence"
+ ],
+ "acceptance": [
+  "a bot whose held step buys a craft input keeps up to the craft's need in its bag; the visit's sale does not list it",
+  "the step fills and the build moves on; no re-buy of the same item in the same visit"
+ ],
+ "evidence": [
+  "loop1458 verifier report 2026-11-11 (scratchpad/loop1458)"
+ ],
+ "tests": [
+  "test_crystal_surplus_market.js"
+ ],
+ "regressions": [
+  "test_crystal_surplus_market.js"
+ ]
+}

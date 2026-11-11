@@ -1,0 +1,36 @@
+{
+ "base": "d68fab586e4a4496ce7b5fd605849c3990a457ca",
+ "symptom": "main re-decides buy-ad bids from the card view on every cold town step that ends without a purchase (finishColdMarketStep \u2192 BotAfkMarketService.reconcile \u2192 reconcileBuyAds \u2192 buyLines \u2192 BuyAdPolicy.linesFor with economyFor(state).watchList), so the build\u2194card bid flip of DT-201 can survive on main",
+ "owner": "bids are the economy build's decision (ColdEconomyPlan); main's reconcile only executes or withdraws",
+ "cause": {
+  "status": "verified",
+  "explanation": "BotAfkMarketService.reconcileBuyAds, for a buy goal the bot can bid on remotely, re-decided bids via buyLines \u2192 linesFor with no watchList (main's card view) and published them; callers finishColdMarketStep ~3180 (town step without a purchase), openMarketListing ~513, marketTravelWithRefund",
+  "evidence": [
+   "run 12962fed3 trace: 17 buy_ad_reconcile changed, 13 after worker plans, 4 (24%) from main with no plan within 1 s (lines 8301, 8480, 29375, 40712)",
+   "bot 2001600: build bid 1463x1310@412 (line 23212, Dion); main posted Gludio 1463x1530@520 + 1458x10@3190 = the card's wish_need requested (line 40621)",
+   "bot 2001728: main rewrote record 67787 to 1464x2696@314 = card requested 2696",
+   "test at 9c37ae336: 'a town step without a purchase leaves the build's bids as posted' (records 8/9 replaced by 10 from the card view)"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Population/PopulationService.js",
+  "src/GameServer/Bot/Economy/BotAfkMarketService.js"
+ ],
+ "nonGoals": [
+  "withdraw/re-post on a goal switch to a non-bidding purchase (DT-233)",
+  "buy-ad town choice",
+  "intentRevision row rewrites"
+ ],
+ "acceptance": [
+  "a cold town step that ends without a purchase changes no buy ad the build did not decide: no republish from the card view; a withdraw main must do (an NPC trip that needs the escrow) still happens"
+ ],
+ "evidence": [
+  "DT-201 review finding 1"
+ ],
+ "tests": [
+  "test_bot_afk_buy_shop.js"
+ ],
+ "regressions": [
+  "test_bot_afk_buy_shop.js"
+ ]
+}

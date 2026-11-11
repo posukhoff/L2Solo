@@ -1,0 +1,42 @@
+{
+ "base": "9c37ae3365ab8925c34e060392a77c9fe0f4c005",
+ "symptom": "a hot bot refused at a stall whose quote is still listed picks the same stall again on its next errand plan, planErrand returns null and the bot buys nothing that visit (a cold bot buys at the next stall); a mark the session forgot still hides a valid stall",
+ "owner": "MarketOpportunity's choice of buyer state on main (bestOffer, hotOffers, bestHotOffer) passed to OfferQuery.admits",
+ "cause": {
+  "status": "verified",
+  "explanation": "hot quote marks are written only to the session's stats copy (DecisionEvents.statsFor/replaceStats, near answers merge gearMarks into the session); BotLifeState.cachedState keeps the snapshot from markHot; bestOffer/hotOffers admit against cachedState, so the refused quote stays the best offer, and planErrand (reading the session) returns null instead of the next offer",
+  "evidence": [
+   "MarketOpportunity.js:188,197,212,219 admit with cachedState; :229-231 live player-store offers not admitted",
+   "OfferQuery.js:39-40",
+   "CompanionEquipmentShopping.js:60-68,104-107,164-166",
+   "DecisionEvents.js:37-45,330-340; BotLifeState.js:2224-2256,936-943",
+   "scratch repro scratchpad/dt204/tests/repro_dt230_hot_quote_admission.js: bestOffer returns the refused 1000 stall, planErrand null; admitting with the body's stats returns 1200"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Economy/MarketOpportunity.js",
+  "src/GameServer/Bot/AI/CompanionEquipmentShopping.js"
+ ],
+ "nonGoals": [
+  "MeetingPriceRefusals (cold-only price proof, different question)",
+  "failedSourceIds (companion route exclusion)",
+  "DT-207 classification",
+  "making the cache follow the session in general",
+  "ShoppingState waitForShoppingMeeting copying cachedState over the session",
+  "hot buyer meeting price refusal marking"
+ ],
+ "acceptance": [
+  "a hot body refused at S1 (same quote still listed) plans its next errand at the next admissible stall S2, as a cold buyer does",
+  "a mark the hot body forgot no longer hides S1",
+  "a refused live player-store quote is not planned again; cold behaviour and worker builds unchanged"
+ ],
+ "evidence": [
+  "DT-204/DT-230 verifier report 2026-11-11 (scratchpad/dt204)"
+ ],
+ "tests": [
+  "test_companion_equipment_shopping.js"
+ ],
+ "regressions": [
+  "test_companion_equipment_shopping.js"
+ ]
+}

@@ -1,0 +1,36 @@
+{
+ "base": "242299cf89866df0311c690311e4bf95cc5068f2",
+ "symptom": "an offer_posted wake re-rolls a held farm leaf over every root: 253 of 1245 offer-only build wakes moved the hunting leaf and bought nothing, 75 moved the hunt spot (run 242299cf8)",
+ "owner": "WishNetwork.build held-step reconsideration (WishNetwork.js 818-829, 981-989); reconsider flag EconomyContext.js 1296",
+ "cause": {
+  "status": "verified",
+  "explanation": "every woken build reconsiders; the held step survives only by the loyalty margin over all candidate roots, else decisionSeq++ and a fresh weighted roll; offer_posted carries no item fact to the build (Situations.js 395/401), so a WTS for X re-prices and re-rolls the farm leaf",
+  "evidence": [
+   "run 242299cf8 trace: bot 2001179 lines 4908-4911, 12954-12957; bot 2000414 15253-15254, 25267-25269, 28211, 29439-29440",
+   "scratchpad/dt196/offer.py: 1245 offer-only wakes \u2192 674 same, 188 shopping, 253 hunting-leaf change; offer2.py 75 spot moves"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Bot/Economy/WishNetwork.js",
+  "src/GameServer/Bot/Situations.js",
+  "src/GameServer/Bot/Economy/EconomyContext.js"
+ ],
+ "nonGoals": [
+  "leaf changes when a step completes or fails",
+  "errands for stock taken from offers",
+  "town sell/resale ping-pong",
+  "earning-spot re-decisions"
+ ],
+ "acceptance": [
+  "an offer_posted wake keeps the held step and hunt spot unless a buy leaf of the offered item beats it; with such a leaf the bot takes the shop step"
+ ],
+ "evidence": [
+  "DT-196 verifier report 2026-11-11 (scratchpad/dt196)"
+ ],
+ "tests": [
+  "test_wish_network.js"
+ ],
+ "regressions": [
+  "test_wish_network.js"
+ ]
+}

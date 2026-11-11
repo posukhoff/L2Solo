@@ -1,0 +1,36 @@
+{
+ "base": "12962fed3de8ba9e09c0ba3fbcdc7b9c469820a2",
+ "symptom": "combat.user_info TypeError on an NPC target (final run d87ce9a05 x14): an expiring effect sent UserInfo of a debuffed NPC to the caster; a character got its UserInfo twice",
+ "owner": "EffectTicker refresh (the receiver of a character's UserInfo after an effect change)",
+ "cause": {
+  "status": "verified",
+  "explanation": "EffectTicker.refreshStats sent UserInfo to the target's session or else the caster's, so an NPC target built UserInfo and threw (fetchPaperdollId), and refreshEffects sent it again for a character",
+  "evidence": [
+   "test_effect_ticker at 12962fed3: TypeError fetchPaperdollId at EffectTicker.js:363 via Timeout; 'no expiry fails to send UserInfo' 1 vs 0; 'the character gets its UserInfo once' 2 vs 1",
+   "final run d87ce9a05 combat.user_info x14"
+  ]
+ },
+ "scope": [
+  "src/GameServer/Effects/EffectTicker.js",
+  "src/GameServer/Skills/C4SkillEffects.js",
+  "src/GameServer/Skills/ToggleSkills.js",
+  "data/Bots"
+ ],
+ "nonGoals": [
+  "other effect refresh copies (DT-227)",
+  "CubicControl UserInfo to others (DT-228)"
+ ],
+ "acceptance": [
+  "no combat.user_info failure on an NPC effect expiry",
+  "a character gets its UserInfo once per effect change, to its own client"
+ ],
+ "evidence": [
+  "RM-3 port report and review 2026-11-11"
+ ],
+ "tests": [
+  "test_effect_ticker.js"
+ ],
+ "regressions": [
+  "test_effect_ticker.js"
+ ]
+}
