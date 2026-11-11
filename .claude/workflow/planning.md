@@ -23,9 +23,13 @@
 - One writer: only one agent at a time edits planning/ (the only editing agent, or the main session). Agents running in
   parallel put their planning edits (problem lines, map clauses, limits rows) in their report; the main session applies
   them. A file over budget is pruned (done items, history, detail to its owner), not given a bigger budget without my
-  ok, never squeezed by dropping words.
+  ok, never squeezed by dropping words. roadmap.md and problems.md have no size budget: lc keeps all open data; the
+  context is budgeted (lc show pages a step's pack; growth is diagnosed by lc status/check with an owner action per
+  cause: place, assign or drop with reason, decide a duplicate, refresh a stale line, split a broad row); nothing is
+  deleted or merged to save context.
 - No unbounded growth: `node planning/hygiene.js` at every task boundary (exit 1 = prune first). It fails on a file
-  outside the list or over its KB budget and on CLAUDE.md over 14 KB or `.claude/workflow/*.md` over 40 KB together, lists stale worktrees, stray files and perf runs
+  outside the list or over its KB budget, on CLAUDE.md over 14 KB, on a role reading over 32 KB of policy, and on
+  lifecycle views that are not the lc render after the cutover; it lists stale worktrees, stray files and perf runs
   beyond the kept sets; `--remove` removes clean merged or stale worktrees (branches stay). A new planning file only
   with my ok (added to the list in git.md "Where things are" and to `ALLOWED`).
 - Planning files are for agents, not for me: I read reports in chat, never these files. Dense: one item per line, no

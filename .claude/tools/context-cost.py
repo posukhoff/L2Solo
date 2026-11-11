@@ -1,6 +1,10 @@
-# Read-only: how much planning/policy text agents actually pull into context, from harness transcripts.
+# Read-only: how much planning/policy text agents pull into context, from harness transcripts (tokens ~ chars/3.5,
+# counted once per read; cache re-reads on later turns come on top). Run by the RC at release close for the retro.
+# Usage: context-cost.py [--root <transcripts dir>] [--since <iso>] [--until <iso>]
 import json, os, re, sys, collections, glob
-root = os.path.expanduser('~/.claude/projects/-Users-iposukhoff-L2Solo')
+arg = lambda k, dflt=None: sys.argv[sys.argv.index(k) + 1] if k in sys.argv else dflt
+root = os.path.expanduser(arg('--root', '~/.claude/projects/-Users-iposukhoff-L2Solo'))
+since, until = arg('--since', ''), arg('--until', '9999')
 KEYS = [('roadmap', r'planning/roadmap\.md'), ('problems', r'architecture/problems\.md'), ('findings', r'findings-1a\.md'),
         ('maps', r'planning/architecture/(?!problems)[\w-]+\.md'), ('target', r'target-architecture/[\w-]+\.(md|json)'),
         ('workflow', r'\.claude/workflow/[\w-]+\.md'), ('claude', r'L2Solo/CLAUDE\.md|(?<![\w/])CLAUDE\.md'), ('rclog', r'release-1a-pilot\.md|handoff-1a\.md')]
@@ -20,6 +24,7 @@ for f in files:
             if '"tool_use"' not in line and '"tool_result"' not in line: continue
             try: m = json.loads(line)
             except Exception: continue
+            if not (since <= str(m.get('timestamp', '')) < until): continue
             c = (m.get('message') or {}).get('content')
             if not isinstance(c, list): continue
             for b in c:

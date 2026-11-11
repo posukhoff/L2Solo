@@ -1,4 +1,6 @@
-# Proposal: context budgets instead of file-size limits (for Workflow V5.2; not implemented)
+# Context budgets instead of file-size limits (Workflow V5.2; implemented 11-11 on ivan/workflow-v5.2-lc)
+
+Accepted by the maintainer 11-11. Implemented as in §3, with the policy text of §4 in planning.md and the role budgets and freshness check in hygiene.js.
 
 The rule: the canonical lifecycle data is never cut to fit. What is limited is the context an agent is handed. Growth in that context triggers a diagnosis with an owner action; it never triggers deleting text.
 

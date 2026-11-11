@@ -284,7 +284,7 @@ test('remote truth: a failed fetch or a moved fork is not taken from a stale cop
     w.no(/local ivan\/batch-1b1 .* differs from fork/, 'freeze', '1b.1');
 });
 
-test('views: render --write refuses hand edits, budget overruns and a failed data write, leaving files as they were', () => {
+test('views: render --write refuses hand edits and a failed data write, leaving files as they were; size only warns', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     const pf = path.join(w.repo, 'planning/architecture/problems.md');
     w.ok('render', '--write'); assert.strictEqual(fs.readFileSync(pf, 'utf8'), PROBLEMS);
@@ -308,7 +308,7 @@ test('views: render --write refuses hand edits, budget overruns and a failed dat
     w.ok('sync'); w.ok('render', '--write');
     assert.match(fs.readFileSync(pf, 'utf8'), /DT-300\|.*\[r1b\]/);
     fs.writeFileSync(path.join(w.repo, 'planning/hygiene.js'), "const ALLOWED = { 'roadmap.md': 12, 'architecture/problems.md': 0 };\n");
-    w.no(/over its budget 0 KB/, 'render', '--write');
+    assert.match(w.ok('render', '--write'), /note  architecture\/problems\.md is 1 KB, over the old 0 KB budget[\s\S]*growth: triage/); // size warns, never blocks
     fs.writeFileSync(pf, PROBLEMS.replace(/^S3\|.*\n/m, ''));
     w.no(/deleted lines must be restored/, 'absorb', '--apply');
 });
@@ -362,4 +362,44 @@ test('the V5.1 task ledger: landed, landed by patch-id, superseded, abandoned, r
     assert.match(out, /v3-clitest2 landed-test · .* on no integration branch/);
     assert.strictEqual(fs.readdirSync(w.wf).map(f => fs.readFileSync(path.join(w.wf, f), 'utf8')).join(), before);
     assert.match(w.sh(['show', 'refs/heads/ivan/lifecycle-data:tasks.jsonl']), /"slug":"dt201","class":"superseded"/);
+});
+
+test('context, not files: show pages a step within its budget and loses no line; growth is diagnosed, never cut', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    for (let n = 0; n < 12; n++) w.ok('add', '--sec', 'parties', '--origin', 'x 11-11', '--rule', '9', '--sites', `\`Mod${n}.js\``, '--what', 'w'.repeat(120), '--fix', 'f', '--id', `DT-${400 + n}`, '--to', '1b.1');
+    const { context, load, save } = require('./lc.js');
+    const cx = context({ repo: w.repo }); let { sha, d } = load(cx);
+    d.meta.budgets = { rc: 600, pack: 900, rowIssues: 5 }; save(cx, sha, d, 'test: small budgets');
+    const p1 = w.ok('show', '1b.1');
+    const m = p1.match(/page 1\/(\d+) · lines 1-(\d+) of (\d+) · next: lc show 1b\.1 --page 2/); assert.ok(m, p1);
+    const seen = []; for (let n = 1; n <= +m[1]; n++) seen.push(...w.ok('show', '1b.1', '--page', String(n)).split('\n').filter(l => /^\s+(DT-\d+|decision)/.test(l)).map(l => l.trim().split('|')[0]));
+    assert.strictEqual(seen.length, +m[3]); assert.strictEqual(new Set(seen).size, seen.length); // every line once, none cut away
+    assert.match(p1, /growth: .*rows over budget 1/);
+    assert.ok(w.ok('show', '1b.1', '--role', 'rc').split('\n').length < p1.split('\n').length + 1);
+    const chk = w.ok('check'); assert.match(chk, /broad 1b\.1 14/);
+    // the same quoted code name on intake and in check; nothing merged
+    w.ok('add', '--sec', 'failures', '--origin', 'x', '--rule', '2,8', '--sites', '`PartyHuntingAssembly.wait` 21', '--what', 'w', '--fix', 'f', '--id', 'DT-499');
+    assert.match(w.ok('add', '--sec', 'failures', '--origin', 'x', '--rule', '2', '--sites', '`PartyHuntingAssembly.wait` 25', '--what', 'w', '--fix', 'f', '--id', 'DT-500'), /same code name: DT-499 \(`PartyHuntingAssembly\.wait`\)/);
+    assert.match(w.ok('check'), /dup\?  DT-499 ~ DT-500 \(`PartyHuntingAssembly\.wait`\)/);
+    assert.match(w.ok('show', 'DT-499'), /DT-499/); assert.match(w.ok('show', 'DT-500'), /DT-500/); // both stay open
+});
+
+test('render --check: nothing to check in shadow; after the cutover a hand edit is not the render', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    assert.match(w.ok('render', '--check'), /shadow/);
+    w.ok('render', '--write');
+    assert.match(w.ok('render', '--check'), /equal the lc render/);
+    fs.appendFileSync(path.join(w.repo, 'planning/roadmap.md'), '- hand line\n');
+    w.no(/not the lc render: roadmap\.md/, 'render', '--check');
+});
+
+test('start names open issues that share a module with the V5.2 brief cause chain', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    w.ok('add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', '`PartyStay.decide` 20', '--what', 'w', '--fix', 'f', '--id', 'DT-600');
+    w.sh(['branch', 'ivan/batch-1b1', w.base]); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
+    w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
+    const rec = landedTask(w, 'p1', w.base, w.base, 'ivan/batch-1b1', ['DT-44']);
+    rec.brief.cause = { status: 'verified', explanation: 'x', chain: ['PartyStay.js:10 symptom', 'PartyStay.decide 20 decides on main'], excluded: ['none plausible: x'] };
+    fs.writeFileSync(path.join(w.wf, 'p1.json'), JSON.stringify(rec));
+    assert.match(w.ok('start', '1b.1', '--task', 'p1'), /same cause\?: DT-600 at triage names PartyStay from p1's cause chain/);
 });

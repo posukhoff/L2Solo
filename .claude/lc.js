@@ -100,6 +100,8 @@ const PROFILES = { // what a gate run must be (release.md "Releases"; testing.md
     trace: { sides: [{ scenario: 'script', script: 'tests/e2e/online-player.js', minutes: 30 }], artifacts: ['run.json', 'server.log', 'summary.json', 'logs', 'world.sqlite'] },
     ab: { sides: [{ scenario: 'script', script: 'tests/e2e/online-player.js', minutes: 30 }, { scenario: 'hot', minutes: 20 }], diagnostics: true, artifacts: ['run.json', 'server.log', 'summary.json', 'logs'] }
 };
+const DEFAULT_BUDGETS = { rc: 2048, pack: 12288, rowIssues: 25 }; // context per role (bytes) and a row's issue count before it is called broad
+const budgetsOf = d => ({ ...DEFAULT_BUDGETS, ...(d.meta.budgets || {}) });
 function upgrade(d) { // data written by older lc versions
     const m = d.meta;
     if ((m.version || 1) < 2) {
@@ -108,6 +110,7 @@ function upgrade(d) { // data written by older lc versions
         for (const i of d.issues) { delete i.hint; if (i.overrides) i.overrides = i.overrides.filter(x => typeof x === 'string'); }
         m.version = 2;
     }
+    if (m.version < 3) { m.budgets ||= { ...DEFAULT_BUDGETS }; m.cutover ??= false; m.version = 3; }
     d.tasks ||= [];
 }
 function encode(d, extra = {}) {
@@ -201,6 +204,46 @@ function authorize(d, id, action, subject) {
     return id;
 }
 const overridden = (d, i, rule) => (i.overrides || []).some(id => allows(d.decisions.find(x => x.id === id), 'rule-override', { issue: i.id, rule: rule.decision }));
+
+// ---------- growth: why the working context is large, each cause with its owner action; nothing is cut ----------
+const ticks = t => [...String(t).matchAll(/`([^`]+)`/g)].map(m => m[1].trim());
+const modules = t => [...new Set([...ticks(t), ...String(t).split(/[\s,;()]+/)].map(x => (x.match(/^([A-Z][A-Za-z0-9]{3,})(?![A-Za-z0-9])/) || [])[1]).filter(Boolean))];
+const rulesOf = i => new Set(String(i.rule).split(/[,\s]+/).filter(Boolean));
+function duplicates(d) { // open pairs sharing an exact quoted code name and a rule number; a name shared by more than 6 is a hub, not evidence
+    const by = new Map();
+    for (const i of d.issues) for (const t of new Set(ticks(i.sites).filter(x => !/\s/.test(x) && /[A-Za-z]{4,}/.test(x)))) (by.get(t) || by.set(t, []).get(t)).push(i);
+    const pairs = new Map();
+    for (const [t, xs] of [...by].sort()) if (xs.length > 1 && xs.length <= 6)
+        for (let a = 0; a < xs.length; a++) for (let b = a + 1; b < xs.length; b++) {
+            if (![...rulesOf(xs[a])].some(r => rulesOf(xs[b]).has(r))) continue;
+            const k = [xs[a].id, xs[b].id].sort().join(' ~ '); if (!pairs.has(k)) pairs.set(k, t);
+        }
+    return [...pairs].map(([k, t]) => `${k} (\`${t}\`)`);
+}
+function sameName(d, sites, except) { // open issues quoting one of these exact code names
+    const mine = new Set(ticks(sites).filter(x => !/\s/.test(x) && /[A-Za-z]{4,}/.test(x)));
+    return d.issues.filter(i => i !== except && ticks(i.sites).some(t => mine.has(t))).map(i => `${i.id} (\`${ticks(i.sites).find(t => mine.has(t))}\`)`);
+}
+function staleIds(cx) { // code names planning/architecture/check.js finds gone, on problems.md lines
+    const f = path.join(cx.planning, 'architecture/check.js'), pf = path.join(cx.planning, VIEWS.problems);
+    if (!fs.existsSync(f) || !fs.existsSync(pf)) return null;
+    let out = '';
+    try { out = execFileSync(process.execPath, [f], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { out = String(e.stdout || ''); }
+    const L = fs.readFileSync(pf, 'utf8').split('\n');
+    return [...new Set(out.split('\n').map(l => l.match(/^problems\.md:(\d+)/)).filter(Boolean).map(m => (L[+m[1] - 1] || '').split(/[| ]/)[0]).filter(Boolean))];
+}
+function growth(d, cx) {
+    const st = steps(d), b = budgetsOf(d);
+    return {
+        triage: d.issues.filter(i => !i.at && !i.tail).map(i => i.id),
+        tails: dueTails(d).due.map(i => i.id),
+        duplicates: duplicates(d),
+        broad: [...st.values()].map(({ s }) => [s.key, d.issues.filter(i => i.at === s.key).length]).filter(([, n]) => n > b.rowIssues).map(([k, n]) => `${k} ${n}`),
+        waiting: d.issues.filter(i => i.resolved).map(i => i.id),
+        stale: cx ? staleIds(cx) : null
+    };
+}
+const growthLine = g => `growth: triage ${g.triage.length} (place) · tails due ${g.tails.length} (assign or drop) · possible duplicates ${g.duplicates.length} (decide) · rows over budget ${g.broad.length} (split is a decision) · resolved waiting close ${g.waiting.length}${g.stale ? ` · stale names ${g.stale.length} (refresh or close)` : ''}`;
 
 // ---------- invariants (pure; every write runs them, `lc check` prints them) ----------
 function check(d) {
@@ -343,7 +386,7 @@ function importPlanning(cx, opt) {
     const read = f => fs.readFileSync(path.join(cx.planning, f), 'utf8');
     const ptext = read(VIEWS.problems), rtext = read(VIEWS.roadmap);
     const p = parseProblems(ptext), r = parseRoadmap(rtext);
-    const d = { meta: { version: 2, problemsHead: p.head, problemsTail: p.tail, sections: p.sections, roadmapHead: r.head, roadmapTail: r.tail, groups: r.groups, rules: [], placement: [], profiles: PROFILES, gates: { default: ['ci', 'trace', 'ab', 'report'], plan: [] }, lastRender: {} }, issues: [], decisions: [], tasks: [], releases: r.releases, archive: {} };
+    const d = { meta: { version: 3, budgets: { ...DEFAULT_BUDGETS }, cutover: false, problemsHead: p.head, problemsTail: p.tail, sections: p.sections, roadmapHead: r.head, roadmapTail: r.tail, groups: r.groups, rules: [], placement: [], profiles: PROFILES, gates: { default: ['ci', 'trace', 'ab', 'report'], plan: [] }, lastRender: {} }, issues: [], decisions: [], tasks: [], releases: r.releases, archive: {} };
     if (opt.decisions) {
         const seed = JSON.parse(fs.readFileSync(opt.decisions, 'utf8'));
         d.decisions = seed.decisions; d.meta.rules = seed.rules || [];
@@ -439,6 +482,11 @@ C.check = (cx) => {
     const { d } = need(cx); const { errors, warnings } = check(d);
     for (const e of errors) console.log('ERROR ' + e);
     for (const w of warnings) console.log('warn  ' + w);
+    const g = growth(d, cx);
+    for (const x of g.duplicates) console.log('dup?  ' + x);
+    for (const x of g.broad) console.log('broad ' + x);
+    for (const x of g.stale || []) console.log('stale ' + x);
+    console.log(growthLine(g));
     console.log(`${errors.length} errors, ${warnings.length} warnings`);
     if (errors.length) process.exitCode = 1;
 };
@@ -461,27 +509,48 @@ C.status = (cx) => {
         out.push(`next ${r.key} ${r.type} · ${r.steps.length} steps · ${n} issues${r.cap?.issues ? '/' + r.cap.issues : ''}${blocked.length ? ' · waits ' + [...new Set(blocked)].join(',') : ''}`);
     }
     for (const [k, a] of Object.entries(d.archive)) if (a.manifest && !a.manifest.published) out.push(`${k} validated, not published (origin needs the maintainer's authorization)`);
-    const b = budgets(cx), size = { roadmap: renderRoadmap(d).length, problems: renderProblems(d).length };
-    out.push('views ' + Object.keys(VIEWS).map(k => `${k} ${Math.ceil(size[k] / 1024)}/${b[k] ?? '?'} KB${b[k] != null && Math.ceil(size[k] / 1024) > b[k] ? ' OVER' : ''}`).join(' · '));
+    const size = { roadmap: renderRoadmap(d).length, problems: renderProblems(d).length };
+    out.push('views ' + Object.keys(VIEWS).map(k => `${k} ${Math.ceil(size[k] / 1024)} KB`).join(' · ') + (d.meta.cutover ? '' : ' (shadow: planning files are the source)'));
+    out.push(growthLine(growth(d, cx)));
     for (const e of errors.slice(0, 3)) out.push('ERROR ' + e);
     console.log(out.join('\n'));
 };
-C.show = (cx, { pos }) => {
-    const { d } = need(cx); const key = pos[0] || fail('show <issue|step|release>'); const st = steps(d);
-    if (d.releases[key]) {
+function packOf(d, key) { // an agent's context for a step or release: header + body lines, deterministic, nothing cut
+    const st = steps(d), dec = new Map(d.decisions.map(x => [x.id, x]));
+    const archived = id => Object.entries(d.archive).flatMap(([k, a]) => (a.issues || []).filter(i => idsOf(i).includes(id)).map(i => `${id} archived in ${k}: ${i.closed?.how}`))[0];
+    const decLines = ids => [...new Set(ids)].filter(x => dec.has(x)).sort((a, b) => +a.slice(1) - +b.slice(1)).map(x => `decision ${x} ${dec.get(x).date}: ${dec.get(x).text}`);
+    if (d.releases[key] && !(st.has(key) && d.releases[key].steps.length === 1)) {
         const r = d.releases[key];
-        console.log(JSON.stringify({ ...r, steps: undefined }));
-        for (const s of r.steps) console.log(`  ${s.key} ${s.st} · ${d.issues.filter(i => i.at === s.key).map(i => i.id + (i.resolved ? '✓' : '')).join(' ') || '-'}${s.landed ? ' · landed ' + JSON.stringify(s.landed) : ''}`);
-        if (!st.has(key)) return;
+        return { header: [JSON.stringify({ ...r, steps: undefined })], body: [...r.steps.map(s => `  ${s.key} ${s.st} · ${d.issues.filter(i => i.at === s.key).map(i => i.id + (i.resolved ? '✓' : '')).join(' ') || '-'}${s.landed ? ' · landed ' + JSON.stringify(s.landed) : ''}`), ...decLines(r.decisions || [])] };
     }
-    if (d.archive[key]?.manifest && !st.has(key)) { console.log(JSON.stringify({ ...d.archive[key].manifest, steps: d.archive[key].manifest.steps.map(s => s.key) })); return; }
-    if (st.has(key)) {
-        const { r, s } = st.get(key);
-        console.log(`${s.key} ${s.st} in ${r.key} (${r.st}, ${r.type})${s.needs.length ? ' needs ' + s.needs.join(',') : ''}${s.tasks.length ? ' tasks ' + s.tasks.join(',') : ''}`);
-        console.log(stepText(d, s));
-        for (const i of d.issues.filter(x => x.at === s.key)) console.log('  ' + issueLine(d, i, st).slice(0, 200));
+    const { r, s } = st.get(key);
+    const mine = d.issues.filter(x => x.at === s.key);
+    const deps = [...new Set(mine.flatMap(i => i.deps || []))].filter(x => !mine.some(i => idsOf(i).includes(x)));
+    return {
+        header: [`${s.key} ${s.st} in ${r.key} (${r.st}, ${r.type})${s.needs.length ? ' needs ' + s.needs.join(',') : ''}${s.tasks.length ? ' tasks ' + s.tasks.join(',') : ''}`, stepText(d, s)],
+        body: [...mine.map(i => issueLine(d, i, st) + (i.why ? `  [${i.why}]` : '')),
+            ...deps.map(x => { const j = d.issues.find(i => idsOf(i).includes(x)); return j ? `dep ${issueLine(d, j, st)}` : `dep ${archived(x) || x + ' unknown'}`; }),
+            ...decLines([...(r.decisions || []), ...mine.flatMap(i => i.overrides || [])])]
+    };
+}
+function pages(header, body, budget) { // greedy pages within the budget; a line longer than a page gets a page of its own
+    const room = Math.max(256, budget - header.join('\n').length - 120), out = [[]]; let used = 0;
+    for (const l of body) { if (out.at(-1).length && used + l.length + 1 > room) { out.push([]); used = 0; } out.at(-1).push(l); used += l.length + 1; }
+    return out;
+}
+C.show = (cx, { pos, opt }) => { // lc show <issue|step|release> [--page N] [--role rc|pack]: the paged context pack
+    const { d } = need(cx); const key = pos[0] || fail('show <issue|step|release> [--page N]'); const st = steps(d);
+    if (d.releases[key] || st.has(key)) {
+        const { header, body } = packOf(d, key), b = budgetsOf(d), budget = opt.role === 'rc' ? b.rc : b.pack;
+        const ps = pages(header, body, budget), n = Math.min(Math.max(1, Number(opt.page) || 1), ps.length);
+        const first = ps.slice(0, n - 1).reduce((a, p) => a + p.length, 0);
+        console.log(header.join('\n'));
+        if (ps.length > 1) console.log(`page ${n}/${ps.length} · lines ${first + 1}-${first + ps[n - 1].length} of ${body.length}${n < ps.length ? ` · next: lc show ${key} --page ${n + 1}` : ''}`);
+        for (const l of ps[n - 1]) console.log(l.startsWith('  ') ? l : '  ' + l.slice(0, 4000));
+        if (ps.length > 1 && n === 1) console.log(growthLine(growth(d)));
         return;
     }
+    if (d.archive[key]?.manifest) { console.log(JSON.stringify({ ...d.archive[key].manifest, steps: d.archive[key].manifest.steps.map(s => s.key) })); return; }
     const a = Object.entries(d.archive).flatMap(([k, x]) => (x.issues || []).filter(i => idsOf(i).includes(key)).map(i => ({ k, i })))[0];
     if (a) { console.log(`archived in ${a.k}: ${JSON.stringify(a.i.closed)}\n${[a.i.head, a.i.origin, a.i.rule, a.i.sites, a.i.what, a.i.fix].join('|')}`); return; }
     const i = issue(d, key);
@@ -495,26 +564,35 @@ C.render = (cx, { opt }) => {
         for (const [k, f] of Object.entries(VIEWS)) { const p = path.join(String(opt.out), f); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, views[k]); }
         console.log(`rendered to ${opt.out}`); return;
     }
-    if (!opt.write) fail('render --out <dir> (preview) or --write (planning/, guarded)');
-    const b = budgets(cx), why = [], last = d.meta.lastRender || {};
+    if (opt.check) { // hygiene's freshness test: after the cutover the planning views must equal the render
+        if (!d.meta.cutover) { console.log('shadow: planning files are the source until the cutover; nothing to check'); return; }
+        const stale = Object.entries(VIEWS).filter(([k, f]) => { const p = path.join(cx.planning, f); return !fs.existsSync(p) || fs.readFileSync(p, 'utf8') !== views[k]; }).map(([, f]) => f);
+        if (stale.length) fail(`not the lc render: ${stale.join(', ')} (hand edits → lc absorb; then lc render --write)`);
+        console.log('planning views equal the lc render'); return;
+    }
+    if (!opt.write) fail('render --out <dir> (preview), --check, or --write (planning/, guarded)');
+    const b = budgets(cx), why = [], notes = [], last = d.meta.lastRender || {};
     for (const [k, f] of Object.entries(VIEWS)) {
         const p = path.join(cx.planning, f), cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
         const known = [sha1(views[k]), last[k]?.cur, last[k]?.prev, last[k]?.absorbed].filter(Boolean); // a half-finished earlier render is not a hand edit
         if (cur !== null && !known.includes(sha1(cur))) why.push(`${f} was edited by hand since the last render: lc absorb first`);
-        if (b[k] != null && Math.ceil(views[k].length / 1024) > b[k]) why.push(`${f} would be ${Math.ceil(views[k].length / 1024)} KB over its budget ${b[k]} KB: close paid issues or prune first`);
+        if (b[k] != null && Math.ceil(views[k].length / 1024) > b[k]) notes.push(`${f} is ${Math.ceil(views[k].length / 1024)} KB, over the old ${b[k]} KB budget: a grep index, not reading; agents read lc show`);
     }
     if (why.length) fail(why.join('\n'));
     fresh(cx, sha); // views from a copy the fork has moved past are not written
     const tmp = {}; // new files first, data next, renames last: a failure leaves either the old state or a re-runnable one
     try { for (const [k, f] of Object.entries(VIEWS)) { tmp[k] = path.join(cx.planning, f) + '.lc-new'; fs.writeFileSync(tmp[k], views[k]); } }
     catch (e) { for (const t of Object.values(tmp)) fs.rmSync(t, { force: true }); fail(`cannot write planning files (${firstLine(e)}); nothing changed`); }
-    const unchanged = Object.keys(VIEWS).every(k => last[k]?.cur === sha1(views[k]));
+    const unchanged = Object.keys(VIEWS).every(k => last[k]?.cur === sha1(views[k])) && d.meta.cutover;
     if (!unchanged) {
+        d.meta.cutover = true;
         d.meta.lastRender = Object.fromEntries(Object.keys(VIEWS).map(k => [k, { cur: sha1(views[k]), prev: last[k]?.cur === sha1(views[k]) ? last[k]?.prev ?? null : last[k]?.cur ?? null }]));
         try { save(cx, sha, d, 'lc render'); } catch (e) { for (const t of Object.values(tmp)) fs.rmSync(t, { force: true }); throw e; }
     }
     try { for (const [k, f] of Object.entries(VIEWS)) fs.renameSync(tmp[k], path.join(cx.planning, f)); }
     catch (e) { fail(`data recorded, a planning file was not replaced (${firstLine(e)}); run lc render --write again`); }
+    for (const n of notes) console.log('note  ' + n);
+    if (notes.length) console.log(growthLine(growth(d, cx)));
     console.log('planning views written');
 };
 C.absorb = (cx, { opt }) => { // hand edits of problems.md (agents' habit) become data; deletions are refused
@@ -529,7 +607,7 @@ C.absorb = (cx, { opt }) => { // hand edits of problems.md (agents' habit) becom
         if (f.length) edited.push([m, t, f]);
     }
     for (const id of gone) console.log(`deleted by hand: ${id} (refused: lc land/resolve/close or lc drop close an issue)`);
-    for (const t of added) console.log(`new: ${t.id} ${t.sec} ${t.legacy}`);
+    for (const t of added) { console.log(`new: ${t.id} ${t.sec} ${t.legacy}`); for (const x of sameName(d, t.sites)) console.log(`  same code name: ${x}`); }
     for (const [m, , f] of edited) console.log(`edited: ${m.id} ${f.join(',')}`);
     if (!opt.apply) { console.log(`${added.length} new, ${edited.length} edited, ${gone.length} deleted; --apply to take them`); return; }
     if (gone.length) fail('deleted lines must be restored or closed through lc first');
@@ -553,6 +631,7 @@ C.add = (cx, { opt }) => {
     const i = { id, head: id, sec, ord: Math.max(0, ...d.issues.filter(x => x.sec === sec).map(x => x.ord)) + 1, at: null, origin: one(opt, 'origin', 'who date'), rule: one(opt, 'rule', 'rule#'), sites: one(opt, 'sites', 'file:line'), what: one(opt, 'what', 'what is wrong → impact'), fix: one(opt, 'fix', 'fix'), deps: many(opt.deps) };
     if (!i.deps.length) delete i.deps;
     if (opt.tail) i.tail = true;
+    for (const x of sameName(d, i.sites, i)) console.log(`same code name: ${x} (possible duplicate: lc show it; merging is a decision)`);
     d.issues.push(i);
     if (opt.to) place(d, i, String(opt.to), opt); else if (!i.tail) i.why = 'new';
     write(cx, sha, d, `lc add ${id}${opt.to ? ' → ' + opt.to : ''}`, `${id} ${i.at ? 'in ' + i.at : i.tail ? 'tail' : 'triage'}`);
@@ -716,9 +795,12 @@ C.start = (cx, { pos, opt }) => {
     if (s.st === 'landed') fail(`${s.key} has landed`);
     const st = steps(d); const waits = s.needs.filter(k => st.has(k) && st.get(k).s.st !== 'landed');
     if (waits.length) fail(`${s.key} needs ${waits.join(', ')} landed first`);
-    const slug = one(opt, 'task', 'V5.1 slug'); task(cx, slug);
+    const slug = one(opt, 'task', 'V5.1 slug'), t = task(cx, slug);
     for (const { s: o } of st.values()) if (o !== s && o.tasks.includes(slug)) fail(`${slug} already belongs to ${o.key}`);
     s.st = 'active'; s.tasks = [...new Set([...s.tasks, slug])];
+    const chain = modules((t.brief?.cause?.chain || []).join(' ')); // V5.2 brief: the verified cause's chain of handles
+    for (const i of d.issues.filter(x => x.at !== s.key && modules(x.sites).some(m => chain.includes(m))).slice(0, 10))
+        console.log(`same cause?: ${i.id} at ${i.at || 'triage'} names ${modules(i.sites).find(m => chain.includes(m))} from ${slug}'s cause chain`);
     write(cx, sha, d, `lc start ${s.key} with ${slug}`, `${s.key} active (${slug})`);
 };
 C.land = (cx, { pos, opt }) => {
@@ -953,9 +1035,9 @@ C.help = () => console.log(`lc status | check | show <id|step|release> | get <re
 issues:   add --sec --origin --rule --sites --what --fix [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--fixed-by)
 releases: release add|set | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
-          resolve <id> --test|--run --verdict | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
+          resolve <id> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
           publish <rel> --decision M --branch <origin branch>   (records a publication; lc never pushes origin)
-views:    render --out <dir> | render --write | absorb [--apply]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
+views:    render --out <dir> | render --check | render --write | absorb [--apply]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
 
 function main(argv) {
     const [cmd, ...rest] = argv; const a = parseArgs(rest);

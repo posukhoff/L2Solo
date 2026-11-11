@@ -6,13 +6,11 @@
 //   2. The step plan (target-architecture/step.md) whose work is merged and measured is deleted (history lives in git).
 //   3. Worktrees under .claude/worktrees whose branch is merged into the integration/release branch, with a clean tree,
 //      are listed for removal (`--remove` removes them; never one with uncommitted changes or unmerged commits).
-// Budgets are KB (what an agent reads costs tokens; lines are not the cost). These files are read by agents only:
-// dense form (no hard wraps, no blank lines between items, no prose for a human reader). A file over budget is pruned:
-// done items deleted, history cut, detail moved to its owner.
+// Budgets are KB an agent reads (planning.md: dense form, pruning); views lc renders have none.
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const PLANNING = __dirname;
@@ -20,19 +18,23 @@ const INTEGRATION = process.env.HYGIENE_BRANCH || 'ivan/batch-6';
 // Branches whose worktrees are never removed here (the integration branch itself; perf-tooling per .claude/workflow/git.md).
 const KEEP = new Set([INTEGRATION, 'ivan/next-release', 'perf-tooling', 'main', 'ivan/perf-remote']);
 const STALE_DAYS = 1;
-// Outside planning/: CLAUDE.md is read by every session and agent (KB), the workflow reference by role (KB together);
-// perf runs: only the baseline and the newest are kept.
+// CLAUDE.md is read by every agent (KB); policy is budgeted per role (CLAUDE.md + routes + evidence + the role's rows of
+// CLAUDE.md's table), not as the folder's total.
 const CLAUDE_MD_KB = 14; // compact entry point; detailed policy lives in .claude/workflow/
-const WORKFLOW_KB = 40;
+const ROLE_KB = 32; // measured 11-11: 24-32 KB per role
+const ROLE_FILES = {
+    implementer: ['coding.md'], landing: ['git.md', 'testing.md'], planner: ['agents.md', 'planning.md'],
+    release: ['testing.md', 'release.md', '../../planning/perf-tooling/test-recipe.md']
+};
 
-// The closed list (.claude/workflow/git.md "Where things are"): every file allowed under planning/ with its KB budget. Any other file
-// fails. A new file only with the maintainer's ok, added to git.md's list and here together.
+// The closed list (git.md "Where things are"): every file allowed under planning/ with its KB budget; any other fails.
+// A new file only with the maintainer's ok, in git.md's list and here together.
 const ALLOWED = {
     'hygiene.js': 10,
     'rules-check.js': 7,
     'tests-for.js': 5,
     'coverage.js': 8,
-    'roadmap.md': 12,
+    'roadmap.md': null, // rendered by .claude/lc.js: checked for freshness (lc render --check), not size
     'perf-tooling/test-recipe.md': 9,
     'architecture/README.md': 9,
     'architecture/check.js': 6,
@@ -45,7 +47,7 @@ const ALLOWED = {
     'architecture/limits.md': 66, // code names stay in backticks: check.js reads them
     'architecture/tables.md': 28,
     'architecture/e2e.md': 12,
-    'architecture/problems.md': 108, // one line per open problem; code names in backticks for check.js
+    'architecture/problems.md': null, // rendered by lc, grepped by id; agents read lc show; code names in backticks for check.js
     'target-architecture/plan.md': 8,
     'target-architecture/situations.md': 8,
     'target-architecture/economy.md': 60,
@@ -69,7 +71,7 @@ for (const file of walk(PLANNING)) {
     const budget = ALLOWED[file];
     const kb = Math.ceil(fs.statSync(path.join(PLANNING, file)).size / 1024);
     if (budget === undefined) problems.push(`file outside the closed list: planning/${file} (${kb} KB): delete it (a new file needs the maintainer's ok in .claude/workflow/git.md's list)`);
-    else if (kb > budget) problems.push(`planning/${file}: ${kb} KB over its budget ${budget} KB: prune (done items, history, detail to its owner)`);
+    else if (budget !== null && kb > budget) problems.push(`planning/${file}: ${kb} KB over its budget ${budget} KB: prune (done items, history, detail to its owner)`);
 }
 
 // A step plan is finished when it says "Measured" and "Done": its binding decisions go to the map, the file is deleted.
@@ -130,9 +132,21 @@ if (fs.existsSync(wtDir)) for (const e of fs.readdirSync(wtDir, { withFileTypes:
 const claudeKb = Math.ceil(fs.statSync(path.join(ROOT, 'CLAUDE.md')).size / 1024);
 if (claudeKb > CLAUDE_MD_KB) problems.push(`CLAUDE.md: ${claudeKb} KB over its budget ${CLAUDE_MD_KB} KB: merge duplicate rules, cut history`);
 const workflowDir = path.join(ROOT, '.claude', 'workflow');
-const workflowKb = fs.existsSync(workflowDir) ? Math.ceil(fs.readdirSync(workflowDir).filter(f => f.endsWith('.md'))
-    .reduce((sum, f) => sum + fs.statSync(path.join(workflowDir, f)).size, 0) / 1024) : 0;
-if (workflowKb > WORKFLOW_KB) problems.push(`.claude/workflow/*.md: ${workflowKb} KB over its budget ${WORKFLOW_KB} KB: merge duplicate rules, cut history`);
+if (fs.existsSync(workflowDir)) {
+    const size = f => { const p = path.join(workflowDir, f); return fs.existsSync(p) ? fs.statSync(p).size : 0; };
+    const every = fs.statSync(path.join(ROOT, 'CLAUDE.md')).size + size('routes.md') + size('evidence.md');
+    const named = new Set(['routes.md', 'evidence.md', ...Object.values(ROLE_FILES).flat()]);
+    for (const f of fs.readdirSync(workflowDir).filter(f => f.endsWith('.md') && !named.has(f))) problems.push(`.claude/workflow/${f}: in no ROLE_FILES role`);
+    for (const [role, files] of Object.entries(ROLE_FILES)) {
+        const kb = Math.ceil((every + files.reduce((n, f) => n + size(f), 0)) / 1024);
+        if (kb > ROLE_KB) problems.push(`${role} reads ${kb} KB of policy, over ${ROLE_KB} KB: merge duplicate rules, cut history`);
+    }
+}
+const lc = path.join(ROOT, '.claude', 'lc.js'); // after the cutover the views must be the lc render
+if (fs.existsSync(lc)) {
+    try { execFileSync(process.execPath, [lc, 'render', '--check', '--repo', ROOT], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (e) { const msg = String(e.stderr || '').trim(); if (/not the lc render/.test(msg)) problems.push(msg.replace(/^lc: /, 'planning views ')); }
+}
 const runsDir = path.join(ROOT, 'tmp/perf/runs');
 // Perf runs kept (maintainer, 2026-11-06): the last release's end (its sha in BASELINE_RUNS) and the newest measurement
 // (the newest sha's runs per scenario). Everything else is listed for deletion.

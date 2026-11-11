@@ -6,6 +6,14 @@ Built on frozen Workflow V5.1, which it does not change. CLI: `lc.js` (970 lines
 behaviour tests on scratch repos with a bare fork and origin). Data: the ref `ivan/lifecycle-data`, an orphan branch
 that is never checked out.
 
+## Context, not files (V5.2; rationale in .claude/context-budgets.md)
+
+- **Paged packs.** `lc show <step|release> [--page N] [--role rc]` is an agent's pack: the row, its issue lines (with `why` notes), direct dependencies (open lines, or archived with their closure) and the decisions that apply. The budget is `meta.budgets` (pack 12 KB, rc 2 KB). Over it, the pack is paged with a header (`page 1/3 · lines 1-30 of 74 · next: …`); a line is never cut or dropped.
+- **Growth diagnosis.** `lc status` prints a `growth:` line, and `lc check` lists the causes: `dup?` (two open issues share an exact quoted code name and a rule number; a name shared by more than 6 is a hub and is skipped), `broad` (a row over `rowIssues` 25), `stale` (check.js "member gone" on problems.md lines), triage, tails due, and resolved issues waiting for close. Each cause has an owner action; nothing is merged or deleted.
+- **Warnings on intake.** `add` and `absorb` print open issues that quote the same code name. `start` prints open issues naming a module from the V5.2 brief's `cause.chain`.
+- **Size only warns.** `render --write` notes a view over an old KB budget instead of refusing. `render --check` (used by hygiene) fails only after the cutover, when a view is not the render.
+- **Measurement.** `.claude/tools/context-cost.py [--since --until]` counts planning and policy reads, re-reads and tokens per role from the transcripts. The RC runs it at release close.
+
 ## Architecture (accepted 11-11)
 
 - **One place per issue.** `issue.at` is a step key, or null for triage/tail. Releases list steps, never issue ids.
