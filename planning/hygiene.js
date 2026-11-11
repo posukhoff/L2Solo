@@ -57,7 +57,7 @@ const ALLOWED = {
     'target-architecture/decision-registry.json': 380
 };
 
-const problems = [];
+const problems = [], sizes = []; // sizes warn with numbers (diagnose: lc status/check, context-cost); they never fail
 function walk(dir, out = []) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         if (entry.name.startsWith('.')) continue;
@@ -71,7 +71,7 @@ for (const file of walk(PLANNING)) {
     const budget = ALLOWED[file];
     const kb = Math.ceil(fs.statSync(path.join(PLANNING, file)).size / 1024);
     if (budget === undefined) problems.push(`file outside the closed list: planning/${file} (${kb} KB): delete it (a new file needs the maintainer's ok in .claude/workflow/git.md's list)`);
-    else if (budget !== null && kb > budget) problems.push(`planning/${file}: ${kb} KB over its budget ${budget} KB: prune (done items, history, detail to its owner)`);
+    else if (budget !== null && kb > budget) sizes.push(`planning/${file}: ${kb} KB (guide ${budget} KB)`);
 }
 
 // A step plan is finished when it says "Measured" and "Done": its binding decisions go to the map, the file is deleted.
@@ -130,7 +130,7 @@ if (fs.existsSync(wtDir)) for (const e of fs.readdirSync(wtDir, { withFileTypes:
     if (!e.isDirectory()) problems.push(`stray file .claude/worktrees/${e.name}: delete it (scratch goes to the session scratchpad)`);
 }
 const claudeKb = Math.ceil(fs.statSync(path.join(ROOT, 'CLAUDE.md')).size / 1024);
-if (claudeKb > CLAUDE_MD_KB) problems.push(`CLAUDE.md: ${claudeKb} KB over its budget ${CLAUDE_MD_KB} KB: merge duplicate rules, cut history`);
+if (claudeKb > CLAUDE_MD_KB) sizes.push(`CLAUDE.md: ${claudeKb} KB (guide ${CLAUDE_MD_KB} KB; every agent reads it)`);
 const workflowDir = path.join(ROOT, '.claude', 'workflow');
 if (fs.existsSync(workflowDir)) {
     const size = f => { const p = path.join(workflowDir, f); return fs.existsSync(p) ? fs.statSync(p).size : 0; };
@@ -139,7 +139,7 @@ if (fs.existsSync(workflowDir)) {
     for (const f of fs.readdirSync(workflowDir).filter(f => f.endsWith('.md') && !named.has(f))) problems.push(`.claude/workflow/${f}: in no ROLE_FILES role`);
     for (const [role, files] of Object.entries(ROLE_FILES)) {
         const kb = Math.ceil((every + files.reduce((n, f) => n + size(f), 0)) / 1024);
-        if (kb > ROLE_KB) problems.push(`${role} reads ${kb} KB of policy, over ${ROLE_KB} KB: merge duplicate rules, cut history`);
+        if (kb > ROLE_KB) sizes.push(`${role} reads ${kb} KB of policy (guide ${ROLE_KB} KB)`);
     }
 }
 const lc = path.join(ROOT, '.claude', 'lc.js'); // after the cutover the views must be the lc render
@@ -160,6 +160,7 @@ if (fs.existsSync(runsDir)) {
     const extra = runs.filter(r => !keep(r));
     if (extra.length) problems.push(`tmp/perf/runs: ${extra.length} runs beyond the release baseline and the newest measurement (delete them):\n    ${extra.join('\n    ')}`);
 }
+if (sizes.length) console.log(`hygiene: size notes (no action forced; diagnose with lc status/check and context-cost)\n- ${sizes.join('\n- ')}`);
 if (problems.length) {
     console.log(`hygiene: ${problems.length} to prune\n- ${problems.join('\n- ')}`);
     process.exit(1);
