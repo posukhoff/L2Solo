@@ -49,7 +49,8 @@ function bot(id, x) {
         replace(Rates, 'selectDropItem', () => ({ selfId: 57 }));
         replace(Rates, 'rollDropAmount', () => 11);
         replace(Math, 'random', () => 0);
-        replace(Geo, 'getHeight', (_x, _y, z) => z);
+        // Open flat ground, whatever map files the machine has.
+        replace(Geo, 'getCellData', (_x, _y, z) => ({ z, nswe: 15 }));
         replace(World, 'items', { spawns: [], byLeader: new Map() });
         replace(World, 'npc', { spawns: [] });
         replace(World, 'fetchNpcsInRadius', () => []);
@@ -130,6 +131,44 @@ function bot(id, x) {
                 'physical pickup preserves solo ownership and native party Adena distribution');
             assert.strictEqual(Pickup.call(World, leader, leader.actor, item), false, 'a second claimant cannot duplicate the reward');
             assert.deepStrictEqual(leader.partyGroundPickupQueue, [], 'completion releases the queue');
+        }
+        // A tree stands by the corpse (one closed geodata cell, x 352..367). C4:
+        // a drop lies where a walk from the corpse gets and a pickup run ends
+        // where a walk ends (Lisvus ItemDropTask and moveToLocation: moveCheck),
+        // so no body ends inside the tree.
+        {
+            const tree = (x, y) => (x >> 4) === 22 && (y >> 4) === 0;
+            const inTree = actor => tree(actor.fetchLocX(), actor.fetchLocY());
+            replace(Geo, 'getCellData', (x, y, z) => ({ z, nswe: tree(x, y) ? 0 : 15 }));
+            const hunter = bot(5, 250);
+            replace(Bots, 'sessions', [hunter]);
+            replace(World, 'user', { sessions: [], revision: 0 });
+            World.insertUser(hunter);
+            purchases.length = 0;
+            // The scatter throws the drop 50 east of the corpse: past the tree.
+            let roll = 0;
+            replace(Math, 'random', () => [1, 0][roll++ % 2]);
+            Rewards.call(World, hunter, { ...npc, fetchLocX: () => 330 });
+            replace(Math, 'random', () => 0);
+            const drop = World.items.spawns[0];
+            assert(drop.fetchLocX() >= 330 && drop.fetchLocX() < 352, 'a drop thrown past a tree lands on the corpse side of it');
+            await wait(700);
+            assert.deepStrictEqual(purchases, [[5, 57, 11]], 'the hunter collects the drop');
+            assert.strictEqual(inTree(hunter.actor), false, 'the collector does not end inside the tree');
+
+            // A drop already lying behind the tree: no straight run gets to it.
+            const stoodAt = hunter.actor.x;
+            Rewards.call(World, hunter, { ...npc, fetchLocX: () => 420 });
+            assert.strictEqual(Loot.startQueuedGroundPickup(hunter), false, 'a drop behind a tree does not hold the hunter');
+            await wait(600);
+            assert.strictEqual(hunter.actor.x, stoodAt, 'the hunter does not run through the tree');
+            assert.strictEqual(World.items.spawns.length, 1, 'the drop stays on the ground');
+            // The hunt moves the hunter past the tree: its next loot scan takes the drop.
+            hunter.actor.x = 500;
+            assert.strictEqual(Loot.reconcileGroundLoot(hunter), 1, 'a clear line makes the drop the hunter\'s again');
+            await wait(600);
+            assert.deepStrictEqual(purchases, [[5, 57, 11], [5, 57, 11]], 'the drop is collected from the clear side');
+            replace(Geo, 'getCellData', (_x, _y, z) => ({ z, nswe: 15 }));
         }
         // A melee hunter's own swing kills. C4: a body neither moves nor picks
         // up inside its swing (Lisvus L2CharacterAI.onIntentionPickUp); the drop
@@ -217,7 +256,7 @@ function bot(id, x) {
             await wait(2500); // the swing ends and the drop is collected
             assert.strictEqual(hunter.partyGroundPickupInProgress, false, 'the collector finishes its drop');
         }
-        console.log('Hot ground loot: native drop, movement, arrival, swing-end and resumed pickup, solo/party ownership and combat/support priority passed');
+        console.log('Hot ground loot: native drop, movement, arrival, swing-end and resumed pickup, drops and runs around a tree, solo/party ownership and combat/support priority passed');
     } finally {
         actors.forEach(actor => actor.automation.abortAll(actor, { notifyClient: false }));
         saved.reverse().forEach(restore => restore());

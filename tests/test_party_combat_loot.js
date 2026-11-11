@@ -65,7 +65,6 @@ function allowed(item=drop()){return Policy.allowed(support,leader,item,sessions
         leader.actor.hp=60;assert.strictEqual(allowed(),false,'party healing outranks loot');leader.actor.hp=100;
         support.actor.hp=60;assert.strictEqual(allowed(),false,'hurt support cannot start looting');support.actor.hp=100;
         assert.strictEqual(allowed(drop(-650)),false,'combat loot stays near the party');
-        Geo.hasLineOfSight=()=>false;assert.strictEqual(allowed(),false,'native straight pickup must not cross a wall');Geo.hasLineOfSight=()=>true;
         const hazard={...enemy,fetchId:()=>3400002,x:-350,y:599,attacking:false,fetchDestId:()=>undefined};
         World.npc.spawns.push(hazard);assert.strictEqual(allowed(),false,'path clearance catches aggro even when both endpoints clear 600 units');
         hazard.hostile=false;assert(allowed(),'a peaceful idle NPC is not an aggro hazard');
