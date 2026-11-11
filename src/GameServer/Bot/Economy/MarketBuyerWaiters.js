@@ -4,18 +4,19 @@
 // registered while the card is held (register, from the worker's held card: a build
 // taken, a card restored on a record's first row) and dropped with it, no clock. A new
 // SELL line, or a cheaper one, wakes at most five buyers of its item whose budget
-// reaches its price (recordChanged → wake: offer_posted, which wakes the build); a
-// woken want leaves the index until the build it wakes holds its next card, a want
-// whose wake is refused (a bot that cannot take it now) stays. At most MAX_WANTS per
-// bot (the rest counted: board:wait:capped). Beside it the owners' own lines
-// (lineEvents): the same record change raises their own-line situations.
+// reaches its price, far and near together (recordChanged → wake: offer_posted, which
+// wakes the build, boardWake); a woken want leaves the index until the build it wakes
+// holds its next card, a want whose wake is refused (a bot that cannot take it now)
+// stays. At most MAX_WANTS per bot (the rest counted: board:wait:capped). Beside it the
+// owners' own lines (lineEvents): the same record change raises their own-line situations.
+const Situations = require('../Situations');
 const MAX_WANTS = 8;
 const WAKES_PER_RECORD = 5;
 
 // Each item keeps an indexed max-heap of budgets. Publication visits only
 // this owner's wants; a new record wakes at most five: a want refused (its own
-// record's owner, a near, fenced or failed bot) is passed over without spending
-// one, so buyers below it still hear the offer.
+// record's owner, a fenced or failed bot, a raise that is no news: boardWake) is
+// passed over without spending one, so buyers below it still hear the offer.
 class ItemWaiters {
     constructor() { this.nodes = []; }
     before(a, b) { return a.budget > b.budget || (a.budget === b.budget && a.sequence < b.sequence); }
@@ -163,4 +164,22 @@ function lineEvents(record, previous, board, wake, capped = () => {}) {
     }
 }
 
-module.exports = { MarketBuyerWaiters, MAX_WANTS, lineEvents };
+// The board's situations on a bot, one path for the buyers' (offer_posted, recordChanged's
+// wake) and the owners' own lines' (line_undercut, goal_done:line, lineEvents' wake): a far
+// bot hears it at its next step (kernel.stepWake, payload: the offer); a near body's mind,
+// the worker's, takes it now at the body's place (Situations.raise: the decisions it wakes,
+// the quote marks it forgets) and decide(ownerId) asks the body's near decision, which
+// answers it on the post it asks. True when taken; false for a bot that cannot take it (no
+// record, a fenced or stopping one, neither far nor near) or a raise that is no news (what
+// it wakes already woken, no mark to forget): a refused buyer keeps its want.
+function boardWake(kernel, decide, ownerId, name, payload = null) {
+    const id = Number(ownerId), entry = kernel?.states.get(id);
+    if (entry?.state.phase !== 'hot') return kernel?.stepWake(id, name, payload) === true;
+    const stats = Situations.raise({ ...entry.state.stats }, name, payload, Situations.bodyPlace(entry.state), id);
+    if (stats.situationSeq === entry.state.stats?.situationSeq) return false;
+    entry.state = { ...entry.state, stats };
+    decide(id);
+    return true;
+}
+
+module.exports = { MarketBuyerWaiters, MAX_WANTS, lineEvents, boardWake };
