@@ -63,8 +63,12 @@ function clanDuty(party) {
     const objective = party?.stats?.objective;
     return objective?.priority === 'required' && !!objective.clanGoalKey;
 }
+// A return ticket the party still holds its place for: before its 15 minutes run out. Past
+// them the party no longer waits (pending drops it) and its member's return is traced as
+// expired (PopulationService.resumePartyMarketBreak).
+const held = (token, now) => Number(token?.until) > now;
 function pending(party, now = Date.now()) {
-    return Object.values(party?.stats?.marketAbsences || {}).filter(value => Number(value.until) > now);
+    return Object.values(party?.stats?.marketAbsences || {}).filter(value => held(value, now));
 }
 // The trips a clan duty lets its member go on (its stay answered one,
 // ColdSimulationKernel.partyStay, one absence at a time): an unload of a bag at its
@@ -94,5 +98,5 @@ function ready(state) {
         && !state.stats?.travel && !state.stats?.marketReturn
         && ['hunting', 'party_wait', 'grouped'].includes(state.activity);
 }
-module.exports = { bagNeed, bagFact, cleanupDecision, cleanupFree, heldCleanup, withoutStartedTrip, clanDuty, pending,
+module.exports = { bagNeed, bagFact, cleanupDecision, cleanupFree, heldCleanup, withoutStartedTrip, clanDuty, held, pending,
     goal, departure, stats, ready, FLOOR_REASONS };

@@ -1,6 +1,7 @@
 const FailureLog = require('../../../FailureLog');
 const PartyMarketBreak = require('./PartyMarketBreak');
 const Situations = require('../Situations');
+const Trace = require('../DecisionTrace');
 const { stepElapsedMs } = require('./ColdSoloWindow');
 const { WorkerCommandAdmissionRefusal, checkWorkerCommandAdmission } = require('./WorkerCommandAdmission');
 const { PartyAdmission, limit: partyLimit, priority: admissionPriority } = require('./PartyAdmission');
@@ -371,6 +372,8 @@ async function applyPartyStayTrips(party, trips = [], timestamp = Date.now()) {
         if (!departure) { Situations.note('party:stay_trip:refused'); continue; }
         const left = await LifeState.leaveParty(departure, 'market_break', { ownerHandoff: true });
         if (!left) continue;
+        Trace.record({ kind: 'party', bot: Number(left.characterId), party: String(party.partyId), phase: 'stay_trip',
+            outcome: 'left', reason: String(need?.reason || 'unnamed') });
         departed.push(left);
         party = BackgroundPartyState.find(party.partyId) || party;
         const retained = retainedMembers(party, left.characterId);
@@ -385,6 +388,20 @@ async function applyPartyStayTrips(party, trips = [], timestamp = Date.now()) {
         party = await BackgroundPartyState.createOrUpdate(nextParty) || party;
     }
     return { party, departed, dissolved: false };
+}
+
+// A stay trip's one end, at its member's return (the departure is traced in
+// applyPartyStayTrips): returned, return_wait (a clan duty's member waits for its party:
+// gone, its objective changed or full) or unavailable (an ordinary party's member hunts on
+// alone). A return past its ticket (PartyMarketBreak.held: the party had stopped holding
+// the place) ends as expired, with the end it found as the reason, and is counted.
+function traceStayTripEnd(state, token, timestamp, end, cause) {
+    const expired = !PartyMarketBreak.held(token, timestamp);
+    if (expired) Situations.note('party:stay_trip:expired');
+    const startedAt = Number(token.startedAt);
+    Trace.record({ kind: 'party', bot: Number(state.characterId), party: String(token.partyId), phase: 'stay_trip',
+        outcome: expired ? 'expired' : end, reason: expired ? end : cause,
+        durationMs: Number.isFinite(startedAt) && startedAt > 0 ? timestamp - startedAt : undefined });
 }
 
 async function resumePartyMarketBreak(state, timestamp) {
@@ -406,18 +423,22 @@ async function resumePartyMarketBreak(state, timestamp) {
             memberIds: roster.map(member => member.characterId),
             roleCoverage: PartyComposition.roleCoverage(roster),
             nextResolveAt: timestamp, stats: { ...party.stats, marketAbsences: absences } }, roster, null);
+        if (result.party) traceStayTripEnd(state, token, timestamp, 'returned');
         return { ok: !!result.party, state: LifeState.cachedState(state.characterId) || state,
             reason: result.party ? 'returned_to_clan_party' : 'party_return_retry' };
     }
+    const cause = party?.status !== 'active' ? 'party_gone' : !matching ? 'objective_changed' : 'party_full';
     if (warehouse) {
         // An ordinary party may fill or dissolve while its member shops. It
         // has no clan request to wait on, so resume the personal route.
         const solo = { ...prepared, activity: 'hunting', timing: { ...(prepared.timing || {}), nextResolveAt: timestamp + 30000 } };
         const saved = await LifeState.upsertState(solo, 'craft_warehouse_party_unavailable');
+        if (saved) traceStayTripEnd(state, token, timestamp, 'unavailable', cause);
         return { ok: !!saved, state: saved || state, reason: 'craft_warehouse_party_unavailable' };
     }
     // A dissolved or full party must not turn the clan assignment into solo combat.
     const saved = await LifeState.upsertState(prepared, 'clan_party_return_wait');
+    if (saved) traceStayTripEnd(state, token, timestamp, 'return_wait', cause);
     return { ok: !!saved, state: saved || state, reason: 'clan_party_return_wait' };
 }
 

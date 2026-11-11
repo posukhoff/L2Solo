@@ -81,10 +81,19 @@ async function departureChecks() {
     const objective = { status: 'open', priority: 'required', clanGoalKey: 'clan:1:gear', clanId: 1, clanOperation: 'equipment',
         minPartySize: 2, maxPartySize: 9 };
     const bagTrip = id => [{ characterId: id, reason: 'bag_full' }];
+    // A stay trip's departure and its end each leave one decision-trace record (kind party, phase stay_trip).
+    const Trace = invoke('GameServer/Bot/DecisionTrace');
+    const traced = [];
+    const stayTrips = () => traced.filter(row => row.kind === 'party' && row.phase === 'stay_trip')
+        .map(row => [row.bot, row.party, row.outcome, row.reason]);
+    Config.decisionTrace = true;
+    Trace.connect(batch => { traced.push(...batch.records.map(row => JSON.parse(row))); Trace.ack(batch.id, batch.records.length); });
     try {
         const breakParty = await formParty('mbleader', 3, { objective }, { clanId: 1 });
         leaving = breakParty.ids[0];
         const left = await Population.applyPartyStayTrips(breakParty.party, bagTrip(leaving));
+        assert.deepStrictEqual(stayTrips(), [[leaving, 'mbleader', 'left', 'inventory_capacity']], 'the departure is traced');
+        traced.length = 0;
         assert.strictEqual(left.departed[0]?.characterId, leaving, 'the leader leaves on its bag trip');
         assert.strictEqual(left.departed[0].stats.partyMarketReturn.partyId, 'mbleader', 'with its return ticket');
         await assertLeaderHandedOver('mbleader', leaving);
@@ -124,7 +133,11 @@ async function departureChecks() {
         assert.strictEqual(waiting.party.partyId, null, 'no orphan party id');
         assert.strictEqual(waiting.stats.partyMarketReturn, null);
         assert.strictEqual(waiting.stats.partyRequest.clanGoalKey, objective.clanGoalKey);
+        assert.deepStrictEqual(stayTrips().filter(row => row[0] === leader), [[leader, 'mbtoken', 'left', 'inventory_capacity'],
+            [leader, 'mbtoken', 'return_wait', 'party_gone']], 'the trip to a dissolved party ends traced as a wait');
     } finally {
+        Config.decisionTrace = false;
+        Trace.stop();
         originals.forEach(([owner, name, value]) => { owner[name] = value; });
     }
 }

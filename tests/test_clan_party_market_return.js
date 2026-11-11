@@ -7,6 +7,18 @@ const Executor = invoke('GameServer/Bot/Goals/GoalExecutor');
 const Spots = invoke('GameServer/Bot/AI/SpotService');
 const Risk = invoke('GameServer/Bot/Population/SpotRiskPolicy');
 const { lifecycleKind } = require('../src/GameServer/Bot/Population/ColdSimulationKernel');
+const Config = invoke('GameServer/Bot/Population/PopulationConfig');
+const Trace = invoke('GameServer/Bot/DecisionTrace');
+const Situations = invoke('GameServer/Bot/Situations');
+// Every stay trip's end leaves one decision-trace record (kind party, phase stay_trip).
+const traced = [];
+Config.decisionTrace = true;
+Trace.connect(batch => { traced.push(...batch.records.map(row => JSON.parse(row))); Trace.ack(batch.id, batch.records.length); });
+const lastEnd = () => {
+    const ends = traced.filter(row => row.kind === 'party' && row.phase === 'stay_trip');
+    traced.length = 0;
+    return ends.map(row => [row.bot, row.party, row.outcome, row.reason]);
+};
 const now = Date.now();
 const objective = { status: 'open', priority: 'required', clanGoalKey: 'clan:1:gear', clanId: 1,
     clanOperation: 'equipment', minPartySize: 3, maxPartySize: 9 };
@@ -39,6 +51,7 @@ Risk.backoffForStates = () => { throw new Error('must not apply solo bans to a c
     assert.deepStrictEqual(party.memberIds, [1, 2, 3]);
     assert.deepStrictEqual(party.stats.marketAbsences, {});
     assert.strictEqual(assigned.find(x => x.state.characterId === 3).state.stats.partyMarketReturn, null);
+    assert.deepStrictEqual(lastEnd(), [[3, 'clan-party', 'returned', undefined]], 'a return in time is traced as returned');
     party.status = 'dissolved';
     let saved;
     Life.upsertState = async state => (saved = state);
@@ -46,6 +59,7 @@ Risk.backoffForStates = () => { throw new Error('must not apply solo bans to a c
     assert.strictEqual(saved.activity, 'party_wait');
     assert.strictEqual(saved.stats.partyRequest.clanGoalKey, objective.clanGoalKey);
     assert.strictEqual(saved.stats.partyMarketReturn, null);
+    assert.deepStrictEqual(lastEnd(), [[3, 'clan-party', 'return_wait', 'party_gone']], 'a stranded waiter is traced with its cause');
     const warehouseObjective = { objectiveKey: 'ordinary-hunt', status: 'open' };
     const warehouseToken = { ...token, objective: warehouseObjective, cleanupReason: 'craft_warehouse' };
     const warehouseArrival = { ...arrived, stats: { partyMarketReturn: warehouseToken } };
@@ -60,6 +74,18 @@ Risk.backoffForStates = () => { throw new Error('must not apply solo bans to a c
     assert.strictEqual(warehouseSolo.reason, 'craft_warehouse_party_unavailable');
     assert.strictEqual(saved.activity, 'hunting', 'a lost party cannot strand a personal craft in party_wait');
     assert.strictEqual(saved.stats.partyMarketReturn, null);
+    assert.deepStrictEqual(lastEnd(), [[3, 'clan-party', 'returned', undefined], [3, 'clan-party', 'unavailable', 'party_gone']]);
+    // A return past its ticket: the party had stopped holding the place; it still has room, so the member rejoins,
+    // and the trip ends as expired (counted), naming the end it found.
+    const expiredCount = () => Situations.counts().raised['party:stay_trip:expired'] || 0, expiredBefore = expiredCount();
+    const lateToken = { ...token, until: now - 1, startedAt: now - 1000000 };
+    party = { ...party, status: 'active', memberIds: [1, 2], stats: { objective, marketAbsences: { 3: lateToken } } };
+    const late = await Service.resolveColdState({ ...arrived, stats: { partyMarketReturn: lateToken } });
+    assert.strictEqual(late.reason, 'returned_to_clan_party');
+    assert.deepStrictEqual(lastEnd(), [[3, 'clan-party', 'expired', 'returned']], 'a late return is traced as expired');
+    assert.strictEqual(expiredCount(), expiredBefore + 1, 'the expiry is counted');
+    Config.decisionTrace = false;
+    Trace.stop();
     const shopping = { ...returning, stats: { ...returning.stats, townVisit: { completed: false } } };
     assert.strictEqual(Service.finishColdMarketStep(shopping, null, null, null, { state: shopping }, { state: shopping, pending: true }, null), shopping,
         'a supply deal already in progress retains ownership until it completes');
