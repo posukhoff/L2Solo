@@ -14,6 +14,6 @@
  "cap": null,
  "gates": {},
  "steps": [
-  {"key":"1b.0","title":"1b.0 bug: server exit on a DoT kill after its caster was cooled (DT-267)","P":"**high**","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+
  ]
 }
