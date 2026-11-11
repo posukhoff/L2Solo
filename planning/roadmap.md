@@ -26,7 +26,7 @@ The one queue (CLAUDE.md "Problems, plans and the roadmap"): rows cite problems.
 | Item | P | S | Who |
 |---|---|---|---|
 | Run tooling (maintainer 11-10): `perf.js --trace` (no reliance on local.ini) and a first-minute self-check (trace, diagnostics, world kept) that stops a wrong run; behaviour runs on fork CI runners in parallel (workflow + saves as an artifact) and on the team VPS; DT-139, DT-167, DT-175, DT-177, DT-210 | low | mid | |
-| Behaviour bugs: DT-112, DT-120, DT-171, DT-216, DT-220, DT-226, DT-257; placement: DT-129, DT-170, DT-183placement: DT-129, DT-170, DT-183, DT-173 | | mid | low | |
+| Behaviour bugs: DT-112, DT-120, DT-171, DT-216, DT-220, DT-226, DT-257; placement: DT-129, DT-170, DT-183, DT-173 | mid | low | |
 | Fence without an owner, activation window: L26, races-R6 | mid | mid | |
 | Supply errand with two owners: races-R15 | low | mid | |
 | Hot/cold handover windows: races-R5, races-R7, POP-4, POP-5, POP-22, threads-9, DT-127, DT-223, DT-236, DT-241 | low | mid | |
