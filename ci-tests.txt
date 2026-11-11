@@ -1,0 +1,12 @@
+test_b_grade_craft_progression.js
+test_bot_arrow_cleanup.js
+test_bot_crystallization_fallback.js
+test_bot_improvements.js
+test_c_grade_preparation.js
+test_c_grade_purchase.js
+test_clan_crystal_supply.js
+test_dual_sword_wish_execution.js
+test_field_trade_ads.js
+test_hot_shopping_progress.js
+test_live_player_market_services.js
+test_town_warehouse_transaction.js
