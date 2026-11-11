@@ -308,11 +308,13 @@ test('views: render --write refuses hand edits and a failed data write, leaving 
     const pf = path.join(w.repo, 'planning/architecture/problems.md');
     w.ok('render', '--write'); assert.strictEqual(fs.readFileSync(pf, 'utf8'), PROBLEMS);
     fs.writeFileSync(pf, PROBLEMS.replace('## Parties\n', '## Parties\nDT-300|review 11-12|8|`F.js`|new thing|fix|[r1b]\n'));
-    w.no(/edited by hand since the last render/, 'render', '--write');
-    assert.match(w.ok('absorb'), /new: DT-300 parties \[r1b\]/);
-    w.ok('absorb', '--apply');
+    w.no(/edited by hand since the last render: its issues live in lc .*--overwrite-problems/, 'render', '--write');
+    w.ok('add', '--sec', 'parties', '--origin', 'review 11-12', '--rule', '8', '--sites', '`F.js`', '--what', 'new thing', '--fix', 'fix', '--id', 'DT-300');
+    const kept = w.ok('render', '--write', '--overwrite-problems').match(/hand-edited problems\.md kept at (\S+);/)[1];
+    assert.match(fs.readFileSync(kept, 'utf8'), /DT-300\|review 11-12/); // the hand copy is kept, the file is the render
+    assert.match(fs.readFileSync(pf, 'utf8'), /DT-300\|review 11-12\|8\|`F\.js`\|new thing\|fix\|/);
     assert.match(w.ok('place'), /DT-300 stays: no explicit row or rule/);
-    assert.match(w.ok('show', 'DT-300'), /\|\[r1b\]\nat triage/);
+    assert.match(w.ok('show', 'DT-300'), /\nat triage/);
     const rule = w.decide('new party lines go to 1b.2', 'action=placement-rule,to=1b.2');
     w.ok('placement', '--to', '1b.2', '--sec', 'parties', '--decision', rule);
     assert.match(w.ok('place', '--apply'), /DT-300 → 1b\.2 \(placement rule\)/);
@@ -328,8 +330,25 @@ test('views: render --write refuses hand edits and a failed data write, leaving 
     assert.match(fs.readFileSync(pf, 'utf8'), /DT-300\|.*\[r1b\]/);
     fs.writeFileSync(path.join(w.repo, 'planning/hygiene.js'), "const ALLOWED = { 'roadmap.md': 12, 'architecture/problems.md': 0 };\n");
     assert.match(w.ok('render', '--write'), /note  architecture\/problems\.md is 1 KB, over the old 0 KB budget[\s\S]*growth: triage/); // size warns, never blocks
-    fs.writeFileSync(pf, PROBLEMS.replace(/^S3\|.*\n/m, ''));
-    w.no(/deleted lines must be restored/, 'absorb', '--apply');
+    fs.writeFileSync(pf, fs.readFileSync(pf, 'utf8').replace(/^S3\|.*\n/m, '')); // a line deleted by hand closes nothing
+    w.no(/edited by hand since the last render/, 'render', '--write');
+    w.ok('render', '--write', '--overwrite-problems');
+    assert.match(fs.readFileSync(pf, 'utf8'), /^S3\|/m);
+});
+
+test('edit changes an open issue\'s text, alias and note through lc; an id is never reused and nothing else moves', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    w.no(/edit names a field that changes/, 'edit', 'DT-44');
+    w.no(/no open issue NOPE-1/, 'edit', 'NOPE-1', '--what', 'x');
+    const before = w.ok('show', 'DT-44');
+    assert.match(w.ok('edit', 'DT-44', '--what', 'party forms twice → two leaders', '--fix', 'one owner of the raise', '--alias', 'RV-9', '--why', 'cause found 11-12: the second raise'), /DT-44 edited \(what, fix, alias RV-9, why\)/);
+    const after = w.ok('show', 'RV-9'); // the alias finds the issue
+    assert.match(after, /^DT-44 \(= [^)]*RV-9\)\|/m); assert.match(after, /\|party forms twice → two leaders\|one owner of the raise\|/); assert.match(after, /cause found 11-12/);
+    assert.strictEqual(after.match(/\nat (\S+)/)[1], before.match(/\nat (\S+)/)[1]); // its place is assign's
+    w.no(/RV-9 exists \(ids are never reused\)/, 'edit', 'DT-49', '--alias', 'RV-9');
+    w.no(/--alias is an id/, 'edit', 'DT-49', '--alias', 'not an id');
+    w.ok('render', '--write');
+    assert.match(fs.readFileSync(path.join(w.repo, 'planning/architecture/problems.md'), 'utf8'), /^DT-44 \(= [^)]*RV-9\)\|.*two leaders/m);
 });
 
 test('split keeps the old id, aliases and history; steps are reset and reordered; tails come due two releases on', () => {
@@ -407,9 +426,7 @@ test('a hand-edited roadmap.md is replaced only on --overwrite-roadmap and its c
     const out = w.ok('render', '--write', '--overwrite-roadmap');
     assert.strictEqual(fs.readFileSync(rf, 'utf8'), ROADMAP);
     assert.match(fs.readFileSync(out.match(/kept at (\S+);/)[1], 'utf8'), /Row by an agent/);
-    const { context, load, save } = require('./lc.js');
-    const cx = context({ repo: w.repo }); const { sha, d } = load(cx);
-    d.issues.find(i => i.id === 'DT-49').why = 'investigation: cause unverified'; save(cx, sha, d, 'test: note');
+    w.ok('edit', 'DT-49', '--why', 'investigation: cause unverified');
     w.ok('assign', 'DT-49', '--to', '1b.2');
     assert.match(w.ok('show', 'DT-49'), /at 1b\.2 .* investigation: cause unverified/);
 });

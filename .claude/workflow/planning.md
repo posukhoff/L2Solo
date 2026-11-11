@@ -11,9 +11,9 @@
   `lc tails` lists the due ones (part of the growth diagnosis; maintainer 2026-11-10, sizes as guides 11-11).
 - Planning state is lc (cutover 2026-11-11): the fork ref `ivan/lifecycle-data`, kept by `node .claude/lc.js`
   (reference `.claude/lc.md`), is the only source of issues, releases, placement, dependencies and closing. roadmap.md
-  and problems.md are rendered views: never edit them. Create, place, move and close only through lc (`add`, `assign`,
-  `place`, `dep`, `defer`, `land`, `resolve`, `close`, `drop`), then `lc render --write`. `lc absorb` is temporary
-  compatibility for agents not yet on lc. New issues enter triage; `place` uses only unambiguous rules (a row naming
+  and problems.md are rendered views: never edit them. Create, edit, place, move and close only through lc (`add`, `edit`,
+  `assign`, `place`, `dep`, `defer`, `land`, `resolve`, `close`, `drop`), then `lc render --write`. A hand edit of a view is
+  refused, never taken in: redo it through lc. New issues enter triage; `place` uses only unambiguous rules (a row naming
   the issue, or a maintainer placement rule). An unknown root cause is an investigation, not leave to implement.
   Lifecycle data changes only by lc commands: no script calls lc's `save`; a correction no command covers waits for one.
 - One queue: `roadmap.md` (rendered), numbered releases; a row is a lc step: a label plus ids or a plan file. Done means

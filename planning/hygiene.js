@@ -151,14 +151,16 @@ const runsDir = path.join(ROOT, 'tmp/perf/runs');
 // Perf runs kept (maintainer, 2026-11-06): the last release's end (its sha in BASELINE_RUNS) and the newest measurement
 // (the newest sha's runs per scenario). Everything else is listed for deletion.
 // Release 1a's end (3c164d3cc), release 1's end (9d6bf579a) and its A sides on v0.1.2, the version players have until
-// release 1 ships. Only -cold-/-hot- folders are matched below: script runs (<sha>-script-<name>-…) are never listed.
-const BASELINE_RUNS = ['3c164d3cc-hot', '9d6bf579a-script', '9d6bf579a-hot', '21ef29385-script', '21ef29385-hot'];
+// release 1 ships. A run is <sha>-<kind>-<date>-<time>, kind = cold, hot or script-<name>; a copy fetched from the VPS
+// carries the prefix l2solo-perf-.
+const BASELINE_RUNS = ['3c164d3cc-script', '3c164d3cc-hot', '9d6bf579a-script', '9d6bf579a-hot', '21ef29385-script', '21ef29385-hot'];
 if (fs.existsSync(runsDir)) {
-    const runs = fs.readdirSync(runsDir).filter(r => /-(cold|hot)-\d{8}-\d{6}$/.test(r));
+    const RUN = /^(?:l2solo-perf-)?([0-9a-f]{7,40})-(cold|hot|script-[A-Za-z0-9-]+?)-(\d{8}-\d{6})$/;
+    const all = fs.readdirSync(runsDir).map(r => [r, RUN.exec(r)]).filter(x => x[1]).map(([r, m]) => ({ r, sha: m[1], kind: m[2], at: m[3] }));
     const newest = {};
-    for (const r of runs) { const [, sha, kind, at] = /^(.+)-(cold|hot)-(\d{8}-\d{6})$/.exec(r); if (!newest[kind] || at > newest[kind].at) newest[kind] = { sha, at }; }
-    const keep = r => BASELINE_RUNS.some(b => r.startsWith(b + '-')) || ['cold', 'hot'].some(k => newest[k] && r.startsWith(`${newest[k].sha}-${k}-`));
-    const extra = runs.filter(r => !keep(r));
+    for (const x of all) if (!newest[x.kind] || x.at > newest[x.kind].at) newest[x.kind] = x;
+    const keep = x => BASELINE_RUNS.some(b => `${x.sha}-${x.kind}-`.startsWith(b + '-')) || newest[x.kind].sha === x.sha;
+    const extra = all.filter(x => !keep(x)).map(x => x.r);
     if (extra.length) problems.push(`tmp/perf/runs: ${extra.length} runs beyond the release baseline and the newest measurement (delete them):\n    ${extra.join('\n    ')}`);
 }
 if (sizes.length) console.log(`hygiene: size notes (no action forced; diagnose with lc status/check and context-cost)\n- ${sizes.join('\n- ')}`);

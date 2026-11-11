@@ -568,17 +568,17 @@ C.render = (cx, { opt }) => {
     if (opt.check) { // hygiene's freshness test: after the cutover the planning views must equal the render
         if (!d.meta.cutover) { console.log('shadow: planning files are the source until the cutover; nothing to check'); return; }
         const stale = Object.entries(VIEWS).filter(([k, f]) => { const p = path.join(cx.planning, f); return !fs.existsSync(p) || fs.readFileSync(p, 'utf8') !== views[k]; }).map(([, f]) => f);
-        if (stale.length) fail(`not the lc render: ${stale.join(', ')} (hand edits → lc absorb; then lc render --write)`);
+        if (stale.length) fail(`not the lc render: ${stale.join(', ')} (run lc render --write; a hand edit is first redone through lc add/edit/drop)`);
         console.log('planning views equal the lc render'); return;
     }
     if (!opt.write) fail('render --out <dir> (preview), --check, or --write (planning/, guarded)');
     const b = budgets(cx), why = [], notes = [], last = d.meta.lastRender || {};
     for (const [k, f] of Object.entries(VIEWS)) {
         const p = path.join(cx.planning, f), cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
-        const known = [sha1(views[k]), last[k]?.cur, last[k]?.prev, last[k]?.absorbed].filter(Boolean); // a half-finished earlier render is not a hand edit
+        const known = [sha1(views[k]), last[k]?.cur, last[k]?.prev].filter(Boolean); // a half-finished earlier render is not a hand edit
         if (cur !== null && !known.includes(sha1(cur))) {
-            if (k === 'roadmap' && opt['overwrite-roadmap']) { const keep = path.join(os.tmpdir(), `roadmap.hand.${Date.now()}.md`); fs.writeFileSync(keep, cur); notes.push(`hand-edited roadmap.md kept at ${keep}; rows live in lc (step add/set)`); }
-            else why.push(k === 'roadmap' ? `${f} was edited by hand: its rows live in lc (lc step add/set, lc assign); then lc render --write --overwrite-roadmap replaces the file (the hand copy is kept)` : `${f} was edited by hand since the last render: lc absorb first`);
+            if (opt['overwrite-' + k]) { const keep = path.join(os.tmpdir(), `${k}.hand.${Date.now()}.md`); fs.writeFileSync(keep, cur); notes.push(`hand-edited ${k}.md kept at ${keep}; ${k === 'roadmap' ? 'rows live in lc (step add/set)' : 'issues live in lc (add, edit, drop)'}`); }
+            else why.push(k === 'roadmap' ? `${f} was edited by hand: its rows live in lc (lc step add/set, lc assign); then lc render --write --overwrite-roadmap replaces the file (the hand copy is kept)` : `${f} was edited by hand since the last render: its issues live in lc (lc add, lc edit, lc drop); then lc render --write --overwrite-problems replaces the file (the hand copy is kept)`);
         }
         if (b[k] != null && Math.ceil(views[k].length / 1024) > b[k]) notes.push(`${f} is ${Math.ceil(views[k].length / 1024)} KB, over the old ${b[k]} KB budget: a grep index, not reading; agents read lc show`);
     }
@@ -599,32 +599,20 @@ C.render = (cx, { opt }) => {
     if (notes.length) console.log(growthLine(growth(d, cx)));
     console.log('planning views written');
 };
-C.absorb = (cx, { opt }) => { // hand edits of problems.md (agents' habit) become data; deletions are refused
-    const { sha, d } = need(cx);
-    const p = parseProblems(fs.readFileSync(path.join(cx.planning, VIEWS.problems), 'utf8'));
-    const mine = new Map(d.issues.map(i => [i.id, i])), theirs = new Map(p.issues.map(i => [i.id, i]));
-    const gone = [...mine.keys()].filter(id => !theirs.has(id)), added = [], edited = [];
-    for (const t of p.issues) {
-        const m = mine.get(t.id);
-        if (!m) { added.push(t); continue; }
-        const f = ['head', 'origin', 'rule', 'sites', 'what', 'fix'].filter(k => m[k] !== t[k]);
-        if (f.length) edited.push([m, t, f]);
+C.edit = (cx, { pos, opt }) => { // an open issue's text, alias and note; its place is assign's, its end is resolve/drop's
+    const { sha, d } = need(cx); const i = issue(d, pos[0] || fail('edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]'));
+    const done = [];
+    for (const k of ['origin', 'rule', 'sites', 'what', 'fix']) if (opt[k] !== undefined) { const v = one(opt, k, 'text'); if (v !== i[k]) { i[k] = v; done.push(k); } }
+    if (opt.alias !== undefined) {
+        const a = one(opt, 'alias', 'id'); if (!isId(a)) fail(`--alias is an id, not ${a}`);
+        if (allIds(d).has(a)) fail(`${a} exists (ids are never reused)`);
+        i.head = /\(=\s*[^)]*\)/.test(i.head) ? i.head.replace(/\(=\s*([^)]*)\)/, (m, l) => `(= ${l.trim()}, ${a})`) : `${i.head} (= ${a})`;
+        done.push(`alias ${a}`);
     }
-    for (const id of gone) console.log(`deleted by hand: ${id} (refused: lc land/resolve/close or lc drop close an issue)`);
-    for (const t of added) { console.log(`new: ${t.id} ${t.sec} ${t.legacy}`); for (const x of sameName(d, t.sites)) console.log(`  same code name: ${x}`); }
-    for (const [m, , f] of edited) console.log(`edited: ${m.id} ${f.join(',')}`);
-    if (!opt.apply) { console.log(`${added.length} new, ${edited.length} edited, ${gone.length} deleted; --apply to take them`); return; }
-    if (gone.length) fail('deleted lines must be restored or closed through lc first');
-    for (const [m, t, f] of edited) for (const k of f) m[k] = t[k];
-    for (const t of p.issues) { const m = mine.get(t.id); if (m) { m.ord = t.ord; m.sec = t.sec; } } // the file's order is kept
-    const sec = new Set(d.meta.sections.map(s => s.key));
-    for (const t of added) {
-        if (!sec.has(t.sec)) fail(`${t.id}: new section ${t.sec} needs the maintainer`);
-        const { legacy, ...rest } = t;
-        d.issues.push({ ...rest, tail: legacy === '[tail]' || undefined, tagx: legacy === '[tail]' ? undefined : legacy, why: `absorbed from problems.md, finder's tag ${legacy}` }); // the view keeps the finder's tag until lc places it
-    }
-    (d.meta.lastRender.problems ||= {}).absorbed = sha1(fs.readFileSync(path.join(cx.planning, VIEWS.problems), 'utf8')); // taken in: not a pending hand edit
-    write(cx, sha, d, `lc absorb: ${added.length} new, ${edited.length} edited`);
+    if (opt.why !== undefined) { i.why = one(opt, 'why', 'note'); done.push('why'); }
+    if (!done.length) fail('edit names a field that changes: --origin, --rule, --sites, --what, --fix, --alias or --why');
+    if (done.includes('sites')) for (const x of sameName(d, i.sites, i)) console.log(`same code name: ${x} (possible duplicate: lc show it; merging is a decision)`);
+    write(cx, sha, d, `lc edit ${i.id}: ${done.join(', ')}`, `${i.id} edited (${done.join(', ')})`);
 };
 function nextId(d, prefix) { const ids = allIds(d); let n = 1; for (const x of ids) { const m = x.match(new RegExp(`^${esc(prefix)}-(\\d+)$`)); if (m) n = Math.max(n, +m[1] + 1); } return `${prefix}-${n}`; }
 C.add = (cx, { opt }) => {
@@ -1017,10 +1005,11 @@ C.get = (cx, { pos }) => { // for scripts: lc get <release> branch|head|base|st
 C.help = () => console.log(`lc status | check | show <id|step|release> | get <release> <field> | tails
 issues:   add --sec --origin --rule --sites --what --fix [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--fixed-by)
+          edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]
 releases: release add|set | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
           resolve <id> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
           publish <rel> --decision M --branch <origin branch>   (records a publication; lc never pushes origin)
-views:    render --out <dir> | render --check | render --write [--overwrite-roadmap] | absorb [--apply]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
+views:    render --out <dir> | render --check | render --write [--overwrite-roadmap|--overwrite-problems]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
 
 function main(argv) {
     const [cmd, ...rest] = argv; const a = parseArgs(rest);
