@@ -1,0 +1,14 @@
+{
+ "decisions": [
+  {"id": "M1", "date": "2026-11-05", "text": "order: server works → performance → one rule → game gaps"},
+  {"id": "M2", "date": "2026-11-07", "text": "no economy work outside the redesign (target-architecture/economy.md)"},
+  {"id": "M3", "date": "2026-11-09", "text": "1b: parties and spots split by kind, one kind per release"},
+  {"id": "M4", "date": "2026-11-10", "text": "1b.1 parties on the worker is one release"},
+  {"id": "M5", "date": "2026-11-11", "text": "economy second, right after 1b"},
+  {"id": "M6", "date": "2026-11-11", "text": "the clan as one aggregate on the worker goes to 1b (1b.2), not economy; clan money stays economy E9"}
+ ],
+ "rules": [
+  {"sec": "economy", "only": ["2", "large"], "decision": "M2"}
+ ],
+ "releases": {"1b.1": ["M3", "M4"], "1b.2": ["M3", "M6"], "1b.3": ["M3"], "1b.4": ["M3"], "1b.5": ["M3"], "1b.6": ["M3"], "2": ["M2", "M5"], "3": ["M1"], "4": ["M1"], "5": ["M1"], "6": ["M1"]}
+}
