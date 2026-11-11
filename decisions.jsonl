@@ -10,3 +10,4 @@
 {"id":"M10","date":"2026-11-12","text":"caps: 1b.1 = 11 issues, 1b.2 = 8; scope grows only by a separate decision","allows":[{"action":"cap","release":"1b.1","value":"11"},{"action":"cap","release":"1b.2","value":"8"}]}
 {"id":"M11","date":"2026-11-12","text":"every code release passes the existing release gates; architecture releases also confirm behaviour is preserved","allows":[{"action":"gates","type":"arch"}]}
 {"id":"M12","date":"2026-11-12","text":"cutover to lc only after release 1a is complete and a separate acceptance"}
+{"id":"M13","date":"2026-11-12","text":"RM-20 closed by the release 1a RC in the old flow (row removed 11-11 18:41): measured in the rm20 run, not a 1a blocker (maintainer 11-11); its gaps became RM-47..RM-50","allows":[{"action":"drop","issue":"RM-20"}]}
