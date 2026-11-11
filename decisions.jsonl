@@ -11,3 +11,4 @@
 {"id":"M11","date":"2026-11-12","text":"every code release passes the existing release gates; architecture releases also confirm behaviour is preserved","allows":[{"action":"gates","type":"arch"}]}
 {"id":"M12","date":"2026-11-12","text":"cutover to lc only after release 1a is complete and a separate acceptance"}
 {"id":"M13","date":"2026-11-12","text":"RM-20 closed by the release 1a RC in the old flow (row removed 11-11 18:41): measured in the rm20 run, not a 1a blocker (maintainer 11-11); its gaps became RM-47..RM-50","allows":[{"action":"drop","issue":"RM-20"}]}
+{"id":"M14","date":"2026-11-11","text":"routing of the 1a RC findings: 3.trace-gaps RM-47, RM-48, RM-54; 3.behaviour-bugs RM-51, RM-52, RM-53, DT-263; 3.flaky-tests RM-55; 3.uncounted-failures DT-265; 3.run-tooling DT-266; 2.sure-price-owner DT-264; RM-49 and RM-50 stay in triage until an owner and the need are confirmed; an assigned issue with an unknown cause stays an investigation"}
