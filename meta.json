@@ -234,5 +234,11 @@
   }
  },
  "placement": [],
- "version": 2
+ "version": 3,
+ "budgets": {
+  "rc": 2048,
+  "pack": 12288,
+  "rowIssues": 25
+ },
+ "cutover": false
 }
