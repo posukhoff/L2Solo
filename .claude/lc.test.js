@@ -270,6 +270,8 @@ test('close: an issue without its own result blocks the close or is carried, nev
     const w = world(); w.ok('import', '--decisions', w.seed);
     openAndLand(w, { ids: ['DT-44'] });
     w.no(/brief does not name DT-49/, 'resolve', 'DT-49', '--test', 'test_fix.js');
+    w.no(/brief does not name DT-49/, 'resolve', 'DT-44', 'DT-49', '--test', 'test_fix.js'); // several ids: one unproven writes none
+    assert.doesNotMatch(w.ok('status'), /resolved waiting close 1/);
     w.ok('resolve', 'DT-44', '--test', 'test_fix.js');
     w.no(/landed step 1b\.1: it needs its result .* not --rule0/, 'drop', 'DT-49', '--reason', 'not worth it', '--rule0');
     w.ok('freeze', '1b.1');
@@ -458,7 +460,7 @@ test('contract: records written by the real workflow.js pass lc land, resolve an
     assert.match(wf('ready', 'p1'), /"taskReady": true/);
     w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']); wf('record-land', 'p1', '--remote', 'fork', '--branch', 'ivan/batch-1b1');
     w.ok('start', '1b.1', '--task', 'p1'); w.ok('land', '1b.1');
-    w.ok('resolve', 'DT-44', '--test', 'test_basic.js'); w.ok('resolve', 'DT-49', '--test', 'test_basic.js');
+    assert.match(w.ok('resolve', 'DT-44', 'DT-49', '--test', 'test_basic.js'), /DT-44, DT-49 resolved/); // one command for a step's issues
     w.ok('freeze', '1b.1');
     assert.match(w.ok('gate', '1b.1', 'ci', '--task', 'p1', '--root', w.repo), /1b\.1 ci ✓/);
     assert.match(w.ok('get', '1b.1', 'gates'), /"ci":\{"at":"[^"]+","task":"p1","runs":\["7"\]\}/);

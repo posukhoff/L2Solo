@@ -21,7 +21,7 @@
   labels each change stays (part of the target) / temporary (the comment and the commit name what replaces it, e.g.
   "temporary: until the town plan owns the sell stop") / throwaway (only when without it something breaks now), and
   names every deviation.
-- Cost is context × turns: reports ≤ 250 words (a brief's limit wins); briefs carry handles; targeted tests only; a fix round is a new narrow agent, never a resumed one; low-risk mechanical work may use a cheaper model; the coordinator batches calls and hands off past ~200 k context. Reports: what changed with file:line, decisions, problems, the hard-rule line
+- Cost is context × turns: reports ≤ 250 words, not counting the hard-rule answers (one line per rule) (a brief's limit wins); briefs carry handles; targeted tests only; a fix round is a new narrow agent, never a resumed one; low-risk mechanical work may use a cheaper model; the coordinator batches calls and hands off past ~200 k context. Reports: what changed with file:line, decisions, problems, the hard-rule line
   (`0 ok, 3 violation file:line …`, rule 0 for every mechanism added) and `rules-check` output. A report may add `RETRO CANDIDATE: <systemic cause> | <consequence> | <proposed guard>` (a process cause, not the task's bug); the coordinator records it with `record-retro` (`--critical`: a critical process violation). An "ok" needs its evidence: rule 4/5 the concept search and
   its hits, rule 6 the cost in numbers; an answer without it counts as unanswered. Reports to me separate what an agent
   claims from what a review confirmed.
@@ -44,7 +44,7 @@
   temporary code that a planned step rewrites goes to that step, not into a second patch of the temporary code.
 - Every batch and release report counts its changes toward / neutral / away; a release adds no "away" without my ok.
   The release report also counts full runs, minutes of blocked development, the share that gave a decision, repeats
-  from preparation errors, regressions only runtime found and the cost of repeated implementation cycles, tokens per role (`.claude/tools/pilot-tokens`, `context-cost.py`), review rounds and cause corrections per task, and runs the
+  from preparation errors, regressions only runtime found and the cost of repeated implementation cycles, tokens per role (`.claude/tools/pilot-tokens`, `context-cost.py`), the flow's own cost (`.claude/tools/flow-stats.js --since <release open>`: records per landing, restarts, records lost to a policy change, lifecycle writes outside a command), review rounds and cause corrections per task, and runs the
   retro over all open candidates.
 - Cost of agents: resuming a large agent re-reads its whole transcript; a design-level fix spanning several areas goes
   back to the author, the rest to new narrow agents (the planner's entries, the plan and rules paths), folded into the

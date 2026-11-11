@@ -820,8 +820,12 @@ C.land = (cx, { pos, opt }) => {
     const left = d.issues.filter(i => i.at === s.key).length;
     write(cx, sha, d, `lc land ${s.key}${s.landed.slug ? ' by ' + s.landed.slug + ' ' + s.landed.head.slice(0, 9) : ' by ' + s.landed.decision}`, `${s.key} landed; ${left} issues each need lc resolve before ${r.key} closes`);
 };
-C.resolve = (cx, { pos, opt }) => { // one issue's own result: a regression test of its task, or a run whose verdict names it
-    const { sha, d } = need(cx); const i = issue(d, pos[0] || fail('resolve <id> --test <file> | --run <dir> --verdict <file>'));
+C.resolve = (cx, { pos, opt }) => { // each issue's own result, several ids at once: all are proven or nothing is written
+    const { sha, d } = need(cx); if (!pos.length) fail('resolve <id...> --test <file> | --run <dir> --verdict <file>');
+    for (const id of pos) resolveOne(cx, d, issue(d, id), opt);
+    write(cx, sha, d, `lc resolve ${pos.join(', ')} by ${opt.test ? 'test' : 'run'}`, `${pos.join(', ')} resolved`);
+};
+function resolveOne(cx, d, i, opt) { // a regression test of a task of the issue's step, or a run whose verdict names the issue
     const x = steps(d).get(i.at) || fail(`${i.id} is in no step`);
     if (x.s.st !== 'landed') fail(`${x.s.key} has not landed`);
     if (opt.test) {
@@ -847,8 +851,7 @@ C.resolve = (cx, { pos, opt }) => { // one issue's own result: a regression test
         if (!idsOf(i).some(id => new RegExp(`^\\s*${esc(id)}\\b.*\\b(resolved|fixed)\\b`, 'im').test(v.text))) fail(`verdict ${path.basename(v.file)} has no "${i.id}: resolved" line`);
         i.resolved = { how: 'run', run: run.base, head: run.full, verdict: v.file, verdictSha256: v.sha256, at: cx.now };
     } else fail('resolve needs --test or --run with --verdict');
-    write(cx, sha, d, `lc resolve ${i.id} by ${i.resolved.how}`, `${i.id} resolved`);
-};
+}
 C.defer = (cx, { pos, opt }) => { // a step not done moves whole to another release; its issues follow by key
     const { sha, d } = need(cx); const { r, s } = step(d, pos[0] || fail('defer <step> --to <release> --reason <why>'));
     const to = release(d, one(opt, 'to', 'release')), reason = one(opt, 'reason', 'why');
@@ -1007,7 +1010,7 @@ issues:   add --sec --origin --rule --sites --what --fix [--prefix|--id] [--to s
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--fixed-by)
           edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]
 releases: release add|set | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
-          resolve <id> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
+          resolve <id...> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
           publish <rel> --decision M --branch <origin branch>   (records a publication; lc never pushes origin)
 views:    render --out <dir> | render --check | render --write [--overwrite-roadmap|--overwrite-problems]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
 
