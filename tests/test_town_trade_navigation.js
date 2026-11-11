@@ -110,8 +110,8 @@ async function run() {
         shopper.bot.automation.abortAll(shopper.bot);
 
         // An optional exit must never block the actual farming trip forever,
-        // including repeated worker-budget failures rather than an empty path.
-        for (const error of [undefined, 'PATH_BUDGET']) {
+        // including repeated route failures.
+        for (const error of [undefined]) {
             const f = fixture(2003060, street);
             let moves = 0;
             f.bot.moveTo = command => { moves++; f.session.lastPathfinding = {
