@@ -709,7 +709,11 @@ C.drop = (cx, { pos, opt }) => {
     const reason = one(opt, 'reason', 'why');
     const closed = { how: 'dropped', reason, at: cx.now };
     if (opt.decision) closed.decision = authorize(d, String(opt.decision), 'drop', { issue: i.id });
-    else if (opt.rule0) closed.how = 'not-worth-it';
+    else if (opt.rule0) { // rule 0 clears triage and planned work; what a landed step or a frozen release holds needs its result
+        const x = i.at && steps(d).get(i.at);
+        if (x && (x.s.st === 'landed' || x.r.st === 'frozen')) fail(`${i.id} is in ${x.s.st === 'landed' ? 'landed step ' + x.s.key : 'frozen release ' + x.r.key}: it needs its result (lc resolve) or a decision, not --rule0`);
+        closed.how = 'not-worth-it';
+    }
     else if (opt['fixed-by']) {
         const t = task(cx, String(opt['fixed-by'])), l = t.evidence?.landed || fail(`${opt['fixed-by']} has not landed`);
         if (!idsOf(i).some(x => mentions(JSON.stringify(t.brief || {}), x))) fail(`${t.slug}'s brief does not name ${i.id}`);
@@ -833,12 +837,21 @@ C.resolve = (cx, { pos, opt }) => { // one issue's own result: a regression test
     const x = steps(d).get(i.at) || fail(`${i.id} is in no step`);
     if (x.s.st !== 'landed') fail(`${x.s.key} has not landed`);
     if (opt.test) {
-        const slug = x.s.landed.slug || fail(`${x.s.key} landed without a V5.1 task; resolve by --run`);
-        const t = task(cx, slug), test = norm(opt.test);
-        const reg = (t.evidence?.regressions || []).find(g => norm(g.test) === test && g.head === x.s.landed.reviewedHead && g.old === t.base);
-        if (!reg) fail(`${slug} has no old-fails/new-passes evidence for ${test} on its landed head`);
-        if (!idsOf(i).some(id => mentions(JSON.stringify(t.brief || {}), id))) fail(`${slug}'s brief does not name ${i.id}`);
-        i.resolved = { how: 'test', slug, test, head: x.s.landed.head, evidence: reg.evidence, at: cx.now };
+        if (!x.s.landed.slug) fail(`${x.s.key} landed without a V5.1 task; resolve by --run`);
+        // A step holds several fixes, each with its own task: any task of the step whose landing the step's landed
+        // head contains can carry an issue's result (the landing task is tried first).
+        const test = norm(opt.test), why = []; let hit;
+        for (const slug of new Set([x.s.landed.slug, ...(x.s.tasks || [])])) {
+            let t; try { t = task(cx, slug); } catch (e) { why.push(`${slug}: ${e.message}`); continue; }
+            const l = t.evidence?.landed;
+            if (!l || l.branch !== x.r.branch || !cx.ok(['merge-base', '--is-ancestor', l.head, x.s.landed.head])) { why.push(`${slug} did not land in ${x.s.key}'s head`); continue; }
+            const reg = (t.evidence.regressions || []).find(g => norm(g.test) === test && g.head === l.reviewedHead && g.old === t.base);
+            if (!reg) { why.push(`${slug} has no old-fails/new-passes evidence for ${test} on its landed head`); continue; }
+            if (!idsOf(i).some(id => mentions(JSON.stringify(t.brief || {}), id))) { why.push(`${slug}'s brief does not name ${i.id}`); continue; }
+            hit = { slug, reg }; break;
+        }
+        if (!hit) fail(why.join('; '));
+        i.resolved = { how: 'test', slug: hit.slug, test, head: x.s.landed.head, evidence: hit.reg.evidence, at: cx.now };
     } else if (opt.run) {
         const run = runInfo(cx, String(opt.run));
         if (!cx.ok(['merge-base', '--is-ancestor', x.s.landed.head, run.full])) fail(`run ${run.base} is of ${run.sha9}, which does not contain ${x.s.key}'s landing`);

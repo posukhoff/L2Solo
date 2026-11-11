@@ -246,11 +246,32 @@ test('a release end to end: per-issue results, complete CI, run provenance, beha
     assert.strictEqual(w.sh(['rev-parse', 'refs/heads/develop'], w.origin), head);
 });
 
+test('resolve: any task of the step that landed inside its head carries an issue\'s result; one that landed elsewhere does not', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    w.sh(['branch', 'ivan/batch-1b1', w.base]); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
+    w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
+    const h1 = commit(w, 'ivan/batch-1b1', 'first fix');
+    landedTask(w, 'p1', w.base, h1, 'ivan/batch-1b1', ['DT-44']);
+    w.ok('start', '1b.1', '--task', 'p1');
+    w.sh(['branch', 'side', w.base]); const hs = commit(w, 'side', 'a fix that never reached the branch');
+    landedTask(w, 'p3', w.base, hs, 'ivan/batch-1b1', ['DT-49']);
+    w.ok('start', '1b.1', '--task', 'p3');
+    const h2 = commit(w, 'ivan/batch-1b1', 'second fix');
+    landedTask(w, 'p2', h1, h2, 'ivan/batch-1b1', []);
+    w.ok('start', '1b.1', '--task', 'p2');
+    w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
+    w.ok('land', '1b.1');
+    w.ok('resolve', 'DT-44', '--test', 'test_fix.js');
+    assert.match(w.ok('show', 'DT-44'), /"slug":"p1"|p1/);
+    w.no(/p3 did not land in 1b\.1's head/, 'resolve', 'DT-49', '--test', 'test_fix.js');
+});
+
 test('close: an issue without its own result blocks the close or is carried, never archived', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     openAndLand(w, { ids: ['DT-44'] });
     w.no(/brief does not name DT-49/, 'resolve', 'DT-49', '--test', 'test_fix.js');
     w.ok('resolve', 'DT-44', '--test', 'test_fix.js');
+    w.no(/landed step 1b\.1: it needs its result .* not --rule0/, 'drop', 'DT-49', '--reason', 'not worth it', '--rule0');
     w.ok('freeze', '1b.1');
     const { context, load, save } = require('./lc.js');
     const cx = context({ repo: w.repo }); const { sha, d } = load(cx); // gates present: this test is about issues
