@@ -14,6 +14,6 @@ Escalate when uncertain. Review 1 checks all hard rules (N/A with reason); revie
 
 Use primary local checkout or absolute script path + --root worktree. See evidence.md for brief shape and gates.
 
-Commands: `start --base <ref> --risk <route> --kind fix`, `record-brief --file <brief>`, `verify --dev` (or `--dev-local`, ≤8 non-map tests), `verify --show-tests`, `verify --rules`, `record-regression`, `record-review`, `record-ci`, `ready`, `record-land --remote --branch`, `record-rebase`. Use `--root` for topic worktrees. See evidence.md.
+Commands: `start --base <ref> --risk <route> --kind fix`, `record-brief --file <brief>`, `verify --dev` (or `--dev-local`, ≤8 non-map tests), `verify --show-tests`, `verify --rules`, `record-regression`, `record-review`, `record-ci`, `ready`, `record-land --remote --branch`, `record-rebase`, `record-retro`. Use `--root` for topic worktrees. See evidence.md.
 
 CLI records evidence in Git common dir. Dev tests are advisory, never readiness. Use verify --check for syntax/table + rules, --local for bounded selected tests; no local tests during perf/trace. Full integration CI mandatory. No automated merge, push, server, tables or release.

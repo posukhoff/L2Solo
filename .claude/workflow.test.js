@@ -6,7 +6,7 @@ const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repe
 let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false, receiptSha='head';
 let current=head, notAncestor=false, rebasePathsMatch=true, samePatch=false, baseTouchesTask=true, pidSeq=0, remoteHead=landed, remoteFetched=true;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
-const fsFake={existsSync:()=>true,mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
+const fsFake={existsSync:p=>!String(p).endsWith('.jsonl')||store.has(p),appendFileSync:(p,v)=>store.set(p,(store.get(p)||'')+v),mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
 const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':id==='6'?'tests/b/+test_basic':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'||id==='6'?'Picked tests':'PR checks',jobs:id==='2'||id==='6'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
 const exec=(p,a)=>{
     if(p==='git'){
@@ -168,3 +168,26 @@ expect('untouched task files carry review and old-code evidence',cmd('record-reb
 console.log('PASS same patch on an unchanged context carries review and old-code evidence, never SHA receipts');
 expect('carried task still needs CI and rules',cmd('ready','mv2'),1,'Mechanical rules-check missing');
 samePatch=false;baseTouchesTask=true;
+
+// Retro candidates: due on a critical violation, one cause twice, or five open; processing clears.
+const notDue=(label,r)=>{if(r.code!==0||r.log.includes('RETRO DUE'))throw Error(label+' failed '+JSON.stringify(r));console.log('PASS '+label);};
+const retro=(...a)=>cmd('record-retro','rt',...a);
+notDue('one candidate is not due',retro('--cause','Run without cause analysis','--text','rerun for statistics | guard: cause first'));
+expect('a candidate needs a cause and text',retro('--cause','x'),1,'requires --cause');
+expect('the same cause twice is due',retro('--cause','run without cause-analysis!','--text','again'),0,'RETRO DUE: cause run-without-cause-analysis seen 2 times');
+expect('processing needs a saved result',retro('--processed','all'),1,'--result');
+notDue('processed candidates clear the trigger',retro('--processed','all','--result','tmp/retro-1.md'));
+for(const c of ['a','b','c'])notDue('distinct cause '+c+' is not due',retro('--cause',c,'--text','t'));
+expect('a useless run needs its blocked minutes',retro('--cause','d','--text','t','--useless-run'),1,'--minutes');
+notDue('four open candidates are not due',retro('--cause','d','--text','t','--useless-run','--minutes','25'));
+if(!store.get('/git/l2solo-workflow/retro.jsonl').includes('"minutes":25'))throw Error('useless run minutes not kept');
+expect('five open candidates are due',retro('--cause','e','--text','t'),0,'RETRO DUE: 5 open candidates');
+notDue('processing by ids clears',retro('--processed','3,4,5,6,7','--result','tmp/retro-2.md'));
+expect('a processed id cannot be processed again',retro('--processed','3','--result','r'),1,'open candidate ids');
+expect('a critical violation is due at once',retro('--cause','f','--text','t','--critical'),0,'RETRO DUE: critical process violation #8');
+expect('retro start',cmd('start','rtc','--base','main','--risk','standard'),0,'policy-hash');
+expect('retro guess',cmd('record-brief','rtc','--file','/guess.json'),0,'false');
+expect('close reports a due retro',cmd('close','rtc','--refuted','--evidence','proof'),0,'RETRO DUE: critical');
+expect('ready reports a due retro',cmd('ready','mv2'),1,'RETRO DUE: critical');
+notDue('cleared',retro('--processed','all','--result','tmp/retro-3.md'));
+{const r=cmd('ready','mv2');if(r.log.includes('RETRO DUE'))throw Error('ready must be quiet when nothing is due');console.log('PASS ready is quiet when nothing is due');}

@@ -90,7 +90,7 @@ function select(base, brief) {
         preferredCI: selected.size>96 || warnings.length ? 'PR checks + uncovered Picked tests' : 'Picked tests or PR checks' };
 }
 function main() {
-    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land|record-rebase|close> <slug> [options]');
+    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land|record-rebase|record-retro|close> <slug> [options]');
     if (!fs.existsSync(path.join(root,'package.json')) || !fs.existsSync(path.join(root,'src'))) fail('Use a real L2Solo game checkout, not the workflow snapshot.');
     const stateDir = path.join(git('rev-parse','--path-format=absolute','--git-common-dir'),'l2solo-workflow');
     fs.mkdirSync(stateDir,{recursive:true});
@@ -106,6 +106,36 @@ function main() {
         fs.writeFileSync(file,JSON.stringify(state,null,2)+'\n',{flag:'wx'});
         console.log(JSON.stringify(state,null,2)); return;
     }
+    // Retro candidates: one append-only log beside the task states. A retro is due on a critical
+    // process violation, one cause seen twice, or five open candidates.
+    const retroFile = path.join(stateDir,'retro.jsonl');
+    const retro = () => {
+        const rows = fs.existsSync(retroFile) ? fs.readFileSync(retroFile,'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+        const done = new Set(rows.flatMap(r => r.processed || []));
+        const open = rows.filter(r => r.id && !done.has(r.id)), count = {};
+        for (const r of open) count[r.cause] = (count[r.cause] || 0) + 1;
+        const critical = open.find(r => r.critical), repeated = Object.keys(count).find(k => count[k] >= 2);
+        const due = critical ? 'critical process violation #'+critical.id : repeated ? 'cause '+repeated+' seen '+count[repeated]+' times' : open.length >= 5 ? open.length+' open candidates' : '';
+        return { rows, open, due };
+    };
+    const retroCheck = () => { const { due } = retro(); if (due) console.log('RETRO DUE: '+due+' (one narrow Retro agent, then record-retro --processed)'); };
+    if (command === 'record-retro') {
+        const { rows, open } = retro(), processed = opt('--processed');
+        if (processed) {
+            const ids = processed === 'all' ? open.map(r => r.id) : processed.split(',').map(Number);
+            if (!nonempty(opt('--result')) || !ids.length || ids.some(id => !open.some(r => r.id === id))) fail('record-retro --processed <ids|all> needs open candidate ids and --result <saved retro>.');
+            fs.appendFileSync(retroFile, JSON.stringify({ processed: ids, result: opt('--result'), slug, at: now() })+'\n');
+        } else {
+            const cause = String(opt('--cause') || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''), minutes = opt('--minutes');
+            if (!cause || !nonempty(opt('--text'))) fail('record-retro requires --cause <systemic cause key> --text <consequence | proposed guard>.');
+            if (flag('--useless-run') && !/^\d+$/.test(minutes || '')) fail('--useless-run requires --minutes <blocked development minutes>.');
+            const row = { id: rows.filter(r => r.id).length + 1, slug, cause, text: opt('--text'), critical: flag('--critical'), at: now() };
+            if (flag('--useless-run')) Object.assign(row, { uselessRun: true, minutes: Number(minutes) });
+            fs.appendFileSync(retroFile, JSON.stringify(row)+'\n');
+            console.log('Retro candidate #'+row.id);
+        }
+        retroCheck(); return;
+    }
     const state=JSON.parse(fs.readFileSync(file,'utf8'));
     if (command === 'status') { console.log(JSON.stringify({...state,policyCurrent:state.policy===digest(),head:sha()},null,2)); return; }
     if (state.closed) fail('Task closed: '+state.closed.reason+'; use a new slug for new evidence.');
@@ -114,7 +144,7 @@ function main() {
     if (command === 'close') {
         if (!flag('--refuted') || state.kind!=='fix' || state.brief?.cause?.status!=='guess' || !opt('--evidence')) fail('close requires a guess fix, --refuted and --evidence <reference>.');
         state.closed={reason:'refuted',evidence:opt('--evidence'),policyCurrent:state.policy===digest(),at:now()};
-        save(state); console.log(JSON.stringify(state.closed)); return;
+        save(state); console.log(JSON.stringify(state.closed)); retroCheck(); return;
     }
     if (state.policy!==digest()) fail('Policy digest changed; coordinator must re-evaluate and create a fresh task record.');
     if (command === 'record-brief') {
@@ -186,7 +216,7 @@ function main() {
         try { git('cat-file','-e',head+'^{commit}'); } catch { fail('Remote head '+head.slice(0,9)+' is not fetched; fetch it, do not transfer evidence.'); }
         if (git('rev-parse',head+'^{tree}')!==git('rev-parse',receipt.head+'^{tree}')) fail('Remote '+remote+'/'+branch+' ('+head.slice(0,9)+') does not hold the verified tree; push first, do not transfer evidence.');
         state.evidence.landed={remote,branch,head,reviewedHead:receipt.head,tree:git('rev-parse',head+'^{tree}'),at:now()};
-        save(state); console.log(JSON.stringify(state.evidence.landed,null,2)); return;
+        save(state); console.log(JSON.stringify(state.evidence.landed,null,2)); retroCheck(); return;
     }
     clean();
     try { git('merge-base','--is-ancestor',state.base,'HEAD'); } catch { fail('Task base is not an ancestor of HEAD.'); }
@@ -341,6 +371,7 @@ function main() {
         if (!reasons.length) { e.ready={head,at:now(),policy:state.policy}; save(state); }
         else if(e.ready) { delete e.ready; save(state); }
         console.log(JSON.stringify({head,taskReady:!reasons.length,reasons,selectionWarnings:plan.warnings,releaseGate:'Full CI on integration head and existing release gates still required.'},null,2));
+        retroCheck();
         if (reasons.length) process.exitCode=1; return;
     }
     fail('Unknown command: '+command);

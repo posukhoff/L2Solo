@@ -8,7 +8,9 @@
   goes to me with your recommendation). Never sit idle: while one lane waits, start what does not depend on it.
 - Lanes: the laptop (exclusive for a perf measurement; up to 3 behaviour runs at once), the team VPS (behaviour runs
   only, never perf: a panel world shares it), CI and tables on the fork, read-only agents. Start the longest independent
-  job first.
+  job first. Only the release coordinator (main session) assigns machines and starts runs, on reviewed heads; others
+  ask it for a runtime slot. One machine per step, no duplicate runs; a step waiting on one machine while the other
+  idles is a scheduling miss.
 - An editing agent gets its own worktree and branch from the integration head (`git worktree add
   .claude/worktrees/<topic> -b ivan/<topic> <head>`). Editing agents run in parallel only on disjoint files; work on
   overlapping files (the same module, its tests) runs one after another. Read-only agents need no worktree.
@@ -20,7 +22,7 @@
   "temporary: until the town plan owns the sell stop") / throwaway (only when without it something breaks now), and
   names every deviation.
 - Cost is context × turns: reports ≤ 250 words (a brief's limit wins); briefs carry handles; targeted tests only; a fix round is a new narrow agent, never a resumed one; low-risk mechanical work may use a cheaper model; the coordinator batches calls and hands off past ~200 k context. Reports: what changed with file:line, decisions, problems, the hard-rule line
-  (`0 ok, 3 violation file:line …`, rule 0 for every mechanism added) and `rules-check` output. An "ok" needs its evidence: rule 4/5 the concept search and
+  (`0 ok, 3 violation file:line …`, rule 0 for every mechanism added) and `rules-check` output. A report may add `RETRO CANDIDATE: <systemic cause> | <consequence> | <proposed guard>` (a process cause, not the task's bug); the coordinator records it with `record-retro` (`--critical`: a critical process violation). An "ok" needs its evidence: rule 4/5 the concept search and
   its hits, rule 6 the cost in numbers; an answer without it counts as unanswered. Reports to me separate what an agent
   claims from what a review confirmed.
 - Fix batches (review findings, pass findings, run bugs) go plan → check → implement → review:
@@ -41,6 +43,9 @@
   reads as 0 unwoken builds). A finding in
   temporary code that a planned step rewrites goes to that step, not into a second patch of the temporary code.
 - Every batch and release report counts its changes toward / neutral / away; a release adds no "away" without my ok.
+  The release report also counts full runs, minutes of blocked development, the share that gave a decision, repeats
+  from preparation errors, regressions only runtime found and the cost of repeated implementation cycles, and runs the
+  retro over all open candidates.
 - Cost of agents: resuming a large agent re-reads its whole transcript; a design-level fix spanning several areas goes
   back to the author, the rest to new narrow agents (the planner's entries, the plan and rules paths), folded into the
   commit they belong to. No work ahead of need (plans for far steps, extra passes).

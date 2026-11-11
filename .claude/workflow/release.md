@@ -45,11 +45,23 @@
   merge, squash) is removed when its job is done.
 - A perf measurement (timings, memory: one cold + one hot per release, or a fix that claims speed) runs alone: no
   other agent, test or server on this laptop. Behaviour runs (trace, audit, a fix check) need no exclusivity: up
-  to 3 at once beside read-only and fork-CI work, no local tests. A run checks in its first minutes that it is what was
-  asked (trace file present, diagnostics on, world kept) and stops otherwise. A fix is checked by a 15-20 min run or
-  the saved run DBs; full-length runs only for the final A/B. Parallel runs hold only while each worker keeps up (`cold due max` near 0): an
-  older version's worker is saturated alone, so A sides and the final A/B run one at a time (2026-11-10: three A sides
-  in parallel starved to 1000 overdue bots and read −40 % EXP).
+  to 3 at once beside read-only and fork-CI work, no local tests. Before the expensive part the coordinator checks the
+  launch (job running, trace file, diagnostics, world kept when per-bot behaviour is counted), stops an invalid run at
+  once and waits in one background command, not by polling. Tiers, cheapest first: targeted tests, offline simulation,
+  saved run DBs; a short run (15 min player script / 20 min hot vs a saved base) for one named cause they and a harness
+  script on the save cannot settle; a full cold + hot run (about 60 min, blocks the laptop) only for a significant
+  integration change or the release's final traced run and A/B. A long run never replaces the cause hunt. Parallel runs
+  hold only while each worker keeps up (`cold due max` near 0): an older version's worker is saturated alone, so A
+  sides and the final A/B run one at a time (2026-11-10: three A sides in parallel starved to 1000 overdue bots and
+  read −40 % EXP).
+- Readiness gate before a full run (any miss: no server; a blocker or a cheaper check): cause proven, or the run is a
+  standalone release gate; implementation done, independent review passed, cheap checks and CI green; HEAD fixed (SHA
+  known, no unfinished related change that would force a repeat); success criteria, invariants and expected results
+  written; a comparable base (world, scenario, settings); diagnostics, trace, kept world and artifact folder set;
+  needed now, not after the next integration step. Compatible checks share one integration SHA unless that hides which
+  change caused a regression; evidence is kept under SHA, scenario and world. A useless full run is a candidate
+  (`record-retro --useless-run --minutes <blocked>`): why it ran, what it showed, why useless, the cheaper check that
+  was due, the guard. A well-posed run that refuted a hypothesis is not useless.
 - zsh does not split an unquoted variable: pass perf arguments as an array (`P=(--save=… --saves=…)`, then
   `node scripts/perf.js run $P …`).
 
