@@ -10,9 +10,12 @@
  "head": null,
  "decisions": [
   "M3",
-  "M6"
+  "M6",
+  "M10"
  ],
- "cap": null,
+ "cap": {
+  "issues": 8
+ },
  "gates": {},
  "steps": [
   {"key":"1b.2","title":"1b.2 architecture, needs 1b.1: the clan as one aggregate on the worker (maintainer 11-11: not economy): roster, leader, level, settings record; facts member_joined/left, member_grade_changed, leader_changed raise to members, parties and the board; `clan_call` replaces `ClanPartyHelp` pleas and the `ClanPartyDuty` 30 s retry (situations step 9); clan evidence on the worker (DT-114, `ClanSocialEvidence` off main's `ClanWarRuntime`); clan planners on their events, windows deleted: DT-27, storage-11, SR-9, DT-92, D7; clan money (donations, wants, spend) stays economy E9 on this aggregate; clocks it removes: DT-250, DT-251","P":"mid","S":"**high**","who":"","needs":["1b.1"],"st":"planned","tasks":[],"landed":null}
