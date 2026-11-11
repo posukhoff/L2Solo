@@ -1,0 +1,55 @@
+{
+  "slug": "ci-raw",
+  "base": "8904efbfd45e2b7549b0c13c8a73882d00ee19c6",
+  "risk": "standard",
+  "kind": "chore",
+  "policy": "8293929315744bc376b22efef6cfb4d97ecafe5a2fdf66cfed37e1ea1eea4368",
+  "created": "2026-11-10T22:28:43.905Z",
+  "evidence": {
+    "rawGeodata": [
+      {
+        "head": "379b3ce2e7442bae9cec2e77cf773f28ba8b49da",
+        "test": "test_bot_activation_placement.js",
+        "source": "ci",
+        "run": "42914617322",
+        "at": "2026-11-10T22:28:47.881Z"
+      }
+    ],
+    "ciRuns": [
+      {
+        "head": "379b3ce2e7442bae9cec2e77cf773f28ba8b49da",
+        "id": "42914617322",
+        "runSha": "379b3ce2e7442bae9cec2e77cf773f28ba8b49da",
+        "url": "https://github.com/posukhoff/L2Solo/actions/runs/42914617322",
+        "workflow": "Picked tests",
+        "tests": [
+          "test_bot_activation_placement.js",
+          "test_bot_town_travel.js"
+        ],
+        "at": "2026-11-10T22:28:47.883Z"
+      }
+    ]
+  },
+  "brief": {
+    "base": "8904efbfd45e2b7549b0c13c8a73882d00ee19c6",
+    "symptom": "optional-geodata map blocks run on no CI job",
+    "owner": "scripts/run-tests.js --only + .github/workflows/tests.yml",
+    "scope": [
+      "scripts/run-tests.js",
+      ".github/workflows/tests.yml"
+    ],
+    "nonGoals": [
+      "PR checks"
+    ],
+    "acceptance": [
+      "a +name Picked run executes the map block and uploads a receipt"
+    ],
+    "evidence": [
+      "Picked 42914645646 (probe fails inside the map block with +), 42914650302 (same probe passes without +)"
+    ],
+    "tests": [
+      "test_bot_activation_placement.js",
+      "test_bot_town_travel.js"
+    ]
+  }
+}

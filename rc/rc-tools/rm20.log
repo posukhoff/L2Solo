@@ -1,0 +1,117 @@
+perf :: tmp/perf/runs/3c164d3cc-script-rm20-player-20261111-165035: RM-20 late world x50 1700 bots L20-74 (bc36cd363, seeded at level) (hall 39 to clan 6000000, PerfPlayer1 in clan, 6000000<->6000001 war), bots {"cold":1735,"hot":45}; 5 min warm-up, 30 min window
+perf :: window open
+perf :: script: the recorder did not finish script in 1800 s
+perf :: window closed; stopping the server
+3c164d3cc-script-rm20-player-20261111-165035: 3c164d3cc, script, RM-20 late world x50 1700 bots L20-74 (bc36cd363, seeded at level) (hall 39 to clan 6000000, PerfPlayer1 in clan, 6000000<->6000001 war)
+  bots {"cold":1735,"hot":45}, 5 min warm-up, window 30.1 min; process 1.12 cores, recorder 0.06 % of main, cold due max 0
+  worker due (commit past due): steady p50 0 / p99 1000 / max 2169 ms (bot 2001254) over 30389 steps; boot p50 10000 / p99 54525 / max 54525 ms (bot 2000927) over 3987 steps, drained 235 s
+  turns (loop delay): main p99 24 (median window 15) / max 507 ms over 60 windows; worker p99 82 (median window 31) / max 488 ms over 59 windows
+  worker GC pauses per minute: minor 131.2 (575.7 ms, longest 24.4 ms), incremental 9.3 (9.7 ms, longest 11.9 ms), major 10.8 (557.3 ms, longest 203.8 ms)
+
+e2e ../../../tmp/rc-tools/rm20-player.js: 1 step(s), 0 failed, NOT FINISHED in the window
+  ok        1 ms  the player goes to the Fallen Orc Shaman fields
+
+player (34652 probes, hot bots avg 63 max 82): OVER: schedule max 479.9 > 150 ms
+  waited for the loop: p50 0.4 / p95 9.7 / p99 22.1 / max 479.9 ms
+  position handler:    p50 0.8 / p95 1.2 / p99 1.4 / max 7.5 ms
+  sent to each of 1 player(s): 30.4 packets/s, 1.2 KB/s; 0 teleport(s)
+
+transitions: cold -> hot 65 (avg 43 / p95 158 / max 158 ms); hot -> cold 63 (avg 13 / p95 96 / max 96 ms); handoffs 57; refused 27 (activation_budget 4, no_safe_activation_placement 23)
+
+main: busy 30.9 %, gc 1.2 %, long turns 22.4/min, longest 505 ms (p95 of chunk longest 430 ms); 0.3 s without samples left out (3 sample gaps over 50 ms)
+  long turns held by:
+      1246 ms  drain src/GameServer/Bot/AI/HotAiDispatcher.js:51
+      1245 ms  HotAiDispatcher.enqueue.urgent.urgent src/GameServer/Bot/BotAI.js:242
+      1245 ms  tick src/GameServer/Bot/BotAI.js:420
+      1144 ms  moveTo src/GameServer/Actor/Generics/MoveTo.js:348
+      1144 ms  moveTo src/GameServer/Actor/Actor.js:84
+      1136 ms  findPath src/GameServer/Geodata/GeodataEngine.js:506
+  by part: native, program 21 %, population, cold, transitions 18.1 %, database 16.2 %, other project code 10.8 %, world, actors, combat 9.1 %, bot AI, goals 7 %, economy, trade 6.1 %, gc 4 %, node internals 3.2 %, other bot code 2.4 %, perf recorder 1.4 %, network, packets 0.8 %
+  cpu by function (self, % of profiled busy time):
+    20.8 %  (program)
+       4 %  (garbage collector)
+     2.6 %  one src/Database.js:2169
+     2.1 %  performTransaction src/Database.js:611
+       2 %  write src/Database.js:2185
+     1.8 %  postMessage node:internal/worker:442
+     1.8 %  writeColdCommitUnsafe src/Database.js:3645
+     1.3 %  listOnTimeout node:internal/timers:546
+     1.2 %  processTimers node:internal/timers:526
+     1.1 %  (anonymous) src/Database.js:425
+  cpu by project file:
+    15.4 %  src/Database.js
+     2.9 %  src/GameServer/Bot/Population/BotLifeState.js
+     2.7 %  src/GameServer/Bot/Population/InventorySummary.js
+     1.9 %  src/GameServer/Bot/Population/LifeStateCache.js
+     1.8 %  src/GameServer/Geodata/GeodataEngine.js
+     1.8 %  src/GameServer/Bot/Population/ColdSimulationProtocol.js
+
+l2node-cold-simulation: busy 40.4 %, gc 3.2 %, long turns 105.4/min, longest 981 ms (p95 of chunk longest 624 ms); 0.5 s without samples left out (5 sample gaps over 50 ms)
+  long turns held by:
+      5676 ms  buildForState src/GameServer/Bot/Economy/EconomyContext.js:1087
+      5660 ms  forState src/GameServer/Bot/Economy/EconomyContext.js:1001
+      4650 ms  (anonymous) src/GameServer/Bot/Economy/WishProviders.js:256
+      4629 ms  buildProjection src/GameServer/Bot/Economy/WishProviders.js:269
+      4574 ms  build src/GameServer/Bot/Economy/WishProviders.js:252
+      3019 ms  planLifecycle src/GameServer/Bot/Population/ColdSimulationWorker.js:1977
+  by part: population, cold, transitions 33.6 %, economy, trade 23 %, bot AI, goals 17.6 %, native, program 8.4 %, gc 8 %, world, actors, combat 5 %, other project code 3.1 %, node internals 0.7 %, other bot code 0.5 %
+  cpu by function (self, % of profiled busy time):
+     8.4 %  (program)
+       8 %  (garbage collector)
+     1.3 %  valueBytes src/GameServer/Bot/Population/ColdSimulationProtocol.js:121
+     1.2 %  evaluate src/GameServer/Bot/Economy/WishNetwork.js:405
+     1.2 %  send src/GameServer/Bot/Population/ColdSimulationWorker.js:1689
+     1.2 %  count src/GameServer/Bot/Economy/EconomyDiagnostics.js:14
+     1.1 %  multiplier src/GameServer/Bot/Population/ColdCombatProfile.js:233
+     0.9 %  solve src/GameServer/Bot/Economy/WishNetwork.js:328
+     0.8 %  view src/GameServer/Combat/CombatantView.js:15
+     0.8 %  prepareResolve src/GameServer/Bot/Population/BotLifeState.js:2778
+  cpu by project file:
+     8.1 %  src/GameServer/Bot/Population/ColdCombatProfile.js
+     5.1 %  src/GameServer/Bot/AI/GearAcquisitionPlanner.js
+     4.8 %  src/GameServer/Bot/AI/BotTargetMatchup.js
+     4.4 %  src/GameServer/Bot/Population/BackgroundResolver.js
+     4.1 %  src/GameServer/Bot/Population/ColdSimulationWorker.js
+     3.2 %  src/GameServer/Bot/Economy/WishNetwork.js
+
+context: hot 62.8 / cold 1717.2 bots avg, players max 1, sustained lag max 8 ms; main heap after GC 333->380 (max 382) MB, geodata 219->219 (max 219) MB, free memory min 134 MB, major page faults 0
+main GC pauses per minute: minor 62.9 (252.2 ms, longest 16.9 ms), incremental 3.4 (4.6 ms, longest 7.4 ms), major 3.5 (103.6 ms, longest 126.9 ms)
+database: queue max 0 (peak 90), WAL 127->236 (max 236) MB, world 36->43 (max 43) MB, history WAL 4->4 (max 4) MB, checkpoints 59
+  WAL truncate: last 2026-11-11T15:23:41.372Z ok 70.6 ms, last emptied 2026-11-11T15:23:41.372Z ok 70.6 ms; maintenance refused in the window: wal_truncate:wal_below_threshold 347, wal_truncate:retry_window 11, state_retention:governor_event_loop_lag 2
+  jobs past the 12 ms drain slice: bot-life:cold-owner-commit-release-batch 3x (max since start 27 ms), skill:learn-bot 1x (max since start 15 ms), bot:npc-purchase 1x (max since start 109 ms), bot-life:save 1x (max since start 15 ms), clan-action:claim-one 1x (max since start 19 ms), board:open 1x (max since start 16 ms)
+     28116 ms run,      338 ms wait  11451x bot-life:cold-owner-commit-release-batch
+     14748 ms run,      399 ms wait  16608x bot-life:save
+      7971 ms run,        8 ms wait  6727x warehouse:withdraw
+      6826 ms run,       11 ms wait  10360x bot-life:resolve-publication
+      6821 ms run,       11 ms wait  7571x warehouse:deposit
+      3816 ms run,       18 ms wait  14203x skill:learn-bot
+commit queue: depth max 10, 229 KB, oldest 451 ms, paused 0 % of lines
+failures: worker faults 0 (0 bots held, 0 quarantined), command DB errors 0, afterCommit errors 0, swallowed 0, safety repairs [0,0,0], path queue max 0
+
+memory: main heap 415->447 MB (max 514), rss 2120->2089 MB (max 2145)
+  main: 416->448 MB (max 515)
+  HistoryWorker: 9->11 MB (max 14)
+  DatabaseCheckpointWorker: 7->7 MB (max 7)
+  l2node-cold-simulation: 293->357 MB (max 389)
+  ClanPlanningWorker: 68->74 MB (max 121)
+  perf-chunks: 32->4 MB (max 70)
+  PathfindingWorker: 9->53 MB (max 56)
+  PathfindingWorker#7: 9->9 MB (max 9)
+  main sampled live 290.7->347.8 MB; grew under:
+      9.1 MB  execute src/Database.js:377
+        9 MB  job src/Database.js:376
+      8.7 MB  enqueue.operation.operation src/Database.js:651
+      8.7 MB  performTransaction src/Database.js:611
+      7.8 MB  afkTradeShopUnsafe src/Database.js:3940
+  ClanPlanningWorker sampled live 62.6->68.7 MB; grew under:
+      4.9 MB  (anonymous) src/GameServer/Clan/ClanPlanningWorker.js:138
+      2.5 MB  prepare src/GameServer/Clan/ClanRosterDemand.js:264
+      2.5 MB  assessment src/GameServer/Clan/ClanRaidPolicy.js:274
+      2.3 MB  estimate src/GameServer/Clan/ClanRaidEstimate.js:49
+      1.4 MB  resolveCached src/GameServer/Skills/C4SkillRules.js:1367
+  l2node-cold-simulation sampled live 278.6->306 MB; grew under:
+     12.5 MB  resolveStep src/GameServer/Bot/Population/ColdSimulationKernel.js:2422
+      8.9 MB  (anonymous) src/GameServer/Bot/Population/ColdSimulationKernel.js:1859
+      8.2 MB  (anonymous) src/GameServer/Bot/Economy/EquipmentIncomeRoute.js:244
+      8.2 MB  find src/GameServer/Bot/Economy/EquipmentIncomeRoute.js:125
+        8 MB  decideEarning src/GameServer/Bot/Economy/EconomyContext.js:754

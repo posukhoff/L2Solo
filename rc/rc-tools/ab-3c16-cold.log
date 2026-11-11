@@ -1,0 +1,2 @@
+perf :: tmp/perf/runs/3c164d3cc-script-online-player-20261111-173654: late world x50 1700 bots L20-74 (bc36cd363, seeded at level), bots {"cold":1735,"hot":45}; 5 min warm-up, 30 min window
+perf :: window open

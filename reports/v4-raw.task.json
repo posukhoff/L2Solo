@@ -1,0 +1,52 @@
+{
+  "slug": "v4-raw",
+  "base": "6aa4f7dc9d585063779af0351876773491da20e7",
+  "risk": "fast",
+  "kind": "fix",
+  "policy": "f150221730444f4c319687016fba946b0c7025402f55312e6bd9b5a690bbb232",
+  "created": "2026-11-10T22:10:06.926Z",
+  "evidence": {
+    "rawGeodata": [
+      {
+        "head": "61ee2b18a8c59bf4972c6b55b92db82d9eb3fed3",
+        "test": "test_bot_activation_placement.js",
+        "at": "2026-11-10T22:10:24.018Z"
+      }
+    ]
+  },
+  "brief": {
+    "base": "6aa4f7dc9d585063779af0351876773491da20e7",
+    "symptom": "town departure route failures and the SoE escape invisible without trace; walkerRoadStepBacks counts two events",
+    "owner": "BotSpotTravel recovery + ActivationPlacement + PopulationMetrics",
+    "cause": {
+      "status": "verified",
+      "explanation": "6aa4f7dc9 writes only a trace note on route failure; ActivationPlacement records walkerRoadStepBacks at both the start-town branch and the step-back branch",
+      "evidence": [
+        "src/GameServer/Bot/AI/BotSpotTravel.js:257-261 at 6aa4f7dc9",
+        "src/GameServer/Bot/Population/ActivationPlacement.js:252,272 at 6aa4f7dc9"
+      ]
+    },
+    "scope": [
+      "src/GameServer/Bot/AI/BotSpotTravel.js",
+      "src/GameServer/Bot/Population/ActivationPlacement.js",
+      "src/GameServer/Bot/Population/PopulationMetrics.js"
+    ],
+    "nonGoals": [
+      "field pockets outside town"
+    ],
+    "acceptance": [
+      "each route failure, escape and start-town placement counted once"
+    ],
+    "evidence": [
+      "DT-173 round-1 review report"
+    ],
+    "tests": [
+      "test_bot_town_travel.js",
+      "test_bot_activation_placement.js"
+    ],
+    "regressions": [
+      "test_bot_town_travel.js",
+      "test_bot_activation_placement.js"
+    ]
+  }
+}

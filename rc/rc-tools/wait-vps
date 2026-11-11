@@ -1,0 +1,17 @@
+#!/bin/zsh
+# wait-vps <job-id> : waits for a VPS trace job (~/perf/jobs/<id>/status.json written at its end).
+# Requires the job to be seen running first (~/perf/current == id, or its job dir with a pid), within 10 min,
+# so an empty or failed launch is never read as done. ssh errors count as "not yet".
+set -u
+id=${1:?usage: wait-vps <job-id>}
+q() { ssh -o ConnectTimeout=15 -o BatchMode=yes l2solo-perf "$1" 2>/dev/null; }
+seen=0; t0=$SECONDS
+until (( seen )); do
+  s=$(q "cat ~/perf/current 2>/dev/null; echo; test -f ~/perf/jobs/$id/pid && echo PID; cat ~/perf/jobs/$id/status.json 2>/dev/null")
+  [[ $s == *$id* || $s == *PID* ]] && seen=1
+  [[ $s == *'"state":"busy"'* ]] && { echo "$id: launch found the lock busy"; exit 3; }
+  (( seen )) || { (( SECONDS - t0 > 600 )) && { echo "$id: never seen running"; exit 4; }; sleep 30; }
+done
+echo "$id: running"
+until s=$(q "cat ~/perf/jobs/$id/status.json") && [[ $s == *'"state":"done"'* || $s == *'"state":"failed"'* ]]; do sleep 90; done
+echo "$id: $s"; [[ $s == *'"state":"done"'* ]]

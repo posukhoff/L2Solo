@@ -1,0 +1,51 @@
+# Agents and review reference
+
+## Agents
+
+- Drive the work without waiting for me: take decisions by the recommendation, log each (step file or problem line;
+  a parallel agent puts it in its report),
+  report at each step and release task; stop and ask only at a fork the plan and rules do not settle (a gameplay fork
+  goes to me with your recommendation). Never sit idle: while one lane waits, start what does not depend on it.
+- Lanes: the laptop (exclusive for a perf measurement; up to 3 behaviour runs at once), the team VPS (behaviour runs
+  only, never perf: a panel world shares it), CI and tables on the fork, read-only agents. Start the longest independent
+  job first.
+- An editing agent gets its own worktree and branch from the integration head (`git worktree add
+  .claude/worktrees/<topic> -b ivan/<topic> <head>`). Editing agents run in parallel only on disjoint files; work on
+  overlapping files (the same module, its tests) runs one after another. Read-only agents need no worktree.
+- A brief names the plan it works under (the roadmap's release, the step file, `target-architecture/situations.md` for
+  the maintainer's answers; the mechanism is population.md "Situations"), carries the paths of CLAUDE.md (/Users/iposukhoff/L2Solo/CLAUDE.md), the workflow reference (/Users/iposukhoff/L2Solo/.claude/workflow/), the map and the plan, and holds at most 4
+  items (plan items or findings) so each gets its cause hunt. The main session checks the brief against the plan for
+  contradictions (e.g. a plan step that needs a run vs a brief that forbids a server) before sending it. The agent
+  labels each change stays (part of the target) / temporary (the comment and the commit name what replaces it, e.g.
+  "temporary: until the town plan owns the sell stop") / throwaway (only when without it something breaks now), and
+  names every deviation.
+- Cost is context × turns: reports ≤ 250 words (a brief's limit wins); briefs carry handles; targeted tests only; a fix round is a new narrow agent, never a resumed one; low-risk mechanical work may use a cheaper model; the coordinator batches calls and hands off past ~200 k context. Reports: what changed with file:line, decisions, problems, the hard-rule line
+  (`0 ok, 3 violation file:line …`, rule 0 for every mechanism added) and `rules-check` output. An "ok" needs its evidence: rule 4/5 the concept search and
+  its hits, rule 6 the cost in numbers; an answer without it counts as unanswered. Reports to me separate what an agent
+  claims from what a review confirmed.
+- Fix batches (review findings, pass findings, run bugs) go plan → check → implement → review:
+  - a read-only planner writes per finding the cause chain (symptom → mechanism → the rule's owner, the invariant it
+    restores), every copy of the concept with search evidence (hot and cold), the fix (keep, delete, the test failing on
+    old code), its cost and a hard-rule pre-check; where the toward fix and a quick fix differ, both with costs;
+  - a change that moves how bots spread over shared things (spots, market, parties) is first run as an offline
+    simulation on real data (the save's population, the real tables and pure code) in the scratchpad, comparing variants
+    by numbers (share over capacity, peaks, trips, oscillation, value); the design is picked from those numbers;
+  - the main session checks the plan against rules 0, 1, 2, 14 and the brief; an item failing them is dropped or replaced with the reason, even when already decided or implemented;
+  - the implementer follows it; the review checks diff vs plan and rules, and asks per fix: cause removed or symptom
+    hidden?
+  - review fixes go to a NEW narrow agent; the second review checks those fixes and related regressions. After two rounds unresolved blockers stop the task; the coordinator chooses replan, split or defer. Unrelated findings go to problems.md. A fix that
+    reveals another copy of the same concept means the concept search was incomplete: merge all copies in that fix.
+- A review agent's brief says "read /Users/iposukhoff/L2Solo/CLAUDE.md and the relevant /Users/iposukhoff/L2Solo/.claude/workflow/ references from disk (the copy in your context may be older); check the task's policy digest (`node /Users/iposukhoff/L2Solo/.claude/workflow.js status <slug>`) and answer every hard rule first (ok with evidence, violation file:line, or N/A with its reason)".
+- Review findings are triaged before any fix (fix now / temporary / belongs to step N / reject with reason); rule 0
+  first: a fix that costs more than the harm it prevents is rejected (or the feature that caused it removed). A number
+  that improves past what the fix explains (a counter dropping to 0) is checked for a hidden cause (a card held forever
+  reads as 0 unwoken builds). A finding in
+  temporary code that a planned step rewrites goes to that step, not into a second patch of the temporary code.
+- Every batch and release report counts its changes toward / neutral / away; a release adds no "away" without my ok.
+- Cost of agents: resuming a large agent re-reads its whole transcript; a design-level fix spanning several areas goes
+  back to the author, the rest to new narrow agents (the planner's entries, the plan and rules paths), folded into the
+  commit they belong to. No work ahead of need (plans for far steps, extra passes).
+- The decision registry (`node planning/target-architecture/decision-registry.js --root <worktree>`) runs after each
+  commit of the situations work: exit 0 (no unclassified clock/step site), and `--stale` shows the windows a step
+  deleted.
+

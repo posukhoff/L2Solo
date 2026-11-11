@@ -1,0 +1,18 @@
+#!/bin/zsh
+# wait-ci <run-id>... : waits until every fork CI run is completed; prints "id name conclusion sha" per run.
+# Exit 0 only if all succeeded. A gh error counts as "not done yet", never as done.
+set -u
+(( $# )) || { echo 'usage: wait-ci <run-id>...'; exit 2; }
+for r in "$@"; do [[ $r == <-> ]] || { echo "not a run id: $r"; exit 2; }; done
+pending=("$@"); fail=0
+while (( ${#pending} )); do
+  next=()
+  for r in $pending; do
+    st=$(gh run view $r -R posukhoff/L2Solo --json status,conclusion,name,headSha -q '[.status,.conclusion,.name,.headSha[0:9]]|join("|")' 2>/dev/null)
+    if [[ ${st%%|*} == completed ]]; then
+      parts=("${(@s:|:)st}"); echo "$r ${parts[3]} ${parts[2]} ${parts[4]}"; [[ ${parts[2]} == success ]] || fail=1
+    else next+=($r); fi
+  done
+  pending=($next); (( ${#pending} )) && sleep 60
+done
+exit $fail

@@ -1,0 +1,165 @@
+{
+ "run": "9d6bf579a",
+ "hours": 0.585,
+ "bots": 1780,
+ "hunters": 1700,
+ "progress": {
+  "botHours": 994.2,
+  "expPerBotH": 8179092,
+  "adenaInvPerBotH": 1458055,
+  "adenaWhPerBotH": 0,
+  "adenaTotalPerBotH": 1458055,
+  "levelUps": 2454,
+  "deathCountDelta": 10,
+  "deathsPerBotH": 0.0101,
+  "noProgressAllRun": 3,
+  "noProgressIds": [
+   2000122,
+   2000632,
+   2000751
+  ]
+ },
+ "shots": {
+  "ok": 972,
+  "noWeapon": 0,
+  "noWeaponIds": [],
+  "gradeAboveLevel": 0,
+  "gradeAboveLevelIds": [],
+  "noShotOfGrade": 726,
+  "noShotOfGradeIds": [
+   "2000045:c",
+   "2000047:d",
+   "2000052:d",
+   "2000061:c",
+   "2000062:d",
+   "2000063:d",
+   "2000065:c",
+   "2000066:c",
+   "2000067:d",
+   "2000068:d",
+   "2000069:d",
+   "2000070:d",
+   "2000071:c",
+   "2000074:d",
+   "2000075:c"
+  ],
+  "otherGradeOnly": 2,
+  "otherGradeOnlyIds": [
+   "2000759:c",
+   "2001239:c"
+  ],
+  "noShotByActivity": {
+   "cold/resting": 340,
+   "cold/hunting": 244,
+   "cold/traveling": 90,
+   "cold/grouped": 38,
+   "cold/shopping": 8,
+   "hot/hunting": 8
+  }
+ },
+ "state": {
+  "staleColdNoWriteInWindow": 2,
+  "staleIds": [
+   "2000751:grouped:31m",
+   "2001126:resting:31m"
+  ],
+  "townActivityOver15m": 2,
+  "townIds": [
+   "2000569:cold/shopping:1672m",
+   "2000648:hot/shopping:26m"
+  ],
+  "lostGround": 1,
+  "lostIds": [
+   "2000772:cold:hunting-no-spot"
+  ],
+  "deadState": [
+   2000366
+  ],
+  "activityAges": {
+   "resting": {
+    "n": 741,
+    "over15": 2,
+    "over30": 2,
+    "max": 35
+   },
+   "hunting": {
+    "n": 603,
+    "over15": 136,
+    "over30": 69,
+    "max": 1697
+   },
+   "grouped": {
+    "n": 147,
+    "over15": 45,
+    "over30": 27,
+    "max": 1694
+   },
+   "traveling": {
+    "n": 188,
+    "over15": 0,
+    "over30": 0,
+    "max": 9
+   },
+   "shopping": {
+    "n": 20,
+    "over15": 2,
+    "over30": 1,
+    "max": 1672
+   },
+   "dead": {
+    "n": 1,
+    "over15": 0,
+    "over30": 0,
+    "max": 1
+   }
+  }
+ },
+ "trace": {
+  "hours": 0.578,
+  "failRaises": {
+   "goal_failed": 1297,
+   "goal_failed:visit": 212,
+   "source_stalled": 22,
+   "out_of_money": 5
+  },
+  "failTotal": 1536,
+  "failPerBotH": 1.562,
+  "topFailBots": [
+   "2001410:192 (331.9/h)",
+   "2000566:15 (25.9/h)",
+   "2001351:12 (20.7/h)",
+   "2001159:12 (20.7/h)",
+   "2000439:11 (19.0/h)",
+   "2000604:11 (19.0/h)",
+   "2001239:10 (17.3/h)",
+   "2001549:10 (17.3/h)"
+  ],
+  "botsOver10FailPerH": 31,
+  "topDecidedBots": [
+   "2001410:225 (389.0/h)",
+   "2001351:141 (243.8/h)",
+   "2001512:120 (207.5/h)",
+   "2001715:119 (205.7/h)",
+   "2001549:94 (162.5/h)",
+   "2001597:86 (148.7/h)",
+   "2001439:85 (146.9/h)",
+   "2001196:79 (136.6/h)"
+  ],
+  "failureSites": 14,
+  "deaths": 11,
+  "deathsPerBotH": 0.0112,
+  "deathList": [
+   "2000186:npc:1643@14_30",
+   "2001565:npc:1526@12_-13",
+   "2001307:unknown@11_17",
+   "2000245:npc:1526@11_-13",
+   "2001671:unknown@14_-14",
+   "2000615:npc:10482@8_34:f1",
+   "2000140:npc:1537@14_-15",
+   "2001468:unknown@13_-8",
+   "2000885:npc:1526@11_-13",
+   "2000245:npc:1526@11_-13",
+   "2000366:npc:1526@12_-13"
+  ]
+ }
+}

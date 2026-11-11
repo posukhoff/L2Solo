@@ -1,0 +1,38 @@
+#!/bin/zsh
+# laptop-run <worktree> <run-label> [--minutes N] [--scenario script|hot] [--dry-run] : local traced perf run (recipe).
+# Links node_modules and tmp/perf/runs of the main checkout into the worktree, starts scripts/perf.js run detached with the
+# decisionTrace ini, logs to scratchpad/<label>.log and prints the run folder line when it appears (max 5 min).
+# Refuses (exit 1) when the worktree is dirty or another `scripts/perf.js run` is running. Exit 0 started; 2 usage;
+# 3 started but no run folder line in 5 min. --dry-run: checks are shown, the commands only printed.
+set -u; setopt extendedglob
+dry=0; min=10; sc=script; a=()
+while (( $# )); do case $1 in --dry-run) dry=1;; --minutes) min=${2:-}; shift;; --scenario) sc=${2:-}; shift;; *) a+=($1);; esac; shift; done
+(( ${#a} == 2 )) && [[ $min == <-> && $sc == (script|hot) && ${a[2]} == [A-Za-z0-9._-]## ]] || { echo 'usage: laptop-run <worktree> <run-label> [--minutes N] [--scenario script|hot] [--dry-run]'; exit 2; }
+wt=$a[1]; label=$a[2]; [[ -d $wt ]] || { echo "no worktree $wt"; exit 2; }
+main=/Users/iposukhoff/L2Solo; S=${0:A:h}; log=$S/$label.log
+bad=0; no() { echo "REFUSE: $1"; bad=1; }
+[[ -z $(git -C $wt status --porcelain) ]] || no "worktree is dirty"
+pgrep -f 'scripts/perf.js run' >/dev/null && no "another scripts/perf.js run is running: $(pgrep -fl 'scripts/perf.js run' | head -2 | tr '\n' ' ')"
+(( bad && ! dry )) && exit 1
+(( bad )) && echo "dry-run: WOULD REFUSE (above)"
+scen=(--scenario=hot); [[ $sc == script ]] && scen=(--scenario=script --script=tests/e2e/online-player.js --warmup=5)
+cmd=(caffeinate -dimsu node scripts/perf.js run --saves=$main/tmp/saves --save=d2f4aa5d-dc82-4241-bdcf-d3bb256899ba $scen --minutes=$min --diagnostics --keep-world)
+if (( dry )); then
+  echo "DRY: cd $wt"
+  echo "DRY: [[ -e node_modules ]] || ln -s $main/node_modules node_modules"
+  echo "DRY: mkdir -p tmp/perf; [[ -e tmp/perf/runs ]] || ln -s $main/tmp/perf/runs tmp/perf/runs"
+  echo "DRY: L2NODE_GEODATA_DIR=$main/data/Geodata L2NODE_SHARED_CONFIG_FILE=$S/trace.ini nohup ${cmd[*]} >$log 2>&1 &"
+  exit $bad
+fi
+cd $wt || exit 2
+[[ -e node_modules ]] || ln -s $main/node_modules node_modules
+mkdir -p tmp/perf; [[ -e tmp/perf/runs ]] || ln -s $main/tmp/perf/runs tmp/perf/runs
+: >$log
+L2NODE_GEODATA_DIR=$main/data/Geodata L2NODE_SHARED_CONFIG_FILE=$S/trace.ini nohup "${cmd[@]}" </dev/null >$log 2>&1 &
+pid=$!; echo "started pid $pid, log $log"
+for i in {1..60}; do
+  l=$(grep -m1 -E 'l2solo-perf-[A-Za-z0-9._-]+' $log); [[ -n $l ]] && { echo "$l"; exit 0; }
+  kill -0 $pid 2>/dev/null || { echo "run exited early:"; tail -5 $log; exit 3; }
+  sleep 5
+done
+echo "no run folder line yet in $log"; exit 3

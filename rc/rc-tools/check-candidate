@@ -1,0 +1,35 @@
+#!/bin/zsh
+# check-candidate <slug> <worktree> [--against <branch>...] : one screen of facts for a landing decision (read-only).
+# Prints HEAD, ready, CI runs, commits over ivan/batch-1a and fast-forward possibility, AI lines, shared files per branch.
+# Exit 0 printed; 2 usage. Facts only: it does not judge.
+set -u
+source ${0:A:h}/.lib.zsh
+(( $# >= 2 )) || { echo 'usage: check-candidate <slug> <worktree> [--against <branch>...]'; exit 2; }
+slug=$1 wt=$2; shift 2; against=()
+while (( $# )); do [[ $1 == --against ]] && shift || { against+=($1); shift; }; done
+[[ -d $wt ]] || { echo "no worktree $wt"; exit 2; }
+sha=$(git -C $wt rev-parse HEAD) || exit 2; s9=${sha[1,9]}
+B=ivan/batch-1a
+echo "HEAD    $sha ($(git -C $wt log -1 --format=%s | cut -c1-60))"
+line=$(ready_line $slug $wt)
+echo "ready   taskReady=${line%%|*}"; [[ -n ${line#*|} ]] && print -r -- ${line#*|} | sed 's/; /\n          /g;s/^/        /'
+echo "CI:"
+gh run list -R posukhoff/L2Solo --limit 100 --json databaseId,headBranch,conclusion,status,workflowName 2>/dev/null | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print("  (gh error: unknown)"); sys.exit()
+rs=[r for r in d if r["headBranch"] in ("ci-'$s9'","tests/list-'$s9'")]
+for r in rs: print("  %s %-22s %s"%(r["databaseId"],r["headBranch"],r["conclusion"] or r["status"]))
+if not rs: print("  (none found)")'
+n=$(git -C $wt rev-list --count $B..$sha); 
+git -C $wt merge-base --is-ancestor $B $sha && ff=yes || ff=NO
+echo "commits $n over $B; $B ancestor of HEAD (fast-forward): $ff"
+ai=$(ai_lines $wt $B..$sha)
+if [[ -n $ai ]]; then echo "AI lines: YES"; print -r -- $ai | head -5 | sed 's/^/  /'; else echo "AI lines: none"; fi
+for br in $against; do
+  git -C $wt rev-parse -q --verify $br >/dev/null || { echo "against $br: unknown ref"; continue; }
+  mb=$(git -C $wt merge-base $sha $br) || { echo "against $br: no merge-base"; continue; }
+  sh=$(comm -12 <(git -C $wt diff --name-only $mb $sha | sort) <(git -C $wt diff --name-only $mb $br | sort))
+  echo "shared with $br (base ${mb[1,9]}): $(print -r -- $sh | grep -c .)"; [[ -n $sh ]] && print -r -- $sh | head -40 | sed "s/^/  /"; (( $(print -r -- $sh | grep -c .) > 40 )) && echo "  ... (more)"
+done
+exit 0
