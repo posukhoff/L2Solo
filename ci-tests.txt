@@ -1,0 +1,10 @@
+clan_war_return_geodata
+companion_equipment_shopping
+companion_pathfinding_worker
+town_trade_navigation
++bot_activation_placement
++c4_swamp_of_screams
++pathfinding_worker_pool
++ti_magic_shop_transition
++town_npc_approach
++town_transit_policy
