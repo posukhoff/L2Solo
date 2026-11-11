@@ -45,6 +45,8 @@ function validateBrief(b, state) {
     if (state.kind === 'fix' && (!b.cause || !['guess','verified'].includes(b.cause.status) ||
         !nonempty(b.cause.explanation))) fail('Fix brief requires cause {status: guess|verified, explanation}.');
     if (state.kind === 'fix' && b.cause.status === 'verified' && (!strings(b.cause.evidence) || !strings(b.regressions) || !b.regressions.every(t=>b.tests.map(norm).includes(norm(t))))) fail('Verified cause needs evidence handles and regression tests listed in tests.');
+    if (state.kind === 'fix' && b.cause.status === 'verified' && (!Array.isArray(b.cause.chain) || b.cause.chain.length < 2 || !b.cause.chain.every(nonempty))) fail('Verified cause needs cause.chain: at least 2 non-empty strings (first = where the symptom shows, last = first wrong decision or broken invariant with handle).');
+    if (state.kind === 'fix' && b.cause.status === 'verified' && !strings(b.cause.excluded)) fail('Verified cause needs cause.excluded: at least 1 non-empty string (alternative ruled out with handle, or "none plausible: reason").');
 }
 // Advisory feedback only; never replaces the integration selection.
 function devPlan(base, brief) {

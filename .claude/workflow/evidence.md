@@ -2,7 +2,7 @@
 
 ## Cause gate and handoff
 
-Separate symptom from hypothesis in problems.md: cause: guess or verified + trace/test/source ref. Guesses enter investigation, not implementation; critical blockers get immediate triage. Verify causal chain and owner before handoff. Briefs carry exact base and evidence handles; implementer spot-checks a decisive handle, reinvestigates only if contradicted. Coordinator resolves overlapping owner scopes before edits; review stays scoped.
+Separate symptom from hypothesis in problems.md: cause: guess or verified + trace/test/source ref. Guesses enter investigation, not implementation; critical blockers get immediate triage. A cause is verified when its chain runs from the observed symptom to the first wrong decision or broken invariant (C4 rule, situation, owner contract). The chain names where the symptom shows apart from the mechanism that produced it, rules out each plausible alternative with a handle, and is proven by a reproduction, trace or counterexample that accounts for the counted symptom, not one instance. Stop at the nearest controllable cause whose fix restores the invariant; unproven after one bounded investigation → blocker. Independent causes get separate linked slugs. Containment of a serious defect is labelled temporary, with an open root-cause problems.md line. Briefs carry exact base and evidence handles; implementer spot-checks a decisive handle, reinvestigates only if contradicted. Coordinator resolves overlapping owner scopes before edits; review stays scoped.
 
 Start with --kind fix (default), feature or chore. A guess is investigation-only. CLI validates shape, not truth; coordinator inspects evidence. New brief resets task evidence; changed policy requires new slug. Keep evidence handles, not secrets/log dumps. Sample:
 
@@ -11,7 +11,7 @@ Start with --kind fix (default), feature or chore. A guess is investigation-only
   "base": "<full task base SHA>",
   "symptom": "Observed incorrect town departure",
   "owner": "BotSpotTravel: departure/recovery",
-  "cause": {"status":"verified","explanation":"What caused the observed failure","evidence":["run ID / trace record / source file:line"]},
+  "cause": {"status":"verified","explanation":"What caused the observed failure","chain":["where the symptom shows (file:line)","first wrong decision or broken invariant (handle)"],"excluded":["plausible alternative ruled out (handle), or none plausible: reason"],"evidence":["run ID / trace record / source file:line"]},
   "scope":["src/..."],
   "nonGoals":["Unrelated field recovery"],
   "acceptance":["Expected observable behaviour"],

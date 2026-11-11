@@ -57,8 +57,22 @@ expect('start',cmd('start','x','--base','main','--risk','standard'),0,'policy-ha
 store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],cause:{status:'guess',explanation:'hypothesis'}}));
 expect('guess',cmd('record-brief','x','--file','/brief.json'),0,'false');
 expect('guess blocks',cmd('verify','x'),1,'hypothesis');
-store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:['fixed'],tests:['test_basic.js','test_geodata.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',evidence:['trace 1']}}));
+store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:['fixed'],tests:['test_basic.js','test_geodata.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],evidence:['trace 1']}}));
+const verifiedBrief=cause=>JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:['fixed'],tests:['test_basic.js'],regressions:['test_basic.js'],cause});
+const okCause={status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],evidence:['trace 1']};
+store.set('/nochain.json',verifiedBrief({...okCause,chain:undefined}));
+expect('verified fix without chain refused',cmd('record-brief','x','--file','/nochain.json'),1,'cause.chain');
+store.set('/onechain.json',verifiedBrief({...okCause,chain:['only one']}));
+expect('verified fix with a one-link chain refused',cmd('record-brief','x','--file','/onechain.json'),1,'cause.chain');
+store.set('/noexcl.json',verifiedBrief({...okCause,excluded:undefined}));
+expect('verified fix without excluded refused',cmd('record-brief','x','--file','/noexcl.json'),1,'cause.excluded');
+store.set('/okcause.json',verifiedBrief(okCause));
+expect('verified fix with chain and excluded accepted',cmd('record-brief','x','--file','/okcause.json'),0,'true');
 expect('verified',cmd('record-brief','x','--file','/brief.json'),0,'true');
+expect('chore start',cmd('start','chore1','--base','main','--risk','fast','--kind','chore'),0,'policy-hash');
+store.set('/chore.json',JSON.stringify({base,symptom:'tidy',evidence:['note'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:['done'],tests:['test_basic.js']}));
+expect('chore brief needs no chain',cmd('record-brief','chore1','--file','/chore.json'),0,'true');
+
 expect('review',cmd('record-review','x','--result','pass','--evidence','review'),0,'');
 expect('duplicate shards refused',cmd('record-ci','x','--run','3'),1,'distinct');
 expect('wrong SHA refused',cmd('record-ci','x','--run','4'),1,'exact task SHA');
@@ -100,7 +114,7 @@ expect('a refuted guess under an older policy can still be closed',cmd('close','
 // Raw-map CI: a Picked +name run counts only with a receipt of a map-present pass, through a runner that kept the mark.
 current=head;optionalRaw=true;
 expect('raw ci start',cmd('start','rawci','--base','main','--risk','standard'),0,'policy-hash');
-store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:['fixed'],tests:['test_basic.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',evidence:['trace 1']}}));
+store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:['fixed'],tests:['test_basic.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],evidence:['trace 1']}}));
 expect('raw ci brief',cmd('record-brief','rawci','--file','/brief.json'),0,'true');
 receiptMode='noMap';expect('a green run without the map is no raw evidence',cmd('record-ci','rawci','--run','6'),1,'No raw-map receipt');
 receiptMode='ok';runnerDropsPlus=true;expect('a runner that drops the mark is refused',cmd('record-ci','rawci','--run','6'),1,'does not keep the raw-map mark');

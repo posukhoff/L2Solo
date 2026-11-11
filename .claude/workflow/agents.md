@@ -24,17 +24,16 @@
   its hits, rule 6 the cost in numbers; an answer without it counts as unanswered. Reports to me separate what an agent
   claims from what a review confirmed.
 - Fix batches (review findings, pass findings, run bugs) go plan → check → implement → review:
-  - a read-only planner writes per finding the cause chain (symptom → mechanism → the rule's owner, the invariant it
-    restores), every copy of the concept with search evidence (hot and cold), the fix (keep, delete, the test failing on
+  - a read-only planner writes per finding the cause chain (symptom where it shows → … → first wrong decision or broken invariant → the rule's owner as *the question it answers* and the function that answers it; a site is never the owner), alternatives ruled out with handles, and for a deleted timer/rest/guard/retry what it alone held and what holds it now, every copy of the concept with search evidence (hot and cold), the fix (keep, delete, the test failing on
     old code), its cost and a hard-rule pre-check; where the toward fix and a quick fix differ, both with costs;
   - a change that moves how bots spread over shared things (spots, market, parties) is first run as an offline
     simulation on real data (the save's population, the real tables and pure code) in the scratchpad, comparing variants
     by numbers (share over capacity, peaks, trips, oscillation, value); the design is picked from those numbers;
   - the main session checks the plan against rules 0, 1, 2, 14 and the brief; an item failing them is dropped or replaced with the reason, even when already decided or implemented;
-  - the implementer follows it; the review checks diff vs plan and rules, and asks per fix: cause removed or symptom
-    hidden?
+  - the implementer follows it; the review checks diff vs plan and rules, and asks per fix: does the chain reach the first wrong decision (re-derive one link from the handles yourself), is the owner the mechanism, not the place the symptom shows, does the regression assert the broken invariant, and what did any removed mechanism alone hold?
   - review fixes go to a NEW narrow agent; the second review checks those fixes and related regressions. After two rounds unresolved blockers stop the task; the coordinator chooses replan, split or defer. Unrelated findings go to problems.md. A fix that
     reveals another copy of the same concept means the concept search was incomplete: merge all copies in that fix.
+- Ad hoc `Verifier:` prompts end with this return block (replaces "Owner: file:line"): Return: Shows at (file:line). Chain to the first wrong decision or broken invariant (one handle per link). Alternatives ruled out (handle each). Owner = the question the rule answers + its function; list every copy hot/cold/main/worker by concept; flag two deciders of one step (rule 1). Proof (repro/trace/counterexample) and the share of the counted symptom it explains. A fix at "Shows at" is mitigation only.
 - A review agent's brief says "read /Users/iposukhoff/L2Solo/CLAUDE.md and the relevant /Users/iposukhoff/L2Solo/.claude/workflow/ references from disk (the copy in your context may be older); check the task's policy digest (`node /Users/iposukhoff/L2Solo/.claude/workflow.js status <slug>`) and answer every hard rule first (ok with evidence, violation file:line, or N/A with its reason)".
 - Review findings are triaged before any fix (fix now / temporary / belongs to step N / reject with reason); rule 0
   first: a fix that costs more than the harm it prevents is rejected (or the feature that caused it removed). A number
