@@ -180,7 +180,8 @@
  "lastRender": {
   "problems": {
    "cur": "a8622f17e109b0537def43bf90d1ad1e494a62a0",
-   "prev": null
+   "prev": null,
+   "absorbed": "008ec4d25f3554c170cf31fb13c7e199c06b4b5a"
   },
   "roadmap": {
    "cur": "c34f6f12caec58be8b355a214c8a5bc8d8c0f752",
