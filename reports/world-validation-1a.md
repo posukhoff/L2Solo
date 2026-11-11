@@ -1,7 +1,7 @@
 # Release 1a world validation (V5)
 
 Batch under test: **ivan/batch-1a `6c1455b5e`** (DT-174 8b36104c6, DT-173 66d99ecd1, DT-200 8904efbfd, raw-map CI e875e0394+ea5d52f4a, warehouse custody 7e1fa4a2d, DT-200b 42e3d07ee, DT-200a 6c1455b5e). Not in the batch: RM-31, DT-208, earning spot, DT-202, DT-197 (implemented, not reviewed/landed).
-Status of this file: criteria, F2 verdict, automation split and proposals are final; **runtime results are pending** the traced run `6c1455b5e-script-online-player-20261111-015741` (window 02:03-02:33 local) and are appended in a follow-up commit. The final A/B is not run: the release scope is not closed (five fixes pending), and the A/B follows the code freeze.
+Status: criteria, F2 verdict, automation split, proposals and the traced run's results (below) are final. The final A/B is not run: the release scope is not closed (five fixes pending), and the A/B follows the code freeze.
 
 ## F2 (BotImprovementService.js:139) — not a blocker for DT-200a
 - `if (!current()) return result;` exists unchanged since d4322a214 (2026-10-06, before any of this work; line 126 at base 8904efbfd). Before DT-200a no commit path, hot or cold, raised the end of its step; DT-200a adds the raise on both success paths. F2 is the remaining case: a near body that stops being current (cooled, logged off, dead) during the native write returns before the raise, uncounted.
@@ -23,6 +23,25 @@ All counters below are server.log end-of-run `BotPopulation :: summary` values (
 | C8 | Loops (release invariant) | trace | `run-query refusals --limit 10` | groups with peak > 5 refusals / 60 s | 2001410 190 (RM-31, not in this batch) | none attributable to the batch's fixes | a new loop | RM-31 is not in the batch: item-90 loops may remain |
 
 Not gated by this run (need the final A/B after scope closes): EXP and income per bot-hour, deaths, stuck bots vs the released version; RM-31, DT-208, earning spot, DT-202, DT-197 are not in the batch.
+
+## Runtime results — traced run `6c1455b5e-script-online-player-20261111-015741`
+Run: exit 0, window 00:02:47-00:32:47 UTC, 41,417 trace records, 1780 bots. Same save and settings as baseline B (9d6bf579a cold+player). Commands are those of the criteria table; outputs below are the run's end values.
+
+| # | Result | Baseline B | Verdict |
+|---|---|---|---|
+| C1 custody | `wd-sale.js 100`: 152 bots with both events in the run, **0 hits, 0 plan-input hits** | 6 (all plan inputs, 2.14 M) | **PASS** (lower bound: last events only) |
+| C2 DT-200a repeats | `rep.js`: **0** steps refused within 10 s of the bot's last draw; 2 `goal_failed` after a henna answer, both without a recent draw and matching the 2 `improvement:henna:no_station` refusals | 36 | **PASS**; no case needs F2 to explain it |
+| C3 invalid_bot_henna | **0** (henna `improvement_missing_materials` 0) | 31 (36) | reported: gone |
+| C4 DT-200b | `dbFailureOps` none; `craft:customer` refusals **2** | failures 18 | **PASS** (path ran twice) |
+| C5 DT-200 | `dbFailures` **0**; `improvementRetired` 3, counted under `dbRefusalOps bot:improvement:22` | 57; 8 retired as failures | **PASS** |
+| C6 DT-174 | 33 npc_only trips, **0** under 20 slots | 758 | **PASS** |
+| C7 DT-173 | `spot_unreachable` **28** over 22 bots (max 3 per bot); `townDepartureRouteFailures` 0, `townStuckEscapes` 0, `walkerStartTownPlacements` 27 | 173 | reported: no stuck pattern; no gatekeeper failure occurred, so the escape path was not exercised |
+| C8 loops | `run-query refusals`: one candidate, 2000566 peak 7/60 s on `power:854:1:item:90:shopping` | 2001410 190/60 s | not attributable to the batch: item-90 shop steps are RM-31/DT-208 (not landed) |
+
+Also seen: `lateInViewActivations` 35 of 49 activations — DT-202 (the landing exemption) is not in the batch, so this is expected.
+
+**Confirmed by this run:** custody (C1), DT-200a (C2/C3), DT-200b (C4), DT-200 (C5), DT-174 (C6). **Not confirmed (not exercised or not in batch):** DT-173's escape path (no departure failure happened), the RM-31/DT-208 item-90 loop (C8, fixes not landed), all A/B criteria (EXP, income, deaths, stuck bots) — final A/B after the scope closes.
+**Blockers found:** none for the landed fixes.
 
 ## Automation split
 Already automated by existing diagnostics: C7 (`run-query census`, `log-query counters --keys townDepartureRouteFailures,townStuckEscapes,walkerStartTownPlacements`), C8 (`run-query refusals`), the window bounds for C1 (`run-query census` → observedFrom/To).
