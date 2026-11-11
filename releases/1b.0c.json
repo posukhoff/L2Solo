@@ -13,7 +13,7 @@
  "gates": {},
  "openedAt": "2026-11-11T21:17:25.457Z",
  "steps": [
-  {"key":"1b.0c","title":"1b.0c bug: a melee bot stands 8 s beside its drop after a kill (AI-16)","P":"mid","S":"low","who":"","needs":[],"st":"active","tasks":["ai16-loot-swing"],"landed":null},
+  {"key":"1b.0c","title":"1b.0c bug: a melee bot stands 8 s beside its drop after a kill (AI-16)","P":"mid","S":"low","who":"","needs":[],"st":"landed","tasks":["ai16-loot-swing"],"landed":{"slug":"ai16-loot-swing","head":"357f8d08b62e58bbe5498a6ab50e3a96daf58f49","reviewedHead":"357f8d08b62e58bbe5498a6ab50e3a96daf58f49","tree":"7eb3151d98152c337b5ea968189b50075b018eed","ci":["43110651273","43110642028"],"at":"2026-11-11T22:31:58.939Z"}},
   {"key":"1b.0c2","title":"1b.0c2 bug, after 1b.0c (same files): a drop lands inside a tree and its picker runs into a cell it cannot leave (DT-274)","P":"mid","S":"low","who":"","needs":["1b.0c"],"st":"planned","tasks":[],"landed":null}
  ]
 }
