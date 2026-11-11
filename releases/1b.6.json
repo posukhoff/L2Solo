@@ -1,0 +1,19 @@
+{
+ "key": "1b.6",
+ "group": "1b",
+ "order": 70,
+ "type": "feature",
+ "st": "planned",
+ "title": "1b.6 feature",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M3"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"1b.6","title":"1b.6 feature: draw distance as a launcher setting (maintainer 11-09, deferred): presets ~4000/6000/8000 the server visibility radius follows, activation/cooling radii derived (+3000/+5000); first verify the C4 visibility radius and that the client sends no draw-distance packet","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

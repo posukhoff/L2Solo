@@ -1,0 +1,18 @@
+{
+ "key": "8",
+ "group": "8",
+ "order": 140,
+ "type": "feature",
+ "st": "planned",
+ "title": "8. Parties like players (maintainer 11-08: after the economy release)",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"8.party-town-break","title":"Party town break: RM-24","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"8.parties-through-relation","title":"Parties through relationships: RM-25","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

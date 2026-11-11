@@ -1,0 +1,19 @@
+{
+ "key": "1b.4",
+ "group": "1b",
+ "order": 50,
+ "type": "feature",
+ "st": "planned",
+ "title": "1b.4 feature",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M3"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"1b.4","title":"1b.4 feature: spot room from respawn (maintainer 11-09): room = clamp(round(0.6 × respawn output ÷ the spot's solo kills/h), 3 (9 party grounds), 36), contest splits room by species respawn share; sim + step run first (DT-121); arrivals past room DT-121; raid room test DT-133; a hold cleared only by an arrival: RA1-1","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

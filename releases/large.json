@@ -1,0 +1,23 @@
+{
+ "key": "large",
+ "group": "large",
+ "order": 150,
+ "type": "plan",
+ "st": "planned",
+ "title": "Large, own plan",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"large.components","title":"Components, typed arrays, sharding: plan.md; POP-23.","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"large.situational-e2e-scripts","title":"Situational e2e scripts: architecture/e2e.md (six to write, step timeouts, \"precondition failed\"), after release 2.","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"large.spot-choice-like","title":"Spot choice like a player (maintainer 11-09): one solo spot search, the habit band for the gear source too: DT-102.","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"large.board-publication-by","title":"Board publication by the worker only: ECO-1. Cold-bot record audit: PER-7. One movement engine: WOR-1. Schema mechanisms into one list: PER-5. Cold walker on its road: RM-27.","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"large.gear-progression-and","title":"Gear progression and market demand from the hunt tables: TBL-3; table generator coupling and unread kit surface: TBL-2, TBL-4, TBL-8.","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"large.clan-share-from","title":"Clan share from personas (discuss with Slava): RM-26.","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"large.bot-memory-on","title":"Bot memory on situations: DT-101; pausable economy build: DT-141; shot recipe class: DV-2.","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

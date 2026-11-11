@@ -1,0 +1,30 @@
+{
+ "key": "4",
+ "group": "4",
+ "order": 100,
+ "type": "perf",
+ "st": "planned",
+ "title": "4. Main thread and memory for 3-5k bots",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M1"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"4.first","title":"FIRST (maintainer 11-08): memory as the source of truth, the DB a write-behind store, then the DB writer worker (plan.md \"Order\" 1, \"DB writer worker\")","P":"high","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.scaling-limits-by","title":"Scaling limits by population: C12, C17","P":"low","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.memory-track","title":"Memory track: per-thread and process budgets in limits.md, afterGc-per-thread + rss line in `perf.js report`/`compare`, the always-on `caps=` segment (memory.md \"Budgets\"); memory.md ranks 1-2 measured; cuts ranks 3-10, first 5 (`parsedColumns`), 8 (shop projections), 10 (boot peak)","P":"low","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.heap-holders","title":"Heap holders: DT-155, DT-156, DT-166, DT-157, DT-160, DT-161, DT-158","P":"mid","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.big-rows-and","title":"Big rows and writes on main: RM-17, C1, C11, RM-18, F8, RM-28, RM-29, RA2-3","P":"mid","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.main-redoes-work","title":"Main redoes work: storage-10, PC-16, DT-65; cache keys: DT-83, A-10, DT-103","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.worker-step-costs","title":"Worker step costs: PC-4, PC-5, PC-7, PC-8, PC-9, RM-2, PC-12, DT-135, DT-140, DV-4, RM-30; boot and worker start: DT-136, DT-137, DT-138","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.visible-bot-routes","title":"Visible bot routes to the path pool: WOR-2","P":"mid","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.main-thread-step","title":"Main-thread step costs: WOR-11, C8, WOR-4, C10, C13, C14, C15, C16, CMB-27, PL-18, RM-40, DT-180, RA2-4","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.later-perf","title":"Later perf: RM-19; merchants hot: POP-21","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.delete-dead-features","title":"Delete dead features: WOR-5, POP-17 (one batch)","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"4.dead-code","title":"Dead code, fields and knobs (one batch, re-check by search): DT-6, DT-82, AI-8, POP-15, POP-20, F12, F13, L6, DB2, DB3, DB4, DB6, TBL-5, DT-52, DT-113, DT-37, storage-14, RM-36, DT-124, DT-134, DT-126, DT-93, DT-232, DT-253, DT-255, RA1-8","P":"low","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

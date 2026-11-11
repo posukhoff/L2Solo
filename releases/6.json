@@ -1,0 +1,28 @@
+{
+ "key": "6",
+ "group": "6",
+ "order": 120,
+ "type": "gaps",
+ "st": "planned",
+ "title": "6. Game gaps vs C4",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M1"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"6.clan-rules-vs","title":"Clan rules vs C4: storage-1, storage-7, storage-8, storage-9, town-11","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.d-s-shots","title":"D-S shots only via craft/board: DB1 (decided 11-03)","P":"high","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.player-visible-item","title":"Player-visible item bugs: X2, X3, X4, X11, X12, X15, X18, X19, R-A","P":"high","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.reads-of-missing","title":"Reads of missing methods or unwritten keys: F2, F3, F4, F5, F6, F10","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.bot-knowledge-and","title":"Bot knowledge and spot value: RM-8, RM-9, RM-10, RM-11","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.soul-crystal-quest","title":"Soul crystal quest: F1; clan warehouse reservations: D2","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.data-against-c4","title":"Data against C4: D-8, D-9, D-10, D-11, D-12, D-13","P":"low","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.game-logic","title":"Game logic: L8, L9, L29, S6, CMB-15, POP-10, DT-228","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.pvp-and-combat","title":"PvP and combat tails: CMB-21, CMB-22, CMB-28, CMB-29, CMB-30, DT-14, CMB-24, CMB-25, DT-9, DT-227","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"6.drop-tooltip-pages","title":"Drop tooltip pages: DT-18; arrow stock: DT-19; Giran crystallization: RM-12","P":"low","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

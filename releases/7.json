@@ -1,0 +1,23 @@
+{
+ "key": "7",
+ "group": "7",
+ "order": 130,
+ "type": "safety",
+ "st": "planned",
+ "title": "7. Value safety (DB migrations; after the named-migration scheme is agreed with Slava)",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"7.duplicates-from-merged","title":"Duplicates from merged copies: races-R8, storage-6","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"7.revision-less-writes","title":"Revision-less writes: races-R2, races-R10, DT-71, DT-72","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"7.clan-money","title":"Clan money: races-R12, DT-78, races-R17","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"7.invented-1-hp","title":"Invented 1-HP mob: S1","P":"mid","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"7.atomic-value-moves","title":"Atomic value moves: PER-1, PER-2, PER-3, storage-2, storage-12, storage-13, X13, races-R3, races-R4, races-R14","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"7.one-stacking-rule","title":"One stacking rule: PER-11 (P-1 urgent), D-5","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"7.bots-on-the","title":"Bots on the account warehouse: PER-9; social graph dropped: PER-4","P":"low","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

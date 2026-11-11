@@ -1,0 +1,19 @@
+{
+ "key": "1b.3",
+ "group": "1b",
+ "order": 40,
+ "type": "feature",
+ "st": "planned",
+ "title": "1b.3 feature, needs 1b.1, 1b.2",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M3"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"1b.3","title":"1b.3 feature, needs 1b.1, 1b.2: retake a spot (maintainer 11-09): a displaced bot (persona, grievance, someone to call) asks friends/clanmates for a party aimed at that spot with strength above the holder; each helper decides by relation and its own cost; outcome by the arrival contest with PvP; one attempt per outing; standing parties displaceable (DT-105)","P":"mid","S":"low","who":"","needs":["1b.1","1b.2"],"st":"planned","tasks":[],"landed":null}
+ ]
+}

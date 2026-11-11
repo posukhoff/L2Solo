@@ -1,0 +1,36 @@
+{
+ "key": "5",
+ "group": "5",
+ "order": 110,
+ "type": "rule",
+ "st": "planned",
+ "title": "5. One rule hot and cold",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M1"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"5.hot-travel-and","title":"Hot travel and activation as cold: WOR-7, town-2, town-3, threads-1","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.skill-reuse","title":"Skill reuse, MP cost, cast time, attack speed, raid forecast: CMB-1, CMB-2, N11, N12, combat-8","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.exposure-to-aggressive","title":"Exposure to aggressive mobs: combat-3","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.death-wait-and","title":"Death wait and restart: combat-1 (decided 11-03)","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.pvp-stay-flee","title":"PvP stay/flee/retreat, consumables: combat-4, combat-5","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.swing-loops-and","title":"Swing loops and weapon spread: CMB-7, CMB-3, CMB-11; estimates through HitRules: CMB-6; stat assembly: CMB-8, CMB-9","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.archers","title":"Archers, bag slots: N3, N9, races-R19","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.rest","title":"Rest, heal and raid lines: N4, N6, N8, combat-6, combat-7, combat-11, RM-1","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.copied-rule-numbers","title":"Copied rule numbers: N13, N15, N16, N17, N18, N19, CMB-19, WOR-9, DT-80, RA-8, parties-11, parties-15, combat-10, DT-119, DT-163, DT-221, DV-5, RA1-3, RA1-5","P":"low","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.one-town-identity","title":"One town identity and arrival rule: WOR-6, town-4","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.one-is-a","title":"One \"is a bot\" rule: WOR-3","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.hot-cold-logic","title":"Hot/cold logic drift: L28, L5, PER-6, POP-6, POP-8, CMB-10, CMB-17, PER-8, threads-10, DT-59, DT-61, DT-73, RM-44, DT-237","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.seeded-rolls-and","title":"Seeded rolls and pure rules: purity-R1, purity-R2, purity-R3, purity-R4, purity-R12, purity-R7, purity-R8, purity-R9, purity-R10, purity-R11, PU3, PU5, RA-10","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.party-want-and","title":"Party want and grouping predicate: parties-9, parties-10, AI-6","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.one-pvp-owner","title":"One PvP owner: SR-12; magic flag vs damage formula: D-4","P":"low","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.pr-passes","title":"PR passes: RM-6 (#213), RM-7 (#215)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.chat-commands-one","title":"Chat commands one meaning: AI-1; companions on shared policies: AI-4","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.disabled-quests","title":"Disabled quests: D4 (decided 11-03)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

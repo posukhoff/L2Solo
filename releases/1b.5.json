@@ -1,0 +1,19 @@
+{
+ "key": "1b.5",
+ "group": "1b",
+ "order": 60,
+ "type": "feature",
+ "st": "planned",
+ "title": "1b.5 feature",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [
+  "M3"
+ ],
+ "cap": null,
+ "gates": {},
+ "steps": [
+  {"key":"1b.5","title":"1b.5 feature: spots from C4 spawn territories, not the 6000 grid (maintainer 11-09: plan later): a bot belongs to a camp, activation places it there; spot ids and tables change; sight scan and roam over its spawn points (DT-152, DT-125)","P":"**high**","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+ ]
+}

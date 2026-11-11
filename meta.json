@@ -1,0 +1,184 @@
+{
+ "problemsHead": [
+  "# Problems: one line per open problem, whatever found it",
+  "Line: id (= merged ids)|origin (who, 2026 date)|rule#|sites (basename; DB src/Database.js, BLS BotLifeState, PS PopulationService, BR BackgroundResolver, CW ColdSimulationWorker, EC EconomyContext; lines drift, grep names)|what is wrong → impact|fix|tag (CLAUDE.md; [large] = roadmap \"Large, own plan\"). New problem: next free number of its prefix (DT = cross-area, RM = found by a run/maintainer). Other prefixes name the pass or census that found the line."
+ ],
+ "problemsTail": "\n",
+ "sections": [
+  {
+   "key": "failures",
+   "title": "## Failures that show (rule 8)"
+  },
+  {
+   "key": "owners",
+   "title": "## Owners, handovers, races (rules 3, 10)"
+  },
+  {
+   "key": "parties",
+   "title": "## Parties"
+  },
+  {
+   "key": "town",
+   "title": "## Town, travel, spot choice"
+  },
+  {
+   "key": "combat",
+   "title": "## Combat and death (hot = cold, C4)"
+  },
+  {
+   "key": "rule",
+   "title": "## Rule numbers copied (rule 4)"
+  },
+  {
+   "key": "purity",
+   "title": "## Purity and determinism (rule 9)"
+  },
+  {
+   "key": "economy",
+   "title": "## Economy (most [r2]: inputs to redesign, target-architecture/economy.md)"
+  },
+  {
+   "key": "persistence",
+   "title": "## Persistence, value safety, clans (rules 3, 10, 12)"
+  },
+  {
+   "key": "client",
+   "title": "## Client entry points, world (rules 3, 12)"
+  },
+  {
+   "key": "bot",
+   "title": "## Bot AI"
+  },
+  {
+   "key": "dead",
+   "title": "## Dead code, fields, dormant (rule 0)"
+  },
+  {
+   "key": "cost",
+   "title": "## Cost (rule 6)"
+  },
+  {
+   "key": "bot-tables",
+   "title": "## Bot tables (tables.md)"
+  },
+  {
+   "key": "tests",
+   "title": "## Tests (rule 11)"
+  },
+  {
+   "key": "data",
+   "title": "## Data against C4 (rule 12; Lisvus fdc7e33, Mobius C4 6bc10d28, l2hub)"
+  },
+  {
+   "key": "features",
+   "title": "## Features players miss (later releases)"
+  }
+ ],
+ "roadmapHead": [
+  "# Roadmap: small releases every few days",
+  "The one queue (CLAUDE.md \"Problems, plans and the roadmap\"): rows cite problems.md ids or a plan file. P = player impact, S = server impact; order (maintainer 11-05): server works → performance → one rule → game gaps; economy second, right after 1b, clan aggregate in 1b (maintainer 11-11); Who: ivan / slava, empty = free (name and push first). 5's CMB items before the typed core."
+ ],
+ "roadmapTail": "\n",
+ "groups": [
+  {
+   "key": "1a",
+   "header": "## 1a. Bug fixes from release 1's final runs (maintainer 11-10)",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "1b",
+   "header": "## 1b. Parties and spots, split by kind (maintainer 11-09/10: one kind per release)",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "2",
+   "header": "## 2. Economy (a redesign: target-architecture/economy.md; maintainer 11-07: no economy work outside it; 11-11: second, after 1b)",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "3",
+   "header": "## 3. The server works: owners, handovers, failures that show",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "4",
+   "header": "## 4. Main thread and memory for 3-5k bots",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "5",
+   "header": "## 5. One rule hot and cold",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "6",
+   "header": "## 6. Game gaps vs C4",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "7",
+   "header": "## 7. Value safety (DB migrations; after the named-migration scheme is agreed with Slava)",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "8",
+   "header": "## 8. Parties like players (maintainer 11-08: after the economy release)",
+   "table": [
+    "| Item | P | S | Who |",
+    "|---|---|---|---|"
+   ]
+  },
+  {
+   "key": "large",
+   "header": "## Large, own plan",
+   "table": null
+  }
+ ],
+ "rules": [
+  {
+   "sec": "economy",
+   "only": [
+    "2",
+    "large"
+   ],
+   "decision": "M2"
+  }
+ ],
+ "gates": {
+  "default": [
+   "ci",
+   "trace",
+   "ab",
+   "report"
+  ],
+  "plan": []
+ },
+ "lastRender": {
+  "problems": "a8622f17e109b0537def43bf90d1ad1e494a62a0",
+  "roadmap": "c34f6f12caec58be8b355a214c8a5bc8d8c0f752"
+ }
+}
