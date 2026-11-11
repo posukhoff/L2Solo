@@ -1,0 +1,17 @@
+{
+ "key": "1b.0c",
+ "group": "1b",
+ "order": 17,
+ "type": "fix",
+ "st": "planned",
+ "title": "1b.0c bug: melee bot stands beside its drop",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [],
+ "cap": null,
+ "gates": {},
+ "steps": [
+
+ ]
+}
