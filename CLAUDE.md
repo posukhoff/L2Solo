@@ -10,7 +10,7 @@ Start with this file, `planning/architecture/README.md` and the touched area of 
 |---|---|
 | Any code change | coding.md: applicable domain, style, tests and hard-rule detail |
 | Worktree, merge, fork or CI | git.md, testing.md |
-| Planning / review | agents.md, planning.md; touched map and plan |
+| Planning / review | agents.md, planning.md; touched map and plan; `node .claude/lc.js status` |
 | Runtime/benchmark/release | testing.md, release.md, planning/perf-tooling/test-recipe.md |
 
 The files above are under `.claude/workflow/`. This entry point and routes.md control workflow cadence; detailed references preserve project-specific engineering policy. If a detailed reference describes the old universal review or audit cadence, routes.md supersedes that cadence only. No gameplay, security, performance or release gate is relaxed.

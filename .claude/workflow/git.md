@@ -21,7 +21,8 @@
 - `origin` = `pmbstyle/L2Solo` (shared, I have push), `fork` = `posukhoff/L2Solo` (my staging area and CI runner).
 - `ivan/next-release` is the release branch: finished work goes to `origin` only by a PR from it into `develop`; only
   a fix for the released game goes into `main`. The integration branch of the release being built is
-  `ivan/batch-<n>` or the landing branch the session names (local + fork); a worktree branch lands on it as one commit
+  `ivan/batch-<n>` or the landing branch the session names (local + fork; scripts read it with `lc get <release> branch`,
+  never a hardcoded name); a worktree branch lands on it as one commit
   per step, squashed by the main session (`git merge --squash`), never a merge commit or the agent's commit series.
 - One coordinator lands queued reviewed topics in readiness order; agents do not chase the moving batch. Stack only on a topic with a passed review and green PR checks; else CI on the integration head alone. After a landing, move the rest with `record-rebase --base <parent> --from-head <old-tip> --evidence <recheck>`: the same patch on a base that left its files unchanged keeps its review and old-code evidence; otherwise they are redone; SHA receipts never carry. `.claude/ci-dispatch.sh` sends both CI runs. No blind reset --soft onto a moving ref. Full CI after a passed review unless overlap saves time.
 - No regroup (maintainer 2026-11-10): the integration branch's commits go to `ivan/next-release` as they are, so each
