@@ -83,10 +83,7 @@
   {
    "key": "1a",
    "header": "## 1a. Closed at 3c164d3cc (2026-11-11)",
-   "table": [
-    "| Item | P | S | Who |",
-    "|---|---|---|---|"
-   ]
+   "table": null
   },
   {
    "key": "1b",
