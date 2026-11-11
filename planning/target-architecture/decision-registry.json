@@ -4464,11 +4464,6 @@
     "home": "build via goal_affordable + offer_posted (buyer wait), step 6 (§6 step 5 deletes the 15 min buyer retry)",
     "note": "marketRetryAfter = ColdMarketService.RETRY_DELAY_MS 15 min: purchase re-tried by time."
   },
-  "src/GameServer/Bot/Goals/GoalExecutor.js|clock|if (Number(ticket?.until) > 0 && Number(ticket.until) <= timestamp)": {
-    "class": "deadline",
-    "home": "patience_out (party market absence reservation, PartyMarketBreak RESERVATION_MS), step 7",
-    "note": "Return ticket until set once at departure; expiry checked when the next trip starts."
-  },
   "src/GameServer/Bot/Goals/GoalExecutor.js|literal|stats: { ...state.stats, marketReturn: null, partyMarketReturn: null, restUntil: timestamp + 30000 },": {
     "class": "execution",
     "home": "",
@@ -6394,7 +6389,7 @@
     "home": "",
     "note": "war supply ticket / absence expiry"
   },
-  "src/GameServer/Bot/Population/PartyMarketBreak.js|clock|return Object.values(party?.stats?.marketAbsences || {}).filter(value => Number(value.until) > now);": {
+  "src/GameServer/Bot/Population/PartyMarketBreak.js|clock|const held = (token, now) => Number(token?.until) > now;": {
     "class": "execution",
     "home": "",
     "note": "war supply ticket / absence expiry"
@@ -8169,5 +8164,10 @@
     "class": "deadline",
     "home": "shot craft series kit hold (develop merge)",
     "note": "30-min hold of the crystal-source gear bought for a shot series; a window without a situation (DV-3), limits row Shot craft series"
+  },
+  "src/GameServer/Bot/Population/PartyMarketBreak.js|clock|durationMs: startedAt > 0 ? now - startedAt : undefined });": {
+    "class": "diagnostics",
+    "home": "",
+    "note": "stay trip end trace duration"
   }
 }

@@ -46,6 +46,7 @@ const ALLOWED = {
     'architecture/tables.md': 28,
     'architecture/e2e.md': 12,
     'architecture/problems.md': 108, // one line per open problem; code names in backticks for check.js
+    'architecture/findings-1a.md': 16, // release-scoped [tail] findings of reviews/audits; sorted out at the release boundary
     'target-architecture/plan.md': 8,
     'target-architecture/situations.md': 8,
     'target-architecture/economy.md': 60,

@@ -2,6 +2,7 @@
 
 ## Problems, plans and the roadmap
 
+- Review/audit [tail] findings: `findings-<release>.md`, sorted out at the release boundary (maintainer 11-11).
 - One problem = one line in `architecture/problems.md`, whatever found it: id | origin | rule | file:line | what is
   wrong → impact | fix | tag. A problem already there gets the new finder's id merged into its line. Other files cite
   the id, never copy the evidence. At the next task boundary each new line is tagged `[rN]` (a roadmap row of release N

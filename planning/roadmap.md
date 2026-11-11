@@ -3,17 +3,9 @@ The one queue (CLAUDE.md "Problems, plans and the roadmap"): rows cite problems.
 ## 1a. Bug fixes from release 1's final runs (maintainer 11-10)
 | Item | P | S | Who |
 |---|---|---|---|
-| Shop step the buyer cannot pay re-taken at once: RM-31 | mid | low | |
-| Bots pop in inside the player's view: DT-202 | **high** | low | |
-| Earning spot owner (root flips, none answer, kit spot): DT-196, DT-122, DT-194 | **high** | low | |
-| Hot bodies stuck before a gatekeeper: DT-173 | **high** | low | |
-| One NPC-only book sends a bot to town: DT-174; merchants killed by bots: DT-181 | **high** | low | |
-| Unbuyable sell lines: DT-197; luxury exchange churn on item 90: DT-208 | mid | low | |
-| Buy-ad re-posts, refusals counted as failures, hot buy catch: DT-201, DT-200, DT-207, DT-146, DT-187 | low | mid | |
-| Refusal memory leftovers, offer_posted: DT-203, DT-204, DT-205, DT-123 | low | low | |
-| Ready: RM-3 (ivan/w-input-versions 34cd3452f); Orc Shaman staff + funded weapon bridge (ivan/shaman-weapon b842ebdb0, 9008fe288) with a table rebuild (reword DT-132 then), re-measure RM-32 | mid | low | |
-| Confirm from a run's DB, else fix: RM-22, RM-23, DT-169; world test: RM-20 | mid | low | |
-| Rules audit of release 1's diff (maintainer 11-08): one read-only pass per hard rule 0-14; findings fixed or logged | mid | mid | |
+| Main still judges "could it bid" for its withdraw: DT-231 | mid | mid | |
+| World test: RM-20; perf recorder misses partial starvation: DT-238; crystal/shot ping-pong and round-trip: DT-247, DT-248 | mid | low | |
+| Rules audit findings (11-11, 3 sampled passes over release 1's diff): RA1-2, RA3-2, RA3-3 (RA2-1/RA2-2 landed); [tail] findings in architecture/findings-1a.md | mid | mid | |
 ## 1b. Parties and spots, split by kind (maintainer 11-09/10: one kind per release)
 | Item | P | S | Who |
 |---|---|---|---|

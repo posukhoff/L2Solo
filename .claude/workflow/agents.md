@@ -19,7 +19,7 @@
   labels each change stays (part of the target) / temporary (the comment and the commit name what replaces it, e.g.
   "temporary: until the town plan owns the sell stop") / throwaway (only when without it something breaks now), and
   names every deviation.
-- Reports ≤ 400 words (a brief's own limit wins): what changed with file:line, decisions, problems, the hard-rule line
+- Cost is context × turns: reports ≤ 250 words (a brief's limit wins); briefs carry handles; targeted tests only; a fix round is a new narrow agent, never a resumed one; low-risk mechanical work may use a cheaper model; the coordinator batches calls and hands off past ~200 k context. Reports: what changed with file:line, decisions, problems, the hard-rule line
   (`0 ok, 3 violation file:line …`, rule 0 for every mechanism added) and `rules-check` output. An "ok" needs its evidence: rule 4/5 the concept search and
   its hits, rule 6 the cost in numbers; an answer without it counts as unanswered. Reports to me separate what an agent
   claims from what a review confirmed.
@@ -30,14 +30,11 @@
   - a change that moves how bots spread over shared things (spots, market, parties) is first run as an offline
     simulation on real data (the save's population, the real tables and pure code) in the scratchpad, comparing variants
     by numbers (share over capacity, peaks, trips, oscillation, value); the design is picked from those numbers;
-  - the main session checks the plan against rules 0, 1, 2, 14 and the brief;
+  - the main session checks the plan against rules 0, 1, 2, 14 and the brief; an item failing them is dropped or replaced with the reason, even when already decided or implemented;
   - the implementer follows it; the review checks diff vs plan and rules, and asks per fix: cause removed or symptom
     hidden?
   - review fixes go to a NEW narrow agent; the second review checks those fixes and related regressions. After two rounds unresolved blockers stop the task; the coordinator chooses replan, split or defer. Unrelated findings go to problems.md. A fix that
     reveals another copy of the same concept means the concept search was incomplete: merge all copies in that fix.
-- A plan item (a situation, a wake, a design choice) that fails rule 0, 1, 2 or 14 is dropped or replaced with the
-  reason, before or after it is implemented; being decided does not settle it. Before a step is implemented its plan
-  (wakes, decisions, commits) is checked against those rules first.
 - A review agent's brief says "read /Users/iposukhoff/L2Solo/CLAUDE.md and the relevant /Users/iposukhoff/L2Solo/.claude/workflow/ references from disk (the copy in your context may be older); check the task's policy digest (`node /Users/iposukhoff/L2Solo/.claude/workflow.js status <slug>`) and answer every hard rule first (ok with evidence, violation file:line, or N/A with its reason)".
 - Review findings are triaged before any fix (fix now / temporary / belongs to step N / reject with reason); rule 0
   first: a fix that costs more than the harm it prevents is rejected (or the feature that caused it removed). A number

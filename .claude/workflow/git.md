@@ -8,7 +8,7 @@
 - Planning, a closed list (`planning/hygiene.js` `ALLOWED` fails on any other file): `roadmap.md` the one queue
   (numbered releases, rows cite ids); `architecture/`: `README.md` (index, how the map is kept, category passes), area
   maps `bot-ai.md` `combat.md` `economy.md` `population.md` (with the situations mechanism) `persistence.md` `world.md`
-  `tables.md` `e2e.md`, `limits.md`, `problems.md` (every open problem), `check.js`; `target-architecture/`: `plan.md`
+  `tables.md` `e2e.md`, `limits.md`, `problems.md` (every open problem), `findings-<release>.md`, `check.js`; `target-architecture/`: `plan.md`
   (principles and large plans), `situations.md` (maintainer answers still binding), `economy.md` (release 7 design),
   `memory.md` (memory census), `step.md` (the open roadmap step's plan, only while one is open),
   `decision-registry.js/.json`; `perf-tooling/test-recipe.md`; `hygiene.js`, `rules-check.js`, `tests-for.js`,
@@ -23,7 +23,7 @@
   a fix for the released game goes into `main`. The integration branch of the release being built is
   `ivan/batch-<n>` or the landing branch the session names (local + fork); a worktree branch lands on it as one commit
   per step, squashed by the main session (`git merge --squash`), never a merge commit or the agent's commit series.
-- One coordinator lands queued reviewed topics; agents do not chase the moving batch. Freeze integration parent for candidate CI/landing. If moved, rebuild/recheck cause, owner and scope; `record-rebase --base <parent> --from-head <old-tip> --evidence <recheck>` archives and clears receipts. No blind reset --soft onto moving ref. Full CI after review/candidate freeze by default; overlap only for expected wall-time gain.
+- One coordinator lands queued reviewed topics in readiness order; agents do not chase the moving batch. Stack only on a topic with a passed review and green PR checks; else CI on the integration head alone. After a landing, move the rest with `record-rebase --base <parent> --from-head <old-tip> --evidence <recheck>`: the same patch keeps its review (and old-code evidence when the base left its files unchanged); a changed patch re-plans; SHA receipts never carry. `.claude/ci-dispatch.sh` sends both CI runs. No blind reset --soft onto a moving ref. Full CI after a passed review unless overlap clearly saves time.
 - No regroup (maintainer 2026-11-10): the integration branch's commits go to `ivan/next-release` as they are, so each
   lands in its final form: one per step or bug, review fixes and their tests folded in before it is pushed, a message
   that says what changed in the game. A fix found after the push is its own commit naming the bug it fixes, never "fix

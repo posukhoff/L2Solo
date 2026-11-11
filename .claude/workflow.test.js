@@ -4,7 +4,7 @@ const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').re
 const execute=new Function('require','process','__dirname','console','Buffer',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
 let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false, receiptSha='head';
-let current=head, notAncestor=false, rebasePathsMatch=true;
+let current=head, notAncestor=false, rebasePathsMatch=true, samePatch=false, baseTouchesTask=true, pidSeq=0;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:()=>true,mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
 const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':id==='6'?'tests/b/+test_basic':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'||id==='6'?'Picked tests':'PR checks',jobs:id==='2'||id==='6'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
@@ -14,10 +14,12 @@ const exec=(p,a)=>{
         if(a[0]==='merge-base'){if(current===landed&&notAncestor)throw Error('not ancestor');return '';}
         if(a[0]==='rev-parse'){
             if(a.includes('--git-common-dir'))return '/git';
-            if(a[1]==='--verify')return a[2].startsWith('new-parent')?other:a[2].startsWith('old-topic')?head:base;
+            if(a[1]==='--verify')return a[2].startsWith('new-parent')?other:a[2].startsWith('old-topic')?head:a[2].startsWith('int-landed')?landed:a[2].startsWith('int-other')?other:base;
             if(a[1]==='HEAD')return current;
             if(a[1].endsWith('^{tree}'))return a[1].startsWith(other)?'other-tree':'same-tree';
         }
+        if(a[0]==='patch-id')return samePatch?'pid-same x':'pid-'+(pidSeq++)+' x';
+        if(a[0]==='diff'&&a.includes('--')&&!baseTouchesTask)return '';
         if(a[0]==='diff')return a.includes('--name-only')?(a.includes(other)&&!rebasePathsMatch?'src/other.js':'src/foo.js'):'M\tsrc/foo.js';
     }
     if(p==='gh'&&a[1]==='download'){
@@ -66,10 +68,13 @@ expect('regression',cmd('record-regression','x','--test','test_basic.js','--old'
 expect('geodata gap',cmd('ready','x'),1,'test_geodata.js');
 expect('picked CI',cmd('record-ci','x','--run','2'),0,'');
 expect('ready',cmd('ready','x'),0,'"taskReady": true');
-current=other;expect('different tree rejected',cmd('record-land','x'),1,'differs');
-current=landed;notAncestor=true;expect('same tree receipt on a squash outside the base history',cmd('record-land','x'),0,'reviewedHead');notAncestor=false;
+expect('landing names the integration ref',cmd('record-land','x'),1,'requires --ref');
+expect('different tree rejected',cmd('record-land','x','--ref','int-other'),1,'does not hold the verified tree');
+notAncestor=true;expect('same tree receipt on a squash outside the base history',cmd('record-land','x','--ref','int-landed'),0,'reviewedHead');notAncestor=false;
+if(JSON.parse(store.get('/git/l2solo-workflow/x.json')).evidence.landed.head!==landed)throw Error('landing must record the ref head');
+console.log('PASS landing records the integration ref head');
 current=head;expect('blocked review invalidates ready',cmd('record-review','x','--result','blocked','--evidence','new blocker'),0,'');
-current=landed;expect('no stale landing',cmd('record-land','x'),1,'No ready receipt');
+expect('no stale landing',cmd('record-land','x','--ref','int-landed'),1,'No ready receipt');
 
 current=head;optionalRaw=true;
 expect('optional raw map not covered by ordinary CI',cmd('ready','x'),1,'Missing optional raw-geodata evidence');
@@ -115,3 +120,29 @@ const rebased=JSON.parse(store.get('/git/l2solo-workflow/rawci.json'));
 if(rebased.base!==other||rebased.brief.base!==other||Object.keys(rebased.evidence).length||!rebased.rebases[0].previous.evidence.rawGeodata)throw Error('rebase did not archive and clear evidence');
 console.log('PASS rebase clears old SHA evidence and retains history');
 expect('rebased task not ready without fresh proof',cmd('ready','rawci'),1,'No passing scoped review');
+
+// A restack of the same change (equal patch-id) carries the review; old-code evidence carries only
+// when the new base left the task's files unchanged; SHA receipts never carry.
+current=head;samePatch=false;baseTouchesTask=true;
+expect('move start',cmd('start','mv','--base','main','--risk','standard'),0,'policy-hash');
+expect('move brief',cmd('record-brief','mv','--file','/brief.json'),0,'true');
+expect('move review',cmd('record-review','mv','--result','pass','--evidence','r1'),0,'');
+expect('move regression',cmd('record-regression','mv','--test','test_basic.js','--old',base,'--evidence','old fail'),0,'');
+current=landed;samePatch=true;
+expect('same patch restack carries the review',cmd('record-rebase','mv','--base','new-parent','--from-head','old-topic','--evidence','restack'),0,'"samePatch": true');
+{const st=JSON.parse(store.get('/git/l2solo-workflow/mv.json'));
+ if(st.evidence.review?.head!==landed||st.evidence.review.carriedFrom!==head)throw Error('review not carried to the new head');
+ if(st.evidence.regressions||st.evidence.ciRuns)throw Error('old-code evidence or CI carried although the base touched the task files');}
+console.log('PASS same-patch restack: review carried, CI and touched old-code evidence dropped');
+expect('restacked task still needs CI and rules',cmd('ready','mv'),1,'Mechanical rules-check missing');
+current=head;samePatch=false;
+expect('move2 start',cmd('start','mv2','--base','main','--risk','standard'),0,'policy-hash');
+expect('move2 brief',cmd('record-brief','mv2','--file','/brief.json'),0,'true');
+expect('move2 review',cmd('record-review','mv2','--result','pass','--evidence','r1'),0,'');
+expect('move2 regression',cmd('record-regression','mv2','--test','test_basic.js','--old',base,'--evidence','old fail'),0,'');
+current=landed;samePatch=true;baseTouchesTask=false;
+expect('untouched files carry old-code evidence',cmd('record-rebase','mv2','--base','new-parent','--from-head','old-topic','--evidence','restack'),0,'"oldCodeEvidence": "carried"');
+{const st=JSON.parse(store.get('/git/l2solo-workflow/mv2.json'));
+ if(st.evidence.regressions?.[0]?.old!==other||st.evidence.regressions[0].head!==landed)throw Error('regression not carried to the new base/head');}
+console.log('PASS same-patch restack carries old-code evidence when the task files are unchanged');
+samePatch=false;baseTouchesTask=true;

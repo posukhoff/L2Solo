@@ -69,7 +69,7 @@ Scope: `Actor`, `Skills`, `Effects`, `Combat`, `Npc`, `RaidBoss`, `Pets`, `Formu
   Corpse-area casts add one target-kind comparison and one existing area-set lookup per recipient, then the same
   hate/assistance reaction as other hostile casts. Enemy-targeted casts short-circuit before that work. The shared
   predicate stays pure; the cold fight's damage-only engagement remains CMB-28.
-- **Effects:** `EffectStore` (authoritative), `EffectStats`, `EffectTicker`, `EffectRestrictions`; `BuffCatalog` legacy.
+- **Effects:** `EffectStore` (authoritative), `EffectStats`, `EffectTicker`, `EffectRestrictions`; `BuffCatalog` legacy. After an effect change the character's UserInfo goes to its own client only, once (`EffectTicker.sendUserInfo`/`ownClient`: none for an NPC; give SP and toggles use it); `refreshStats` rebuilds stats and sends vitals; a toggle's MP tick sends only its StatusUpdate.
   Hot NPC control uses `Npc.interruptCombatActions`: it cancels the current swing/path request and sends
   AutoAttackStop, preserving combat intention, target and every hate entry. The existing combat loop waits on
   restrictions; expiry, damage wake-up and cleanse all release it without a separate resumption path.
