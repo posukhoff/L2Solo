@@ -10,9 +10,12 @@
  "head": null,
  "decisions": [
   "M3",
-  "M4"
+  "M4",
+  "M10"
  ],
- "cap": null,
+ "cap": {
+  "issues": 11
+ },
  "gates": {},
  "steps": [
   {"key":"1b.1","title":"1b.1 architecture, parties on the worker (maintainer 11-10: one release): forming: the region × band seeker pool and the roster verdict on the worker, a new party written by one atomic worker commit; main's forming and recruit passes deleted (DT-44, A-11, DT-46); hot party decisions: members post facts, the worker takes party_stay/party_spot for a party near a player, main executes (DT-49, DT-89, DT-190); DT-209; pays parties-6; DT-244, DT-246, RA1-6","P":"mid","S":"**high**","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
