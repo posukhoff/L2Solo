@@ -2,19 +2,21 @@
 
 ## Problems, plans and the roadmap
 
-- Review/audit [tail] findings: `findings-<release>.md`, sorted out at the release boundary (maintainer 11-11).
-- One problem = one line in `architecture/problems.md`, whatever found it: id | origin | rule | file:line | what is
-  wrong → impact | fix | tag. A problem already there gets the new finder's id merged into its line. Other files cite
-  the id, never copy the evidence. At the next task boundary each new line is tagged `[rN]` (a roadmap row of release N
-  cites it), `[large]` (its own plan) or `[tail]` (small, here only). At each release boundary a `[tail]` whose origin
+- Review/audit findings: `lc add` (they enter triage) or the finder's report to the main session; no findings file.
+- One problem = one lc issue (its line in `architecture/problems.md`: id | origin | rule | file:line | what is
+  wrong → impact | fix | tag), whatever found it; a problem already there gets the new finder's id as an alias. Other
+  files cite the id, never copy the evidence. The tag comes from the issue's place in lc: `[rN]` (a row of release N),
+  `[large]` (its own plan), `[tail]` (small, here only, or triage). At each release boundary a `[tail]` whose origin
   date is two releases old moves to a roadmap row (`[rN]`) or is deleted with its reason (rule 0: not worth its cost);
   `lc tails` lists the due ones (part of the growth diagnosis; maintainer 2026-11-10, sizes as guides 11-11).
-- Planning state: the fork ref `ivan/lifecycle-data`, kept by `node .claude/lc.js` (reference `.claude/lc.md`). Until the cutover
-  acceptance (M12, after 1a) it runs in shadow: these files stay hand-edited, `lc absorb`/`render --out` show drift. After it
-  roadmap.md and problems.md are rendered (`render --write` only with my ok); agents still append problem lines and the
-  main session takes them with `lc absorb`; placing, closing and release state go through lc only.
-- One queue: `roadmap.md`, numbered releases; a row is a label plus ids or a plan file. Done means gone everywhere: the
-  commit that finishes an item deletes its row and its problem lines; obsolete ones go with the reason.
+- Planning state is lc (cutover 2026-11-11): the fork ref `ivan/lifecycle-data`, kept by `node .claude/lc.js`
+  (reference `.claude/lc.md`), is the only source of issues, releases, placement, dependencies and closing. roadmap.md
+  and problems.md are rendered views: never edit them. Create, place, move and close only through lc (`add`, `assign`,
+  `place`, `dep`, `defer`, `land`, `resolve`, `close`, `drop`), then `lc render --write`. `lc absorb` is temporary
+  compatibility for agents not yet on lc. New issues enter triage; `place` uses only unambiguous rules (a row naming
+  the issue, or a maintainer placement rule). An unknown root cause is an investigation, not leave to implement.
+- One queue: `roadmap.md` (rendered), numbered releases; a row is a lc step: a label plus ids or a plan file. Done means
+  archived by lc (land, resolve and close; or drop with its reason and authority) and gone from the views.
 - A roadmap step's plan lives in `target-architecture/step.md` and is deleted when the step lands; its binding
   decisions move first into the map, one clause on the row of the rule each shapes. Maintainer decisions taken outside
   a step go on the problem's line or the plan.md principle they shape.

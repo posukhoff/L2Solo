@@ -1,5 +1,7 @@
 # lc — issue and release lifecycle (reference for `.claude/lc.js`, Workflow V5.2)
 
+Production since the cutover 2026-11-11 (lifecycle-data db1ea74d7): planning/roadmap.md and problems.md are rendered by lc; the shadow-mode and cutover-readiness notes below are history.
+
 lc.js is outside the policy digest on purpose: an lc fix must not void open workflow.js tasks (`workflow.js:117`); `.claude/lc.test.js` guards it (`node --test .claude/lc.test.js`, ~70 s, needs git). Rules it enforces are stated in planning.md and git.md.
 
 Built on frozen Workflow V5.1, which it does not change. CLI: `lc.js` (970 lines, node only) and `lc.test.js` (9
