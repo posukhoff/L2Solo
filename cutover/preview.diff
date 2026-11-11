@@ -1,0 +1,86 @@
+--- a/planning/roadmap.md
++++ b/planning/roadmap.md
+@@ -16,31 +16,31 @@
+ | Item | P | S | Who |
+ |---|---|---|---|
+ | FIRST (maintainer 11-09): D-grade shots never restocked: RM-45 | **high** | low | |
+-| Sure-price owner draft (ivan/economy-prices 94ac9f1cb): DT-67 | high | mid | |
++| Sure-price owner draft (ivan/economy-prices 94ac9f1cb): DT-67; DT-264 | high | mid | |
+ | Fixed buy stores (decide with Slava): RM-15 | high | high | |
+ | Field trade both ways, contention as trade: economy.md "Leanings" | mid | mid | |
+ | One free-units and bids rule: DT-118, DT-145, DT-149, DT-151, DT-162, DT-165, DT-186, DT-188, DT-144, DT-213, DT-218, DT-224, DT-233, DT-240, DT-254, DT-256, DT-258 | mid | low | |
+-| Design inputs: ECO-2, ECO-3, ECO-4, ECO-5, ECO-6, ECO-7, ECO-8, ECO-10 (bid worth), ECO-13, ECO-14, ECO-15, ECO-16, SR-6, SR-7, SR-10, BA-3, PL-11, DT-63, DT-64, DT-66, DT-68, DT-74, RM-14, town-5, DT-22, DT-79, DT-40, PL-6, RA-12, DT-70, DV-6, RM-41, RM-46, DT-219, DT-222, DT-229, DT-249, DT-252 | mid | mid | |
++| Design inputs: ECO-2, ECO-3, ECO-4, ECO-5, ECO-6, ECO-7, ECO-8, ECO-17, ECO-13, ECO-14, ECO-15, ECO-16, SR-6, SR-7, SR-10, BA-3, PL-11, DT-63, DT-64, DT-66, DT-68, DT-74, RM-14, town-5, DT-22, DT-79, DT-40, PL-6, RA-12, DT-70, DV-6, RM-41, RM-46, DT-219, DT-222, DT-229, DT-249, DT-252 | mid | mid | |
+ ## 3. The server works: owners, handovers, failures that show
+ | Item | P | S | Who |
+ |---|---|---|---|
+-| Run tooling (maintainer 11-10): `perf.js --trace` (no reliance on local.ini) and a first-minute self-check (trace, diagnostics, world kept) that stops a wrong run; behaviour runs on fork CI runners in parallel (workflow + saves as an artifact) and on the team VPS; DT-139, DT-167, DT-175, DT-177, DT-210 | low | mid | |
+-| Behaviour bugs: DT-112, DT-120, DT-171, DT-216, DT-220, DT-226, DT-257; placement: DT-129, DT-170, DT-183, DT-173 | mid | low | |
++| Run tooling (maintainer 11-10): `perf.js --trace` (no reliance on local.ini) and a first-minute self-check (trace, diagnostics, world kept) that stops a wrong run; behaviour runs on fork CI runners in parallel (workflow + saves as an artifact) and on the team VPS; DT-139, DT-167, DT-175, DT-177, DT-210; DT-266 | low | mid | |
++| Behaviour bugs: DT-112, DT-120, DT-171, DT-216, DT-220, DT-257; placement: DT-129, DT-170, DT-183, DT-173; RM-51, RM-52, RM-53, DT-263 | mid | low | |
+ | Fence without an owner, activation window: L26, races-R6 | mid | mid | |
+ | Supply errand with two owners: races-R15 | low | mid | |
+ | Hot/cold handover windows: races-R5, races-R7, POP-4, POP-5, POP-22, threads-9, DT-127, DT-223, DT-236, DT-241 | low | mid | |
+ | Cold command dropped without an ack: S3 | low | mid | |
+-| Uncounted failures: threads-4, town-12, parties-12, DT-1, S2, X6, X17, SF-4, DT-130, DT-110, DT-168, DT-212, DT-245 | low | mid | |
+-| Refusals by one classifier hot and cold, not faults: RM-34, DT-142, DT-148, DT-150, DT-234, DT-235, RA3-1 | low | mid | |
+-| Trace gaps: RM-37, DT-86, DT-128, DT-178, DT-179, DT-215, DT-259 | low | mid | |
++| Uncounted failures: threads-4, town-12, parties-12, DT-1, S2, X6, X17, SF-4, DT-130, DT-110, DT-168, DT-212, DT-245; DT-265 | low | mid | |
++| Refusals by one classifier hot and cold, not faults: RM-34, DT-142, DT-148, DT-150, DT-234, DT-235, RA3-1; ECO-18 | low | mid | |
++| Trace gaps: RM-37, DT-86, DT-128, DT-178, DT-179, DT-215, DT-259; RM-47, RM-48, RM-54 | low | mid | |
+ | Main writes far rows on a raise (release 1 exception, rule 15 away, maintainer 11-09): `raiseOnRow`/`raiseOn` → a named raise message the worker applies in its commit; RC-2, RC-4, SF-2, threads-7 | low | mid | |
+-| Situation raises and failures that do not show: RC-2, RC-3, RC-4, SF-1, SF-2, SF-3, SF-5, SF-6, ECO-10 (own move), A-12, BA-6, RA-9, DT-111, DT-147, DT-176 | low | mid | |
++| Situation raises and failures that do not show: RC-3, SF-1, SF-3, SF-5, SF-6, ECO-10 (own move), A-12, BA-6, RA-9, DT-111, DT-147, DT-176 | low | mid | |
+ | One store per membership: parties-13, storage-4 | low | mid | |
+ | One worker restart rule: DT-16, races-R16, DT-98 | low | mid | |
+ | One-time migrations under the governor: DT-2 | low | mid | |
+ | Restart / Logout teardown: X16 | mid | low | |
+ | rules-check after the V5.1 freeze (maintainer 11-11: changes the policy digest): Trade line check RA3-3; design-id CITE check (RA3-2 tail); CITE over commit bodies: RA3-4 | low | mid | |
+-| Flaky tests, CI time, tests of internals: RM-4, DT-15b, TS1, TS2, TS4, RA-14, RA3-5, DT-225, DT-260, DT-262; a comment in a table input costs a rebuild: DT-261 (then DT-132) | mid | low | |
++| Flaky tests, CI time, tests of internals: RM-4, DT-15b, TS1, TS2, TS4, RA-14, RA3-5, DT-225, DT-260, DT-262; a comment in a table input costs a rebuild: DT-261 (then DT-132); RM-55 | mid | low | |
+ | Statement cache cleared by long SQL: DT-51; recorder heap window leak: DT-50 | low | mid | |
+ | Polls standing in for missing events (rule 2): POP-24, POP-25, AI-14, AI-15, threads-5, DT-77, DV-3, DT-185, DT-217, RA1-4 | low | mid | |
+ ## 4. Main thread and memory for 3-5k bots
+--- a/planning/architecture/problems.md
++++ b/planning/architecture/problems.md
+@@ -59,7 +59,7 @@
+ DT-236|dt204 verifier 11-11|10|`ShoppingState.waitForShoppingMeeting` ~322-326 copies `cachedState` over the session|drops quote marks written since the last cache refresh until the next near answer|keep the session's marks|[r3]
+ DT-237|dt204 verifier 11-11|5|`trade_meeting_cancelled` marks nothing; `rememberPriceRefusal` cold buyers only|a hot bot may pick the same meeting quote again (guess)|one price-refusal memory|[r5]
+ ## Parties
+-parties-6|census 11-08|5|cold BotRoute (another camp, else evacuate together) vs hot `HotBackgroundParty` 5 s clock → `HotPartyLifecycle.releaseUnsafeHunt`|a hot party on unhuntable ground dissolves where a far one moves camp|main marks the spot (`PartySpotRiskPolicy.withMark`), asks the worker for a party spot, worker `BotRoute.route`, members `SpotTravel`; delete `releaseUnsafeHunt`, `backgroundUnsafeHunt`, the clock (L)|[r5]
++parties-6|census 11-08|5|cold BotRoute (another camp, else evacuate together) vs hot `HotBackgroundParty` 5 s clock → `HotPartyLifecycle.releaseUnsafeHunt`|a hot party on unhuntable ground dissolves where a far one moves camp|main marks the spot (`PartySpotRiskPolicy.withMark`), asks the worker for a party spot, worker `BotRoute.route`, members `SpotTravel`; delete `releaseUnsafeHunt`, `backgroundUnsafeHunt`, the clock (L)|[r1b]
+ parties-9|census 11-08|4,12|`PersonaPartyPolicy.backgroundIntent` (roll party_intent), `PartyGoalPolicy` participation (roll party), `PartyProgressComparison` partyLean|persona party want: 3 formulas, 2 rolls → crafters join less; unmarked|one lean, one seeded roll per (bot, roster)|[r5]
+ parties-10|census 11-08|4|`PartyRequestPlanner` 198 vs `RequiredPartyFormation` 24 vs PS 1527|"may be grouped now" thrice: raid-supply-held bot as fill; service/market bots kept out on the event path only; `RequiredPartyFormation` holds only `eligible`; `formBackgroundParties(candidates=null)` branch tests only|one predicate in PartyRequestPlanner|[r5]
+ parties-11|census 11-08|4|`BuffServicePolicy` 47 vs `PartyProgressComparison` 180|paid-buff affordability copied|call `affordable`|[r5]
+@@ -166,9 +166,11 @@
+ ECO-6|map 11-03|4|`MarketOpportunity.hotOffers` (no `botCanBuy`), `npcOffers`, `NpcRestockPlan.quoteFor`; offer rows from `ColdNpcPlanningCatalog.buildRows` and `MarketOpportunity.npcOffersAll`|main offer queries bypass `OfferQuery`; quotes read in two more places; two row builders, agreement unverified|OfferQuery|[r2]
+ ECO-7|map 11-03|4|`ItemDisposition.warehouseCandidates` vs `unreservedActorItems` + `isWarehouseCandidate`|warehouse candidates twice; legacy craft return live|one|[r2]
+ ECO-8 (= ECO-9)|map 11-03|0|`TradeService.ratedPrice`, `MarketOpportunity.activeBuyDemandSelfIds`, `findBuyOffers`, `BuyAdPolicy` `legacyEstimate`, `MarketSnapshot` legacy shape; `scripts/{decision,clan-numbers,wish-cache}-parity.js` nobody runs|dead/compat code|delete (parity scripts: or wire in)|[r2]
+-ECO-10|map 11-03|1,2|`DecisionSections.occupationPlanned`; `TradeIntent.wishRows` vs `itemUsefulness`/`worth`|a far bot's own move is no event (`own_move` waits at every far place): a far bot moved without a trip never hears it; a required item's bid worth read two ways|own move as a situation (every reader); one worth|[r3] own move, [r2] bid worth
++ECO-10|map 11-03|2|`DecisionSections.occupationPlanned`|a far bot's own move is no event (`own_move` waits at every far place): a far bot moved without a trip never hears it|own move as a situation (every reader)|[r3]
++ECO-17|map 11-03; split from ECO-10 (M9)|1|`TradeIntent.wishRows` vs `itemUsefulness`/`worth`|a required item's bid worth read two ways|one worth|[r2]
+ ECO-13|map 11-03|4|MarketDemand, MarketTradeDemand, BuyInterestIndex, MarketDemandIndex, ShotTradeDemand, `PriceBelief.demandValue`, MarketCounters|demand sources unclear|one entry|[r2]
+-ECO-14 (= RM-33)|map 11-03; run 11-09|10,8|`invalid_afk_trade_source` 55, `economy_plan_need_changed` 11 (2 h); `ColdEconomyPlan.prepare` → `productionKit`; cold visit bid-limit/withdraw refusals; `Database.reconcileBotPurchasesUnsafe` 4588 `economy_funding_changed`|post-commit plans refused (the craft step can consume a listed stack); bid-limit and withdraw refusals fault (`main_command`); a stale funding input counts as worker fault (`workerFaults` → fault backoff, 1/run)|count, not fault (a stale source is a refused commit, retried)|[r3] fault, [r2] refusals
++ECO-14 (= RM-33)|map 11-03; run 11-09|10|`invalid_afk_trade_source` 55, `economy_plan_need_changed` 11 (2 h); `ColdEconomyPlan.prepare` → `productionKit`|post-commit plans refused (the craft step can consume a listed stack)|input to the economy redesign; no fix chosen|[r2]
++ECO-18|map 11-03; run 11-09; split from ECO-14 (M9)|8|cold visit bid-limit/withdraw refusals; `Database.reconcileBotPurchasesUnsafe` 4588 `economy_funding_changed`|bid-limit and withdraw refusals fault (`main_command`); a stale funding input counts as worker fault (`workerFaults` → fault backoff, 1/run)|count, not fault (a stale source is a refused commit, retried)|[r3]
+ ECO-15|map 11-03|1,7|`EquipmentIncomeRoute.search` → `SpotEconomics.create` `moneyWeight(state)`|the income search reads its own last answer (`hourAdena` × money price) for half of bots|value the weight at the band hour|[r2]
+ ECO-16|review 11-08 (PR #217)|4|`BotLuxuryExchange.eligible` → `dualComponent` 31-42 vs `WishProviders` 641|Luxury dual input re-derived|read the leaf's `combine`|[r2]
+ SR-6 (= RA-13)|pass 11-06|1|EC 286-317 leafOutcome; `Situations.partyHeld`|a visit step judges offers, price, wallet, fees to raise goal_done/failed:visit (the counter's question); party_spot woken by drift|executors raise at the counter; the step checks physical progress|[r2]
+@@ -205,7 +207,7 @@
+ DT-224|rm31 review 11-11|5,4|spends naming no root (`ColdWealthCraftService`, `ShotCraftPolicy`, `ColdShotEconomyService`, `ColdCraftingService`, `ShoppingState`, `TradeIntent`, `WishProviders`)|they match funded rows by ratio: a jewel's second slot spends the first's money|pass the spend's root key|[r2]
+ DT-229|dt146 impl 11-11|4|`ColdSafeEnchantService.enchantSafe` on a scroll release|a second enchant path beside the held enchant improvement|one enchant path|[r2]
+ DT-233|dt201 verifier 11-11|2|buy-ad withdraw on a goal switch to a non-bidding purchase|standing bids withdrawn and re-posted at the next build|decide if a non-bidding goal clears bids|[r2]
+-DT-226|dt187 verifier 11-11|8|`BotImprovementService` enchant `improvement_missing_materials`|2000204/2000895 refused an enchant whose scroll is not in the bag, no warehouse use, no trade: cause not found|find how the step saw the scroll|[r3]
++DT-226|dt187 verifier 11-11|8|`BotImprovementService` enchant `improvement_missing_materials`|2000204/2000895 refused an enchant whose scroll is not in the bag, no warehouse use, no trade: cause not found|find how the step saw the scroll|[tail]
+ DT-240|run 12962fed3 11-11|3|custody of a deferred plan's inputs|a withdrawn input of a deferred (wish_focus) plan sold 59 ms later|decide whether a deferred plan keeps its inputs|[r2]
+ ## Persistence, value safety, clans (rules 3, 10, 12)
+ PER-1 (= races-R13)|map 11-03|10|`World/Generics/PurchaseItems` 37/49 (adena via buffered `deleteItem`, items on setTimeout); basket slot check copies `PickupCapacity.check`|player NPC buy non-atomic: logout → paid, nothing received; refund failure only logged|`purchaseNpcInventoryBasket`|[r7]
+@@ -462,7 +464,7 @@
+ DT-219|dt208 plan 11-10|12|`BotLuxuryExchange.js` 17; `BotCrystallization.choices` 87; `WishProviders.js` 645|the bot luxury recipe drops the C crystals; crystals ranked per crystal, board crystals dropped: lumpy overpay|price the C4 recipe; rank by the need's total cost|[r2]
+ DT-220|hotloop agent 11-10|2|`CompanionEquipmentShopping.js` 97-107|a hot body finding no offer in budget ends the visit unmarked; the same step is re-taken (≤ 4 per bot)|mark the quote as a seller refusal does|[r3]
+ DT-221|dt197 impl 11-10|4|`EconomyContext.js` 300 `tradeRoute`; `WishProviders.js` 1421|inline `fees <= adena` copies of `TripPayment.fareShort`|read fareShort|[r5]
+-RA3-3|rules audit 11-11|14|release-1 src commits (39022cb2c, 5cec83605, c44e1f852, 29b4bfac9 …)|210/252 carry no Trade/Cost line|Trade line checked by rules-check|[r1a]
++RA3-3|rules audit 11-11|14|release-1 src commits (39022cb2c, 5cec83605, c44e1f852, 29b4bfac9 …)|210/252 carry no Trade/Cost line|Trade line checked by rules-check|[r3]
+ DT-249|RC pilot 2 11-11|3|`resale:<root>:item:1785:shopping` plans vs the craft hold of DT-247/248 (e78ad210f)|with e78ad210f Soul Ore buying is ×4.9 base in 15 min (14,382 vs 2,922; top 5 bots 960 each on resale:1464, 48 sold): resale stock may be held by its own craft hold (guess, unverified; runs e78ad210f-script-online-player-20261111-121725 vs 95a12356b-…-082543)|resale is to be redesigned with the economy (maintainer 11-11): check there, not in 1a|[r2]
+ DT-250|RC pilot 2 11-11|2|`BackgroundResolver.js` ~2749 (cold no-spot step, +60 s); `Situations.spotAsk` 488|the cold no-spot wait is a 60 s clock where a released clan waiter and a far bot with no ground now go (limits.md "No-spot wait"); the missing event is the end of the `SpotRiskPolicy` mark (`untilStep`)|wake the bot at the mark's end, delete the 60 s|[r1b]
+ DT-251|RC pilot 2 11-11|2|`ColdSimulationKernel.js` ~1691 (hall-visit placeholder `nextResolveAt` +30 s)|a bot in a clan hall visit with no step is due again every 30 s with an empty patch (a clock, no event)|due at the visit's end or its next event|[r1b]

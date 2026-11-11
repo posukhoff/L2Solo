@@ -1,10 +1,10 @@
-# lc — issue and release lifecycle for L2Solo (v2, after the 11-12 audit)
+# lc — issue and release lifecycle for L2Solo (v2, after the 11-11 audits)
 
 Built on frozen Workflow V5.1, which it does not change. CLI: `lc.js` (970 lines, node only) and `lc.test.js` (9
 behaviour tests on scratch repos with a bare fork and origin). Data: the ref `ivan/lifecycle-data`, an orphan branch
 that is never checked out.
 
-## Architecture (accepted 11-12)
+## Architecture (accepted 11-11)
 
 - **One place per issue.** `issue.at` is a step key, or null for triage/tail. Releases list steps, never issue ids.
 - **One commit per write.** Each write is checked against the fork's copy (`ls-remote`), moved by compare-and-swap (`update-ref new old`), and pushed without force. A refused push undoes the local move.
@@ -12,7 +12,7 @@ that is never checked out.
 - **Views.** `roadmap.md` and `problems.md` render in their V5.1 formats. `render --write` writes temp files first, then commits the data, then renames the files. A failure leaves either the old state or one that a rerun finishes. It refuses hand edits (`absorb` first), budget overruns, and a copy the fork has moved past.
 - **Evidence.** V5.1 records and run directories are read, never written. lc pushes nothing to origin and opens no PR.
 
-## What the 11-12 audit required, and where it is
+## What the 11-11 audit required, and where it is
 
 | Item | How lc meets it | Test |
 |---|---|---|
@@ -29,7 +29,7 @@ that is never checked out.
 | P1 tools | `split` (old id, aliases and history stay; new id records `split from`), `tails` (due two releases on), `step set|move|drop`, `dep` | split …, ledger |
 | P1 rc-tools | `land` and `check-candidate` read B from `RC_BRANCH` or `lc get $RC_RELEASE branch`; no default | manual (tmp/rc-tools) |
 
-## Maintainer decisions recorded (M7–M13)
+## Maintainer decisions recorded (M7–M14, all 2026-11-11)
 
 | Decision | Content | Effect in data |
 |---|---|---|
@@ -39,32 +39,47 @@ that is never checked out.
 | M10 | caps 11 / 8 | both releases are at their cap |
 | M11 | arch gates ci, trace, ab, behaviour, report | `behaviour` needs a verdict naming the recorded A/B runs plus "behaviour: preserved" |
 | M12 | cutover only after 1a and a separate acceptance | — |
-| M13 | records the 1a RC's own closing of RM-20 (row removed 11-11 18:41), so the deletion could be taken in | RM-20 archived; gaps RM-47..50 |
+| M13 | historical approval of closing RM-20 after its world test | RM-20 archived as `completed` (not dropped) with run, verdict and log evidence; follow-ups RM-47..50 |
+| M14 | routing of the 1a RC findings | RM-47/48/54 trace gaps; RM-51/52/53, DT-263 behaviour bugs; RM-55 flaky tests; DT-265 uncounted failures; DT-266 run tooling; DT-264 sure-price owner; RM-49, RM-50 triage |
 
 Seed decisions M1–M6 carry no `allows`, so they authorize nothing.
 
-## Migration check (real data)
+## Investigation status
 
-- **Original import.** All 452 lines accounted for: 451 open, RM-20 archived. 48 alias heads unchanged. Fields differ only for DT-121, RM-45 and DT-128 (edited by the RC) and for ECO-10 and ECO-14 (split). No dependencies exist in planning, and none were added.
-- **Against today's planning** (`lc import --compare`). No id missing, no alias difference. The remaining differences are exactly the decisions: tags of parties-6, ECO-10, ECO-14, DT-226, RA3-3, and the split lines and rows.
-- **Not yet in planning.** Writing those differences into planning/ was blocked by the auto-mode permission check, because the 1a RC writes those files too. The ready render is `lc render --out <dir>`.
-- **Triage (14).** DT-226 (M8), plus 13 lines the RC added at 18:41 tagged [r3]/[r2] that no roadmap row names: RM-47…55, DT-263…266. The view keeps the finder's tag until a row or rule places them.
+RM-51, RM-52, RM-53, DT-263 and DT-264 carry `why: investigation: cause unverified`, so a hypothesis is not a cause. A cause becomes verified only through `lc resolve`, which needs V5.1 evidence: a regression test (old fails, new passes) in a task whose brief names the id, or a run verdict naming it.
 
-## V5.1 task ledger (`tasks.jsonl`, the 96 records unchanged)
+Limit: `assign` clears `why`. Moving such an issue again needs the note set again; no CLI feature was added for this (maintainer 11-11).
+
+## Triage (3)
+
+- **DT-226** (M8): investigate first.
+- **RM-49**: its only site, `ClanPartyHelp.request`, is what 1b.2 replaces with `clan_call`. It becomes obsolete or re-aimed after 1b.2, and is not added to 1b.2.
+- **RM-50**: checked, a fixture rather than a growth defect, so not split. At x50, level 1 needs a ledger of ≥ 6.54 M; worlds hold at most 4.38 M, with no blocked advance.
+
+## V5.1 task ledger (`tasks.jsonl`)
+
+The ledger serves history and cleanup only. `land`, `resolve` and `gate` read each task's own V5.1 record, never this ledger, so a patch-id match is not review, CI or regression evidence.
 
 | Class | Count | Rule |
 |---|---|---|
-| landed | 53 | 34 by their own record-land on an integration branch, 19 by the same patch-id as one of those |
-| superseded | 35 | a later landed record of the same family |
-| abandoned | 5 | dt123, n-shaman, v4-refuted, wf-clitest, wf-prtest: no landing in the family |
-| refuted | 2 | V5.1 close |
-| release-gate | 1 | release-1a-ci, kept open |
+| landed | 53 | 34 own record-land on an integration branch, 19 by patch-id |
+| superseded | 35 | |
+| abandoned | 5 | |
+| refuted | 2 | |
+| release-gate | 1 | |
 
-A record-land head on no integration branch would be `landed-test`; there are none today.
+## Cutover readiness (2026-11-11 20:20)
 
-## Open
-
-- Applying the decision diff to planning/ (needs a permission or the RC).
-- Placing the 13 RC lines and DT-226.
-- Pruning both views to budget (roadmap 13/12 KB, problems 117/108 KB) before cutover.
-- Cutover after 1a (M12).
+- **No lost ids.** All 452 original ids are open or archived (RM-20). All 464 ids in today's planning are open in data. `onlyInData` holds ECO-17 and ECO-18.
+- **Exact diff.** `cutover/preview.diff` (planning → render) has 9 roadmap rows, 6 changed problem lines and 2 new ones. Nothing else differs.
+- **Not ready.** The 1a RC still runs: a hot B run is in progress, and its log and session were active at 20:10. It plans new 1b lines (crash, the 2001104 loop) and V5.2.
+- **Planning files** are untouched by lc (maintainer: no edits while the RC works).
+- **Sequence after 1a closes:**
+  1. `lc sync`
+  2. `lc absorb` (the RC's new lines and edits)
+  3. `lc check`
+  4. `render --out`
+  5. compare with the planning files
+  6. acceptance
+  7. prune both views to budget (roadmap 13/12 KB, problems 117/108 KB); `render --write` refuses until then
+  8. `render --write`
