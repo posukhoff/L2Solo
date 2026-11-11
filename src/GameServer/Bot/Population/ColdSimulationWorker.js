@@ -139,7 +139,7 @@ const ColdNpcPlanningCatalog = require('./ColdNpcPlanningCatalog');
 const TableMirror = require('./TableMirror');
 const { BoardIndex, recordOf, escrowOf } = require('../../AfkTrade/BoardIndex');
 const ColdPvpResolver = invoke('GameServer/Bot/Population/ColdPvpResolver');
-const { MarketBuyerWaiters, lineEvents } = require('../Economy/MarketBuyerWaiters');
+const { MarketBuyerWaiters, lineEvents, boardWake: wakeOnBoard } = require('../Economy/MarketBuyerWaiters');
 const SpotIndex = require('../AI/SpotIndex');
 const SpotService = require('../AI/SpotService');
 const SpotValueTable = require('../AI/SpotValueTable');
@@ -197,8 +197,11 @@ const economyDiagnostics = require('../Economy/EconomyDiagnostics');
 const MarketCounters = invoke('GameServer/Bot/Economy/MarketCounters');
 const Trace = require('../DecisionTrace');
 const boardIndex = new BoardIndex({ groupOf: MarketCounters.counterOf });
+// The board's situations on a bot, far or near (MarketBuyerWaiters.boardWake): a near
+// body's is answered by its near decision (occupationOwnerChanged).
+const boardWake = (ownerId, name, payload = null) => wakeOnBoard(kernel, occupationOwnerChanged, ownerId, name, payload);
 const buyerWaiters = new MarketBuyerWaiters({
-    wake: (id, offer) => kernel?.stepWake(id, 'offer_posted', offer) === true,
+    wake: (id, offer) => boardWake(id, 'offer_posted', offer),
     capped: () => Situations.note('board:wait:capped')
 });
 // The bot's board wants follow its held card (record.wishAdvisory): a card held anew (a
@@ -939,18 +942,6 @@ function changedItems(previous, next) {
         occupationPlanner.sourceChanged(id); occupationPlanner.groupChanged(MarketCounters.counterOf(id));
     }
 }
-// An own line's situation (line_undercut, goal_done:line) on its bot owner: a far
-// bot hears it at its next step (kernel.stepWake); a near body's mind, the worker's,
-// takes it now and the body's decision answers it on the post it asks.
-function lineWake(ownerId, name) {
-    const entry = kernel?.states.get(ownerId);
-    if (entry?.state.phase !== 'hot') return kernel?.stepWake(ownerId, name) === true;
-    const stats = Situations.raise({ ...entry.state.stats }, name, null, Situations.bodyPlace(entry.state), ownerId);
-    if (stats.situationSeq === entry.state.stats?.situationSeq) return false;
-    entry.state = { ...entry.state, stats };
-    occupationOwnerChanged(ownerId);
-    return true;
-}
 // A bot's buy-order escrow: the sum of its board records' escrow (row[9]),
 // kept as the board rows apply (BotAfkMarketService.buyOrderEscrow on main).
 const escrowByRecord = new Map(), escrowByOwner = new Map();
@@ -1034,7 +1025,7 @@ tables.watch('board', {
         if (!boardReplacing && tables.ready('board')) {
             const record = recordOf(row);
             buyerWaiters.recordChanged(record, previous);
-            lineEvents(record, previous, boardIndex, lineWake, () => Situations.note('board:undercut:capped'));
+            lineEvents(record, previous, boardIndex, boardWake, () => Situations.note('board:undercut:capped'));
         }
     },
     remove: (key) => {
