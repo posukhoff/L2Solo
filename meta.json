@@ -82,7 +82,7 @@
  "groups": [
   {
    "key": "1a",
-   "header": "## 1a. Bug fixes from release 1's final runs (maintainer 11-10)",
+   "header": "## 1a. Closed at 3c164d3cc (2026-11-11)",
    "table": [
     "| Item | P | S | Who |",
     "|---|---|---|---|"

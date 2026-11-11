@@ -1,0 +1,41 @@
+{
+ "key": "1a",
+ "group": "1a",
+ "order": 10,
+ "type": "fix",
+ "st": "validated",
+ "title": "1a. Bug fixes from release 1's final runs (maintainer 11-10)",
+ "branch": "ivan/batch-1a",
+ "base": "9d6bf579a1fae698340fa0e0c10d9540a8adb1a5",
+ "head": "3c164d3ccd7cfda9cd3e1b627e00efed11e13384",
+ "decisions": [
+  "M15"
+ ],
+ "cap": null,
+ "gates": {
+  "ci": {
+   "runs": [
+    "43039191186",
+    "43034678746"
+   ],
+   "task": "release-1a-ci (V5.1)"
+  },
+  "trace": {
+   "run": "l2solo-perf-3c164d3cc-script-online-player-20261111-144517",
+   "verdict": "tmp/rc-tools/gate3-verifier.md",
+   "waived": "pre-existing invariant misses (maintainer 18:10)"
+  },
+  "ab": {
+   "verdict": "tmp/rc-tools/ab-final.md"
+  },
+  "report": {
+   "file": "tmp/release-1a-report.md"
+  }
+ },
+ "validatedAt": "2026-11-11T19:20:00.000Z",
+ "published": null,
+ "flow": "V5.1 (old flow), recorded by M15",
+ "steps": [
+
+ ]
+}
