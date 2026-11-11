@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.." || exit 1
 mode="${1:---dry-run}"
 [[ "$mode" == "--dry-run" || "$mode" == "--apply" ]] || { echo "usage: $0 [--dry-run|--apply]" >&2; exit 2; }
 git fetch -q --prune --multiple fork origin
-keep=(main ivan/next-release perf-tooling ivan/workflow ivan/workflow-v2)
+keep=(main ivan/next-release perf-tooling ivan/lifecycle-data ivan/workflow-v5.2 ivan/workflow ivan/workflow-v2)
 refs=$(git ls-remote --heads fork)
 # One query for the recent runs (one call per branch took ~1 s each: 460 branches, ~10 min). A failed query aborts.
 runs=$(gh run list -R posukhoff/L2Solo --limit 1000 --json headBranch,headSha,status,createdAt)

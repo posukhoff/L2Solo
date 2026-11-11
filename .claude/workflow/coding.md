@@ -69,7 +69,7 @@ symptom showed). The direction is one mechanism per rule.
   readers and writers; positional slots (`money[2]`) and sentinel values (`-1`) live only inside that owner.
 - A bot state object is replaced, not edited in place; code that must edit one owns it, and no cache keyed by object
   identity reads it while it changes.
-- Tails found but not fixed (duplicate path, dead code, half-migration): a problems.md line, not a fix inside an
+- Tails found but not fixed (duplicate path, dead code, half-migration): an lc issue (`lc add`), not a fix inside an
   unrelated change.
 - Code merged from another branch that breaks these rules is rewritten to them in its own commit that says what it
   brings in line and why (the merge commit stays a plain merge).

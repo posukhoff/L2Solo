@@ -26,7 +26,7 @@
   to the release head.
 - Architecture passes: after every develop update merged in, one read-only agent reviews that diff against these rules
   and the map (parallel paths, call-site patches, a rule with two owners, a decision on the wrong thread, limits,
-  silent failures, C4); findings go to problems.md and are fixed by porting (git.md). Whole-code passes rotate, 2-3 categories per
+  silent failures, C4); findings become lc issues (`lc add`) and are fixed by porting (git.md). Whole-code passes rotate, 2-3 categories per
   release (dead branches, dormant, fields, logic, silent failures, step cost, purity, client, races, tests, tables,
   data vs C4), near the release's end; last run per category in the map's README.
 

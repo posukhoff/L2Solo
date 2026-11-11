@@ -1,6 +1,6 @@
 # Architecture map
 
-Checked at 9d6bf579a (2026-11-10).
+Checked at 3c164d3cc (2026-11-11).
 
 What exists, who owns each rule, which path is canonical. First survey: t106dev (now `ivan/next-release`) @ 9f27b7fa,
 2026-11-03, six read-only passes. Line numbers drift; search by name. Read the file of the area you touch before
@@ -33,7 +33,7 @@ recorder, `[Perf] live`; `Threads`, `CpuProfile`, `HeapProfile`, `ChunkWorker`),
 `WorkerHeapTelemetry`'s GC observer for its handle; report takes window deltas); report and compare leave a starved
 CPU chunk out and count it (limits.md "Recorder thresholds").
 
-**How the map is kept.** Current state only (no history, no "was/now", no step or decision ids): an area line states the rule as built, a binding decision is one clause on the row of the rule it shapes; open problems live only in problems.md (an area row cites its id); a paid problem's line is deleted; history is git (`git log -S <id>`). A change that settles an owner, removes a path, pays a problem or adds or changes a limit updates the touched entry in the same commit; review checks it (a change that should have
+**How the map is kept.** Current state only (no history, no "was/now", no step or decision ids): an area line states the rule as built, a binding decision is one clause on the row of the rule it shapes; open problems live only in lc (problems.md is its rendered view; an area row cites the id); a paid problem is closed through lc, never by deleting its line; history is git (`git log -S <id>`). A change that settles an owner, removes a path, pays a problem or adds or changes a limit updates the touched entry in the same commit; review checks it (a change that should have
 moved the map and did not is a finding). Before each release: `node planning/architecture/check.js` (lists every quoted code name that is no
 longer in `src/`, `scripts/`, `tests/`, `config/`, `database/` or `launcher/main`; a name followed by "(proposed)" or
 "(C4" and lines recording removed code are skipped), then a refresh scoped by `git diff <Checked at sha>..HEAD`:
@@ -42,7 +42,7 @@ update only the touched entries, delete paid items, set "Checked at" to the rele
 ## Category passes
 
 A category pass reads the whole code for one kind of fault and is refreshed every few releases (not at each release).
-A pass writes each finding as a problems.md line (verify before acting; a problem already there gets the pass's id merged into its line, not a second line); a fixed problem's line is deleted in the commit that fixes it. Open lines re-checked against ivan/combo5 9c34e6fbf (2026-11-08).
+A pass files each finding as an lc issue (`lc add`; verify before acting; a problem already there gets the pass's id as an alias, not a second issue); a fixed problem is closed through lc (land, resolve, close). Open lines re-checked against ivan/combo5 9c34e6fbf (2026-11-08).
 
 | Category | Last run |
 |---|---|

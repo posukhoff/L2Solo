@@ -1,0 +1,33 @@
+#!/bin/zsh
+# vps-run <sha> <job-id> [--minutes N] [--dry-run] : pushes <sha> to the VPS repo, waits until ~/perf/current is absent,
+# launches the online-player traced job (tracejob.sh) detached, and confirms within 60 s that ~/perf/current == job.
+# It does not wait for the end: use wait-vps <job-id>.
+# Exit 0 launched and seen; 1 launch not confirmed (prints the job's status.json); 2 usage/unknown sha; 3 push failed.
+# ssh errors while waiting count as "not yet", never as "free": only the literal answer ABSENT frees the VPS.
+set -u; setopt extendedglob
+dry=0; min=; a=()
+while (( $# )); do case $1 in --dry-run) dry=1;; --minutes) min=${2:-}; shift;; *) a+=($1);; esac; shift; done
+(( ${#a} == 2 )) && [[ ${a[1]} == [0-9a-f](#c7,40) ]] && [[ -z $min || $min == <-> ]] || { echo 'usage: vps-run <sha> <job-id> [--minutes N] [--dry-run]'; exit 2; }
+sha=$a[1]; job=$a[2]; [[ $job == [A-Za-z0-9._-]## ]] || { echo "bad job id"; exit 2; }
+repo=/Users/iposukhoff/L2Solo
+git -C $repo cat-file -e "$sha^{commit}" 2>/dev/null || { echo "unknown commit $sha"; exit 2; }
+full=$(git -C $repo rev-parse $sha)
+q() { ssh -o ConnectTimeout=15 -o BatchMode=yes l2solo-perf "$1" 2>/dev/null; }
+push=(git -C $repo push -q l2solo-perf:/home/l2/perf/l2solo.git ${full}:refs/perf/${full})
+launch="MINUTES=${min:-10} setsid nohup bash ~/perf/tracejob.sh $full $job </dev/null >~/perf/launch-$job.log 2>&1 &"
+if (( dry )); then
+  echo "DRY: ${push[*]}"
+  echo "DRY: poll until ssh l2solo-perf 'test -e ~/perf/current && echo PRESENT || echo ABSENT' prints ABSENT"
+  echo "DRY: ssh l2solo-perf '$launch'"
+  echo "DRY: within 60 s expect ssh l2solo-perf 'cat ~/perf/current' == $job, else print ~/perf/jobs/$job/status.json, exit 1"
+  exit 0
+fi
+"${push[@]}" || { echo "push failed"; exit 3; }
+until [[ $(q 'test -e ~/perf/current && echo PRESENT || echo ABSENT') == ABSENT ]]; do echo "$(date +%H:%M) VPS busy or unreachable, waiting"; sleep 60; done
+ssh -o ConnectTimeout=15 -o BatchMode=yes l2solo-perf "$launch" </dev/null >/dev/null 2>&1
+for i in {1..12}; do
+  [[ $(q 'cat ~/perf/current') == *$job* ]] && { echo "$job: launched ($full[1,9]), ~/perf/current == $job"; exit 0; }
+  sleep 5
+done
+echo "$job: not confirmed running within 60 s; status.json:"; q "cat ~/perf/jobs/$job/status.json || echo '(none)'; tail -5 ~/perf/launch-$job.log"
+exit 1

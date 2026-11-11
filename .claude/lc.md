@@ -1,14 +1,15 @@
 # lc — issue and release lifecycle (reference for `.claude/lc.js`, Workflow V5.2)
 
-Production since the cutover 2026-11-11 (lifecycle-data db1ea74d7): planning/roadmap.md and problems.md are rendered by lc; the shadow-mode and cutover-readiness notes below are history.
+Production since the cutover 2026-11-11 (lifecycle-data db1ea74d7): planning/roadmap.md and problems.md are rendered by lc.
 
 The policy digest is workflow.js + evidence.md + routes.md; lc.js is outside it, so an lc fix does not void open tasks; `.claude/lc.test.js` guards it (`node --test .claude/lc.test.js`, ~70 s, needs git). Rules it enforces are stated in planning.md and git.md.
 
-Built on frozen Workflow V5.1, which it does not change. CLI: `lc.js` (970 lines, node only) and `lc.test.js` (9
-behaviour tests on scratch repos with a bare fork and origin). Data: the ref `ivan/lifecycle-data`, an orphan branch
+CLI: `lc.js` (node only) and `lc.test.js` (behaviour tests on scratch repos with a bare fork and origin). Data: the ref `ivan/lifecycle-data`, an orphan branch
 that is never checked out.
 
-## Context, not files (V5.2; rationale in .claude/context-budgets.md)
+## Context, not files
+
+Why (measured over 622 transcripts of 11-10..11-11): planning and policy reads cost about 2.66 M tokens, and the cost is the number of reads and re-reads, full reads of target-architecture docs and explicit re-reads of CLAUDE.md, not the size of problems.md (grepped, about 2.3 k characters per read).
 
 - **Paged packs.** `lc show <step|release> [--page N] [--role rc]` is an agent's pack: the row, its issue lines (with `why` notes), direct dependencies (open lines, or archived with their closure) and the decisions that apply. The budget is `meta.budgets` (pack 12 KB, rc 2 KB). Over it, the pack is paged with a header (`page 1/3 · lines 1-30 of 74 · next: …`); a line is never cut or dropped.
 - **Growth diagnosis.** `lc status` prints a `growth:` line, and `lc check` lists the causes: `dup?` (two open issues share an exact quoted member `Module.method` and a rule number; a module name alone, or a name shared by more than 6 issues, is not evidence), `broad` (a row over `rowIssues` 25), `stale` (check.js "member gone" on problems.md lines), triage, tails due, and resolved issues waiting for close. Each cause has an owner action; nothing is merged or deleted.
@@ -21,10 +22,10 @@ that is never checked out.
 - **One place per issue.** `issue.at` is a step key, or null for triage/tail. Releases list steps, never issue ids.
 - **One commit per write.** Each write is checked against the fork's copy (`ls-remote`), moved by compare-and-swap (`update-ref new old`), and pushed without force. A refused push undoes the local move.
 - **Sync without force.** `lc sync` fast-forwards or pushes. On a divergence it keeps this copy's commits at `refs/lc/conflict/<time>`, takes the fork's data, and prints the commands to run again.
-- **Views.** `roadmap.md` and `problems.md` render in their V5.1 formats. `render --write` writes temp files first, then commits the data, then renames the files. A failure leaves either the old state or one that a rerun finishes. It refuses hand edits (`absorb` first), budget overruns, and a copy the fork has moved past.
-- **Evidence.** V5.1 records and run directories are read, never written. lc pushes nothing to origin and opens no PR.
+- **Views.** `roadmap.md` and `problems.md` render in their V5.1 formats. `render --write` writes temp files first, then commits the data, then renames the files. A failure leaves either the old state or one that a rerun finishes. It refuses hand edits (`absorb` first) and a copy the fork has moved past.
+- **Evidence.** Task records and run directories are read; lc writes none itself, but `gate ci` runs `workflow.js ready`, which refreshes that record's ready receipt. lc pushes nothing to origin and opens no PR.
 
-## What the 11-11 audit required, and where it is
+## Gates lc enforces (from the 11-11 audit) and their tests
 
 | Item | How lc meets it | Test |
 |---|---|---|
@@ -39,7 +40,7 @@ that is never checked out.
 | P1 place | only one naming row or one explicit `lc placement` rule (itself authorized); the section heuristic is gone | views |
 | P1 writers | fork check before write, push after, `sync` with conflict refs | writers |
 | P1 tools | `split` (old id, aliases and history stay; new id records `split from`), `tails` (due two releases on), `step set|move|drop`, `dep` | split … |
-| P1 rc-tools | `land` and `check-candidate` read B from `RC_BRANCH` or `lc get $RC_RELEASE branch`; no default | manual (tmp/rc-tools) |
+| P1 rc-tools | `land` and `check-candidate` read B from `RC_BRANCH` or `lc get $RC_RELEASE branch`; no default | manual (.claude/tools) |
 
 ## History
 

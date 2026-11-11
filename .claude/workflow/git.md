@@ -9,10 +9,11 @@
   (numbered releases, rows cite ids); `architecture/`: `README.md` (index, how the map is kept, category passes), area
   maps `bot-ai.md` `combat.md` `economy.md` `population.md` (with the situations mechanism) `persistence.md` `world.md`
   `tables.md` `e2e.md`, `limits.md`, `problems.md` (every open problem, rendered by lc), `check.js`; `target-architecture/`: `plan.md`
-  (principles and large plans), `situations.md` (maintainer answers still binding), `economy.md` (release 7 design),
+  (principles and large plans), `situations.md` (maintainer answers still binding), `economy.md` (release 2 design),
   `memory.md` (memory census), `step.md` (the open roadmap step's plan, only while one is open),
   `decision-registry.js/.json`; `perf-tooling/test-recipe.md`; `hygiene.js`, `rules-check.js`, `tests-for.js`,
   `coverage.js`.
+- Coordinator scripts: `.claude/tools/` (`land`, `check-candidate`, `ci-finish`, `wait-ci`, `laptop-run`, `vps-run`, `wait-vps`, token counters; each prints its usage), `.claude/ci-dispatch.sh`, `gpush.sh`, `prune-branches.sh`.
 - Fix-batch plans, review notes, simulations and run copies live in the session scratchpad, never in the repo or planning/.
 - Auto memory (`~/.claude/projects/-Users-iposukhoff-L2Solo/memory/`): facts outside the repo only (e.g. the team VPS).
 
@@ -24,7 +25,7 @@
   `ivan/batch-<n>` or the landing branch the session names (local + fork; scripts read it with `lc get <release> branch`,
   never a hardcoded name); a worktree branch lands on it as one commit
   per step, squashed by the main session (`git merge --squash`), never a merge commit or the agent's commit series.
-- One coordinator lands queued reviewed topics in readiness order; agents do not chase the moving batch. Stack only on a topic with a passed review and green PR checks; else CI on the integration head alone. After a landing, move the rest with `record-rebase --base <parent> --from-head <old-tip> --evidence <recheck>`: the same patch on a base that left its files unchanged keeps its review and old-code evidence; otherwise they are redone; SHA receipts never carry. `.claude/ci-dispatch.sh` sends both CI runs. No blind reset --soft onto a moving ref. Full CI after a passed review unless overlap saves time.
+- One coordinator lands queued reviewed topics in readiness order; agents do not chase the moving batch. Stack only on a topic with a passed review and green PR checks; else base it on the integration head alone. After a landing, move the rest with `record-rebase --base <parent> --from-head <old-tip> --evidence <recheck>`: the same patch on a base that left its files unchanged keeps its review and old-code evidence; otherwise they are redone; SHA receipts never carry. `.claude/ci-dispatch.sh` sends both CI runs. No blind reset --soft onto a moving ref. Full CI after a passed review unless overlap saves time.
 - No regroup (maintainer 2026-11-10): the integration branch's commits go to `ivan/next-release` as they are, so each
   lands in its final form: one per step or bug, review fixes and their tests folded in before it is pushed, a message
   that says what changed in the game. A fix found after the push is its own commit naming the bug it fixes, never "fix

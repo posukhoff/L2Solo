@@ -150,8 +150,9 @@ if (fs.existsSync(lc)) {
 const runsDir = path.join(ROOT, 'tmp/perf/runs');
 // Perf runs kept (maintainer, 2026-11-06): the last release's end (its sha in BASELINE_RUNS) and the newest measurement
 // (the newest sha's runs per scenario). Everything else is listed for deletion.
-// Release 1's end (9d6bf579a) and its A sides on v0.1.2, the version players have until release 1 ships.
-const BASELINE_RUNS = ['9d6bf579a-script', '9d6bf579a-hot', '21ef29385-script', '21ef29385-hot'];
+// Release 1a's end (3c164d3cc), release 1's end (9d6bf579a) and its A sides on v0.1.2, the version players have until
+// release 1 ships. Only -cold-/-hot- folders are matched below: script runs (<sha>-script-<name>-…) are never listed.
+const BASELINE_RUNS = ['3c164d3cc-hot', '9d6bf579a-script', '9d6bf579a-hot', '21ef29385-script', '21ef29385-hot'];
 if (fs.existsSync(runsDir)) {
     const runs = fs.readdirSync(runsDir).filter(r => /-(cold|hot)-\d{8}-\d{6}$/.test(r));
     const newest = {};

@@ -2,11 +2,11 @@
 
 ## How much testing
 
-- Per commit: the tests that load its changed files (`node planning/tests-for.js <base>..HEAD --root <tree> --depth 0`),
-  locally, one file at a time, when no perf measurement or traced run is on the laptop (else as Picked tests on the
-  fork); `npm run check`.
+- Per commit: `verify --dev-local` (the brief's tests plus the direct loaders of the changed files, at most 8 non-map
+  files; feedback only) when no perf measurement or traced run is on the laptop; a longer list (a normal commit loads
+  100-250 tests) goes to the fork as Picked tests or the task's full PR checks; `npm run check`.
 - Per landing on the integration branch (a squashed step or a merged branch): full PR checks on the fork, with fresh
-  tables if their inputs changed. Topic agents end with targeted tests and counters to watch; full CI runs on the reviewed integration candidate.
+  tables if their inputs changed. Topic agents end with targeted tests and counters to watch; the coordinator dispatches full PR checks for each reviewed task SHA and again for the integration head.
 - Per batch: the main session runs one traced server for all merged branches (agents do not each run one) and reports
   the step's target rates and rule 14's player rates (town trips per bot-hour and the share that buy and sell nothing,
   deaths, income and EXP per hour, bots stuck, goals completed) and the threads: longest turn of main and the worker,

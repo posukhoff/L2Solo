@@ -1,0 +1,37 @@
+#!/bin/zsh
+# land <slug> <worktree> [--dry-run] : fast-forward the release's integration branch B (local + fork) to the worktree's
+# HEAD, then record-land. B = RC_BRANCH, else `lc get $RC_RELEASE branch`.
+# Refuses (exit 1) unless fork/B == local B, B is an ancestor of HEAD, ready taskReady is true,
+# and no AI co-author/session lines. Never forces, never touches origin. --dry-run: checks run, mutating commands are
+# only printed (a failed check is shown as WOULD REFUSE and the commands are still printed).
+# Exit 0 landed (or dry-run all checks ok); 1 refused/failed; 2 usage.
+set -u
+source ${0:A:h}/.lib.zsh
+dry=0; a=(); for x in "$@"; do [[ $x == --dry-run ]] && dry=1 || a+=($x); done
+(( ${#a} == 2 )) || { echo 'usage: land <slug> <worktree> [--dry-run]'; exit 2; }
+slug=$a[1]; wt=$a[2]; B=$(integration_branch) || exit 2
+[[ -d $wt ]] || { echo "no worktree $wt"; exit 2; }
+G=(git -C $wt)
+sha=$($G[@] rev-parse HEAD) || exit 2
+$G[@] fetch -q fork || { echo "fetch fork failed"; exit 1; }
+bad=0; no() { echo "REFUSE: $1"; bad=1; }
+loc=$($G[@] rev-parse -q --verify refs/heads/$B) ; rem=$($G[@] rev-parse -q --verify refs/remotes/fork/$B)
+[[ -n $loc && -n $rem ]] || no "cannot resolve local or fork $B"
+[[ $loc == $rem ]] || no "fork/$B ${rem[1,9]} != local $B ${loc[1,9]}"
+$G[@] merge-base --is-ancestor $B $sha || no "$B is not an ancestor of HEAD (rebase first)"
+line=$(ready_line $slug $wt); [[ ${line%%|*} == true ]] || no "not ready: ${line%%|*} ${line#*|}"
+ai=$(ai_lines $wt $B..$sha); [[ -z $ai ]] || no "AI lines in commits: $(print -r -- $ai | head -2 | tr '\n' ' ')"
+if (( bad && ! dry )); then exit 1; fi
+(( bad )) && echo "dry-run: WOULD REFUSE (above); commands that would run if it did not:"
+run() { if (( dry )); then echo "DRY: $*"; else "$@"; fi }
+run $G[@] fetch . ${sha}:${B} || exit 1
+run /Users/iposukhoff/L2Solo/.claude/gpush.sh fork $B || { echo "push failed"; exit 1; }
+if (( dry )); then
+  echo "DRY: git fetch fork; verify fork/$B == $sha"
+  echo "DRY: node $W record-land $slug --remote fork --branch $B --root $wt"
+  echo "DRY: would print ${loc[1,9]} -> ${sha[1,9]}"; exit $bad
+fi
+$G[@] fetch -q fork; now=$($G[@] rev-parse refs/remotes/fork/$B)
+[[ $now == $sha ]] || { echo "after push fork/$B = ${now[1,9]}, not ${sha[1,9]}"; exit 1; }
+node $W record-land $slug --remote fork --branch $B --root $wt || { echo "record-land failed"; exit 1; }
+echo "landed: ${loc[1,9]} -> ${sha[1,9]}"

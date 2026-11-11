@@ -4,6 +4,7 @@ const source=require('node:fs').readFileSync(__dirname+'/workflow.js','utf8').re
 const execute=new Function('require','process','__dirname','console','Buffer',source);
 const store=new Map(), base='a'.repeat(40), head='b'.repeat(40), landed='c'.repeat(40), other='d'.repeat(40);
 let optionalRaw=false, receiptMode='ok', runnerDropsPlus=false, receiptSha='head';
+let changed='src/foo.js';
 let current=head, notAncestor=false, rebasePathsMatch=true, samePatch=false, baseTouchesTask=true, pidSeq=0, remoteHead=landed, remoteFetched=true;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:p=>!String(p).endsWith('.jsonl')||store.has(p),appendFileSync:(p,v)=>store.set(p,(store.get(p)||'')+v),mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
@@ -22,7 +23,7 @@ const exec=(p,a)=>{
         if(a[0]==='cat-file'){if(!remoteFetched)throw Error('missing object');return '';}
         if(a[0]==='patch-id')return samePatch?'pid-same x':'pid-'+(pidSeq++)+' x';
         if(a[0]==='diff'&&a.includes('--')&&!baseTouchesTask)return '';
-        if(a[0]==='diff')return a.includes('--name-only')?(a.includes(other)&&!rebasePathsMatch?'src/other.js':'src/foo.js'):'M\tsrc/foo.js';
+        if(a[0]==='diff')return a.includes('--name-only')?(a.includes(other)&&!rebasePathsMatch?'src/other.js':'src/foo.js'):'M\t'+changed;
     }
     if(p==='gh'&&a[1]==='download'){
         const files=receiptMode==='noMap'?[{test:'tests/test_basic.js',skipRaw:'1',geodataFiles:0,status:'passed'}]:[{test:'tests/test_basic.js',skipRaw:'0',geodataFiles:142,status:'passed'}];
@@ -130,6 +131,26 @@ current=head;optionalRaw=false;
 expect('dev feedback only',cmd('verify','rawci','--dev'),0,'Development feedback only');
 expect('dev-local runs non-map tests',cmd('verify','rawci','--dev-local'),0,'test_basic.js');
 expect('integration plan retains map tests',cmd('verify','rawci'),0,'pickedAfterFull');
+if(JSON.parse(store.get('/git/l2solo-workflow/rawci.json')).evidence.local)throw Error('dev-local must record nothing');
+console.log('PASS dev-local records nothing toward ready');
+expect('the removed --local path says so',cmd('verify','rawci','--local'),1,'--local was removed');
+expect('rawci review',cmd('record-review','rawci','--result','pass','--evidence','r'),0,'');
+expect('rawci check and rules',cmd('verify','rawci','--check'),0,'ok');
+expect('rawci regression',cmd('record-regression','rawci','--test','test_basic.js','--old',base,'--evidence','old fail new pass'),0,'');
+expect('rawci picked map test',cmd('record-ci','rawci','--run','2'),0,'');
+{const r=cmd('ready','rawci'),v=JSON.parse(r.log.slice(r.log.indexOf('{'),r.log.lastIndexOf('}')+1));
+ if(r.code!==1||v.reasons.length!==1||!v.reasons[0].includes('Full PR checks on HEAD required')||v.ci.missing.length)throw Error('Picked tests covering the whole selection must still need full PR checks: '+r.log);}
+console.log('PASS picked tests covering the whole selection are not ready without full PR checks');
+expect('rawci full CI',cmd('record-ci','rawci','--run','1'),0,'');
+expect('full PR checks complete it',cmd('ready','rawci'),0,'"taskReady": true');
+changed='tests/test_cold_worker_routing.js';
+expect('a test named after a critical surface does not escalate',cmd('verify','rawci'),0,'"critical": false');
+changed='src/ColdWorker.js';
+expect('a critical source file still escalates',cmd('verify','rawci'),1,'Escalate to critical');
+expect('critical start',cmd('start','crit','--base','main','--risk','critical'),0,'policy-hash');
+expect('critical brief',cmd('record-brief','crit','--file','/brief.json'),0,'true');
+expect('a critical surface on the critical route raises no selection warning',cmd('verify','crit'),0,'"warnings": []');
+changed='src/foo.js';
 current=landed;
 expect('rebase needs explicit recheck',cmd('record-rebase','rawci','--base','new-parent','--from-head','old-topic'),1,'requires');
 rebasePathsMatch=false;

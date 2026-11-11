@@ -2,7 +2,7 @@
 
 ## Agents
 
-- Drive the work without waiting for me: take decisions by the recommendation, log each (step file or problem line;
+- Drive the work without waiting for me: take decisions by the recommendation, log each (step file or lc issue;
   a parallel agent puts it in its report),
   report at each step and release task; stop and ask only at a fork the plan and rules do not settle (a gameplay fork
   goes to me with your recommendation). Never sit idle: while one lane waits, start what does not depend on it.
@@ -33,10 +33,10 @@
     by numbers (share over capacity, peaks, trips, oscillation, value); the design is picked from those numbers;
   - the main session checks the plan against rules 0, 1, 2, 14 and the brief; an item failing them is dropped or replaced with the reason, even when already decided or implemented;
   - the implementer follows it; the review checks diff vs plan and rules, and asks per fix: does the chain reach the first wrong decision (re-derive one link from the handles yourself), is the owner the mechanism, not the place the symptom shows, does the regression assert the broken invariant, and what did any removed mechanism alone hold?
-  - review fixes go to a NEW narrow agent; the second review checks those fixes and related regressions. After two rounds unresolved blockers stop the task; the coordinator chooses replan, split or defer. Unrelated findings go to problems.md. A fix that
+  - review fixes go to a NEW narrow agent; the second review checks those fixes and related regressions. After two rounds unresolved blockers stop the task; the coordinator chooses replan, split or defer. Unrelated findings become lc issues (`lc add`). A fix that
     reveals another copy of the same concept means the concept search was incomplete: merge all copies in that fix.
 - Ad hoc `Verifier:` prompts end with this return block (replaces "Owner: file:line"): Return: Shows at (file:line). Chain to the first wrong decision or broken invariant (one handle per link). Alternatives ruled out (handle each). Owner = the question the rule answers + its function; list every copy hot/cold/main/worker by concept; flag two deciders of one step (rule 1). Proof (repro/trace/counterexample) and the share of the counted symptom it explains. A fix at "Shows at" is mitigation only.
-- A review agent's brief says "read /Users/iposukhoff/L2Solo/CLAUDE.md and the relevant /Users/iposukhoff/L2Solo/.claude/workflow/ references from disk (the copy in your context may be older); check the task's policy digest (`node /Users/iposukhoff/L2Solo/.claude/workflow.js status <slug>`) and answer every hard rule first (ok with evidence, violation file:line, or N/A with its reason)".
+- A review agent's brief says "read the relevant /Users/iposukhoff/L2Solo/.claude/workflow/ references from disk; CLAUDE.md (/Users/iposukhoff/L2Solo/CLAUDE.md) only if it is not already in your context or the coordinator says it changed this session; check the task's policy digest (`node /Users/iposukhoff/L2Solo/.claude/workflow.js status <slug>`) and answer every hard rule first (ok with evidence, violation file:line, or N/A with its reason)".
 - Review findings are triaged before any fix (fix now / temporary / belongs to step N / reject with reason); rule 0
   first: a fix that costs more than the harm it prevents is rejected (or the feature that caused it removed). A number
   that improves past what the fix explains (a counter dropping to 0) is checked for a hidden cause (a card held forever
@@ -44,7 +44,7 @@
   temporary code that a planned step rewrites goes to that step, not into a second patch of the temporary code.
 - Every batch and release report counts its changes toward / neutral / away; a release adds no "away" without my ok.
   The release report also counts full runs, minutes of blocked development, the share that gave a decision, repeats
-  from preparation errors, regressions only runtime found and the cost of repeated implementation cycles, and runs the
+  from preparation errors, regressions only runtime found and the cost of repeated implementation cycles, tokens per role (`.claude/tools/pilot-tokens`, `context-cost.py`), review rounds and cause corrections per task, and runs the
   retro over all open candidates.
 - Cost of agents: resuming a large agent re-reads its whole transcript; a design-level fix spanning several areas goes
   back to the author, the rest to new narrow agents (the planner's entries, the plan and rules paths), folded into the

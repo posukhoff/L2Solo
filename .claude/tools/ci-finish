@@ -1,0 +1,38 @@
+#!/bin/zsh
+# ci-finish <slug> <worktree> [--dry-run] [--sha <sha>] : waits for the fork CI runs of the worktree's HEAD (branches
+# ci-<sha9> and tests/list-<sha9>, matched by headBranch because a Picked run's headSha is a list commit),
+# then record-ci for each green run and prints the `ready` result.
+# Exit 0 all runs green, recorded, taskReady true; 1 a run is red (nothing recorded) or taskReady false or record failed;
+# 2 usage; 3 no run for this head found within 10 min. gh errors / empty answers count as "not yet".
+set -u
+source ${0:A:h}/.lib.zsh
+dry=0; a=(); only=; while (( $# )); do case $1 in --dry-run) dry=1;; --sha) only=${2:-}; shift;; *) a+=($1);; esac; shift; done
+(( ${#a} == 2 )) || { echo 'usage: ci-finish <slug> <worktree> [--dry-run] [--sha <sha>]'; exit 2; }
+slug=$a[1]; wt=$a[2]; [[ -d $wt ]] || { echo "no worktree $wt"; exit 2; }
+sha=${only:-$(git -C $wt rev-parse HEAD)} || exit 2; s9=${sha[1,9]}
+ids=(); t0=$SECONDS
+until (( ${#ids} )); do
+  ids=($(gh run list -R posukhoff/L2Solo --limit 100 --json databaseId,headBranch 2>/dev/null | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d=[]
+best={}
+for r in d:
+    if r["headBranch"] in ("ci-'$s9'","tests/list-'$s9'"): best[r["headBranch"]]=max(best.get(r["headBranch"],0),r["databaseId"])
+print(*best.values())'))
+  (( ${#ids} )) && break
+  (( SECONDS - t0 > 600 )) && { echo "no CI run found for $s9"; exit 3; }
+  sleep 30
+done
+echo "head $s9 runs: $ids"
+res=$($BIN/wait-ci $ids); rc=$?; echo "$res"
+(( rc == 0 )) || { echo "RED or unfinished: nothing recorded"; exit 1; }
+# every run has to be seen as success in wait-ci's own output before it is recorded
+for r in $ids; do print -r -- "$res" | grep -qE "^$r .* success [0-9a-f]{9}$" || { echo "run $r not confirmed success: nothing recorded"; exit 1; }; done
+for r in $ids; do
+  cmd=(node $W record-ci $slug --run $r --root $wt)
+  if (( dry )); then echo "DRY: ${cmd[*]}"; else "${cmd[@]}" || { echo "record-ci $r failed"; exit 1; }; fi
+done
+if (( dry )); then echo "DRY: node $W ready $slug --root $wt"; exit 0; fi
+line=$(ready_line $slug $wt); echo "ready: taskReady=${line%%|*}"; echo "reasons: ${line#*|}"
+[[ ${line%%|*} == true ]]

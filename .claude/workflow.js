@@ -83,13 +83,13 @@ function select(base, brief) {
     if (changes.some(x => /^D\t/.test(x))) warnings.push('Deleted file: inspect former callers and tests.');
     if (files.some(x => !x.endsWith('.js'))) warnings.push('Non-JS data/config change: add relevant tests explicitly.');
     if (!selected.size) warnings.push('No selected tests: explain why or provide additional tests.');
-    const critical = files.some(x => /(^database\/|^data\/Bots\/|^src\/Database\.js$|Situations\.js$|worker|migration|TableFingerprint|scripts\/generate|scripts\/perf)/i.test(x));
-    if (critical) warnings.push('Critical surface: require critical route and integration/release gates.');
+    // A test file's name is not a surface: only code, data and scripts escalate.
+    const critical = files.some(x => !x.startsWith('tests/') && /(^database\/|^data\/Bots\/|^src\/Database\.js$|Situations\.js$|worker|migration|TableFingerprint|scripts\/generate|scripts\/perf)/i.test(x));
+    // A critical surface is a route check (verify and ready refuse a lower route), not a selection doubt: it asks no ack.
     return { files, tests: [...selected].sort(), normal: [...normal].sort(),
         geodataOnly: [...selected].filter(t=>!normal.has(t)).sort(),
         optionalGeodata: [...selected].filter(t=>normal.has(t)&&geo.has(t)).sort(),
-        domains: domains.map(x=>x[2]), warnings, critical,
-        preferredCI: selected.size>96 || warnings.length ? 'PR checks + uncovered Picked tests' : 'Picked tests or PR checks' };
+        domains: domains.map(x=>x[2]), warnings, critical };
 }
 function main() {
     if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land|record-rebase|record-retro|close> <slug> [options]');
@@ -234,13 +234,14 @@ function main() {
         state.evidence.regressions.push({head,old,test:norm(test),evidence,at:now()}); save(state); return;
     }
     if (command === 'verify') {
+        if (flag('--local')) fail('verify --local was removed: --dev-local gives feedback, CI gives evidence.');
         if(flag('--dev')||flag('--dev-local')){
             const dev=devPlan(state.base,state.brief);
             console.log(JSON.stringify({base:state.base,head,...dev},null,2));
             if(flag('--dev-local')){
                 if(!dev.local.length||dev.local.length>8) fail('Dev-local needs 1-8 non-geodata tests; use Picked CI.');
+                // Feedback only: nothing is recorded, so it can never count toward ready.
                 console.log(run(process.execPath,[path.join(root,'scripts/run-tests.js'),'--only='+dev.local.join(','),'--keep-going']));
-                state.evidence.local={head,at:now(),tests:dev.local};save(state);
             }
             return;
         }
@@ -263,21 +264,12 @@ function main() {
             state.evidence.rules={head,at:now()}; save(state); return;
         }
         if (flag('--check')) {
-            // The gates Picked tests does not run: syntax, table freshness, the mechanical rules.
+            // Before a push: syntax and table freshness (PR checks runs them again) and the mechanical rules (it does not).
             console.log(run('npm',['run','check']));
             console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
-            state.evidence.check={head,at:now()}; state.evidence.rules={head,at:now()}; save(state); return;
+            state.evidence.rules={head,at:now()}; save(state); return;
         }
-        if (!flag('--local')) return;
-        if (plan.warnings.length || plan.tests.length>8) fail('Selection needs coordinator/CI; no broad local test run.');
-        const only=plan.tests.join(',');
-        const runner=path.join(root,'scripts/run-tests.js');
-        const needs=run(process.execPath,[runner,'--only='+only,'--needs-geodata']);
-        if (needs!=='false') fail('Geodata or unknown test requirements; use CI.');
-        console.log(run('npm',['run','check']));
-        console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
-        console.log(run(process.execPath,[runner,'--only='+only,'--keep-going']));
-        state.evidence.local={head,at:now(),tests:plan.tests}; state.evidence.check={head,at:now()}; state.evidence.rules={head,at:now()}; save(state); return;
+        return;
     }
     if (command === 'record-review') {
         const result=opt('--result'), evidence=opt('--evidence');
@@ -356,17 +348,17 @@ function main() {
         if (e.review?.head!==head || e.review.result!=='pass') reasons.push('No passing scoped review for HEAD.');
         const runs=(e.ciRuns||[]).filter(r=>r.head===head);
         const full=runs.some(r=>r.workflow==='PR checks');
-        const covered=new Set([...runs.flatMap(r=>r.tests),...(e.local?.head===head?e.local.tests:[])]);
+        const covered=new Set(runs.flatMap(r=>r.tests));
         const missing=plan.tests.filter(t=>!covered.has(t));
         const raw=new Set((e.rawGeodata||[]).filter(r=>r.head===head).map(r=>r.test));
         const missingRaw=plan.optionalGeodata.filter(t=>!raw.has(t));
         if(missingRaw.length) reasons.push('Missing optional raw-geodata evidence: '+missingRaw.join(', '));
         if (missing.length) reasons.push('Missing '+missing.length+' selected tests: '+missing.slice(0,20).join(', ')+(missing.length>20?' ... (verify --show-tests)':''));
-        if (!plan.tests.length && !full) reasons.push('Empty selection requires full CI.');
-        if (plan.warnings.length && (!full || !e.review?.selectionAcknowledged)) reasons.push('Uncertain selection needs full CI and explicit review --selection-ack.');
+        // Every route: full PR checks on the task SHA (its first shard runs the syntax/table check); the selection
+        // only names the map tests PR checks skips, which Picked tests adds.
+        if (!full) reasons.push('Full PR checks on HEAD required (every route).');
+        if (plan.warnings.length && !e.review?.selectionAcknowledged) reasons.push('Uncertain selection needs explicit review --selection-ack.');
         if (e.rules?.head!==head) reasons.push('Mechanical rules-check missing for HEAD (verify --rules).');
-        if (e.check?.head!==head && !full) reasons.push('Syntax/table check missing (verify --check or PR checks).');
-        if (state.risk==='critical' && !full) reasons.push('Critical task requires full PR checks on its SHA.');
         if (state.kind==='fix') {
             const proven=new Set((e.regressions||[]).filter(r=>r.head===head && r.old===state.base).map(r=>r.test));
             const missingRegression=state.brief.regressions.map(norm).filter(t=>!proven.has(t));

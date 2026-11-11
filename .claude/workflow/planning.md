@@ -20,8 +20,8 @@
   archived by lc (land, resolve and close; or drop with its reason and authority) and gone from the views.
 - A roadmap step's plan lives in `target-architecture/step.md` and is deleted when the step lands; its binding
   decisions move first into the map, one clause on the row of the rule each shapes. Maintainer decisions taken outside
-  a step go on the problem's line or the plan.md principle they shape.
-- The map holds the current state only: an area line is rewritten to the new state, a paid problem's line is deleted;
+  a step go on the lc issue or the plan.md principle they shape.
+- The map holds the current state only: an area line is rewritten to the new state, a paid problem is closed through lc (its line leaves the view);
   no history, no "was/now", no step or decision ids.
 - One writer: only one agent at a time edits planning/ (the only editing agent, or the main session). Agents running in
   parallel put their planning edits (new issues for `lc add`, map clauses, limits rows) in their report; the main session applies

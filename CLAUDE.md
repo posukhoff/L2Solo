@@ -4,7 +4,7 @@ Node.js >=22.5, CommonJS, SQLite, Lineage II C4. Hot bots execute near the playe
 
 ## Read only what your role needs
 
-Start with this file, `planning/architecture/README.md` and the touched area of the architecture map. Read the relevant sections, not all planning files. The workflow reference lives in `.claude/workflow/` in the primary local checkout (not the game-code branch): /Users/iposukhoff/L2Solo/.claude/workflow/; this file is /Users/iposukhoff/L2Solo/CLAUDE.md. Both are git-excluded, so an agent in a worktree reads them by these absolute paths. Resolve paths from the actual checkout; do not assume a worktree contains local planning. A task brief names the base SHA, route, policy digest and relevant files. Do not use newer policy or map silently for older work: check the recorded SHA/digest and resolve drift with the coordinator.
+Start with this file, `planning/architecture/README.md` and the touched area of the architecture map. Read the relevant sections, not all planning files. The workflow reference lives in `.claude/workflow/` in the primary local checkout (not the game-code branch): /Users/iposukhoff/L2Solo/.claude/workflow/; this file is /Users/iposukhoff/L2Solo/CLAUDE.md. Both are git-excluded, so an agent in a worktree reads the references by these absolute paths, and this file only when it is not already in its context (explicit re-reads were the largest avoidable policy cost). Resolve paths from the actual checkout; do not assume a worktree contains local planning. A task brief names the base SHA, route, policy digest and relevant files. Do not use newer policy or map silently for older work: check the recorded SHA/digest and resolve drift with the coordinator.
 
 | Work | Additional reading |
 |---|---|
@@ -25,11 +25,11 @@ Each as the question a review asks (each answered: ok with evidence, violation f
 1. One question: does each decision touched answer one question and own its output? Is every situation a physical fact
    (no prices, board, clock or another decision's answer inside it)?
 2. Situations, not time: is a decision taken only at its named situations and held between them? Any new window, timer
-   or "again after N s"? (Only for a situation with no event yet: reason + limits.md row + the missing event as a
-   problems.md line.)
+   or "again after N s"? (Only for a situation with no event yet: reason + limits.md row + the missing event as an
+   lc issue.)
 3. Owner: is the fix in the mechanism that owns the rule, not a guard, special case or retry at the call site?
 4. One path: does it add a second mechanism for something that exists? Every copy of the concept is listed (search
-   terms and hits, hot and cold); the change merges them or names each one left as a problems.md line. Is the replaced
+   terms and hits, hot and cold); the change merges them or names each one left as an lc issue. Is the replaced
    path deleted in the same change, with its tests and config keys?
 5. Hot = cold: do hot and cold call one function for the rule?
 6. Cost: what does it add per bot per step (CPU, allocations, DB writes, worker messages), on main or the worker? Any
@@ -47,7 +47,7 @@ Each as the question a review asks (each answered: ok with evidence, violation f
     co-author/session lines? (`node planning/rules-check.js <base>..<head> --root <tree>`: the mechanical part.)
 14. Trade: one line per change: its cost, what a C4 player does here, what it gives up (simulation, realism,
     performance). A review asks "would a player do this?" as it asks the cost.
-15. Direction: toward the target architecture (coding.md "Target architecture"), neutral, or away? Away only with its reason, a problems.md line
+15. Direction: toward the target architecture (coding.md "Target architecture"), neutral, or away? Away only with its reason, an lc issue
     and the named replacement; a review counts it like a violation otherwise.
 
 
@@ -57,6 +57,6 @@ Read `.claude/workflow/routes.md` and `.claude/workflow/evidence.md` before star
 
 Coordinator: use `node .claude/workflow.js start <slug> --base <ref> --risk <fast|standard|critical>` from the primary game checkout. The CLI records evidence, not automatic authorization to merge. Use `verify`, `record-review`, `record-ci`, `ready` (see routes.md). Existing integration/release Git policy remains in force. Never push to shared origin or open a PR without the existing explicit authorization (the one standing ask: fast-forward `ivan/next-release` to origin when release commits or a develop update land on it, git.md); never expose secrets.
 
-For every change: identify cause and owner, search relevant copies, preserve player-visible behaviour unless deliberately changed, prove fixes with a failing-old-code test, run the existing required gates. Review answers every hard rule: applicable ones with evidence, others N/A with the reason. Never weaken a hard invariant. Scope a second review to fixes and related regressions. After two rounds, unresolved blockers stop the task for a coordinator decision. New unrelated findings enter problems.md; do not silently expand the task.
+For every change: identify cause and owner, search relevant copies, preserve player-visible behaviour unless deliberately changed, prove fixes with a failing-old-code test, run the existing required gates. Review answers every hard rule: applicable ones with evidence, others N/A with the reason. Never weaken a hard invariant. Scope a second review to fixes and related regressions. After two rounds, unresolved blockers stop the task for a coordinator decision. New unrelated findings become lc issues (`lc add`); do not silently expand the task.
 
 Tasks and releases live in lc only (cutover 2026-11-11, planning.md): read with `node .claude/lc.js status` / `show <step>`; create, place, move and close through lc; roadmap.md and problems.md are generated, never edited (`lc absorb` is temporary compatibility). New issues enter triage; placement is automatic only by unambiguous rules. An unknown root cause is an investigation, not leave to implement. Long game runs only by the RC after the readiness gate (release.md); release gates unchanged. Maps stay local, single-writer, current-state only. Record stable decisions in their owning map and keep the task evidence outside planning. Git and CI rules are in git.md/testing.md. Release acceptance and final A/B are unchanged.
