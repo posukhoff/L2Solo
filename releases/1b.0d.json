@@ -12,6 +12,6 @@
  "cap": null,
  "gates": {},
  "steps": [
-  {"key":"1b.0d","title":"1b.0d bug, Critical: a body on a one-way geodata cell can never leave it; the step rule becomes C4's (the leaving cell's flag), offline measurement first (DT-273)","P":"**high**","S":"mid","who":"","needs":["1b.0c2"],"st":"planned","tasks":[],"landed":null}
+
  ]
 }
