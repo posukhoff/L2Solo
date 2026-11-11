@@ -175,7 +175,14 @@
    "ab",
    "report"
   ],
-  "plan": []
+  "plan": [],
+  "arch": [
+   "ci",
+   "trace",
+   "ab",
+   "behaviour",
+   "report"
+  ]
  },
  "lastRender": {
   "problems": {
