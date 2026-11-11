@@ -1,0 +1,96 @@
+{"slug":"ci-raw","class":"superseded","by":"ci-raw-2","evidence":"family ci: ci-raw-2 landed after it (2026-11-10T22:57)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ci-raw-2","class":"landed","evidence":"record-land (no branch) ea5d52f4a, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"custody-c","class":"landed","evidence":"record-land (no branch) 7e1fa4a2d, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"custody-staff","class":"superseded","by":"custody-c","evidence":"family custody: custody-c landed after it (2026-11-10T23:06)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt123","class":"abandoned","evidence":"no landing in family dt123; created 2026-11-10T21:33, no commit recorded","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt123-v2","class":"refuted","evidence":"V5.1 close: refuted","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt146","class":"superseded","by":"dt146c","evidence":"family dt146: dt146c landed after it (2026-11-11T02:33)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt146c","class":"landed","evidence":"record-land (no branch) 4ab2856b6, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt173-review","class":"landed","by":"v3-clitest2","evidence":"same patch-id as v3-clitest2 (head 61ee2b18a)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt196b","class":"landed","evidence":"record-land (no branch) d981990b1, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt200","class":"landed","evidence":"record-land (no branch) 8904efbfd, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt200a","class":"superseded","by":"dt200b-r","evidence":"family dt200: dt200b-r landed after it (2026-11-10T23:31)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt200a-r","class":"landed","evidence":"record-land (no branch) 6c1455b5e, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt200b","class":"superseded","by":"dt200b-r","evidence":"family dt200: dt200b-r landed after it (2026-11-10T23:31)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt200b-r","class":"landed","evidence":"record-land (no branch) 42e3d07ee, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt201","class":"superseded","by":"dt201d","evidence":"family dt201: dt201d landed after it (2026-11-11T02:29)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt201b","class":"superseded","by":"dt201d","evidence":"family dt201: dt201d landed after it (2026-11-11T02:29)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt201c","class":"superseded","by":"dt201d","evidence":"family dt201: dt201d landed after it (2026-11-11T02:29)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt201d","class":"landed","evidence":"record-land (no branch) 4dde46367, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt203","class":"superseded","by":"dt203c","evidence":"family dt203: dt203c landed after it (2026-11-11T02:26)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt203b","class":"landed","by":"dt203c","evidence":"same patch-id as dt203c (head 7acdd329c)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt203c","class":"landed","evidence":"record-land (no branch) 83b6b46df, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt205b","class":"superseded","by":"dt205c","evidence":"family dt205: dt205c landed after it (2026-11-11T03:24)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt205c","class":"landed","evidence":"record-land (no branch) 242299cf8, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt207","class":"superseded","by":"dt207c","evidence":"family dt207: dt207c landed after it (2026-11-11T02:26)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt207c","class":"landed","evidence":"record-land (no branch) 126a74c0d, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt231-withdraw","class":"landed","evidence":"record-land ivan/batch-1a f44a63cf3, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt231b","class":"landed","by":"dt231c","evidence":"same patch-id as dt231c (head 704addfb0)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt231c","class":"landed","evidence":"record-land (no branch) 22e3e1fb3, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt238-gaps","class":"superseded","by":"dt238-perf-gaps","evidence":"family dt238: dt238-perf-gaps landed after it (2026-11-11T12:21)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt238-perf-gaps","class":"landed","evidence":"record-land ivan/batch-1a 0ab48bbfd, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt242b","class":"landed","evidence":"record-land (no branch) 95427f498, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"dt247-spare-units","class":"landed","evidence":"record-land ivan/batch-1a 5e6f1e009, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt196","class":"superseded","by":"dt196b","evidence":"family dt196: dt196b landed after it (2026-11-11T04:51)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt197","class":"landed","by":"n4-dt197","evidence":"same patch-id as n4-dt197 (head d6dd8f238)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt202","class":"landed","by":"n2-dt202","evidence":"same patch-id as n2-dt202 (head cad378003)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt204","class":"landed","evidence":"record-land (no branch) d68fab586, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt205","class":"superseded","by":"dt205c","evidence":"family dt205: dt205c landed after it (2026-11-11T03:24)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt208","class":"superseded","by":"n7-dt208","evidence":"family dt208: n7-dt208 landed after it (2026-11-11T01:41)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt211","class":"superseded","by":"n5-dt211","evidence":"family dt211: n5-dt211 landed after it (2026-11-11T01:21)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt231","class":"superseded","by":"dt231c","evidence":"family dt231: dt231c landed after it (2026-11-11T03:16)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt239","class":"landed","evidence":"record-land (no branch) d53b2571f, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-dt242","class":"superseded","by":"dt242b","evidence":"family dt242: dt242b landed after it (2026-11-11T04:40)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-earnspot","class":"landed","by":"n4-earnspot","evidence":"same patch-id as n4-earnspot (head 51389c436)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-pfclean","class":"landed","by":"n6-pfclean","evidence":"same patch-id as n6-pfclean (head e6e239bfd)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-ra21","class":"landed","by":"ra21b","evidence":"same patch-id as ra21b (head 1325817b8)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-ra22","class":"superseded","by":"ra22c","evidence":"family ra22: ra22c landed after it (2026-11-11T05:04)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-rm31","class":"superseded","by":"n7-rm31","evidence":"family rm31: n7-rm31 landed after it (2026-11-11T01:47)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n-shaman","class":"abandoned","evidence":"no landing in family shaman; created 2026-11-11T02:43, no commit recorded","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n2-dt202","class":"landed","evidence":"record-land (no branch) 52eb1107c, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n2-dt208","class":"superseded","by":"n7-dt208","evidence":"family dt208: n7-dt208 landed after it (2026-11-11T01:41)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n2-earnspot","class":"landed","by":"n4-earnspot","evidence":"same patch-id as n4-earnspot (head edc72fcb8)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n3-dt197","class":"landed","by":"n4-dt197","evidence":"same patch-id as n4-dt197 (head 32ac0225d)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n3-dt211","class":"superseded","by":"n5-dt211","evidence":"family dt211: n5-dt211 landed after it (2026-11-11T01:21)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n3-pfclean","class":"landed","by":"n6-pfclean","evidence":"same patch-id as n6-pfclean (head a6e5ea421)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n3-rm31","class":"superseded","by":"n7-rm31","evidence":"family rm31: n7-rm31 landed after it (2026-11-11T01:47)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n4-dt197","class":"landed","evidence":"record-land (no branch) 32ac85f1b, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n4-dt211","class":"landed","by":"n5-dt211","evidence":"same patch-id as n5-dt211 (head dabc14fb5)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n4-earnspot","class":"landed","evidence":"record-land (no branch) 1ff7b2b4a, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n4-pfclean","class":"landed","by":"n6-pfclean","evidence":"same patch-id as n6-pfclean (head 0d1081133)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n4-rm31","class":"superseded","by":"n7-rm31","evidence":"family rm31: n7-rm31 landed after it (2026-11-11T01:47)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n5-dt211","class":"landed","evidence":"record-land (no branch) 319b71f19, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n5-pfclean","class":"landed","by":"n6-pfclean","evidence":"same patch-id as n6-pfclean (head 7668e09c7)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n6-dt208","class":"superseded","by":"n7-dt208","evidence":"family dt208: n7-dt208 landed after it (2026-11-11T01:41)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n6-pfclean","class":"landed","evidence":"record-land (no branch) 7668e09c7, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n6-rm31","class":"superseded","by":"n7-rm31","evidence":"family rm31: n7-rm31 landed after it (2026-11-11T01:47)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n7-dt208","class":"landed","evidence":"record-land (no branch) f3eec5444, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"n7-rm31","class":"landed","evidence":"record-land (no branch) 12962fed3, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ra12-spot-ask","class":"superseded","by":"ra12b-spot-loop","evidence":"family ra12: ra12b-spot-loop landed after it (2026-11-11T10:48)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ra12b-spot-loop","class":"landed","evidence":"record-land ivan/batch-1a 0c759221c, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ra21b","class":"landed","evidence":"record-land (no branch) d8cf46c47, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ra22b","class":"landed","by":"ra22c","evidence":"same patch-id as ra22c (head c2965c444)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ra22c","class":"landed","evidence":"record-land (no branch) 1a7619d3e, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ra32-comments","class":"superseded","by":"ra32-comments-2","evidence":"family ra32: ra32-comments-2 landed after it (2026-11-11T13:35)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"ra32-comments-2","class":"landed","evidence":"record-land ivan/batch-1a 3c164d3cc, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"release-1a-ci","class":"release-gate","evidence":"holds a release CI record; kept open","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"rm3","class":"superseded","by":"rm3c","evidence":"family rm3: rm3c landed after it (2026-11-11T02:35)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"rm3b","class":"landed","by":"rm3c","evidence":"same patch-id as rm3c (head 9c37ae336)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"rm3c","class":"landed","evidence":"record-land (no branch) 9c37ae336, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-dt214","class":"superseded","by":"s-dt214c","evidence":"family dt214: s-dt214c landed after it (2026-11-11T07:05)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-dt214b","class":"superseded","by":"s-dt214c","evidence":"family dt214: s-dt214c landed after it (2026-11-11T07:05)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-dt214c","class":"landed","evidence":"record-land (no branch) e83fd26e5, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-dt243","class":"superseded","by":"s-dt243d","evidence":"family dt243: s-dt243d landed after it (2026-11-11T07:14)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-dt243b","class":"superseded","by":"s-dt243d","evidence":"family dt243: s-dt243d landed after it (2026-11-11T07:14)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-dt243c","class":"superseded","by":"s-dt243d","evidence":"family dt243: s-dt243d landed after it (2026-11-11T07:14)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-dt243d","class":"landed","evidence":"record-land (no branch) 9e189d2b2, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-ra15","class":"superseded","by":"s-ra15c","evidence":"family ra15: s-ra15c landed after it (2026-11-11T07:13)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-ra15b","class":"landed","by":"s-ra15c","evidence":"same patch-id as s-ra15c (head e2dee62aa)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"s-ra15c","class":"landed","evidence":"record-land (no branch) 95a12356b, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"v3-clitest","class":"landed","by":"v3-clitest2","evidence":"same patch-id as v3-clitest2 (head 61ee2b18a)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"v3-clitest2","class":"landed","evidence":"record-land (no branch) 66d99ecd1, on an integration branch","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"v4-raw","class":"landed","by":"v3-clitest2","evidence":"same patch-id as v3-clitest2 (head 61ee2b18a)","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"v4-refuted","class":"abandoned","evidence":"no landing in family v4; created 2026-11-10T22:10, no commit recorded","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"v4-refuted2","class":"refuted","evidence":"V5.1 close: refuted","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"wf-clitest","class":"abandoned","evidence":"no landing in family wf; created 2026-11-10T20:57","at":"2026-11-11T17:11:34.669Z"}
+{"slug":"wf-prtest","class":"abandoned","evidence":"no landing in family wf; created 2026-11-10T21:02","at":"2026-11-11T17:11:34.669Z"}
