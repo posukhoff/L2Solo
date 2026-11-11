@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Boundary checks for token-token-usage.py on synthetic transcripts.
 import json,os,sys,tempfile,importlib.util
-spec=importlib.util.spec_from_file_location('u',os.path.join(os.path.dirname(os.path.abspath(__file__)),'token-token-usage.py' if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),'token-usage.py')) else 'usage.py')); u=importlib.util.module_from_spec(spec); spec.loader.exec_module(u)
+spec=importlib.util.spec_from_file_location('u',os.path.join(os.path.dirname(os.path.abspath(__file__)),'token-usage.py')); u=importlib.util.module_from_spec(spec); spec.loader.exec_module(u)
 d=tempfile.mkdtemp()
 def msg(t,i,o): return json.dumps({'type':'assistant','timestamp':t,'message':{'id':i,'model':'m','usage':{'input_tokens':1,'cache_creation_input_tokens':0,'cache_read_input_tokens':0,'output_tokens':o}}})
 open(os.path.join(d,'a.output'),'w').write('\n'.join([
