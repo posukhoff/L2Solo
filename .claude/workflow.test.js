@@ -191,3 +191,9 @@ expect('close reports a due retro',cmd('close','rtc','--refuted','--evidence','p
 expect('ready reports a due retro',cmd('ready','mv2'),1,'RETRO DUE: critical');
 notDue('cleared',retro('--processed','all','--result','tmp/retro-3.md'));
 {const r=cmd('ready','mv2');if(r.log.includes('RETRO DUE'))throw Error('ready must be quiet when nothing is due');console.log('PASS ready is quiet when nothing is due');}
+// A corrupt retro line is skipped and reported; ready and close still work.
+store.set('/git/l2solo-workflow/retro.jsonl',(store.get('/git/l2solo-workflow/retro.jsonl')||'')+'{not json\n');
+expect('ready skips and reports a corrupt retro line',cmd('ready','mv2'),1,'retro.jsonl: 1 unreadable line(s) skipped');
+expect('retro-check close skips and reports a corrupt line',cmd('start','rtd','--base','main','--risk','standard'),0,'policy-hash');
+expect('retro-check guess',cmd('record-brief','rtd','--file','/guess.json'),0,'false');
+expect('close survives a corrupt retro line',cmd('close','rtd','--refuted','--evidence','proof'),0,'unreadable line(s) skipped');

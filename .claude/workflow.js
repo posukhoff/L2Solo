@@ -110,7 +110,9 @@ function main() {
     // process violation, one cause seen twice, or five open candidates.
     const retroFile = path.join(stateDir,'retro.jsonl');
     const retro = () => {
-        const rows = fs.existsSync(retroFile) ? fs.readFileSync(retroFile,'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+        let bad = 0;
+        const rows = (fs.existsSync(retroFile) ? fs.readFileSync(retroFile,'utf8').split('\n').filter(Boolean) : []).flatMap(l => { try { return [JSON.parse(l)]; } catch { bad++; return []; } });
+        if (bad) console.log('retro.jsonl: '+bad+' unreadable line(s) skipped');
         const done = new Set(rows.flatMap(r => r.processed || []));
         const open = rows.filter(r => r.id && !done.has(r.id)), count = {};
         for (const r of open) count[r.cause] = (count[r.cause] || 0) + 1;
