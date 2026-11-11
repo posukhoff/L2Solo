@@ -746,7 +746,12 @@ C.release = (cx, { pos, opt }) => { // release add <key> | release set <key>
         if (opt.cap !== undefined) { r.cap = { issues: Number(opt.cap) }; r.decisions = [...new Set([...r.decisions, authorize(d, opt.decision, 'cap', { release: key, value: opt.cap })])]; }
         if (opt.order !== undefined) { r.order = Number(opt.order); r.decisions = [...new Set([...r.decisions, authorize(d, opt.decision, 'order', { release: key, value: opt.order })])]; }
         if (opt.type !== undefined) { if (r.st !== 'planned') fail('type changes only while planned'); r.type = String(opt.type); }
-    } else fail('release add <key> --group --order --type | release set <key> [--cap N|--order N] --decision id | [--type T]');
+    } else if (verb === 'drop') { // an empty planned release (its steps moved or dropped) leaves the roadmap
+        const r = release(d, key), reason = one(opt, 'reason', 'why');
+        if (r.st !== 'planned' || r.steps.length) fail(`${key} is ${r.st} with ${r.steps.length} steps: only an empty planned release drops`);
+        delete d.releases[key];
+        return write(cx, sha, d, `lc release drop ${key}\n\n${reason}`, `${key} dropped`);
+    } else fail('release add <key> --group --order --type | release set <key> [--cap N|--order N] --decision id | [--type T] | release drop <key> --reason');
     write(cx, sha, d, `lc release ${verb} ${key}`);
 };
 C.step = (cx, { pos, opt }) => { // step add <release> | step set <step> | step move <step> --to <release> --reason
@@ -1009,7 +1014,7 @@ C.help = () => console.log(`lc status | check | show <id|step|release> | get <re
 issues:   add --sec --origin --rule --sites --what --fix [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--fixed-by)
           edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]
-releases: release add|set | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
+releases: release add|set|drop | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
           resolve <id...> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
           publish <rel> --decision M --branch <origin branch>   (records a publication; lc never pushes origin)
 views:    render --out <dir> | render --check | render --write [--overwrite-roadmap|--overwrite-problems]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);

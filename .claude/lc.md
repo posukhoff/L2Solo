@@ -39,7 +39,7 @@ Why (measured over 622 transcripts of 11-10..11-11): planning and policy reads c
 | P1 decisions | `decide --allow action=…,issue=…,to=…`; every `--decision` is checked against the action and subject (rule-override, scope-add, cap, order, land-no-code, drop, split, publish, gates, placement-rule) | decisions … |
 | P1 place | only one naming row or one explicit `lc placement` rule (itself authorized); the section heuristic is gone | views |
 | P1 writers | fork check before write, push after, `sync` with conflict refs | writers |
-| P1 tools | `split` (old id, aliases and history stay; new id records `split from`), `tails` (due two releases on), `step set|move|drop`, `dep` | split … |
+| P1 tools | `split` (old id, aliases and history stay; new id records `split from`), `tails` (due two releases on), `step set|move|drop`, `release drop` (an empty planned release), `dep` | split … |
 | P1 rc-tools | `land` and `check-candidate` read B from `RC_BRANCH` or `lc get $RC_RELEASE branch`; no default | manual (.claude/tools) |
 
 ## History

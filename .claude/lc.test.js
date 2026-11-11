@@ -371,7 +371,11 @@ test('split keeps the old id, aliases and history; steps are reset and reordered
     const out = path.join(w.dir, 'o2'); w.ok('render', '--out', out);
     const rm = fs.readFileSync(path.join(out, 'roadmap.md'), 'utf8');
     assert.ok(rm.indexOf('Situation raises') < rm.indexOf('Cold command dropped') && /Situation raises: ECO-10 \(own move\) \| mid/.test(rm));
+    w.no(/1b\.2 is planned with 1 steps: only an empty planned release drops/, 'release', 'drop', '1b.2', '--reason', 'merged into 2');
     w.ok('step', 'move', '1b.2', '--to', '2', '--reason', 'waits for the economy');
+    assert.match(w.ok('release', 'drop', '1b.2', '--reason', 'its one step moved to 2'), /1b\.2 dropped/); // an emptied release leaves the roadmap
+    w.no(/no live or planned release 1b\.2/, 'release', 'drop', '1b.2', '--reason', 'again');
+    assert.doesNotMatch(w.ok('status'), /next 1b\.2 /);
     assert.match(w.ok('show', 'DT-114'), /at 1b\.2 \(2 planned\)/);
     const { dueTails } = require('./lc.js');
     const d = { issues: [{ id: 'DT-90', origin: 'run 10-01', at: null, tail: true }, { id: 'DT-91', origin: 'run 11-20', at: null, tail: true }], archive: { a: { manifest: { validatedAt: '2026-11-10T00:00:00Z' } } } };
