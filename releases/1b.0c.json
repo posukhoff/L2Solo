@@ -3,14 +3,15 @@
  "group": "1b",
  "order": 17,
  "type": "fix",
- "st": "planned",
+ "st": "open",
  "title": "1b.0c bug: melee bot stands beside its drop",
- "branch": null,
- "base": null,
+ "branch": "ivan/batch-1b",
+ "base": "3c164d3ccd7cfda9cd3e1b627e00efed11e13384",
  "head": null,
  "decisions": [],
  "cap": null,
  "gates": {},
+ "openedAt": "2026-11-11T21:17:25.457Z",
  "steps": [
   {"key":"1b.0c","title":"1b.0c bug: a melee bot stands 8 s beside its drop after a kill (AI-16)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
