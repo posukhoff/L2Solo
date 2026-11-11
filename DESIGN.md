@@ -100,7 +100,7 @@ Upkeep: the view formats are pinned by the lossless import test; a change of V5.
 
 ## 10. Pilot state (ivan/lifecycle-data, local + fork)
 
-- 1b.1: arch, 12 issues incl. parties-6 (moved from its stale [r5]).
+- 1b.1: arch, 11 issues; parties-6's stale [r5] tag cleared by `lc assign` (the row pays it).
 - 1b.2: arch, needs 1b.1, 8 issues.
 - Not opened, since neither has started.
 - Planning files untouched (md5 checked); a preview render differs only in parties-6's tag.
