@@ -208,10 +208,11 @@ const overridden = (d, i, rule) => (i.overrides || []).some(id => allows(d.decis
 // ---------- growth: why the working context is large, each cause with its owner action; nothing is cut ----------
 const ticks = t => [...String(t).matchAll(/`([^`]+)`/g)].map(m => m[1].trim());
 const modules = t => [...new Set([...ticks(t), ...String(t).split(/[\s,;()]+/)].map(x => (x.match(/^([A-Z][A-Za-z0-9]{3,})(?![A-Za-z0-9])/) || [])[1]).filter(Boolean))];
+const member = x => /^[A-Za-z][\w]{3,}\.[a-z_]\w{2,}$/.test(x) && !/\.(c?js|json|md|ini|sql)$/.test(x); // `Module.method`, not a file name
 const rulesOf = i => new Set(String(i.rule).split(/[,\s]+/).filter(Boolean));
-function duplicates(d) { // open pairs sharing an exact quoted code name and a rule number; a name shared by more than 6 is a hub, not evidence
+function duplicates(d) { // open pairs sharing an exact quoted member (`Module.method`) and a rule number; a module alone or a name shared by more than 6 is not evidence
     const by = new Map();
-    for (const i of d.issues) for (const t of new Set(ticks(i.sites).filter(x => !/\s/.test(x) && /[A-Za-z]{4,}/.test(x)))) (by.get(t) || by.set(t, []).get(t)).push(i);
+    for (const i of d.issues) for (const t of new Set(ticks(i.sites).filter(member))) (by.get(t) || by.set(t, []).get(t)).push(i);
     const pairs = new Map();
     for (const [t, xs] of [...by].sort()) if (xs.length > 1 && xs.length <= 6)
         for (let a = 0; a < xs.length; a++) for (let b = a + 1; b < xs.length; b++) {
