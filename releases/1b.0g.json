@@ -29,6 +29,7 @@
   {"key":"1b.0g13","title":"Bodies the server moves never drop more than 333 (DT-381, M33)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g14","title":"Aden Lorenzo is reachable: a counter point on the floor when the spawn z lies under it (DT-391)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g15","title":"Room for bots at a crowded open-air NPC: Rune gatekeeper (DT-393)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0g16","title":"Far walks (spot to spot, cross-town, karma) find the walking way, not the straight leg (DT-407; critical, own design)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"1b.0g16","title":"Far walks (spot to spot, cross-town, karma) find the walking way, not the straight leg (DT-407; critical, own design)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0g8","title":"Fewer clans on the 1b head (investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":["dt366-fewer-clans"],"landed":null,"carried":[{"from":"1b.0g","reason":"maintainer 11-12 (M32): first what a player sees in a 30 min run","at":"2026-11-12T08:50:25.036Z"},{"from":"1b.0f","reason":"empty: DT-366 moved to release 2 with its deeper cause DT-324 (M35)","at":"2026-11-12T19:28:04.807Z"}]}
  ]
 }
