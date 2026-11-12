@@ -100,7 +100,22 @@ function select(base, brief) {
     return { files, tests: [...selected].sort(), normal: [...normal].sort(),
         geodataOnly: [...selected].filter(t=>!normal.has(t)).sort(),
         optionalGeodata: [...selected].filter(t=>normal.has(t)&&geo.has(t)).sort(),
-        domains: domains.map(x=>x[2]), warnings, critical };
+        domains: domains.map(x=>x[2]), warnings, critical,
+        // A generated table, its generator or its fingerprint: the pair of builder and reader shows only on the whole built table.
+        table: files.some(x => !x.startsWith('tests/') && /(^data\/Bots\/|scripts\/generate|TableFingerprint)/.test(x)) };
+}
+// What ready asks of CI on HEAD. record-review asks the same before the first review of a generated-table task.
+function ciGaps(plan, e, head) {
+    const runs=(e.ciRuns||[]).filter(r=>r.head===head), full=runs.some(r=>r.workflow==='PR checks');
+    const covered=new Set(runs.flatMap(r=>r.tests)), missing=plan.tests.filter(t=>!covered.has(t));
+    const raw=new Set((e.rawGeodata||[]).filter(r=>r.head===head).map(r=>r.test)), missingRaw=plan.optionalGeodata.filter(t=>!raw.has(t));
+    const reasons=[];
+    if (missingRaw.length) reasons.push('Missing optional raw-geodata evidence: '+missingRaw.join(', '));
+    if (missing.length) reasons.push('Missing '+missing.length+' selected tests: '+missing.slice(0,20).join(', ')+(missing.length>20?' ... (verify --show-tests)':''));
+    // Every route: full PR checks on the task SHA (its first shard runs the syntax/table check); the selection
+    // only names the map tests PR checks skips, which Picked tests adds.
+    if (!full) reasons.push('Full PR checks on HEAD required (every route).');
+    return { full, missing, missingRaw, reasons };
 }
 // A review answers the 16 hard rules (0-15) and the deeper-cause question, one line each:
 //   <rule|cause> ok <evidence> | na <reason> | violation <file:line> <what> | left <lc id[,id]> [M<n>] <reason>
@@ -345,8 +360,13 @@ function main() {
         const takenOut=(opt('--taken-out')||'').split(',').filter(Boolean);
         const unknown=takenOut.filter(id=>!(state.brief.smallFixes||[]).some(f=>f.id===id));
         if (unknown.length) fail('--taken-out names no small fix of the brief: '+unknown.join(', '));
+        const plan=select(state.base,state.brief);
         save(s=>{
             const prior=s.evidence.review, table={...(prior?.table||{}),...lines};
+            // The builder and the reader of a generated table were once reviewed on pieces: two rounds and three builds later
+            // the whole table failed its own reader. The first review therefore waits for CI on the built table.
+            const gaps=!prior && plan.table ? ciGaps(plan,s.evidence,head).reasons : [];
+            if (gaps.length) fail('This task changes a generated table, its generator or its fingerprint: its first review is recorded only after CI passed on HEAD, so the real reader has run over the whole built table (record-ci). '+gaps.join(' '));
             const missing=RULES.filter(k=>!table[k]);
             if (missing.length) fail((prior?.table?'':'The first review of a brief answers every rule. ')+'Review table has no answer for: '+missing.join(', '));
             const standing=RULES.filter(k=>table[k].verdict==='violation');
@@ -435,17 +455,8 @@ function main() {
         const table=e.review?.table||{};
         if (e.review?.head===head && RULES.some(k=>!table[k] || table[k].verdict==='violation')) reasons.push('Review table: an unanswered rule or a standing violation.');
         reasons.push(...smallFixProblems(state.base,state.brief,e.review?.takenOut));
-        const runs=(e.ciRuns||[]).filter(r=>r.head===head);
-        const full=runs.some(r=>r.workflow==='PR checks');
-        const covered=new Set(runs.flatMap(r=>r.tests));
-        const missing=plan.tests.filter(t=>!covered.has(t));
-        const raw=new Set((e.rawGeodata||[]).filter(r=>r.head===head).map(r=>r.test));
-        const missingRaw=plan.optionalGeodata.filter(t=>!raw.has(t));
-        if(missingRaw.length) reasons.push('Missing optional raw-geodata evidence: '+missingRaw.join(', '));
-        if (missing.length) reasons.push('Missing '+missing.length+' selected tests: '+missing.slice(0,20).join(', ')+(missing.length>20?' ... (verify --show-tests)':''));
-        // Every route: full PR checks on the task SHA (its first shard runs the syntax/table check); the selection
-        // only names the map tests PR checks skips, which Picked tests adds.
-        if (!full) reasons.push('Full PR checks on HEAD required (every route).');
+        const {full,missing,missingRaw,reasons:ciReasons}=ciGaps(plan,e,head);
+        reasons.push(...ciReasons);
         if (plan.warnings.length && !e.review?.selectionAcknowledged) reasons.push('Uncertain selection needs explicit review --selection-ack.');
         if (e.rules?.head!==head) reasons.push('Mechanical rules-check missing for HEAD (verify --rules).');
         if (state.kind==='fix') {

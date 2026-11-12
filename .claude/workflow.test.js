@@ -296,3 +296,24 @@ onNpm=()=>{onNpm=null;const r=cmd('record-brief','lw','--file','/brief.json');if
  expect('a brief replaced while verify --check runs refuses the receipt',cmd('verify','lw','--check'),1,'changed while this command ran');store.set('/brief.json',before);}
 if(JSON.parse(store.get('/git/l2solo-workflow/lw.json')).evidence.rules)throw Error('no receipt may be written onto a replaced brief');
 console.log('PASS a receipt is not written onto a brief replaced under the command');
+// A generated-table task: the first review waits for CI on HEAD; a later round does not.
+changed='scripts/generate-town-ways.js';
+expect('gt start',cmd('start','gt','--base','main','--risk','critical'),0,'policy-hash');
+store.set('/b.json',briefWith({scope:['scripts/generate-town-ways.js']}));
+expect('gt brief',cmd('record-brief','gt','--file','/b.json'),0,'true');
+expect('first review of a generated-table task refused before CI',cmd('record-review','gt','--result','pass','--evidence','review','--rules','/table.txt'),1,'generated table');
+expect('gt full CI',cmd('record-ci','gt','--run','1'),0,'');
+expect('full PR checks alone leave the map test of the table missing',cmd('record-review','gt','--result','pass','--evidence','review','--rules','/table.txt'),1,'Missing 1 selected tests: test_geodata.js');
+expect('gt picked CI',cmd('record-ci','gt','--run','2'),0,'');
+expect('with CI on HEAD the review of a generated-table task reaches the table check',cmd('record-review','gt','--result','blocked','--evidence','review','--rules','/blocked.txt'),1,'no answer for');
+store.set('/gt1.txt',fullTable({3:'3 violation scripts/generate-town-ways.js:1 each spur checked alone'}));
+expect('gt review 1 blocked',cmd('record-review','gt','--result','blocked','--evidence','review','--rules','/gt1.txt'),0,'');
+{const f='/git/l2solo-workflow/gt.json',r=JSON.parse(store.get(f));delete r.evidence.ciRuns;store.set(f,JSON.stringify(r));}
+store.set('/gt2.txt','3 ok the generator checks through the reader');
+expect('a later round of a generated-table task asks no CI first',cmd('record-review','gt','--result','pass','--evidence','review 2','--rules','/gt2.txt'),0,'');
+changed='data/Bots/town-ways.json';
+expect('gt2 start',cmd('start','gt2','--base','main','--risk','critical'),0,'policy-hash');
+store.set('/b.json',briefWith({scope:['data/Bots/town-ways.json']}));
+expect('gt2 brief',cmd('record-brief','gt2','--file','/b.json'),0,'true');
+expect('a committed table counts as a generated-table task',cmd('record-review','gt2','--result','pass','--evidence','review','--rules','/table.txt'),1,'generated table');
+changed='src/foo.js';
