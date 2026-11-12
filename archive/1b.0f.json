@@ -1,0 +1,84 @@
+{
+ "key": "1b.0f",
+ "group": "1b",
+ "order": 19.3,
+ "type": "fix",
+ "st": "validated",
+ "title": "1b.0f combat timing, server exits, geodata points, loops (fix)",
+ "branch": "ivan/batch-1b",
+ "base": "631f6b95c43b9429db038d0e9c42a258ae524b99",
+ "head": "f9fa498e69e8c2d5180a410cacd8b585cb571316",
+ "decisions": [],
+ "cap": null,
+ "gates": {
+  "ci": {
+   "at": "2026-11-12T21:16:47.334Z",
+   "task": "dt360-town-ways",
+   "runs": [
+    "43295720708",
+    "43295735380"
+   ]
+  },
+  "ab": {
+   "at": "2026-11-12T21:27:45.602Z",
+   "runs": [
+    "f9fa498e6-script-online-player-20261112-221111",
+    "f9fa498e6-hot-20261112-224913"
+   ],
+   "base": [
+    "631f6b95c-script-online-player-20261112-122158",
+    "631f6b95c-hot-20261112-134759"
+   ],
+   "save": "d2f4aa5d-dc82-4241-bdcf-d3bb256899ba",
+   "verdict": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/ab-verdict-1b0f.md",
+    "sha256": "bb76b023886237c4100421855daf1d797dc7254e0d4bd9196af8994964642bda"
+   }
+  },
+  "trace": {
+   "at": "2026-11-12T21:36:08.001Z",
+   "run": "f9fa498e6-script-online-player-20261112-221111",
+   "head": "f9fa498e69e8c2d5180a410cacd8b585cb571316",
+   "save": "d2f4aa5d-dc82-4241-bdcf-d3bb256899ba",
+   "coverage": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-coverage-1b0f.md",
+    "sha256": "b7d7f3446e4813c9e060ff12ed88f571a15f4ce3589ec74e151d2a1d13f96653"
+   },
+   "invariants": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-invariants-1b0f.md",
+    "sha256": "27466b05e741858c8f7b1fe78c6e46e154011d0dbd0347c5a326a4ddbaff7ef6"
+   },
+   "verdict": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-verdict-1b0f.md",
+    "sha256": "4aba50c3d6d437a17a677d017fcdecece5e0d5e4f6cf6e87bb439391dc7691e4"
+   }
+  },
+  "report": {
+   "at": "2026-11-12T21:37:26.383Z",
+   "file": "/Users/iposukhoff/L2Solo/tmp/release-1b0f-report.md",
+   "sha256": "8549f45a5ccf8cc510f1dd84bafcbe179cfef3757417732023973032e8aaf6d9",
+   "detectors": {
+    "r8-catch": 65,
+    "r9-world": 42,
+    "r9-random": 51,
+    "r13-cite": 1,
+    "r5-main": 14,
+    "r4-const": 1,
+    "r2-clock": 4
+   }
+  }
+ },
+ "openedAt": "2026-11-12T14:22:41.841Z",
+ "frozenAt": "2026-11-12T20:08:16.432Z",
+ "validatedAt": "2026-11-12T21:37:32.103Z",
+ "published": null,
+ "steps": [
+  {"key":"1b.0g6","title":"The hot town walk finds long detours (critical)","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["dt360-town-detour","dt360-town-ways"],"landed":{"slug":"dt360-town-ways","head":"f9fa498e69e8c2d5180a410cacd8b585cb571316","reviewedHead":"f9fa498e69e8c2d5180a410cacd8b585cb571316","tree":"fac42718262c5f241553bcca7a00f12236ab1f6d","ci":["43295720708","43295735380"],"at":"2026-11-12T20:06:22.335Z"},"carried":[{"from":"1b.0g","reason":"maintainer 11-12 (M32): first what a player sees in a 30 min run","at":"2026-11-12T08:50:19.361Z"}]},
+  {"key":"1b.0f3","title":"No server exit from a kill reward throw ()","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["dt306-kill-boundary"],"landed":{"slug":"dt306-kill-boundary","head":"d7a0eb724b4e5d6c8d17d34aea86c3622c0ff9e4","reviewedHead":"d7a0eb724b4e5d6c8d17d34aea86c3622c0ff9e4","tree":"73e5b7624d9878d08efe7ff7f1b6f92151bdb25d","ci":["43261819349","43261869704","43263146144"],"at":"2026-11-12T16:52:34.760Z"}},
+  {"key":"1b.0f1","title":"A DoT tick takes at most HP-1 and is booked to its real source, hot and cold ()","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["cmb35-dot-hp1"],"landed":{"slug":"cmb35-dot-hp1","head":"080507692084a3293f3a79b2010ce642d54c5937","reviewedHead":"080507692084a3293f3a79b2010ce642d54c5937","tree":"60127769b3bcddd20ffbcac978e54bc649cbc1a0","ci":["43268886583","43268901990"],"at":"2026-11-12T17:29:40.530Z"}},
+  {"key":"1b.0f17","title":"A worker reply its validator refuses is answered as a refusal to the waiting request (deeper cause of ; critical: worker file)","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["dt399-worker-refusal"],"landed":{"slug":"dt399-worker-refusal","head":"b4406630cc461d80f7d5762fff326617095d7068","reviewedHead":"b4406630cc461d80f7d5762fff326617095d7068","tree":"53fd84a4780113b69de0c7ba83d17dd9b29533d0","ci":["43272915747","43272968275"],"at":"2026-11-12T17:53:22.945Z"}},
+  {"key":"1b.0f11","title":"Small fixes: failures that show ()","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["f11-small-shows"],"landed":{"slug":"f11-small-shows","head":"2872a261eeb699cc5cff5499a47aff29d074f7eb","reviewedHead":"2872a261eeb699cc5cff5499a47aff29d074f7eb","tree":"28513155c083e9295983e8d837a2937d24037ec1","ci":["43257077008","43257090656"],"at":"2026-11-12T16:27:37.324Z"}},
+  {"key":"1b.0f12","title":"Each bot talks to a counter NPC from its own point, no queue ()","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["dt390-counter-spread"],"landed":{"slug":"dt390-counter-spread","head":"aa70b7cdba0a7724dc3f1e72a8dec357a69a7634","reviewedHead":"aa70b7cdba0a7724dc3f1e72a8dec357a69a7634","tree":"50a30441e70644485cc59e172dfc7bc58e2aeb38","ci":["43241017646","43241002715"],"at":"2026-11-12T14:55:30.573Z"}},
+  {"key":"1b.0f16","title":"A refused party goal answer is answered at once (; critical: worker file)","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["dt300-refused-answer"],"landed":{"slug":"dt300-refused-answer","head":"62a51ef61a82c83deb66ea29316ddb21cc074785","reviewedHead":"62a51ef61a82c83deb66ea29316ddb21cc074785","tree":"336b3b9341c91a85269686d56381a0614283d590","ci":["43255340498","43255447989"],"at":"2026-11-12T16:16:46.430Z"}}
+ ]
+}
