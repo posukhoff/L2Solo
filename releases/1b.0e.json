@@ -18,6 +18,24 @@
     "43198299358",
     "43198288424"
    ]
+  },
+  "trace": {
+   "at": "2026-11-12T12:15:13.226Z",
+   "run": "631f6b95c-script-online-player-20261112-122158",
+   "head": "631f6b95c43b9429db038d0e9c42a258ae524b99",
+   "save": "d2f4aa5d-dc82-4241-bdcf-d3bb256899ba",
+   "coverage": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-coverage-1b0e.md",
+    "sha256": "7a47a504b75404a2522d3a4a50ca3a6de0d1c71730b6b6e6dff85775e2f44a5e"
+   },
+   "invariants": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-invariants-1b0e.md",
+    "sha256": "9ebbef1a54334d3aa7f7e30328c162108117460587ee44e1582b02810cf07975"
+   },
+   "verdict": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-verdict-1b0e.md",
+    "sha256": "8fd2134e9c8ee82834b425fcc7890a5488e671f609154d819a8339d59165ae19"
+   }
   }
  },
  "openedAt": "2026-11-12T06:06:57.652Z",
