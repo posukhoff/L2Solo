@@ -214,12 +214,12 @@ const placeOf = i => i.at || (i.tail ? 'tail' : 'triage');
 const kindsLine = d => `kinds ${KINDS.map(k => `${k} ${d.issues.filter(i => i.kind === k).length}`).join(' · ')} · none ${d.issues.filter(i => !i.kind).length}`;
 
 // ---------- assembling a release (planning.md "Assembling a release"; maintainer 2026-11-12) ----------
-const STEP_ISSUES = 4, FIX_STEPS = 6, FIX_HOURS = 24, NEAR_SHARED = 12; // one task's brief · a fix release's steps · and its age: one gate cycle can still name the change that hurt
+const STEP_ISSUES = 4, FIX_STEPS = 6, FIX_HOURS = 24, NEAR_SHARED = 12, QUEUE_SHOWN = 12; // one task's brief · a fix release's steps · and its age: one gate cycle can still name the change that hurt
 function fixQueue(d) { // bugs, then risks, that no landed step holds: they go to a fix release before anything planned
     const st = steps(d);
     return d.issues.filter(i => ['bug', 'risk'].includes(i.kind) && !i.resolved && !(i.at && st.get(i.at).s.st === 'landed')).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'bug' ? -1 : 1));
 }
-const queueLine = d => { const q = fixQueue(d); return `fix queue ${q.length}${q.length ? ': ' + q.map(i => `${i.id} ${i.kind} ${i.at || 'no release'}`).join(' · ') : ''}`; };
+const queueLine = d => { const q = fixQueue(d), more = q.length - QUEUE_SHOWN; return `fix queue ${q.length}${q.length ? ': ' + q.slice(0, QUEUE_SHOWN).map(i => `${i.id} ${i.kind} ${i.at || 'no release'}`).join(' · ') + (more > 0 ? ` · +${more} (lc list --kind bug, lc list --kind risk)` : '') : ''}`; }; // the head of the queue: the whole of it is a list, not a line read at every status
 
 // ---------- growth: why the working context is large, each cause with its owner action; nothing is cut ----------
 const ticks = t => [...String(t).matchAll(/`([^`]+)`/g)].map(m => m[1].trim());

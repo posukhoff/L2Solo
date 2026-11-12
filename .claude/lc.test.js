@@ -516,6 +516,9 @@ test('assembling: bugs lead the fix queue and leave it when their step lands; op
     w.ok('kind', 'debt', ...mine.filter(id => id !== 'DT-801')); w.ok('seen', ...mine, '--by', 'pass 11-12');
     const ready = w.ok('next'); assert.match(ready, /\n {2}1b\.2 · \d+ issues · no kind 0 · not confirmed 0 · debt or gap \d+/); assert.match(ready, /\n1b\.2: ready to open\n$/);
     assert.match(w.lc('near', 'DT-9999').out, /DT-9999: no open issue there/); // a mistyped id is not a module name
+    for (let k = 0; k < 13; k++) add(`DT-9${String(k).padStart(2, '0')}`, '--kind', 'risk'); // a long queue shows its head and the count of the rest
+    const line = w.ok('status').split('\n').find(l => l.startsWith('fix queue ')), total = Number(line.match(/^fix queue (\d+): /)[1]);
+    assert.ok(total > 12); assert.equal(line.split(' · ').length, 13); assert.ok(line.endsWith(` · +${total - 12} (lc list --kind bug, lc list --kind risk)`));
 });
 
 test('unfreeze: a frozen release takes the fix its final runs asked for only by a decision; the old head and gates become history and the new tip is frozen', () => {
