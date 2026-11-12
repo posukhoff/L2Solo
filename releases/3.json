@@ -24,7 +24,7 @@
   {"key":"3.refusals-by-one","title":"Refusals by one classifier hot and cold, not faults: RM-34, DT-142, DT-148, DT-234, DT-235, RA3-1","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.trace-gaps","title":"Trace gaps: RM-37, DT-86, DT-128, DT-178, DT-179, DT-215, DT-259","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.main-writes-far","title":"Main writes far rows on a raise (release 1 exception, rule 15 away, maintainer 11-09): `raiseOnRow`/`raiseOn` → a named raise message the worker applies in its commit; RC-2, RC-4, SF-2, threads-7","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"3.situation-raises-and","title":"Situation raises and failures that do not show: RC-3, SF-1, SF-3, SF-5, SF-6, ECO-10 (own move), A-12, BA-6, RA-9, DT-111, DT-147, DT-176","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"3.situation-raises-and","title":"Situation raises and failures that do not show: RC-3, SF-1, SF-3, SF-6, ECO-10 (own move), A-12, BA-6, RA-9, DT-111, DT-147, DT-176","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.one-store-per","title":"One store per membership: parties-13, storage-4","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.one-worker-restart","title":"One worker restart rule: DT-16, races-R16, DT-98","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.one-time-migrations","title":"One-time migrations under the governor: DT-2","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
