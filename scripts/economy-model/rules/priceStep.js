@@ -26,16 +26,18 @@ function finite(value) {
 
 // The price a new line starts at. Seller: under the cheapest rival line it
 // sees, else its known price, else the item's first price; never under the
-// floor. With none of the three it throws: the caller supplies the first
+// floor, and at a standing WTB when its caller passes one (bid: the
+// sellerSeesBids reading, ours) and it is higher. With none of the three it throws: the caller supplies the first
 // price (an item never seen starts at its cheapest supplying route,
 // bounds.firstPrice). Buyer: its known price, else the first price, held to
 // the cap, times the persona's start factor; with neither it throws.
-function startPrice(side, { floor, cap, rival = null, known = null, first = null, persona, roll = 0 }) {
+function startPrice(side, { floor, cap, rival = null, known = null, first = null, bid = null, persona, roll = 0 }) {
     if (side === 'sell') {
         const { min, max } = PRICE_STEP.undercut;
         if (!finite(rival) && !finite(known) && !finite(first)) throw new Error('a seller needs a rival line, a known price or the first price');
         const seen = finite(rival) ? Number(rival) * (1 - (min + (max - min) * roll)) : finite(known) ? Number(known) : Number(first);
-        return Math.max(floor, seen);
+        // A standing WTB above that is a price it knows: it starts there.
+        return Math.max(floor, seen, finite(bid) ? Number(bid) : -Infinity);
     }
     if (!finite(known) && !finite(first)) throw new Error('a buyer needs a known price or the first price');
     return Math.min(finite(known) ? Number(known) : Number(first), cap) * persona.buyerStart;

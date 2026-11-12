@@ -33,14 +33,19 @@ function reachTowns({ town = null, twinTown = null }) {
 // What an account sees of an item in the books it reaches. books: { town:
 // { sell: { item: [{ price, qty, owner }] }, buy: { item: [...] }, bids:
 // { grade: [{ price, qty, owner }] } } }. self: the account's own index,
-// whose lines are not rivals. Returns { rivalSell: the cheapest other sell
-// line's price, bestBid: the dearest other buy line's price } (null without one).
-function reach(place, books, item, self = -1) {
+// whose lines are not rivals. ads: the mains' WTS and WTB ads ({ sell:
+// { item: [entry] }, buy: { item: [entry] } }), heard everywhere until the
+// regional chat (the ads are global). Returns { rivalSell: the cheapest other
+// sell line's or WTS's price, bestBid: the dearest other buy line's or WTB's
+// price } (null without one).
+function reach(place, books, item, self = -1, ads = null) {
     let rivalSell = null, bestBid = null;
-    for (const town of reachTowns(place)) {
-        for (const line of books[town]?.sell?.[item] || []) if (line.owner !== self && line.qty > 0 && (rivalSell === null || line.price < rivalSell)) rivalSell = line.price;
-        for (const line of books[town]?.buy?.[item] || []) if (line.owner !== self && line.qty > 0 && (bestBid === null || line.price > bestBid)) bestBid = line.price;
-    }
+    const read = book => {
+        for (const line of book?.sell?.[item] || []) if (line.owner !== self && line.qty > 0 && (rivalSell === null || line.price < rivalSell)) rivalSell = line.price;
+        for (const line of book?.buy?.[item] || []) if (line.owner !== self && line.qty > 0 && (bestBid === null || line.price > bestBid)) bestBid = line.price;
+    };
+    for (const town of reachTowns(place)) read(books[town]);
+    if (ads) read(ads);
     return { rivalSell, bestBid };
 }
 
@@ -53,4 +58,4 @@ function bestCrystalBid(place, books, grade, self = -1) {
     return best;
 }
 
-module.exports = { remember, known, reach, reachTowns, bestCrystalBid, MEMORY_ROWS };
+module.exports = { remember, known, reach, bestCrystalBid, MEMORY_ROWS };

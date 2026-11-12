@@ -10,12 +10,12 @@
 // plain: NPC trade only, one hunting share and visit rate for every band.
 // today: today's fixed stores and NPC prices (today.js), the hunting share
 // and visits per band fitted on --fit (default: the --cohort ledger).
-// design: the economy design's account plane (design.js): crafter twins,
-// the workshop, own lines, the town books and the stock side of a main's
-// visit, NPC prices at x1 and the design's rates; --start late is the
-// --cohort ledger's start save, fresh the seeder's start levels (--accounts,
-// default 1700); the hunting share and arrivals are fitted on --fit as in today mode.
-// All come to town at today's periodic arrivals (Today.nextArrival).
+// design: the economy design (design.js, mains.js): crafter twins with
+// their workshop and lines, and the mains' market (path, acquire, trip,
+// visit, occupation), NPC prices at x1 and the design's rates; --start late
+// is the --cohort ledger's start save, fresh the seeder's start levels
+// (--accounts, default 1700); the hunting share is fitted on --fit as in
+// today mode, and a main comes to town at its trip's situations.
 //
 // Prints per stage band (by start level) the faucets and sinks per bot-hour,
 // the money stock, the bands over the hours, town visits and the run's
@@ -27,6 +27,7 @@ const Cohort = require('./cohort');
 const Engine = require('./engine');
 const Today = require('./today');
 const Design = require('./design');
+const PersonaTypes = require('../../src/GameServer/Bot/AI/BotPersonaTypes');
 const { levelForGrade } = require('../../src/GameServer/Bot/AI/GearGradeRule');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
 const { STAGE_BANDS } = require('../economy/ledger-rules');
@@ -77,12 +78,15 @@ function progress(label) {
     return ({ hour, hours, events, seconds }) => process.stderr.write(`[${label}] h=${hour}/${hours} events=${Math.round(events / 1000)}k ${(events / Math.max(seconds, 1e-3) / 1000).toFixed(1)}k ev/s\n`);
 }
 
-function printRun(out, { rates }) {
+// fresh: a fresh start's money stock begins near zero, so net / mean stock
+// reads 2 / hours by construction: the growth rate is not printed.
+function printRun(out, { rates, fresh = false }) {
     const flows = out.flows.perBotHour;
     console.log(`RATES per band (hunting share, visits per bot-hour): ${Object.entries(rates).map(([band, rate]) => `${band} ${rate.huntShare.toFixed(3)}/${rate.visitsPerBotHour.toFixed(2)}`).join(' | ')}`);
     console.log(`POPULATION ${out.population.bots} accounts, ${out.population.botHours} bot-h over ${out.window.hours} h; start bands ${Object.entries(out.population.stageBands).map(([band, n]) => `${band} ${n}`).join(' | ')}`);
     console.log(`FLOWS per bot-hour: ${Object.entries(flows).map(([kind, adena]) => `${kind} ${k(adena)}`).join(' | ')}; faucets ${(out.flows.faucets / 1e6).toFixed(1)}M sinks ${(out.flows.sinks / 1e6).toFixed(1)}M net ${(out.flows.net / 1e6).toFixed(1)}M; fixed buyers ${(out.flows.fixedBuyerShareOfFaucets * 100).toFixed(1)} % of faucets`);
-    console.log(`MONEY ${(out.money.stockStart / 1e6).toFixed(1)}M -> ${(out.money.stockEnd / 1e6).toFixed(1)}M, growth ${(out.money.growthPerHour * 100).toFixed(2)} %/h, closure gap ${out.money.closureGap}`);
+    if (fresh) console.log(`MONEY ${(out.money.stockStart / 1e6).toFixed(1)}M -> ${(out.money.stockEnd / 1e6).toFixed(1)}M, net per bot-hour ${k(out.flows.net / Math.max(1, out.population.botHours))}, sinks / faucets ${(-out.flows.sinks / Math.max(1, out.flows.faucets)).toFixed(3)}, closure gap ${out.money.closureGap}`);
+    else console.log(`MONEY ${(out.money.stockStart / 1e6).toFixed(1)}M -> ${(out.money.stockEnd / 1e6).toFixed(1)}M, growth ${(out.money.growthPerHour * 100).toFixed(2)} %/h, closure gap ${out.money.closureGap}`);
     console.log('BANDS by start level, per bot-hour:');
     console.log(`  ${'band'.padEnd(8)}${pad('bots', 6)}${pad('huntAdena', 11)}${pad('npcSales', 10)}${pad('fixedBuy', 10)}${pad('npcBuys', 10)}${pad('fixedSell', 10)}${pad('fares', 9)}${pad('moneyΔ', 10)}${pad('exp', 10)}${pad('lvUps', 7)}`);
     for (const [band, row] of Object.entries(out.progress.stageBands)) {
@@ -155,7 +159,8 @@ function designOf(argv, snapshot) {
         + `SSD ${fmt(game.firstPrice[1463])}, SSC ${fmt(game.firstPrice[1464])}, D crystal ${fmt(game.firstPrice[1458])}, Soul Ore ${fmt(game.firstPrice[1785])}`);
     console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStockHours are high-sensitivity): ${JSON.stringify(config)}`);
     console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : config[field] === r.ours ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
-    return { view, rates, cohort, design: Design.plane({ snapshot, game, config, start, grades }) };
+    const personaShares = Object.fromEntries(PersonaTypes.TYPE_IDS.map(id => [id, PersonaTypes.TYPES[id].share]));
+    return { view, rates, cohort, fresh: start === 'fresh', design: Design.plane({ snapshot, game, config, start, grades, personaShares }) };
 }
 
 const fmt = value => (value === null || value === undefined || !Number.isFinite(value) ? '-' : Math.abs(value) >= 1e4 ? k(value) : Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(2));
@@ -178,13 +183,13 @@ function printDesign(design, hours) {
         for (const row of window) for (const [grade, s] of Object.entries(row.shots)) { const t = sum[grade] ||= { wanted: 0, fired: 0 }; t.wanted += s.wanted; t.fired += s.fired; }
         console.log(`  h${pad(window[window.length - 1].hour, 4)} ${Object.entries(sum).map(([grade, t]) => `${grade} ${pct(t.fired, t.wanted)}`).join(' | ')}`);
     }
-    const s = design.shots.supply, seen = design.shots.worthSeen;
-    console.log(`SHOT SUPPLY units: from the own twin ${s.own}, bought on twin lines ${s.lines}, NPC ${s.npc}; visits with a twin line in town ${seen.visitsWithLine}: `
-        + `cheapest at or under the shot's worth ${pct(seen.cheapestAtOrUnderWorth, seen.visitsWithLine)}`);
+    const s = design.shots.supply;
+    console.log(`SHOT SUPPLY units: from the own twin ${s.own}, bought on twin lines ${s.lines}, NPC ${s.npc}`);
     console.log(`SHOT WORTH at the start against the first price a twin asks: ${Object.entries(design.shots.worthAtStart).map(([grade, w]) => `${grade} ${pct(w.worthAtOrAboveFirstPrice, w.mains)} of ${w.mains}`).join(' | ')}`);
     console.log(`MP used ${k(design.mp.used)} of ${k(design.mp.available)} available (${pct(design.mp.used, design.mp.available)}); a full shot use would take ${k(design.mp.neededForFullShots)} (${pct(design.mp.neededForFullShots, design.mp.available)} of available); idle MP lost at max ${k(design.mp.lost)}`);
-    const t = design.twins.seat, twinHours = t.sell + t.buy + t.idleSell + t.idleBuy;
-    console.log(`TWINS seat-hours: selling (sell lines shown) ${fmt(t.sell)} (${pct(t.sell, twinHours)}), buying (buy lines shown) ${fmt(t.buy)} (${pct(t.buy, twinHours)}), `
+    const t = design.twins.seat, twinHours = t.sell + t.buy + t.manufacture + t.idleSell + t.idleBuy;
+    console.log(`TWINS without a seat yet (their main cannot craft): ${fmt(t.unseated)} twin-hours`);
+    console.log(`TWINS seat-hours: selling (sell lines shown) ${fmt(t.sell)} (${pct(t.sell, twinHours)}), buying (buy lines shown) ${fmt(t.buy)} (${pct(t.buy, twinHours)}), manufacture ${fmt(t.manufacture)} (${pct(t.manufacture, twinHours)}), `
         + `idle (store empty) ${fmt(t.idleSell + t.idleBuy)} (${pct(t.idleSell + t.idleBuy, twinHours)}: in sell mode ${fmt(t.idleSell)}, in buy mode ${fmt(t.idleBuy)}); `
         + `crafting (a batch running, beside the store) ${fmt(design.twins.batchHours)} (${pct(design.twins.batchHours, twinHours)})`);
     const mk = design.money, money = row => `${row.accounts} accounts ${(row.money / 1e6).toFixed(1)}M`;
@@ -214,8 +219,76 @@ function printDesign(design, hours) {
     console.log(`GOODS ${design.goods.items} items moved; closure (start + produced - destroyed - to NPC = end) fails for ${design.goods.failing}${design.goods.failing ? ` ${JSON.stringify(design.goods.worst)}` : ''}; `
         + `${Object.entries(design.goods.totals).map(([field, n]) => `${field} ${k(n)}`).join(' | ')}`);
     console.log(`BOT-TO-BOT adena ${k(design.botToBot)} (${(design.botToBot / hours / 1e6).toFixed(2)}M per hour); COUNTERS ${Object.entries(design.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
-    console.log('STAND-INS until the mains\' market rules exist:');
-    for (const line of design.standIns) console.log(`  - ${line}`);
+    printMarket(design, hours);
+}
+
+// The market of mains: how kit pieces came, the wants left open, trips,
+// meetings, orders, caps against floors, velocity, Gini, the shot margin's spread.
+function printMarket(design, hours) {
+    const m = design.market, g = design.gates, h = (table, grade) => (table[grade] === undefined ? '-' : (typeof table[grade] === 'number' ? table[grade] : table[grade].h).toFixed(1));
+    console.log('GATES of each grade\'s soulshot (hour; - never): crafter main in the grade -> its shot recipe\'s scroll reaches a twin (how) -> a twin holds the recipe -> first crystal (from) -> first shots crafted -> first sold to a main on a line -> 10 % / 50 % of the grade\'s shooters see a line at or under their shot worth:');
+    for (const [grade] of [['d'], ['c'], ['b'], ['a'], ['s']]) {
+        const deals = design.scrollDeals[grade];
+        const at = g.scroll[grade]?.where, where = at ? ` at ${at.spot} lv${at.level} line ${at.line} class ${at.classId}${at.npcs.length ? ` from ${at.npcs.join(', ')}` : ''}` : '';
+        console.log(`  ${grade.padEnd(5)} ${h(g.crafter, grade)} -> ${h(g.scroll, grade)}${g.scroll[grade] ? ` (${g.scroll[grade].from}${where})` : ''} -> ${h(g.recipe, grade)} -> ${h(g.crystal, grade)}${g.crystal[grade] ? ` (${g.crystal[grade].from})` : ''} `
+            + `-> ${h(design.firsts.shot, grade)} -> ${h(g.sold, grade)} -> ${h(g.reach10, grade)} / ${h(g.reach50, grade)}`
+            + `${deals ? `; shot scroll deals ${deals.deals}: first ${fmt(deals.first.price)} at h${deals.first.h.toFixed(1)}, last ${fmt(deals.last.price)} at h${deals.last.h.toFixed(1)} (NPC buys at ${fmt(deals.npcBuy)})` : ''}`);
+    }
+    const towns = design.townsAt, pick = [towns[0], towns[Math.floor((towns.length - 1) / 2)], towns[towns.length - 1]].filter(Boolean);
+    console.log('TWINS by town (start, middle, end):');
+    for (const row of pick) console.log(`  h${pad(row.hour, 4)} ${Object.entries(row.byTown).sort((a, b) => b[1] - a[1]).map(([town, n]) => `${town} ${n}`).join(' | ')}`);
+    const own = design.ownTownLine, at = [own[0], own[Math.floor((own.length - 1) / 2)], own[own.length - 1]].filter(Boolean);
+    console.log(`SHOOTERS whose own town's book holds a line of their shot (start, middle, end): ${at.map(row => `h${row.hour} ${Object.entries(row.byGrade).map(([grade, share]) => `${grade} ${pct(share, 1)}`).join(' ')}`).join(' | ')}`);
+    console.log('KIT PIECES obtained per grade (buy: a player\'s line or ad, twin: the own twin\'s shelf, order, npc, exchange, farm: its own drop), wants failed as outgrown (the main left the grade without the piece) and wants open at the end:');
+    for (const grade of [...new Set([...Object.keys(m.obtained), ...Object.keys(m.openWants), ...Object.keys(m.outgrown)])].sort()) {
+        const row = m.obtained[grade] || {}, total = Object.values(row).reduce((a, b) => a + b, 0), open = m.openWants[grade] || {};
+        console.log(`  ${grade.padEnd(5)} ${total} pieces: ${Object.entries(row).sort((a, b) => b[1] - a[1]).map(([route, n]) => `${route} ${n} (${pct(n, total)})`).join(' | ') || '-'}; `
+            + `outgrown ${m.outgrown[grade] || 0}; open ${Object.entries(open).map(([state, n]) => `${state} ${n}`).join(' | ') || '-'}`);
+    }
+    const w = design.liveness.waits;
+    console.log(`WTBS posted ${w.wtb.opened} filled ${w.wtb.done} failed ${w.wtb.failed} (unfunded at the meeting ${m.unfunded.wtb}, outgrown ${w.wtb.outgrown}) withdrawn ${w.wtb.withdrawn} open ${w.wtb.open}; `
+        + `parked at the cap: pieces ${w.parkedWant.opened}, shots ${w.parkedShots.opened}; sales to twin lines unfunded ${m.unfunded.line}, to bids ${m.unfunded.bid}`);
+    console.log(`ROUTES priced ${m.routes.priced}, the cap's own route at 0 adena ${m.routes.zero} (${pct(m.routes.zero, m.routes.priced)})`);
+    const tripsTotal = Object.entries(m.trips).filter(([reason]) => reason !== 'shotsParked').reduce((sum, [, n]) => sum + n, 0);
+    console.log(`TRIPS by situation (${tripsTotal}, ${(tripsTotal / hours).toFixed(0)}/h): ${Object.entries(m.trips).sort((a, b) => b[1] - a[1]).map(([reason, n]) => `${reason} ${n}`).join(' | ')}`);
+    console.log(`MEETINGS ${m.meetings}; offers raised ${m.events.offerPosted}, bids raised ${m.events.bidPosted}; ORDERS posted ${m.orders.posted} claimed ${m.orders.claimed} delivered ${m.orders.delivered} failed ${m.orders.failed} withdrawn ${m.orders.withdrawn} open ${m.orders.open}; `
+        + `twin-to-twin units ${m.twinToTwin}, twin units to the NPC at the floor ${m.twinToNpc}; paths ${m.paths}; spot changes ${Object.entries(m.occupation).map(([why, n]) => `${why} ${n}`).join(' | ')}`);
+    console.log('CAP>=FLOOR per grade: static (the best buyer among the lines entering the grade, path kit pieces; floors npc | npc + D crystals at the NPC gear route) under gear_gain / hunt_cycle; dynamic over pieces offered (a WTB in reach whose cap reaches the WTS floor):');
+    for (const [grade, row] of Object.entries(m.capFloorStatic)) {
+        const dyn = m.capFloor[grade];
+        console.log(`  ${grade.padEnd(5)} ${row.pieces} pieces: gear_gain ${pct(row.gear_gain.npc, 1)} | ${pct(row.gear_gain.withD, 1)}; hunt_cycle ${pct(row.hunt_cycle.npc, 1)} | ${pct(row.hunt_cycle.withD, 1)}; `
+            + `hunt-cycle rows at the bound ${pct(row.bounded, 1)}; offered ${dyn ? `${dyn.offered}: gear_gain ${pct(dyn.gear_gain, dyn.offered)}, hunt_cycle ${pct(dyn.hunt_cycle, dyn.offered)}` : '0'}`);
+    }
+    console.log(`WORTH caps held at the hunt cycle's bound: ${m.worthBounded}`);
+    const windows = [];
+    for (let from = 0; from < m.velocity.length; from += 10) {
+        const rows = m.velocity.slice(from, from + 10), moved = rows.reduce((sum, row) => sum + row.moved, 0), stock = rows.reduce((sum, row) => sum + row.stock, 0) / rows.length;
+        windows.push(`h${rows[rows.length - 1].hour} ${(100 * moved / rows.length / Math.max(1, stock)).toFixed(2)} %`);
+    }
+    console.log(`VELOCITY (bot-to-bot adena per hour / money stock, each 10 h): ${windows.join(' | ')}`);
+    console.log(`GINI of account money: start ${m.gini.start.toFixed(3)} -> end ${m.gini.end.toFixed(3)}`);
+    const last = design.hourly.slice(-10), spread = {};
+    for (const row of last) for (const [grade, mg] of Object.entries(row.margin)) if (mg.median !== null && mg.crafts >= 5) (spread[grade] ||= []).push(mg.median);
+    console.log(`SHOT MARGIN over the last 10 hours (hours with >= 5 batches; (max - min) / mean of the hourly medians): ${Object.entries(spread).map(([grade, values]) => {
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        return `${grade} ${values.length} h, mean ${fmt(mean)}, spread ${mean ? (100 * (Math.max(...values) - Math.min(...values)) / Math.abs(mean)).toFixed(1) : '-'} %`;
+    }).join(' | ') || '-'}`);
+    console.log('PRICES (median of the hourly median deal prices in each 10-hour window, deals): shots by grade on twin lines | materials as a multiple of the NPC buy price:');
+    const med = values => { const v = [...values].sort((a, b) => a - b); return v.length ? v[v.length >> 1] : null; };
+    for (let from = 0; from < design.hourly.length; from += 10) {
+        const rows = design.hourly.slice(from, from + 10), shots = {};
+        for (const row of rows) for (const [grade, p] of Object.entries(row.prices.shots)) { const e = shots[grade] ||= { medians: [], deals: 0 }; if (p.median !== null) e.medians.push(p.median); e.deals += p.deals; }
+        const mats = rows.map(row => row.prices.materials).filter(p => p.median !== null);
+        console.log(`  h${pad(rows[rows.length - 1].hour, 4)} ${Object.entries(shots).map(([g, e]) => `${g} ${fmt(med(e.medians))} (${e.deals})`).join(' | ') || '-'} | materials x${fmt(med(mats.map(p => p.median)))} (${mats.reduce((sum, p) => sum + p.deals, 0)})`);
+    }
+    const lastPrices = {};
+    for (const row of design.hourly.slice(-10)) for (const [grade, p] of Object.entries(row.prices.shots)) if (p.median !== null && p.deals >= 5) (lastPrices[grade] ||= []).push(p.median);
+    console.log(`SHOT PRICE over the last 10 hours (hours with >= 5 deals; (max - min) / mean): ${Object.entries(lastPrices).map(([grade, values]) => {
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        return `${grade} ${values.length} h, mean ${fmt(mean)}, spread ${(100 * (Math.max(...values) - Math.min(...values)) / mean).toFixed(1)} %`;
+    }).join(' | ') || '-'}`);
+    console.log('WHAT THE MODEL GETS WRONG (solo, closed cohort, no travel time, no crowding, global ads):');
+    for (const line of design.biases) console.log(`  - ${line}`);
 }
 
 function main(argv) {
@@ -228,12 +301,14 @@ function main(argv) {
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)})`);
     console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}`);
     const began = Date.now();
-    const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: Today.nextArrival,
+    const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: picked ? null : Today.nextArrival,
         onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates }, design: picked ? picked.design : null });
-    printRun(out, { rates });
+    printRun(out, { rates, fresh: !!picked?.fresh });
+    console.log(`MONEY per start band, mean per bot start -> end: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.meanStart)} -> ${k(row.money.meanEnd)}`).join(' | ')}`);
+    if (out.design) console.log(`MONEY per start band, net per bot-hour: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.deltaPerBotHour)}`).join(' | ')}`);
     if (out.design) printDesign(out.design, hours);
     console.log(`RUN ${out.counters.events} events in ${((Date.now() - began) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);
-    printFooter();
+    if (!out.design) printFooter();
     const json = Boot.option(argv, 'json', null);
     if (json) fs.writeFileSync(json, `${JSON.stringify(out, null, 1)}\n`);
 }

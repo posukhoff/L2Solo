@@ -51,4 +51,22 @@ function huntCycleWorth({ incomeWith, incomeWithout, horizonHours, ownHour = inc
     return worth(perHour, horizonHours, hour);
 }
 
-module.exports = { gearWorth, huntCycleWorth };
+// The worth of a path piece to a buyer, in adena, by formula: 'gear_gain'
+// (the design's text: today's gear gain, row.gear its hours per hour) or
+// 'hunt_cycle' (ours: the hunt cycle's hour with the piece over without,
+// row.with / row.without). The hunt cycle's share explodes where the hour
+// without the piece is near zero or below (a kit that dies more than it
+// earns): its gain is held to gainBound times the own hour (ours) and
+// bounded says so. row: the snapshot's pieceWorth row; null (no row: a piece
+// no line's path names) gives null, a worth nobody can state.
+function pieceWorth({ formula, row, horizonHours, ownHour, gainBound }) {
+    if (!row) return { adena: null, perHour: 0, bounded: false };
+    if (formula === 'gear_gain') return { ...worth(positive(row.gear), horizonHours, ownHour), bounded: false };
+    if (row.with === null || row.without === null) return { ...worth(0, horizonHours, ownHour), bounded: false };
+    const gain = Number(row.with) - Number(row.without);
+    const share = gain <= 0 ? 0 : Number(row.without) > 0 ? gain / Number(row.without) : Infinity;
+    const bounded = share > gainBound;
+    return { ...worth(bounded ? gainBound : share, horizonHours, ownHour), bounded };
+}
+
+module.exports = { gearWorth, huntCycleWorth, pieceWorth };

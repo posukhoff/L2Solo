@@ -289,4 +289,72 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
     assert.deepEqual([line.price, line.bound, line.floorBy], [10, 'floor', 'cost'], 'the fifth look parks at the cost, rounded up');
 }
 
+// A buyer's order ("craft X for me") from its own materials for a recipe the
+// twin holds: the twin gives its MP for the fee. An order is ranked by its
+// fee per MP against the batch the twin would craft otherwise (a sword at
+// (50000 - 10 ore x 300) / 100 MP = 470 an MP): one craft of the order's
+// recipe, no inputs bought (the buyer brings them).
+{
+    const game = gameOf([recipe(1, SSD), recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: ORE, amount: 10 }] })]);
+    const twin = twinOf({ recipes: [1, 3], stock: {} });
+    const out = Workshop.workshop(viewOf(game, twin, { orders: [{ id: 'o1', item: SWORD, recipeId: 3, fee: 50000 }] }));
+    assert.equal(out.mode, 'manufacture', '500 an MP over its own sword\'s 470');
+    assert.equal(out.modeValues.manufacture, 50000);
+    assert.deepEqual([out.batch.recipeId, out.batch.crafts, out.batch.orderId, out.order, out.npcBuys.length], [3, 1, 'o1', 'o1', 0]);
+    const cheap = Workshop.workshop(viewOf(game, twin, { orders: [{ id: 'o2', item: SWORD, recipeId: 3, fee: 1300 }] }));
+    assert.notEqual(cheap.mode, 'manufacture', '13 an MP is less than its own craft pays');
+    assert.equal(cheap.order, null);
+    // A twin with no craft of its own to make (no money for inputs) takes the same fee.
+    const idle = Workshop.workshop(viewOf(game, twinOf({ recipes: [1, 3], stock: {}, wallet: 0 }), { orders: [{ id: 'o2', item: SWORD, recipeId: 3, fee: 1300 }] }));
+    assert.deepEqual([idle.mode, idle.order], ['manufacture', 'o2'], 'its MP has no other work');
+    const unheld = Workshop.workshop(viewOf(game, twinOf({ recipes: [1], stock: {}, wallet: 0 }), { orders: [{ id: 'o3', item: SWORD, recipeId: 3, fee: 50000 }] }));
+    assert.equal(unheld.order, null, 'an order of a recipe it does not hold');
+}
+
+// Its buy lines first take another twin's sell line in its town at or under
+// their cap: an input no NPC sells (bone) bought from twin 7's shelf.
+{
+    const game = gameOf([recipe(4, SSD, { materials: [{ selfId: BONE, amount: 2 }] })], {}, { [SSD]: 30 });
+    const twin = twinOf({ recipes: [4], stock: {}, mode: 'buy' });
+    const books = { A: { sell: { [BONE]: [{ owner: 7, id: 's7', price: 15, qty: 10 }, { owner: 8, id: 's8', price: 18, qty: 1000 }] }, buy: {}, bids: {} } };
+    const out = Workshop.workshop(viewOf(game, twin, { books }));
+    assert.deepEqual(out.claims.map(row => [row.owner, row.units, row.price]), [[7, 10, 15], [8, 18, 18]], 'one batch\'s 28 bones, the cheaper shelf first');
+    assert.ok(out.claims.every(row => row.owner !== 0), 'never its own line');
+}
+
+// sellerSeesBids true (ours): a seller who sees a standing WTB above its ask
+// starts there; an open line restarts from it at a look. false (the
+// design's text): the workshop passes no bid, the line starts at its known
+// price and steps down. A liquid good at its market floor for two looks goes
+// to the NPC; held at its input cost it stays parked.
+{
+    const persona = { looksToFloor: 5, buyerStart: 0.7 };
+    const game = gameOf([recipe(1, SSD)]), stocked = twinOf({ recipes: [1], stock: { [SSD]: 500 }, wallet: 0 });
+    const ads = { sell: {}, buy: { [SSD]: [{ owner: 3, id: 'w3', price: 40, qty: 100 }] } };
+    assert.equal(Workshop.workshop(viewOf(game, stocked, { ads, config: { ...TEXT, sellerSeesBids: true } })).prices[`sell:${SSD}`].bid, 40, 'ours: the WTB is a price it knows');
+    const text = Workshop.workshop(viewOf(game, stocked, { ads, config: { ...TEXT, sellerSeesBids: false } })).prices[`sell:${SSD}`];
+    assert.equal(text.bid, null, 'the design\'s text: rival lines and own deals only');
+    const plain = ownLines([], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: null }], prices: { [`sell:${SSD}`]: text }, persona, sellerLook: 'every_look', roll: 0.5 }, 'batch_applied').lines[0];
+    assert.equal(plain.price, 10, 'it starts at its first price, not at the WTB');
+    const prices = { 'sell:1463': { floor: 5, floorBy: 'market', rival: null, known: 8, first: 10, bid: 12 } };
+    const fresh = ownLines([], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: null }], prices, persona, sellerLook: 'every_look', roll: 0.5 }, 'batch_applied').lines[0];
+    assert.equal(fresh.price, 12, 'the WTB at 12 over its known 8');
+    const low = { id: 'l', side: 'sell', item: SSD, qty: 100, start: 8, look: 2, price: 7, atBound: 0 };
+    const lifted = ownLines([low], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: 'l' }], prices, persona, sellerLook: 'every_look', roll: 0.5 }, 'main_arrived').lines[0];
+    assert.deepEqual([lifted.price, lifted.look], [12, 0], 'restarted from the bid');
+    const floorPrices = { 'sell:1463': { floor: 5, floorBy: 'market', rival: null, known: 8, first: 10 } };
+    const atFloor = { id: 'l', side: 'sell', item: SSD, qty: 100, start: 8, look: 5, price: 5, atBound: 1, bound: 'floor', floorBy: 'market' };
+    const closed = ownLines([atFloor], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: 'l' }], prices: floorPrices, persona, sellerLook: 'every_look', roll: 0.5 }, 'main_arrived');
+    assert.deepEqual(closed.closed.map(row => row.why), ['floor'], 'the second look at the floor: to the NPC');
+    const atCost = { ...atFloor, floorBy: 'cost' };
+    const costPrices = { 'sell:1463': { ...floorPrices['sell:1463'], floorBy: 'cost' } };
+    const parked = ownLines([atCost], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: 'l' }], prices: costPrices, persona, sellerLook: 'every_look', roll: 0.5 }, 'main_arrived');
+    assert.deepEqual([parked.closed.length, parked.lines.length], [0, 1], 'an ask at its input cost stays parked');
+}
+
+// The seat as part of the mode choice: it moves when its best mode there
+// beats its best mode here by more than the fare.
+assert.equal(Workshop.seatByMode({ here: { sell: 1000, buy: 200, manufacture: 0 }, there: { sell: 400, buy: 2100, manufacture: 0 }, fare: 1000 }), true);
+assert.equal(Workshop.seatByMode({ here: { sell: 1000, buy: 200, manufacture: 0 }, there: { sell: 400, buy: 1900, manufacture: 0 }, fare: 1000 }), false, 'a gain under the fare keeps it');
+
 console.log('PASS economy model workshop rules');

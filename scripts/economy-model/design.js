@@ -11,16 +11,13 @@
 // stepped: an Artisan below 40 and a Warsmith from 40 at its main's highest
 // level (ours), seated in a town, its MP a function of time. It acts at its
 // account's wakes: its main's arrival in a town, a fill of one of its lines,
-// the end of its craft batch (the one deadline the engine holds besides the
+// a buyer's order for what it crafts, the end of its craft batch (the one deadline the engine holds besides the
 // mains' situations).
 //
-// Stand-ins until the mains' own market rules exist (each named in the
-// printed footer): a main comes to town at the fitted periodic arrivals
-// (Today.nextArrival), buys its kit pieces at the NPC (x1) as today's
-// engine does, sells its stock to crafter buy lines in the town it visits
-// (else the NPC) and its gear to a crystallizer bid in reach (else the NPC),
-// and buys shots of its grade from twin sell lines in its town at or under a
-// shot's worth to it, else hunts without them.
+// The mains' side (mains.js) runs the character plane's rules: a main comes
+// to town at its trip's situations, sells and buys at its visit through the
+// twins' lines, the ads and its caps' own routes, and re-chooses its spot at
+// its occupation's situations.
 const Engine = require('./engine');
 const Ledger = require('./ledger');
 const Books = require('./books');
@@ -30,6 +27,8 @@ const Workshop = require('./rules/workshop');
 const { ownLines } = require('./rules/ownLines');
 const { hash, mulberry } = require('../hunt-tables/common');
 const Weights = require('./weights');
+const Worth = require('./rules/worth');
+const Mains = require('./mains');
 
 // What the design leaves unsaid, and four readings of its text, at the
 // values the model runs with. Every field is read by the code and printed
@@ -90,31 +89,107 @@ const DESIGN = Object.freeze({
     // Unsaid in the design: ours. A crafter account prices as the patient
     // crafter it stands for: the floor at the 5th look, the buyer starting at
     // 0.7 of its known price or cap.
-    crafterPersona: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 })
+    crafterPersona: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 }),
+    // Unsaid in the design: ours. The other accounts by their persona type
+    // (drawn by the types' shares, seeded): the look a seller's ask reaches
+    // its floor and a buyer's start; types not named take 'other'.
+    personas: Object.freeze({ patient_crafter: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 }), speculator: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 }),
+        pragmatic_earner: Object.freeze({ looksToFloor: 3, buyerStart: 0.8 }), steady_achiever: Object.freeze({ looksToFloor: 3, buyerStart: 0.8 }),
+        other: Object.freeze({ looksToFloor: 2, buyerStart: 0.9 }) }),
+    // A piece's worth to a buyer (its cap). 'gear_gain' (the design's text):
+    // today's gear gain carried over. 'hunt_cycle' (ours, pending the
+    // maintainer): the hunt cycle's hour with the piece over without, which
+    // sizes a gain near the simulated fight where today's formula sizes it
+    // at a tenth.
+    worth: 'hunt_cycle',
+    // A crafted good's price at the workshop. 'bid_first' (the reading "read
+    // from open bids" as written): the best open bid in reach, else its last
+    // deal or first price. 'bid_or_own' (ours, pending the maintainer): the
+    // dearer of the bid and its own price (a WTB starts under what its buyer
+    // pays and steps up at its looks).
+    productPrice: 'bid_or_own',
+    // Where a twin sits. 'starter_region' (the design's text): it starts in
+    // its main's starter village (fresh) or its main's spot town (late) and
+    // re-seats at its main's arrival in another town whose buy lines for what
+    // it crafts reach reseatFactor times its own town's. 'main_town' (ours,
+    // pending the maintainer): it takes no seat before it can craft (Create
+    // Item 1); its first seat is the town its main resupplies in then; at its
+    // main's arrival in another town the workshop weighs adena per seat-hour
+    // of its modes there against here, each from that town's book alone, and
+    // moves when there wins by more than the fare.
+    twinSeat: 'main_town',
+    // A scroll the account's own workshop decided to add counts in its main's
+    // occupation at the workshop's cap for it, and occupation is re-chosen
+    // when that decision changes (recipe_wanted). false (the plan's wakes
+    // only) | true (ours: in C4 a dwarf's first aim was its shot recipe).
+    occupationRecipeWant: true,
+    // Unsaid: ours. The hunt cycle's gain is held to this many own hours an
+    // hour (a piece at most doubles the hour); counted where it binds.
+    huntCycleGainBound: 1,
+    // A route's hours (acquire). 'literal' (the design's text): hours x own
+    // hour. 'opportunity' (ours): hours x (own hour - the hour of the farm
+    // spot, one the main can hunt at its own level).
+    hourCost: 'opportunity',
+    // Unsaid: ours. An order's fee: the craft's MP at this many adena an MP
+    // (the start value of an MP, mpStartValue), raised by orderFeeStepPerMp
+    // an MP at each of its buyer's visits while no twin took it.
+    orderFeePerMp: 13,
+    orderFeeStepPerMp: 7,
+    // What a seller's known price is. false (the design's text): rival lines
+    // and its own deals. true (ours): a standing WTB above its ask too: its
+    // line starts there and restarts there at a look.
+    sellerSeesBids: true,
+    // A buyer's WTB ladder. 'looks' (the design's text): start at
+    // min(known, cap) x the persona's start, the cap at the 3rd look, two
+    // looks at the cap. 'paced' (ours): the same ladder, but a buyer whose
+    // expected visits left in its grade are fewer than the looks the ladder
+    // still needs starts that many steps up (one visit left: its cap).
+    buyerLadder: 'paced',
+    // Unsaid: ours. An order or a farm wait still unmet after this many
+    // visits fails, its route stalled for the piece (source_stalled).
+    waitVisits: 2,
+    // Unsaid: ours. stock_low:shots at this many minutes of shots left; a
+    // refill covers the last outing's hunting hours, at least refillMinHours.
+    stockLowMinutes: 10,
+    refillMinHours: 1,
+    // Unsaid: ours. bag_full at no free slot or at this share of the max
+    // load (C4 weight penalty beyond it).
+    loadShare: 2 / 3
 });
 // The readings of the design's text and ours, by field (printed with the run).
 const READINGS = Object.freeze({
     firstPriceDrop: Object.freeze({ text: 'band_hour', ours: 'hour_share' }),
     firstPriceCraft: Object.freeze({ text: 'inputs', ours: 'inputs_plus_mp' }),
     sellerLook: Object.freeze({ text: 'every_look', ours: 'unsold_look' }),
-    askFloorAtCost: Object.freeze({ text: false, ours: true })
+    askFloorAtCost: Object.freeze({ text: false, ours: true }),
+    worth: Object.freeze({ text: 'gear_gain', ours: 'hunt_cycle' }),
+    hourCost: Object.freeze({ text: 'literal', ours: 'opportunity' }),
+    productPrice: Object.freeze({ text: 'bid_first', ours: 'bid_or_own' }),
+    twinSeat: Object.freeze({ text: 'starter_region', ours: 'main_town' }),
+    occupationRecipeWant: Object.freeze({ text: false, ours: true }),
+    sellerSeesBids: Object.freeze({ text: false, ours: true }),
+    buyerLadder: Object.freeze({ text: 'looks', ours: 'paced' })
 });
 // C4 warehouse deposit fee per stack (Lisvus SendWareHouseDepositList).
 const DEPOSIT_FEE = 30;
 // A race's starter village (C4 newbie towns), by the template's race id.
 const STARTER_VILLAGE = Object.freeze({ 0: 'Talking Island', 1: 'Elven Village', 2: 'Dark Elven Village', 3: 'Orc Village', 4: 'Dwarven Village' });
 const BOUNTY_HUNTER = String(Weights.BOUNTY_HUNTER);
-const STAND_INS = Object.freeze([
-    'arrivals: a main comes to town at the fitted periodic rule (Today.nextArrival), not at the design\'s trip situations',
-    'kit: a main buys its kit pieces at the NPC (x1) as today\'s engine does; no gear is bought from twins or other mains',
-    'stock: a main sells materials and recipes to crafter buy lines in the town it visits, else the NPC; gear to a crystallizer bid in reach, else the NPC (no WTS/WTB ads)',
-    'shots: a main buys shots of its grade from twin sell lines in its town at or under a shot\'s worth to it, else hunts without them',
-    'mains post no WTB: no buyer line rises for want of shots, gear or anything else',
-    'no twin buys from another twin: intermediates, crystals and scrolls move only from mains to twins',
-    'arrows and intermediates have no buyer: they stay on the twin\'s shelf',
-    'a crafted gear piece has no buyer yet: it stays shelved (one per recipe)',
-    'no orders, so no manufacture mode: a twin sells or buys',
-    'a twin re-seats only on other twins\' buy lines (no main\'s demand draws it)'
+// What the model gets wrong, printed with every design run: it is solo,
+// with a closed cohort, no travel time, no crowding and global ads.
+const BIASES = Object.freeze([
+    'shot coverage reads high: trips cost no time, the ads are global (no regional chat), no party shares shots',
+    'the share of crafter accounts needed reads high (conservative): no clan dwarf crafts at cost for its members',
+    'first crystal and crafted piece read late for B and above (no clan pools materials to one dwarf) and early through free trips',
+    'pieces per hour against grade entries read high: solo yields, no party split, no crowding at a spot',
+    'the share of materials a pair gathers itself reads high: its spoil reaches its twin through the warehouse at once',
+    'recipes learned read high: global ads and meetings that cost nothing',
+    'faucets net of sinks and money per band read high (inflation reads high): no clan levels, unsealing, enchanting, no adena lost walking back after a death',
+    'the share of pieces whose buyer cap reaches the floor reads high: a solo own hour is above a party member\'s',
+    'markets go quiet early: a closed cohort with no entry or retirement, no enchant breaking',
+    'looks come faster without travel: a price settles or oscillates earlier than it would',
+    'a main hunts the spot its occupation chose alone: a spot is never full',
+    'left out as in today mode: potions, enchanting, augments, henna, quests, clans, the player, sessions, hot bodies near a player'
 ]);
 
 const isMaterial = item => !Engine.isGear(item) && item?.kind !== 'Other.Recipe' && item?.kind !== 'Other.Shot';
@@ -234,18 +309,79 @@ function twinStats(snapshot, level) {
     return { level, classId: row.classId, createItem: row.createItem, crystallize: row.crystallize, maxMp: row.maxMp, regen: row.mp, storeSlots: row.storeSlots };
 }
 
-// The waits the design counts (liveness): each opened wait ends done,
-// withdrawn by its owner, failed, or at its one deadline, or is open at the end.
-const WAITS = ['sellLine', 'buyLine', 'bid', 'batch', 'shotless'];
-const wait = () => ({ opened: 0, done: 0, withdrawn: 0, failed: 0, deadline: 0 });
-
-// The design plane for Engine.simulate. options: { snapshot, game, config,
-// start: 'late' | 'fresh', grades: [[grade, fromLevel]] (D..S) }.
-function plane({ snapshot, game, config = DESIGN, start = 'late', grades }) {
-    return { sinks: ['warehouseFees'], start: context => startPlane({ snapshot, game, config, start, grades, ...context }) };
+// The Gini of a list of money amounts (negatives counted as 0).
+function gini(values) {
+    const sorted = values.filter(value => Number.isFinite(value)).map(value => Math.max(0, value)).sort((a, b) => a - b), n = sorted.length, sum = sorted.reduce((a, b) => a + b, 0);
+    return n && sum ? sorted.reduce((acc, value, i) => acc + (2 * (i + 1) - n - 1) * value, 0) / (n * sum) : 0;
 }
 
-function startPlane({ snapshot, game, config, start, grades, view, mains, ledger, push, seed, rateOf }) {
+// Does second-hand gear have a buyer whose cap reaches the seller's floor?
+// Per grade, over the path kits' pieces, the best buyer among the lines (a
+// line's reference bot entering the grade: its own hour at its best spot at
+// the design's yields, the NPC's prices, over its hunting hours to the next
+// grade) against the floor, under both worth formulas: the NPC's buy price
+// alone, and for D also the D crystals a crystallizer gets at the cheapest
+// NPC gear route per crystal (the most a crystallizer bids: an upper bound
+// of the floor). bounded: the share of line-piece rows whose hunt-cycle
+// gain is held at the bound.
+function staticCapFloor(snapshot, view, game, grades, config) {
+    const npcMin = {}, out = {};
+    for (const prices of Object.values(game.npcByTown)) for (const [id, price] of Object.entries(prices)) npcMin[id] = Math.min(npcMin[id] ?? Infinity, price);
+    const dRoute = Math.min(...Object.values(game.routeByTown).map(routes => routes.d?.perCrystal ?? Infinity));
+    for (const [at, [grade]] of grades.entries()) {
+        const best = {}, rows = { all: 0, bounded: 0 };
+        for (const line of Object.keys(Weights.CLASS_WEIGHTS)) {
+            const row = snapshot.pieceWorth?.[line]?.[grade], hour = row ? view.hours[line]?.[row.level]?.best : null;
+            if (!hour || !(hour.exp > 0)) continue;
+            const ownHour = hour.adena * Engine.designAdenaFactor(view, hour, row.level)
+                + Engine.designYieldRows(view, line, row.level, hour, false).reduce((sum, [id, perKill]) => sum + perKill * hour.kills * (view.items[id]?.npcBuy || 0), 0);
+            const next = at + 1 < grades.length ? grades[at + 1][1] : view.maxLevel;
+            const horizon = Math.max(0, Engine.expAt(view, Math.min(next, view.maxLevel)) - Engine.expAt(view, row.level)) / hour.exp;
+            for (const [id, piece] of Object.entries(row.pieces)) {
+                rows.all++;
+                for (const formula of ['gear_gain', 'hunt_cycle']) {
+                    const worth = Worth.pieceWorth({ formula, row: piece, horizonHours: horizon, ownHour, gainBound: config.huntCycleGainBound });
+                    if (formula === 'hunt_cycle' && worth.bounded) rows.bounded++;
+                    const cap = Bounds.cap({ worth: worth.adena ?? 0, npcSell: npcMin[id] ?? null }).cap;
+                    const held = (best[id] ||= {});
+                    held[formula] = Math.max(held[formula] ?? 0, cap);
+                }
+            }
+        }
+        const ids = Object.keys(best), share = (formula, floorOf) => (ids.length ? ids.filter(id => best[id][formula] >= floorOf(id)).length / ids.length : null);
+        const npcFloor = id => view.items[id]?.npcBuy || 0, dFloor = id => Math.max(npcFloor(id), grade === 'd' && Number.isFinite(dRoute) ? (view.items[id]?.crystals || 0) * dRoute : 0);
+        out[grade] = { pieces: ids.length, bounded: rows.all ? rows.bounded / rows.all : 0,
+            gear_gain: { npc: share('gear_gain', npcFloor), withD: share('gear_gain', dFloor) }, hunt_cycle: { npc: share('hunt_cycle', npcFloor), withD: share('hunt_cycle', dFloor) } };
+    }
+    return out;
+}
+
+// The waits the design counts (liveness): each opened wait ends done,
+// withdrawn by its owner, failed, or at its one deadline, or is open at the end.
+const WAITS = ['sellLine', 'buyLine', 'bid', 'batch', 'shotless', 'wts', 'wtb', 'route', 'order', 'farm', 'parkedWant', 'parkedShots'];
+// outgrown: of the failed, those its owner's main left the piece's grade without.
+const wait = () => ({ opened: 0, done: 0, withdrawn: 0, failed: 0, deadline: 0, outgrown: 0 });
+
+// The design plane for Engine.simulate. options: { snapshot, game, config,
+// start: 'late' | 'fresh', grades: [[grade, fromLevel]] (D..S),
+// personaShares: { type: share } (the persona types' shares; without them
+// every main prices as 'other') }.
+function plane({ snapshot, game, config = DESIGN, start = 'late', grades, personaShares = null }) {
+    return { sinks: ['warehouseFees'], start: context => startPlane({ snapshot, game, config, start, grades, personaShares, ...context }) };
+}
+
+// A main's persona type: drawn by the types' shares (seeded per account),
+// a crafter account is the patient crafter it stands for.
+function personaOf(config, personaShares, seed, main, crafter) {
+    if (crafter) return config.crafterPersona;
+    const types = Object.entries(personaShares || {}).filter(([type]) => type !== 'patient_crafter');
+    const total = types.reduce((sum, [, share]) => sum + share, 0);
+    let roll = mulberry(hash(`persona:${seed}:${main.id}`))() * total;
+    for (const [type, share] of types) { roll -= share; if (roll < 0) return config.personas[type] || config.personas.other; }
+    return config.personas.other;
+}
+
+function startPlane({ snapshot, game, config, start, grades, personaShares, view, mains, ledger, push, seed, rateOf, rearrive, commit }) {
     const books = Books.create(), accounts = [];
     const gradeOfLevel = level => grades.reduce((name, [grade, from]) => (level >= from ? grade : name), 'none');
     // A shot's grade is its column in the shot families (shot items carry no grade).
@@ -255,12 +391,30 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
     };
     const stats = {
         goods: {}, shots: {}, shotsByTown: {}, shotWanted: {}, hourly: [], hour: {}, mp: { used: 0, available: 0, lost: 0 },
-        seat: { sell: 0, buy: 0, idleSell: 0, idleBuy: 0 }, batchHours: 0, firsts: { crystal: {}, shot: {}, piece: {} },
+        seat: { sell: 0, buy: 0, manufacture: 0, idleSell: 0, idleBuy: 0, unseated: 0 }, townsAt: [], batchHours: 0, firsts: { crystal: {}, shot: {}, piece: {} },
+        // The gate chain of each grade's soulshot: a crafter main entering the
+        // grade, a twin holding a recipe of the grade's shots (and where its
+        // scroll came from), the first crystal (and its source), the first
+        // shots crafted, the first sold to a main on a line, and the hours by
+        // which 10 % and 50 % of the mains firing the grade's shots saw a line
+        // at or under their shot's worth at their last visit.
+        gates: { crafter: {}, scroll: {}, recipe: {}, crystal: {}, sold: {}, reach10: {}, reach50: {} },
         pieces: {}, entries: {}, materials: { own: 0, bought: 0, npc: 0 }, crystals: { bids: 0, own: 0, npcRoute: 0, used: 0 },
         recipes: {}, margins: {}, marginHour: {}, waits: Object.fromEntries(WAITS.map(kind => [kind, wait()])), counters: { wakes: 0, reseats: 0, failedCrafts: 0,
-            gearCapped: 0, shotsOwn: 0, shotsLine: 0, shotsNpc: 0, visitsWithLine: 0, lineWorthIt: 0, lineAboveWorth: 0, deposits: 0, stintsKept: 0, stintsUnfilled: 0 },
-        stopped: new Set(), botToBot: 0
+            gearCapped: 0, shotsOwn: 0, shotsLine: 0, shotsNpc: 0, deposits: 0, stintsKept: 0, stintsUnfilled: 0, twinToTwin: 0, twinToNpc: 0, unseatedWakes: 0, firstSeats: 0 },
+        stopped: new Set(), botToBot: 0, botToBotHour: 0,
+        // The market of mains: pieces obtained by route and grade, trips by
+        // their situation, meetings, orders, the cap-against-floor count over
+        // pieces offered, hunt-cycle worths held at the bound, spot changes.
+        pieces_: {}, trips: {}, meetings: 0, paths: 0, orders: { posted: 0, claimed: 0, withdrawn: 0, delivered: 0, failed: 0 }, capFloor: {}, worthBounded: 0,
+        occupation: { grade_changed: 0, spot_left: 0, recipe_wanted: 0, forScroll: 0, scrollSpot: 0, rowMissing: 0 }, events: { offerPosted: 0, bidPosted: 0 }, velocity: [],
+        // Routes acquire priced, and those whose cap's own route cost 0; sales
+        // whose buyer could not pay at the meeting; failed waits outgrown, by grade.
+        routes: { priced: 0, zero: 0 }, unfunded: { wtb: 0, line: 0, bid: 0 }, outgrown: {},
+        // Deal prices this hour: shots by grade, materials as a multiple of the NPC's buy price.
+        priceHour: { shots: {}, materials: [] }, ownTownLine: [], scrollDeals: {}, scrollMains: new Set()
     };
+    stats.obtained = (grade, route) => { const row = stats.pieces_[grade] ||= {}; row[route] = (row[route] || 0) + 1; };
     const goods = (field, id, count) => { if (count) { const row = stats.goods[id] ||= {}; row[field] = (row[field] || 0) + count; } };
     const recipeRow = id => stats.recipes[view.recipeGrade[id] || 'none'] ||= { dropped: 0, soldToTwins: 0, kept: 0, learned: 0, toNpc: 0 };
     const isRecipe = id => view.items[id]?.kind === 'Other.Recipe';
@@ -271,7 +425,7 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
     const counterOf = index => put(index, { counter: accounts[index].counter + 1 }).counter;
     // The store's seat state of a twin: its mode while its store shows a
     // line, idle (by mode) while it shows none. Seat-hours accrue per state.
-    const seatOf = twin => (twin.lines.length ? twin.mode : twin.mode === 'sell' ? 'idleSell' : 'idleBuy');
+    const seatOf = twin => (!twin.town ? 'unseated' : twin.mode === 'manufacture' || twin.lines.length ? twin.mode : twin.mode === 'sell' ? 'idleSell' : 'idleBuy');
     const putTwin = (index, twin, now) => {
         const before = accounts[index].twin, key = seatOf(twin);
         let seat = before ? before.seat : { key, since: now };
@@ -288,11 +442,13 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         let twin = null;
         if (crafter) {
             const row = Engine.spotRowOf(view, main), spotTown = row ? view.yields[`${row.spotId}@${main.level}`]?.town : null;
-            const town = start === 'fresh' ? STARTER_VILLAGE[snapshot.races?.[main.line]] || spotTown : spotTown || STARTER_VILLAGE[snapshot.races?.[main.line]];
+            const starter = start === 'fresh' ? STARTER_VILLAGE[snapshot.races?.[main.line]] || spotTown : spotTown || STARTER_VILLAGE[snapshot.races?.[main.line]];
+            const town = config.twinSeat === 'main_town' ? (twinStats(snapshot, main.level).createItem >= 1 ? spotTown : null) : starter;
             twin = { ...twinStats(snapshot, main.level), town, mode: 'sell', stint: { since: 0, units: 0, goods: '' }, stints: {}, lines: [], bids: [], mp: 0, mpAt: 0,
                 recipes: [], decided: [], stock: {}, paid: {}, wallet: 0, batch: null, parked: {}, soldOut: {}, mpFrom: 0, highest: main.level, seat: { key: 'idleSell', since: 0 } };
         }
-        accounts.push({ index: main.index, crafter, persona: config.crafterPersona, memory: [], twin, counter: 0, lastTown: null, wake: null, shotless: false, level: main.level });
+        accounts.push({ index: main.index, crafter, persona: personaOf(config, personaShares, seed, main, crafter), memory: [], twin, counter: 0, lastTown: null, wake: null,
+            shotless: false, level: main.level, market: { ...Mains.marketStart(), spotHeld: !!main.spot } });
     }
     // Items held at the start (the goods ledger's opening stock).
     const holdings = () => {
@@ -309,7 +465,9 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         return out;
     };
     const opening = holdings();
-    const walletSum = () => accounts.reduce((sum, account) => sum + (account.twin ? account.twin.wallet : 0), 0);
+    // The design plane's money: the twins' wallets and the fees held with open orders.
+    let side = null;
+    const walletSum = () => accounts.reduce((sum, account) => sum + (account.twin ? account.twin.wallet : 0), 0) + (side ? side.orderEscrow().fees : 0);
     const moneyStart = walletSum();
     // Money of crafter accounts (main and twin) and of the others at the start.
     const moneyByKind = list => {
@@ -322,6 +480,10 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         return out;
     };
     const moneyAtStart = moneyByKind(mains);
+    // Account money (main + twin wallet), for its Gini.
+    const wealth = list => list.filter(main => !main.station).map(main => main.money + (accounts[main.index].twin ? accounts[main.index].twin.wallet : 0));
+    const giniStart = gini(wealth(mains));
+    const capFloorStatic = staticCapFloor(snapshot, view, game, grades, config);
 
     const wakeAt = (index, now, reason) => {
         const account = accounts[index];
@@ -330,7 +492,7 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         put(index, { wake: { at: now, reasons: [reason] } });
         push({ at: now, kind: 'account_wake', who: index });
     };
-    const placeLines = index => { const twin = accounts[index].twin; Books.place(books, index, twin.town, twin.lines, twin.bids); };
+    const placeLines = index => { const twin = accounts[index].twin; if (twin.town) Books.place(books, index, twin.town, twin.lines, twin.bids); else Books.remove(books, index); };
     // A twin's sell lines never list more than it holds.
     const clampLines = (lines, stock) => {
         const left = { ...stock };
@@ -342,6 +504,12 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         }).filter(line => line.side !== 'sell' || line.qty > 0);
     };
     const firstAt = (table, key, now, extra) => { if (!(key in table)) table[key] = extra ? { h: now, ...extra } : now; };
+    // The grade of the shots a recipe scroll makes (null for any other scroll).
+    const shotScrollGrade = id => { const recipe = game.byScroll[id] ? game.recipes[game.byScroll[id]] : null; return recipe && view.items[recipe.productId]?.kind === 'Other.Shot' ? shotGrade(recipe.productId) : null; };
+    // The first scroll of a grade's shot recipe that reaches a twin, how, and where its main got it.
+    const scrollReached = (id, from, now, where = null) => { const grade = shotScrollGrade(id); if (grade) firstAt(stats.gates.scroll, grade, now, where ? { from, where } : { from }); };
+    // Crafter mains already in a grade at the start opened its first gate at hour 0.
+    for (const account of accounts) if (account.twin) for (const [grade, from] of grades) if (account.level >= from) firstAt(stats.gates.crafter, grade, 0);
     const hoursToGrade = main => {
         const next = grades.find(([, from]) => from > main.level), row = Engine.spotRowOf(view, main), share = rateOf(main.band).huntShare;
         if (!next || !(row?.exp > 0) || !(share > 0)) return 0;
@@ -350,11 +518,12 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
     const markMp = (twin, now) => { stats.mp.available += twin.regen * Math.max(0, now - twin.mpFrom); return { ...twin, mpFrom: now }; };
 
     // The rules' view of an account's twin at a wake.
-    const viewOf = (index, now, applied = null, rankRecipes = false) => {
-        const account = accounts[index], twin = account.twin, main = mains[index];
-        return { now, self: index, place: { town: account.lastTown, twinTown: twin.town }, books: books.towns, memory: account.memory, persona: account.persona,
+    // seatAt: weigh the twin seated in that town, from that town's book alone.
+    const viewOf = (index, now, applied = null, rankRecipes = false, seatAt = null) => {
+        const account = accounts[index], twin = seatAt ? { ...account.twin, town: seatAt } : account.twin, main = mains[index];
+        return { now, self: index, place: seatAt ? { town: null, twinTown: seatAt } : { town: account.lastTown, twinTown: twin.town }, books: books.towns, memory: account.memory, persona: account.persona,
             config, twin, game, npcSell: game.npcByTown[twin.town] || {}, crystalRoute: game.routeByTown[twin.town] || {}, crystalReach: game.reachByTown[twin.town] || {},
-            applied, hoursToGrade: hoursToGrade(main), fares: view.fares, rankRecipes };
+            applied, hoursToGrade: hoursToGrade(main), fares: view.fares, rankRecipes, ads: side.adsBook(seatAt), orders: side.openOrders() };
     };
 
     // A twin's money moves: its account's flows go to its main's start band.
@@ -365,7 +534,25 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         stats.counters.wakes++;
         let twin = accounts[index].twin;
         const arrivedIn = accounts[index].lastTown;
-        if (reason === 'main_arrived' && arrivedIn && arrivedIn !== twin.town) {
+        // main_town: no seat before it can craft; its first seat is where its main resupplies.
+        if (!twin.town) {
+            if (reason !== 'main_arrived' || !arrivedIn || !(twin.createItem >= 1)) { stats.counters.unseatedWakes++; return; }
+            twin = putTwin(index, { ...twin, town: arrivedIn }, now).twin;
+            stats.counters.firstSeats++;
+        }
+        let decided = null;
+        if (reason === 'main_arrived' && arrivedIn && arrivedIn !== twin.town && config.twinSeat === 'main_town') {
+            // The seat is part of the mode choice: its best mode there against here, each on its own town's book.
+            const fare = view.fares[twin.town]?.[arrivedIn];
+            if (fare !== null && fare !== undefined && twin.wallet >= fare) {
+                const here = Workshop.workshop(viewOf(index, now, applied, true, twin.town)), there = Workshop.workshop(viewOf(index, now, applied, true, arrivedIn));
+                if (Workshop.seatByMode({ here: here.modeValues, there: there.modeValues, fare })) {
+                    flow(index, 'fares', -fare);
+                    twin = putTwin(index, { ...twin, town: arrivedIn, wallet: twin.wallet - fare }, now).twin;
+                    stats.counters.reseats++;
+                }
+            }
+        } else if (reason === 'main_arrived' && arrivedIn && arrivedIn !== twin.town) {
             const town = Workshop.seat(viewOf(index, now), arrivedIn);
             if (town !== twin.town) {
                 const fare = view.fares[twin.town][town];
@@ -374,14 +561,33 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
                 stats.counters.reseats++;
             }
         }
-        const decision = Workshop.workshop(viewOf(index, now, applied, reason === 'main_arrived'));
+        decided = Workshop.workshop(viewOf(index, now, applied, reason === 'main_arrived'));
+        // An order it took: its materials and fee come with it (the fee
+        // before the roll); an order gone leaves the twin without that batch.
+        const order = decided.order ? side.claimOrder(index, decided.order, now) : null;
+        const decision = decided.order && !order ? { ...decided, batch: null, npcBuys: [], routeBuys: [] } : decided;
         stats.counters.gearCapped += decision.counters.gearCapped;
         for (const id of decision.counters.stopped) stats.stopped.add(`${index}:${id}`);
         const stock = { ...twin.stock }, paid = { ...twin.paid };
-        let wallet = twin.wallet;
+        let wallet = twin.wallet + (order ? order.fee : 0);
+        if (order) for (const [id, count] of Object.entries(order.materials)) { stock[id] = (stock[id] || 0) + count; paid[id] = paid[id] ?? 0; }
+        // Inputs bought from other twins' sell lines in its town, first come.
+        for (const claim of decision.claims) {
+            const live = accounts[claim.owner].twin.lines.find(line => line.id === claim.id && line.side === 'sell');
+            const units = Math.min(claim.units, live?.qty || 0, Math.floor(wallet / claim.price));
+            if (units <= 0) continue;
+            const adena = deal(index, claim.owner, { id: claim.id }, 'sell', claim.item, units, claim.price, now);
+            wakeAt(claim.owner, now, 'fill');
+            wallet -= adena;
+            stock[claim.item] = (stock[claim.item] || 0) + units;
+            paid[claim.item] = claim.price;
+            stats.counters.twinToTwin += units;
+            if (isMaterial(view.items[claim.item])) stats.materials.bought += units;
+        }
         const recipes = twin.recipes.filter(id => !decision.forget.includes(id));
         for (const id of decision.learn) {
             const scroll = game.recipes[id].recipeItemId;
+            if (view.items[game.recipes[id].productId]?.kind === 'Other.Shot') firstAt(stats.gates.recipe, shotGrade(game.recipes[id].productId), now, { from: twin.scrollFrom?.[scroll] || 'held at the start' });
             stock[scroll]--;
             goods('learned', scroll, 1);
             recipeRow(scroll).learned++;
@@ -396,6 +602,7 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
             stock[crystal] = (stock[crystal] || 0) + made;
             paid[crystal] = (before + count * perPiecePaid) / stock[crystal];
             firstAt(stats.firsts.crystal, grade, now);
+            firstAt(stats.gates.crystal, grade, now, { from: source });
         };
         for (const piece of decision.crystallize) {
             stock[piece.selfId] -= piece.count;
@@ -429,7 +636,7 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
             }
             stats.mp.lost += Math.max(0, twin.regen * (now - twin.mpAt) - (twin.maxMp - twin.mp));
             stats.mp.used += decision.batch.crafts * recipe.mpCost;
-            batch = { ...decision.batch, start: now };
+            batch = { ...decision.batch, start: now, order };
             stats.waits.batch.opened++;
             push({ at: batch.deadline, kind: 'batch_done', who: index });
             const product = view.items[recipe.productId];
@@ -447,8 +654,13 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
             for (const line of result.lines) if (!known.has(line.id)) stats.waits[kindOf(line)].opened++;
             for (const { line, why } of result.closed) {
                 if (!known.has(line.id)) continue;
-                stats.waits[kindOf(line)][why === 'withdrawn' ? 'withdrawn' : 'failed']++;
+                stats.waits[kindOf(line)][why === 'withdrawn' ? 'withdrawn' : why === 'floor' ? 'done' : 'failed']++;
                 if (why === 'parked' || why === 'own_route') parked[line.item] = true;
+                // An ask at its market floor: the units go to the NPC.
+                if (why === 'floor') {
+                    const units = Math.min(line.qty, stock[line.item] || 0), value = Math.round(units * (view.items[line.item]?.npcBuy || 0));
+                    if (units > 0 && value > 0) { stock[line.item] -= units; wallet += value; flow(index, 'npcSales', value); goods('toNpc', line.item, units); stats.counters.twinToNpc += units; }
+                }
             }
         }
         // Its last ask per good it still holds (the price the workshop reads for unsold goods).
@@ -458,10 +670,20 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         // A sold-out line's step is remembered until a line of the good opens again.
         const soldOut = { ...twin.soldOut };
         for (const line of priced.lines) if (line.side === 'sell') delete soldOut[line.item];
+        // A sell line its stock no longer covers is withdrawn.
+        const lines = clampLines(priced.lines, stock);
+        stats.waits.sellLine.withdrawn += priced.lines.length - lines.length;
+        // The workshop's decision to add a recipe changed: its main's occupation re-chooses.
+        const wantedBefore = (twin.wants || []).map(row => row.id).sort().join(','), wantedNow = (decision.wants || []).map(row => row.id).sort().join(',');
+        if (config.occupationRecipeWant && wantedBefore !== wantedNow) wantChanged.push(index);
         putTwin(index, { ...twin, stock, paid, wallet, recipes, decided: decision.want, wants: decision.wants, batch, mode: decision.mode, stint: decision.stint, stints: decision.stints, parked, asks, soldOut,
-            lines: clampLines(priced.lines, stock), bids: bids.lines, bought: {} }, now);
+            lines, bids: bids.lines, bought: {} }, now);
         placeLines(index);
+        // A new sell line in its town is an offer for the mains that want its good.
+        for (const line of accounts[index].twin.lines) if (line.side === 'sell' && !known.has(line.id)) side.offerPosted(line.item, accounts[index].twin.town, line.price, index, now);
+        while (wantChanged.length) side.recipeWanted(wantChanged.pop(), now);
     }
+    const wantChanged = [];
 
     // The end of a craft batch at its MP deadline: products by a seeded roll
     // per craft (a failed craft destroys its inputs, which the batch's start took).
@@ -479,8 +701,12 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         stats.batchHours += now - batch.start;
         stats.waits.batch.deadline++;
         const mp = Math.max(0, batch.mpAtStart + twin.regen * (now - batch.start) - batch.crafts * recipe.mpCost);
-        putTwin(index, { ...twin, batch: null, mp: Math.min(twin.maxMp, mp), mpAt: now, stock: { ...twin.stock, [recipe.productId]: (twin.stock[recipe.productId] || 0) + units } }, now);
-        wake(index, now, 'batch_done', { item: recipe.productId, units });
+        // An order's piece goes to its buyer, met at once; a failed craft
+        // fails the order (its materials are gone, the fee kept).
+        if (batch.order) side.deliver(batch.order, units > 0, now);
+        const kept = batch.order ? 0 : units;
+        putTwin(index, { ...twin, batch: null, mp: Math.min(twin.maxMp, mp), mpAt: now, stock: { ...twin.stock, [recipe.productId]: (twin.stock[recipe.productId] || 0) + kept } }, now);
+        wake(index, now, 'batch_done', { item: recipe.productId, units: kept });
     }
 
     // A main takes units from a twin's line (sell) or fills its buy line or
@@ -511,10 +737,14 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         if (line && line.qty - units <= 0) stats.waits[side === 'sell' ? 'sellLine' : side === 'buy' ? 'buyLine' : 'bid'].done++;
         // A stint counts the fills of its own store's lines, not of its bids.
         const stint = side === twin.mode ? { ...twin.stint, units: twin.stint.units + count } : twin.stint;
-        putTwin(owner, { ...twin, stock, paid, wallet, bought, stint, soldOut,
-            lines: side === 'bids' ? twin.lines : clampLines(next, stock), bids: side === 'bids' ? next : twin.bids }, now);
+        const kept = side === 'bids' ? twin.lines : clampLines(next, stock);
+        if (side !== 'bids') stats.waits.sellLine.withdrawn += next.length - kept.length;
+        putTwin(owner, { ...twin, stock, paid, wallet, bought, stint, soldOut, lines: kept, bids: side === 'bids' ? next : twin.bids }, now);
         placeLines(owner);
         stats.botToBot += adena;
+        const dealt = view.items[item];
+        if (side === 'sell' && dealt?.kind === 'Other.Shot') (stats.priceHour.shots[shotGrade(item)] ||= []).push(price);
+        else if (side !== 'bids' && isMaterial(dealt) && dealt.npcBuy > 0) stats.priceHour.materials.push(price / dealt.npcBuy);
         return adena;
     }
 
@@ -547,164 +777,91 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         if (price !== undefined && shotWorth(main) >= price) entry.worthAtOrAboveFirstPrice++;
     }
 
-    // The design visit: a pair's main leaves its twin what it uses, sells the
-    // rest to buy lines or the NPC, pools the account's money, takes shots
-    // from its twin and buys them from lines, and buys its kit at the NPC.
-    function visitMain(main, now, { outingHours }) {
-        const index = main.index, hour = Engine.hourOf(view, main), row = Engine.spotRowOf(view, main);
-        const town = row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null;
-        const flows = { huntCold: 0, npcSales: 0, fixedBuyers: 0, npcBuys: 0, fixedSellers: 0, fares: 0, warehouseFees: 0 };
-        const delta = { flows, towns: [], gearToNpc: 0, gearBought: 0, shotsBoughtFixed: 0, shotsBoughtNpc: 0, shotsSoldNpc: 0, unsold: 0, missingPieces: 0, missingShots: 0, noTown: 0 };
-        if (!town) { delta.noTown = 1; return { main, delta }; }
-        delta.towns.push(town);
-        put(index, { lastTown: town });
-        let money = main.money;
-        const bag = { ...main.bag };
-        const toNpc = (id, count) => {
-            const value = Math.round(count * (view.items[id]?.npcBuy || 0));
-            if (!(value > 0)) { delta.unsold += count; return; }
-            flows.npcSales += value; money += value;
-            goods('toNpc', id, count);
-            if (Engine.isGear(view.items[id])) delta.gearToNpc += count;
-            if (isRecipe(id)) recipeRow(id).toNpc += count;
-        };
-        // A pair's main leaves its twin what it uses, a deposit fee per stack.
-        if (accounts[index].twin) {
-            const twin = accounts[index].twin, left = Workshop.depositFor(bag, twin, game, twin.decided);
-            const stock = { ...twin.stock }, paid = { ...twin.paid };
-            for (const [key, count] of Object.entries(left)) {
-                if (money < DEPOSIT_FEE) break;
-                const id = Number(key);
-                money -= DEPOSIT_FEE; flows.warehouseFees -= DEPOSIT_FEE;
-                stock[id] = (stock[id] || 0) + count;
-                paid[id] = paid[id] ?? view.items[id]?.npcBuy ?? 0;
-                bag[id] -= count;
-                if (!bag[id]) delete bag[id];
-                stats.counters.deposits++;
-                if (isRecipe(id)) recipeRow(id).kept += count; else if (isMaterial(view.items[id])) stats.materials.own += count;
-            }
-            putTwin(index, { ...twin, stock, paid }, now);
-        }
-        // Gear goes to the best crystallizer bid in reach above the NPC price
-        // (its own twin's through the warehouse), else to the NPC.
-        const sellGear = id => {
-            const item = view.items[id], grade = gradeOf(item), crystals = item?.crystals || 0;
-            const twin = accounts[index].twin;
-            let best = null;
-            if (crystals > 0) {
-                for (const entry of Books.rowsOf(books, town, 'bids', grade)) {
-                    if (entry.owner === index || entry.qty < crystals) continue;
-                    if (accounts[entry.owner].twin.wallet >= crystals * entry.price && (!best || entry.price > best.entry.price)) best = { entry, own: false };
+    // A visit's commit on the account plane: what the main left its twin, the
+    // pooled wallet, and the goods it sold to or bought from the NPC.
+    function commitVisit(index, now, out) {
+        const twin = accounts[index].twin;
+        if (twin) {
+            const stock = { ...twin.stock }, paid = { ...twin.paid }, scrollFrom = { ...twin.scrollFrom };
+            for (const stop of out.stops) {
+                if (stop.kind !== 'warehouse' || stop.target !== 'deposit') continue;
+                for (const { selfId: id, count } of stop.items) {
+                    stock[id] = (stock[id] || 0) + count;
+                    paid[id] = paid[id] ?? view.items[id]?.npcBuy ?? 0;
+                    stats.counters.deposits++;
+                    if (isRecipe(id)) {
+                        recipeRow(id).kept += count;
+                        const route = side.scrollRoute(index, id);
+                        scrollFrom[id] = scrollFrom[id] || route.from;
+                        scrollReached(id, scrollFrom[id], now, route.where);
+                    } else if (isMaterial(view.items[id])) stats.materials.own += count;
                 }
-                const ownBid = twin?.bids.find(bid => bid.item === grade && bid.qty >= crystals);
-                if (ownBid && (!best || ownBid.price > best.entry.price)) best = { entry: ownBid, own: true };
             }
-            const floor = Bounds.floor({ npcBuy: item?.npcBuy || 0, crystallizerBids: best ? [best.entry.price * crystals] : [] });
-            if (!best || !(floor > (item?.npcBuy || 0))) return toNpc(id, 1);
-            if (best.own) {
-                const bids = twin.bids.map(bid => (bid === best.entry ? { ...bid, qty: bid.qty - crystals } : bid)).filter(bid => bid.qty > 0);
-                putTwin(index, { ...twin, bids, stock: { ...twin.stock, [id]: (twin.stock[id] || 0) + 1 }, paid: { ...twin.paid, [id]: item.npcBuy || 0 } }, now);
-                placeLines(index);
-                return;
-            }
-            money += deal(index, best.entry.owner, best.entry, 'bids', id, 1, best.entry.price, now);
-            wakeAt(best.entry.owner, now, 'fill');
-        };
-        for (const [key, count] of Object.entries(bag)) {
-            const id = Number(key), item = view.items[id];
-            if (Engine.isGear(item)) { for (let i = 0; i < count; i++) sellGear(id); continue; }
-            let left = count;
-            for (const entry of [...Books.rowsOf(books, town, 'buy', id)]) {
-                if (left <= 0 || entry.owner === index || entry.price < (item?.npcBuy || 0)) continue;
-                const seller = accounts[entry.owner], live = seller.twin.lines.find(line => line.id === entry.id);
-                const units = Math.min(left, live?.qty || 0, Math.floor(seller.twin.wallet / entry.price));
-                if (units <= 0) continue;
-                money += deal(index, entry.owner, entry, 'buy', id, units, entry.price, now);
-                wakeAt(entry.owner, now, 'fill');
-                left -= units;
-                if (isRecipe(id)) recipeRow(id).soldToTwins += units; else if (isMaterial(item)) stats.materials.bought += units;
-            }
-            if (left > 0) toNpc(id, left);
+            putTwin(index, { ...twin, stock, paid, wallet: out.wallet, scrollFrom }, now);
         }
-        // Shots of a grade it no longer fires go to the NPC.
-        const firing = Engine.shotOf(view, main, hour), shots = {};
-        for (const [key, count] of Object.entries(main.shots)) {
-            if (Number(key) === firing || !count) { if (count) shots[key] = count; continue; }
-            toNpc(Number(key), count); delta.shotsSoldNpc += count;
-        }
-        // The account warehouse pools the money: the main keeps its next outing's shots and its next kit piece.
-        const errands = Engine.errands({ ...main, shots }, view, hour, { outingHours });
-        const shotErrand = errands.find(errand => errand.kind === 'shots');
-        const nextPiece = errands.find(errand => errand.kind === 'piece'), piecePrice = nextPiece ? Engine.sellerOf(view, nextPiece.id, town)?.price || 0 : 0;
-        const shotPrice = shotErrand ? Knowledge.known(accounts[index].memory, shotErrand.id) ?? Books.rowsOf(books, town, 'sell', shotErrand.id)[0]?.price ?? 0 : 0;
-        if (accounts[index].twin) {
-            const twin = accounts[index].twin, escrow = twin.lines.filter(line => line.side === 'buy').reduce((sum, line) => sum + line.qty * line.price, 0)
-                + twin.bids.reduce((sum, bid) => sum + bid.qty * bid.price, 0);
-            const pooled = Workshop.pool({ main: money, wallet: twin.wallet, escrow, keep: (shotErrand ? shotErrand.amount * shotPrice : 0) + piecePrice });
-            let wallet = pooled.wallet;
-            money = pooled.main;
-            if (pooled.moved > 0 && wallet >= DEPOSIT_FEE) { wallet -= DEPOSIT_FEE; flows.warehouseFees -= DEPOSIT_FEE; } else if (pooled.moved > 0 && money >= DEPOSIT_FEE) { money -= DEPOSIT_FEE; flows.warehouseFees -= DEPOSIT_FEE; }
-            putTwin(index, { ...twin, wallet }, now);
-        }
-        // Shots: its twin's stock first, then twin lines in town at or under the shot's worth, then an NPC here.
-        if (shotErrand) {
-            let need = shotErrand.amount;
-            const id = shotErrand.id, twin = accounts[index].twin;
-            if (twin && (twin.stock[id] || 0) > 0) {
-                const take = Math.min(need, twin.stock[id]), stock = { ...twin.stock, [id]: twin.stock[id] - take };
-                putTwin(index, { ...twin, stock, lines: clampLines(twin.lines, stock) }, now);
-                placeLines(index);
-                shots[id] = (shots[id] || 0) + take; need -= take; stats.counters.shotsOwn += take;
+        for (const stop of out.stops) {
+            for (const { selfId: id, count } of stop.items) {
+                if (stop.kind === 'npc_sell') { goods('toNpc', id, count); if (isRecipe(id)) recipeRow(id).toNpc += count; }
+                if (stop.kind === 'npc_buy') { goods('fromNpc', id, count); if (view.items[id]?.kind === 'Other.Shot') stats.counters.shotsNpc += count; }
             }
-            const worth = shotWorth(main), rows = Books.rowsOf(books, town, 'sell', id).filter(entry => entry.owner !== index);
-            if (rows.length) { stats.counters.visitsWithLine++; if (rows[0].price <= worth) stats.counters.lineWorthIt++; else stats.counters.lineAboveWorth++; }
-            for (const entry of [...rows]) {
-                if (need <= 0 || entry.price > worth || money < entry.price) break;
-                const live = accounts[entry.owner].twin.lines.find(line => line.id === entry.id), units = Math.min(need, live?.qty || 0, Math.floor(money / entry.price));
-                if (units <= 0) continue;
-                money -= deal(index, entry.owner, entry, 'sell', id, units, entry.price, now);
-                wakeAt(entry.owner, now, 'fill');
-                shots[id] = (shots[id] || 0) + units; need -= units; stats.counters.shotsLine += units;
-            }
-            const npc = game.npcByTown[town]?.[id];
-            if (need > 0 && npc > 0 && npc <= worth) {
-                const units = Math.min(need, Math.floor(money / npc));
-                if (units > 0) { money -= units * npc; flows.npcBuys -= units * npc; goods('fromNpc', id, units); shots[id] = (shots[id] || 0) + units; need -= units; delta.shotsBoughtNpc += units; stats.counters.shotsNpc += units; }
-            }
-            if (need > 0) delta.missingShots++;
-            const holds = (shots[id] || 0) > 0, shotless = accounts[index].shotless;
-            if (!holds && !shotless) { put(index, { shotless: true }); stats.waits.shotless.opened++; } else if (holds && shotless) { put(index, { shotless: false }); stats.waits.shotless.done++; }
+            if (stop.kind === 'exchange') { goods('exchangeIn', stop.items[0].selfId, stop.items[0].count); goods('fromNpc', stop.items[1].selfId, 1); }
         }
-        // Kit pieces at the NPC (x1), one onward hop to the nearest town that sells the first one missing.
-        const kit = { ...main.kit };
-        let weapon = main.weapon;
-        const buyPiece = (errand, seller) => {
-            if (money < seller.price) return false;
-            money -= seller.price; flows.npcBuys -= seller.price; delta.gearBought++;
-            goods('fromNpc', errand.id, 1);
-            const worn = kit[errand.slot];
-            kit[errand.slot] = errand.id;
-            if (Engine.isWeapon(view.items[errand.id])) {
-                if (weapon && weapon !== worn && !Object.values(main.kit).includes(weapon)) sellGear(weapon);
-                weapon = errand.id;
-            }
-            if (worn) sellGear(worn);
-            return true;
-        };
-        let open = errands.filter(errand => errand.kind === 'piece').filter(errand => {
-            const seller = Engine.sellerOf(view, errand.id, town);
-            return !(seller?.fare === 0 && buyPiece(errand, seller));
-        });
-        const first = open.map(errand => ({ errand, seller: Engine.sellerOf(view, errand.id, town) })).find(entry => entry.seller && entry.seller.fare > 0);
-        if (first && money >= first.seller.fare + first.seller.price) {
-            money -= first.seller.fare; flows.fares -= first.seller.fare;
-            delta.towns.push(first.seller.town);
-            open = open.filter(errand => { const seller = Engine.sellerOf(view, errand.id, first.seller.town); return !(seller?.fare === 0 && buyPiece(errand, seller)); });
-        }
-        delta.missingPieces += open.length;
-        if (accounts[index].twin) wakeAt(index, now, 'main_arrived');
-        return { main: { ...main, money, bag: {}, shots, kit, weapon }, delta };
     }
+
+    // A main's claim on a twin's line or bid (or its own twin's shelf or
+    // bid), first come. A sale to a buy line or a bid whose owner's wallet
+    // cannot pay fails: no deal, the line is withdrawn, counted (C4: a buy
+    // store holds no money beyond the check at its setup). Returns the adena
+    // a sale moved, null when it failed.
+    function claimOnTwin(index, claim, now) {
+        const item = view.items[claim.item], shot = item?.kind === 'Other.Shot';
+        if (claim.kind === 'sell_line' || claim.kind === 'buy_line' || claim.kind === 'sell_bid') {
+            const side = claim.kind === 'sell_line' ? 'buy' : claim.kind === 'buy_line' ? 'sell' : 'bids';
+            const owner = accounts[claim.owner].twin;
+            if (claim.adena !== undefined && owner.wallet < claim.adena) {
+                const bids = side === 'bids', lines = (bids ? owner.bids : owner.lines).filter(line => line.id !== claim.id);
+                if (lines.length < (bids ? owner.bids : owner.lines).length) stats.waits[bids ? 'bid' : 'buyLine'].failed++;
+                putTwin(claim.owner, { ...owner, ...(bids ? { bids: lines } : { lines }) }, now);
+                placeLines(claim.owner);
+                stats.unfunded[bids ? 'bid' : 'line']++;
+                return null;
+            }
+            const adena = deal(index, claim.owner, { id: claim.id }, side, claim.item, claim.units, claim.price, now);
+            wakeAt(claim.owner, now, 'fill');
+            if (claim.kind === 'sell_line') {
+                if (isRecipe(claim.item)) {
+                    recipeRow(claim.item).soldToTwins += claim.units;
+                    const seller = accounts[claim.owner].twin;
+                    if (!seller.scrollFrom?.[claim.item]) put(claim.owner, { twin: { ...seller, scrollFrom: { ...seller.scrollFrom, [claim.item]: 'bought on its buy line' } } });
+                    scrollReached(claim.item, 'bought on its buy line', now);
+                    const grade = shotScrollGrade(claim.item);
+                    if (grade) { const row = stats.scrollDeals[grade] ||= { first: null, last: null, deals: 0, npcBuy: item.npcBuy || 0 }; const deal = { h: now, price: claim.price }; row.first ||= deal; row.last = deal; row.deals++; }
+                } else if (isMaterial(item)) stats.materials.bought += claim.units;
+            }
+            if (claim.kind === 'buy_line' && shot) { stats.counters.shotsLine += claim.units; firstAt(stats.gates.sold, shotGrade(claim.item), now); }
+            return adena;
+        }
+        const twin = accounts[index].twin;
+        if (claim.kind === 'own_bid') {
+            const crystals = item.crystals, bids = twin.bids.map(bid => (bid.id === claim.id ? { ...bid, qty: bid.qty - crystals } : bid)).filter(bid => bid.qty > 0);
+            stats.waits.bid.done += twin.bids.length - bids.length;
+            putTwin(index, { ...twin, bids, stock: { ...twin.stock, [claim.item]: (twin.stock[claim.item] || 0) + 1 }, paid: { ...twin.paid, [claim.item]: item.npcBuy || 0 } }, now);
+            placeLines(index);
+            return 0;
+        }
+        if (claim.kind === 'own_stock') {
+            const stock = { ...twin.stock, [claim.item]: twin.stock[claim.item] - claim.units }, lines = clampLines(twin.lines, stock);
+            // A sell line its main emptied through the warehouse is withdrawn.
+            stats.waits.sellLine.withdrawn += twin.lines.length - lines.length;
+            putTwin(index, { ...twin, stock, lines }, now);
+            placeLines(index);
+            if (shot) stats.counters.shotsOwn += claim.units;
+        }
+        return 0;
+    }
+
+    side = Mains.mainsSide({ snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, shotWorth, shotGrade, hoursToGrade,
+        depositFee: DEPOSIT_FEE, rearrive, commit, commitVisit, claimOnTwin, wait });
 
     return {
         hunt(main, delta) {
@@ -721,18 +878,22 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
             const hourRow = stats.hour[grade] ||= { wanted: 0, fired: 0 };
             hourRow.wanted += delta.shotsWanted; hourRow.fired += delta.shotsUsed;
         },
-        visit: visitMain,
+        visit: (main, now, context) => side.visitMain(main, now, context),
+        nextArrival: (main, context) => side.nextArrival(main, context),
         levelUp(main, now) {
             const index = main.index, account = accounts[index], seen = account.level, before = account.twin?.highest ?? seen;
-            const from = gradeOfLevel(seen), to = gradeOfLevel(main.level);
+            const from = gradeOfLevel(seen), to = gradeOfLevel(main.level), gradeChanged = to !== from && main.level > seen;
             put(index, { level: Math.max(seen, main.level) });
-            if (to !== from && main.level > seen) stats.entries[to] = (stats.entries[to] || 0) + 1;
-            if (!account.twin || main.level <= before) return;
-            const twin = markMp(account.twin, now), lifted = twinStats(snapshot, main.level);
-            const mp = Workshop.mpAt(twin, now);
-            if (!twin.batch) stats.mp.lost += Math.max(0, twin.regen * (now - twin.mpAt) - (twin.maxMp - twin.mp));
-            putTwin(index, { ...twin, ...lifted, highest: main.level, mp: twin.batch ? twin.mp : Math.min(lifted.maxMp, mp), mpAt: twin.batch ? twin.mpAt : now,
-                parked: gradeOfLevel(before) === to ? twin.parked : {} }, now);
+            if (gradeChanged) stats.entries[to] = (stats.entries[to] || 0) + 1;
+            if (gradeChanged && account.twin) firstAt(stats.gates.crafter, to, now);
+            if (account.twin && main.level > before) {
+                const twin = markMp(account.twin, now), lifted = twinStats(snapshot, main.level);
+                const mp = Workshop.mpAt(twin, now);
+                if (!twin.batch) stats.mp.lost += Math.max(0, twin.regen * (now - twin.mpAt) - (twin.maxMp - twin.mp));
+                putTwin(index, { ...twin, ...lifted, highest: main.level, mp: twin.batch ? twin.mp : Math.min(lifted.maxMp, mp), mpAt: twin.batch ? twin.mpAt : now,
+                    parked: gradeOfLevel(before) === to ? twin.parked : {} }, now);
+            }
+            return side.levelUp(main, now, gradeChanged);
         },
         event(event) {
             const index = event.who, account = accounts[index];
@@ -740,10 +901,41 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
             if (!account.wake || account.wake.at !== event.at) return;
             const reasons = account.wake.reasons;
             put(index, { wake: null });
-            wake(index, event.at, reasons.includes('main_arrived') ? 'main_arrived' : 'fill');
+            wake(index, event.at, reasons.includes('main_arrived') ? 'main_arrived' : reasons.includes('fill') ? 'fill' : 'order');
         },
         hour(now) {
-            const row = { hour: now, shots: {}, margin: {} };
+            // Velocity: the hour's bot-to-bot adena over the money stock.
+            const stock = walletSum() + mains.reduce((sum, main) => sum + main.money, 0);
+            stats.velocity.push({ hour: now, moved: stats.botToBot - stats.botToBotHour, stock });
+            if (now === 1 || now % 10 === 0) {
+                const byTown = {};
+                for (const account of accounts) if (account.twin) byTown[account.twin.town || '(no seat)'] = (byTown[account.twin.town || '(no seat)'] || 0) + 1;
+                stats.townsAt.push({ hour: now, byTown });
+            }
+            // The share of each grade's shooters whose own town's book holds a line of their shot.
+            const ownLine = {};
+            for (const account of accounts) {
+                const at = account.market.lineSeen, id = account.market.shotId;
+                if (!at || !id) continue;
+                const row = ownLine[at.grade] ||= { mains: 0, line: 0 };
+                row.mains++; if (Books.rowsOf(books, account.lastTown, 'sell', id).length) row.line++;
+            }
+            stats.ownTownLine.push({ hour: now, byGrade: Object.fromEntries(Object.entries(ownLine).map(([grade, row]) => [grade, row.line / row.mains])) });
+            const seen = {};
+            for (const account of accounts) {
+                const at = account.market.lineSeen;
+                if (!at) continue;
+                const row = seen[at.grade] ||= { mains: 0, seen: 0 };
+                row.mains++; if (at.seen) row.seen++;
+            }
+            for (const [grade, row] of Object.entries(seen)) {
+                if (row.seen >= 0.1 * row.mains) firstAt(stats.gates.reach10, grade, now);
+                if (row.seen >= 0.5 * row.mains) firstAt(stats.gates.reach50, grade, now);
+            }
+            stats.botToBotHour = stats.botToBot;
+            const row = { hour: now, shots: {}, margin: {}, prices: { shots: {}, materials: { median: median(stats.priceHour.materials), deals: stats.priceHour.materials.length } } };
+            for (const [grade, values] of Object.entries(stats.priceHour.shots)) row.prices.shots[grade] = { median: median(values), deals: values.length };
+            stats.priceHour = { shots: {}, materials: [] };
             for (const [grade, counts] of Object.entries(stats.hour)) row.shots[grade] = { ...counts };
             for (const [grade, values] of Object.entries(stats.marginHour)) row.margin[grade] = { median: median(values), crafts: values.length };
             stats.hourly.push(row);
@@ -774,12 +966,13 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
             if (main.weapon && !Object.values(main.kit).includes(main.weapon)) add(main.weapon, 1);
         }
         for (const account of accounts) if (account.twin) for (const [id, count] of Object.entries(account.twin.stock)) add(id, count);
+        for (const [id, count] of Object.entries(side.orderEscrow().goods)) add(id, count);
         const totals = {}, failing = [];
         for (const id of new Set([...Object.keys(opening), ...Object.keys(closing), ...Object.keys(stats.goods)])) {
             const g = stats.goods[id] || {};
             for (const [field, count] of Object.entries(g)) totals[field] = (totals[field] || 0) + count;
             const expected = (opening[id] || 0) + (g.drop || 0) + (g.crafted || 0) + (g.crystalOut || 0) + (g.fromNpc || 0)
-                - (g.used || 0) - (g.craftIn || 0) - (g.crystalIn || 0) - (g.learned || 0) - (g.toNpc || 0);
+                - (g.used || 0) - (g.craftIn || 0) - (g.crystalIn || 0) - (g.learned || 0) - (g.toNpc || 0) - (g.exchangeIn || 0);
             if (expected !== (closing[id] || 0)) failing.push({ id: Number(id), expected, held: closing[id] || 0 });
         }
         const twins = accounts.filter(account => account.twin);
@@ -794,7 +987,18 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         const openWaits = { sellLine: twins.reduce((sum, account) => sum + account.twin.lines.filter(line => line.side === 'sell').length, 0),
             buyLine: twins.reduce((sum, account) => sum + account.twin.lines.filter(line => line.side === 'buy').length, 0),
             bid: twins.reduce((sum, account) => sum + account.twin.bids.length, 0), batch: twins.filter(account => account.twin.batch).length,
-            shotless: accounts.filter(account => account.shotless).length };
+            shotless: accounts.filter(account => account.shotless).length,
+            wts: accounts.reduce((sum, account) => sum + account.market.ads.wts.length, 0), wtb: accounts.reduce((sum, account) => sum + account.market.ads.wtb.length, 0),
+            parkedShots: accounts.filter(account => account.market.shotWait === 'parked').length };
+        // Wants open at the end, by state (route, order, farm, parked) and the piece's grade.
+        const parkedAtEnd = {};
+        for (const kind of ['route', 'order', 'farm', 'parkedWant']) openWaits[kind] = 0;
+        for (const account of accounts) for (const [key, want] of Object.entries(account.market.wants)) {
+            const grade = gradeOf(view.items[key]), row = parkedAtEnd[grade] ||= {};
+            row[want.state] = (row[want.state] || 0) + 1;
+            openWaits[want.state === 'parked' ? 'parkedWant' : want.state] = (openWaits[want.state === 'parked' ? 'parkedWant' : want.state] || 0) + (want.state === 'wtb' ? 0 : 1);
+        }
+
         // MP a full shot use would take: the shots wanted x MP per unit of each shot's cheapest recipe.
         let mpNeeded = 0;
         for (const [id, wanted] of Object.entries(stats.shotWanted)) {
@@ -803,21 +1007,25 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
         }
         return {
             config,
-            standIns: STAND_INS,
+            biases: BIASES,
+            market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
+                trips: stats.trips, meetings: stats.meetings, paths: stats.paths, orders: { ...stats.orders, open: side.openOrders().length },
+                capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
+                velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),
                 bountyHunterPairs: twins.filter(account => mains[account.index].line === BOUNTY_HUNTER).length,
                 otherPairs: twins.filter(account => mains[account.index].line !== BOUNTY_HUNTER).length, byBand, byClass, byTown },
             shots: { byGrade: Object.fromEntries(Object.entries(stats.shots).map(([grade, row]) => [grade, { ...row, coverage: row.wanted ? row.fired / row.wanted : null,
                 byTown: Object.entries(stats.shotsByTown[grade] || {}).map(([town, t]) => ({ town, ...t, coverage: t.wanted ? t.fired / t.wanted : null })).sort((a, b) => b.wanted - a.wanted) }])),
             supply: { own: stats.counters.shotsOwn, lines: stats.counters.shotsLine, npc: stats.counters.shotsNpc },
-            worthAtStart,
-            worthSeen: { visitsWithLine: stats.counters.visitsWithLine, cheapestAtOrUnderWorth: stats.counters.lineWorthIt, cheapestAboveWorth: stats.counters.lineAboveWorth } },
+            worthAtStart },
             mp: { ...stats.mp, neededForFullShots: mpNeeded },
             // Seat-hours by store state: selling or buying while its store shows a line, idle (by
             // the mode chosen) while it shows none; crafting overlaps them (a batch's MP wait).
             twins: { seat: { ...stats.seat }, batchHours: stats.batchHours, mpLost: stats.mp.lost },
             money: { start: moneyAtStart, end: moneyByKind(endMains) },
             firsts: stats.firsts,
+            gates: stats.gates, townsAt: stats.townsAt, ownTownLine: stats.ownTownLine, scrollDeals: stats.scrollDeals,
             pieces: Object.fromEntries([...new Set([...Object.keys(stats.pieces), ...Object.keys(stats.entries)])].map(grade => [grade,
                 { crafted: stats.pieces[grade] || 0, craftedPerHour: (stats.pieces[grade] || 0) / hours, entries: stats.entries[grade] || 0, entriesPerHour: (stats.entries[grade] || 0) / hours }])),
             materials: { ...stats.materials },
@@ -834,4 +1042,4 @@ function startPlane({ snapshot, game, config, start, grades, view, mains, ledger
     }
 }
 
-module.exports = { DESIGN, READINGS, DEPOSIT_FEE, STARTER_VILLAGE, STAND_INS, gameOf, firstPrices, plane, twinStats };
+module.exports = { DESIGN, READINGS, DEPOSIT_FEE, STARTER_VILLAGE, BIASES, gameOf, firstPrices, plane, twinStats, staticCapFloor };

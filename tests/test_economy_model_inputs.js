@@ -24,11 +24,28 @@ const hour = snapshot.hours[line][level];
 const best = Table.best(line, level, true, 'income');
 for (const field of Inputs.HOUR_FIELDS) assert.equal(hour.best[field], best[field], `best ${field}`);
 const ranked = Table.rankedIncome(line, level);
-assert.equal(hour.top.length, 3);
+assert.equal(hour.top.length, 10, 'the ten spots an occupation ranks');
 hour.top.forEach((row, i) => assert.equal(row.spotId, ranked[i].spotId, `top ${i} is the ranked income's`));
 assert.equal(hour.top[0].adena, ranked[0].adena);
 assert.equal(hour.shotId, 1463, 'a Bounty Hunter at 30 fires Soulshot D');
 assert.ok(snapshot.kits[line][level].length > 0, 'the reference kit');
+
+// Each spot a main may hold carries the levels the spot table has a row for
+// the line there (spot_left fires outside them); the rows outside the top
+// are spots it may keep or rank for a shot recipe's scroll, never a top spot.
+const ranges = snapshot.spotLevels[line];
+for (const row of hour.top) {
+    const [low, high] = ranges[String(row.spotId)];
+    assert.ok(low <= level && level <= high, `top spot ${row.spotId} in its range ${low}-${high}`);
+    assert.ok(Table.value(String(row.spotId), line, low, true)?.kills > 0 && !(Table.value(String(row.spotId), line, high + 1, true)?.kills > 0), `${row.spotId}: the table's own rows bound the range`);
+}
+const ssdScroll = 1804;
+for (const row of hour.others || []) {
+    assert.ok(!hour.top.some(top => top.spotId === row.spotId), `${row.spotId} is not a top spot`);
+    assert.ok(row.scrolls === undefined || row.scrolls.every(id => snapshot.recipes.some(recipe => recipe.recipeItemId === id && snapshot.items[recipe.productId]?.kind === 'Other.Shot')), 'scrolls named are shot recipes\' scrolls');
+}
+const low = Inputs.extract({ preset: 'x50', lines: [line], levels: [22, 22] });
+assert.ok((low.hours[line][22].others || []).some(row => row.scrolls?.includes(ssdScroll)), 'at 22 a spot that yields the Soulshot D recipe is a candidate outside the top');
 
 // Spot value (SpotRewardExpectation) against the snapshot's per-item yields at the npcBuy price.
 const Rewards = invoke('GameServer/Bot/Economy/SpotRewardExpectation');
@@ -85,5 +102,26 @@ const designKey = keys[0], designRow = snapshot.yields[designKey];
 assert.deepEqual(snapshot.yieldsDesign[designKey], DesignIncome.designYields(snapshot, designRow.spotId, designRow.level, designRow.spoilSkill, DESIGN_RATES.x50, DesignIncome.gameRules()),
     'the design yields are the drop rule at the design\'s x50 rates');
 assert.ok(snapshot.yieldsDesign[designKey].drop[57] < snapshot.yields[designKey].drop[57], 'design adena at 25 under today\'s 50');
+
+// The market's additions, each the owner's own number: a line's bag slots
+// and max load, the walk back from a spot, each top spot's hour without
+// shots, both Luxury crystal options and the inputs of both worth formulas.
+const Inventory = require('../src/GameServer/Inventory/InventoryLimits');
+const Formulas = invoke('GameServer/Formulas');
+assert.deepEqual(snapshot.bags[line], { race: 4, slots: Inventory.capacity(4, 0), maxLoad: Math.round(Formulas.calcMaxLoad(45)) }, 'a dwarf\'s 100 slots and the CON 45 load');
+assert.equal(snapshot.walkBack[hour.best.spotId], DesignIncome.walkBackHours(hour.best.spotId, {}));
+assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a walk back');
+const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
+assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
+assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', c: 573, d: 2865 }, 'Flamberge for 573 C or 2865 D crystals');
+const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle'), BotGear = invoke('GameServer/Bot/AI/BotGear');
+const dRow = snapshot.pieceWorth[line].d, kit39 = BotGear.planFor({ classId: Table.roleClass(line, 39), level: 39, characterId: HuntCycle.referenceId(Table.roleClass(line, 39), 55) }).items;
+assert.equal(dRow.level, 20);
+assert.equal(dRow.last, 39);
+assert.deepEqual(Object.keys(dRow.pieces).map(Number).sort((a, b) => a - b), [...new Set(kit39.map(row => Number(row.selfId)))].sort((a, b) => a - b), 'the pieces of the kit at 39');
+const weapon = kit39.find(row => [7, 14].includes(Number(row.slot)));
+const piece = dRow.pieces[weapon.selfId];
+assert.ok(piece.gear > 0 && piece.with > piece.without, 'the D weapon raises both the gear gain and the hunt cycle\'s hour');
+assert.equal(snapshot.pieceWorth[line].s.last, 78, 'S runs to the last level');
 
 console.log('PASS economy model inputs snapshot');

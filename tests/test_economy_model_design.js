@@ -46,7 +46,10 @@ const snapshot = {
     twins: Object.fromEntries(levels.map(level => [level, twin(level)])),
     sources: { [BONE]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] }, [SCROLL]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] } },
     shotFamilies: { grades: ['NONE', 'D', 'C', 'B', 'A', 'S'], ids: [[1835, SSD, 1464, 1465, 1466, 1467]] },
-    fares: { TownA: { TownA: 0 } }
+    fares: { TownA: { TownA: 0 } },
+    // The Bounty Hunter's bag holds two stacks: its sword and the expected first drop fill it.
+    bags: { 55: { race: 4, slots: 2, maxLoad: 100000 }, 9: { race: 1, slots: 80, maxLoad: 100000 } },
+    walkBack: { s1: 0.01 }
 };
 const accounts = [
     { id: 1, station: false, classId: 55, line: '55', level: 25, exp: 25e9, money: 200000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD } },
@@ -74,6 +77,16 @@ assert.ok(design.crystals.npcRoute > 0, 'crystals through NPC gear in its town')
 assert.ok(design.shots.supply.lines > 0, 'the other main bought shots from the twin\'s line');
 assert.ok(design.shots.byGrade.d.fired > 0, 'and fired them');
 assert.ok(design.botToBot > 0);
+// The gate chain of Soulshot D: the crafter main was in D at the start, its
+// twin learned from the scroll its main left it, crafted, and sold to a main.
+const gates = design.gates;
+assert.equal(gates.crafter.d, 0);
+assert.equal(gates.recipe.d.from, 'its own main\'s drop');
+assert.deepEqual(gates.scroll.d, { h: gates.scroll.d.h, from: 'its own main\'s drop', where: { spot: 's1', level: 25, line: '55', classId: 55, npcs: [] } },
+    'the scroll reached the twin through the warehouse: where its main hunted (this snapshot names no NPC rewards)');
+assert.equal(design.crafters.byTown.TownA, 1, 'its twin sits where its main resupplies (main_town)');
+assert.ok(gates.recipe.d.h <= gates.crystal.d.h + 1 && gates.crystal.d.from === 'npcRoute', JSON.stringify(gates));
+assert.ok(design.firsts.shot.d <= gates.sold.d && gates.reach10.d >= gates.sold.d, JSON.stringify(gates));
 // Money closes to the adena, the twin's wallet included; every item closes.
 assert.equal(out.money.closureGap, 0);
 assert.equal(out.money.delta, out.flows.net);
@@ -125,5 +138,261 @@ assert.equal(bare.delta.huntBare, 2);
 const armed = Engine.huntDesign({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5);
 assert.equal(armed.delta.flows.huntCold, 1500, 'one hour with its 50 shots at 1000, one without at 500');
 assert.equal(armed.delta.shotsUsed, 50);
+
+// The market of mains: two buyers want the D sword their path names and no
+// line offers one, so each posts a WTB at its first visit; a hunter that
+// drops swords sells to the standing WTB at or above its floor, the first
+// claimer (the dearer, then the earlier account) first, met at once. Neither
+// buyer finds shots anywhere: its shot situation parks, so it does not come
+// to town again and again. Money and items close.
+{
+    const OLD = 2002;
+    const levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
+    // The hunter's loot: half a sword an hour at the NPC's 2000.
+    const plain = (spotId, shots, loot = 0) => ({ spotId, kills: 10, exp: 1, adena: 1000, shots, dropLoot: loot, spoilLoot: 0, loot, potions: 0, busyShare: 1, deaths: 0, shotless: null });
+    const market = {
+        ...snapshot,
+        header: { levels: [1, 45], rates: { adena: 1 } },
+        exp: levels45.map(level => level * 1e9),
+        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: SSD, best: plain('s1', 50), top: [] }])),
+            46: Object.fromEntries(levels45.map(level => [level, { classId: 46, shotId: 0, best: plain('s2', 0, 1000), top: [] }])) },
+        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: SWORD, slot: 7 }]])), 46: Object.fromEntries(levels45.map(level => [level, [{ selfId: OLD, slot: 7 }]])) },
+        yields: Object.fromEntries(levels45.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { 57: 100 }, spoil: {} }], [`s2@${level}`, { town: 'TownA', drop: { 57: 100, [SWORD]: 0.05 }, spoil: {} }]])),
+        items: { ...snapshot.items, [OLD]: { kind: 'Weapon.Sword', grade: 'NONE', ref: 20, npcBuy: 10, crystals: 0 } },
+        npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } },
+        recipes: [], races: { 9: 1, 46: 3 },
+        bags: { 9: { race: 1, slots: 80, maxLoad: 1e6 }, 46: { race: 3, slots: 2, maxLoad: 1e6 } },
+        pieceWorth: { 9: { d: { level: 20, last: 39, spotId: 's1', deathHours: 0, pieces: { [SWORD]: { slot: 7, gear: 1, with: 2000, without: 1000 } } } } },
+        walkBack: { s1: 0.01, s2: 0.01 }
+    };
+    market.yieldsDesign = market.yields;
+    const buyers = [
+        { id: 11, station: false, classId: 9, line: '9', level: 22, exp: 22e9, money: 100000, spot: null, shots: {}, held: [], worn: { 7: OLD } },
+        { id: 12, station: false, classId: 9, line: '9', level: 24, exp: 24e9, money: 100000, spot: null, shots: {}, held: [], worn: { 7: OLD } },
+        { id: 13, station: false, classId: 46, line: '46', level: 35, exp: 35e9, money: 1000, spot: null, shots: {}, held: [OLD], worn: { 7: OLD } }
+    ];
+    const marketBands = [['first', 1], ['second', 23], ['seller', 30]];
+    const runMarket = (seed, config = Design.DESIGN, cohort = buyers, hours = 8) => {
+        const view = Engine.viewOf(market, { npcPrices: 'x1' });
+        return Engine.simulate({ view, accounts: cohort, bands: marketBands, rates, hours, seed, design: Design.plane({ snapshot: market, game: Design.gameOf(market, view, config), config, start: 'late', grades }) });
+    };
+    const done = runMarket(3), waits = done.design.liveness.waits;
+    assert.equal(waits.wtb.opened, 4, 'each buyer posts a WTB for the sword and one for its shots: no line offers either');
+    assert.ok(done.design.market.meetings >= 1, 'the hunter sold to a standing WTB, met at once');
+    const bands = done.progress.stageBands, paid = band => bands[band].money.meanStart - bands[band].money.meanEnd;
+    assert.equal(paid('first') - paid('second'), 3600, 'the first claimer (the earlier account at the same price) paid its WTB, 0.9 x the NPC\'s 4000; the second is still waiting');
+    assert.equal(done.design.market.obtained.d.buy, done.design.market.meetings, 'each sword met a WTB and was worn');
+    assert.equal(done.money.closureGap, 0);
+    assert.equal(done.design.goods.failing, 0, JSON.stringify(done.design.goods.worst));
+    assert.deepEqual(runMarket(3), done, 'a run is a function of its seed');
+    // No shots anywhere: after its first visit each buyer's shot situation is parked.
+    assert.ok(done.design.market.trips.shotsParked >= 2);
+    assert.ok(done.counters.visits <= 12, `three mains in 8 hours come to town ${done.counters.visits} times`);
+    // Every wait opened ended (done, withdrawn, failed, at its deadline) or is open at the end.
+    for (const result of [done, out]) for (const [kind, w] of Object.entries(result.design.liveness.waits)) {
+        assert.equal(w.opened, w.done + w.withdrawn + w.failed + w.deadline + w.open, `${kind}: ${JSON.stringify(w)}`);
+    }
+    // A claim cannot be filled twice: over a day the hunter drops many swords,
+    // but each buyer's WTB (one sword) is met once; the rest go elsewhere.
+    const day = runMarket(3, Design.DESIGN, buyers, 24), dayBands = day.design.market;
+    assert.ok(day.design.goods.items > 0 && (day.design.goods.totals.drop || 0) > 0);
+    assert.ok(dayBands.meetings <= 2 && dayBands.obtained.d.buy <= 2, `two WTBs, two swords at most: ${dayBands.meetings}`);
+    const spent = band => day.progress.stageBands[band].money.meanStart - day.progress.stageBands[band].money.meanEnd;
+    assert.ok(spent('first') <= 4000 && spent('second') <= 4000, `each buyer paid one sword at most: ${spent('first')}, ${spent('second')}`);
+    // A WTB its owner cannot pay fails at the meeting: no deal, the WTB is
+    // withdrawn, counted; the seller keeps its sword for the next buyer.
+    const poor = runMarket(3, Design.DESIGN, buyers.map(row => (row.id === 11 ? { ...row, money: 1000 } : row)));
+    assert.ok(poor.design.market.unfunded.wtb >= 1, JSON.stringify(poor.design.market.unfunded));
+    assert.equal(poor.progress.stageBands.first.money.meanStart - poor.progress.stageBands.first.money.meanEnd <= 0, true, 'the poor buyer paid nothing');
+    assert.ok(poor.design.liveness.waits.wtb.failed >= 1);
+    assert.equal(poor.money.closureGap, 0);
+    assert.equal(poor.design.goods.failing, 0, JSON.stringify(poor.design.goods.worst));
+}
+
+// An order at a workshop from the customer's own materials: a main that
+// wants a sword nobody sells gathers the five bones of its recipe at its
+// own spot (its own hour given up: none), leaves them and the fee with the
+// order; the Bounty Hunter's twin, which holds the recipe its main dropped
+// and has no other work (no craft of its own, no buy store), takes it for
+// its MP, the fee before
+// the roll. The sword reaches the buyer, who wears it. Money (the fee held
+// with the open order included) and items (the bones with the order
+// included) close; a 60 % recipe can fail: the bones are gone, the fee kept.
+{
+    const RECIPE30 = 5030, JUNK = 1869;
+    const levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
+    // Loot an hour: s1 70 (10 kills x (0.5 bones x 10 + 2 junk x 1)), s2 45 (the recipe's scroll at 0.05 a kill x 50 and the junk).
+    const plain = (spotId, shots, loot = 0) => ({ spotId, kills: 10, exp: 1, adena: 1000, shots, dropLoot: loot, spoilLoot: 0, loot, potions: 0, busyShare: 1, deaths: 0, shotless: null });
+    const byLevel = make => Object.fromEntries(levels30.map(level => [level, make(level)]));
+    const world = {
+        ...snapshot,
+        hours: { 9: byLevel(() => ({ classId: 9, shotId: 0, best: plain('s1', 0, 70), top: [] })), 55: byLevel(() => ({ classId: 55, shotId: 0, best: plain('s2', 0, 45), top: [] })) },
+        kits: { 9: byLevel(() => [{ selfId: SWORD, slot: 7 }]), 55: byLevel(() => [{ selfId: 2002, slot: 7 }]) },
+        yields: Object.fromEntries(levels30.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { 57: 100, [BONE]: 0.5, [JUNK]: 2 }, spoil: {} }], [`s2@${level}`, { town: 'TownA', drop: { 57: 100, [RECIPE30]: 0.05, [JUNK]: 2 }, spoil: {} }]])),
+        items: { ...snapshot.items, 2002: { kind: 'Weapon.Sword', grade: 'NONE', ref: 20, npcBuy: 10, crystals: 0 }, [RECIPE30]: { kind: 'Other.Recipe', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 },
+            [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        recipes: [{ type: 'dwarven', recipeId: 30, recipeItemId: RECIPE30, level: 1, materials: [{ selfId: BONE, amount: 5 }], productId: SWORD, productCount: 1, mpCost: 50, successRate: 100, quest: false }],
+        npcOffers: { preset: {}, x1: {} },
+        sources: { [BONE]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] }, [RECIPE30]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] } },
+        bags: { 9: { race: 1, slots: 80, maxLoad: 300 }, 55: { race: 4, slots: 80, maxLoad: 300 } },
+        pieceWorth: { 9: { d: { level: 20, last: 29, spotId: 's1', deathHours: 0, pieces: { [SWORD]: { slot: 7, gear: 1, with: 2000, without: 1000 } } } } },
+        walkBack: { s1: 0.01, s2: 0.01 },
+        // A twin without buy-store slots: no line of its own to weigh against the order.
+        twins: Object.fromEntries(levels30.map(level => [level, { ...twin(level), storeSlots: { sell: 4, buy: 0 } }]))
+    };
+    world.yieldsDesign = world.yields;
+    const pair = [
+        { id: 21, station: false, classId: 55, line: '55', level: 25, exp: 25e9, money: 100, spot: null, shots: {}, held: [2002], worn: { 7: 2002 } },
+        { id: 22, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 100000, spot: null, shots: {}, held: [], worn: { 7: 2002 } }
+    ];
+    const runOrder = (seed, rate = 100) => {
+        const at = rate === 100 ? world : { ...world, recipes: [{ ...world.recipes[0], successRate: rate }] }, view = Engine.viewOf(at, { npcPrices: 'x1' });
+        return Engine.simulate({ view, accounts: pair, bands: [['twin', 1], ['buyer', 25]], rates, hours: 24, seed, design: Design.plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) });
+    };
+    const done = runOrder(4), d = done.design, orders = d.market.orders;
+    assert.ok(orders.posted >= 1 && orders.claimed >= 1 && orders.delivered >= 1, JSON.stringify(orders));
+    assert.equal(d.market.obtained.d.order, 1, 'the buyer\'s sword came by the order');
+    assert.ok(d.goods.totals.craftIn >= 5, 'the bones went into the craft');
+    assert.ok(d.money.end.crafters.money - d.money.start.crafters.money >= 650, `the twin kept the fee, 50 MP x 13: ${JSON.stringify(d.money)}`);
+    assert.equal(done.money.closureGap, 0);
+    assert.equal(d.goods.failing, 0, JSON.stringify(d.goods.worst));
+    for (const [kind, w] of Object.entries(d.liveness.waits)) assert.equal(w.opened, w.done + w.withdrawn + w.failed + w.deadline + w.open, `${kind}: ${JSON.stringify(w)}`);
+    // A 60 % recipe: some seed fails a craft; the fee stays with the twin, the bones are gone, and both ledgers close.
+    const risky = [1, 2, 3, 4, 5, 6, 7, 8].map(seed => runOrder(seed, 60));
+    const failed = risky.find(r => r.design.market.orders.failed > 0);
+    assert.ok(failed, 'a failed craft among eight seeds');
+    assert.ok(failed.design.money.end.crafters.money - failed.design.money.start.crafters.money >= 650, 'the fee is kept');
+    for (const r of risky) { assert.equal(r.money.closureGap, 0); assert.equal(r.design.goods.failing, 0, JSON.stringify(r.design.goods.worst)); }
+}
+
+// path ranks pieces by their worth per adena of their route: with money for
+// one of two pieces the NPC sells (3000 and 2900), the main buys the one
+// that lifts its hour 0.9 times before the one that lifts it 0.4 times (both
+// worth more than their price). By the cap, the NPC's price, the two would
+// tie and the lower item id would win.
+{
+    const LOW = 2003, HIGH = 2004, JUNK = 1869, levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
+    // It earns 20 an hour from junk whose weight brings it to town about hourly (its WTBs' looks).
+    const hourRow = { spotId: 's1', kills: 10, exp: 1e7, adena: 0, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = {
+        ...snapshot,
+        hours: { 9: Object.fromEntries(levels30.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: LOW, slot: 6 }, { selfId: HIGH, slot: 10 }]])) },
+        items: { ...snapshot.items, [LOW]: { kind: 'Armor.Body', grade: 'D', ref: 3000, npcBuy: 1500, crystals: 0 }, [HIGH]: { kind: 'Armor.Legs', grade: 'D', ref: 3000, npcBuy: 1500, crystals: 0 },
+            [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels30.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        recipes: [], npcOffers: { preset: {}, x1: { [LOW]: [{ town: 'TownA', price: 3000 }], [HIGH]: [{ town: 'TownA', price: 2900 }] } },
+        pieceWorth: { 9: { d: { level: 20, last: 39, spotId: 's1', deathHours: 0, pieces: { [LOW]: { slot: 6, gear: 0, with: 1400, without: 1000 }, [HIGH]: { slot: 10, gear: 0, with: 1900, without: 1000 } } } } }
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const one = Engine.simulate({ view, accounts: [{ id: 31, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 4000, spot: null, shots: {}, held: [], worn: {} }],
+        bands: [['all', 1]], rates, hours: 12, seed: 2, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+    assert.deepEqual([one.design.goods.totals.fromNpc, one.design.market.obtained.d.npc], [1, 1], 'one piece bought');
+    assert.equal(Math.round(one.flows.perBotHour.npcBuys * 12), -2900, 'the piece worth more per adena');
+}
+
+// spot_left: a main holds the spot it chose until its level leaves the spot
+// table's range for its line there, even when the spot drops out of its top
+// spots: it takes A at grade_changed (20), keeps it through 23-26 where B
+// and then C top the list, and moves only at 27, past A's range 20-26.
+{
+    const levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
+    const spot = (spotId, adena) => ({ spotId, kills: 10, exp: 1e9, adena, shots: 0, dropLoot: 0, spoilLoot: 0, loot: 0, potions: 0, busyShare: 1, deaths: 0, shotless: null });
+    const ranges = { A: [20, 26], B: [23, 24], C: [25, 30] };
+    const inRange = (id, level) => level >= ranges[id][0] && level <= ranges[id][1];
+    const topOf = level => (level <= 22 ? ['A'] : level <= 24 ? ['B'] : ['C']).filter(id => inRange(id, level));
+    const world = {
+        ...snapshot,
+        hours: { 9: Object.fromEntries(levels30.map(level => {
+            const top = topOf(level).map(id => spot(id, 1000)), others = ['A'].filter(id => level >= 23 && inRange(id, level)).map(id => spot(id, 900));
+            return [level, { classId: 9, shotId: 0, best: top[0] || spot('A', 1000), top, ...(others.length ? { others } : {}) }];
+        })) },
+        spotLevels: { 9: ranges },
+        kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: SWORD, slot: 7 }]])) },
+        yields: Object.fromEntries(levels30.flatMap(level => ['A', 'B', 'C'].map(id => [`${id}@${level}`, { town: 'TownA', drop: { 57: 100 }, spoil: {} }]))),
+        walkBack: { A: 0.01, B: 0.01, C: 0.01 }
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const ran = Engine.simulate({ view, accounts: [{ id: 41, station: false, classId: 9, line: '9', level: 19, exp: 19.5e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD } }],
+        bands: [['all', 1]], rates, hours: 9, seed: 1, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+    const moves = ran.design.market.occupation;
+    assert.deepEqual([moves.grade_changed, moves.spot_left, moves.rowMissing], [1, 1, 0], JSON.stringify(moves));
+}
+
+// A pair's main deals only in the town it stands in: both twins sit in the
+// starter village, the Bounty Hunter's twin sells Soulshot D there, and the
+// other pair's main, hunting out of TownA, knows that line (its twin's
+// town) but never buys from it. Its own twin's shelf would still reach it
+// through the account warehouse.
+{
+    const village = 'Elven Village';
+    // The other main's bones bring it to town about every two hours.
+    const world = { ...snapshot, races: { 55: 1, 9: 1 }, items: { ...snapshot.items, [BONE]: { ...snapshot.items[BONE], weight: 10 } }, bags: { ...snapshot.bags, 9: { race: 1, slots: 80, maxLoad: 150 } },
+        npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: village, price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: village, price: 4000 }] } } };
+    const config = { ...Design.DESIGN, twinSeat: 'starter_region', crafterShare: 1 };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const apart = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
+        design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
+    assert.deepEqual(apart.crafters.byTown, { [village]: 2 }, 'both twins in the village');
+    assert.ok(apart.firsts.shot.d > 0, 'the Bounty Hunter\'s twin crafted shots there');
+    assert.equal(apart.shots.supply.lines, 0, 'no main bought on a line of a town it did not stand in');
+}
+
+// A want the main leaves the grade without fails as outgrown, not as a
+// neutral withdrawal: its D sword's WTB is open when it reaches C (40).
+{
+    const CSWORD = 2005, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 5e8, adena: 0, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = {
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
+        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: level < 40 ? SWORD : CSWORD, slot: 7 }]])) },
+        items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 40000, npcBuy: 20000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }], [CSWORD]: [{ town: 'TownA', price: 40000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        twins: Object.fromEntries(levels45.map(level => [level, twin(level)]))
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const grown = Engine.simulate({ view, accounts: [{ id: 51, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [], worn: {} }],
+        bands: [['all', 1]], rates, hours: 8, seed: 1, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
+    const wtb = grown.liveness.waits.wtb;
+    assert.ok(wtb.outgrown >= 1 && wtb.failed >= wtb.outgrown, JSON.stringify(wtb));
+    assert.equal(wtb.withdrawn, 0, 'not a neutral withdrawal');
+    assert.equal(grown.market.outgrown.d, wtb.outgrown, 'counted under the grade it left');
+    assert.equal(wtb.opened, wtb.done + wtb.withdrawn + wtb.failed + wtb.deadline + wtb.open);
+}
+
+// A farm route is priced at a spot the main can hunt at its own level: a
+// level-25 main whose own spot pays 1000 an hour is not charged nothing for
+// farming its sword at a level-30 spot paying 5000 (its farm route would
+// cost 0 and its cap fall to 0, refusing every seller): it has no farm
+// route and buys the sword from the NPC once its WTB has run its looks.
+{
+    const JUNK = 1869, levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
+    const row = (spotId, adena, loot) => ({ spotId, kills: 10, exp: 1, adena, shots: 0, dropLoot: loot, spoilLoot: 0, loot, potions: 0, busyShare: 1, deaths: 0, shotless: null });
+    const world = {
+        ...snapshot,
+        hours: { 9: Object.fromEntries(levels30.map(level => [level, { classId: 9, shotId: 0, best: level < 30 ? row('s1', 1000, 20) : row('s9', 5000, 220), top: [] }])) },
+        kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: SWORD, slot: 7 }]])) },
+        items: { ...snapshot.items, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels30.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }], [`s9@${level}`, { town: 'TownA', drop: { [JUNK]: 2, [SWORD]: 0.01 }, spoil: {} }]])),
+        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        walkBack: { s1: 0.01, s9: 0.01 }
+    };
+    world.yieldsDesign = world.yields;
+    const run2 = hourCost => {
+        const config = { ...Design.DESIGN, hourCost }, view = Engine.viewOf(world, { npcPrices: 'x1' });
+        return Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 100000, spot: null, shots: {}, held: [], worn: {} }],
+            bands: [['all', 1]], rates, hours: 10, seed: 1, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
+    };
+    for (const hourCost of ['opportunity', 'literal']) {
+        const out = run2(hourCost);
+        assert.deepEqual([out.market.obtained.d?.npc, out.market.routes.zero], [1, 0], `${hourCost}: ${JSON.stringify(out.market.obtained)}, zero ${out.market.routes.zero}`);
+    }
+}
 
 console.log('PASS economy model design mode');

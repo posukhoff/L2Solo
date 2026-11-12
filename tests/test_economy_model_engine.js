@@ -173,6 +173,18 @@ const lost = Engine.simulate({ view: Engine.viewOf(lossy), accounts: [{ ...accou
 assert.equal(lost.counters.spoilUnyielded, 10, 'ten kills with spoil loot and no spoil yields');
 assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
 
+// A spot its occupation chose (the design mode's, one of its line's top
+// spots at its level) is where the main hunts; without one, its own spot or
+// its line's best.
+{
+    const top = { ...own, spotId: 's3', adena: 5000 };
+    const ranked = { ...snapshot, hours: { 9: { ...snapshot.hours[9], 1: { ...snapshot.hours[9][1], top: [top] } } } };
+    const at = Engine.viewOf(ranked), base = Engine.mainOf(accounts[0], 0, at, bands);
+    assert.equal(Engine.spotRowOf(at, { ...base, occupied: 's3' }).spotId, 's3');
+    assert.equal(Engine.spotRowOf(at, base).spotId, 's1', 'no occupation: the line\'s best');
+    assert.equal(Engine.spotRowOf(at, { ...base, occupied: 's9' }).spotId, 's1', 'a spot with no hour at its level is not hunted');
+}
+
 // The hunt rule is pure: the main it is given is left as it was.
 const main = Engine.mainOf(accounts[0], 0, Engine.viewOf(snapshot), bands);
 const frozen = JSON.stringify(main);

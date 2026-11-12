@@ -25,9 +25,10 @@
 //   report        every simulated hour: counters only, never a decision.
 // In the design mode (simulate's design: design.js) the run also holds the
 // account plane: crafter twins seated in towns, woken by account_wake (a line
-// filled, its main's arrival) and batch_done (a craft batch's MP deadline);
-// mains hunt at the design's yields and, without shots of their grade, at
-// the hour without shots, and their visits are the design's.
+// filled, an order, its main's arrival) and batch_done (a craft batch's MP
+// deadline); mains hunt at the design's yields and, without shots of their
+// grade, at the hour without shots, at the spot their occupation chose; the
+// design's trip is the arrival rule and its visits are the design's.
 //
 // hunt and visit are pure: they take a main and the view and return the new
 // main with the flows it caused; the engine commits both. Rolls are seeded per
@@ -65,7 +66,7 @@ function viewOf(snapshot, options = {}) {
         hours: snapshot.hours, kits: snapshot.kits, yields: snapshot.yields, items: snapshot.items, exp: snapshot.exp,
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(),
-        spotHours: snapshot.spotHours?.rows || null, yieldsDesign: snapshot.yieldsDesign || null
+        spotHours: snapshot.spotHours?.rows || null, yieldsDesign: snapshot.yieldsDesign || null, spotLevels: snapshot.spotLevels || null
     };
 }
 
@@ -86,9 +87,13 @@ function bandOf(bands, level) {
 const hourOf = (view, main) => view.hours[main.line]?.[main.level] || null;
 const ownRow = (view, line, level, spot) => (spot ? view.spotHours?.[line]?.[level]?.[spot] || null : null);
 
-// The spot row a main hunts: its own spot's hour, else its line's best.
+// The spot row a main hunts: the spot its occupation chose (the design
+// mode's, among its line's top spots at its level or the other rows it may
+// hold there), else its own spot's hour, else its line's best.
 function spotRowOf(view, main) {
-    return ownRow(view, main.line, main.level, main.spot) || hourOf(view, main)?.best || null;
+    const hour = main.occupied ? hourOf(view, main) : null, chosen = row => String(row.spotId) === main.occupied;
+    const occupied = hour ? hour.top?.find(chosen) || hour.others?.find(chosen) || null : null;
+    return occupied || ownRow(view, main.line, main.level, main.spot) || hourOf(view, main)?.best || null;
 }
 
 // The shot a main fires: the hour's kind of shot at the grade of the weapon
@@ -400,16 +405,25 @@ function heap() {
 // The snapshot has no bag capacity or carry weight (items carry a weight, the
 // class carry limit is not read), so a rule on "the bag is full" has no number yet.
 // design: null (today's and the plain mode) or the design mode's plane
-// (design.js plane()): its start({ view, mains, ledger, push, seed, rateOf })
-// returns the hooks the run calls (hunt, visit, levelUp, event, hour, finish).
-// Returns the model ledger.
+// (design.js plane()): its start({ view, mains, ledger, push, seed, rateOf,
+// rearrive, commit }) returns the hooks the run calls (hunt, visit, levelUp,
+// event, hour, finish, nextArrival: the design's trip, which replaces the
+// nextArrival given). rearrive(index, now, event) asks the arrival rule again
+// for a main after a situation raised outside its own events (a line in
+// reach, a bid for what it sells); commit(index, now, change) hunts a main to
+// now, replaces it by change(main) (a deal met with it while it hunts) and
+// asks again. Returns the model ledger.
 function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, onProgress = null, inputs = {}, design = null }) {
-    if (typeof nextArrival !== 'function') throw new Error('simulate needs nextArrival(main, view)');
+    if (typeof nextArrival !== 'function' && !design) throw new Error('simulate needs nextArrival(main, view)');
     const rateOf = band => rates[band] || rates.default;
     const mains = accounts.map((account, index) => mainOf(account, index, view, bands));
     const ledger = Ledger.create({ bands, mains, view, extraSinks: design ? design.sinks : [] });
     const queue = heap();
-    const plane = design ? design.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf }) : null;
+    let arrivalRule = nextArrival;
+    const plane = design ? design.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf,
+        rearrive: (index, now, event) => reschedule(mains[index], now, event),
+        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; reschedule(main, now, event); return main; } }) : null;
+    if (plane) arrivalRule = plane.nextArrival;
     const randomFor = main => mulberry(hash(`${seed}:${main.id}:${main.counter}`));
     let events = 0;
 
@@ -424,7 +438,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     const pending = new Map();
     const reschedule = (main, now, event) => {
         const row = spotRowOf(view, main), rate = rateOf(main.band), held = pending.get(main.index) ?? null;
-        const at = nextArrival(main, { event, now, pending: held, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
+        const at = arrivalRule(main, { event, now, pending: held, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
             hour: row || null, shotsPerHour: row?.shots || 0, huntShare: rate.huntShare });
         const next = Number.isFinite(at) && at > now ? at : null;
         pending.set(main.index, next);
@@ -469,7 +483,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             const band = bandOf(bands, main.level), spot = ownRow(view, main.line, main.level, main.spot) ? main.spot : null;
             if (main.spot && !spot) ledger.counters.leftOwnSpot++;
             main = { ...main, band, spot };
-            if (plane) plane.levelUp(main, event.at);
+            if (plane) main = plane.levelUp(main, event.at);
             scheduleLevel(main, event.at);
             mains[event.who] = main;
             reschedule(main, event.at, 'level_up');

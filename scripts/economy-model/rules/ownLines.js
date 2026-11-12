@@ -9,7 +9,7 @@
 // (rules/bounds.cap). Pure: lines, the workshop's wanted lines, bounds and
 // the roll arrive as plain data; it returns new line objects.
 const { hash, mulberry } = require('../../hunt-tables/common');
-const { priceStep } = require('./priceStep');
+const { priceStep, PRICE_STEP } = require('./priceStep');
 
 // The wakes at which own_lines runs; at any other reason the lines stay as they are.
 const REASONS = Object.freeze(new Set(['main_arrived', 'fill', 'batch_applied']));
@@ -32,8 +32,10 @@ const stepsAtLook = (line, sellerLook) => !(sellerLook === 'unsold_look' && line
 // on a line of the good that sold out), prices: { 'side:item': { floor,
 // floorBy, cap, capBy, rival, known, first } }, persona { looksToFloor,
 // buyerStart }, sellerLook, roll: a seeded number of the wake, which also
-// names a new line }. Returns { lines, closed: [{ line, why: 'withdrawn' |
-// 'no_market' | 'own_route' | 'parked' }] }.
+// names a new line }. prices may carry bid (the best standing WTB or buy
+// line it sees) and gear (a crafted piece). Returns { lines, closed: [{ line,
+// why: 'withdrawn' | 'no_market' | 'own_route' | 'parked' | 'floor' (to the
+// NPC) }] }.
 function ownLines(lines, view, reason) {
     if (!REASONS.has(reason)) return { lines, closed: [] };
     const look = LOOKS.has(reason), out = [], closed = [], kept = new Set();
@@ -45,6 +47,10 @@ function ownLines(lines, view, reason) {
         let priced;
         if (!held && want.resume) priced = priceStep({ side: want.side, start: want.resume.start }, { ...stepView, look: Math.max(0, want.resume.look - 1) });
         else if (!held) priced = priceStep({ side: want.side }, { ...stepView, look: 0 });
+        // A standing WTB above a seller's ask restarts its line from the bid
+        // (the only way up a seller's ask has besides a sold-out restart);
+        // the workshop passes a bid only with sellerSeesBids (ours).
+        else if (look && want.side === 'sell' && Number.isFinite(bounds.bid) && bounds.bid > held.price) priced = priceStep({ side: 'sell', start: bounds.bid }, { ...stepView, look: 0 });
         else if (look) priced = priceStep(held, { ...stepView, look: held.look + (stepsAtLook(held, view.sellerLook) ? 1 : 0) });
         else priced = held;
         const line = { ...priced, id: held ? held.id : `${view.roll}:${want.side}:${want.item}`, side: want.side, item: want.item, qty: want.qty,
@@ -52,6 +58,10 @@ function ownLines(lines, view, reason) {
         if (held) kept.add(held.id);
         if (priced.noMarket) closed.push({ line, why: 'no_market' });
         else if (priced.close) closed.push({ line, why: priced.close });
+        // An ask at its market floor for two looks goes to the NPC (liquid
+        // goods; a crafted piece stays shelved, and an ask held at its input
+        // cost stays parked there).
+        else if (want.side === 'sell' && !bounds.gear && priced.bound === 'floor' && line.floorBy !== 'cost' && priced.atBound >= PRICE_STEP.looksAtCapToClose) closed.push({ line, why: 'floor' });
         else out.push(line);
     }
     for (const line of lines) if (!kept.has(line.id)) closed.push({ line, why: 'withdrawn' });

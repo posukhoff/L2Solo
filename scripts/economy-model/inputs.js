@@ -33,6 +33,7 @@ const Capacity = require('./capacity');
 const Cohort = require('./cohort');
 const DesignIncome = require('./design-income');
 const { DESIGN_RATES } = require('./rules/dropRule');
+const Worth = require('./rules/worth');
 const common = require('../hunt-tables/common');
 
 const SCHEMA = 1;
@@ -42,7 +43,20 @@ const TWIN_LEVELS = Object.freeze([1, common.MAX_LEVEL]);
 const STORE_SELL = 1, STORE_BUY = 3, EXPAND_TRADE = 1370, DWARF = 4;
 // The fields of an hour without shots (SpotValueTable.value(spot, line, level, false)).
 const SHOTLESS_FIELDS = Object.freeze(['kills', 'exp', 'adena', 'dropLoot', 'spoilLoot', 'loot']);
-const TOP_SPOTS = 3;
+// The spots a main's occupation ranks (its line's first spots by income).
+const TOP_SPOTS = 10;
+// Spots that yield a shot recipe's scroll a main's occupation may also rank
+// (ours): per scroll, line and level, the few that give the most scrolls an
+// hour. Scrolls of gear recipes drop at nearly every spot, so the top spots
+// carry them already; a shot recipe's scroll drops at few.
+const SCROLL_SPOTS = 3;
+// NPC levels around a scroll spot's own where a line's rows are searched.
+const SCROLL_LEVEL_REACH = 12;
+// The grades a path covers, D to S (GearGradeRule), and the Luxury shop NPCs (C4 multisell 7097, 7098).
+const GRADE_NAMES = Object.freeze(['d', 'c', 'b', 'a', 's']);
+const LUXURY_NPCS = Object.freeze([7097, 7098]);
+// The skill that adds bag slots (InventoryLimits.forActor).
+const EXPAND_INVENTORY = 1372;
 // Spot hours of a save's bot at its level and this many levels above it: a
 // bot of the real runs gains at most 10 levels in a 25-minute window.
 const SPOT_LEVELS_AHEAD = 10;
@@ -56,7 +70,9 @@ const NOTES = Object.freeze([
     'Per-kill item yields (yields) are taken at the spot\'s spawn mix; the hour\'s income (best, top) uses the kill mix the spot table measured for the line.',
     'spotHours (with --spots): spotHours.rows[line][level][spotId] is the spot table\'s hour at the spot a save\'s bot stood at, for the line the model draws for it, null where that line may fight nothing there.',
     'rates are today\'s presets as the game applies them, not the design\'s per-kind rates; yieldsDesign holds the per-kill yields at the design\'s rates of the preset (rules/dropRule), at the same spawn mix and Spoil level as yields.',
-    'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off).'
+    'hours[line][level].others: rows of spots outside the top at that level that a main may hold (a spot of its top at an earlier level, while the level stays in the spot\'s range) or rank for a shot recipe\'s scroll (scrolls: the ones it yields); spotLevels[line][spotId] is the lowest and highest level the spot table has a row for the line there.',
+    'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off).',
+    'pieceWorth[line][grade] holds the inputs of both worth formulas for the line\'s path kit (the kit at the grade\'s last level) at the grade\'s entry in the kit of the level before; the hunt cycle\'s with / without are at today\'s money of the preset, so only their ratio is read.'
 ]);
 
 function readJson(relative) {
@@ -165,8 +181,96 @@ function gameOwners() {
         BotGear: invoke('GameServer/Bot/AI/BotGear'),
         HuntCycle: invoke('GameServer/Bot/AI/HuntCycle'),
         Profile: invoke('GameServer/Bot/Population/ColdCombatProfile'),
-        StoreLimits: require('../../src/GameServer/PrivateStoreLimits')
+        StoreLimits: require('../../src/GameServer/PrivateStoreLimits'),
+        Inventory: require('../../src/GameServer/Inventory/InventoryLimits'),
+        Equipment: require('../../src/GameServer/Bot/AI/BotEquipmentCompatibility'),
+        Valuation: invoke('GameServer/Bot/Economy/EconomicValuation'),
+        Caster: invoke('GameServer/Bot/Economy/BotImprovementPolicy'),
+        Grades: require('../../src/GameServer/Bot/AI/GearGradeRule'),
+        Exchange: require('../../src/GameServer/World/Generics/NpcExchangeShopLists'),
+        Towns: require('../../src/GameServer/World/TownRespawn')
     };
+}
+
+// A line's bag: its slots (InventoryLimits.capacity by race and Expand
+// Inventory level in its class's tree at 40) and its max load
+// (Formulas.calcMaxLoad of its class template's CON).
+function bagRow(line, owners) {
+    const { Data, Table, Profile, Inventory, Formulas } = owners;
+    const classId = Table.roleClass(line, 40), template = Data.classTemplates.find(row => Number(row.classId) === Number(classId));
+    const race = Number(template?.template?.race), expand = Profile.skillsFor({ level: 40, stats: { classId } }, classId, 40).find(skill => Number(skill.selfId) === EXPAND_INVENTORY)?.level || 0;
+    return { race, slots: Inventory.capacity(race, expand), maxLoad: Math.round(Formulas.calcMaxLoad(Number(template?.base?.con))) };
+}
+
+// A line's reference bot at a level in its kit of an earlier level.
+function referenceBot(owners, line, level, kitLevel) {
+    const { Table, HuntCycle, BotGear, Data } = owners;
+    const classId = Table.roleClass(line, level), state = HuntCycle.referenceState(classId, level, { line: Number(line) });
+    const earlier = Table.roleClass(line, kitLevel), inventory = {};
+    for (const row of BotGear.planFor({ classId: earlier, level: kitLevel, characterId: HuntCycle.referenceId(earlier, Number(line)) }).items) {
+        const key = `kit-${row.selfId}`, prior = inventory[key], amount = (prior?.amount || 0) + 1;
+        inventory[key] = { selfId: Number(row.selfId), amount, equipped: true, equippedCount: amount,
+            equippedSlots: [...(prior?.equippedSlots || []), Number(row.slot)], slot: Number(row.slot) };
+    }
+    return { ...state, inventory, stats: { ...state.stats, exp: Data.experience[level - 1] } };
+}
+
+// The worth of each piece of a line's path kit (BotGear's kit at the grade's
+// last level) to the line's reference bot entering the grade in the kit of
+// the level before, both formulas' inputs (rules/worth.js): gear, today's gear
+// gain per hour (attack gain plus defence gain x the hours a death costs),
+// and with / without, the hunt cycle's net adena per hour at the line's best
+// spot wearing the piece and not (HuntCycle.reader). null fields where the
+// class cannot use the piece or the hunt cycle has no row for the spot.
+// grade -> { level, last, spotId, deathHours, pieces: { selfId: { slot, gear, with, without } } }.
+function pieceWorth(line, owners) {
+    const { Table, HuntCycle, BotGear, Profile, Equipment, Valuation, Caster, Planner, Grades, Data, Index } = owners, out = {};
+    for (const [at, grade] of GRADE_NAMES.entries()) {
+        const level = Grades.levelForGrade(grade), last = at + 1 < GRADE_NAMES.length ? Grades.levelForGrade(GRADE_NAMES[at + 1]) - 1 : LEVELS[1];
+        const best = Table.best(line, level, true, 'income');
+        if (!best) continue;
+        const state = referenceBot(owners, line, level, level - 1), classId = state.classId;
+        const walk = DesignIncome.walkBackHours(best.spotId, state);
+        const deathHours = Valuation.deathHours(state, { expPerHour: best.exp || 0, walkBackHours: walk });
+        const role = Planner.roleFor(state), caster = Caster.isCaster(state), candidates = Profile.candidateProfiles(state, 0, {});
+        const reader = HuntCycle.reader(state, { deathHours, hunt: { spotId: best.spotId } }), spot = reader.spotIds.indexOf(best.spotId);
+        const held = Object.values(state.inventory).map(row => Index.find(Data.items, row.selfId)).find(item => Equipment.isWeaponSlot(item?.etc?.slot));
+        const without = spot >= 0 ? reader.hourAt(candidates.before, spot).income : null, pieces = {};
+        const kit = BotGear.planFor({ classId: Table.roleClass(line, last), level: last, characterId: HuntCycle.referenceId(Table.roleClass(line, last), Number(line)) }).items;
+        for (const row of kit) {
+            const item = Index.find(Data.items, row.selfId), slot = Number(row.slot);
+            const usable = item && Planner.equipmentCandidate(item, state, role) && (!Equipment.isWeaponSlot(slot) || Planner.equipmentItemBetter(item, held, role, classId));
+            if (!usable) { pieces[row.selfId] = { slot, gear: null, with: null, without }; continue; }
+            const after = candidates.after({ free: worn => Equipment.equipmentReplacementConflict(slot, worn), wear: { selfId: Number(row.selfId), enchant: 0, slot } });
+            const gear = Worth.gearWorth({ before: candidates.before, after, caster, threatMask: 3, deathHours, horizonHours: 1, ownHour: 1 }).perHour;
+            pieces[row.selfId] = { slot, gear, with: spot >= 0 ? reader.hourAt(after, spot).income : null, without };
+        }
+        out[grade] = { level, last, spotId: String(best.spotId), deathHours, pieces };
+    }
+    return out;
+}
+
+// Luxury (C4 multisell 7097, 7098 where the NPC is spawned): each item's C
+// and D crystal amounts (one row lists both; C4 takes either) and the town
+// the NPC stands in. item -> { npcId, town, c, d }.
+function luxuryOptions(owners) {
+    const { Data, Exchange, Towns, Enchant } = owners, out = {};
+    for (const zone of Data.npcSpawns || []) for (const spawn of zone.spawns || [zone]) {
+        const npcId = Number(spawn.selfId), loc = spawn.coords?.[0];
+        if (!LUXURY_NPCS.includes(npcId) || !(Number(spawn.total) > 0) || !loc) continue;
+        const town = Towns.getClosestTown(loc.locX, loc.locY, loc.locZ)?.name || null;
+        for (const row of Exchange.fetchForNpc(npcId)) {
+            const amount = id => Number(row.required.find(part => Number(part.selfId) === id)?.amount) || null;
+            out[row.result.selfId] ||= { npcId, town, c: amount(Enchant.CRYSTAL_IDS.C), d: amount(Enchant.CRYSTAL_IDS.D) };
+        }
+    }
+    return out;
+}
+
+// The hours of a death's walk back from each spot (WalkBack over the hunt
+// tables' spot centers, design-income.walkBackHours): spotId -> hours.
+function walkBack(spots) {
+    return Object.fromEntries([...spots.keys()].map(id => [id, DesignIncome.walkBackHours(id, {})]));
 }
 
 // item -> [{ town, price }] of every NPC offer at the current rate.
@@ -206,7 +310,7 @@ function staticInputs(owners, spots) {
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
     return { recipes, stores, luxury, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
-        races: lineRaces(Data), crystalIds: { ...owners.Enchant.CRYSTAL_IDS } };
+        races: lineRaces(Data), crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), walkBack: walkBack(spots) };
 }
 
 // A crafter twin at a level: its seated MP per hour, Create Item level and
@@ -288,14 +392,107 @@ function spotHours(save, hours, levels, owners, pairs) {
     return { source: save, levelsAhead: SPOT_LEVELS_AHEAD, rows };
 }
 
+// Expected units of one item per kill at a spot for a killer of the level:
+// its drops by the drop rule and its spoils at the Spoil level times the
+// landing chance (spotYields for one item).
+function itemYield(entries, id, killerLevel, spoilSkillLevel, owners) {
+    const { Planner, Formulas } = owners, total = entries.reduce((sum, entry) => sum + entry.count, 0);
+    let out = 0;
+    for (const entry of entries) {
+        const share = entry.count / total, context = { npcLevel: entry.level, killerLevel };
+        out += share * (Planner.itemDropYield(entry.reward, id, 'drop', context).expectedYield || 0);
+        if (spoilSkillLevel > 0) {
+            const landed = Formulas.spoilSuccessChance({ skillId: 254, skillLevel: spoilSkillLevel, attackerLevel: killerLevel, targetLevel: entry.level });
+            out += share * (Planner.itemDropYield(entry.reward, id, 'spoil', context).expectedYield || 0) * landed;
+        }
+    }
+    return out;
+}
+
+// The shot recipes' scrolls and the spots whose NPCs drop or spoil each:
+// scroll -> [spotId], with each spot's NPC level span.
+function scrollSpots(fixed, spots, owners) {
+    const { Data, Index } = owners, shotScrolls = new Set();
+    for (const row of fixed.recipes) if (Index.find(Data.items, row.productId)?.template?.kind === 'Other.Shot') shotScrolls.add(Number(row.recipeItemId));
+    const bySpot = {}, byScroll = {};
+    for (const [spotId, spot] of Object.entries(fixed.compositions)) {
+        if (!spots.has(spotId)) continue;
+        for (const npc of spot.npcs) {
+            const reward = fixed.rewards[npc.rewardId];
+            if (!reward) continue;
+            for (const group of [...reward.rewards, ...reward.spoils]) for (const item of group.items || []) {
+                const id = Number(item.selfId);
+                if (!shotScrolls.has(id)) continue;
+                (byScroll[id] ||= new Set()).add(spotId);
+                (bySpot[spotId] ||= new Set()).add(id);
+            }
+        }
+    }
+    const span = spotId => { const levels = fixed.compositions[spotId].npcs.map(npc => npc.level); return [Math.min(...levels), Math.max(...levels)]; };
+    return { byScroll: Object.fromEntries(Object.entries(byScroll).map(([id, set]) => [id, [...set].sort()])),
+        bySpot: Object.fromEntries(Object.entries(bySpot).map(([id, set]) => [id, [...set].sort((a, b) => a - b)])), span };
+}
+
+// A line's rows beyond its top spots. Each spot of its top at some level,
+// and the scroll spots, keep a row at every level from the first level it is
+// a candidate up to the last level the spot table has a row for the line
+// there: a main holds the spot it chose until its level leaves the spot's
+// range (spot_left). range[spotId] = [lowest, highest] level with a row.
+// Returns { others: { level: [row] }, range }.
+function moreRows(line, levels, hours, scrolls, owners) {
+    const { Table } = owners, rowAt = (spotId, level) => { const row = Table.value(spotId, line, level, true); return row && row.kills > 0 ? row : null; };
+    const first = new Map(), range = {};
+    for (let level = levels[0]; level <= levels[1]; level++) {
+        const hour = hours[level];
+        for (const row of [hour.best, ...hour.top]) if (row && !first.has(String(row.spotId))) first.set(String(row.spotId), level);
+    }
+    // The scroll spots: per scroll and level, the SCROLL_SPOTS that give the most scrolls an hour.
+    const entries = new Map(), entriesOf = spotId => { if (!entries.has(spotId)) entries.set(spotId, composition(owners.spots.get(spotId), owners)); return entries.get(spotId); };
+    for (const [id, spotIds] of Object.entries(scrolls.byScroll)) {
+        const best = {};
+        for (const spotId of spotIds) {
+            const [low, high] = scrolls.span(spotId);
+            for (let level = Math.max(levels[0], low - SCROLL_LEVEL_REACH); level <= Math.min(levels[1], high + SCROLL_LEVEL_REACH); level++) {
+                const row = rowAt(spotId, level);
+                if (!row) continue;
+                const perHour = row.kills * itemYield(entriesOf(spotId), Number(id), level, Table.roleSpoilLevel(line, level), owners);
+                if (perHour > 0) (best[level] ||= []).push({ spotId, perHour });
+            }
+        }
+        for (const [level, rows] of Object.entries(best)) {
+            for (const { spotId } of rows.sort((a, b) => b.perHour - a.perHour || (a.spotId < b.spotId ? -1 : 1)).slice(0, SCROLL_SPOTS)) {
+                if (!first.has(spotId) || first.get(spotId) > Number(level)) first.set(spotId, Number(level));
+            }
+        }
+    }
+    const others = {};
+    for (const [spotId, from] of first) {
+        let low = from, high = from;
+        while (low > LEVELS[0] && rowAt(spotId, low - 1)) low--;
+        while (high < LEVELS[1] && rowAt(spotId, high + 1)) high++;
+        if (!rowAt(spotId, from)) continue;
+        range[spotId] = [low, high];
+        for (let level = from; level <= Math.min(high, levels[1]); level++) {
+            const hour = hours[level];
+            if (hour.top.some(row => String(row.spotId) === spotId)) continue;
+            const row = hourRowWithShotless({ ...rowAt(spotId, level), spotId }, line, level, Table);
+            (others[level] ||= []).push(scrolls.bySpot[spotId] ? { ...row, scrolls: scrolls.bySpot[spotId] } : row);
+        }
+    }
+    return { others, range };
+}
+
 function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base = null, spots: save = null } = {}) {
     const owners = gameOwners(), { Table, Data, Index, Enchant, Sell, Rates } = owners;
     if (!x1Offers) { Boot.usePreset('x1'); x1Offers = npcOffers(owners); }
     Boot.usePreset(preset);
     const spots = rewardSpots(), fixed = base || staticInputs(owners, spots);
-    const hours = {}, kits = {}, pairs = new Map();
+    const hours = {}, kits = {}, pairs = new Map(), bags = {}, worth = {}, spotLevels = {};
+    const scrolls = scrollSpots(fixed, spots, owners), more = { ...owners, spots };
     for (const line of lines || Table.roles()) {
         hours[line] = {}; kits[line] = {};
+        bags[line] = bagRow(line, owners);
+        worth[line] = pieceWorth(line, owners);
         for (let level = levels[0]; level <= levels[1]; level++) {
             const best = Table.best(line, level, true, 'income');
             const top = Table.rankedIncome(line, level).slice(0, TOP_SPOTS);
@@ -303,11 +500,21 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
             const kit = owners.BotGear.planFor({ classId, level, characterId: owners.HuntCycle.referenceId(classId, Number(line)) }).items;
             kits[line][level] = kit.map(({ selfId, slot }) => ({ selfId: Number(selfId), slot: Number(slot) }));
             hours[line][level] = { classId, shotId: Capacity.referenceShot(classId, level, line),
-                best: best && hourRowWithShotless(best, line, level, Table), top: top.map(hourRow) };
+                best: best && hourRowWithShotless(best, line, level, Table), top: top.map(row => hourRowWithShotless(row, line, level, Table)) };
             const skill = Table.roleSpoilLevel(line, level);
             for (const row of [best, ...top]) if (row) {
                 const key = `${row.spotId}@${level}`, held = pairs.get(key);
                 pairs.set(key, { spotId: String(row.spotId), level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
+            }
+        }
+        const { others, range } = moreRows(line, levels, hours[line], scrolls, more);
+        spotLevels[line] = range;
+        for (const [key, rows] of Object.entries(others)) {
+            const level = Number(key), skill = Table.roleSpoilLevel(line, level);
+            hours[line][level].others = rows;
+            for (const row of rows) {
+                const pair = `${row.spotId}@${level}`, held = pairs.get(pair);
+                pairs.set(pair, { spotId: String(row.spotId), level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
             }
         }
     }
@@ -328,6 +535,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     for (const [id, row] of Object.entries(fixed.luxury)) { add(id); row.crystals.forEach(crystal => add(crystal.selfId)); }
     for (const reward of Object.values(fixed.rewards)) for (const group of [...reward.rewards, ...reward.spoils]) (group.items || []).forEach(item => add(item.selfId));
     for (const byLevel of Object.values(kits)) for (const kit of Object.values(byLevel)) kit.forEach(row => add(row.selfId));
+    for (const byGrade of Object.values(worth)) for (const row of Object.values(byGrade)) Object.keys(row.pieces).forEach(add);
     for (const byLevel of Object.values(hours)) for (const hour of Object.values(byLevel)) add(hour.shotId);
     Object.keys(offers).forEach(add); Object.keys(x1Offers).forEach(add);
     Object.values(Enchant.CRYSTAL_IDS).forEach(add);
@@ -343,7 +551,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const { quests, ...kept } = fixed;
     return {
         header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES },
-        hours, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}),
+        hours, spotLevels, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}), bags, pieceWorth: worth,
         sources: rawSources(owners, ids)
     };
 }
