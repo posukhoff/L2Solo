@@ -213,15 +213,6 @@ const saysSeen = i => !['bug', 'risk'].includes(i.kind) || /→|->/.test(i.what)
 const placeOf = i => i.at || (i.tail ? 'tail' : 'triage');
 const kindsLine = d => `kinds ${KINDS.map(k => `${k} ${d.issues.filter(i => i.kind === k).length}`).join(' · ')} · none ${d.issues.filter(i => !i.kind).length}`;
 
-// ---------- a script release: tools that read runs or model the rules; nothing a player or the server runs changes (maintainer 2026-11-12) ----------
-const SCRIPT_GATES = ['ci', 'report'], SCRIPT_PATHS = /^(scripts|tests)\//;
-const gatesOf = (d, r) => r.type === 'script' ? SCRIPT_GATES : d.meta.gates[r.type] || d.meta.gates.default;
-function scriptOnly(cx, r, head) { // it skips the trace and the A/B only because its whole diff stays out of game code and data
-    if (r.type !== 'script') return;
-    const out = cx.git(['diff', '--name-only', `${r.base}..${head}`]).split('\n').filter(f => f && !SCRIPT_PATHS.test(f));
-    if (out.length) fail(`${r.key} is a script release: it changes only scripts/ and tests/, not ${out.slice(0, 5).join(', ')}${out.length > 5 ? ` and ${out.length - 5} more` : ''}; game code and data go in a code release with its trace and A/B`);
-}
-
 // ---------- assembling a release (planning.md "Assembling a release"; maintainer 2026-11-12) ----------
 const STEP_ISSUES = 4, FIX_STEPS = 6, FIX_HOURS = 24, NEAR_SHARED = 12; // one task's brief · a fix release's steps · and its age: one gate cycle can still name the change that hurt
 function fixQueue(d) { // bugs, then risks, that no landed step holds: they go to a fix release before anything planned
@@ -524,7 +515,7 @@ C.status = (cx) => {
     const out = [`lc ${sha.slice(0, 9)} ${tracking === sha ? 'on ' + cx.remote : cx.remote + ' copy differs: lc sync'} · open ${d.issues.length} · triage ${triage} · ${errors.length} errors · ${warnings.length} warnings`];
     const rels = Object.values(d.releases).sort((a, b) => a.order - b.order);
     for (const r of rels.filter(live)) {
-        const wanted = gatesOf(d, r);
+        const wanted = d.meta.gates[r.type] || d.meta.gates.default;
         const done = r.steps.filter(s => s.st === 'landed').length;
         const unresolved = d.issues.filter(i => st.get(i.at)?.r === r && st.get(i.at).s.st === 'landed' && !i.resolved).length;
         out.push(`${r.key} ${r.st} ${r.type} ${r.branch}${r.head ? ' @' + r.head.slice(0, 9) : ''} · steps ${done}/${r.steps.length} landed · unresolved ${unresolved} · gates ${wanted.map(g => g + (r.gates[g] ? '✓' : '·')).join(' ')}`);
@@ -834,7 +825,6 @@ C.decide = (cx, { opt }) => { // --allow "action=assign,issue=RC-2,to=3.x" (repe
 C.gates = (cx, { pos, opt }) => { // lc gates <type> ci,trace,... --decision M: the gates a release type must pass
     const { sha, d } = need(cx); const [type, names] = pos;
     if (!type || !names) fail('gates <type> <gate,...> --decision M');
-    if (type === 'script') fail(`a script release has the fixed gates ${SCRIPT_GATES.join(', ')}`);
     authorize(d, opt.decision, 'gates', { type });
     const g = many(names); const known = ['ci', 'trace', 'ab', 'behaviour', 'report'];
     for (const x of g) if (!known.includes(x)) fail(`known gates: ${known.join(', ')}`);
@@ -858,7 +848,7 @@ C.release = (cx, { pos, opt }) => { // release add <key> | release set <key>
         if (r.st !== 'planned' || r.steps.length) fail(`${key} is ${r.st} with ${r.steps.length} steps: only an empty planned release drops`);
         delete d.releases[key];
         return write(cx, sha, d, `lc release drop ${key}\n\n${reason}`, `${key} dropped`);
-    } else fail('release add <key> --group --order --type <fix|arch|feature|script|…> | release set <key> [--cap N|--order N] --decision id | [--type T] | release drop <key> --reason');
+    } else fail('release add <key> --group --order --type | release set <key> [--cap N|--order N] --decision id | [--type T] | release drop <key> --reason');
     write(cx, sha, d, `lc release ${verb} ${key}`);
 };
 C.step = (cx, { pos, opt }) => { // step add <release> | step set <step> | step move <step> --to <release> --reason
@@ -932,7 +922,7 @@ C.land = (cx, { pos, opt }) => {
         const t = task(cx, slug), l = t.evidence?.landed || fail(`${slug}: no record-land in V5.1`);
         if (l.branch !== r.branch) fail(`${slug} landed on ${l.branch}, ${r.key} integrates ${r.branch}`);
         if (t.evidence?.review?.result !== 'pass' || t.evidence?.review?.head !== l.reviewedHead || t.evidence?.ready?.head !== l.reviewedHead) fail(`${slug}: review/ready evidence does not cover the landed head`);
-        onRemote(cx, l.head, r.branch); scriptOnly(cx, r, l.head);
+        onRemote(cx, l.head, r.branch);
         s.landed = { slug, head: l.head, reviewedHead: l.reviewedHead, tree: l.tree, ci: (t.evidence.ciRuns || []).filter(x => x.head === l.reviewedHead).map(x => x.id), at: cx.now };
     }
     s.st = 'landed';
@@ -991,7 +981,6 @@ C.freeze = (cx, { pos }) => { // the frozen head is the fork's actual tip, nothi
     const local = rev(cx, `refs/heads/${r.branch}`);
     if (local && local !== head) fail(`local ${r.branch} ${local.slice(0, 9)} differs from ${cx.remote} ${head.slice(0, 9)}`);
     for (const s of r.steps) if (s.landed.head && !cx.ok(['merge-base', '--is-ancestor', s.landed.head, head])) fail(`${s.key} ${s.landed.head.slice(0, 9)} is not in ${head.slice(0, 9)}`);
-    scriptOnly(cx, r, head);
     Object.assign(r, { st: 'frozen', head, frozenAt: cx.now });
     write(cx, sha, d, `lc freeze ${r.key} at ${head.slice(0, 9)}`, `${r.key} frozen at ${head.slice(0, 9)}`);
 };
@@ -1020,7 +1009,7 @@ function ciComplete(cx, r, slug, root) { // "CI is complete" has one owner, work
 }
 C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the frozen head; no decision waives a code gate
     const { sha, d } = need(cx); const r = release(d, pos[0]); const g = pos[1];
-    const want = gatesOf(d, r);
+    const want = d.meta.gates[r.type] || d.meta.gates.default;
     if (!want.includes(g)) fail(`${r.type} releases need gates ${want.join(', ')}`);
     if (r.st !== 'frozen') fail(`gates are recorded on the frozen head; ${r.key} is ${r.st}`);
     if (opt.waive || opt.decision) fail('code gates are not waived; record the evidence (a pre-existing miss belongs in the verdict)');
@@ -1064,7 +1053,7 @@ C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the 
 C.close = (cx, { pos, opt }) => { // validated, not published: closing grants no push to origin and no PR
     const { sha, d } = need(cx); const r = release(d, pos[0] || fail('close <release> [--carry <step|triage>]'));
     if (r.st !== 'frozen') fail(`${r.key} is ${r.st}; freeze it first`);
-    const want = gatesOf(d, r), missing = want.filter(g => !r.gates[g]);
+    const want = d.meta.gates[r.type] || d.meta.gates.default, missing = want.filter(g => !r.gates[g]);
     if (missing.length) fail(`gates missing: ${missing.join(', ')}`);
     const keys = new Set(r.steps.map(s => s.key));
     const mine = d.issues.filter(i => keys.has(i.at)), unresolved = mine.filter(i => !i.resolved);
