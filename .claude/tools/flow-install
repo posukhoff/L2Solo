@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 // Installs flow files from this worktree's HEAD into the live checkout and logs it.
-// Usage (from the flow worktree): .claude/tools/flow-install --from <installed sha> [--dry] [--defect "<why it cannot wait>"] [--skip-lc-tests]
+// Usage (from the flow worktree): .claude/tools/flow-install --from <installed sha> [--dry] [--defect "<why it cannot wait>"] [--void <slug,slug>] [--skip-lc-tests]
 //   --from: the commit the live checkout holds now (the last line of the live .claude/flow-install.log names it).
 // Refuses: a dirty worktree; a live file that differs from its --from version (somebody edited it in place); a digest
 // file (workflow.js, evidence.md, routes.md) while lc has a release open or frozen, unless --defect names the defect
-// that blocks work (evidence.md "Digest"); failing tests of what it installs.
+// that blocks work (evidence.md "Digest"); a digest file while a task record is open on the installed digest (a track
+// without an lc release, such as the economy branch, has such records at any hour: 2026-11-12 an install voided a reviewed
+// one), unless --void names every such record after its coordinator agreed; failing tests of what it installs.
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const a = process.argv.slice(2), opt = k => { const i = a.indexOf(k); return i < 0 ? undefined : a[i + 1]; };
@@ -32,6 +34,10 @@ if (digestFiles.length) {
     const status = execFileSync(process.execPath, [path.join(live, '.claude/lc.js'), 'status'], { cwd: live, encoding: 'utf8' });
     const held = status.split('\n').filter(l => /^\S+ (open|frozen) /.test(l)).map(l => l.split(' ').slice(0, 2).join(' '));
     if (held.length && !opt('--defect')) fail(digestFiles.join(', ') + ' void every open task record and lc holds ' + held.join(', ') + ': install between releases, or name the blocking defect with --defect');
+    const now = digest(f => fs.readFileSync(path.join(live, f))), dir = path.join(live, '.git/l2solo-workflow'), agreed = (opt('--void') || '').split(',').filter(Boolean);
+    const open = (fs.existsSync(dir) ? fs.readdirSync(dir) : []).filter(f => f.endsWith('.json')).map(f => { try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { return null; } })
+        .filter(r => r && r.slug && !r.closed && !r.evidence?.landed && String(r.policy).startsWith(now)).map(r => r.slug).filter(x => !agreed.includes(x));
+    if (open.length) fail(digestFiles.join(', ') + ' would void the open task record' + (open.length > 1 ? 's ' : ' ') + open.join(', ') + ': ask the coordinator of each to land or close it, or to agree, then pass --void ' + open.join(','));
 }
 execFileSync(process.execPath, [path.join(tree, '.claude/workflow.test.js')], { cwd: tree, stdio: ['ignore', 'ignore', 'inherit'] });
 if (touched.some(f => /^\.claude\/lc(\.test)?\.js$/.test(f)) && !a.includes('--skip-lc-tests')) execFileSync(process.execPath, ['--test', path.join(tree, '.claude/lc.test.js')], { cwd: tree, stdio: ['ignore', 'ignore', 'inherit'] });
