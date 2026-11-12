@@ -1,19 +1,30 @@
 #!/bin/zsh
-# land <slug> <worktree> [--fixes-red] [--dry-run] : fast-forward the release's integration branch B (local + fork) to the
-# worktree's HEAD, record-land, then start the full PR checks of the new head. B = RC_BRANCH, else `lc get $RC_RELEASE branch`.
+# land <slug> <worktree> [--message <file>] [--fixes-red] [--dry-run] : put a reviewed task on the release's integration
+# branch B (local + fork), record-land, then start the full PR checks of the new head. B = RC_BRANCH, else
+# `lc get $RC_RELEASE branch`.
+# One commit per task: the task's own commits are folded into one on top of B; each small fix named in the brief stays
+# its own commit after it, and the table builds (commits changing only data/Bots/) become one commit at the end. A series
+# that already has that shape is fast-forwarded as it is. Folding several task commits needs --message <file> (the final
+# commit message). The folded series must end in exactly the reviewed tree, or nothing lands; the task's evidence holds on
+# it because the tree is the same (workflow.js). If the commits do not apply in that order, land refuses: reorder them in
+# the worktree (the same final tree keeps the evidence).
 # Refuses (exit 1) unless fork/B == local B, B is an ancestor of HEAD, ready taskReady is true,
 # and no AI co-author/session lines. A task proves only its own selection, so the full suite is the branch head's: the
 # landing is refused while the head's full run is missing, still going or red; --fixes-red lands the declared fix of a
 # red head (and nothing else does). The release base needs no run of its own. This holds for a branch an open or frozen
-# lc release integrates; a side branch (no release of its own yet) lands on the task's evidence alone and gets no full run. Never forces, never touches origin. --dry-run: checks run, mutating commands are
-# only printed (a failed check is shown as WOULD REFUSE and the commands are still printed).
+# lc release integrates; a side branch (no release of its own yet) lands on the task's evidence alone and gets no full run.
+# Never forces, never touches origin. --dry-run: checks and the fold run, branches are not moved and the mutating
+# commands are only printed (a failed check is shown as WOULD REFUSE and the commands are still printed).
 # Exit 0 landed (or dry-run all checks ok); 1 refused/failed; 2 usage.
 set -u
 source ${0:A:h}/.lib.zsh
-dry=0; fixes=0; a=(); for x in "$@"; do case $x in --dry-run) dry=1;; --fixes-red) fixes=1;; *) a+=($x);; esac; done
-(( ${#a} == 2 )) || { echo 'usage: land <slug> <worktree> [--fixes-red] [--dry-run]'; exit 2; }
+dry=0; fixes=0; msg=; a=()
+while (( $# )); do case $1 in --dry-run) dry=1;; --fixes-red) fixes=1;; --message) msg=${2:-}; shift;; *) a+=($1);; esac; shift; done
+(( ${#a} == 2 )) || { echo 'usage: land <slug> <worktree> [--message <file>] [--fixes-red] [--dry-run]'; exit 2; }
 slug=$a[1]; wt=$a[2]; B=$(integration_branch) || exit 2
 [[ -d $wt ]] || { echo "no worktree $wt"; exit 2; }
+[[ -z $msg || -s $msg ]] || { echo "no message file $msg"; exit 2; }
+[[ -n $msg ]] && msg=${msg:A}
 G=(git -C $wt)
 sha=$($G[@] rev-parse HEAD) || exit 2
 $G[@] fetch -q fork || { echo "fetch fork failed"; exit 1; }
@@ -21,9 +32,8 @@ bad=0; no() { echo "REFUSE: $1"; bad=1; }
 loc=$($G[@] rev-parse -q --verify refs/heads/$B) ; rem=$($G[@] rev-parse -q --verify refs/remotes/fork/$B)
 [[ -n $loc && -n $rem ]] || no "cannot resolve local or fork $B"
 [[ $loc == $rem ]] || no "fork/$B ${rem[1,9]} != local $B ${loc[1,9]}"
-$G[@] merge-base --is-ancestor $B $sha || no "$B is not an ancestor of HEAD (rebase first)"
+anc=1; $G[@] merge-base --is-ancestor $B $sha || { anc=0; no "$B is not an ancestor of HEAD (rebase first)"; }
 line=$(ready_line $slug $wt); [[ ${line%%|*} == true ]] || no "not ready: ${line%%|*} ${line#*|}"
-ai=$(ai_lines $wt $B..$sha); [[ -z $ai ]] || no "AI lines in commits: $(print -r -- $ai | head -2 | tr '\n' ' ')"
 # The head this task lands onto: its full run is green, or this landing is the declared fix of a red one.
 live=($(node $LC status --repo /Users/iposukhoff/L2Solo 2>/dev/null | awk '$2=="open"||$2=="frozen"{print $4}'))
 (( ${live[(Ie)$B]} )) && rel=1 || { rel=0; echo "side branch $B (no open or frozen release integrates it): no full run asked"; }
@@ -39,25 +49,78 @@ if [[ -n $rem ]] && (( rel )); then
        else (( fixes )) || no "the branch head ${rem[1,9]} is red (run ${fr[1]}): only its fix lands, with --fixes-red"; fi;;
   esac
 fi
-if (( bad && ! dry )); then exit 1; fi
+
+# The series as it lands. A commit is a table build (only data/Bots/), a small fix (its lc id from the brief in the
+# subject) or the task's own; tip stays HEAD when the series already is "one task commit, small fixes, one table build".
+tip=$sha; tmp=; folded=
+cleanup() { [[ -n $tmp ]] && { $G[@] worktree remove --force $tmp 2>/dev/null; rm -rf $tmp; }; }
+if (( anc )) && [[ -n $loc ]]; then
+  ids=($(node $W status $slug --root $wt 2>/dev/null | python3 -c '
+import json,sys
+try: print(*[f["id"] for f in (json.load(sys.stdin).get("brief") or {}).get("smallFixes",[])])
+except Exception: pass'))
+  task=(); small=(); tables=(); order=
+  for c in $($G[@] rev-list --reverse $B..$sha); do
+    subj=$($G[@] log -1 --format=%s $c); files=$($G[@] diff-tree --no-commit-id --name-only -r $c); k=t
+    [[ -n $files && -z $(print -r -- $files | grep -v '^data/Bots/') ]] && k=b
+    for id in $ids; do [[ $k == t && $subj == *$id* ]] && k=s; done
+    case $k in t) task+=($c);; s) small+=($c);; b) tables+=($c);; esac; order+=$k
+  done
+  if [[ ! $order =~ '^t?s*b?$' ]]; then
+    echo "series of ${#order} commits ($order: t task, s small fix, b table build): folding to $(( ${#task} > 0 )) task + ${#small} small fixes + $(( ${#tables} > 0 )) table build"
+    if (( ${#task} > 1 )) && [[ -z $msg ]]; then
+      no "${#task} task commits are folded into one: give its message with --message <file>. Their subjects:"; for c in $task; do echo "    $($G[@] log -1 --format='%h %s' $c)"; done
+    else
+      tmp=$(mktemp -d /tmp/l2solo-land.XXXXXX); T=(git -C $tmp); me=(-c user.name=iposukhoff)
+      if ! $G[@] worktree add -q --detach $tmp $B; then no "cannot make a scratch worktree for the fold"; tmp=
+      else
+        ok=1
+        for c in $task; do $T[@] cherry-pick -n $c >/dev/null 2>&1 || { ok=0; no "cannot fold: task commit ${c[1,9]} does not apply in the order task, small fixes, table build; reorder the series in the worktree (the same final tree keeps the evidence)"; break; }; done
+        if (( ok && ${#task} )); then
+          if (( ${#task} == 1 )); then $T[@] $me commit -q -C $task[1] || ok=0
+          else GIT_AUTHOR_NAME=$($G[@] log -1 --format=%an $task[1]) GIT_AUTHOR_EMAIL=$($G[@] log -1 --format=%ae $task[1]) GIT_AUTHOR_DATE=$($G[@] log -1 --format=%aI $task[-1]) $T[@] $me commit -q -F $msg || ok=0; fi
+          (( ok )) || no "cannot commit the folded task (an empty change?)"
+        fi
+        if (( ok )); then for c in $small; do $T[@] $me cherry-pick $c >/dev/null 2>&1 || { ok=0; no "cannot fold: small fix ${c[1,9]} does not apply after the task commit; reorder the series in the worktree"; break; }; done; fi
+        if (( ok )); then
+          left=$($T[@] diff --name-only HEAD $sha)
+          if (( ${#tables} )) && [[ -z $(print -r -- $left | grep -v '^data/Bots/') ]]; then
+            [[ -z $left ]] || { $T[@] read-tree -u --reset $sha && $T[@] $me commit -q -C $tables[-1] || { ok=0; no "cannot commit the table build"; }; }
+          elif [[ -n $left ]]; then ok=0; no "the folded series differs from the reviewed tree in: $(print -r -- $left | head -3 | tr '\n' ' ')"; fi
+        fi
+        if (( ok )); then
+          tip=$($T[@] rev-parse HEAD)
+          [[ $($T[@] rev-parse $tip^{tree}) == $($G[@] rev-parse $sha^{tree}) ]] || { no "the folded series does not end in the reviewed tree"; tip=$sha; }
+          folded=" (${#order} commits folded into $($G[@] rev-list --count $B..$tip))"
+          $G[@] log --reverse --format='    %h %s' $B..$tip
+        fi
+      fi
+    fi
+  fi
+fi
+ai=$(ai_lines $wt $B..$tip); [[ -z $ai ]] || no "AI lines in commits: $(print -r -- $ai | head -2 | tr '\n' ' ')"
+if [[ $tip != $sha ]] && $G[@] worktree list --porcelain | grep -qx "branch refs/heads/$B"; then no "$B is checked out in a worktree: a folded series cannot move it there"; fi
+if (( bad && ! dry )); then cleanup; exit 1; fi
 (( bad )) && echo "dry-run: WOULD REFUSE (above); commands that would run if it did not:"
 run() { if (( dry )); then echo "DRY: $*"; else "$@"; fi }
-run $G[@] fetch . ${sha}:${B} || exit 1
+if [[ $tip == $sha ]]; then run $G[@] fetch . ${sha}:${B} || { cleanup; exit 1; }
+else run $G[@] update-ref refs/heads/$B $tip $loc || { cleanup; exit 1; }; fi
+cleanup
 run /Users/iposukhoff/L2Solo/.claude/gpush.sh fork $B || { echo "push failed"; exit 1; }
 if (( dry )); then
-  echo "DRY: git fetch fork; verify fork/$B == $sha"
+  echo "DRY: git fetch fork; verify fork/$B == $tip"
   echo "DRY: node $W record-land $slug --remote fork --branch $B --root $wt"
-  (( rel )) && echo "DRY: start the full run of ${sha[1,9]} unless one exists (push ci-${sha[1,9]}, gh workflow run pr-checks.yml)"
-  echo "DRY: would print ${loc[1,9]} -> ${sha[1,9]}"; exit $bad
+  (( rel )) && echo "DRY: start the full run of ${tip[1,9]} unless one exists (push ci-${tip[1,9]}, gh workflow run pr-checks.yml)"
+  echo "DRY: would print ${loc[1,9]} -> ${tip[1,9]}$folded"; exit $bad
 fi
 $G[@] fetch -q fork; now=$($G[@] rev-parse refs/remotes/fork/$B)
-[[ $now == $sha ]] || { echo "after push fork/$B = ${now[1,9]}, not ${sha[1,9]}"; exit 1; }
+[[ $now == $tip ]] || { echo "after push fork/$B = ${now[1,9]}, not ${tip[1,9]}"; exit 1; }
 node $W record-land $slug --remote fork --branch $B --root $wt || { echo "record-land failed"; exit 1; }
-echo "landed: ${loc[1,9]} -> ${sha[1,9]}"
+echo "landed: ${loc[1,9]} -> ${tip[1,9]}$folded"
 # The new head's full suite: started here so that every landing has one; the next landing reads its result.
 (( rel )) || exit 0
-s9=${sha[1,9]}; fr=($(full_run $sha))
+s9=${tip[1,9]}; fr=($(full_run $tip))
 if [[ ${fr[1]} == <-> && ${fr[3]} != cancelled ]]; then echo "full run of the new head: ${fr[1]} (${fr[2]} ${fr[3]})"
-elif /Users/iposukhoff/L2Solo/.claude/gpush.sh fork $sha:refs/heads/ci-$s9 && gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-$s9; then
-  echo "full run of the new head started on ci-$s9: record it with ci-finish $slug $wt; the next landing waits for it"
-else echo "COULD NOT START the full run of $s9: git push fork $sha:refs/heads/ci-$s9 && gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-$s9 (the next landing is refused without it)"; fi
+elif /Users/iposukhoff/L2Solo/.claude/gpush.sh fork $tip:refs/heads/ci-$s9 && gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-$s9; then
+  echo "full run of the new head started on ci-$s9: record it with ci-finish $slug $wt --sha $tip; the next landing waits for it"
+else echo "COULD NOT START the full run of $s9: git push fork $tip:refs/heads/ci-$s9 && gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-$s9 (the next landing is refused without it)"; fi

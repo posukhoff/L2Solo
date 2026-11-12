@@ -15,6 +15,11 @@ const git = (...argv) => run('git', argv);
 // The stable patch-id of a task's change (base..head): equal ids are the same change on any base.
 const patchId = (a, b) => execFileSync('git', ['patch-id', '--stable'], { cwd: root, encoding: 'utf8', input: execFileSync('git', ['diff', '--no-renames', a, b], { cwd: root, maxBuffer: 64 * 1024 * 1024 }) }).trim().split(/\s+/)[0] || '';
 const fail = msg => { throw new Error(msg); };
+// The same tree on the same base is the same change: evidence taken on one commit holds on another commit with its tree
+// (a task's commits folded into one at landing; the branch head a release freezes). Commit messages are not in a tree:
+// the land tool checks the folded message itself.
+const trees = new Map(), treeOf = h => { if (!trees.has(h)) { let t = ''; try { t = git('rev-parse', h + '^{tree}'); } catch { /* unknown commit: its own evidence only */ } trees.set(h, t); } return trees.get(h); };
+const sameChange = (a, b) => a === b || (!!a && !!b && treeOf(a) !== '' && treeOf(a) === treeOf(b));
 const digest = () => {
     const h = crypto.createHash('sha256');
     // Only what defines evidence: the CLI and its two contracts. Entry point, references, hygiene and cleanup scripts
@@ -109,9 +114,9 @@ function select(base, brief) {
 // landing (the land tool starts it and refuses a landing onto a head that is not green) and the release gate reads `full`
 // on the frozen head. In release 1b.0f both tests a task's full run failed on were inside that task's selection.
 function ciGaps(plan, e, head) {
-    const runs=(e.ciRuns||[]).filter(r=>r.head===head), full=runs.some(r=>r.workflow==='PR checks');
+    const runs=(e.ciRuns||[]).filter(r=>sameChange(r.head,head)), full=runs.some(r=>r.workflow==='PR checks');
     const covered=new Set(runs.flatMap(r=>r.tests)), missing=plan.tests.filter(t=>!covered.has(t));
-    const raw=new Set((e.rawGeodata||[]).filter(r=>r.head===head).map(r=>r.test)), missingRaw=plan.optionalGeodata.filter(t=>!raw.has(t));
+    const raw=new Set((e.rawGeodata||[]).filter(r=>sameChange(r.head,head)).map(r=>r.test)), missingRaw=plan.optionalGeodata.filter(t=>!raw.has(t));
     const reasons=[];
     if (missingRaw.length) reasons.push('Missing optional raw-geodata evidence: '+missingRaw.join(', '));
     if (missing.length) reasons.push('Missing '+missing.length+' selected tests: '+missing.slice(0,20).join(', ')+(missing.length>20?' ... (verify --show-tests)':''));
@@ -312,7 +317,7 @@ function main() {
         const test=opt('--test'), old=opt('--old'), evidence=opt('--evidence');
         if (!test || !old || !evidence || !state.brief.regressions?.map(norm).includes(norm(test))) fail('record-regression requires a brief test, --old <base SHA>, --evidence <old expected failure and new pass reference>.');
         if (old!==state.base) fail('Old-code evidence must identify the task base SHA.');
-        save(s=>{s.evidence.regressions=(s.evidence.regressions||[]).filter(r=>r.head===head && r.test!==norm(test));
+        save(s=>{s.evidence.regressions=(s.evidence.regressions||[]).filter(r=>sameChange(r.head,head) && r.test!==norm(test));
             s.evidence.regressions.push({head,old,test:norm(test),evidence,at:now()});}); return;
     }
     if (command === 'verify') {
@@ -341,7 +346,7 @@ function main() {
             if(!plan.optionalGeodata.includes(test)) fail('Choose one selected optional-geodata test with --test.');
             // Explicit local command; caller must provide raw map and avoid concurrent perf/trace.
             console.log(run(process.execPath,[path.join(root,'scripts/run-tests.js'),'--geodata','--only='+test,'--keep-going']));
-            save(s=>{s.evidence.rawGeodata=(s.evidence.rawGeodata||[]).filter(r=>r.head===head&&r.test!==test);
+            save(s=>{s.evidence.rawGeodata=(s.evidence.rawGeodata||[]).filter(r=>sameChange(r.head,head)&&r.test!==test);
                 s.evidence.rawGeodata.push({head,test,at:now()});}); return;
         }
         if (flag('--rules')) {
@@ -393,10 +398,12 @@ function main() {
         if (ci.headSha!==head && ci.workflowName==='Picked tests') {
             try {
                 git('fetch','-q','fork',ci.headSha);
-                if (git('rev-list','--parents','-n','1',ci.headSha).split(/\s+/).length===2 && git('rev-parse',ci.headSha+'^')===head && git('diff','--name-only',head,ci.headSha)==='ci-tests.txt') ci.headSha=head;
+                if (git('rev-list','--parents','-n','1',ci.headSha).split(/\s+/).length===2 && sameChange(git('rev-parse',ci.headSha+'^'),head) && git('diff','--name-only',head,ci.headSha)==='ci-tests.txt') ci.headSha=head;
             } catch { /* not a list commit of HEAD: refused below */ }
         }
-        if (ci.headSha!==head || ci.status!=='completed' || ci.conclusion!=='success' || !['PR checks','Picked tests'].includes(ci.workflowName)) fail('CI must be successful, completed, expected workflow and exact task SHA.');
+        // A run on another commit with HEAD's tree (the folded commit the branch holds) tested this change.
+        if (ci.headSha!==head) { try { git('cat-file','-e',ci.headSha+'^{commit}'); } catch { try { git('fetch','-q','fork',ci.headSha); } catch { /* unknown commit: refused below */ } } }
+        if (!sameChange(ci.headSha,head) || ci.status!=='completed' || ci.conclusion!=='success' || !['PR checks','Picked tests'].includes(ci.workflowName)) fail('CI must be successful, completed, expected workflow and exact task SHA (or a commit with the same tree).');
         // A green run proves only what it ran. PR checks: all 12 shards (GitHub sometimes creates fewer jobs).
         // Picked tests: the files it ran (its branch tests/<sha>/<a,b> or the list commit's ci-tests.txt) cover the selection.
         const plan=select(state.base,state.brief);
@@ -446,8 +453,8 @@ function main() {
         }
         save(s=>{
             const ev=s.evidence;
-            if (rawProven) { ev.rawGeodata=(ev.rawGeodata||[]).filter(r=>r.head===head&&!rawProven.has(r.test)); for (const t of rawProven) ev.rawGeodata.push({head,test:t,source:'ci',run:id,at:now()}); }
-            ev.ciRuns=(ev.ciRuns||[]).filter(r=>r.head===head && r.id!==id);
+            if (rawProven) { ev.rawGeodata=(ev.rawGeodata||[]).filter(r=>sameChange(r.head,head)&&!rawProven.has(r.test)); for (const t of rawProven) ev.rawGeodata.push({head,test:t,source:'ci',run:id,at:now()}); }
+            ev.ciRuns=(ev.ciRuns||[]).filter(r=>sameChange(r.head,head) && r.id!==id);
             ev.ciRuns.push({head,id,runSha:listSha,url:ci.url,workflow:ci.workflowName,tests:covered,at:now()});
         }); return;
     }
@@ -455,17 +462,17 @@ function main() {
         const plan=select(state.base,state.brief), e=state.evidence;
         const reasons=[];
         if (plan.critical && state.risk!=='critical') reasons.push('Critical surface requires escalation.');
-        if (e.review?.head!==head || e.review.result!=='pass') reasons.push('No passing scoped review for HEAD.');
+        if (!sameChange(e.review?.head,head) || e.review.result!=='pass') reasons.push('No passing scoped review for HEAD.');
         const table=e.review?.table||{};
-        if (e.review?.head===head && RULES.some(k=>!table[k] || table[k].verdict==='violation')) reasons.push('Review table: an unanswered rule or a standing violation.');
+        if (sameChange(e.review?.head,head) && RULES.some(k=>!table[k] || table[k].verdict==='violation')) reasons.push('Review table: an unanswered rule or a standing violation.');
         reasons.push(...smallFixProblems(state.base,state.brief,e.review?.takenOut));
         const {full,missing,missingRaw,reasons:ciReasons}=ciGaps(plan,e,head);
         reasons.push(...ciReasons);
         if (plan.warnings.length && !e.review?.selectionAcknowledged) reasons.push('Uncertain selection needs explicit review --selection-ack.');
-        if (e.rules?.head!==head) reasons.push('Mechanical rules-check missing for HEAD (verify --rules).');
+        if (!sameChange(e.rules?.head,head)) reasons.push('Mechanical rules-check missing for HEAD (verify --rules).');
         else if (!e.rules.check && !full) reasons.push('Syntax and table check missing for HEAD: verify --check (Picked tests do not run it; a full PR checks run on HEAD does).');
         if (state.kind==='fix') {
-            const proven=new Set((e.regressions||[]).filter(r=>r.head===head && r.old===state.base).map(r=>r.test));
+            const proven=new Set((e.regressions||[]).filter(r=>sameChange(r.head,head) && r.old===state.base).map(r=>r.test));
             const missingRegression=state.brief.regressions.map(norm).filter(t=>!proven.has(t));
             if(missingRegression.length) reasons.push('Missing old-code failure/new-code pass evidence: '+missingRegression.join(', '));
         }
@@ -473,7 +480,7 @@ function main() {
         else if(e.ready) save(s=>{delete s.evidence.ready;},true);
         // What the review let stand, for lc land to check against its issues and decisions.
         const left=RULES.filter(k=>table[k]?.verdict==='left').map(k=>({rule:k,ids:table[k].ids,decision:table[k].decision}));
-        console.log(JSON.stringify({head,taskReady:!reasons.length,reasons,left,map:state.brief.map,ci:{full,missing,missingRaw,rules:e.rules?.head===head},selectionWarnings:plan.warnings,releaseGate:'Full CI on integration head and existing release gates still required.'},null,2));
+        console.log(JSON.stringify({head,taskReady:!reasons.length,reasons,left,map:state.brief.map,ci:{full,missing,missingRaw,rules:sameChange(e.rules?.head,head)},selectionWarnings:plan.warnings,releaseGate:'Full CI on integration head and existing release gates still required.'},null,2));
         retroCheck();
         if (reasons.length) process.exitCode=1; return;
     }

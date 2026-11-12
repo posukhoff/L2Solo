@@ -1021,7 +1021,7 @@ function ciComplete(cx, r, slug, root) { // "CI is complete" has one owner, work
     if (!v.ci.full) fail(`${slug}: no full PR checks on ${head.slice(0, 9)}`);
     if (v.ci.missing.length) fail(`${slug}: CI misses ${v.ci.missing.slice(0, 8).join(', ')}${v.ci.missing.length > 8 ? ' …' : ''}`);
     if (v.ci.missingRaw.length) fail(`${slug}: raw-geodata evidence misses ${v.ci.missingRaw.slice(0, 8).join(', ')}`);
-    return { task: slug, runs: (t.evidence?.ciRuns || []).filter(x => x.head === head).map(x => x.id) };
+    return { task: slug, runs: (t.evidence?.ciRuns || []).filter(x => x.head === head || x.runSha === head).map(x => x.id) };
 }
 // The landed tasks an independent auditor reads again at the release close: three, picked by the frozen head, so
 // nobody chooses the easy ones and a new head picks anew.

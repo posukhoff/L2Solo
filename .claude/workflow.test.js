@@ -8,7 +8,7 @@ let changed='src/foo.js', gitLog='', treeFiles={}, onNpm=null;
 let current=head, notAncestor=false, rebasePathsMatch=true, samePatch=false, baseTouchesTask=true, pidSeq=0, remoteHead=landed, remoteFetched=true;
 const pathFake={resolve:(...x)=>x.join('/').replaceAll('/./','/').replace(/\/[^/]+\/\.\./g,''),join:(...x)=>x.join('/').replace(/\/+/g,'/'),basename:x=>x.split('/').at(-1)};
 const fsFake={existsSync:p=>!String(p).includes('nosuch')&&(!String(p).endsWith('.jsonl')||store.has(p)),appendFileSync:(p,v)=>store.set(p,(store.get(p)||'')+v),mkdtempSync:()=>'/tmp/raw',statSync:p=>({isDirectory:()=>p==='/tmp/raw/raw-geodata-1'}),rmSync(){},readdirSync:p=>p.endsWith('/tests')?['test_basic.js','test_geodata.js']:p==='/tmp/raw'?['raw-geodata-1']:p==='/tmp/raw/raw-geodata-1'?['raw-geodata-receipt.json']:['routes.md'],readFileSync:p=>store.get(p)||'policy',mkdirSync(){},writeFileSync:(p,v)=>store.set(p,v),renameSync:(a,b)=>{store.set(b,store.get(a));store.delete(a);}};
-const gh=id=>({headSha:id==='4'?other:head,headBranch:id==='2'?'tests/b/test_geodata':id==='6'?'tests/b/+test_basic':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'||id==='6'?'Picked tests':'PR checks',jobs:id==='2'||id==='6'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
+const gh=id=>({headSha:id==='4'?other:id==='8'?landed:head,headBranch:id==='2'?'tests/b/test_geodata':id==='6'?'tests/b/+test_basic':'ci-b',status:'completed',conclusion:'success',url:'https://example.invalid/run',workflowName:id==='2'||id==='6'?'Picked tests':'PR checks',jobs:id==='2'||id==='6'?[{name:'Plan',conclusion:'success'},{name:'Tests (1/1)',conclusion:'success'}]:Array.from({length:12},(_,i)=>({name:'Node tests ('+(id==='3'?1:i+1)+'/12)',conclusion:'success'}))});
 const exec=(p,a)=>{
     if(p==='git'){
         if(a[0]==='status')return '';
@@ -17,7 +17,7 @@ const exec=(p,a)=>{
             if(a.includes('--git-common-dir'))return '/git';
             if(a[1]==='--verify')return a[2].startsWith('new-parent')?other:a[2].startsWith('old-topic')?head:a[2].startsWith('int-landed')?landed:a[2].startsWith('int-other')?other:base;
             if(a[1]==='HEAD')return current;
-            if(a[1].endsWith('^{tree}'))return a[1].startsWith(other)?'other-tree':'same-tree';
+            if(a[1].endsWith('^{tree}'))return a[1].startsWith(other)?'other-tree':a[1].startsWith(base)?'base-tree':'same-tree';
         }
         if(a[0]==='ls-remote')return remoteHead?remoteHead+'\trefs/heads/'+a[2].replace('refs/heads/','')+'\n'+remoteHead+'\trefs/heads/'+a[2].replace('refs/heads/','')+'-other':'';
         if(a[0]==='cat-file'){if(!remoteFetched)throw Error('missing object');return '';}
@@ -333,4 +333,23 @@ expect('pk picked selection',cmd('record-ci','pk','--run','6'),0,'');
 expect('picked tests without the syntax and table check are not ready',cmd('ready','pk'),1,'Syntax and table check missing for HEAD');
 expect('pk check',cmd('verify','pk','--check'),0,'ok');
 expect('picked tests and the local check make the task ready with no full run',cmd('ready','pk'),0,'"full": false');
+// The same tree is the same change: a task folded into one commit at landing keeps its evidence; another tree does not.
+current=head;
+expect('fold start',cmd('start','fold','--base','main','--risk','standard'),0,'policy-hash');
+store.set('/b.json',briefWith({}));
+expect('fold brief',cmd('record-brief','fold','--file','/b.json'),0,'true');
+expect('fold review',cmd('record-review','fold','--result','pass','--evidence','review','--rules','/table.txt'),0,'');
+expect('fold check',cmd('verify','fold','--check'),0,'ok');
+expect('fold regression',cmd('record-regression','fold','--test','test_basic.js','--old',base,'--evidence','old fail new pass'),0,'');
+expect('fold picked map test',cmd('record-ci','fold','--run','2'),0,'');
+expect('fold picked selection',cmd('record-ci','fold','--run','6'),0,'');
+expect('fold ready on the reviewed head',cmd('ready','fold'),0,'"taskReady": true');
+expect('the full run of the folded commit is recorded from the reviewed head',cmd('record-ci','fold','--run','8'),0,'');
+expect('a run on a commit with another tree is still refused',cmd('record-ci','fold','--run','4'),1,'same tree');
+current=landed;
+expect('the folded commit with the same tree keeps the review, the rules and the CI',cmd('ready','fold'),0,'"full": true');
+current=other;
+{const r=cmd('ready','fold');if(r.code!==1||!r.log.includes('No passing scoped review for HEAD')||!r.log.includes('Mechanical rules-check missing')||!r.log.includes('"full": false'))throw Error('a commit with another tree must carry no evidence: '+r.log);}
+console.log('PASS a commit with another tree carries no evidence');
+current=head;
 
