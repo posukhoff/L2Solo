@@ -1,0 +1,12 @@
++test_c4_catacomb_of_the_branded.js
++test_c4_catacomb_of_the_witch.js
++test_c4_devils_isle.js
++test_c4_elmore_northeast_coast.js
++test_c4_forest_of_the_dead.js
++test_c4_garden_of_beasts.js
++test_c4_necropolis_of_sacrifice.js
++test_c4_necropolis_of_saints.js
++test_c4_necropolis_of_the_disciples.js
++test_c4_swamp_of_screams.js
++test_c4_valley_of_saints.js
++test_npc_geodata_visibility.js
