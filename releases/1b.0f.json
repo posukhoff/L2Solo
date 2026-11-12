@@ -32,6 +32,7 @@
   {"key":"1b.0f16","title":"A refused party goal answer is answered at once (DT-300; critical: worker file)","P":"","S":"","who":"","needs":[],"st":"landed","tasks":["dt300-refused-answer"],"landed":{"slug":"dt300-refused-answer","head":"62a51ef61a82c83deb66ea29316ddb21cc074785","reviewedHead":"62a51ef61a82c83deb66ea29316ddb21cc074785","tree":"336b3b9341c91a85269686d56381a0614283d590","ci":["43255340498","43255447989"],"at":"2026-11-12T16:16:46.430Z"}},
   {"key":"1b.0f19","title":"A cold raid boss death goes through the one NPC death core (DT-401)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0f20","title":"A body leaves the shop in every town before it walks out (DT-412)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0f21","title":"Every rolled-back workshop refusal is named, so recovery never retries it (DT-212; critical: Database.js)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"1b.0f21","title":"Every rolled-back workshop refusal is named, so recovery never retries it (DT-212; critical: Database.js)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0f22","title":"Every reader of the luxury exchange's free crystals counts reservations (DT-186, DT-416; critical: shared rule, Database.js)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
