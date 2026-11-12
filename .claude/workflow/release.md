@@ -20,8 +20,9 @@
   per bot-hour not below −10 %, no bots stuck (no progress all run, no visible loop), deaths not below; checks of the
   release's behaviours in logs and the DB; my in-game check (the client is on my other laptop); fix what broke, refresh
   the map, then the PR.
-- Map refresh before the PR: `node planning/architecture/check.js` (after the release commits land on
-  `ivan/next-release`) lists map names gone from the code; one agent updates the touched entries from each file's
+- Map refresh at the release close, on the frozen head: `node planning/architecture/check.js --root <the release tree>`
+  lists map names gone from the code (the report gate takes its last line only at zero, and asks the sample audit of
+  three landed tasks: lc.md "Measurement", audit.md); one agent updates the touched entries from each file's
   "Checked at" sha, closes paid issues through lc (never by deleting lines), updates limits.md, fixes what check.js lists and sets "Checked at"
   to the release head.
 - Architecture passes: after every develop update merged in, one read-only agent reviews that diff against these rules

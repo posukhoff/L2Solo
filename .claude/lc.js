@@ -937,7 +937,7 @@ C.land = (cx, { pos, opt }) => {
             if (v.decision && !d.decisions.some(x => x.id === v.decision)) fail(`${slug}: the review leaves rule ${rule} under unknown decision ${v.decision}`);
             for (const id of v.ids || []) { const i = issue(d, id); i.leftBy = [...new Set([...(i.leftBy || []), slug])]; }
         }
-        s.landed = { slug, head: l.head, reviewedHead: l.reviewedHead, tree: l.tree, ci: (t.evidence.ciRuns || []).filter(x => x.head === l.reviewedHead).map(x => x.id), at: cx.now,
+        s.landed = { slug, base: t.base, head: l.head, reviewedHead: l.reviewedHead, tree: l.tree, ci: (t.evidence.ciRuns || []).filter(x => x.head === l.reviewedHead).map(x => x.id), at: cx.now,
             ...(leftRows.length ? { left: leftRows.map(([rule, v]) => ({ rule, ids: v.ids, ...(v.decision ? { decision: v.decision } : {}) })) } : {}),
             ...((t.brief?.map || []).some(x => !/^none:/.test(x)) ? { map: t.brief.map } : {}) };
     }
@@ -1023,6 +1023,18 @@ function ciComplete(cx, r, slug, root) { // "CI is complete" has one owner, work
     if (v.ci.missingRaw.length) fail(`${slug}: raw-geodata evidence misses ${v.ci.missingRaw.slice(0, 8).join(', ')}`);
     return { task: slug, runs: (t.evidence?.ciRuns || []).filter(x => x.head === head).map(x => x.id) };
 }
+// The landed tasks an independent auditor reads again at the release close: three, picked by the frozen head, so
+// nobody chooses the easy ones and a new head picks anew.
+const auditSample = r => r.steps.filter(s => s.landed?.slug).map(s => ({ s, k: crypto.createHash('sha256').update(r.head + s.key).digest('hex') }))
+    .sort((a, b) => a.k.localeCompare(b.k)).slice(0, 3).map(x => x.s);
+C.sample = (cx, { pos }) => { // lc sample <release>: the tasks of the release's sample audit; nothing is written
+    const { d } = need(cx); const r = release(d, pos[0] || fail('sample <release>'));
+    if (r.st !== 'frozen') fail(`the sample is picked by the frozen head; ${r.key} is ${r.st}`);
+    const sample = auditSample(r);
+    if (!sample.length) return console.log(`${r.key} landed no task: its report gate asks no sample audit`);
+    for (const s of sample) console.log(`${s.key} ${s.landed.slug} ${s.landed.base ? s.landed.base.slice(0, 9) : '<task base>'}..${s.landed.head.slice(0, 9)}`);
+    console.log(`one read-only auditor (opus, effort high) that has not seen the reviews, brief .claude/workflow/audit.md, one output file; then check each claimed violation, lc add what holds, and: lc gate ${r.key} report --ref <report> --audit <file>`);
+};
 C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the frozen head; no decision waives a code gate
     const { sha, d } = need(cx); const r = release(d, pos[0]); const g = pos[1];
     const want = d.meta.gates[r.type] || d.meta.gates.default;
@@ -1071,11 +1083,27 @@ C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the 
             const was = prev.gates.report.detectors[k] || 0, leave = new RegExp(`^accepted growth: ${k}\\b.*\\b(M\\d+)\\b`, 'm').exec(f.text);
             if (v > was && !(leave && d.decisions.some(x => x.id === leave[1]))) fail(`rules-check ${k} grew ${was} → ${v} since ${prev.key}: remove the new hits, or the report says "accepted growth: ${k} <why> <decision id>"`);
         }
+        // The map quotes only names the release's code still has.
+        const gone = /^map references gone: (\d+) \(code at ([0-9a-f]{7,40})\)$/m.exec(f.text) || fail(`report ${path.basename(f.file)} has no map check: paste the last line of node planning/architecture/check.js --root <the release tree>`);
+        if (!r.head.startsWith(gone[2])) fail(`the map check ran on ${gone[2]}, not the frozen head ${sha9}`);
+        if (+gone[1]) fail(`the map quotes ${gone[1]} names the code no longer has: correct those map lines (check.js lists them) and run it again`);
         // The map entries the landed tasks said they change: each named file was refreshed on a commit that holds the landing.
         for (const st of r.steps) for (const entry of st.landed?.map || []) {
             const file = entry.split(':')[0], full = path.join(cx.planning, 'architecture', file);
             const at = fs.existsSync(full) && (/^Checked at ([0-9a-f]{7,40})\b/m.exec(fs.readFileSync(full, 'utf8')) || [])[1], checked = at && rev(cx, at);
             if (!checked || !cx.ok(['merge-base', '--is-ancestor', st.landed.head, checked])) fail(`map ${file} is checked at ${at || 'no commit'}, before ${st.key} landed (${st.landed.slug} changes "${entry}"): refresh the entry and set "Checked at" to the release head`);
+        }
+        // The sample audit: what the reviews of this release missed, counted on tasks the release did not choose.
+        const sample = auditSample(r);
+        if (sample.length) {
+            const a = evidenceFile(opt.audit, sample.map(s => s.landed.head.slice(0, 9)), `sample audit (--audit <file>; lc sample ${r.key} names its tasks)`);
+            const claimed = a.text.split('\n').reduce((n, line) => { try { return n + (JSON.parse(line).violations || []).filter(v => v.at_head !== false).length; } catch { return n; } }, 0);
+            const m = /^sample audit: (\d+) claimed · recorded (\S+) · refuted (\d+)$/m.exec(f.text) || fail(`report ${path.basename(f.file)} has no "sample audit: <n> claimed · recorded <lc ids|none> · refuted <n>" line`);
+            const ids = m[2] === 'none' ? [] : m[2].split(',');
+            if (+m[1] !== claimed) fail(`the audit file claims ${claimed} violations at the head, the report says ${m[1]}`);
+            for (const id of ids) if (!d.issues.some(i => idsOf(i).includes(id)) && !Object.values(d.archive).some(x => (x.issues || []).some(i => idsOf(i).includes(id)))) fail(`sample audit: no lc issue ${id}`);
+            if (claimed && !ids.length && !+m[3]) fail('sample audit: each claimed violation is checked, then recorded as an lc issue or counted refuted');
+            rec.audit = { file: a.file, sha256: a.sha256, steps: sample.map(s => s.key), claimed, recorded: ids, refuted: +m[3] };
         }
         Object.assign(rec, { file: f.file, sha256: f.sha256, detectors });
     }
@@ -1155,7 +1183,7 @@ C.get = (cx, { pos }) => { // for scripts: lc get <release> branch|head|base|st
     if (v === undefined || v === null) fail(`${pos[0]} has no ${pos[1]}`);
     console.log(typeof v === 'object' ? JSON.stringify(v) : v);
 };
-C.help = () => console.log(`lc status | check | next | show <id|step|release> | get <release> <field> | tails
+C.help = () => console.log(`lc status | check | next | show <id|step|release> | get <release> <field> | tails | sample <release>
 issues:   add --sec --origin --rule --sites --what --fix --kind [--task slug|--pass name] [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--gone|--fixed-by)
           edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]

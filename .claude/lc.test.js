@@ -240,8 +240,23 @@ test('a release end to end: per-issue results, complete CI, run provenance, beha
         d.archive['1a'] = { manifest: { key: '1a', st: 'validated', published: { at: '2026-01-02T00:00:00Z' }, steps: [], decisions: [], gates: { report: { at: '2026-01-01T00:00:00Z', detectors: { 'r8-catch': 1 } } } }, issues: [] }; lcjs.save(cx, sha, d, 'test: an earlier report'); }
     w.no(/rules-check r8-catch grew 1 → 2 since 1a: remove the new hits, or the report says "accepted growth: r8-catch <why> <decision id>"/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\nper detector: r8-catch 2, r9-world 0\n`));
     w.no(/r8-catch grew 1 → 2/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\nper detector: r8-catch 2\naccepted growth: r8-catch a parser boundary M99\n`));
-    w.ok('gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\nper detector: r8-catch 2, r9-world 0\naccepted growth: r8-catch a parser boundary M1\n`));
-    w.ok('gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\nper detector: r8-catch 1, r9-world 0\n`));
+    const flow = `release 1b.1 at ${s9}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\n`;
+    w.no(/report r2\.md has no map check: paste the last line of node planning\/architecture\/check\.js/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\n`));
+    w.no(/the map check ran on [0-9a-f]{9}, not the frozen head/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\nmap references gone: 0 (code at ${w.base.slice(0, 9)})\n`));
+    w.no(/the map quotes 2 names the code no longer has/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\nmap references gone: 2 (code at ${s9})\n`));
+    const mapOk = `map references gone: 0 (code at ${s9})\n`;
+    assert.match(w.ok('sample', '1b.1'), new RegExp(`^1b\\.1 \\S+ [0-9a-f]{9}\\.\\.${s9}\\n.*brief \\.claude/workflow/audit\\.md`));
+    w.no(/sample audit \(--audit <file>; lc sample 1b\.1 names its tasks\): file undefined not found/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\n${mapOk}`));
+    w.no(/sample audit .* au0\.jsonl does not name/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\n${mapOk}`), '--audit', file(w, 'au0.jsonl', '{"sha":"0000000"}\n'));
+    const au = file(w, 'au.jsonl', `{"sha":"${s9}","violations":[{"rule":11,"where":"src/a.js:1","at_head":true},{"rule":4,"where":"src/b.js:2","at_head":false}]}\n`);
+    w.no(/has no "sample audit: <n> claimed/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\n${mapOk}`), '--audit', au);
+    w.no(/the audit file claims 1 violations at the head, the report says 0/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\n${mapOk}sample audit: 0 claimed · recorded none · refuted 0\n`), '--audit', au);
+    w.no(/each claimed violation is checked/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\n${mapOk}sample audit: 1 claimed · recorded none · refuted 0\n`), '--audit', au);
+    w.no(/sample audit: no lc issue DT-999/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1\n${mapOk}sample audit: 1 claimed · recorded DT-999 · refuted 0\n`), '--audit', au);
+    const audited = `${mapOk}sample audit: 1 claimed · recorded none · refuted 1\n`;
+    w.ok('gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 2, r9-world 0\naccepted growth: r8-catch a parser boundary M1\n${audited}`), '--audit', au);
+    w.ok('gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `${flow}per detector: r8-catch 1, r9-world 0\n${audited}`), '--audit', au);
+    assert.match(w.ok('get', '1b.1', 'gates'), /"audit":\{"file":"[^"]+","sha256":"[0-9a-f]+","steps":\["1b\.1"\],"claimed":1,"recorded":\[\],"refuted":1\}/);
     assert.match(w.ok('close', '1b.1'), /1b\.1 validated \(not published\); 2 archived, 0 carried/);
     assert.match(w.ok('show', 'DT-44'), /archived in 1b\.1: .*"how":"landed".*"resolved":\{"how":"test"/);
     assert.match(w.ok('status'), /1b\.1 validated, not published/);
@@ -613,10 +628,12 @@ test('contract: records written by the real workflow.js pass lc land, resolve an
     assert.match(w.ok('gate', '1b.1', 'ci', '--task', 'p1', '--root', w.repo), /1b\.1 ci ✓/);
     assert.match(w.ok('get', '1b.1', 'gates'), /"ci":\{"at":"[^"]+","task":"p1","runs":\["7"\]\}/);
     // the report gate: a map file the landed task named must be refreshed on a commit that holds the landing
-    const report = file(w, 'r.md', `release 1b.1 at ${head.slice(0, 9)}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\nper detector: r8-catch 2\n`);
-    w.no(/map combat\.md is checked at no commit/, 'gate', '1b.1', 'report', '--ref', report);
+    const report = file(w, 'r.md', `release 1b.1 at ${head.slice(0, 9)}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\nper detector: r8-catch 2\nmap references gone: 0 (code at ${head.slice(0, 9)})\nsample audit: 0 claimed · recorded none · refuted 0\n`);
+    const audit = file(w, 'au.jsonl', `{"sha":"${head.slice(0, 9)}","violations":[]}\n`);
+    assert.match(w.ok('get', '1b.1', 'steps'), new RegExp(`"slug":"p1","base":"${base}"`));
+    w.no(/map combat\.md is checked at no commit/, 'gate', '1b.1', 'report', '--ref', report, '--audit', audit);
     put(path.join(w.repo, 'planning/architecture/combat.md'), `# Combat\n\nChecked at ${base.slice(0, 9)} (2026-11-11).\n`);
-    w.no(/map combat\.md is checked at [0-9a-f]{9}, before .* landed \(p1 changes "combat\.md: Hit core"\)/, 'gate', '1b.1', 'report', '--ref', report);
+    w.no(/map combat\.md is checked at [0-9a-f]{9}, before .* landed \(p1 changes "combat\.md: Hit core"\)/, 'gate', '1b.1', 'report', '--ref', report, '--audit', audit);
     put(path.join(w.repo, 'planning/architecture/combat.md'), `# Combat\n\nChecked at ${head.slice(0, 9)} (2026-11-12).\n`);
-    assert.match(w.ok('gate', '1b.1', 'report', '--ref', report), /1b\.1 report ✓/);
+    assert.match(w.ok('gate', '1b.1', 'report', '--ref', report, '--audit', audit), /1b\.1 report ✓/);
 });

@@ -2,15 +2,19 @@
 
 // Map staleness check: every code name the map quotes (`Module`, `Module.method`, `path/File.js`) must still exist in
 // src/, scripts/ or tests/. Prints the map lines whose names are gone; exit 1 when any are.
-// Usage: node planning/architecture/check.js
-// Run before each release (map refresh) and after a change that removes or renames a module.
+// Usage: node planning/architecture/check.js [--root <checkout of the code to check against>]
+// Run before each release (map refresh) and after a change that removes or renames a module. The release report gate
+// (lc gate <release> report) asks for the last line, run with --root on the frozen head: "map references gone: 0 (code at <sha>)".
+// problems.md is not read: it is generated from lc, which counts its stale names itself.
 // Not checked: lines that record removed code (deleted/removed/gone/paid), and a quoted name followed by
 // " (proposed)" (a fix's name that does not exist yet) or " (C4" (a name from the C4 reference code).
 
 const fs = require('fs');
 const path = require('path');
 
-const root = path.resolve(__dirname, '../..');
+const rootArg = process.argv.indexOf('--root');
+const root = path.resolve(rootArg < 0 ? path.join(__dirname, '../..') : process.argv[rootArg + 1]);
+const codeAt = require('child_process').execFileSync('git', ['rev-parse', '--short=9', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const mapDir = __dirname;
 
 function walk(dir, out = []) {
@@ -65,7 +69,7 @@ function check(span) {
 }
 
 const missing = [];
-for (const file of fs.readdirSync(mapDir).filter(name => name.endsWith('.md')).sort()) {
+for (const file of fs.readdirSync(mapDir).filter(name => name.endsWith('.md') && name !== 'problems.md').sort()) {
     const lines = text(path.join(mapDir, file)).split('\n');
     lines.forEach((line, index) => {
         // Entries recorded as removed name the dead code on purpose.
@@ -82,8 +86,6 @@ for (const file of fs.readdirSync(mapDir).filter(name => name.endsWith('.md')).s
 }
 if (missing.length) {
     console.log(missing.join('\n'));
-    console.log(`\n${missing.length} map reference(s) no longer found in the code.`);
     process.exitCode = 1;
-} else {
-    console.log('Every code name in the map is still in the code.');
 }
+console.log(`map references gone: ${missing.length} (code at ${codeAt})`);
