@@ -26,7 +26,6 @@ const { hash, mulberry } = require('../hunt-tables/common');
 const ADS = 'ads';
 const FORMULAS = Object.freeze(['gear_gain', 'hunt_cycle']);
 const gradeOfItem = item => String(item?.grade || 'NONE').toLowerCase();
-const GRADE_ORDER = Object.freeze(['none', 'd', 'c', 'b', 'a', 's']);
 
 // ctx: the design plane's state and helpers (design.js startPlane).
 function mainsSide(ctx) {
@@ -36,53 +35,57 @@ function mainsSide(ctx) {
     const setMarket = (index, patch) => put(index, { market: { ...accounts[index].market, ...patch } });
     const townOf = main => { const row = Engine.spotRowOf(view, main); return row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null; };
     const fareOf = (from, to) => (from === to ? 0 : view.fares[from]?.[to] ?? null);
-    const lastLevel = grade => {
-        const at = grades.findIndex(([name]) => name === grade);
-        if (at < 0) return grades[0][1] - 1;
-        return at + 1 < grades.length ? grades[at + 1][1] - 1 : view.maxLevel;
-    };
     const firstLevel = grade => grades.find(([name]) => name === grade)?.[1] ?? 1;
     const kitAt = (main, level) => view.kits[main.line]?.[Math.min(view.maxLevel, level)] || [];
-    // The pieces path aims at, one a slot. pathTarget 'grade_last_level' (the
-    // model before): the kit at the grade's last level. 'own_level_then_up'
-    // (ours): the kit at the main's own level, each slot with the pieces the
-    // grade's kits name for it below that level (best first), which path
-    // tries while no route prices the one above; read again at path's
-    // situations, so the aim moves up as the main levels.
+    // The gear ladder (the snapshot's gearLadder) of a main's line in the
+    // band of its level: the band's rungs and hours, null without one.
+    const ladderOf = main => (snapshot.gearLadder?.lines?.[main.line] || []).find(row => main.level >= row.from && main.level <= row.to) || null;
+    const groupOf = Worth.ladderGroup;
+    // The piece a main wears in a slot (its weapon for either hand), 0 for none.
+    const wornIn = (main, slot) => (groupOf(slot) === 'weapon' ? main.weapon || 0 : main.kit[slot] || 0);
+    // A piece's ladder row in a band ({ hour, gear }), null without one; a
+    // worn piece without a row reads as the empty slot.
+    const rungRow = (row, group, selfId) => { const hour = row?.hour[group]?.[selfId]; return hour === undefined ? null : { hour, gear: row.gear[group]?.[selfId] ?? 0 }; };
+    const wornRow = (row, group, selfId) => rungRow(row, group, selfId) ?? rungRow(row, group, 0);
+    // The slots path aims at, one a ladder group of the main's kit at its own
+    // level (both hands one aim, the weapon's first), each with its
+    // candidates: the rungs of its band's ladder (its grade and below) whose
+    // hunt hour beats the piece it wears there, best first, a weapon rung in
+    // its own hand's slot; held: the worn piece is of the main's grade.
     const aimsOf = main => {
-        const grade = gradeOfLevel(main.level);
-        if (config.pathTarget === 'grade_last_level') return kitAt(main, lastLevel(grade)).map(piece => ({ selfId: piece.selfId, slot: piece.slot, lower: [] }));
-        const from = firstLevel(grade);
-        return kitAt(main, main.level).map(piece => {
-            const lower = [];
-            for (let level = main.level - 1; level >= from; level--) {
-                for (const other of kitAt(main, level)) if (other.slot === piece.slot && other.selfId !== piece.selfId && !lower.includes(other.selfId)) lower.push(other.selfId);
-            }
-            return { selfId: piece.selfId, slot: piece.slot, lower };
-        });
+        const row = ladderOf(main), grade = gradeOfLevel(main.level), aims = [], seen = new Set();
+        if (!row) return aims;
+        for (const piece of kitAt(main, main.level)) {
+            const group = groupOf(piece.slot), key = group === 'weapon' ? group : String(piece.slot);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const worn = wornIn(main, piece.slot), floor = wornRow(row, group, worn)?.hour ?? -Infinity;
+            const candidates = (row.rungs[group] || []).filter(id => id !== worn && (row.hour[group]?.[id] ?? -Infinity) > floor)
+                .map(selfId => ({ selfId, slot: group === 'weapon' ? snapshot.gearLadder.slots?.[selfId] || piece.slot : piece.slot }));
+            aims.push({ slot: piece.slot, group, worn, held: worn > 0 && gradeOfItem(view.items[worn]) === grade, candidates });
+        }
+        return aims.sort((a, b) => (b.group === 'weapon') - (a.group === 'weapon'));
     };
-    // The next grade's kit: at its first level (own_level_then_up) or its last; none past the last grade.
+    // The next grade's kit at its first level; none past the last grade.
     const aheadKit = main => {
         const at = grades.findIndex(([name]) => name === gradeOfLevel(main.level)), next = grades[at + 1];
         if (!next) return [];
-        return kitAt(main, config.pathTarget === 'grade_last_level' ? lastLevel(next[0]) : next[1]).map(piece => ({ selfId: piece.selfId, slot: piece.slot }));
+        return kitAt(main, next[1]).map(piece => ({ selfId: piece.selfId, slot: piece.slot }));
     };
-    // The level at which path names another piece than selfId for the slot
-    // inside the main's grade (own_level_then_up), null when none does before
-    // the grade's end. Memo key: line, level, slot, piece (its inputs).
-    const replacedMemo = new Map();
-    const replacedAt = (main, selfId, slot) => {
-        if (config.pathTarget === 'grade_last_level') return null;
-        const key = `${main.line}@${main.level}@${slot}@${selfId}`;
-        if (replacedMemo.has(key)) return replacedMemo.get(key);
-        const last = lastLevel(gradeOfLevel(main.level));
-        let at = null;
-        for (let level = main.level + 1; level <= Math.min(last, view.maxLevel) && at === null; level++) {
-            const other = kitAt(main, level).find(piece => piece.slot === slot);
-            if (other && other.selfId !== selfId) at = level;
-        }
-        replacedMemo.set(key, at);
-        return at;
+    // Does a grade's ladder of a slot group hold a rung with a priced route
+    // for a main standing in a town: an NPC seller it reaches (the route the
+    // game fixes; a player's line comes and goes, and the Luxury exchange needs
+    // crystals on lines in reach, which a main cannot count on)? Memo key: line,
+    // grade, group, town (its inputs).
+    const pricedMemo = new Map();
+    const gradePriced = (main, group, town, grade) => {
+        const key = `${main.line}@${grade}@${group}@${town}`;
+        if (pricedMemo.has(key)) return pricedMemo.get(key);
+        const first = firstLevel(grade), row = (snapshot.gearLadder?.lines?.[main.line] || []).find(band => first >= band.from && first <= band.to);
+        const priced = !!row && (row.rungs[group] || []).some(id => gradeOfItem(view.items[id]) === grade
+            && (view.offers.get(id) || []).some(offer => offer.channel === 'npc_buy' && fareOf(town, offer.town) !== null));
+        pricedMemo.set(key, priced);
+        return priced;
     };
     const priceOfItem = (memory, id) => Knowledge.known(memory, id) ?? view.items[id]?.npcBuy ?? 0;
 
@@ -129,11 +132,19 @@ function mainsSide(ctx) {
         const bid = item?.crystals > 0 && bids.length ? Math.max(...bids.map(entry => entry.price)) * item.crystals : null;
         return Bounds.floor({ npcBuy: item?.npcBuy || 0, crystallizerBids: bid === null ? [] : [bid] });
     };
-    // The hours a piece's gain counts over and its resale (worthHorizon).
-    const horizonFor = (main, selfId, slot, book) => {
-        const replaced = replacedAt(main, selfId, slot);
-        return Worth.horizon({ reading: config.worthHorizon, gradeHours: horizonOf(main), useHours: replaced === null ? null : hoursTo(main, replaced), resale: resaleOf(selfId, book) });
+    // The hunting hours a piece of a slot is worn: to the end of its own
+    // grade, and on to the end of the next grade when that grade's piece of
+    // the slot has no priced route for the main (gradePriced); never further:
+    // a main expects to replace a piece within one grade after its own.
+    const useHoursOf = (main, slot, town) => {
+        const next = grades.findIndex(([, from]) => from > main.level);
+        if (next < 0) return horizonOf(main);
+        if (gradePriced(main, groupOf(slot), town, grades[next][0])) return hoursTo(main, grades[next][1]);
+        return hoursTo(main, next + 1 < grades.length ? grades[next + 1][1] : view.maxLevel);
     };
+    // The hours a piece's gain counts over and its resale (worthHorizon).
+    const horizonFor = (main, selfId, slot, book, town) => Worth.horizon({ reading: config.worthHorizon, gradeHours: horizonOf(main),
+        useHours: useHoursOf(main, slot, town), resale: resaleOf(selfId, book) });
     // Farm hours of each item at the spot that drops it fastest among the
     // spots the main can hunt at its own level (its line's rows there):
     // item -> { hours, row, where }. Memo key: line, level, shots held (the
@@ -196,7 +207,7 @@ function mainsSide(ctx) {
     const orderInputs = selfId => (orderRecipe(selfId)?.materials || []).map(row => row.selfId);
 
     // The routes of one piece (acquire) and its cap, for a main standing in town.
-    const routesOf = (index, main, town, book, piece, grade) => {
+    const routesOf = (index, main, town, book, piece) => {
         const account = accounts[index], memory = account.memory, hour = ownHour(main, memory), selfId = piece.selfId;
         const npc = (view.offers.get(selfId) || []).filter(row => row.channel === 'npc_buy').map(row => ({ town: row.town, price: row.price, fare: fareOf(town, row.town) }))
             .filter(row => row.fare !== null);
@@ -206,35 +217,40 @@ function mainsSide(ctx) {
             materials: recipe.materials.map(row => {
                 const farm = farmRoute(main, memory, row.selfId);
                 return { selfId: row.selfId, amount: row.amount, held: main.bag[row.selfId] || 0, sale: Knowledge.known(memory, row.selfId) ?? view.items[row.selfId]?.npcBuy ?? 0,
-                    line: book.sell[row.selfId]?.[0]?.price ?? book.seen[row.selfId] ?? null, npc: game.npcByTown[town]?.[row.selfId] ?? null, farmHours: farm?.hours || 0, spotHour: farm?.spotHour || 0 };
+                    line: book.sell[row.selfId]?.[0]?.price ?? book.seen[row.selfId] ?? null, npc: game.npcByTown[town]?.[row.selfId] ?? null, farmHours: farm?.hours || 0, spotHour: farm?.spotHour || 0,
+                    crafter: game.firstPrice[row.selfId] ?? null };
             }) } : null;
         const lux = snapshot.luxuryOptions?.[selfId];
         const exchange = lux && fareOf(town, lux.town) !== null ? { town: lux.town, fare: fareOf(town, lux.town),
             options: [['c', lux.c], ['d', lux.d]].filter(([, amount]) => amount > 0).map(([g, amount]) => ({ grade: g, amount, price: priceToMain(memory, book, game.crystalIds[g.toUpperCase()]) })) } : null;
-        // The piece's use per hunting hour (its gain at the own hour): what a wait for it costs.
-        const row = snapshot.pieceWorth?.[main.line]?.[grade]?.pieces?.[selfId] || null, horizon = horizonFor(main, selfId, piece.slot, book);
-        const used = Worth.pieceWorth({ formula: config.worth, row, horizonHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
-        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.perHour * hour, lines: [], npc, order, farm: farmRoute(main, memory, selfId), exchange,
+        // The piece's use per hunting hour (its hunt hour over the worn piece's): what a wait for it costs.
+        const ladder = ladderOf(main), group = groupOf(piece.slot), rows = { rung: rungRow(ladder, group, selfId), worn: wornRow(ladder, group, wornIn(main, piece.slot)) };
+        const horizon = horizonFor(main, selfId, piece.slot, book, town);
+        const used = Worth.rungWorth({ formula: config.worth, ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
+        // No ladder row: its use cannot be stated (counted), and acquire offers no farm priced by it.
+        if (used.adena === null) stats.routes.noWorth++;
+        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], npc, order, orderMaterials: config.orderMaterials, farm: farmRoute(main, memory, selfId), exchange,
             twin: account.twin ? ctx.ownCraft(index, selfId) : null, stalled: account.market.stalled[selfId] || [] };
         const routes = acquire(piece, own);
         stats.routes.priced++;
         if (routes?.routeCost === 0) stats.routes.zero++;
-        const capped = capOf(row, horizon, routes?.routeCost ?? null, game.npcByTown[town]?.[selfId] ?? null, hour);
+        const capped = capOf(rows, horizon, routes?.routeCost ?? null, game.npcByTown[town]?.[selfId] ?? null, hour);
         const lines = (book.sell[selfId] || []).map(entry => ({ price: entry.price, kind: entry.kind, where: entry.kind === 'ad' ? 'ad' : entry.town }));
         // What the piece is worth to its account's workshop: the least of its
         // worth and its cheapest route other than a player's line or the own twin.
         const other = routes?.routes.find(option => option.route !== 'buy' && option.route !== 'twin');
         const need = Math.min(capped.worth ?? Infinity, other ? other.cost : Infinity);
-        return { ...capped, useHours: horizon.hours, need: Number.isFinite(need) ? need : null, acquired: lines.length ? acquire(piece, { ...own, cap: capped.cap ?? 0, lines }) : routes };
+        return { ...capped, useHours: horizon.hours, perHour: used.perHour, resale: horizon.resale, need: Number.isFinite(need) ? need : null,
+            acquired: lines.length ? acquire(piece, { ...own, cap: capped.cap ?? 0, lines }) : routes };
     };
     // A piece's cap: min(worth, own route, the NPC here); both formulas' caps
-    // for the cap-against-floor count. A piece no path row names is capped by
-    // its routes alone; with no route either it has no cap (null).
-    const capOf = (row, horizon, routeCost, npcSell, hour) => {
+    // for the cap-against-floor count. A piece without a ladder row is capped
+    // by its routes alone; with no route either it has no cap (null).
+    const capOf = (rows, horizon, routeCost, npcSell, hour) => {
         const caps = {};
         let chosen = null;
         for (const formula of FORMULAS) {
-            const worth = Worth.pieceWorth({ formula, row, horizonHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound, resale: horizon.resale });
+            const worth = Worth.rungWorth({ formula, ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound, resale: horizon.resale });
             const capped = Bounds.cap({ worth: worth.adena ?? Number.MAX_SAFE_INTEGER, routeCost, npcSell });
             const cap = capped.cap >= Number.MAX_SAFE_INTEGER ? null : capped.cap;
             caps[formula] = cap;
@@ -255,25 +271,36 @@ function mainsSide(ctx) {
         return { id, amount, held, perHour: row.shots };
     };
 
+    // What pathAim 'affordable' reads: the money the main holds, what it
+    // nets a hunting hour now (its own hour less the shots it fires), and
+    // the worn pieces' resale beside the candidates'.
+    function aimView(main, kit, book, uses, shotsPerHour) {
+        const resale = { ...uses.resale };
+        for (const aim of kit) if (aim.worn && !(aim.worn in resale)) resale[aim.worn] = resaleOf(aim.worn, book);
+        return { money: main.money, earn: Math.max(0, ownHour(main, accounts[main.index].memory) - shotsPerHour), perHour: uses.perHour, useHours: uses.useHours, resale };
+    }
+
     // path: at its situations, from the routes acquire gives in the town the
     // main stands in. Returns the main with what withdrawn orders gave back.
     function pathOf(index, main, town) {
-        const kit = aimsOf(main), grade = gradeOfLevel(main.level);
-        const candidates = kit.flatMap(piece => [{ selfId: piece.selfId, slot: piece.slot }, ...piece.lower.map(selfId => ({ selfId, slot: piece.slot }))]);
+        const kit = aimsOf(main), grade = gradeOfLevel(main.level), candidates = kit.flatMap(aim => aim.candidates);
         const book = reachBook(index, town, [...new Set(candidates.flatMap(piece => [piece.selfId, ...orderInputs(piece.selfId)]))], [grade]);
-        const routes = {}, worth = {}, weapons = {}, needs = {};
+        const routes = {}, worth = {}, weapons = {}, needs = {}, perHour = {}, useHours = {}, resale = {};
         for (const piece of candidates) {
-            if (main.kit[piece.slot] === piece.selfId || piece.selfId in routes) continue;
-            const priced = routesOf(index, main, town, book, piece, gradeOfItem(view.items[piece.selfId]) === 'none' ? grade : gradeOfItem(view.items[piece.selfId]));
-            routes[piece.selfId] = priced.acquired ? { route: priced.acquired.route, cost: priced.acquired.cost } : null;
+            if (piece.selfId in routes) continue;
+            const priced = routesOf(index, main, town, book, piece), got = priced.acquired;
+            // A Luxury route names its crystals: its account's workshop counts them as its main's own use.
+            routes[piece.selfId] = got ? { route: got.route, cost: got.cost, crystals: got.route === 'exchange' ? { grade: got.grade, amount: got.amount } : null } : null;
             worth[piece.selfId] = priced.worth;
             needs[piece.selfId] = priced.need;
+            perHour[piece.selfId] = priced.perHour; useHours[piece.selfId] = priced.useHours; resale[piece.selfId] = priced.resale;
             if (Engine.isWeapon(view.items[piece.selfId])) weapons[piece.selfId] = true;
         }
-        const reserve = reserveOf(main, rateOf(main.band).huntShare);
-        const reserveAdena = reserve ? reserve.amount * (Knowledge.known(accounts[index].memory, reserve.id) ?? game.firstPrice[reserve.id] ?? 0) : 0;
-        const held = view.items[main.weapon], weaponBelow = !main.weapon || GRADE_ORDER.indexOf(gradeOfItem(held)) < GRADE_ORDER.indexOf(grade);
-        const answer = path(main, { kit, weapons, weaponBelow, routes, worth, reserve: reserveAdena, ahead: aheadKit(main) });
+        const reserve = reserveOf(main, rateOf(main.band).huntShare), memory = accounts[index].memory;
+        const shotPrice = reserve ? Knowledge.known(memory, reserve.id) ?? game.firstPrice[reserve.id] ?? 0 : 0;
+        const reserveAdena = reserve ? reserve.amount * shotPrice : 0;
+        const answer = path(main, { kit, weapons, routes, worth, reserve: reserveAdena, ahead: aheadKit(main),
+            aim: config.pathAim === 'affordable' ? aimView(main, kit, book, { perHour, useHours, resale }, reserve ? reserve.perHour * shotPrice : 0) : null });
         stats.paths++;
         stats.unpriced += answer.unpriced.length;
         // Wants of pieces no longer on the path are withdrawn with their
@@ -467,12 +494,15 @@ function mainsSide(ctx) {
         const visitRate = (marketOf(index).visits || 0) / Math.max(1, now), share = rateOf(main.band).huntShare || 1;
         for (const row of market.path.order) {
             if (row.kind !== 'piece' || main.kit[row.slot] === row.selfId || pieces[row.selfId]) continue;
-            const pieceGrade = gradeOfItem(view.items[row.selfId]) === 'none' ? grade : gradeOfItem(view.items[row.selfId]);
-            const priced = routesOf(index, main, town, book, row, pieceGrade);
+            const priced = routesOf(index, main, town, book, row);
             if (priced.bounded) stats.worthBounded++;
+            const routes = priced.acquired ? priced.acquired.routes : [];
+            // No seller in the towns it knows: no line or ad in reach, none in its twin's town or a town book it keeps, no NPC, Luxury or own twin.
+            const noSeller = !book.sell[row.selfId]?.length && book.seen[row.selfId] === undefined && !Object.values(account.townBooks || {}).some(known => known?.sell?.[row.selfId])
+                && !routes.some(option => option.route === 'npc' || option.route === 'exchange' || option.route === 'twin');
             pieces[row.selfId] = { selfId: row.selfId, slot: row.slot, grade: gradeOfItem(view.items[row.selfId]), weapon: Engine.isWeapon(view.items[row.selfId]),
-                cap: priced.cap, capBy: priced.capBy, caps: priced.caps, routes: priced.acquired ? priced.acquired.routes : [], own: twin?.stock[row.selfId] || 0,
-                visitsLeft: priced.useHours / share * visitRate };
+                cap: priced.cap, capBy: priced.capBy, caps: priced.caps, routes, own: twin?.stock[row.selfId] || 0,
+                visitsLeft: priced.useHours / share * visitRate, noSeller };
         }
         const memory = account.memory, known = {};
         for (const deal of memory) known[deal.item] = deal.price;
@@ -501,7 +531,8 @@ function mainsSide(ctx) {
             keepRule: config.keepRule, stockSale: config.stockSale, stash, stashLooks: account.stashLooks || {}, knownBids, ahead: market.path.ahead || [], surplus: twin ? Object.fromEntries(Object.entries(twin.surplus || {}).map(([id, count]) => [id, Math.min(count, twin.stock[id] || 0)])) : {},
             reserve: reserve && reserve.amount > 0 ? { id: reserve.id, amount: reserve.amount, cap: shotCap.cap, capBy: shotCap.by, own: twin?.stock[reserve.id] || 0 } : null,
             pieces, order: market.path.order, fares: view.fares[town] || {}, waitVisits: config.waitVisits, feeStep: config.orderFeeStepPerMp,
-            ladder: { mode: config.buyerLadder, visitsLeft } });
+            ladder: { mode: config.buyerLadder, visitsLeft }, buyerNoSeller: config.buyerNoSeller,
+            ownCrystals: twin ? Object.fromEntries(Object.values(game.crystalIds).filter(id => twin.stock[id] > 0).map(id => [id, twin.stock[id]])) : {} });
         ctx.commitVisit(index, now, out, deposit);
         put(index, { stash: out.stash, stashLooks: out.stashLooks });
         // Stock sold to lines here (a hub: a town other than the nearest) and to the NPC, kept in the warehouse.
@@ -555,9 +586,9 @@ function mainsSide(ctx) {
         const bidIds = [...new Set([...Object.keys(main.bag).map(Number), ...Object.keys(accounts[index].stash || {}).map(Number), ...dropped])].filter(id => isStock(view.items[id]));
         const seenNow = Knowledge.remembered(books.towns[town], { bids: bidIds, asks: [...new Set(wantsOf(marketOf(index)).map(want => want.id))] }, index);
         stats.counters.bookRowsDropped += seenNow.dropped;
-        const kept = Knowledge.afterVisit({ books: accounts[index].townBooks, refusals: accounts[index].bookRefusals, refused: refusedTowns, visited: town });
+        const kept = Knowledge.afterVisit({ books: accounts[index].townBooks, refusals: accounts[index].bookRefusals, refused: refusedTowns, visited: town, asleep: accounts[index].asleep || [] });
         stats.counters.booksForgotten += kept.forgotten.length;
-        put(index, { townBooks: { ...kept.books, [town]: seenNow.book }, bookRefusals: kept.refusals });
+        put(index, { townBooks: { ...kept.books, [town]: seenNow.book }, bookRefusals: kept.refusals, asleep: kept.asleep });
         const after = { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon };
         // occupationAtTown (ours): its spot is re-chosen at its arrival in town too.
         return { main: config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after, delta };
@@ -623,7 +654,7 @@ function mainsSide(ctx) {
             .map(piece => ({ selfId: piece.selfId, worth: market.needs?.[piece.selfId] ?? piece.worth })).filter(piece => piece.worth > 0);
         return { shot, pieces };
     }
-    const openOrders = () => [...orders.values()].map(order => ({ id: order.id, item: order.item, recipeId: order.recipeId, fee: order.fee }));
+    const openOrders = () => [...orders.values()].map(order => ({ id: order.id, item: order.item, recipeId: order.recipeId, fee: order.fee, supplied: order.supplied || {} }));
 
     // Stock: what a main sells to lines and the NPC (not gear, not shots).
     const isStock = item => !!item && !Engine.isGear(item) && item.kind !== 'Other.Shot';
@@ -647,13 +678,17 @@ function mainsSide(ctx) {
     // first prices, a bet the visit's book then replaces).
     function tripTowns(index, main, nearest, items) {
         const account = accounts[index], market = account.market, stash = account.stash || {};
-        const hubs = config.hubKnown ? config.hubTowns : [];
-        const others = [...new Set([...Object.keys(account.townBooks || {}), account.twin?.town, ...hubs].filter(Boolean))].filter(town => town !== nearest && fareOf(nearest, town) !== null);
-        if (!others.length) return { towns: [] };
         const rates = new Map(items.filter(item => isStock(view.items[item.id])).map(item => [item.id, item.rate]));
         const stockIds = new Set([...Object.keys(main.bag).map(Number).filter(id => main.bag[id] > 0 && isStock(view.items[id])), ...Object.keys(stash).map(Number).filter(id => stash[id] > 0), ...rates.keys()]);
-        const stock = [...stockIds].map(id => ({ id, held: (main.bag[id] || 0) + (stash[id] || 0), rate: rates.get(id) || 0, npc: view.items[id]?.npcBuy || 0 }));
         const wants = wantsOf(market);
+        // hubTowns 'by_grade': the game's trade town of the stock it carries and of what it wants.
+        const hubs = !config.hubKnown ? [] : config.hubTowns !== 'by_grade' ? config.hubTowns
+            : [...new Set([[...stockIds], wants.map(want => want.id)].filter(lot => lot.length).flatMap(lot => ctx.tradeTownsOf(index, lot)))];
+        const asleep = new Set(account.asleep || []);
+        const others = [...new Set([...Object.keys(account.townBooks || {}), account.twin?.town, ...hubs].filter(Boolean))]
+            .filter(town => town !== nearest && fareOf(nearest, town) !== null && (!asleep.has(town) || town === account.twin?.town));
+        if (!others.length) return { towns: [] };
+        const stock = [...stockIds].map(id => ({ id, held: (main.bag[id] || 0) + (stash[id] || 0), rate: rates.get(id) || 0, npc: view.items[id]?.npcBuy || 0 }));
         const ids = [...stockIds, ...wants.map(want => want.id)];
         const askOf = book => Object.fromEntries(Object.entries(book?.sell || {}).map(([id, row]) => [id, row.price]));
         const nearBook = knownBook(index, nearest, ids), npc = game.npcByTown[nearest] || {}, nearAsks = askOf(nearBook);
@@ -727,6 +762,8 @@ function mainsSide(ctx) {
                 if (want.state === 'parked') endWait('parkedWant', key, gradeOfItem(view.items[key]) !== 'none' && gradeOfItem(view.items[key]) !== grade); else wants[key] = want;
             }
             setMarket(index, { pathDirty: true, wants, stalled: {} });
+            // A new grade is something new about every town: the forgotten ones wake.
+            put(index, { asleep: [] });
             if (market.shotWait === 'parked' || market.shotWait === 'unwanted') { if (market.shotWait === 'parked') stats.waits.parkedShots.withdrawn++; setMarket(index, { shotWait: null }); }
             indexWants(index);
         }

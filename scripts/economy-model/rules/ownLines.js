@@ -22,6 +22,8 @@ const LOOKS = Object.freeze(new Set(['main_arrived', 'fill']));
 // look where its stock stayed unsold since the previous look; a line that
 // sold since then holds its price. A buyer's line steps at every look.
 const stepsAtLook = (line, sellerLook) => !(sellerLook === 'unsold_look' && line.side === 'sell' && line.sold > 0);
+// A standing bid holds a sell line's ask while the bids at that price take all its units.
+const holds = (bounds, want) => Number.isFinite(bounds.bid) && !(want.qty > (bounds.bidUnits ?? Infinity));
 
 // lines: the twin's open lines { id, side, item, qty, start, look, price,
 // atBound, bound, floorBy, sold (units filled since its last look) }. view:
@@ -33,7 +35,8 @@ const stepsAtLook = (line, sellerLook) => !(sellerLook === 'unsold_look' && line
 // floorBy, cap, capBy, rival, known, first } }, persona { looksToFloor,
 // buyerStart }, sellerLook, roll: a seeded number of the wake, which also
 // names a new line }. prices may carry bid (the best standing WTB or buy
-// line it sees) and gear (a crafted piece). Returns { lines, closed: [{ line,
+// line it sees) with bidUnits (the units it takes) and gear (a crafted
+// piece). Returns { lines, closed: [{ line,
 // why: 'withdrawn' | 'no_market' | 'own_route' | 'parked' | 'floor' (to the
 // NPC) }] }.
 function ownLines(lines, view, reason) {
@@ -43,7 +46,7 @@ function ownLines(lines, view, reason) {
         const bounds = view.prices[`${want.side}:${want.item}`] || {};
         const held = want.lineId ? lines.find(line => line.id === want.lineId) : null;
         const roll = mulberry(hash(`${view.roll}:${want.side}:${want.item}:${want.lineId || 'new'}`))();
-        const stepView = { ...bounds, persona: view.persona, roll };
+        const stepView = { ...bounds, bid: want.side === 'sell' && !holds(bounds, want) ? null : bounds.bid, persona: view.persona, roll };
         let priced;
         if (!held && want.resume) priced = priceStep({ side: want.side, start: want.resume.start }, { ...stepView, look: Math.max(0, want.resume.look - 1) });
         else if (!held) priced = priceStep({ side: want.side }, { ...stepView, look: 0 });
@@ -51,11 +54,13 @@ function ownLines(lines, view, reason) {
         // (the only way up a seller's ask has besides a sold-out restart),
         // unless the line started at that bid already; and no step takes an
         // ask under a standing bid: it holds at the bid while the bid stands.
-        // The workshop passes a bid only with sellerSeesBids (ours).
-        else if (look && want.side === 'sell' && Number.isFinite(bounds.bid) && bounds.bid > held.price && bounds.bid !== held.start) priced = priceStep({ side: 'sell', start: bounds.bid }, { ...stepView, look: 0 });
+        // A bid holds only the units it takes: a line of more units than the
+        // bids at that price take steps as any line (the bidders buy from it
+        // at its ask). The workshop passes a bid only with sellerSeesBids (ours).
+        else if (look && want.side === 'sell' && holds(bounds, want) && bounds.bid > held.price && bounds.bid !== held.start) priced = priceStep({ side: 'sell', start: bounds.bid }, { ...stepView, look: 0 });
         else if (look) {
             priced = priceStep(held, { ...stepView, look: held.look + (stepsAtLook(held, view.sellerLook) ? 1 : 0) });
-            if (want.side === 'sell' && Number.isFinite(bounds.bid) && priced.price !== null && priced.price < bounds.bid) priced = { ...priced, price: Math.ceil(bounds.bid), bound: null, atBound: 0 };
+            if (want.side === 'sell' && holds(bounds, want) && priced.price !== null && priced.price < bounds.bid) priced = { ...priced, price: Math.ceil(bounds.bid), bound: null, atBound: 0 };
         } else priced = held;
         const line = { ...priced, id: held ? held.id : `${view.roll}:${want.side}:${want.item}`, side: want.side, item: want.item, qty: want.qty,
             floorBy: priced.bound === 'floor' ? bounds.floorBy ?? null : null, sold: held && !look ? held.sold || 0 : 0 };

@@ -58,6 +58,14 @@ const accounts = [
 const bands = [['low', 1], ['high', 40]];
 const rates = { default: { huntShare: 1, visitsPerBotHour: 1 } };
 const grades = [['d', 20], ['c', 40], ['b', 52], ['a', 61], ['s', 76]];
+// A line's gear ladder (the snapshot's gearLadder): level bands, each with
+// its rungs per slot group (best first) and the hunt hour of every piece a
+// main there may wear (0: the empty slot).
+const ladderOf = (line, bands) => ({ slots: {}, lines: { [line]: bands.map(([from, to, groups]) => {
+    const each = field => Object.fromEntries(Object.entries(groups).map(([group, row]) => [group, field(row)]));
+    return { from, to, level: from, grade: 'd', best: 's1', scale: 1, rungs: each(row => row.rungs), hour: each(row => row.hour),
+        gear: each(row => Object.fromEntries(Object.keys(row.hour).map(id => [id, 0]))) };
+}) } });
 const arrivals = (main, { event, now, pending, roll }) => (event === 'level_up' ? pending : now + (event === 'start' ? roll : 1));
 const run = (seed, hours = 8, world = snapshot) => {
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
@@ -84,7 +92,7 @@ assert.equal(gates.crafter.d, 0);
 assert.equal(gates.recipe.d.from, 'its own main\'s drop');
 assert.deepEqual(gates.scroll.d, { h: gates.scroll.d.h, from: 'its own main\'s drop', where: { spot: 's1', level: 25, line: '55', classId: 55, npcs: [] } },
     'the scroll reached the twin through the warehouse: where its main hunted (this snapshot names no NPC rewards)');
-assert.equal(design.crafters.byTown.TownA, 1, 'its twin sits where its main resupplies (main_town)');
+assert.equal(design.crafters.byTown.TownA, 1, 'its twin sits where its main resupplies (no trade towns in the fixture)');
 assert.ok(gates.recipe.d.h <= gates.crystal.d.h + 1 && gates.crystal.d.from === 'npcRoute', JSON.stringify(gates));
 assert.ok(design.firsts.shot.d <= gates.sold.d && gates.reach10.d >= gates.sold.d, JSON.stringify(gates));
 // Money closes to the adena, the twin's wallet included; every item closes.
@@ -161,18 +169,22 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     assert.equal(off.items[BONE], world.items[BONE], 'other items as they are');
 }
 
-// The twin's seat follows the mains' WTB ads of its product in the town
-// its main arrives in, and only there. The twin starts in its main's
-// starter village (the starter_region reading); its main resupplies in
-// TownA. The other main, shotless, posts a WTB for Soulshot D in the town of
-// its spot: in TownA the twin moves there; in a third town it stays.
+// twinSeat 'starter_then_pays' (the design's text): the twin starts in its
+// main's starter village and re-seats at its main's arrival in another town
+// only when its best store there beats its best store here by more than the
+// fare. Its main resupplies in TownA. The other main, shotless, posts a WTB
+// for Soulshot D in the town of its spot: in TownA the twin moves there; in
+// a third town it stays; at a fare above the gain it stays.
 {
     const fares = { TownA: { TownA: 0, 'Dwarven Village': 500, TownC: 500 }, 'Dwarven Village': { TownA: 500, 'Dwarven Village': 0, TownC: 500 }, TownC: { TownA: 500, 'Dwarven Village': 500, TownC: 0 } };
-    const seated = buyerTown => {
+    const seated = (buyerTown, fare = 100) => {
         const s2 = levels.map(level => [`s2@${level}`, { ...yields, town: buyerTown }]);
-        const world = { ...snapshot, fares, hours: { ...snapshot.hours, 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: row('s2', 1000, 50), top: [] }])) },
-            yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, walkBack: { s1: 0.01, s2: 0.01 } };
-        const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'starter_region' };
+        const priced = Object.fromEntries(Object.entries(fares).map(([from, to]) => [from, Object.fromEntries(Object.entries(to).map(([town, price]) => [town, price && fare]))]));
+        const world = { ...snapshot, fares: priced, hours: { ...snapshot.hours, 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: row('s2', 1000, 50), top: [] }])) },
+            yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, walkBack: { s1: 0.01, s2: 0.01 },
+            // Ore and the sword (its D crystals) in the village too: the twin crafts and lists its shots where it sits.
+            npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'Dwarven Village', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'Dwarven Village', price: 4000 }] } } };
+        const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'starter_then_pays' };
         return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
             design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
     };
@@ -180,6 +192,45 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     assert.ok(near.liveness.waits.wtb.opened > 0 && far.liveness.waits.wtb.opened > 0, 'the shotless main posted its WTB');
     assert.deepEqual([near.crafters.byTown.TownA, near.counters.reseats], [1, 1], 'a WTB of its product where its main arrived: it moves');
     assert.deepEqual([far.crafters.byTown['Dwarven Village'], far.counters.reseats], [1, 0], 'a WTB in a third town: it stays');
+    const dear = seated('TownA', 1e9);
+    assert.deepEqual([dear.crafters.byTown['Dwarven Village'], dear.counters.reseats], [1, 0], 'a fare above the gain: it stays');
+}
+
+// twinSeat 'hub' with hubTowns 'by_grade' (the game's trade towns): a twin
+// that sells nothing yet sits in the market nearest its main's spot (a
+// no-grade lot: TownA); once it holds the Soulshot D recipe its hub is the D
+// market, where the other main, shotless, posts its WTB for the shots: it
+// moves there at its main's next arrival, paying the fare, only when its
+// store there beats its store here by more than the fare.
+{
+    const s2 = levels.map(level => [`s2@${level}`, { ...yields, town: 'TownD' }]);
+    const world = fare => ({ ...snapshot, fares: { TownA: { TownA: 0, TownD: fare }, TownD: { TownA: fare, TownD: 0 } },
+        hours: { ...snapshot.hours, 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: row('s2', 1000, 50), top: [] }])) },
+        yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, walkBack: { s1: 0.01, s2: 0.01 },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } });
+    const out = run(5, 8, world(500)).design;
+    assert.ok(out.gates.recipe?.d || Object.keys(out.gates.recipe || {}).length, 'the twin learned the shot recipe');
+    assert.deepEqual([out.crafters.byTown.TownD, out.counters.reseats], [1, 1], 'seated in the D market by the grade of what it sells');
+    const dear = run(5, 8, world(1e9)).design;
+    assert.deepEqual([dear.crafters.byTown.TownD, dear.counters.reseats], [undefined, 0], 'a fare above the gain: it stays');
+}
+
+// Two hubs of the D market both pay: the twin sits in the one whose gain net
+// of its fare is the greater. Two shotless mains post the same WTBs for the
+// shots, one in each hub; the second hub's fare is the lower, and the twin
+// moves there at once, not to the first.
+{
+    const yieldsAt = town => ({ ...yields, town }), spots = { s2: 'TownD', s3: 'TownE' };
+    const yieldRows = Object.fromEntries(levels.flatMap(level => Object.entries(spots).map(([spot, town]) => [`${spot}@${level}`, yieldsAt(town)])));
+    const hoursNine = Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: level === 26 ? row('s3', 1000, 50) : row('s2', 1000, 50), top: [] }]));
+    const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 300, TownE: 100 }, TownD: { TownA: 300, TownD: 0, TownE: 100 }, TownE: { TownA: 100, TownD: 100, TownE: 0 } },
+        hours: { ...snapshot.hours, 9: hoursNine }, yields: { ...snapshot.yields, ...yieldRows }, yieldsDesign: { ...snapshot.yieldsDesign, ...yieldRows }, walkBack: { s1: 0.01, s2: 0.01, s3: 0.01 },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD', 'TownE'], higher: 'TownC' } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub' };
+    const pair = [accounts[1], { ...accounts[1], id: 3, level: 26, exp: 26e9 }, accounts[0]];
+    const out = Engine.simulate({ view, accounts: pair, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
+        design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
+    assert.deepEqual([out.crafters.byTown.TownE, out.crafters.byTown.TownD, out.counters.reseats], [1, undefined, 1], 'both hubs pay, the second nets more: the twin sits in the second');
 }
 
 // An order no twin takes: the main leaves its two bones and the fee with
@@ -192,7 +243,9 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
         kits: { ...snapshot.kits, 9: Object.fromEntries(levels.map(level => [level, [{ selfId: SWORD, slot: 7 }, { selfId: ARMOR, slot: 10 }]])) },
         items: { ...snapshot.items, [ARMOR]: { kind: 'Armor.Body', grade: 'D', ref: 2000, npcBuy: 1000, crystals: 50 }, [SCROLL2]: { kind: 'Other.Recipe', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 } },
         recipes: [...snapshot.recipes, { type: 'dwarven', recipeId: 30, recipeItemId: SCROLL2, level: 2, materials: [{ selfId: BONE, amount: 2 }], productId: ARMOR, productCount: 1, mpCost: 100, successRate: 100, quest: false }],
-        sources: { ...snapshot.sources, [SCROLL2]: { drop: [{ npcId: 2, yield: 1 }], spoil: [] } } };
+        sources: { ...snapshot.sources, [SCROLL2]: { drop: [{ npcId: 2, yield: 1 }], spoil: [] } },
+        // The armour's worth (100 an hour over the empty slot): gathering its bones is priced by that use.
+        gearLadder: ladderOf('9', [[1, 30, { 10: { rungs: [ARMOR], hour: { [ARMOR]: 1100, 0: 1000 } } }]]) };
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const out = Engine.simulate({ view, accounts, bands, rates, hours: 16, seed: 5, nextArrival: arrivals,
         design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
@@ -273,13 +326,13 @@ assert.equal(armed.delta.shotsUsed, 50);
         npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } },
         recipes: [], races: { 9: 1, 46: 3 },
         bags: { 9: { race: 1, slots: 80, maxLoad: 1e6 }, 46: { race: 3, slots: 2, maxLoad: 1e6 } },
-        pieceWorth: { 9: { d: { level: 20, last: 39, spotId: 's1', deathHours: 0, pieces: { [SWORD]: { slot: 7, gear: 1, with: 2000, without: 1000 } } } } },
+        gearLadder: ladderOf('9', [[1, 45, { weapon: { rungs: [SWORD], hour: { [SWORD]: 2000, [OLD]: 1000, 0: 500 } } }]]),
         walkBack: { s1: 0.01, s2: 0.01 }
     };
     market.yieldsDesign = market.yields;
     const buyers = [
-        { id: 11, station: false, classId: 9, line: '9', level: 22, exp: 22e9, money: 100000, spot: null, shots: {}, held: [], worn: { 7: OLD } },
-        { id: 12, station: false, classId: 9, line: '9', level: 24, exp: 24e9, money: 100000, spot: null, shots: {}, held: [], worn: { 7: OLD } },
+        { id: 11, station: false, classId: 9, line: '9', level: 22, exp: 22e9, money: 3900, spot: null, shots: {}, held: [], worn: { 7: OLD } },
+        { id: 12, station: false, classId: 9, line: '9', level: 24, exp: 24e9, money: 3900, spot: null, shots: {}, held: [], worn: { 7: OLD } },
         { id: 13, station: false, classId: 46, line: '46', level: 35, exp: 35e9, money: 1000, spot: null, shots: {}, held: [OLD], worn: { 7: OLD } }
     ];
     const marketBands = [['first', 1], ['second', 23], ['seller', 30]];
@@ -346,7 +399,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         npcOffers: { preset: {}, x1: {} },
         sources: { [BONE]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] }, [RECIPE30]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] } },
         bags: { 9: { race: 1, slots: 80, maxLoad: 300 }, 55: { race: 4, slots: 80, maxLoad: 300 } },
-        pieceWorth: { 9: { d: { level: 20, last: 29, spotId: 's1', deathHours: 0, pieces: { [SWORD]: { slot: 7, gear: 1, with: 2000, without: 1000 } } } } },
+        gearLadder: ladderOf('9', [[1, 30, { weapon: { rungs: [SWORD], hour: { [SWORD]: 2000, 2002: 1000, 0: 500 } } }]]),
         walkBack: { s1: 0.01, s2: 0.01 },
         // A twin without buy-store slots: no line of its own to weigh against the order.
         twins: Object.fromEntries(levels30.map(level => [level, { ...twin(level), storeSlots: { sell: 4, buy: 0 } }]))
@@ -378,7 +431,7 @@ assert.equal(armed.delta.shotsUsed, 50);
 
 // path ranks pieces by their worth per adena of their route: with money for
 // one of two pieces the NPC sells (3000 and 2900), the main buys the one
-// that lifts its hour 0.9 times before the one that lifts it 0.4 times (both
+// that lifts its hour by 18 an hour before the one that lifts it by 8 (both
 // worth more than their price). By the cap, the NPC's price, the two would
 // tie and the lower item id would win.
 {
@@ -394,7 +447,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         yields: Object.fromEntries(levels30.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
         bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
         recipes: [], npcOffers: { preset: {}, x1: { [LOW]: [{ town: 'TownA', price: 3000 }], [HIGH]: [{ town: 'TownA', price: 2900 }] } },
-        pieceWorth: { 9: { d: { level: 20, last: 39, spotId: 's1', deathHours: 0, pieces: { [LOW]: { slot: 6, gear: 0, with: 1400, without: 1000 }, [HIGH]: { slot: 10, gear: 0, with: 1900, without: 1000 } } } } }
+        gearLadder: ladderOf('9', [[1, 30, { 6: { rungs: [LOW], hour: { [LOW]: 28, 0: 20 } }, 10: { rungs: [HIGH], hour: { [HIGH]: 38, 0: 20 } } }]])
     };
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
@@ -443,7 +496,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     // The other main's bones bring it to town about every two hours.
     const world = { ...snapshot, races: { 55: 1, 9: 1 }, items: { ...snapshot.items, [BONE]: { ...snapshot.items[BONE], weight: 10 } }, bags: { ...snapshot.bags, 9: { race: 1, slots: 80, maxLoad: 150 } },
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: village, price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: village, price: 4000 }] } } };
-    const config = { ...Design.DESIGN, twinSeat: 'starter_region', crafterShare: 1 };
+    const config = { ...Design.DESIGN, twinSeat: 'starter_then_pays', crafterShare: 1 };
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const apart = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
         design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
@@ -453,18 +506,22 @@ assert.equal(armed.delta.shotsUsed, 50);
 }
 
 // A want the main leaves the grade without fails as outgrown, not as a
-// neutral withdrawal: its D sword's WTB is open when it reaches C (40).
+// neutral withdrawal: its D sword's want is open when it reaches C (40).
+// No C sword is sold, so the D sword is worn to the last level (15 hunting
+// hours) and repays its wait (about 5 h of 620 an hour for 3000 more); the
+// C ladder lists the C sword alone.
 {
     const CSWORD = 2005, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
-    const hourRow = { spotId: 's1', kills: 10, exp: 5e8, adena: 0, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const hourRow = { spotId: 's1', kills: 10, exp: 4e8, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const world = {
         ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: level < 40 ? SWORD : CSWORD, slot: 7 }]])) },
         items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 40000, npcBuy: 20000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
         yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
-        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }], [CSWORD]: [{ town: 'TownA', price: 40000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
-        twins: Object.fromEntries(levels45.map(level => [level, twin(level)]))
+        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
+        gearLadder: ladderOf('9', [[1, 39, { weapon: { rungs: [SWORD], hour: { [SWORD]: 1200, 0: 200 } } }], [40, 45, { weapon: { rungs: [CSWORD], hour: { [CSWORD]: 1400, 0: 200 } } }]])
     };
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
@@ -478,30 +535,77 @@ assert.equal(armed.delta.shotsUsed, 50);
     for (const w of waits) assert.equal(w.opened, w.done + w.withdrawn + w.failed + w.deadline + w.open);
 }
 
-// pathTarget: a level-21 main with 10000 adena and no weapon. Its line's kit
-// names a 4000 sword (NPC) at 20-29 and a 40000 one at 30-39. Aiming at its
-// own level (ours) it buys the 4000 sword at its first visit; aiming at the
-// grade's last level (the model before) it waits for 40000 it never has.
+// path's candidates are the class's gear ladder: a level-21 main with 10000
+// adena and no weapon whose ladder holds a 40000 sword above a 4000 one
+// (both NPC-sold). pathAim 'affordable' (ours) buys the 4000 sword at its
+// first visit; 'best_priced' (the model before) waits for 40000 it never has
+// in 8 hours.
 {
     const DEAR = 2006, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
-    const hourRow = { spotId: 's1', kills: 10, exp: 1, adena: 0, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    // 1020 an hour, 19 hunting hours to C: its outings add about 18k to its 10000 before then.
+    const hourRow = { spotId: 's1', kills: 10, exp: 1e9, adena: 1000, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const world = {
         ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
-        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: level < 30 ? SWORD : DEAR, slot: 7 }]])) },
+        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: SWORD, slot: 7 }]])) },
         items: { ...snapshot.items, [DEAR]: { kind: 'Weapon.Sword', grade: 'D', ref: 40000, npcBuy: 20000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
         yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
         recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }], [DEAR]: [{ town: 'TownA', price: 40000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
-        twins: Object.fromEntries(levels45.map(level => [level, twin(level)]))
+        twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
+        gearLadder: ladderOf('9', [[20, 45, { weapon: { rungs: [DEAR, SWORD], hour: { [DEAR]: 1400, [SWORD]: 1300, 0: 1000 } } }]])
     };
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
-    const aim = pathTarget => Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 21, exp: 21e9, money: 10000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, nextArrival: arrivals, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), config: { ...Design.DESIGN, pathTarget }, start: 'late', grades }) }).design;
-    const own = aim('own_level_then_up'), last = aim('grade_last_level');
-    assert.deepEqual(own.market.obtained.d, { npc: 1 }, 'the sword of its own level, from the NPC');
+    const aim = pathAim => Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 21, exp: 21e9, money: 10000, spot: null, shots: {}, held: [], worn: {} }],
+        bands: [['all', 1]], rates, hours: 8, seed: 1, nextArrival: arrivals, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), config: { ...Design.DESIGN, pathAim }, start: 'late', grades }) }).design;
+    const own = aim('affordable'), best = aim('best_priced');
+    assert.deepEqual(own.market.obtained.d, { npc: 1 }, 'the rung it can pay, from the NPC');
     assert.equal(own.market.gradeWeapon.d.first !== null, true, 'a weapon of its grade worn');
-    assert.equal(last.market.obtained.d, undefined, 'aiming at the last level: nothing it can pay');
+    assert.equal(best.market.obtained.d, undefined, 'the best priced rung: nothing it can pay');
+}
+
+// A piece is worn past its grade's end while the next grade's ladder for its
+// slot holds no rung an NPC or Luxury sells it: a level-38 main (20 hunting
+// hours to C at 40, 70 to the last level 45) whose D sword gains 50 an hour
+// over its bare hands. With the C sword NPC-sold its worth is 50 x 20 h +
+// 2000 resale = 3000, under the NPC's 4000: it buys no sword; with the C
+// sword unpriced its worth runs to 45 (50 x 70 h + 2000 = 5500) and its cap
+// reaches the NPC's price: it buys the sword once its WTB has run its looks.
+{
+    const CSWORD = 2005, JUNK = 1869, levelsTo = top => Array.from({ length: top }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 1e8, adena: 1000, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = (cSold, { top = 45, swordPrice = 4000, luxury = false } = {}) => {
+        const levels45 = levelsTo(top);
+        const out = {
+            ...snapshot, header: { levels: [1, top], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
+            hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+            kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: level < 40 ? SWORD : CSWORD, slot: 7 }]])) },
+            items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 400000, npcBuy: 200000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+            yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { 57: 100, [JUNK]: 2 }, spoil: {} }])),
+            recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: swordPrice }], ...(cSold ? { [CSWORD]: [{ town: 'TownA', price: 400000 }] } : {}) } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+            twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
+            gearLadder: ladderOf('9', [[20, 39, { weapon: { rungs: [SWORD], hour: { [SWORD]: 550, 0: 500 } } }], [40, top, { weapon: { rungs: [CSWORD, SWORD], hour: { [CSWORD]: 600, [SWORD]: 550, 0: 500 } } }]])
+        };
+        if (luxury) out.luxuryOptions = { [CSWORD]: { town: 'TownA', c: 573, d: 2865 } };
+        out.yieldsDesign = out.yields;
+        return out;
+    };
+    const bought = (cSold, opts) => {
+        const at = world(cSold, opts), view = Engine.viewOf(at, { npcPrices: 'x1' });
+        return Engine.simulate({ view, accounts: [{ id: 71, station: false, classId: 9, line: '9', level: 38, exp: 38e9, money: 100000, spot: null, shots: {}, held: [], worn: {} }],
+            bands: [['all', 1]], rates, hours: 12, seed: 1, nextArrival: arrivals, design: Design.plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) }).design.market.obtained.d;
+    };
+    assert.equal(bought(true), undefined, 'the C sword sold: worth 3000 under the NPC\'s 4000');
+    assert.deepEqual(bought(false), { npc: 1 }, 'the C sword unpriced: its cap reaches the NPC\'s price');
+    // Worn past its grade only to the end of the next grade, whatever is priced
+    // beyond: a level-38 main on a 78-level ladder with no C, B or A sword
+    // priced wears its D sword to the end of C (140 h: 50 x 140 + 2000 = 9000),
+    // not to level 78 (400 h: 22000); the sword at the NPC for 15000 is out of
+    // reach of the first and within reach of the second.
+    assert.equal(bought(false, { top: 78, swordPrice: 15000 }), undefined, 'worth ends with grade C: 9000 under the NPC\'s 15000');
+    // A C sword only the Luxury exchange gives (crystals on lines in reach it
+    // cannot count on) is no priced route: the D sword stays worn through C.
+    assert.deepEqual(bought(false, { luxury: true }), { npc: 1 }, 'the C sword at Luxury only: not priced, the D sword worn through C');
 }
 
 // A farm route is priced at a spot the main can hunt at its own level: a
@@ -519,7 +623,8 @@ assert.equal(armed.delta.shotsUsed, 50);
         items: { ...snapshot.items, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
         yields: Object.fromEntries(levels30.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }], [`s9@${level}`, { town: 'TownA', drop: { [JUNK]: 2, [SWORD]: 0.01 }, spoil: {} }]])),
         recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
-        walkBack: { s1: 0.01, s9: 0.01 }
+        walkBack: { s1: 0.01, s9: 0.01 },
+        gearLadder: ladderOf('9', [[1, 30, { weapon: { rungs: [SWORD], hour: { [SWORD]: 1500, 0: 1000 } } }]])
     };
     world.yieldsDesign = world.yields;
     const run2 = hourCost => {

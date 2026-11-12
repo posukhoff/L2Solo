@@ -160,7 +160,7 @@ function designOf(argv, snapshot) {
     console.log(`DESIGN game tables in ${((Date.now() - began) / 1000).toFixed(1)} s: ${Object.keys(game.firstPrice).length} first prices; `
         + `SSD ${fmt(game.firstPrice[1463])}, SSC ${fmt(game.firstPrice[1464])}, D crystal ${fmt(game.firstPrice[1458])}, Soul Ore ${fmt(game.firstPrice[1785])}`);
     console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStock are high-sensitivity): ${JSON.stringify(config)}`);
-    console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : config[field] === r.ours ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
+    console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : [].concat(r.ours).includes(config[field]) ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
     const personaShares = Object.fromEntries(PersonaTypes.TYPE_IDS.map(id => [id, PersonaTypes.TYPES[id].share]));
     return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, design: Design.plane({ snapshot, game, config, start, grades, personaShares }) };
 }
@@ -313,7 +313,7 @@ function printMarket(design, hours) {
     const w = design.liveness.waits;
     console.log(`WTBS posted ${w.wtb.opened} filled ${w.wtb.done} failed ${w.wtb.failed} (unfunded at the meeting ${m.unfunded.wtb}, outgrown ${w.wtb.outgrown}) withdrawn ${w.wtb.withdrawn} open ${w.wtb.open}; `
         + `parked at the cap: pieces ${w.parkedWant.opened}, shots ${w.parkedShots.opened}; sales to twin lines unfunded ${m.unfunded.line}, to bids ${m.unfunded.bid}`);
-    console.log(`ROUTES priced ${m.routes.priced}, the cap's own route at 0 adena ${m.routes.zero} (${pct(m.routes.zero, m.routes.priced)})`);
+    console.log(`ROUTES priced ${m.routes.priced}, the cap's own route at 0 adena ${m.routes.zero} (${pct(m.routes.zero, m.routes.priced)}), a piece with no worth row (no farm offered) ${m.routes.noWorth} (${pct(m.routes.noWorth, m.routes.priced)})`);
     const tripsTotal = Object.entries(m.trips).filter(([reason]) => reason !== 'shotsParked').reduce((sum, [, n]) => sum + n, 0);
     console.log(`TRIPS by situation (${tripsTotal}, ${(tripsTotal / hours).toFixed(0)}/h): ${Object.entries(m.trips).sort((a, b) => b[1] - a[1]).map(([reason, n]) => `${reason} ${n}`).join(' | ')}`);
     console.log(`MEETINGS ${m.meetings}; offers raised ${m.events.offerPosted}, bids raised ${m.events.bidPosted}; ORDERS posted ${m.orders.posted} claimed ${m.orders.claimed} delivered ${m.orders.delivered} failed ${m.orders.failed} withdrawn ${m.orders.withdrawn} open ${m.orders.open} fees ${k(m.orders.fees || 0)}; `

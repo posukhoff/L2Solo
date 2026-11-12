@@ -1,11 +1,8 @@
 'use strict';
 
-// The worth of a gear piece to a bot (ours, no C4 source): the hours of its
-// own hour the piece adds over the hours to the end of its grade stage, and
-// in adena those hours times the own hour (the bot's income per hour at its
-// earning spot). Two formulas, both pure over plain numbers, so the economy
-// model can rank them against the simulated fight; the buyer's cap
-// (bounds.cap) reads the adena.
+// The worth of a gear piece to a bot (ours, no C4 source): the adena an
+// hour the piece adds over the hours it is worn, plus what it returns after
+// them. Pure over plain numbers; the buyer's cap (bounds.cap) reads it.
 //
 // - gearWorth: today's gear gain (WishProviders.gearGainReader) carried over:
 //   the attack gain (P.Atk, M.Atk for a caster) plus the defence gain (the
@@ -13,6 +10,7 @@
 //   against one that only hits) times the hours a death costs.
 // - huntCycleWorth: the hunt cycle's income per hour at the held spot with
 //   the piece minus without it (HuntCycle.reader).
+// - rungWorth: a ladder rung's worth to a buyer over the piece it wears.
 
 function positive(value) {
     const number = Number(value);
@@ -51,37 +49,43 @@ function huntCycleWorth({ incomeWith, incomeWithout, horizonHours, ownHour = inc
     return worth(perHour, horizonHours, hour);
 }
 
-// The worth of a path piece to a buyer, in adena, by formula: 'gear_gain'
-// (the design's text: today's gear gain, row.gear its hours per hour) or
-// 'hunt_cycle' (ours: the hunt cycle's hour with the piece over without,
-// row.with / row.without). The hunt cycle's share explodes where the hour
-// without the piece is near zero or below (a kit that dies more than it
-// earns): its gain is held to gainBound times the own hour (ours) and
-// bounded says so. row: the snapshot's pieceWorth row; null (no row: a piece
-// no line's path names) gives null, a worth nobody can state. resale: the
-// adena the piece returns when the main stops wearing it, added to the gain
-// (the horizon reading 'use_plus_resale'; 0 under the design's text).
-function pieceWorth({ formula, row, horizonHours, ownHour, gainBound, resale = 0 }) {
-    if (!row) return { adena: null, perHour: 0, bounded: false };
-    const plus = out => ({ ...out, adena: out.adena + positive(resale) });
-    if (formula === 'gear_gain') return { ...plus(worth(positive(row.gear), horizonHours, ownHour)), bounded: false };
-    if (row.with === null || row.without === null) return { ...plus(worth(0, horizonHours, ownHour)), bounded: false };
-    const gain = Number(row.with) - Number(row.without);
-    const share = gain <= 0 ? 0 : Number(row.without) > 0 ? gain / Number(row.without) : Infinity;
-    const bounded = share > gainBound;
-    return { ...plus(worth(bounded ? gainBound : share, horizonHours, ownHour)), bounded };
+// The worth of a gear rung to a buyer, in adena, by formula: 'hunt_cycle'
+// (ours): the hunt hour with the rung minus the hour with the piece the main
+// wears in its slot (rung.hour, worn.hour: adena an hour, each at the best
+// spot for its kit, the snapshot's gear ladder), never a share of an hour;
+// 'gear_gain' (the design's text): today's gear gain of the rung over the
+// worn piece (rung.gear, worn.gear: attack plus defence x death hours, each
+// over the same entry kit) times the own hour. The gain an hour is held to
+// gainBound times the own hour (ours: a piece at most doubles the hour) and
+// bounded says so (a main with no own hour has no gain an hour). useHours: the hunting hours it is worn; resale: what it
+// returns after them. rung or worn null (no row) gives null: a worth nobody
+// can state. Returns { adena, perHour (adena an hour), bounded }.
+function rungWorth({ formula, rung, worn, useHours, ownHour, gainBound, resale = 0 }) {
+    if (!rung || !worn) return { adena: null, perHour: 0, bounded: false };
+    const own = positive(ownHour), gain = formula === 'gear_gain' ? positive(rung.gear - worn.gear) * own : positive(rung.hour - worn.hour);
+    const bounded = gain > gainBound * own, perHour = bounded ? gainBound * own : gain;
+    return { adena: perHour * positive(useHours) + positive(resale), perHour, bounded };
+}
+
+// The gear ladder group of a slot (the hunt tables' gear table keys): both
+// hands one, the earrings (1, 2) one, the rings (4, 5) one, any other slot
+// its own.
+function ladderGroup(slot) {
+    const at = Number(slot);
+    return at === 7 || at === 14 ? 'weapon' : at === 2 ? '1' : at === 5 ? '4' : String(at);
 }
 
 // The hours a piece's gain counts over and what it returns beyond them.
 // 'grade_stage' (the design's text): the hunting hours to the end of the
 // grade stage, nothing returned. 'use_plus_resale' (ours): the hunting hours
-// the main wears it until its path names another piece for the slot (the
-// grade's end when none is named), plus the least it sells for then (the
-// floor: the NPC's buy price or the best crystallizer bid it knows), so a
-// piece bought late in its grade is still worth its resale.
+// the main wears it (useHours: to the end of its grade, and on to the end of
+// the next grade when that grade's piece of the slot has no priced route for
+// the main: it keeps wearing it, never further), plus the least it sells for then (the floor: the NPC's
+// buy price or the best crystallizer bid it knows), so a piece bought late in
+// its grade is still worth its resale.
 function horizon({ reading, gradeHours, useHours, resale }) {
     if (reading === 'grade_stage') return { hours: positive(gradeHours), resale: 0 };
-    return { hours: Math.min(positive(gradeHours), positive(useHours ?? gradeHours)), resale: positive(resale) };
+    return { hours: positive(useHours ?? gradeHours), resale: positive(resale) };
 }
 
-module.exports = { gearWorth, huntCycleWorth, pieceWorth, horizon };
+module.exports = { gearWorth, huntCycleWorth, rungWorth, horizon, ladderGroup };

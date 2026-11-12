@@ -105,7 +105,7 @@ assert.ok(snapshot.yieldsDesign[designKey].drop[57] < snapshot.yields[designKey]
 
 // The market's additions, each the owner's own number: a line's bag slots
 // and max load, the walk back from a spot, each top spot's hour without
-// shots, both Luxury crystal options and the inputs of both worth formulas.
+// shots and both Luxury crystal options.
 const Inventory = require('../src/GameServer/Inventory/InventoryLimits');
 const Formulas = invoke('GameServer/Formulas');
 assert.deepEqual(snapshot.bags[line], { race: 4, slots: Inventory.capacity(4, 0), maxLoad: Math.round(Formulas.calcMaxLoad(45)) }, 'a dwarf\'s 100 slots and the CON 45 load');
@@ -114,14 +114,37 @@ assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a w
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
 assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
 assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', c: 573, d: 2865 }, 'Flamberge for 573 C or 2865 D crystals');
-const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle'), BotGear = invoke('GameServer/Bot/AI/BotGear');
-const dRow = snapshot.pieceWorth[line].d, kit39 = BotGear.planFor({ classId: Table.roleClass(line, 39), level: 39, characterId: HuntCycle.referenceId(Table.roleClass(line, 39), 55) }).items;
-assert.equal(dRow.level, 20);
-assert.equal(dRow.last, 39);
-assert.deepEqual(Object.keys(dRow.pieces).map(Number).sort((a, b) => a - b), [...new Set(kit39.map(row => Number(row.selfId)))].sort((a, b) => a - b), 'the pieces of the kit at 39');
-const weapon = kit39.find(row => [7, 14].includes(Number(row.slot)));
-const piece = dRow.pieces[weapon.selfId];
-assert.ok(piece.gear > 0 && piece.with > piece.without, 'the D weapon raises both the gear gain and the hunt cycle\'s hour');
-assert.equal(snapshot.pieceWorth[line].s.last, 78, 'S runs to the last level');
+
+// The gear ladder: a Scavenger's (the Bounty Hunter at 30) band 30-34 holds
+// the gear table's D weapon rungs and the no-grade ones below, none above D,
+// each with its hunt hour in the design's money; a better axe earns more,
+// and bare hands still earn at an easier spot (not nothing).
+const name = id => snapshot.items[id]?.name;
+const band = snapshot.gearLadder.lines[line];
+assert.deepEqual(band.map(row => [row.from, row.to, row.level, row.grade]), [[30, 34, 32, 'd']], 'the band of the levels asked, read at its middle');
+const weapons = band[0].rungs.weapon, axe = weapons.find(id => name(id) === 'Hand Axe'), club = weapons.find(id => name(id) === 'Spiked Club');
+for (const wanted of ['Hand Axe', 'Tomahawk', 'Spiked Club']) assert.ok(weapons.some(id => name(id) === wanted), `${wanted} is a rung`);
+assert.ok(weapons.every(id => ['D', 'NONE'].includes(snapshot.items[id].grade)), 'no rung above the band\'s grade');
+const weaponHour = band[0].hour.weapon;
+assert.ok(weapons.every(id => Number.isFinite(weaponHour[id])), 'every rung has its hour');
+assert.ok(weaponHour[club] > weaponHour[axe] && weaponHour[axe] > weaponHour[0], `${weaponHour[club]} > ${weaponHour[axe]} > ${weaponHour[0]}`);
+assert.ok(weaponHour[0] > 0, 'bare hands earn at an easier spot');
+assert.ok(band[0].scale > 0 && band[0].scale < 1, `x50 design money under today's: ${band[0].scale}`);
+for (const row of snapshot.kits[line][level]) assert.ok(Number.isFinite(band[0].hour[row.slot === 2 ? '1' : row.slot === 5 ? '4' : [7, 14].includes(row.slot) ? 'weapon' : String(row.slot)]?.[row.selfId]), `the kit's ${row.selfId} has its hour`);
+assert.equal(snapshot.gearLadder.slots[club], 7, 'a rung\'s own slot');
+
+// The trade towns are the game's own (MarketTownPolicy): C and above in
+// Giran, D in either D market, a no-grade lot in the starter-village market
+// nearest the spot card's centre (a Talking Island spot sells there), and
+// at least four of the five villages over the spots.
+const villages = ['Talking Island', 'Elven Village', 'Dark Elven Village', 'Orc Village', 'Dwarven Village'];
+assert.equal(snapshot.tradeTowns.higher, 'Giran');
+assert.deepEqual(snapshot.tradeTowns.d, ['Gludio', 'Dion']);
+assert.equal(snapshot.tradeTowns.grade[1463], 'd');
+const cards = require('../data/Bots/hunt/spots.json'), townAt = cards.spotFields.indexOf('town'), minAt = cards.spotFields.indexOf('minLevel');
+const island = cards.spots.find(row => row[townAt] === 'Talking Island' && row[minAt] <= 5);
+assert.equal(snapshot.tradeTowns.none[String(island[0])], 'Talking Island', `${island[0]} sells in Talking Island`);
+const markets = new Set(Object.values(snapshot.tradeTowns.none));
+assert.ok([...markets].every(town => villages.includes(town)) && markets.size >= 4, [...markets].join(', '));
 
 console.log('PASS economy model inputs snapshot');

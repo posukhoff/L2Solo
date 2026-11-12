@@ -22,15 +22,23 @@
 // farming there instead of hunting its own spot) + hours x the piece's use
 // per hour (useHour: the adena an hour the piece adds, lost while it waits
 // for the drop, so a farm at its own spot is not free). 'literal' (the
-// design's text): hours x own hour.
+// design's text): hours x own hour. A piece whose worth nobody can state
+// (useHour null: no worth row) has no use to charge: under 'opportunity'
+// its farm and its order's gathering are not offered, as their cost would
+// read 0 at the main's own spot.
 function charge(hours, spotHour, view) {
     if (!(hours > 0)) return 0;
     return hours * (view.hourCost === 'literal' ? view.ownHour : Math.max(0, view.ownHour - (spotHour || 0)) + (view.useHour || 0));
 }
+const hoursPriced = view => view.hourCost === 'literal' || view.useHour !== null;
 
 // A material of an order, for one craft: the units it holds at what they
 // would sell for (sale), the rest by the cheapest of a line in reach, the
-// NPC and gathering them; null when it lacks units nothing supplies.
+// NPC and gathering them; null when it lacks units nothing supplies. With
+// orderMaterials 'customer_then_crafter' (ours; the design's text
+// 'customer': an order from the customer's own materials) units nothing
+// supplies it come from the crafter, paid with the fee at the crafter's
+// replacement cost as the customer reckons it (row.crafter: its first price).
 // Returns { adena (money spent), hours, cost, via, price (per unit of the
 // route taken) }.
 function material(row, view) {
@@ -39,18 +47,20 @@ function material(row, view) {
     const options = [];
     if (row.line !== null && row.line !== undefined) options.push({ via: 'line', price: row.line, adena: rest * row.line, hours: 0, cost: rest * row.line });
     if (row.npc > 0) options.push({ via: 'npc', price: row.npc, adena: rest * row.npc, hours: 0, cost: rest * row.npc });
-    if (row.farmHours > 0) { const hours = rest * row.farmHours, cost = charge(hours, row.spotHour, view); options.push({ via: 'gather', price: cost / rest, adena: 0, hours, cost }); }
+    if (row.farmHours > 0 && hoursPriced(view)) { const hours = rest * row.farmHours, cost = charge(hours, row.spotHour, view); options.push({ via: 'gather', price: cost / rest, adena: 0, hours, cost }); }
+    if (!options.length && view.orderMaterials === 'customer_then_crafter' && row.crafter > 0) options.push({ via: 'crafter', price: row.crafter, adena: rest * row.crafter, hours: 0, cost: rest * row.crafter });
     if (!options.length) return null;
     const best = options.sort((a, b) => a.cost - b.cost || a.via.localeCompare(b.via))[0];
     return { ...best, cost: best.cost + heldCost };
 }
 
 // piece: { selfId }. view: { cap (the buyer's most for a player's line),
-// ownHour, hourCost, useHour (the piece's worth per hunting hour), lines:
+// ownHour, hourCost, useHour (the piece's worth per hunting hour; null when
+// no worth is stated), lines:
 // [{ price, kind: 'line' | 'ad', where }] in reach, npc: [{ town, price, fare }] the NPC sellers it reaches, order:
 // { recipeId, fee, mp, units (pieces one craft makes, its success rate
 // counted), materials: [{ selfId, amount (one craft), held, sale, line,
-// npc, farmHours, spotHour }] } | null, farm: { hours, spotHour, where } |
+// npc, farmHours, spotHour, crafter }] } | null, orderMaterials, farm: { hours, spotHour, where } |
 // null (hours to farm one whole), twin: { recipeId, cost (adena per piece
 // made: inputs at the twin's replacement cost, plus the scroll when it lacks
 // the recipe), hours (the craft's MP hours per piece) } | null (its own twin
@@ -79,7 +89,7 @@ function acquire(piece, view) {
     }
     // The own twin: no money changes hands inside the account; the wait for the craft costs the piece's use.
     if (view.twin) add('twin', 0, view.twin.hours, view.twin.cost + charge(view.twin.hours, view.ownHour, view), null, { recipeId: view.twin.recipeId });
-    if (view.farm?.hours > 0) add('farm', 0, view.farm.hours, charge(view.farm.hours, view.farm.spotHour, view), view.farm.where);
+    if (view.farm?.hours > 0 && hoursPriced(view)) add('farm', 0, view.farm.hours, charge(view.farm.hours, view.farm.spotHour, view), view.farm.where);
     for (const option of view.exchange?.options || []) {
         if (option.price === null || option.price === undefined) continue;
         const adena = option.amount * option.price + (view.exchange.fare || 0);
