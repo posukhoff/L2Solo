@@ -29,12 +29,11 @@
 // shape { kind, target, items }.
 const { priceStep, PRICE_STEP } = require('./priceStep');
 const Bounds = require('./bounds');
+const Worth = require('./worth');
 const { pool } = require('./workshop');
 const { hash, mulberry } = require('../../hunt-tables/common');
 
 const isGear = item => /^(Weapon|Armor)/.test(item?.kind || '');
-// Paperdoll slots: one-handed and two-handed weapons, the shield.
-const WEAPON_SLOTS = Object.freeze([7, 14]), TWO_HANDED = 14, SHIELD = 8;
 const isShot = item => item?.kind === 'Other.Shot';
 // A kept thing goes to the NPC at this visit without a known price above the
 // NPC's (the design's lots: "after three looks").
@@ -64,7 +63,8 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // { price, qty }: the dearest buy line it knows in another town },
 // ahead: [{ selfId, slot }] (its next grade's kit, one a slot), surplus:
 // { item: count } (its twin's warehouse stock the workshop no longer uses),
-// firing (the shot it fires), reserve: { id, amount, cap, capBy, own } |
+// firing (the shot it fires), fires (the ids of the shots its worn weapon
+// fires: held ones are kept, never sold), reserve: { id, amount, cap, capBy, own } |
 // null, pieces: { selfId: { selfId, slot, grade, weapon, cap (null: nothing
 // caps it, no want is posted), capBy, caps, routes, own (units its own twin
 // holds), visitsLeft (its expected visits before it stops using the piece) } },
@@ -147,9 +147,9 @@ function visit(main, view) {
         if (view.pieces[selfId]?.weapon) {
             if (weapon && weapon !== worn && !Object.values(main.kit).includes(weapon)) add(bag, weapon, 1);
             weapon = selfId;
-            // A weapon takes both hands' slots; a two-handed one the shield's too.
-            for (const other of [...WEAPON_SLOTS, ...(slot === TWO_HANDED ? [SHIELD] : [])]) if (other !== slot && kit[other]) { add(bag, kit[other], 1); kit[other] = 0; }
         }
+        // What the piece cannot be worn with goes back to the bag.
+        for (const other of Object.keys(kit)) if (Number(other) !== Number(slot) && kit[other] && Worth.slotsConflict(slot, other)) { add(bag, kit[other], 1); kit[other] = 0; }
         if (worn) add(bag, worn, 1);
         gearChanged = true;
         const want = wants[selfId];
@@ -181,13 +181,16 @@ function visit(main, view) {
     // deposit fee per stack for units it brings; what the warehouse kept
     // stays there until its third visit without such a price). The
     // warehouse's stock is on offer at every visit.
+    // A shot its worn weapon fires stays in the bag whatever kind it buys this
+    // visit (firing); only the shots it cannot fire go to the NPC.
+    const fires = new Set(view.fires || []), fireable = id => id === view.firing || fires.has(id);
     const accumulate = view.stockSale === 'accumulate', stash = {}, stashLooks = {};
     if (accumulate) for (const [key, count] of Object.entries(view.stash || {})) if (count > 0) add(bag, Number(key), count);
     for (const key of Object.keys(bag)) {
         const id = Number(key), item = view.items[id], count = spare(id);
         if (isGear(item) || !(count > 0)) continue;
         let rest = count;
-        if (isShot(item)) { if (id === view.firing) continue; if (toNpc(id, rest)) add(bag, id, -rest); continue; }
+        if (isShot(item)) { if (fireable(id)) continue; if (toNpc(id, rest)) add(bag, id, -rest); continue; }
         for (const entry of view.book.buy?.[id] || []) {
             if (rest <= 0) break;
             if (entry.price < (item?.npcBuy || 0)) break;
@@ -215,7 +218,7 @@ function visit(main, view) {
         add(bag, id, -gone);
     }
     for (const [key, count] of Object.entries(shots)) {
-        if (Number(key) === view.firing || !count) continue;
+        if (fireable(Number(key)) || !count) continue;
         if (toNpc(Number(key), count)) delete shots[key];
     }
 
@@ -412,6 +415,16 @@ function visit(main, view) {
     // the refill reserve.
     let stopped = false;
     const tried = new Map();
+    // A piece from its own twin's shelf comes through the account warehouse:
+    // a unit taken for one slot of a pair is no longer there for the other.
+    const shelfTaken = {};
+    const onShelf = piece => (piece.own || 0) - (shelfTaken[piece.selfId] || 0) > 0;
+    const fromShelf = piece => {
+        shelfTaken[piece.selfId] = (shelfTaken[piece.selfId] || 0) + 1;
+        claims.push({ kind: 'own_stock', item: piece.selfId, units: 1 });
+        obtained.push({ selfId: piece.selfId, grade: piece.grade, route: 'twin' });
+        equip(piece.selfId, piece.slot);
+    };
     for (const row of view.order) {
         if (stopped && row.kind !== 'reserve') continue;
         if (row.kind === 'reserve') {
@@ -470,12 +483,7 @@ function visit(main, view) {
         // fails: the route is stalled for the piece (source_stalled re-reads
         // path). An order no twin took raises its fee by the step at each
         // visit before that, while the order stays under the piece's cap.
-        if (want?.state === 'twin' && piece.own > 0) {
-            claims.push({ kind: 'own_stock', item: piece.selfId, units: 1 });
-            obtained.push({ selfId: piece.selfId, grade: piece.grade, route: 'twin' });
-            equip(piece.selfId, piece.slot);
-            continue;
-        }
+        if (want?.state === 'twin' && onShelf(piece)) { fromShelf(piece); continue; }
         if (want?.state === 'farm' || want?.state === 'order' || want?.state === 'twin') {
             const seen = (want.seen || 0) + 1;
             if (seen <= view.waitVisits) {
@@ -501,13 +509,8 @@ function visit(main, view) {
         // Nothing caps a piece no route prices and no worth states: no want
         // is posted (a wait it holds still ends above).
         if (piece.cap === null) continue;
-        // Its own twin's shelf first, through the account warehouse.
-        if (piece.own > 0) {
-            claims.push({ kind: 'own_stock', item: piece.selfId, units: 1 });
-            obtained.push({ selfId: piece.selfId, grade: piece.grade, route: 'twin' });
-            equip(piece.selfId, piece.slot);
-            continue;
-        }
+        // Its own twin's shelf first.
+        if (onShelf(piece)) { fromShelf(piece); continue; }
         const sellers = (view.book.sell?.[piece.selfId] || []).filter(entry => entry.price <= piece.cap && left(entry) > 0);
         if (sellers.length) {
             if (money < sellers[0].price) { stopped = true; continue; }

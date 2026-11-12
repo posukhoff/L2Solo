@@ -96,12 +96,12 @@ const DESIGN = Object.freeze({
     personas: Object.freeze({ patient_crafter: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 }), speculator: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 }),
         pragmatic_earner: Object.freeze({ looksToFloor: 3, buyerStart: 0.8 }), steady_achiever: Object.freeze({ looksToFloor: 3, buyerStart: 0.8 }),
         other: Object.freeze({ looksToFloor: 2, buyerStart: 0.9 }) }),
-    // A piece's worth to a buyer (its cap): its gain an hour over the piece
-    // the main wears in the slot, over the hours it is worn, plus its resale.
-    // 'gear_gain' (the design's text): today's gear gain over the worn piece
-    // carried over, times the own hour. 'hunt_cycle' (ours, pending the
-    // maintainer): the hunt hour with the piece minus the hour with the worn
-    // one, in adena, each at the best spot for its kit (the gear ladder).
+    // A piece's worth to a buyer (its cap): its gain an hour over the kit
+    // the main wears, over the hours it is worn, plus its resale.
+    // 'gear_gain' (the design's text): today's gear gain of the piece over the
+    // worn kit carried over, times the own hour. 'hunt_cycle' (ours, pending the
+    // maintainer): the hunt hour of the worn kit with the piece minus the
+    // worn kit's, in adena, each at the best spot for its kit (kit-hours.js).
     worth: 'hunt_cycle',
     // The hours a piece's worth counts over. 'grade_stage' (the design's
     // text): its gain over the hunting hours to the end of the grade stage.
@@ -375,6 +375,16 @@ const median = values => {
     const sorted = [...values].sort((a, b) => a - b), mid = sorted.length >> 1;
     return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
+// Per sampling point: mains sampled, those at 90 % of the reference kit's
+// hour or more, the median and 10th percentile ratio (nearest rank), mains
+// with no ratio and mains with no weapon in hand.
+function kitHourSummary(points) {
+    return Object.fromEntries(Object.entries(points).map(([key, { level, ratios, none, unarmed }]) => {
+        const sorted = [...ratios].sort((a, b) => a - b);
+        return [key, { level, sampled: ratios.length + none, atLeast90: ratios.filter(ratio => ratio >= 0.9).length, median: median(ratios),
+            p10: sorted.length ? sorted[Math.max(0, Math.ceil(0.1 * sorted.length) - 1)] : null, none, unarmed }];
+    }));
+}
 
 // The game data the rules read, built once per run from the snapshot and
 // the design view: recipes indexed, NPC prices and the NPC gear route per
@@ -435,7 +445,7 @@ function firstPrices(snapshot, view, { recipes, byProduct, crystalGrade, npcMin,
         for (const [key, hour] of Object.entries(byLevel)) {
             const row = hour.best, level = Number(key);
             if (!row || !(row.kills > 0)) continue;
-            const per = Engine.designYieldRows(view, line, level, row, false).map(([id, perKill]) => [id, perKill * row.kills]);
+            const per = Engine.designYieldRows(view, line, level, row, 'shots').map(([id, perKill]) => [id, perKill * row.kills]);
             const loot = per.reduce((sum, [id, count]) => sum + count * (view.items[id]?.npcBuy || 0), 0);
             const income = row.adena * Engine.designAdenaFactor(view, row, level) + loot;
             for (const [id, count] of per) {
@@ -498,41 +508,44 @@ function gini(values) {
 // Per grade, over the gear ladder's rungs of the grade, the best buyer among
 // the lines (a line's reference bot entering the grade in the kit of the
 // level before: its own hour at its best spot at the design's yields, the
-// NPC's prices, the rung's gain over that kit's piece of the slot, over its
-// hunting hours to the next grade) against the floor, under both worth
-// formulas: the NPC's buy price alone, and for D also the D crystals a
-// crystallizer gets at the cheapest NPC gear route per crystal (the most a
-// crystallizer bids: an upper bound of the floor). bounded: the share of
-// line-rung rows whose hunt-cycle gain is held at the bound.
-function staticCapFloor(snapshot, view, game, grades, config) {
+// NPC's prices, the net hour of that kit with the rung put on over the
+// kit's, read through kitHours, each firing what nets most at the shots'
+// first prices (what a main knows before any deal: Worth.firing), over its
+// hunting hours to the next grade) against
+// the floor, under both worth formulas: the NPC's buy price alone, and for D
+// also the D crystals a crystallizer gets at the cheapest NPC gear route per
+// crystal (the most a crystallizer bids: an upper bound of the floor).
+// bounded: the share of line-rung rows whose hunt-cycle gain is held at the
+// bound.
+function staticCapFloor(snapshot, view, game, grades, config, kitHours) {
     const npcMin = {}, out = {};
     for (const prices of Object.values(game.npcByTown)) for (const [id, price] of Object.entries(prices)) npcMin[id] = Math.min(npcMin[id] ?? Infinity, price);
     const dRoute = Math.min(...Object.values(game.routeByTown).map(routes => routes.d?.perCrystal ?? Infinity));
-    const rowOf = (ladder, group, id) => { const hour = ladder.hour[group]?.[id]; return hour === undefined ? null : { hour, gear: ladder.gear[group]?.[id] ?? 0 }; };
+    const firstPrice = id => game.firstPrice[id] ?? null;
     for (const [at, [grade, from]] of grades.entries()) {
         const best = {}, rows = { all: 0, bounded: 0 };
         for (const line of Object.keys(Weights.CLASS_WEIGHTS)) {
             const ladder = (snapshot.gearLadder?.lines?.[line] || []).find(band => from >= band.from && from <= band.to), hour = view.hours[line]?.[from]?.best;
             if (!ladder || !hour || !(hour.exp > 0)) continue;
             const ownHour = hour.adena * Engine.designAdenaFactor(view, hour, from)
-                + Engine.designYieldRows(view, line, from, hour, false).reduce((sum, [id, perKill]) => sum + perKill * hour.kills * (view.items[id]?.npcBuy || 0), 0);
+                + Engine.designYieldRows(view, line, from, hour, 'shots').reduce((sum, [id, perKill]) => sum + perKill * hour.kills * (view.items[id]?.npcBuy || 0), 0);
             const next = at + 1 < grades.length ? grades[at + 1][1] : view.maxLevel;
             const horizon = Math.max(0, Engine.expAt(view, Math.min(next, view.maxLevel)) - Engine.expAt(view, from)) / hour.exp;
-            const entry = view.kits[line]?.[Math.max(1, from - 1)] || [];
-            for (const [group, ids] of Object.entries(ladder.rungs)) {
-                const kept = entry.find(piece => Worth.ladderGroup(piece.slot) === group)?.selfId || 0, worn = rowOf(ladder, group, kept) ?? rowOf(ladder, group, 0);
-                for (const id of ids) {
-                    if (String(view.items[id]?.grade || 'NONE').toLowerCase() !== grade) continue;
-                    rows.all++;
-                    for (const formula of ['gear_gain', 'hunt_cycle']) {
-                        const worth = Worth.rungWorth({ formula, rung: rowOf(ladder, group, id), worn, useHours: horizon, ownHour, gainBound: config.huntCycleGainBound });
-                        if (formula === 'hunt_cycle' && worth.bounded) rows.bounded++;
-                        const cap = Bounds.cap({ worth: worth.adena ?? 0, npcSell: npcMin[id] ?? null }).cap;
-                        const held = (best[id] ||= {});
-                        held[formula] = Math.max(held[formula] ?? 0, cap);
-                    }
+            const entry = Object.fromEntries((view.kits[line]?.[Math.max(1, from - 1)] || []).map(piece => [piece.slot, piece.selfId]));
+            const pieces = Object.entries(ladder.rungs).flatMap(([group, ids]) => ids.filter(id => String(view.items[id]?.grade || 'NONE').toLowerCase() === grade)
+                .map(selfId => ({ selfId, slot: group === 'weapon' ? snapshot.gearLadder.slots?.[selfId] || 7 : Number(group) })));
+            const read = Worth.swapRows(kitHours.swaps(line, from, entry, pieces)), worn = Worth.netRow(read.worn, firstPrice);
+            pieces.forEach(({ selfId: id }, index) => {
+                rows.all++;
+                const rung = Worth.netRow(read.rows[index] ?? null, firstPrice);
+                for (const formula of ['gear_gain', 'hunt_cycle']) {
+                    const worth = Worth.rungWorth({ formula, rung, worn, useHours: horizon, ownHour, gainBound: config.huntCycleGainBound });
+                    if (formula === 'hunt_cycle' && worth.bounded) rows.bounded++;
+                    const cap = Bounds.cap({ worth: worth.adena ?? 0, npcSell: npcMin[id] ?? null }).cap;
+                    const held = (best[id] ||= {});
+                    held[formula] = Math.max(held[formula] ?? 0, cap);
                 }
-            }
+            });
         }
         const ids = Object.keys(best), share = (formula, floorOf) => (ids.length ? ids.filter(id => best[id][formula] >= floorOf(id)).length / ids.length : null);
         const npcFloor = id => view.items[id]?.npcBuy || 0, dFloor = id => Math.max(npcFloor(id), grade === 'd' && Number.isFinite(dRoute) ? (view.items[id]?.crystals || 0) * dRoute : 0);
@@ -551,9 +564,10 @@ const wait = () => ({ opened: 0, done: 0, withdrawn: 0, failed: 0, deadline: 0, 
 // The design plane for Engine.simulate. options: { snapshot, game, config,
 // start: 'late' | 'fresh', grades: [[grade, fromLevel]] (D..S),
 // personaShares: { type: share } (the persona types' shares; without them
-// every main prices as 'other') }.
-function plane({ snapshot, game, config = DESIGN, start = 'late', grades, personaShares = null }) {
-    return { sinks: ['warehouseFees'], start: context => startPlane({ snapshot, game, config, start, grades, personaShares, ...context }) };
+// every main prices as 'other'; kitHours: the kit hour source (kit-hours.js
+// gameKitHours, or one with the same seam) }.
+function plane({ snapshot, game, config = DESIGN, start = 'late', grades, personaShares = null, kitHours }) {
+    return { sinks: ['warehouseFees'], start: context => startPlane({ snapshot, game, config, start, grades, personaShares, kitHours, ...context }) };
 }
 
 // A main's persona type: drawn by the types' shares (seeded per account),
@@ -567,7 +581,7 @@ function personaOf(config, personaShares, seed, main, crafter) {
     return config.personas.other;
 }
 
-function startPlane({ snapshot, game, config, start, grades, personaShares, view, mains, ledger, push, seed, rateOf, rearrive, commit }) {
+function startPlane({ snapshot, game, config, start, grades, personaShares, view, mains, ledger, push, seed, rateOf, rearrive, commit, kitHours }) {
     const books = Books.create(), accounts = [];
     const gradeOfLevel = level => grades.reduce((name, [grade, from]) => (level >= from ? grade : name), 'none');
     // The game's trade towns of a lot of items for an account's main
@@ -616,10 +630,14 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         // NPC (adena); units its mains put in the warehouse to sell later.
         stock: { nearLines: 0, hubLines: 0, npc: 0, stashed: 0 }, paths: 0, orders: { posted: 0, claimed: 0, withdrawn: 0, delivered: 0, failed: 0, fees: 0 }, capFloor: {}, worthBounded: 0,
         occupation: { grade_changed: 0, spot_left: 0, recipe_wanted: 0, arrived_town: 0, forScroll: 0, forBid: 0, returned: 0, refusedBack: 0, scrollSpot: 0, rowMissing: 0 }, events: { offerPosted: 0, bidPosted: 0 }, velocity: [],
-        // Path pieces no route priced (source_stalled); per grade, the mains
-        // wearing a weapon of their grade when they reach its middle level and
-        // when they leave it, and the first hour one is worn.
-        unpriced: 0, gradeWeapon: {},
+        // Path pieces no route priced (source_stalled); per sampling point
+        // (a grade's middle level crossed, a grade left at its last level)
+        // the mains' worn kit hour over the reference kit's (mains.kitRatio):
+        // { level, ratios, none: no ratio, unarmed: no weapon in hand }; kit
+        // tables (mains.kitTableOf) taken as a main's line, band or kit
+        // changed, read through kitHours, shared from another main's and
+        // let go past the bound.
+        unpriced: 0, kitHour: {}, kitTables: { taken: 0, read: 0, shared: 0, evicted: 0, wornEvicted: 0 },
         // Routes acquire priced, and those whose cap's own route cost 0; sales
         // whose buyer could not pay at the meeting; failed waits outgrown, by grade.
         routes: { priced: 0, zero: 0, noWorth: 0 }, unfunded: { wtb: 0, line: 0, bid: 0 }, outgrown: {},
@@ -721,7 +739,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     // Account money (main + twin wallet), for its Gini.
     const wealth = list => list.filter(main => !main.station).map(main => main.money + (accounts[main.index].twin ? accounts[main.index].twin.wallet : 0));
     const giniStart = gini(wealth(mains));
-    const capFloorStatic = staticCapFloor(snapshot, view, game, grades, config);
+    const capFloorStatic = staticCapFloor(snapshot, view, game, grades, config, kitHours);
 
     const wakeAt = (index, now, reason) => {
         const account = accounts[index];
@@ -1002,35 +1020,6 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         return adena;
     }
 
-    // A shot's worth to a hunter at its row: (the hour with shots - without) /
-    // shots per hour, adena and loot at the NPC's buy price. Memo key: line,
-    // level, spot (the row's inputs).
-    const worthMemo = new Map();
-    const shotWorth = main => {
-        const row = Engine.spotRowOf(view, main);
-        if (!row || !(row.shots > 0)) return 0;
-        const key = `${main.line}@${main.level}@${row.spotId}`;
-        if (worthMemo.has(key)) return worthMemo.get(key);
-        const income = (r, bare) => r.adena * Engine.designAdenaFactor(view, row, main.level)
-            + Engine.designYieldRows(view, main.line, main.level, r, bare).reduce((sum, [id, perKill]) => sum + perKill * r.kills * (view.items[id]?.npcBuy || 0), 0);
-        const bare = row.shotless ? { ...row, ...row.shotless } : null;
-        const worth = Math.max(0, (income(row, false) - (bare ? income(bare, true) : 0)) / row.shots);
-        worthMemo.set(key, worth);
-        return worth;
-    };
-
-    // At the start: the share of mains, per shot grade, whose shot is worth
-    // its first price to them (the price a twin asks before any deal).
-    const worthAtStart = {};
-    for (const main of hunting) {
-        const hour = Engine.hourOf(view, main), row = Engine.spotRowOf(view, main);
-        if (!hour?.shotId || !(row?.shots > 0)) continue;
-        const id = Engine.shotOf(view, main, hour), grade = shotGrade(id), price = game.firstPrice[id];
-        const entry = worthAtStart[grade] ||= { mains: 0, worthAtOrAboveFirstPrice: 0 };
-        entry.mains++;
-        if (price !== undefined && shotWorth(main) >= price) entry.worthAtOrAboveFirstPrice++;
-    }
-
     // A visit's commit on the account plane: what the main left its twin, the
     // pooled wallet, and the goods it sold to or bought from the NPC.
     function commitVisit(index, now, out) {
@@ -1133,8 +1122,20 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         const twin = accounts[index].twin;
         return twin ? Workshop.ownCraft({ twin, game, npcSell: game.npcByTown[twin.town] || {}, crystalReach: game.reachByTown[twin.town] || {}, memory: accounts[index].memory, books: books.towns, self: index }, selfId) : null;
     };
-    side = Mains.mainsSide({ snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, shotWorth, shotGrade, hoursToGrade,
-        depositFee: DEPOSIT_FEE, rearrive, commit, commitVisit, claimOnTwin, wait, ownCraft, tradeTownsOf });
+    side = Mains.mainsSide({ snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, shotGrade, hoursToGrade,
+        depositFee: DEPOSIT_FEE, kitHours, rearrive, commit, commitVisit, claimOnTwin, wait, ownCraft, tradeTownsOf });
+
+    // At the start: the share of mains, per grade of the shot their spot row
+    // fires, who fire it at its first price (the price a twin asks before
+    // any deal; a main knows no other at the start: firingOf).
+    const worthAtStart = {};
+    for (const main of hunting) {
+        const hour = Engine.hourOf(view, main), row = Engine.spotRowOf(view, main);
+        if (!hour?.shotId || !(row?.shots > 0)) continue;
+        const entry = worthAtStart[shotGrade(Engine.shotOf(view, main, hour))] ||= { mains: 0, worthAtOrAboveFirstPrice: 0 };
+        entry.mains++;
+        if (side.firingOf(main)) entry.worthAtOrAboveFirstPrice++;
+    }
 
     return {
         hunt(main, delta) {
@@ -1157,16 +1158,21 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         },
         visit: (main, now, context) => side.visitMain(main, now, context),
         nextArrival: (main, context) => side.nextArrival(main, context),
+        firing: main => side.firingOf(main),
         levelUp(main, now) {
             const index = main.index, account = accounts[index], seen = account.level, before = account.twin?.highest ?? seen;
             const from = gradeOfLevel(seen), to = gradeOfLevel(main.level), gradeChanged = to !== from && main.level > seen;
             put(index, { level: Math.max(seen, main.level) });
             if (gradeChanged) stats.entries[to] = (stats.entries[to] || 0) + 1;
-            // A weapon of its grade at the grade's middle level and as it leaves the grade.
-            const armed = grade => gradeOf(view.items[main.weapon]) === grade, row = grade => (stats.gradeWeapon[grade] ||= { middle: 0, middleArmed: 0, end: 0, endArmed: 0, first: null });
+            // The worn kit's hour over the reference kit's at the grade's middle level and as it leaves the grade (its last level).
+            const sample = (key, level) => {
+                const row = stats.kitHour[key] ||= { level, ratios: [], none: 0, unarmed: 0 }, { ratio, unarmed } = side.kitRatio(main, level);
+                if (ratio === null) row.none++; else row.ratios.push(ratio);
+                if (unarmed) row.unarmed++;
+            };
             const at = grades.findIndex(([name]) => name === to), middle = at >= 0 && at + 1 < grades.length ? Math.floor((grades[at][1] + grades[at + 1][1]) / 2) : null;
-            if (middle !== null && seen < middle && main.level >= middle) { row(to).middle++; if (armed(to)) row(to).middleArmed++; }
-            if (gradeChanged) { row(from).end++; if (armed(from)) row(from).endArmed++; }
+            if (middle !== null && seen < middle && main.level >= middle) sample(`${to} middle`, middle);
+            if (gradeChanged) sample(`${from} end`, grades.find(([name]) => name === to)[1] - 1);
             if (gradeChanged && account.twin) firstAt(stats.gates.crafter, to, now);
             if (account.twin && main.level > before) {
                 const twin = markMp(account.twin, now), lifted = twinStats(snapshot, main.level);
@@ -1302,7 +1308,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             config,
             biases: BIASES,
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
-                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, stashEnd: stashEnd() }, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, gradeWeapon: stats.gradeWeapon, orders: { ...stats.orders, open: side.openOrders().length },
+                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, stashEnd: stashEnd() }, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null, orders: { ...stats.orders, open: side.openOrders().length },
                 capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
                 velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),

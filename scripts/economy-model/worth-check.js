@@ -224,7 +224,7 @@ function runCase(o, { line, level, slot, group, spot, deathHours, full, hours, c
     const item = o.Index.find(o.Data.items, step.piece.selfId), slotOf = Number(step.piece.slot);
     const candidates = o.Profile.candidateProfiles(state, 0, {});
     const before = candidates.before;
-    const after = candidates.after({ free: worn => o.Equipment.equipmentReplacementConflict(slotOf, worn), wear: { selfId: Number(item.selfId), enchant: 0, slot: slotOf } });
+    const after = candidates.after({ free: worn => Worth.slotsConflict(slotOf, worn), wear: { selfId: Number(item.selfId), enchant: 0, slot: slotOf } });
     const reader = o.HuntCycle.reader(state, { deathHours, hunt: { spotId: spot.id } });
     const at = reader.spotIds.indexOf(spot.id);
     if (at < 0) return null;

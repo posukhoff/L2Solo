@@ -53,6 +53,22 @@ for (let look = 1; look <= 4; look++) {
 }
 assert.equal(buy.close, 'parked', 'the want is parked after two looks at its worth');
 
+// The rows a buyer's worth reads off a kit's swaps: the worn kit's hour,
+// and per piece the hour of the kit with it and its gear gain over the worn
+// kit (not over another kit); a kit with no hour stated gives no row, and
+// nothing is stated over a worn kit with no hour.
+{
+    const worn = { pAtk: 200, mAtk: 100, pDef: 300, mDef: 200 };
+    const read = { hour: 1000, numbers: worn, caster: false, deathHours: 2, swaps: [
+        { hour: 1300, numbers: { ...worn, pAtk: 250 } }, { hour: 1100, numbers: { ...worn, pDef: 400 } }, { hour: null, numbers: null }] };
+    const rows = Worth.swapRows(read);
+    assert.deepEqual(rows.worn, { hour: 1000, gear: 0 });
+    assert.deepEqual(rows.rows[0], { hour: 1300, gear: 0.25 }, 'a weapon: its attack gain over the worn kit');
+    near(rows.rows[1].gear, 0.25 * 2, 'a chest: its defence gain times the death hours');
+    assert.equal(rows.rows[2], null, 'a kit with no hour stated: no row');
+    assert.deepEqual(Worth.swapRows({ ...read, hour: null, numbers: null }), { worn: null, rows: [null, null, null] }, 'a worn kit with no hour: nothing stated');
+}
+
 // The worth's gear gain is today's (WishProviders.gearGain) on a reference
 // bot: a Hawkeye-line archer at 40 in its author's kit, a better bow, a
 // chest piece and a necklace (M.Def only).
@@ -62,19 +78,32 @@ assert.equal(buy.close, 'parked', 'the want is parked after two looks at its wor
     const Index = require('../src/GameServer/Item/ItemTemplateIndex');
     const Table = invoke('GameServer/Bot/AI/SpotValueTable'), HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
     const Wish = invoke('GameServer/Bot/Economy/WishProviders'), Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
-    const Equipment = require('../src/GameServer/Bot/AI/BotEquipmentCompatibility');
     const caster = invoke('GameServer/Bot/Economy/BotImprovementPolicy').isCaster;
     const state = HuntCycle.referenceState(Table.roleClass('9', 40), 40, { line: 9 });
     const candidates = Profile.candidateProfiles(state, 0, {});
     for (const [selfId, part] of [[283, 'attack'], [60, 'defence'], [119, 'defence']]) {
         const item = Index.find(Data.items, selfId), slot = Number(item.etc.slot);
-        const after = candidates.after({ free: worn => Equipment.equipmentReplacementConflict(slot, worn), wear: { selfId, enchant: 0, slot } });
+        const after = candidates.after({ free: worn => Worth.slotsConflict(slot, worn), wear: { selfId, enchant: 0, slot } });
         const at = deathHours => Worth.gearWorth({ before: candidates.before, after, caster: caster(state), threatMask: 3, deathHours, horizonHours: 1, ownHour: 1 }).perHour;
         const today = Wish.gearGain(state, item, 0, 3);
         assert.ok(today[part] > 0, `${item.template.name} adds ${part} today`);
         near(at(0), today.attack, `${item.template.name}: attack gain as today's`);
         near(at(1) - at(0), today.defence, `${item.template.name}: defence gain as today's`);
     }
+}
+
+// The shots a main fires (firing): a kind it knows no price of (null or
+// undefined) is no option, a price of 0 a free shot. The kit's hour: 1000
+// firing none; shot 1 at 1600 gross over 100 shots, shot 2 at 2000 over 100.
+{
+    const hour = { none: 1000, shots: [{ id: 1, kind: 'a', gross: 1600, units: 100 }, { id: 2, kind: 'b', gross: 2000, units: 100 }] };
+    const unknown = Worth.firing(hour, id => (id === 1 ? 2 : null));
+    assert.deepEqual([unknown.id, unknown.units, unknown.net, unknown.worth], [1, 100, 1400, 6], 'shot 2 has no price: shot 1 (1600 - 100 x 2) over none (1000), worth (1600 - 1000) / 100');
+    assert.equal(Worth.firing(hour, id => (id === 1 ? 2 : undefined)).id, 1, 'an undefined price is no price either');
+    assert.deepEqual(Worth.firing(hour, () => null), { id: 0, units: 0, net: 1000, worth: 0 }, 'no price for any shot: none');
+    const free = Worth.firing(hour, id => (id === 1 ? 2 : 0));
+    assert.deepEqual([free.id, free.net, free.worth], [2, 2000, 6], 'a price of 0 is a free shot: shot 2 nets 2000, worth (2000 - 1400) / 100');
+    assert.equal(Worth.firing({ none: null, shots: hour.shots }, () => null), null, 'no hour firing none and no priced shot: no answer');
 }
 
 console.log('test_economy_model_worth: ok');

@@ -258,6 +258,15 @@ const viewOf = (patch = {}) => ({
     ...patch
 });
 {
+    // The shots its worn weapon fires (fires) stay in the bag whatever kind it
+    // buys this visit; a shot of another grade goes to the NPC (3 an item).
+    const shotItems = { ...items, 301: { kind: 'Other.Shot', grade: 'NONE', npcBuy: 3 }, 302: { kind: 'Other.Shot', grade: 'NONE', npcBuy: 2 } };
+    const held = mainOf({ bag: { 302: 100 }, shots: { 302: 400, 301: 40 } });
+    const out = visit(held, viewOf({ items: shotItems, fires: [300, 302], firing: 300, order: [], pieces: {} }));
+    assert.deepEqual([out.main.bag[302], out.main.shots[302], out.main.shots[301]], [100, 400, undefined], 'the fireable shots stay, the other grade is sold');
+    assert.equal(out.flows.npcSales, 120, '40 x 3 for the unfireable shots only');
+}
+{
     // A want with no line becomes a WTB, priced under its cap.
     const out = visit(mainOf({ money: 4000 }), viewOf());
     assert.equal(out.main.ads.wtb.length, 1, 'a WTB for the sword');
@@ -295,6 +304,10 @@ const viewOf = (patch = {}) => ({
     assert.deepEqual([rich.main.kit[4], rich.main.kit[5], rich.main.money], [102, 102, 3400], 'two rings worn for two prices');
     const one = visit(mainOf({ money: 1000, kit: { 4: 0, 5: 0 } }), viewOf(pair));
     assert.deepEqual([one.main.kit[4], one.main.kit[5] || 0, Object.keys(one.main.wants)], [102, 0, ['102']], 'money for one: one worn, one open want');
+    // One ring on its own twin's shelf is taken once: worn in one slot, the other bought, no unit from nothing.
+    const shelf = visit(mainOf({ money: 5000, kit: { 4: 0, 5: 0 } }), viewOf({ ...pair, pieces: { 102: { ...ring, own: 1 } } }));
+    assert.deepEqual([shelf.claims.filter(row => row.kind === 'own_stock').length, shelf.main.kit[4], shelf.main.kit[5], shelf.main.money], [1, 102, 102, 4200],
+        'one unit from the shelf, the second ring for its price');
     // No seller: one WTB, stepped once a visit, not once a slot.
     const wtbPair = { ...pair, pieces: { 102: { ...ring, routes: [] } } };
     let main = mainOf({ money: 100, kit: { 4: 0, 5: 0 } });
@@ -837,6 +850,21 @@ const viewOf = (patch = {}) => ({
     assert.equal(trip({}, view(goal('wtb'))).at, null);
     assert.equal(goalOf({ pieces, kit: { 7: 100 }, wants: { 100: { state: 'parked' } }, reserve: 0, money: 3000, bagValue: 0, perHour: 1000, fresh: false }), null, 'it wears the piece');
     assert.deepEqual(goal(null), { need: 5000, have: 3000, perHour: 1000, fresh: false }, 'a piece it does not want yet is the goal too');
+}
+
+{
+    // A slot's piece takes off what it cannot be worn with, into the bag: a
+    // full armour (15) the chest and legs, a chest or legs piece the full armour.
+    const armour = slot => ({ selfId: slot * 10, slot, grade: 'd', weapon: false, cap: 900, capBy: 'npc', caps: null, routes: [] });
+    const pieces = { 150: armour(15), 100: viewOf().pieces[100], 101: armour(10), 111: armour(11) };
+    const wear = (kit, bag, slot, id) => visit(mainOf({ kit: { 7: 0, ...kit }, bag }), viewOf({ pieces, order: [{ kind: 'piece', selfId: id, slot }] })).main;
+    const full = wear({ 10: 101, 11: 111 }, { 150: 1 }, 15, 150);
+    assert.equal(full.kit[15], 150, 'the full armour is worn');
+    assert.deepEqual([full.kit[10], full.kit[11]], [0, 0], 'the chest and legs are off');
+    assert.deepEqual([full.bag[101], full.bag[111]], [1, 1], 'they are in the bag');
+    const chest = wear({ 15: 150 }, { 101: 1 }, 10, 101);
+    assert.deepEqual([chest.kit[10], chest.kit[15]], [101, 0], 'the chest piece is worn, the full armour off');
+    assert.equal(chest.bag[150], 1, 'the full armour is in the bag');
 }
 
 console.log('PASS economy model market rules');

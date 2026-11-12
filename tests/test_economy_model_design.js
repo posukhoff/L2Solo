@@ -14,6 +14,7 @@
 const assert = require('node:assert/strict');
 const Engine = require('../scripts/economy-model/engine');
 const Design = require('../scripts/economy-model/design');
+const Worth = require('../scripts/economy-model/rules/worth');
 
 const ORE = 1785, CRYSTAL = 1458, SSD = 1463, SCROLL = 5001, SWORD = 2001, BONE = 1872;
 // Loot 150 an hour: the per-kill yields below at the NPC's price (10 kills x (0.5 x 10 + 0.2 x 50)).
@@ -59,18 +60,63 @@ const bands = [['low', 1], ['high', 40]];
 const rates = { default: { huntShare: 1, visitsPerBotHour: 1 } };
 const grades = [['d', 20], ['c', 40], ['b', 52], ['a', 61], ['s', 76]];
 // A line's gear ladder (the snapshot's gearLadder): level bands, each with
-// its rungs per slot group (best first) and the hunt hour of every piece a
-// main there may wear (0: the empty slot).
+// its rungs per slot group (best first); testHours: the hour each piece a
+// main there may wear adds in its group (0: the empty slot), the numbers the
+// fixture's kit hours read (stubKitHours).
 const ladderOf = (line, bands) => ({ slots: {}, lines: { [line]: bands.map(([from, to, groups]) => {
     const each = field => Object.fromEntries(Object.entries(groups).map(([group, row]) => [group, field(row)]));
-    return { from, to, level: from, grade: 'd', best: 's1', scale: 1, rungs: each(row => row.rungs), hour: each(row => row.hour),
-        gear: each(row => Object.fromEntries(Object.keys(row.hour).map(id => [id, 0]))) };
+    return { from, to, level: from, grade: 'd', best: 's1', scale: 1, rungs: each(row => row.rungs), testHours: each(row => row.hour) };
 }) } });
+// A kit hour source over hourOf(line, level, kit) -> number | null (the
+// hour firing none) and shotsOf(line, level, kit, hour) -> [{ id, gross,
+// units }] (the hour per kind of shot the kit fires) with the seam of
+// kit-hours.js: a piece put on in a slot takes the other hand's weapon off;
+// a weapon fires the row's count (shotScale 1).
+const kitHoursOf = (hourOf, shotsOf = () => []) => {
+    const hour = (line, level, kit) => { const none = hourOf(line, level, kit); return none === null ? null : { none, shots: shotsOf(line, level, kit, none) }; };
+    const swaps = (line, level, kit, pieces) => {
+        const numbers = value => (value === null ? null : { pAtk: 1, mAtk: 1, pDef: 1, mDef: 1 }), base = hour(line, level, kit);
+        return { hour: base, numbers: numbers(base), caster: false, deathHours: 0, swaps: pieces.map(({ slot, selfId }) => {
+            const next = [7, 14].includes(Number(slot)) ? { ...kit, 7: 0, 14: 0, [slot]: selfId } : { ...kit, [slot]: selfId }, at = hour(line, level, next);
+            return { hour: at, numbers: numbers(at) };
+        }) };
+    };
+    return { hour, swaps, shotScale: () => 1 };
+};
+// The shots a fixture kit fires: the shot of its line's hour at its
+// weapon's grade, the row's shots an hour, gross by what the row with shots
+// adds over the row without (adena and loot).
+const fixtureShots = world => (line, level, kit, none) => {
+    const hour = world.hours?.[line]?.[level], row = hour?.best, weapon = Number(kit[7] || kit[14]) || 0;
+    if (!weapon || !hour?.shotId || !(row?.shots > 0)) return [];
+    const family = world.shotFamilies.ids.find(ids => ids.includes(hour.shotId)), at = world.shotFamilies.grades.indexOf(world.items[weapon]?.grade);
+    const bare = row.shotless || { adena: 0, loot: 0 };
+    return [{ id: at >= 0 ? family[at] : hour.shotId, gross: none + row.adena + row.loot - bare.adena - bare.loot, units: row.shots }];
+};
+// The fixture ladder's kit hours: the sum over the band's groups of the
+// number of the piece the kit wears there; a piece without one leaves the
+// hour unstated.
+const stubKitHours = world => kitHoursOf((line, level, kit) => {
+    const band = (world.gearLadder?.lines?.[line] || []).find(row => level >= row.from && level <= row.to);
+    if (!band) return null;
+    let sum = 0;
+    for (const [group, byId] of Object.entries(band.testHours)) {
+        const worn = Number(group === 'weapon' ? kit[7] || kit[14] : kit[group]) || 0;
+        if (byId[worn] === undefined) return null;
+        sum += byId[worn];
+    }
+    return sum;
+}, fixtureShots(world));
+// The base fixture's ladder: each line's sword, the kit its shots are fired with.
+const swordLadder = line => ladderOf(line, [[1, 30, { weapon: { rungs: [SWORD], hour: { [SWORD]: 1000, 0: 500 } } }]]).lines[line];
+snapshot.gearLadder = { slots: {}, lines: { 55: swordLadder('55'), 9: swordLadder('9') } };
+// The design plane with the fixture's kit hours unless given.
+const plane = options => Design.plane({ kitHours: stubKitHours(options.snapshot), ...options });
 const arrivals = (main, { event, now, pending, roll }) => (event === 'level_up' ? pending : now + (event === 'start' ? roll : 1));
 const run = (seed, hours = 8, world = snapshot) => {
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const game = Design.gameOf(world, view);
-    return Engine.simulate({ view, accounts, bands, rates, hours, seed, nextArrival: arrivals, design: Design.plane({ snapshot: world, game, start: 'late', grades }) });
+    return Engine.simulate({ view, accounts, bands, rates, hours, seed, nextArrival: arrivals, design: plane({ snapshot: world, game, start: 'late', grades }) });
 };
 const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-6 * Math.max(1, Math.abs(expected)), `${message}: ${actual} against ${expected}`);
 
@@ -84,6 +130,10 @@ assert.equal(design.liveness.waits.batch.opened, design.liveness.waits.batch.dea
 assert.ok(design.crystals.npcRoute > 0, 'crystals through NPC gear in its town');
 assert.ok(design.shots.supply.lines > 0, 'the other main bought shots from the twin\'s line');
 assert.ok(design.shots.byGrade.d.fired > 0, 'and fired them');
+// A deal on the line moved the price the buyer knows of its shot, not its
+// kit's hour. The run's budget rests on the kit table: a main's table is
+// taken once for its kit and band, never again for a price.
+assert.equal(design.market.kitTables.taken, 2, 'one kit table per main');
 assert.ok(design.botToBot > 0);
 // The gate chain of Soulshot D: the crafter main was in D at the start, its
 // twin learned from the scroll its main left it, crafted, and sold to a main.
@@ -105,6 +155,93 @@ assert.deepEqual(run(5), out);
 // The twin's crafts use no more MP than it regenerated (it starts with none): used + lost at max <= regenerated.
 assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.available + 1e-6, JSON.stringify(design.mp));
 
+// A caster's shot kind: its kit fires Spiritshot D (2000 an hour gross, 10
+// shots) or Blessed Spiritshot D (2600, 10) or none (1000). At the NPC's 20
+// and 50 the blessed nets more (2100 against 1800) and is what it buys and
+// fires; at 20 and 90 the plain one (1800 against 1700). The refill and the
+// kit's worth read the one answer (firing).
+const SPSD = 2510, BSPSD = 3948;
+// A caster's world: its spot row (the row's plain hour, row()'s hour without
+// shots) with its hour firing Blessed Spiritshots (blessed), Spiritshot D at
+// plainPrice and Blessed Spiritshot D at blessedPrice at the NPC; yields
+// replaces the spot's per-kill yields.
+const casterWorld = ({ plainPrice = 20, blessedPrice, blessed, yields: spotYields = null }) => ({ ...snapshot,
+    hours: { 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: { ...row('s1', 1000, 50), blessed }, top: [] }])) }, kits: { 9: snapshot.kits[9] },
+    items: { ...snapshot.items, [SPSD]: { kind: 'Other.Shot', grade: 'NONE', ref: 20, npcBuy: 10, crystals: 0 }, [BSPSD]: { kind: 'Other.Shot', grade: 'NONE', ref: 50, npcBuy: 25, crystals: 0 } },
+    npcOffers: { preset: {}, x1: { ...snapshot.npcOffers.x1, [SPSD]: [{ town: 'TownA', price: plainPrice }], [BSPSD]: [{ town: 'TownA', price: blessedPrice }] } },
+    shotFamilies: { grades: snapshot.shotFamilies.grades, ids: [...snapshot.shotFamilies.ids, [2509, SPSD, 2511, 2512, 2513, 2514], [3947, BSPSD, 3949, 3950, 3951, 3952]] },
+    ...(spotYields ? { yields: Object.fromEntries(levels.map(level => [`s1@${level}`, spotYields])), yieldsDesign: Object.fromEntries(levels.map(level => [`s1@${level}`, spotYields])) } : {}) });
+// A run of one account over a world with kit hours, held at its end: the
+// plane's hooks, the run's context and the view.
+const runHeld = (world, kitHours, account, hours) => {
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours });
+    let hooks = null, held = null;
+    const design = { ...real, start: context => { held = context; hooks = real.start(context); return hooks; } };
+    const out = Engine.simulate({ view, accounts: [account], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
+    return { out, hooks, main: held.mains[0], view };
+};
+{
+    const runKind = blessedPrice => {
+        const world = casterWorld({ blessedPrice, blessed: { kills: 10, exp: 1, adena: 1000, dropLoot: 150, spoilLoot: 0, loot: 150, shots: 50 } });
+        const { out, hooks, main } = runHeld(world, kitHoursOf(() => 1000, () => [{ id: SPSD, gross: 2000, units: 10 }, { id: BSPSD, gross: 2600, units: 10 }]), accounts[1], 8);
+        return { firing: hooks.firing(main), shots: Object.keys(main.shots).filter(id => main.shots[id] > 0).map(Number), fired: out.design.shots.byGrade.d?.fired || 0 };
+    };
+    const blessed = runKind(50), plainKind = runKind(90);
+    assert.deepEqual([blessed.firing.id, blessed.firing.worth], [BSPSD, 80], 'at 50 the blessed: worth 80 a shot against the plain\'s 1800');
+    assert.deepEqual([plainKind.firing.id, plainKind.firing.worth], [SPSD, 30], 'at 90 the plain: worth 30 a shot against the blessed\'s 1700');
+    assert.ok(blessed.fired > 0 && plainKind.fired > 0, 'each fired its shots');
+    assert.ok(blessed.shots.length && plainKind.shots.length && blessed.shots.every(id => id === BSPSD) && plainKind.shots.every(id => id === SPSD), `the refill bought the kind chosen: ${blessed.shots} | ${plainKind.shots}`);
+}
+
+// A main hunts the hour of the kind it fires. The caster's row: plain 10
+// kills, 1 exp, 1000 adena, 50 Spiritshots an hour; without shots 500 adena,
+// 0.5 exp; blessed 14 kills, 1.6 exp, 1500 adena, 70 Blessed Spiritshots,
+// which its weapon fires at twice the row's count (shotScale 2). The kit
+// hours state each kind from that row's hour (adena only: no loot to draw),
+// so the decision's net of the kind it fires is what one hunting hour nets.
+{
+    const blessedHour = { kills: 14, exp: 1.6, adena: 1500, dropLoot: 0, spoilLoot: 0, loot: 0, shots: 70 }, scaleOf = blessed => (blessed ? 2 : 1);
+    const hour = { none: 500, shots: [{ id: SPSD, gross: 1000, units: 50 * scaleOf(false) }, { id: BSPSD, gross: 1500, units: 70 * scaleOf(true) }] };
+    const kitHours = { ...kitHoursOf(() => hour.none, () => hour.shots), shotScale: (line, level, spotId, weapon, blessed) => scaleOf(blessed) };
+    const huntOne = (plainPrice, blessedPrice, blessed = blessedHour) => {
+        const world = casterWorld({ plainPrice, blessedPrice, blessed, yields: { town: 'TownA', drop: { 57: 100 }, spoil: {} } });
+        const { hooks, main, view } = runHeld(world, kitHours, { ...accounts[1], money: 0 }, 0), firing = hooks.firing(main), price = { [SPSD]: plainPrice, [BSPSD]: blessedPrice };
+        const decided = Worth.firing(hour, id => price[id]), hunted = Engine.huntDesign({ ...main, shots: { [SPSD]: 1000, [BSPSD]: 1000 } }, view, 1, () => 0.5, firing).delta;
+        return { decided, firing, hunted, net: hunted.flows.huntCold - hunted.shotsUsed * (price[hunted.shotId] || 0) };
+    };
+    // (1) Blessed at 2 against Spiritshot at 5: 1500 - 140 x 2 = 1220 over 1000 - 50 x 5 = 750.
+    // One hunting hour credits the blessed hour (1500 adena, 1.6 exp) and
+    // fires 140 Blessed Spiritshots; hunting the plain row it earned 1000
+    // adena and 1 exp and fired 50.
+    const blessed = huntOne(5, 2);
+    assert.equal(blessed.firing.id, BSPSD, 'it fires Blessed Spiritshots');
+    assert.deepEqual([blessed.hunted.flows.huntCold, blessed.hunted.exp, blessed.hunted.shotsUsed], [1500, 1.6, 140], 'the blessed hour at its weapon\'s count');
+    // (2) The decision's net is the hunting hour's net: blessed 1220, plain
+    // at a blessed price of 10 (750 over 100), none at 20 and 10 (500 over 0 and 100).
+    for (const [prices, id, net] of [[[5, 2], BSPSD, 1220], [[5, 10], SPSD, 750], [[20, 10], 0, 500]]) {
+        const at = huntOne(...prices);
+        assert.deepEqual([at.decided.id, at.firing?.id ?? 0, at.decided.net], [id, id, net], `at ${prices}: the kind decided and fired`);
+        near(at.net, at.decided.net, `at ${prices}: one hunting hour nets the decision's net`);
+    }
+    // At a row without a blessed hour (the spot table measured no such fight
+    // there) Blessed Spiritshots are no option: at 5 and 2 it fires Spiritshots there.
+    const unmeasured = huntOne(5, 2, null);
+    assert.deepEqual([unmeasured.firing.id, unmeasured.hunted.flows.huntCold, unmeasured.hunted.shotsUsed], [SPSD, 1000, 50], 'the plain shot at the row');
+    // A row the table has no reference count of the plain shot for (shotScale
+    // null) states no units: that kind is no option there. At 5 and 10 Blessed
+    // Spiritshots net 1500 - 140 x 10 = 100, under firing none's 500: it fires none.
+    const noCount = { ...kitHours, shotScale: (line, level, spotId, weapon, blessed) => (blessed ? scaleOf(true) : null) };
+    const counted = runHeld(casterWorld({ plainPrice: 5, blessedPrice: 10, blessed: blessedHour, yields: { town: 'TownA', drop: { 57: 100 }, spoil: {} } }), noCount, { ...accounts[1], money: 0 }, 0);
+    assert.equal(counted.hooks.firing(counted.main), null, 'the plain shot has no count at the row: no option, it fires none');
+}
+// (3) A fighter fires its soulshot at its row: one hunting hour credits the
+// row (1000 adena, 1 exp) and fires its 50 shots.
+{
+    const { hooks, main, view } = runHeld(snapshot, stubKitHours(snapshot), accounts[1], 0), firing = hooks.firing(main);
+    const hunted = Engine.huntDesign({ ...main, shots: { [SSD]: 1000 } }, view, 1, () => 0.5, firing).delta;
+    assert.deepEqual([firing.id, hunted.flows.huntCold, hunted.exp, hunted.shotsUsed], [SSD, 1000, 1, 50], 'the row\'s hour and count');
+}
+
 // Own use first at the engine: the Bounty Hunter fires Soulshot D too; its
 // twin crafts its main's shortfall first, its main draws them through the
 // warehouse and fires them; without the rule its twin serves the shelf.
@@ -114,7 +251,7 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     const runWith = config => {
         const view = Engine.viewOf(shooting, { npcPrices: 'x1' });
         return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-            design: Design.plane({ snapshot: shooting, game: Design.gameOf(shooting, view, config), config, start: 'late', grades }) });
+            design: plane({ snapshot: shooting, game: Design.gameOf(shooting, view, config), config, start: 'late', grades }) });
     };
     const own = runWith(Design.DESIGN);
     assert.ok(own.design.crafts.own.batches > 0 && own.design.shots.supply.own > 0 && own.design.gates.own.d >= 0, JSON.stringify(own.design.crafts));
@@ -139,7 +276,7 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
 // income (adena and loot at the NPC); band_hour lays the whole hour on each.
 {
     const view = Engine.viewOf(snapshot, { npcPrices: 'x1' }), row = view.hours[9][25].best;
-    const drops = Engine.designYieldRows(view, '9', 25, row, false).map(([id, perKill]) => [id, perKill * row.kills]);
+    const drops = Engine.designYieldRows(view, '9', 25, row, 'shots').map(([id, perKill]) => [id, perKill * row.kills]);
     const income = row.adena * Engine.designAdenaFactor(view, row, 25) + drops.reduce((sum, [id, count]) => sum + count * view.items[id].npcBuy, 0);
     const priced = reading => Design.gameOf(snapshot, view, { ...Design.DESIGN, firstPriceDrop: reading }).firstPrice;
     const share = priced('hour_share');
@@ -186,7 +323,7 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
             npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'Dwarven Village', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'Dwarven Village', price: 4000 }] } } };
         const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'starter_then_pays' };
         return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-            design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
+            design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
     };
     const near = seated('TownA'), far = seated('TownC');
     assert.ok(near.liveness.waits.wtb.opened > 0 && far.liveness.waits.wtb.opened > 0, 'the shotless main posted its WTB');
@@ -229,7 +366,7 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub' };
     const pair = [accounts[1], { ...accounts[1], id: 3, level: 26, exp: 26e9 }, accounts[0]];
     const out = Engine.simulate({ view, accounts: pair, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-        design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
+        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
     assert.deepEqual([out.crafters.byTown.TownE, out.crafters.byTown.TownD, out.counters.reseats], [1, undefined, 1], 'both hubs pay, the second nets more: the twin sits in the second');
 }
 
@@ -248,7 +385,7 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
         gearLadder: ladderOf('9', [[1, 30, { 10: { rungs: [ARMOR], hour: { [ARMOR]: 1100, 0: 1000 } } }]]) };
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const out = Engine.simulate({ view, accounts, bands, rates, hours: 16, seed: 5, nextArrival: arrivals,
-        design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+        design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
     const orders = out.design.market.orders, waits = out.design.liveness.waits.order;
     assert.ok(orders.posted >= 1 && orders.claimed === 0, JSON.stringify(orders));
     assert.deepEqual([orders.withdrawn, orders.open], [orders.posted, 0], 'every order no twin took came back');
@@ -283,7 +420,7 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     const runDying = deathArrival => {
         const view = Engine.viewOf(dying, { npcPrices: 'x1' }), config = { ...Design.DESIGN, deathArrival };
         return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-            design: Design.plane({ snapshot: dying, game: Design.gameOf(dying, view, config), config, start: 'late', grades }) });
+            design: plane({ snapshot: dying, game: Design.gameOf(dying, view, config), config, start: 'late', grades }) });
     };
     const died = runDying(true);
     assert.ok(died.design.market.trips.death >= 1, JSON.stringify(died.design.market.trips));
@@ -293,13 +430,14 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     assert.equal(runDying(false).design.market.trips.death, undefined, 'without the switch no death sends it to town');
 }
 
-// A main without shots hunts at the same spot's hour without shots.
+// A main without shots, or firing none, hunts at the same spot's hour without shots.
 const view = Engine.viewOf(snapshot, { npcPrices: 'x1' });
-const buyer = Engine.mainOf(accounts[1], 1, view, bands);
-const bare = Engine.huntDesign(buyer, view, 2, () => 0.5);
+const buyer = Engine.mainOf(accounts[1], 1, view, bands), firing = { id: SSD, perHour: 50 };
+const bare = Engine.huntDesign(buyer, view, 2, () => 0.5, firing);
 assert.equal(bare.delta.flows.huntCold, 1000, 'two hours at the shotless 500 adena');
 assert.equal(bare.delta.huntBare, 2);
-const armed = Engine.huntDesign({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5);
+assert.equal(Engine.huntDesign({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5, null).delta.flows.huntCold, 1000, 'firing none: its shots stay in the bag');
+const armed = Engine.huntDesign({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5, firing);
 assert.equal(armed.delta.flows.huntCold, 1500, 'one hour with its 50 shots at 1000, one without at 500');
 assert.equal(armed.delta.shotsUsed, 50);
 
@@ -322,8 +460,8 @@ assert.equal(armed.delta.shotsUsed, 50);
             46: Object.fromEntries(levels45.map(level => [level, { classId: 46, shotId: 0, best: plain('s2', 0, 1000), top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: SWORD, slot: 7 }]])), 46: Object.fromEntries(levels45.map(level => [level, [{ selfId: OLD, slot: 7 }]])) },
         yields: Object.fromEntries(levels45.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { 57: 100 }, spoil: {} }], [`s2@${level}`, { town: 'TownA', drop: { 57: 100, [SWORD]: 0.05 }, spoil: {} }]])),
-        items: { ...snapshot.items, [OLD]: { kind: 'Weapon.Sword', grade: 'NONE', ref: 20, npcBuy: 10, crystals: 0 } },
-        npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } },
+        items: { ...snapshot.items, [OLD]: { kind: 'Weapon.Sword', grade: 'NONE', ref: 20, npcBuy: 10, crystals: 0 }, 1835: { kind: 'Other.Shot', grade: 'NONE', ref: 10, npcBuy: 5, crystals: 0 } },
+        npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }], 1835: [{ town: 'TownB', price: 10 }] } },
         recipes: [], races: { 9: 1, 46: 3 },
         bags: { 9: { race: 1, slots: 80, maxLoad: 1e6 }, 46: { race: 3, slots: 2, maxLoad: 1e6 } },
         gearLadder: ladderOf('9', [[1, 45, { weapon: { rungs: [SWORD], hour: { [SWORD]: 2000, [OLD]: 1000, 0: 500 } } }]]),
@@ -338,7 +476,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const marketBands = [['first', 1], ['second', 23], ['seller', 30]];
     const runMarket = (seed, config = Design.DESIGN, cohort = buyers, hours = 8) => {
         const view = Engine.viewOf(market, { npcPrices: 'x1' });
-        return Engine.simulate({ view, accounts: cohort, bands: marketBands, rates, hours, seed, design: Design.plane({ snapshot: market, game: Design.gameOf(market, view, config), config, start: 'late', grades }) });
+        return Engine.simulate({ view, accounts: cohort, bands: marketBands, rates, hours, seed, design: plane({ snapshot: market, game: Design.gameOf(market, view, config), config, start: 'late', grades }) });
     };
     const done = runMarket(3), waits = done.design.liveness.waits;
     assert.equal(waits.wtb.opened, 4, 'each buyer posts a WTB for the sword and one for its shots: no line offers either');
@@ -411,7 +549,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     ];
     const runOrder = (seed, rate = 100) => {
         const at = rate === 100 ? world : { ...world, recipes: [{ ...world.recipes[0], successRate: rate }] }, view = Engine.viewOf(at, { npcPrices: 'x1' });
-        return Engine.simulate({ view, accounts: pair, bands: [['twin', 1], ['buyer', 25]], rates, hours: 24, seed, design: Design.plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) });
+        return Engine.simulate({ view, accounts: pair, bands: [['twin', 1], ['buyer', 25]], rates, hours: 24, seed, design: plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) });
     };
     const done = runOrder(4), d = done.design, orders = d.market.orders;
     assert.ok(orders.posted >= 1 && orders.claimed >= 1 && orders.delivered >= 1, JSON.stringify(orders));
@@ -452,7 +590,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const one = Engine.simulate({ view, accounts: [{ id: 31, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 4000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 12, seed: 2, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+        bands: [['all', 1]], rates, hours: 12, seed: 2, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
     assert.deepEqual([one.design.goods.totals.fromNpc, one.design.market.obtained.d.npc], [1, 1], 'one piece bought');
     assert.equal(Math.round(one.flows.perBotHour.npcBuys * 12), -2900, 'the piece worth more per adena');
 }
@@ -481,7 +619,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const ran = Engine.simulate({ view, accounts: [{ id: 41, station: false, classId: 9, line: '9', level: 19, exp: 19.5e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD } }],
-        bands: [['all', 1]], rates, hours: 9, seed: 1, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+        bands: [['all', 1]], rates, hours: 9, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
     const moves = ran.design.market.occupation;
     assert.deepEqual([moves.grade_changed, moves.spot_left, moves.rowMissing], [1, 1, 0], JSON.stringify(moves));
 }
@@ -499,7 +637,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const config = { ...Design.DESIGN, twinSeat: 'starter_then_pays', crafterShare: 1 };
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const apart = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-        design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
+        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
     assert.deepEqual(apart.crafters.byTown, { [village]: 2 }, 'both twins in the village');
     assert.ok(apart.firsts.shot.d > 0, 'the Bounty Hunter\'s twin crafted shots there');
     assert.equal(apart.shots.supply.lines, 0, 'no main bought on a line of a town it did not stand in');
@@ -526,13 +664,26 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const grown = Engine.simulate({ view, accounts: [{ id: 51, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
+        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
     // One visit or none before 40: no ladder, the NPC route at once, which its 1000 adena cannot pay.
     const waits = Object.values(grown.liveness.waits), outgrown = waits.reduce((sum, w) => sum + (w.outgrown || 0), 0);
     assert.ok(outgrown >= 1 && waits.every(w => w.failed >= (w.outgrown || 0)), JSON.stringify(grown.liveness.waits));
     assert.equal(waits.filter(w => w.outgrown > 0).reduce((sum, w) => sum + w.withdrawn, 0), 0, 'not a neutral withdrawal');
     assert.equal(grown.market.outgrown.d, outgrown, 'counted under the grade it left');
     for (const w of waits) assert.equal(w.opened, w.done + w.withdrawn + w.failed + w.deadline + w.open);
+    // Leaving D at 39 bare-handed: its kit's hour is the empty slot's 200
+    // over the reference kit's (the D sword) 1200, and it is counted unarmed;
+    // a main holding the reference kit reads 1.
+    const ratio = 200 / 1200;
+    assert.deepEqual(grown.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: ratio, p10: ratio, none: 0, unarmed: 1 });
+    const armed = Engine.simulate({ view, accounts: [{ id: 52, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: {} }],
+        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
+    assert.deepEqual(armed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 1, median: 1, p10: 1, none: 0, unarmed: 0 });
+    // A kit hour source given to the plane is the one read: a stub stating 300 for a bare-handed kit and 900 for an armed one.
+    const stub = kitHoursOf((line, level, kit) => (line === '9' && level === 39 ? (kit[7] ? 900 : 300) : null));
+    const stubbed = Engine.simulate({ view, accounts: [{ id: 53, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [], worn: {} }],
+        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: stub }) }).design;
+    assert.deepEqual(stubbed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: 300 / 900, p10: 300 / 900, none: 0, unarmed: 1 });
 }
 
 // path's candidates are the class's gear ladder: a level-21 main with 10000
@@ -557,10 +708,9 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const aim = pathAim => Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 21, exp: 21e9, money: 10000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, nextArrival: arrivals, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), config: { ...Design.DESIGN, pathAim }, start: 'late', grades }) }).design;
+        bands: [['all', 1]], rates, hours: 8, seed: 1, nextArrival: arrivals, design: plane({ snapshot: world, game: Design.gameOf(world, view), config: { ...Design.DESIGN, pathAim }, start: 'late', grades }) }).design;
     const own = aim('affordable'), best = aim('best_priced');
     assert.deepEqual(own.market.obtained.d, { npc: 1 }, 'the rung it can pay, from the NPC');
-    assert.equal(own.market.gradeWeapon.d.first !== null, true, 'a weapon of its grade worn');
     assert.equal(best.market.obtained.d, undefined, 'the best priced rung: nothing it can pay');
 }
 
@@ -593,7 +743,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const bought = (cSold, opts) => {
         const at = world(cSold, opts), view = Engine.viewOf(at, { npcPrices: 'x1' });
         return Engine.simulate({ view, accounts: [{ id: 71, station: false, classId: 9, line: '9', level: 38, exp: 38e9, money: 100000, spot: null, shots: {}, held: [], worn: {} }],
-            bands: [['all', 1]], rates, hours: 12, seed: 1, nextArrival: arrivals, design: Design.plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) }).design.market.obtained.d;
+            bands: [['all', 1]], rates, hours: 12, seed: 1, nextArrival: arrivals, design: plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) }).design.market.obtained.d;
     };
     assert.equal(bought(true), undefined, 'the C sword sold: worth 3000 under the NPC\'s 4000');
     assert.deepEqual(bought(false), { npc: 1 }, 'the C sword unpriced: its cap reaches the NPC\'s price');
@@ -630,12 +780,46 @@ assert.equal(armed.delta.shotsUsed, 50);
     const run2 = hourCost => {
         const config = { ...Design.DESIGN, hourCost }, view = Engine.viewOf(world, { npcPrices: 'x1' });
         return Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 100000, spot: null, shots: {}, held: [], worn: {} }],
-            bands: [['all', 1]], rates, hours: 10, seed: 1, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
+            bands: [['all', 1]], rates, hours: 10, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
     };
     for (const hourCost of ['opportunity', 'literal']) {
         const out = run2(hourCost);
         assert.deepEqual([out.market.obtained.d?.npc, out.market.routes.zero], [1, 0], `${hourCost}: ${JSON.stringify(out.market.obtained)}, zero ${out.market.routes.zero}`);
     }
+}
+
+// A piece is worth what it adds to the kit the main wears: a sword that adds
+// 500 an hour to a main in its armour and nothing to a bare one (the armour
+// alone adds nothing). The armoured main buys the sword from the NPC; the
+// bare one aims at nothing. Its kit's hours are read once while its kit and
+// band stay: the bare main visits again and again on one table.
+{
+    const ARMOR = 2003, JUNK = 1869, levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 1, adena: 1000, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = {
+        ...snapshot,
+        hours: { 9: Object.fromEntries(levels30.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: SWORD, slot: 7 }, { selfId: ARMOR, slot: 10 }]])) },
+        items: { ...snapshot.items, [ARMOR]: { kind: 'Armor.Body', grade: 'D', ref: 2000, npcBuy: 1000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels30.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        gearLadder: ladderOf('9', [[1, 30, { weapon: { rungs: [SWORD], hour: {} }, 10: { rungs: [ARMOR], hour: {} } }]])
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const run3 = held => {
+        const kitHours = kitHoursOf((line, level, kit) => 1000 + (kit[7] === SWORD && kit[10] === ARMOR ? 500 : 0));
+        const out = Engine.simulate({ view, accounts: [{ id: 81, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 100000, spot: null, shots: {}, held, worn: {} }],
+            bands: [['all', 1]], rates, hours: 10, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours }) }).design;
+        return { out, kitHours };
+    };
+    const armoured = run3([ARMOR]), bare = run3([]);
+    assert.deepEqual(armoured.out.market.obtained.d, { npc: 1 }, 'in its armour the sword adds 500 an hour: bought');
+    assert.equal(bare.out.market.obtained.d, undefined, 'bare, the sword adds nothing: not bought');
+    const visits = Object.values(bare.out.market.trips).reduce((sum, n) => sum + n, 0);
+    assert.ok(visits >= 3, `the bare main came to town ${visits} times`);
+    // The same kit in the same band reads the same: a second run buys the same.
+    assert.deepEqual(run3([ARMOR]).out.market.obtained, armoured.out.market.obtained, 'the same kit, the same purchases');
 }
 
 // Towns A and B, 100 a fare each way. The second main hunts a spot whose
@@ -674,7 +858,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         };
         try {
             const game = Design.gameOf(world, view, config);
-            const out = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals, design: Design.plane({ snapshot: world, game, config, start: 'late', grades }) });
+            const out = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals, design: plane({ snapshot: world, game, config, start: 'late', grades }) });
             assert.equal(out.money.closureGap, 0);
             assert.equal(out.design.goods.failing, 0, JSON.stringify(out.design.goods.worst));
             return { design: out.design, first: game.firstPrice[MAT] };

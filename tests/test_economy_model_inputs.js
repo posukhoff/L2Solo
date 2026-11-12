@@ -13,7 +13,8 @@ const Inputs = require('../scripts/economy-model/inputs');
 Boot.boot('x50');
 
 const line = '55', level = 30;
-const snapshot = Inputs.extract({ preset: 'x50', lines: [line], levels: [level, level] });
+const caster = '12';
+const snapshot = Inputs.extract({ preset: 'x50', lines: [line, '2', caster], levels: [level, level] });
 assert.equal(snapshot.header.rates.drop, 50, 'the preset\'s rates');
 assert.ok(snapshot.recipes.length > 700, 'recipes are read wherever the script starts');
 const ssd = snapshot.recipes.find(row => row.productId === 1463);
@@ -89,6 +90,17 @@ Boot.usePreset('x50');
 const bare = Table.value(String(hour.best.spotId), line, level, false);
 for (const field of Inputs.SHOTLESS_FIELDS) assert.equal(hour.best.shotless[field], bare[field], `shotless ${field}`);
 assert.ok(hour.best.shotless.kills < hour.best.kills, 'fewer kills without shots');
+// A line that fires spiritshots carries each row's hour firing Blessed
+// Spiritshots (the spot table's with shots 2); a soulshot line has none.
+const rowsOf = at => [at.best, ...at.top, ...(at.others || [])].filter(Boolean);
+const casterRows = rowsOf(snapshot.hours[caster][level]);
+assert.ok(casterRows.length > 1, 'the caster\'s rows');
+for (const row of casterRows) {
+    const blessed = Table.value(String(row.spotId), caster, level, 2);
+    assert.deepEqual(row.blessed, Object.fromEntries(Inputs.BLESSED_FIELDS.map(field => [field, blessed[field]])), `${row.spotId}: the blessed hour`);
+}
+assert.ok(casterRows.some(row => row.blessed.exp > row.exp && row.blessed.adena > row.adena), 'blessed shots earn and level faster at some spot');
+for (const other of [line, '2']) assert.ok(rowsOf(snapshot.hours[other][level]).every(row => !('blessed' in row)), `line ${other} fires soulshots: no blessed hour`);
 const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 assert.equal(snapshot.twins[30].maxMp, Profile.profileFor({ level: 30, stats: { classId: 56 } }, 0).maxMp, 'an Artisan at 30');
 assert.equal(snapshot.twins[55].classId, 57, 'a Warsmith from 40');
@@ -117,20 +129,18 @@ assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', c: 57
 
 // The gear ladder: a Scavenger's (the Bounty Hunter at 30) band 30-34 holds
 // the gear table's D weapon rungs and the no-grade ones below, none above D,
-// each with its hunt hour in the design's money; a better axe earns more,
-// and bare hands still earn at an easier spot (not nothing).
+// its best spot, its scale to the design's money and its caster mark (a
+// Scavenger weighs a piece's attack by P.Atk); a kit's hours are read
+// through kit-hours.js, not stored.
 const name = id => snapshot.items[id]?.name;
 const band = snapshot.gearLadder.lines[line];
-assert.deepEqual(band.map(row => [row.from, row.to, row.level, row.grade]), [[30, 34, 32, 'd']], 'the band of the levels asked, read at its middle');
-const weapons = band[0].rungs.weapon, axe = weapons.find(id => name(id) === 'Hand Axe'), club = weapons.find(id => name(id) === 'Spiked Club');
+assert.deepEqual(band.map(row => [row.from, row.to, row.level, row.grade, row.caster]), [[30, 34, 32, 'd', false]], 'the band of the levels asked, read at its middle');
+const weapons = band[0].rungs.weapon, club = weapons.find(id => name(id) === 'Spiked Club');
 for (const wanted of ['Hand Axe', 'Tomahawk', 'Spiked Club']) assert.ok(weapons.some(id => name(id) === wanted), `${wanted} is a rung`);
 assert.ok(weapons.every(id => ['D', 'NONE'].includes(snapshot.items[id].grade)), 'no rung above the band\'s grade');
-const weaponHour = band[0].hour.weapon;
-assert.ok(weapons.every(id => Number.isFinite(weaponHour[id])), 'every rung has its hour');
-assert.ok(weaponHour[club] > weaponHour[axe] && weaponHour[axe] > weaponHour[0], `${weaponHour[club]} > ${weaponHour[axe]} > ${weaponHour[0]}`);
-assert.ok(weaponHour[0] > 0, 'bare hands earn at an easier spot');
+assert.equal(band[0].best, String(Table.best(line, 32, true, 'income').spotId), 'the band\'s best spot');
 assert.ok(band[0].scale > 0 && band[0].scale < 1, `x50 design money under today's: ${band[0].scale}`);
-for (const row of snapshot.kits[line][level]) assert.ok(Number.isFinite(band[0].hour[row.slot === 2 ? '1' : row.slot === 5 ? '4' : [7, 14].includes(row.slot) ? 'weapon' : String(row.slot)]?.[row.selfId]), `the kit's ${row.selfId} has its hour`);
+assert.ok(!('hour' in band[0]) && !('gear' in band[0]), 'no kit hour stored');
 assert.equal(snapshot.gearLadder.slots[club], 7, 'a rung\'s own slot');
 
 // The trade towns are the game's own (MarketTownPolicy): C and above in
