@@ -29,7 +29,6 @@
   {"key":"1b.0g13","title":"Bodies the server moves never drop more than 333 (DT-381, M33)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g14","title":"Aden Lorenzo is reachable: a counter point on the floor when the spawn z lies under it (DT-391)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g15","title":"Room for bots at a crowded open-air NPC: Rune gatekeeper (DT-393)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0g16","title":"Far walks (spot to spot, cross-town, karma) find the walking way, not the straight leg (DT-407; critical, own design)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0f13","title":"Small fixes: economy refusals and exchanges ()","P":"","S":"","who":"","needs":[],"st":"planned","tasks":["f13-small-econ"],"landed":null,"carried":[{"from":"1b.0f","reason":"batch f13 emptied: DT-212 did not pass the small-fix conditions, DT-186 taken out by review; both moved to release 2 by M35","at":"2026-11-12T19:27:37.986Z"}]}
+  {"key":"1b.0g16","title":"Far walks (spot to spot, cross-town, karma) find the walking way, not the straight leg (DT-407; critical, own design)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
