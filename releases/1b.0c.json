@@ -20,6 +20,22 @@
     "43148700223",
     "43148691851"
    ]
+  },
+  "ab": {
+   "at": "2026-11-12T05:00:44.001Z",
+   "runs": [
+    "e6eee6dd4-script-online-player-20261112-054042",
+    "e6eee6dd4-hot-20261112-061716"
+   ],
+   "base": [
+    "3c164d3cc-script-online-player-20261111-173654",
+    "3c164d3cc-hot-20261111-181352"
+   ],
+   "save": "d2f4aa5d-dc82-4241-bdcf-d3bb256899ba",
+   "verdict": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/ab-verdict.md",
+    "sha256": "768bc8d033417eb1665e8ebef768e506c5172c31f823ba8c303cca710fdc6627"
+   }
   }
  },
  "openedAt": "2026-11-11T21:17:25.457Z",
