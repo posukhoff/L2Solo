@@ -18,6 +18,22 @@
     "43295720708",
     "43295735380"
    ]
+  },
+  "ab": {
+   "at": "2026-11-12T21:27:45.602Z",
+   "runs": [
+    "f9fa498e6-script-online-player-20261112-221111",
+    "f9fa498e6-hot-20261112-224913"
+   ],
+   "base": [
+    "631f6b95c-script-online-player-20261112-122158",
+    "631f6b95c-hot-20261112-134759"
+   ],
+   "save": "d2f4aa5d-dc82-4241-bdcf-d3bb256899ba",
+   "verdict": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/ab-verdict-1b0f.md",
+    "sha256": "bb76b023886237c4100421855daf1d797dc7254e0d4bd9196af8994964642bda"
+   }
   }
  },
  "openedAt": "2026-11-12T14:22:41.841Z",
