@@ -36,6 +36,22 @@
     "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-verdict-1b0e.md",
     "sha256": "8fd2134e9c8ee82834b425fcc7890a5488e671f609154d819a8339d59165ae19"
    }
+  },
+  "ab": {
+   "at": "2026-11-12T12:15:19.006Z",
+   "runs": [
+    "631f6b95c-script-online-player-20261112-122158",
+    "631f6b95c-hot-20261112-134759"
+   ],
+   "base": [
+    "e6eee6dd4-script-online-player-20261112-054042",
+    "e6eee6dd4-hot-20261112-061716"
+   ],
+   "save": "d2f4aa5d-dc82-4241-bdcf-d3bb256899ba",
+   "verdict": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/ab-verdict-1b0e.md",
+    "sha256": "b7b31a353adb5e4dda85cb0610d97e855acb1b491e5480387b6a48630b96cecd"
+   }
   }
  },
  "openedAt": "2026-11-12T06:06:57.652Z",
