@@ -30,7 +30,7 @@
   {"key":"3.one-time-migrations","title":"One-time migrations under the governor: DT-2","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.restart-logout-teardown","title":"Restart / Logout teardown: X16","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.rules-check-after","title":"rules-check after the V5.1 freeze (maintainer 11-11: changes the policy digest): Trade line check RA3-3; design-id CITE check (RA3-2 tail); CITE over commit bodies: RA3-4","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"3.flaky-tests","title":"Flaky tests, CI time, tests of internals: RM-4, TS1, TS2, TS4, RA-14, RA3-5, DT-225, DT-260, DT-262; a comment in a table input costs a rebuild: DT-261 (then DT-132)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"3.flaky-tests","title":"Flaky tests, CI time, tests of internals: RM-4, TS2, TS4, RA-14, RA3-5, DT-225, DT-260, DT-262; a comment in a table input costs a rebuild: DT-261 (then DT-132)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.statement-cache-cleared","title":"Statement cache cleared by long SQL: DT-51; recorder heap window leak: DT-50","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.polls-standing-in","title":"Polls standing in for missing events (rule 2): POP-24, POP-25, AI-14, AI-15, threads-5, DT-77, DV-3, DT-185, DT-217, RA1-4","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
