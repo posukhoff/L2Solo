@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 // CLAUDE.md hard rules by text. `<base>..<head> [--root <tree>]`: added lines, exit 1 on ERROR; `--all [--list]`: src/.
+// A range also lists what the change adds that a rule asks about (`ask` lines: a timer, a catch, a cache): no verdict,
+// the review answers each by its file:line (rules 2, 8, 7).
 const fs = require('fs'),path = require('path'),{execFileSync: run} = require('child_process');
 const args = process.argv.slice(2),ALL = args.includes('--all'),range = args.find(a=>a.includes('..'));
 const at = args.indexOf('--root'),root = path.resolve(at >= 0 ? args[at + 1] : `${__dirname}/..`);
@@ -8,7 +10,7 @@ if (!range && !ALL) process.exit(console.log('usage: <base>..<head> | --all [--l
 const opt = {encoding: 'utf8',maxBuffer: 1 << 28},git = (...a)=>run('git',['-C',root,...a],opt);
 const disk = f=>{try {return fs.readFileSync(path.join(root,f),'utf8');} catch (_) {return '';}};
 const read = f=>{try {return ALL ? disk(f) : git('show',`${range.split('..')[1] || 'HEAD'}:${f}`);} catch (_) {return '';}};
-let F,N; const hits = [],hit = (d,m,e = 0)=>hits.push({d,f: F,n: N,m,e});
+let F,N; const hits = [],hit = (d,m,e = 0)=>hits.push({d,f: F,n: N,m,e}),asks = [],ask = (d,m)=>asks.push({d,f: F,n: N,m});
 const CITE = /planning\/|\b[\w-]+\.md\b|§|\bsituations step\b|\bstep \d+\b|\b(?:SR|PC|RC|SF|TBL|ECO|AI|CMB|PER|POP|WOR|TS|PL|DM|DT|RM|BA|RA)-\d+\b|\b(?:user|maintainer) \d{1,2}-\d{2}\b|\b[DQ]\d{1,2}\b(?=[):,\s])/;
 const RAISE = /\braise(?:Far|Near|OnRow|Bag)?\(([^;]*)/,SIT = /'([a-z][a-z_]*(?::[a-z_]+)?)'/g;
 // Raised names: `name: '…'` entries when the call has them (a reason argument and payload strings are no names), else the strings outside object literals.
@@ -44,6 +46,12 @@ for (const [f,lines] of scope) {
         if (c && CITE.test(c)) hit('r13-cite',t.trim().slice(0,99),1);
         for (const k of /\bfunction\s+raise/.test(t) ? [] : raisedNames(RAISE.exec(t)?.[1])) if (!known.has(k)) hit('r1-raise',`undeclared '${k}'`,1);
         if (!src || c === t) return;
+        if (!ALL) {
+            const code = c ? t.slice(0,t.lastIndexOf(c) - 2) : t;
+            if (/\bset(?:Timeout|Interval)\(/.test(code)) ask('r2-timer',code.trim().slice(0,99));
+            if (/\bcatch\s*[({]|\.catch\(/.test(code)) ask('r8-catch',code.trim().slice(0,99));
+            if (/\bnew (?:Map|WeakMap)\(|\b\w*[cC]ache\w*\s*=[^=]/.test(code)) ask('r7-cache',code.trim().slice(0,99));
+        }
         if (/Math\.random\(\)(?!\.toString)/.test(t) && /^src\/GameServer\/(Bot\/|.*Policy[^/]*$)/.test(f)) hit('r9-random','not seeded');
         if (/isMainThread/.test(t) && /^src\/GameServer\/Bot\/(?!.*(Worker|TableMirror|Receiver))/.test(f) && !PLUMB.test(t)) hit('r5-main','isMainThread branch');
         if (worker.has(f) && !/isMainThread/.test(t)) for (const [,m] of t.matchAll(/invoke\('([\w/]+)'\)/g)) if (FORBID.test(m) && !stubs.has(m)) hit('r9-world',`invokes ${m}`);
@@ -67,5 +75,7 @@ if (!ALL) for (F of git('log','--format=%h','-i','-E','--grep=Co-Authored-By:|Cl
 const errs = hits.filter(h=>h.e).length,tally = k=>Object.entries(hits.reduce((m,h)=>(m[h[k]] = (m[h[k]] || 0) + 1,m),{}));
 if (!ALL || args.includes('--list')) for (const h of hits.sort((a,b)=>a.e - b.e)) console.log(`${h.e ? 'ERROR' : 'warn '} ${h.d} ${h.f}:${h.n} ${h.m}`);
 if (ALL) console.log(`per detector: ${tally('d').map(e=>e.join(' ')).join(', ')}\n${tally('f').sort((a,b)=>b[1] - a[1]).slice(0,15).map(([f,v])=>`  ${v}\t${f}`).join('\n')}`);
-console.log(`rules-check ${range || '--all'}: ${errs} errors, ${hits.length - errs} warnings`);
+for (const a of asks) console.log(`ask   ${a.d} ${a.f}:${a.n} ${a.m}`);
+const asked = d=>asks.filter(a=>a.d === d).length;
+console.log(`rules-check ${range || '--all'}: ${errs} errors, ${hits.length - errs} warnings${ALL ? '' : ` · added to answer: timers ${asked('r2-timer')}, catches ${asked('r8-catch')}, caches ${asked('r7-cache')}`}`);
 process.exit(errs && !ALL ? 1 : 0);

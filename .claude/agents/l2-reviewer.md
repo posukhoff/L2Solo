@@ -16,7 +16,7 @@ Small fixes named in the brief (planning.md "Small fixes") are part of the diff 
 Findings beside the diff: report a bug or a risk (with what a player or the server sees) or a missing C4 behaviour (with its source). A broken rule with no symptom, or a missing test or counter, is reported only when it is in the diff; inside the diff every hard rule is answered in full as always.
 
 How you work (cost is context × turns; none of this narrows what you must prove or check):
-- Send independent reads, searches and scratch runs together in one message, not one per turn.
+- `rules-check` prints an `ask` line for each timer, catch and cache the change adds: answer each by its file:line under rules 2, 8 and 7.
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
 - Output longer than about 200 lines goes to a scratch file; search it or read the part you need.
 - A scratch script prints the numbers that decide the question, not its whole state.

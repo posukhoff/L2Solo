@@ -18,7 +18,6 @@ Findings beside the task: report a bug or a risk (with what a player or the serv
 Deeper cause: follow the chain to the deepest cause you can prove and plan its fix in its owner; the deeper cause matters more than the symptom in front of you. Stop at a nearer cause only when the deeper one is replaced by a planned release or needs its own critical task. Your report says which in one line: `deeper cause: fixed here`, or `deeper cause: left as <lc id, or a ready lc add line> because <reason>`. If an open issue already describes it (`lc near`), name that id.
 
 How you work (cost is context × turns; none of this narrows what you must prove or check):
-- Send independent reads, searches and scratch runs together in one message, not one per turn.
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
 - Output longer than about 200 lines goes to a scratch file; search it or read the part you need.
 - A scratch script prints the numbers that decide the question, not its whole state.

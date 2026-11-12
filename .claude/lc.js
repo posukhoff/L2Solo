@@ -710,9 +710,16 @@ C.add = (cx, { opt }) => {
     const i = { id, head: id, sec, ord: Math.max(0, ...d.issues.filter(x => x.sec === sec).map(x => x.ord)) + 1, at: null, origin: one(opt, 'origin', 'who date'), rule: one(opt, 'rule', 'rule#'), sites: one(opt, 'sites', 'file:line'), what: one(opt, 'what', 'what is wrong → impact'), fix: one(opt, 'fix', 'fix'), deps: many(opt.deps) };
     if (!i.deps.length) delete i.deps;
     if (opt.tail) i.tail = true;
-    if (opt.kind !== undefined) {
-        i.kind = one(opt, 'kind', KINDS.join('|')); if (!KINDS.includes(i.kind)) fail(`kinds: ${KINDS.join(' ')}`);
-        if (!saysSeen(i)) fail(`a ${i.kind} says what a player or the server sees: --what "<what is wrong> → <what is seen>"`);
+    i.kind = one(opt, 'kind', KINDS.join('|')); if (!KINDS.includes(i.kind)) fail(`kinds: ${KINDS.join(' ')}`);
+    if (!saysSeen(i)) fail(`a ${i.kind} says what a player or the server sees: --what "<what is wrong> → <what is seen>"`);
+    if (['debt', 'gap'].includes(i.kind)) { // beside a task only on code that task changes; a pass (audit, final run, design, sweep) names itself
+        if (opt.task !== undefined) {
+            const slug = one(opt, 'task', 'slug'); let scope = null;
+            try { scope = /^[\w.-]+$/.test(slug) ? JSON.parse(fs.readFileSync(path.join(cx.workflowDir, `${slug}.json`), 'utf8')).brief.scope : null; } catch (_) { /* no record: refused below */ }
+            if (!Array.isArray(scope)) fail(`no task record ${slug} with a brief scope`);
+            const names = scope.map(x => path.basename(String(x).split(' ')[0]).replace(/\.\w+$/, '')).filter(Boolean);
+            if (!names.some(n => i.sites.includes(n))) fail(`${slug} does not change the code in --sites (its scope: ${names.join(', ')}): a ${i.kind} beside a task is left unrecorded`);
+        } else if (opt.pass === undefined) fail(`a ${i.kind} needs --task <slug> (the task that changes this code) or --pass <audit|final-run|design|sweep>: beside a task only a bug, a risk or a missing behaviour is recorded`);
     }
     for (const x of sameName(d, i.sites, i)) console.log(`same code name: ${x} (possible duplicate: lc show it; merging is a decision)`);
     d.issues.push(i);
@@ -1045,6 +1052,8 @@ C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the 
         Object.assign(rec, { verdict: { file: v.file, sha256: v.sha256 } });
     } else {
         const f = evidenceFile(opt.ref, [r.key, sha9], 'report');
+        for (const [rx, tool] of [[/^total \$[\d.]+ · agents \$/m, 'token-usage.py --from <release open> --table'], [/^task records \d+/m, 'flow-stats.js --since <release open>']]) // what the release cost, measured at its close and not when somebody asks
+            if (!rx.test(f.text)) fail(`report ${path.basename(f.file)} has no flow measurement: paste the output of .claude/tools/${tool}`);
         Object.assign(rec, { file: f.file, sha256: f.sha256 });
     }
     r.gates[g] = rec;
@@ -1124,7 +1133,7 @@ C.get = (cx, { pos }) => { // for scripts: lc get <release> branch|head|base|st
     console.log(typeof v === 'object' ? JSON.stringify(v) : v);
 };
 C.help = () => console.log(`lc status | check | next | show <id|step|release> | get <release> <field> | tails
-issues:   add --sec --origin --rule --sites --what --fix [--kind] [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
+issues:   add --sec --origin --rule --sites --what --fix --kind [--task slug|--pass name] [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--gone|--fixed-by)
           edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]
           kind [<bug|risk|missing|debt|gap> <id...>] | list [--kind k|none] [--sec s] [--at step|triage|tail] [--unseen] | near <id|step|Module>... | seen <id...> --by <who date>

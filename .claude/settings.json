@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          { "type": "command", "command": "node /Users/iposukhoff/L2Solo/.claude/hooks/agent-launch.js", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node /Users/iposukhoff/L2Solo/.claude/hooks/push-origin.js", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

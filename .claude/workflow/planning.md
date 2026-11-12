@@ -3,7 +3,7 @@
 ## Problems, plans and the roadmap
 
 - Review/audit findings: `lc add` (they enter triage) or the finder's report to the main session; no findings file.
-  - What a planner or reviewer records beside its task (maintainer 2026-11-12: issues arrive faster than they close; 84 of 179 in two days came from these two roles): a `bug` or `risk` with what is seen after `→`, or a `missing` with its C4 source. A `debt` or `gap` is recorded only on code the task itself changes (or taken in as a small fix); elsewhere it is left unrecorded: whoever next works on that code reads it again. Final runs, audits and design passes record what they find as before.
+  - What a planner or reviewer records beside its task (maintainer 2026-11-12: issues arrive faster than they close; 84 of 179 in two days came from these two roles): a `bug` or `risk` with what is seen after `→`, or a `missing` with its C4 source. A `debt` or `gap` is recorded only on code the task itself changes (or taken in as a small fix); elsewhere it is left unrecorded: whoever next works on that code reads it again. Final runs, audits and design passes record what they find as before. `lc add` holds this: it needs `--kind`, and for a `debt` or `gap` `--task <slug>` (that task's brief scope names the module) or `--pass <name>`.
 - One problem = one lc issue (its line in `architecture/problems.md`: id | origin | rule | file:line | what is
   wrong → impact | fix | tag), whatever found it; a problem already there gets the new finder's id as an alias. Other
   files cite the id, never copy the evidence. The tag comes from the issue's place in lc: `[rN]` (a row of release N),

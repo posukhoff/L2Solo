@@ -131,13 +131,13 @@ test('decisions authorize only what they name; rules, deps, cycles, ids and drop
     w.no(/depends on unknown|unknown NOPE-1/, 'dep', 'DT-49', '--on', 'NOPE-1');
     w.ok('dep', 'DT-49', '--on', 'DT-44');
     w.no(/dependency cycle/, 'dep', 'DT-44', '--on', 'DT-49');
-    w.ok('add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'DT-200', '--deps', 'DT-49', '--to', '1b.2');
-    w.no(/queued later/, 'add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'DT-201', '--deps', 'DT-200', '--to', '1b.1');
-    w.no(/ids are never reused/, 'add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'A-11');
+    w.ok('add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--kind', 'missing', '--id', 'DT-200', '--deps', 'DT-49', '--to', '1b.2');
+    w.no(/queued later/, 'add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--kind', 'missing', '--id', 'DT-201', '--deps', 'DT-200', '--to', '1b.1');
+    w.no(/ids are never reused/, 'add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--kind', 'missing', '--id', 'A-11');
     w.no(/names --decision, --rule0, --gone or --fixed-by/, 'drop', 'S3', '--reason', 'gone');
     w.no(/does not allow drop/, 'drop', 'S3', '--reason', 'gone', '--decision', vague);
     w.ok('drop', 'S3', '--reason', 'not worth a line', '--rule0');
-    w.no(/exists/, 'add', '--sec', 'failures', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'S3');
+    w.no(/exists/, 'add', '--sec', 'failures', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--kind', 'missing', '--id', 'S3');
     assert.match(w.ok('show', 'S3'), /archived in 3: .*not-worth-it/);
     w.no(/does not allow cap/, 'release', 'set', '1b.1', '--cap', '1', '--decision', vague);
     const cap = w.decide('caps', 'action=cap,release=1b.1,value=2');
@@ -233,7 +233,9 @@ test('a release end to end: per-issue results, complete CI, run provenance, beha
     w.ok('gate', '1b.1', 'behaviour', '--verdict', file(w, 'bh.md', `${s9} ${b1} ${b2}\nbehaviour: preserved\n`));
     w.no(/gates missing: report/, 'close', '1b.1');
     w.no(/report r\.md does not name/, 'gate', '1b.1', 'report', '--ref', file(w, 'r.md', 'release report'));
-    w.ok('gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}`));
+    w.no(/report r2\.md has no flow measurement: paste the output of \.claude\/tools\/token-usage\.py/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}`));
+    w.no(/has no flow measurement: paste the output of \.claude\/tools\/flow-stats\.js/, 'gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\n`));
+    w.ok('gate', '1b.1', 'report', '--ref', file(w, 'r2.md', `release 1b.1 at ${s9}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\n`));
     assert.match(w.ok('close', '1b.1'), /1b\.1 validated \(not published\); 2 archived, 0 carried/);
     assert.match(w.ok('show', 'DT-44'), /archived in 1b\.1: .*"how":"landed".*"resolved":\{"how":"test"/);
     assert.match(w.ok('status'), /1b\.1 validated, not published/);
@@ -311,7 +313,7 @@ test('views: render --write refuses hand edits and a failed data write, leaving 
     w.ok('render', '--write'); assert.strictEqual(fs.readFileSync(pf, 'utf8'), PROBLEMS);
     fs.writeFileSync(pf, PROBLEMS.replace('## Parties\n', '## Parties\nDT-300|review 11-12|8|`F.js`|new thing|fix|[r1b]\n'));
     w.no(/edited by hand since the last render: its issues live in lc .*--overwrite-problems/, 'render', '--write');
-    w.ok('add', '--sec', 'parties', '--origin', 'review 11-12', '--rule', '8', '--sites', '`F.js`', '--what', 'new thing', '--fix', 'fix', '--id', 'DT-300');
+    w.ok('add', '--sec', 'parties', '--origin', 'review 11-12', '--rule', '8', '--sites', '`F.js`', '--what', 'new thing', '--fix', 'fix', '--kind', 'missing', '--id', 'DT-300');
     const kept = w.ok('render', '--write', '--overwrite-problems').match(/hand-edited problems\.md kept at (\S+);/)[1];
     assert.match(fs.readFileSync(kept, 'utf8'), /DT-300\|review 11-12/); // the hand copy is kept, the file is the render
     assert.match(fs.readFileSync(pf, 'utf8'), /DT-300\|review 11-12\|8\|`F\.js`\|new thing\|fix\|/);
@@ -389,7 +391,7 @@ test('split keeps the old id, aliases and history; steps are reset and reordered
 
 test('context, not files: show pages a step within its budget and loses no line; growth is diagnosed, never cut', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
-    for (let n = 0; n < 12; n++) w.ok('add', '--sec', 'parties', '--origin', 'x 11-11', '--rule', '9', '--sites', `\`Mod${n}.js\``, '--what', 'w'.repeat(120), '--fix', 'f', '--id', `DT-${400 + n}`, '--to', '1b.1');
+    for (let n = 0; n < 12; n++) w.ok('add', '--sec', 'parties', '--origin', 'x 11-11', '--rule', '9', '--sites', `\`Mod${n}.js\``, '--what', 'w'.repeat(120), '--fix', 'f', '--kind', 'missing', '--id', `DT-${400 + n}`, '--to', '1b.1');
     const { context, load, save } = require('./lc.js');
     const cx = context({ repo: w.repo }); let { sha, d } = load(cx);
     d.meta.budgets = { rc: 600, pack: 900, rowIssues: 5 }; save(cx, sha, d, 'test: small budgets');
@@ -401,8 +403,8 @@ test('context, not files: show pages a step within its budget and loses no line;
     assert.ok(w.ok('show', '1b.1', '--role', 'rc').split('\n').length < p1.split('\n').length + 1);
     const chk = w.ok('check'); assert.match(chk, /broad 1b\.1 14/);
     // the same quoted code name on intake and in check; nothing merged
-    w.ok('add', '--sec', 'failures', '--origin', 'x', '--rule', '2,8', '--sites', '`PartyHuntingAssembly.wait` 21', '--what', 'w', '--fix', 'f', '--id', 'DT-499');
-    assert.match(w.ok('add', '--sec', 'failures', '--origin', 'x', '--rule', '2', '--sites', '`PartyHuntingAssembly.wait` 25', '--what', 'w', '--fix', 'f', '--id', 'DT-500'), /same code name: DT-499 \(`PartyHuntingAssembly\.wait`\)/);
+    w.ok('add', '--sec', 'failures', '--origin', 'x', '--rule', '2,8', '--sites', '`PartyHuntingAssembly.wait` 21', '--what', 'w', '--fix', 'f', '--kind', 'missing', '--id', 'DT-499');
+    assert.match(w.ok('add', '--sec', 'failures', '--origin', 'x', '--rule', '2', '--sites', '`PartyHuntingAssembly.wait` 25', '--what', 'w', '--fix', 'f', '--kind', 'missing', '--id', 'DT-500'), /same code name: DT-499 \(`PartyHuntingAssembly\.wait`\)/);
     assert.match(w.ok('check'), /dup\?  DT-499 ~ DT-500 \(`PartyHuntingAssembly\.wait`\)/);
     assert.match(w.ok('show', 'DT-499'), /DT-499/); assert.match(w.ok('show', 'DT-500'), /DT-500/); // both stay open
 });
@@ -418,7 +420,7 @@ test('render --check: nothing to check in shadow; after the cutover a hand edit 
 
 test('start names open issues that share a module with the V5.2 brief cause chain', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
-    w.ok('add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', '`PartyStay.decide` 20', '--what', 'w', '--fix', 'f', '--id', 'DT-600');
+    w.ok('add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', '`PartyStay.decide` 20', '--what', 'w', '--fix', 'f', '--kind', 'missing', '--id', 'DT-600');
     w.sh(['branch', 'ivan/batch-1b1', w.base]); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
     w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
     const rec = landedTask(w, 'p1', w.base, w.base, 'ivan/batch-1b1', ['DT-44']);
@@ -446,15 +448,21 @@ test('kinds: a bug says what is seen; one write sets many; list, near and seen r
     assert.match(add('DT-700', '`PartyStay.decide` 20', 'two leaders', '--kind', 'bug').out, /a bug says what a player or the server sees/);
     assert.match(add('DT-700', '`PartyStay.decide` 20', 'two leaders', '--kind', 'chore').out, /kinds: bug risk missing debt gap/);
     assert.strictEqual(add('DT-700', '`PartyStay.decide` 20', 'party forms twice → two leaders', '--kind', 'bug').code, 0);
-    assert.strictEqual(add('DT-701', '`PartyStay.leave` 44', 'nine written twice', '--kind', 'debt', '--tail').code, 0);
-    assert.strictEqual(add('DT-702', '`Elsewhere.run` 1', 'no counter').code, 0); // a kind is not required yet
+    assert.match(add('DT-701', '`PartyStay.leave` 44', 'nine written twice', '--kind', 'debt', '--tail').out, /a debt needs --task <slug> \(the task that changes this code\) or --pass/); // beside a task only what shows is recorded
+    fs.mkdirSync(w.env.LC_WORKFLOW_DIR, { recursive: true }); fs.writeFileSync(path.join(w.env.LC_WORKFLOW_DIR, 'dt9-stay.json'), JSON.stringify({ brief: { scope: ['src/GameServer/Party/PartyStay.js', 'src/Old.js (deleted)'] } }));
+    assert.match(add('DT-701', '`Elsewhere.run` 1', 'nine written twice', '--kind', 'debt', '--task', 'dt9-stay').out, /dt9-stay does not change the code in --sites \(its scope: PartyStay, Old\)/);
+    assert.match(add('DT-701', '`PartyStay.leave` 44', 'nine written twice', '--kind', 'gap', '--task', 'nope').out, /no task record nope/);
+    assert.strictEqual(add('DT-701', '`PartyStay.leave` 44', 'nine written twice', '--kind', 'debt', '--task', 'dt9-stay', '--tail').code, 0);
+    assert.strictEqual(add('DT-703', '`Other.walk` 9', 'no counter', '--kind', 'gap', '--pass', 'audit', '--tail').code, 0);
+    assert.match(add('DT-702', '`Elsewhere.run` 1', 'no counter').out, /--kind <bug\|risk\|missing\|debt\|gap> required/);
+    assert.strictEqual(add('DT-702', '`Elsewhere.run` 1', 'no counter', '--kind', 'missing').code, 0);
     w.no(/kind <bug\|risk\|missing\|debt\|gap> <id\.\.\.>/, 'kind', 'chore', 'DT-702');
     w.no(/no open issue NOPE-1/, 'kind', 'gap', 'DT-702', 'NOPE-1');
     const before = w.sh(['rev-parse', 'ivan/lifecycle-data']);
     assert.match(w.ok('kind', 'risk', 'DT-702', 'DT-49'), /note {2}DT-702: a risk without what is seen[\s\S]*2 → risk/);
     assert.strictEqual(w.sh(['rev-list', '--count', `${before}..ivan/lifecycle-data`]), '1'); // one write for the lot
     w.no(/already risk/, 'kind', 'risk', 'DT-702');
-    assert.match(w.ok('status'), /kinds bug 1 · risk 2 · missing 0 · debt 1 · gap 0 · none \d+/);
+    assert.match(w.ok('status'), /kinds bug 1 · risk 2 · missing 0 · debt 1 · gap 1 · none \d+/);
     assert.match(w.ok('kind'), /without what is seen 2: DT-49 DT-702/);
     const bugs = w.ok('list', '--kind', 'bug'); assert.match(bugs, /^bug DT-700\|/m); assert.match(bugs, /\n1 of \d+\n$/);
     assert.match(w.ok('list', '--kind', 'none', '--sec', 'parties'), /^- DT-114\|/m);
@@ -479,7 +487,7 @@ test('kinds: a bug says what is seen; one write sets many; list, near and seen r
 
 test('assembling: bugs lead the fix queue and leave it when their step lands; open refuses an unplaced bug; a fix release shows its limit; a step over four issues starts only with a plan', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
-    const add = (id, ...more) => w.ok('add', '--sec', 'parties', '--origin', 'x 11-12', '--rule', '4', '--sites', `\`Mod${id.slice(3)}.run\` 1`, '--what', 'w → seen', '--fix', 'f', '--id', id, ...more);
+    const add = (id, ...more) => w.ok('add', '--sec', 'parties', '--origin', 'x 11-12', '--rule', '4', '--sites', `\`Mod${id.slice(3)}.run\` 1`, '--what', 'w → seen', '--fix', 'f', '--id', id, '--pass', 'audit', ...more);
     const at = (now, ...args) => execFileSync(process.execPath, [LC, ...args, '--repo', w.repo], { env: { ...w.env, LC_NOW: now }, encoding: 'utf8' });
     assert.match(w.ok('next'), /^fix queue 0\n/);
     add('DT-801', '--kind', 'risk', '--to', '1b.2'); add('DT-800', '--kind', 'bug'); add('DT-802', '--kind', 'debt', '--to', '1b.1'); // the risk is older than the bug
@@ -498,10 +506,10 @@ test('assembling: bugs lead the fix queue and leave it when their step lands; op
     w.ok('start', '1b.0', '--task', 'f1'); w.sh(['push', '-q', 'fork', 'ivan/batch-1b0']); w.ok('land', '1b.0');
     assert.match(w.ok('next'), /^fix queue 1: DT-801 risk 1b\.2\n/); // a landed step holds it: it waits for its result, not for a release
     w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
-    add('DT-803', '--to', '1b.1'); // DT-44, DT-49, DT-802, DT-803: four is one task
+    add('DT-803', '--kind', 'missing', '--to', '1b.1'); // DT-44, DT-49, DT-802, DT-803: four is one task
     landedTask(w, 'p1', w.base, w.base, 'ivan/batch-1b1', ['DT-44']); landedTask(w, 'p2', w.base, w.base, 'ivan/batch-1b1', ['DT-49']); landedTask(w, 'p3', w.base, w.base, 'ivan/batch-1b1', ['DT-49']);
     assert.match(w.ok('start', '1b.1', '--task', 'p1'), /1b\.1 active \(p1\)/);
-    add('DT-804', '--to', '1b.1'); // five
+    add('DT-804', '--kind', 'missing', '--to', '1b.1'); // five
     w.no(/1b\.1 holds 5 issues, over the 4 of one task: split it .* or name its plan/, 'start', '1b.1', '--task', 'p2');
     w.no(/no planning\/target-architecture\/parties\.md/, 'step', 'set', '1b.1', '--plan', 'target-architecture/parties.md');
     fs.mkdirSync(path.join(w.repo, 'planning/target-architecture'), { recursive: true }); fs.writeFileSync(path.join(w.repo, 'planning/target-architecture/parties.md'), 'order of commits\n');
