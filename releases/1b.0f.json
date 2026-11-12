@@ -10,7 +10,16 @@
  "head": "f9fa498e69e8c2d5180a410cacd8b585cb571316",
  "decisions": [],
  "cap": null,
- "gates": {},
+ "gates": {
+  "ci": {
+   "at": "2026-11-12T21:16:47.334Z",
+   "task": "dt360-town-ways",
+   "runs": [
+    "43295720708",
+    "43295735380"
+   ]
+  }
+ },
  "openedAt": "2026-11-12T14:22:41.841Z",
  "frozenAt": "2026-11-12T20:08:16.432Z",
  "steps": [
