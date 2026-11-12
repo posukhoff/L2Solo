@@ -15,7 +15,7 @@
  "gates": {},
  "steps": [
   {"key":"3.run-tooling","title":"Run tooling (maintainer 11-10): `perf.js --trace` (no reliance on local.ini) and a first-minute self-check (trace, diagnostics, world kept) that stops a wrong run; behaviour runs on fork CI runners in parallel (workflow + saves as an artifact) and on the team VPS; DT-139, DT-167, DT-175, DT-177, DT-210","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"3.behaviour-bugs","title":"Behaviour bugs: DT-112, DT-120, DT-171, DT-216, DT-220, DT-257; placement: DT-129, DT-170, DT-183, DT-173","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"3.behaviour-bugs","title":"Behaviour bugs: DT-112, DT-120, DT-216, DT-220, DT-257; placement: DT-129, DT-170, DT-183, DT-173","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.fence-without-an","title":"Fence without an owner, activation window: L26, races-R6","P":"mid","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.supply-errand-with","title":"Supply errand with two owners: races-R15","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.hot-cold-handover","title":"Hot/cold handover windows: races-R5, races-R7, POP-4, POP-5, POP-22, threads-9, DT-127, DT-223, DT-236, DT-241","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
