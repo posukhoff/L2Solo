@@ -2,6 +2,7 @@
 # laptop-run <worktree> <run-label> [--minutes N] [--scenario script|hot] [--dry-run] : local traced perf run (recipe).
 # Links node_modules and tmp/perf/runs of the main checkout into the worktree, starts scripts/perf.js run detached with the
 # decisionTrace ini, logs to the main checkout's tmp/rc-logs/<label>.log and prints the run folder line when it appears (max 5 min).
+# Beside the log, <label>.load gets one line a minute: load average, CPU of the run, CPU of other processes and the top three of them.
 # Refuses (exit 1) when the worktree is dirty or another `scripts/perf.js run` is running. Exit 0 started; 2 usage;
 # 3 started but no run folder line in 5 min. --dry-run: checks are shown, the commands only printed.
 set -u; setopt extendedglob
@@ -30,6 +31,18 @@ mkdir -p tmp/perf; [[ -e tmp/perf/runs ]] || ln -s $main/tmp/perf/runs tmp/perf/
 mkdir -p ${log:h}; : >$log
 L2NODE_GEODATA_DIR=$main/data/Geodata L2NODE_SHARED_CONFIG_FILE=$S/trace.ini nohup "${cmd[@]}" </dev/null >$log 2>&1 &
 pid=$!; echo "started pid $pid, log $log"
+# Once a minute, while the run lives: CPU of the run's own processes and of everything else (each 5 % or more), so a
+# run another job disturbed shows which minutes to discard. A perf measurement runs alone (release.md).
+load=${log:r}.load
+sample() { print -r -- "$(date -u +%H:%M:%S) load $(sysctl -n vm.loadavg | awk '{print $2}') $(ps -Ao pid=,ppid=,pcpu=,comm= | awk -v root=$pid '
+  { pp[$1] = $2; cpu[$1] = $3; n = $4; for (i = 5; i <= NF; i++) n = n " " $i; sub(/.*\//, "", n); nm[$1] = n }
+  END { mine[root] = 1; do { ch = 0; for (p in pp) if (!(p in mine) && (pp[p] in mine)) { mine[p] = 1; ch = 1 } } while (ch)
+    for (p in cpu) if (p in mine) run += cpu[p]; else if (cpu[p] >= 5) { other += cpu[p]; left[p] = 1 }
+    for (k = 0; k < 3; k++) { best = ""; for (p in left) if (best == "" || cpu[p] > cpu[best]) best = p; if (best == "") break; top = top sprintf(" %s %d%%;", nm[best], cpu[best]); delete left[best] }
+    printf "run %d%% other %d%%%s", run, other, (top == "" ? "" : ":" top) }')"; }
+first=$(sample); print -r -- $first >$load; echo "load file $load · $first"
+[[ $first =~ 'other ([0-9]+)%' ]] && (( match[1] >= 100 )) && echo "WARN: other processes use ${match[1]}% CPU: a perf measurement must run alone (release.md)"
+( trap '' HUP; while sleep 60 && kill -0 $pid 2>/dev/null; do sample; done ) </dev/null >>$load 2>&1 &!
 for i in {1..60}; do
   l=$(grep -m1 -E 'l2solo-perf-[A-Za-z0-9._-]+' $log); [[ -n $l ]] && { echo "$l"; exit 0; }
   kill -0 $pid 2>/dev/null || { echo "run exited early:"; tail -5 $log; exit 3; }

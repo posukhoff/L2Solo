@@ -44,7 +44,12 @@
   lands in the worktree's `tmp/perf/runs`: copy it to the main checkout's right after. A detached worktree (perf side,
   merge, squash) is removed when its job is done.
 - A perf measurement (timings, memory: one cold + one hot per release, or a fix that claims speed) runs alone: no
-  other agent, test or server on this laptop. Behaviour runs (trace, audit, a fix check) need no exclusivity: up
+  other agent, test or server on this laptop. Before it the coordinator tells every other live session "laptop busy"
+  (ListAgents, SendMessage) and "laptop free" after; a session told so starts no server, run, test batch or heavy
+  script until then (1b.0e: another session's jobs overlapped the final runs; the hot run was repeated and a 4.2 % EXP
+  drop stayed unexplained). `laptop-run` writes `tmp/rc-logs/<label>.load`, one line a minute (CPU of the run, CPU of
+  other processes); whoever judges the run reads it first and discards the minutes where `other` is 100 % or more, or
+  the run when they fall in its boot. Behaviour runs (trace, audit, a fix check) need no exclusivity: up
   to 3 at once beside read-only and fork-CI work, no local tests. Before the expensive part the coordinator checks the
   launch (job running, trace file, diagnostics, world kept when per-bot behaviour is counted), stops an invalid run at
   once and waits in one background command, not by polling. Tiers, cheapest first: targeted tests, offline simulation,
