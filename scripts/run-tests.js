@@ -782,6 +782,8 @@ const tests = [
     'tests/test_class_vitals.js',
     'tests/test_solo_round_rules.js',
     'tests/test_hunt_corrections_fit.js',
+    'tests/test_economy_model_capacity.js',
+    'tests/test_economy_model_inputs.js',
     'tests/test_table_roles_and_blessed.js',
     'tests/test_c4_shot_multipliers.js',
     'tests/test_table_class_lines.js',
