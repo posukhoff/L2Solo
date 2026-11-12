@@ -33,4 +33,7 @@ rows,tot=u.count([d2],'2026-01-01T00:00:00Z')
 r=next(x for x in rows if x['role']=='reviewer'); assert abs(r['usd']-(2+1+0.1+4))<1e-9, r; assert (r['tool_turns'],r['batched'],r['session'])==(2,1,'s1'), r
 assert tot['session']['usd']==4 and abs(tot['ALL']['usd']-11.1)<1e-9, tot
 assert u.table(rows,tot).splitlines()[-1]=='total $11.10 · agents $7.10 · sessions $4.00 · batched tool turns 1/3 (33 %)', u.table(rows,tot)
+os.makedirs(os.path.join(d2,'s2')); open(os.path.join(d2,'s2.jsonl'),'w').write('\n'.join(turn('n1','claude-opus-5-5',{'input_tokens':1000000,'output_tokens':0,'cache_read_input_tokens':0,'cache_creation_input_tokens':0},1)))
+rows,tot=u.count([d2],'2026-01-01T00:00:00Z',only=['s1'])  # one track's sessions: the other session is named in the total line, not counted
+assert u.table(rows,tot).splitlines()[-1]=='total $11.10 · agents $7.10 · sessions $4.00 · batched tool turns 1/3 (33 %) · 1 of 2 sessions, all $15.10', u.table(rows,tot)
 print('PASS token-usage: per-message window, [from,to) bounds, one count per message id across files, bad lines skipped; price per model and batched turns')
