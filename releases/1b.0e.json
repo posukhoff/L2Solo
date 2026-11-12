@@ -12,6 +12,6 @@
  "cap": null,
  "gates": {},
  "steps": [
-
+  {"key":"1b.0e1","title":"1b.0e1 bug: geodata after the C4 step rule — a ledge reachable by a route but not left (DT-321); a ranged bot on a skirt hits mobs that cannot see it back (CMB-42)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
