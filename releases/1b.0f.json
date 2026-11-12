@@ -52,6 +52,20 @@
     "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-verdict-1b0f.md",
     "sha256": "4aba50c3d6d437a17a677d017fcdecece5e0d5e4f6cf6e87bb439391dc7691e4"
    }
+  },
+  "report": {
+   "at": "2026-11-12T21:37:26.383Z",
+   "file": "/Users/iposukhoff/L2Solo/tmp/release-1b0f-report.md",
+   "sha256": "8549f45a5ccf8cc510f1dd84bafcbe179cfef3757417732023973032e8aaf6d9",
+   "detectors": {
+    "r8-catch": 65,
+    "r9-world": 42,
+    "r9-random": 51,
+    "r13-cite": 1,
+    "r5-main": 14,
+    "r4-const": 1,
+    "r2-clock": 4
+   }
   }
  },
  "openedAt": "2026-11-12T14:22:41.841Z",
