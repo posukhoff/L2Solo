@@ -28,6 +28,7 @@ const Cohort = require('./cohort');
 const Engine = require('./engine');
 const Today = require('./today');
 const Design = require('./design');
+const KitHours = require('./kit-hours');
 const PersonaTypes = require('../../src/GameServer/Bot/AI/BotPersonaTypes');
 const { levelForGrade } = require('../../src/GameServer/Bot/AI/GearGradeRule');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
@@ -162,7 +163,10 @@ function designOf(argv, snapshot) {
     console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStock are high-sensitivity): ${JSON.stringify(config)}`);
     console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : [].concat(r.ours).includes(config[field]) ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
     const personaShares = Object.fromEntries(PersonaTypes.TYPE_IDS.map(id => [id, PersonaTypes.TYPES[id].share]));
-    return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, design: Design.plane({ snapshot, game, config, start, grades, personaShares }) };
+    const booted = Date.now(), kitHours = KitHours.gameKitHours({ snapshot, anchor: game.firstPrice });
+    kitHours.warm();
+    console.log(`DESIGN kit hours: the game's hunt cycle booted and every band's body built in ${((Date.now() - booted) / 1000).toFixed(1)} s`);
+    return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, design: Design.plane({ snapshot, game, config, start, grades, personaShares, kitHours }) };
 }
 
 // The design mode's hunting share per band (the design world's share is
@@ -322,7 +326,15 @@ function printMarket(design, hours) {
     console.log(`SPOT CHANGES ${moves} (${(moves / hours).toFixed(1)}/h): ${['grade_changed', 'spot_left', 'recipe_wanted', 'arrived_town'].map(why => `${why} ${occ[why] || 0}`).join(' | ')}; `
         + `caused by a bid seen for what the new spot yields ${occ.forBid || 0} (${pct(occ.forBid || 0, moves)}), by its workshop's scroll want ${occ.forScroll || 0} (${pct(occ.forScroll || 0, moves)}); back to the spot held before ${occ.returned || 0}; `
         + `a move back to the spot left at the last arrival refused ${occ.refusedBack || 0}`);
-    console.log(`WEAPON OF THE GRADE (mains wearing a weapon of their grade at its middle level and as they leave it; the first hour one is worn): ${Object.entries(m.gradeWeapon || {}).sort().map(([grade, row]) => `${grade} middle ${row.middleArmed}/${row.middle} (${pct(row.middleArmed, row.middle)}), end ${row.endArmed}/${row.end} (${pct(row.endArmed, row.end)}), first h${row.first === null ? '-' : row.first.toFixed(1)}`).join(' | ') || '-'}; path pieces no route prices ${m.unpriced || 0}`);
+    console.log('KIT HOUR (the hunt hour of the kit a main wears over the reference kit\'s at the level, by the game\'s hunt cycle; mains crossing each grade\'s middle level and leaving the grade at its last level; the >=0.9 share of those with a ratio):');
+    for (const [point, row] of Object.entries(m.kitHour || {}).sort((a, b) => a[1].level - b[1].level)) {
+        const ratio = value => (value === null ? '-' : value.toFixed(2));
+        console.log(`  ${point.padEnd(11)} lv${row.level}: sampled ${row.sampled}, >=0.9 ${row.atLeast90} (${pct(row.atLeast90, row.sampled - row.none)}), median ${ratio(row.median)}, p10 ${ratio(row.p10)}, no ratio ${row.none}, unarmed ${row.unarmed}`);
+    }
+    const kh = m.kitHours || {}, kt = m.kitTables;
+    console.log(`KIT TABLES taken ${kt.taken} (a main's line, band or worn kit changed): read ${kt.read}, shared from another main's ${kt.shared} (${pct(kt.shared, kt.taken)}), let go past the bound ${kt.evicted}, worn hours ${kt.wornEvicted}; `
+        + `kit hours: swaps ${kh.swaps}, of them by the formula over the worn kit ${kh.fast}, whole profile passes ${kh.fresh}, cell builds ${kh.builds}`);
+    console.log(`PATH pieces no route prices ${m.unpriced || 0}`);
     console.log('CAP>=FLOOR per grade: static (the best buyer among the lines entering the grade, path kit pieces; floors npc | npc + D crystals at the NPC gear route) under gear_gain / hunt_cycle; dynamic over pieces offered (a WTB in reach whose cap reaches the WTS floor):');
     for (const [grade, row] of Object.entries(m.capFloorStatic)) {
         const dyn = m.capFloor[grade];

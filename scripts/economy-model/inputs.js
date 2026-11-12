@@ -8,7 +8,8 @@
 // (NpcShopBuyLists), today's static stores (MerchantStoreConfigs), seated MP
 // and craft skills (ColdRest, CraftEligibility), a twin's max MP
 // (ColdCombatProfile) and store slots (PrivateStoreLimits), the hour without
-// shots (SpotValueTable.value with shots off), each line's race (class
+// shots (SpotValueTable.value with shots off) and firing Blessed
+// Spiritshots (with shots 2), each line's race (class
 // templates) and the design's per-kill yields (rules/dropRule at the
 // design's rates of the preset).
 //
@@ -33,18 +34,19 @@ const Capacity = require('./capacity');
 const Cohort = require('./cohort');
 const DesignIncome = require('./design-income');
 const { DESIGN_RATES } = require('./rules/dropRule');
-const Worth = require('./rules/worth');
+const KitHours = require('./kit-hours');
 const common = require('../hunt-tables/common');
 
 const SCHEMA = 1;
 const LEVELS = Object.freeze([1, common.MAX_LEVEL]);
+const { TOP_SPOTS } = KitHours;
 const TWIN_LEVELS = Object.freeze([1, common.MAX_LEVEL]);
 // Private store types (PrivateStoreLimits.tradeLimit) and Expand Trade, the skill that adds slots.
 const STORE_SELL = 1, STORE_BUY = 3, EXPAND_TRADE = 1370, DWARF = 4;
 // The fields of an hour without shots (SpotValueTable.value(spot, line, level, false)).
 const SHOTLESS_FIELDS = Object.freeze(['kills', 'exp', 'adena', 'dropLoot', 'spoilLoot', 'loot']);
-// The spots a main's occupation ranks (its line's first spots by income).
-const TOP_SPOTS = 10;
+// The fields of an hour firing Blessed Spiritshots (SpotValueTable.value(spot, line, level, 2)).
+const BLESSED_FIELDS = Object.freeze([...SHOTLESS_FIELDS, 'shots']);
 // Spots that yield a shot recipe's scroll a main's occupation may also rank
 // (ours): per scroll, line and level, the few that give the most scrolls an
 // hour. Scrolls of gear recipes drop at nearly every spot, so the top spots
@@ -72,8 +74,9 @@ const NOTES = Object.freeze([
     'rates are today\'s presets as the game applies them, not the design\'s per-kind rates; yieldsDesign holds the per-kill yields at the design\'s rates of the preset (rules/dropRule), at the same spawn mix and Spoil level as yields.',
     'hours[line][level].others: rows of spots outside the top at that level that a main may hold (a spot of its top at an earlier level, while the level stays in the spot\'s range) or rank for a shot recipe\'s scroll (scrolls: the ones it yields); spotLevels[line][spotId] is the lowest and highest level the spot table has a row for the line there.',
     'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off).',
+    'An hour row\'s blessed holds the same spot\'s hour for the same line and level firing Blessed Spiritshots (SpotValueTable.value with shots 2); only a line the spot table measures firing them there (a spiritshot class) has it, and the row itself is the hour firing its plain shot.',
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
-    'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first) and the hunt hour of each rung, kit piece and empty slot (hour[group][selfId], 0 the empty slot) at the band\'s middle level in the grade\'s entry kit, at the best ranked spot for that kit, in the design\'s money (today\'s hour x scale); gear[group][selfId] is today\'s gear gain over the entry kit; gearLadder.slots holds each rung\'s own slot.'
+    'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot, caster (BotImprovementPolicy.isCaster of the line\'s body there) and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
 ]);
 
 function readJson(relative) {
@@ -100,10 +103,13 @@ function hourRow(row) {
 }
 
 // An hour row with the same spot's hour without shots beside it (null where
-// the line fights nothing there without shots).
-function hourRowWithShotless(row, line, level, Table) {
-    const out = hourRow(row), bare = Table.value(String(row.spotId), String(line), level, false);
+// the line fights nothing there without shots) and, for a line the spot
+// table measures firing Blessed Spiritshots there, its hour firing them
+// (absent for any other line).
+function hourRowWithForms(row, line, level, Table) {
+    const out = hourRow(row), bare = Table.value(String(row.spotId), String(line), level, false), blessed = Table.value(String(row.spotId), String(line), level, 2);
     out.shotless = bare && bare.kills > 0 ? Object.fromEntries(SHOTLESS_FIELDS.map(field => [field, bare[field]])) : null;
+    if (blessed && blessed.kills > 0) out.blessed = Object.fromEntries(BLESSED_FIELDS.map(field => [field, blessed[field]]));
     return out;
 }
 
@@ -184,7 +190,6 @@ function gameOwners() {
         Profile: invoke('GameServer/Bot/Population/ColdCombatProfile'),
         StoreLimits: require('../../src/GameServer/PrivateStoreLimits'),
         Inventory: require('../../src/GameServer/Inventory/InventoryLimits'),
-        Equipment: require('../../src/GameServer/Bot/AI/BotEquipmentCompatibility'),
         Valuation: invoke('GameServer/Bot/Economy/EconomicValuation'),
         Caster: invoke('GameServer/Bot/Economy/BotImprovementPolicy'),
         Grades: require('../../src/GameServer/Bot/AI/GearGradeRule'),
@@ -203,27 +208,8 @@ function bagRow(line, owners) {
     return { race, slots: Inventory.capacity(race, expand), maxLoad: Math.round(Formulas.calcMaxLoad(Number(template?.base?.con))) };
 }
 
-// A line's reference bot at a level in its kit of an earlier level.
-function referenceBot(owners, line, level, kitLevel) {
-    const { Table, HuntCycle, BotGear, Data } = owners;
-    const classId = Table.roleClass(line, level), state = HuntCycle.referenceState(classId, level, { line: Number(line) });
-    const earlier = Table.roleClass(line, kitLevel), inventory = {};
-    for (const row of BotGear.planFor({ classId: earlier, level: kitLevel, characterId: HuntCycle.referenceId(earlier, Number(line)) }).items) {
-        const key = `kit-${row.selfId}`, prior = inventory[key], amount = (prior?.amount || 0) + 1;
-        inventory[key] = { selfId: Number(row.selfId), amount, equipped: true, equippedCount: amount,
-            equippedSlots: [...(prior?.equippedSlots || []), Number(row.slot)], slot: Number(row.slot) };
-    }
-    return { ...state, inventory, stats: { ...state.stats, exp: Data.experience[level - 1] } };
-}
-
-// The worn slots a piece of a slot takes off: the conflict rule of the
-// equipment owner, and a full armour (15) against the chest and legs (10, 11).
-function freesSlot(owners, slot) {
-    return worn => owners.Equipment.equipmentReplacementConflict(slot, worn) || (slot === 15 && (worn === 10 || worn === 11)) || ((slot === 10 || slot === 11) && worn === 15);
-}
-// The level bands the gear ladder's hours are read at: five levels, cut at
-// each grade's first level (GearGradeRule); a band's hours are taken at its
-// middle level.
+// The level bands of the gear ladder: five levels, cut at each grade's first
+// level (GearGradeRule); a band's kit hours are read at its middle level.
 function ladderBands(owners) {
     const cuts = [1, ...GRADE_NAMES.map(grade => owners.Grades.levelForGrade(grade)), LEVELS[1] + 1], out = [];
     for (let at = 0; at + 1 < cuts.length; at++) for (let from = cuts[at]; from < cuts[at + 1]; from += 5) out.push([from, Math.min(from + 4, cuts[at + 1] - 1)]);
@@ -231,63 +217,23 @@ function ladderBands(owners) {
 }
 
 // A line's gear ladder per level band (the hunt tables' gear table: each
-// class's per-slot ladder without dominated pieces, best first) with the
-// hunt hour of every rung a main of the band may wear or buy: the rungs of
-// its grade and below, the pieces BotGear's kits name up to the band (what
-// a main starts in), the rungs of the line's earlier bands (what it may
-// still wear) and an empty slot (0). The hour of a piece is the hunt
-// cycle's net adena per hour of the line's reference bot at the band's
-// middle level, in the kit of its grade's entry (the kit of the level before
-// the grade) with the piece in its slot, at the best spot for that kit among
-// the line's ranked spots at that level (HuntCycle.reader at each of them):
-// a weaker kit earns at an easier spot, not nothing. gear: today's gear gain
-// of the piece over the entry kit (attack plus defence x death hours), read
-// by worth 'gear_gain'.
-// [{ from, to, level, grade, best, rungs: { group: [selfId] }, hour: { group:
-// { selfId: adena } }, gear: { group: { selfId: share } } }] (hours at today's
-// money of the preset; extract scales them to the design's).
+// class's per-slot ladder without dominated pieces, best first): the rungs a
+// main of the band may buy (its grade and below), the band's middle level
+// and grade, the line's best spot there (its money scales the band's kit
+// hours to the design's, extract) and whether the line's body there weighs
+// a piece's attack by M.Atk (BotImprovementPolicy.isCaster, today's gear
+// gain's caster).
+// [{ from, to, level, grade, best, caster, rungs: { group: [selfId] } }].
 function gearLadder(line, owners, gearTable, bands) {
-    const { Table, HuntCycle, BotGear, Profile, Valuation, Caster, Grades, Data, Index } = owners, out = [];
-    const slotOf = new Map(gearTable.items.map(row => [Number(row[0]), Number(row[3])])), rankOf = new Map(gearTable.items.map(row => [Number(row[0]), Grades.rankOf(row[4])]));
-    const kitsTo = new Map(), heldBefore = new Map();
-    for (let level = 1; level <= LEVELS[1]; level++) {
-        const classId = Table.roleClass(line, level);
-        kitsTo.set(level, BotGear.planFor({ classId, level, characterId: HuntCycle.referenceId(classId, Number(line)) }).items);
-    }
+    const { Table, Grades, Caster } = owners, out = [];
+    const rankOf = new Map(gearTable.items.map(row => [Number(row[0]), Grades.rankOf(row[4])]));
     for (const [from, to] of bands) {
         const level = Math.floor((from + to) / 2), grade = Grades.gradeForLevel(level), rank = Grades.rankOf(grade);
         const best = Table.best(line, level, true, 'income'), gearClass = gearTable.classes.find(row => Number(row.classId) === Number(Table.roleClass(line, level)));
         if (!best || !gearClass) continue;
-        const kitLevel = Math.max(1, Grades.levelForGrade(grade) - 1), state = referenceBot(owners, line, level, kitLevel);
-        const deathHours = Valuation.deathHours(state, { expPerHour: best.exp || 0, walkBackHours: DesignIncome.walkBackHours(best.spotId, state) });
-        const caster = Caster.isCaster(state), candidates = Profile.candidateProfiles(state, 0, {});
-        // Every ranked spot's row, each once, read through a reader that weighs it.
-        const spots = [String(best.spotId), ...Table.rankedIncome(line, level).slice(0, TOP_SPOTS).map(row => String(row.spotId))], cells = new Map();
-        for (const spotId of spots) {
-            if (cells.has(spotId)) continue;
-            const reader = HuntCycle.reader(state, { deathHours, hunt: { spotId } });
-            reader.spotIds.forEach((id, index) => { if (!cells.has(String(id))) cells.set(String(id), { reader, index }); });
-        }
-        if (!cells.size) continue;
-        const hourOf = numbers => Math.max(...[...cells.values()].map(({ reader, index }) => reader.hourAt(numbers, index).income));
-        const rungs = {}, hour = {}, gear = {}, held = new Map(heldBefore);
-        const add = (group, selfId, slot) => {
-            if ((hour[group] ||= {})[selfId] !== undefined) return;
-            if (selfId && !Index.find(Data.items, selfId)) return;
-            const after = candidates.after({ free: freesSlot(owners, slot), wear: selfId ? [{ selfId, enchant: 0, slot }] : [] });
-            hour[group][selfId] = hourOf(after);
-            (gear[group] ||= {})[selfId] = Worth.gearWorth({ before: candidates.before, after, caster, threatMask: 3, deathHours, horizonHours: 1, ownHour: 1 }).perHour;
-        };
-        for (const [group, ladder] of Object.entries(gearClass.slots)) {
-            rungs[group] = ladder.map(([selfId]) => Number(selfId)).filter(selfId => rankOf.get(selfId) <= rank);
-            for (const selfId of rungs[group]) add(group, selfId, slotOf.get(selfId));
-            add(group, 0, group === 'weapon' ? 7 : Number(group));
-        }
-        for (let at = 1; at <= to; at++) for (const row of kitsTo.get(at)) add(Worth.ladderGroup(row.slot), Number(row.selfId), Number(row.slot));
-        // The rungs of the line's earlier bands: what a main may still wear.
-        for (const [key, slot] of held) { const [group, selfId] = key.split(':'); add(group, Number(selfId), slot); }
-        for (const [group, ids] of Object.entries(rungs)) for (const selfId of ids) heldBefore.set(`${group}:${selfId}`, slotOf.get(selfId));
-        out.push({ from, to, level, grade, best: String(best.spotId), rungs, hour, gear });
+        const rungs = {};
+        for (const [group, ladder] of Object.entries(gearClass.slots)) rungs[group] = ladder.map(([selfId]) => Number(selfId)).filter(selfId => rankOf.get(selfId) <= rank);
+        out.push({ from, to, level, grade, best: String(best.spotId), caster: Caster.isCaster(KitHours.referenceBot(owners, line, level, [])), rungs });
     }
     return out;
 }
@@ -451,7 +397,7 @@ function spotHours(save, hours, levels, owners, pairs) {
             const at = ((rows[line] ||= {})[level] ||= {});
             if (at[spotId] !== undefined) continue;
             const row = Table.value(spotId, line, level, true);
-            at[spotId] = row && row.kills > 0 ? hourRowWithShotless({ ...row, spotId }, line, level, Table) : null;
+            at[spotId] = row && row.kills > 0 ? hourRowWithForms({ ...row, spotId }, line, level, Table) : null;
             if (!at[spotId]) continue;
             const key = `${spotId}@${level}`, held = pairs.get(key), skill = Table.roleSpoilLevel(line, level);
             pairs.set(key, { spotId, level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
@@ -543,7 +489,7 @@ function moreRows(line, levels, hours, scrolls, owners) {
         for (let level = from; level <= Math.min(high, levels[1]); level++) {
             const hour = hours[level];
             if (hour.top.some(row => String(row.spotId) === spotId)) continue;
-            const row = hourRowWithShotless({ ...rowAt(spotId, level), spotId }, line, level, Table);
+            const row = hourRowWithForms({ ...rowAt(spotId, level), spotId }, line, level, Table);
             (others[level] ||= []).push(scrolls.bySpot[spotId] ? { ...row, scrolls: scrolls.bySpot[spotId] } : row);
         }
     }
@@ -570,10 +516,9 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
             const best = Table.best(line, level, true, 'income');
             const top = Table.rankedIncome(line, level).slice(0, TOP_SPOTS);
             const classId = Table.roleClass(line, level);
-            const kit = owners.BotGear.planFor({ classId, level, characterId: owners.HuntCycle.referenceId(classId, Number(line)) }).items;
-            kits[line][level] = kit.map(({ selfId, slot }) => ({ selfId: Number(selfId), slot: Number(slot) }));
+            kits[line][level] = KitHours.lineKit(owners, line, level);
             hours[line][level] = { classId, shotId: Capacity.referenceShot(classId, level, line),
-                best: best && hourRowWithShotless(best, line, level, Table), top: top.map(row => hourRowWithShotless(row, line, level, Table)) };
+                best: best && hourRowWithForms(best, line, level, Table), top: top.map(row => hourRowWithForms(row, line, level, Table)) };
             const skill = Table.roleSpoilLevel(line, level);
             for (const row of [best, ...top]) if (row) {
                 const key = `${row.spotId}@${level}`, held = pairs.get(key);
@@ -608,7 +553,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     for (const [id, row] of Object.entries(fixed.luxury)) { add(id); row.crystals.forEach(crystal => add(crystal.selfId)); }
     for (const reward of Object.values(fixed.rewards)) for (const group of [...reward.rewards, ...reward.spoils]) (group.items || []).forEach(item => add(item.selfId));
     for (const byLevel of Object.values(kits)) for (const kit of Object.values(byLevel)) kit.forEach(row => add(row.selfId));
-    for (const rows of Object.values(ladders)) for (const row of rows) for (const byId of Object.values(row.hour)) Object.keys(byId).forEach(add);
+    for (const rows of Object.values(ladders)) for (const row of rows) for (const ids of Object.values(row.rungs)) ids.forEach(add);
     for (const byLevel of Object.values(hours)) for (const hour of Object.values(byLevel)) add(hour.shotId);
     Object.keys(offers).forEach(add); Object.keys(x1Offers).forEach(add);
     Object.values(Enchant.CRYSTAL_IDS).forEach(add);
@@ -621,17 +566,16 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
         items[id] = { name: item.template?.name || null, kind, grade: item.etc?.rank ? Enchant.gradeOf(item.etc) : 'NONE', ref,
             npcBuy: kind === 'Other.Quest' ? 0 : Sell.npcBuyPrice(ref), crystals: Enchant.crystalCount(item.etc), weight: Number(item.template?.mass || 0) };
     }
-    // The ladder's hours in the design's money: today's hour at the preset
-    // times the design's money per kill over today's at the band's best spot
-    // (adena and loot at the NPC's buy price; 1 where today's is 0).
+    // A band's scale: the design's money per kill over today's at the band's
+    // best spot (adena and loot at the NPC's buy price; 1 where today's is 0),
+    // which turns the band's kit hours at the preset into the design's money.
     const moneyOf = row => Object.entries(row?.drop || {}).concat(Object.entries(row?.spoil || {}))
         .reduce((sum, [id, count]) => sum + count * (Number(id) === 57 ? 1 : items[id]?.npcBuy || 0), 0);
     const gearLadders = {};
     for (const [line, rows] of Object.entries(ladders)) {
         gearLadders[line] = rows.map(row => {
             const key = `${row.best}@${row.level}`, today = moneyOf(yields[key]), scale = today > 0 && yieldsDesign[key] ? moneyOf(yieldsDesign[key]) / today : 1;
-            const hour = Object.fromEntries(Object.entries(row.hour).map(([group, byId]) => [group, Object.fromEntries(Object.entries(byId).map(([id, adena]) => [id, adena * scale]))]));
-            return { ...row, scale, hour };
+            return { ...row, scale };
         });
     }
     const slots = {};
@@ -665,8 +609,7 @@ function main(argv) {
     const out = path.resolve(Boot.option(argv, 'out', path.join(Boot.root, 'tmp', 'economy-model')));
     Boot.boot('x1');
     const startedAt = Date.now();
-    const fingerprint = invoke('GameServer/Bot/AI/TableFingerprint').fingerprint('hunt').hash, revision = gitRevision();
-    const spotTable = readJson('data/Bots/spot-table.json').header?.fingerprint?.hash || null;
+    const { fingerprint, spotTable, extraFiles } = Boot.dataStamp(), revision = gitRevision();
     const owners = gameOwners();
     // NPC prices at x1 ride in every snapshot: the design's NPC prices at every preset.
     const x1Offers = npcOffers(owners), base = staticInputs(owners, rewardSpots());
@@ -674,7 +617,7 @@ function main(argv) {
     for (const preset of presets) {
         const began = Date.now();
         const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null) });
-        snapshot.header = { ...snapshot.header, fingerprint, spotTable, revision };
+        snapshot.header = { ...snapshot.header, fingerprint, spotTable, extraFiles, revision };
         const file = path.join(out, `inputs-${preset}-${revision}-${fingerprint}.json`), text = `${JSON.stringify(snapshot)}\n`;
         fs.writeFileSync(file, text);
         const gaps = sourceGaps(snapshot), lineCount = Object.keys(snapshot.hours).length;
@@ -699,4 +642,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { extract, spotHours, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, SCHEMA, SPOT_LEVELS_AHEAD };
+module.exports = { extract, spotHours, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, BLESSED_FIELDS, SCHEMA, SPOT_LEVELS_AHEAD };

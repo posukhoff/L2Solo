@@ -784,6 +784,7 @@ const tests = [
     'tests/test_hunt_corrections_fit.js',
     'tests/test_economy_model_capacity.js',
     'tests/test_economy_model_inputs.js',
+    'tests/test_economy_model_kit_hours.js',
     'tests/test_economy_model_engine.js',
     'tests/test_economy_model_today.js',
     'tests/test_economy_model_rules.js',
