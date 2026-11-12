@@ -17,6 +17,7 @@
   {"key":"1b.0f3","title":"No server exit from a kill reward throw; PvP flag timer ends with the body (DT-306, DT-307)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0f4","title":"Spawn and stop points on walkable cells (DT-319, DT-293)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0f5","title":"Command and visit loops at 1-20 Hz (DT-269, DT-270, investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0f6","title":"Clan review turn length; opportunistic raid under a busy worker (DT-278, DT-281)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"1b.0f6","title":"Clan review turn length; opportunistic raid under a busy worker (DT-278, DT-281)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0f7","title":"One data root for every data file read (DT-367)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
