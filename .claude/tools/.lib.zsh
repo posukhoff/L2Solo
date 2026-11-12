@@ -14,6 +14,15 @@ except Exception:
     print("ERR|"+(t.strip().splitlines() or ["empty answer"])[0])'
 }
 ai_lines() { git -C $1 log $2 --format='%h %B' | grep -iE 'co-authored-by|claude-session|claude\.ai'; }
+# full_run <sha> : the newest PR checks run of that commit as "<id> <status> <conclusion>", "none", or "ERR" when gh fails
+full_run() {
+  gh run list -R posukhoff/L2Solo --commit $1 --workflow pr-checks.yml --limit 20 --json databaseId,status,conclusion 2>/dev/null | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print("ERR"); sys.exit()
+r=max(d,key=lambda x:x["databaseId"]) if d else None
+print("%s %s %s"%(r["databaseId"],r["status"],r["conclusion"] or "-") if r else "none")'
+}
 # integration_branch : the release's integration branch, from RC_BRANCH or `lc get $RC_RELEASE branch`; no default
 LC=/Users/iposukhoff/L2Solo/.claude/lc.js
 integration_branch() {

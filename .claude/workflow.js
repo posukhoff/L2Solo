@@ -104,7 +104,10 @@ function select(base, brief) {
         // A generated table, its generator or its fingerprint: the pair of builder and reader shows only on the whole built table.
         table: files.some(x => !x.startsWith('tests/') && /(^data\/Bots\/|scripts\/generate|TableFingerprint)/.test(x)) };
 }
-// What ready asks of CI on HEAD. record-review asks the same before the first review of a generated-table task.
+// What ready asks of CI on HEAD: the task's own selection, green. record-review asks the same before the first review of
+// a generated-table task. The full suite is not a task's evidence: it runs on the integration branch head after each
+// landing (the land tool starts it and refuses a landing onto a head that is not green) and the release gate reads `full`
+// on the frozen head. In release 1b.0f both tests a task's full run failed on were inside that task's selection.
 function ciGaps(plan, e, head) {
     const runs=(e.ciRuns||[]).filter(r=>r.head===head), full=runs.some(r=>r.workflow==='PR checks');
     const covered=new Set(runs.flatMap(r=>r.tests)), missing=plan.tests.filter(t=>!covered.has(t));
@@ -112,9 +115,6 @@ function ciGaps(plan, e, head) {
     const reasons=[];
     if (missingRaw.length) reasons.push('Missing optional raw-geodata evidence: '+missingRaw.join(', '));
     if (missing.length) reasons.push('Missing '+missing.length+' selected tests: '+missing.slice(0,20).join(', ')+(missing.length>20?' ... (verify --show-tests)':''));
-    // Every route: full PR checks on the task SHA (its first shard runs the syntax/table check); the selection
-    // only names the map tests PR checks skips, which Picked tests adds.
-    if (!full) reasons.push('Full PR checks on HEAD required (every route).');
     return { full, missing, missingRaw, reasons };
 }
 // A review answers the 16 hard rules (0-15) and the deeper-cause question, one line each:
@@ -175,7 +175,8 @@ function main() {
             if (whole || s.closed || s.base!==state.base || s.policy!==state.policy || JSON.stringify(s.brief)!==brief0) fail('The task record changed while this command ran'+(whole?'':' (brief, base, policy or close)')+': run it again.');
         }
         change(s);
-        if (!['ready','record-land'].includes(command)) delete s.evidence.ready;
+        // A CI run added for the same head takes nothing from readiness (the landed head's full run is recorded after ready).
+        if (!['ready','record-land','record-ci'].includes(command)) delete s.evidence.ready;
         const tmp=file+'.'+process.pid+'.tmp'; fs.writeFileSync(tmp,JSON.stringify(s,null,2)+'\n',{flag:'wx'}); fs.renameSync(tmp,file);
     };
     if (command === 'start') {
@@ -329,7 +330,10 @@ function main() {
         const plan=select(state.base,state.brief);
         const {normal,tests,...details}=plan;
         const pickedAfterFull=[...plan.geodataOnly,...plan.optionalGeodata.map(t=>'+'+t)];
-        console.log(JSON.stringify({base:state.base,head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,pickedAfterFull,
+        // The Picked tests list that alone covers the task: its whole selection, a raw-map file marked with +.
+        const picked=[...tests.filter(t=>!plan.optionalGeodata.includes(t)),...plan.optionalGeodata.map(t=>'+'+t)];
+        if (flag('--picked-list')) { console.log(picked.join('\n')); return; }
+        console.log(JSON.stringify({base:state.base,head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,pickedCount:picked.length,pickedAfterFull,
             listCommitRecommended:Buffer.byteLength('tests/'+head+'/'+pickedAfterFull.join(','))>240,...(flag('--show-tests')?{tests}:{})},null,2));
         if (plan.critical && state.risk!=='critical') fail('Escalate to critical route before verification.');
         if (flag('--raw-geodata')) {
@@ -345,10 +349,10 @@ function main() {
             save(s=>{s.evidence.rules={head,at:now()};}); return;
         }
         if (flag('--check')) {
-            // Before a push: syntax and table freshness (PR checks runs them again) and the mechanical rules (it does not).
+            // Syntax and table freshness (Picked tests do not run them; PR checks does) and the mechanical rules (CI does not).
             console.log(run('npm',['run','check']));
             console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
-            save(s=>{s.evidence.rules={head,at:now()};}); return;
+            save(s=>{s.evidence.rules={head,at:now(),check:true};}); return;
         }
         return;
     }
@@ -459,6 +463,7 @@ function main() {
         reasons.push(...ciReasons);
         if (plan.warnings.length && !e.review?.selectionAcknowledged) reasons.push('Uncertain selection needs explicit review --selection-ack.');
         if (e.rules?.head!==head) reasons.push('Mechanical rules-check missing for HEAD (verify --rules).');
+        else if (!e.rules.check && !full) reasons.push('Syntax and table check missing for HEAD: verify --check (Picked tests do not run it; a full PR checks run on HEAD does).');
         if (state.kind==='fix') {
             const proven=new Set((e.regressions||[]).filter(r=>r.head===head && r.old===state.base).map(r=>r.test));
             const missingRegression=state.brief.regressions.map(norm).filter(t=>!proven.has(t));

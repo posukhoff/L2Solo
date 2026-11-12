@@ -144,10 +144,14 @@ expect('rawci check and rules',cmd('verify','rawci','--check'),0,'ok');
 expect('rawci regression',cmd('record-regression','rawci','--test','test_basic.js','--old',base,'--evidence','old fail new pass'),0,'');
 expect('rawci picked map test',cmd('record-ci','rawci','--run','2'),0,'');
 {const r=cmd('ready','rawci'),v=JSON.parse(r.log.slice(r.log.indexOf('{'),r.log.lastIndexOf('}')+1));
- if(r.code!==1||v.reasons.length!==1||!v.reasons[0].includes('Full PR checks on HEAD required')||v.ci.missing.length)throw Error('Picked tests covering the whole selection must still need full PR checks: '+r.log);}
-console.log('PASS picked tests covering the whole selection are not ready without full PR checks');
+ if(r.code!==0||!v.taskReady||v.ci.full||v.ci.missing.length)throw Error('Picked tests covering the whole selection make the task ready and report no full run: '+r.log);}
+console.log('PASS picked tests covering the whole selection make the task ready; the full run is reported as absent');
+expect('the picked list is the whole selection',cmd('verify','rawci','--picked-list'),0,'test_basic.js\ntest_geodata.js');
+{const was=optionalRaw;optionalRaw=true;expect('the picked list marks a raw-map file',cmd('verify','rawci','--picked-list'),0,'test_geodata.js\n+test_basic.js');optionalRaw=was;}
 expect('rawci full CI',cmd('record-ci','rawci','--run','1'),0,'');
-expect('full PR checks complete it',cmd('ready','rawci'),0,'"taskReady": true');
+if(!JSON.parse(store.get('/git/l2solo-workflow/rawci.json')).evidence.ready)throw Error('a CI run recorded after ready must keep readiness');
+console.log('PASS the full run of the landed head is recorded without taking readiness away');
+expect('the full run shows in the ci part the release gate reads',cmd('ready','rawci'),0,'"full": true');
 changed='tests/test_cold_worker_routing.js';
 expect('a test named after a critical surface does not escalate',cmd('verify','rawci'),0,'"critical": false');
 changed='src/ColdWorker.js';
@@ -317,3 +321,16 @@ store.set('/b.json',briefWith({scope:['data/Bots/town-ways.json']}));
 expect('gt2 brief',cmd('record-brief','gt2','--file','/b.json'),0,'true');
 expect('a committed table counts as a generated-table task',cmd('record-review','gt2','--result','pass','--evidence','review','--rules','/table.txt'),1,'generated table');
 changed='src/foo.js';
+// A task proven by Picked tests alone still owes the syntax and table check that only a full run or verify --check gives.
+expect('pk start',cmd('start','pk','--base','main','--risk','standard'),0,'policy-hash');
+store.set('/b.json',briefWith({}));
+expect('pk brief',cmd('record-brief','pk','--file','/b.json'),0,'true');
+expect('pk review',cmd('record-review','pk','--result','pass','--evidence','review','--rules','/table.txt'),0,'');
+expect('pk rules',cmd('verify','pk','--rules'),0,'ok');
+expect('pk regression',cmd('record-regression','pk','--test','test_basic.js','--old',base,'--evidence','old fail new pass'),0,'');
+expect('pk picked map test',cmd('record-ci','pk','--run','2'),0,'');
+expect('pk picked selection',cmd('record-ci','pk','--run','6'),0,'');
+expect('picked tests without the syntax and table check are not ready',cmd('ready','pk'),1,'Syntax and table check missing for HEAD');
+expect('pk check',cmd('verify','pk','--check'),0,'ok');
+expect('picked tests and the local check make the task ready with no full run',cmd('ready','pk'),0,'"full": false');
+

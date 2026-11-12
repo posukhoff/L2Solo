@@ -1,14 +1,17 @@
 #!/bin/zsh
-# land <slug> <worktree> [--dry-run] : fast-forward the release's integration branch B (local + fork) to the worktree's
-# HEAD, then record-land. B = RC_BRANCH, else `lc get $RC_RELEASE branch`.
+# land <slug> <worktree> [--fixes-red] [--dry-run] : fast-forward the release's integration branch B (local + fork) to the
+# worktree's HEAD, record-land, then start the full PR checks of the new head. B = RC_BRANCH, else `lc get $RC_RELEASE branch`.
 # Refuses (exit 1) unless fork/B == local B, B is an ancestor of HEAD, ready taskReady is true,
-# and no AI co-author/session lines. Never forces, never touches origin. --dry-run: checks run, mutating commands are
+# and no AI co-author/session lines. A task proves only its own selection, so the full suite is the branch head's: the
+# landing is refused while the head's full run is missing, still going or red; --fixes-red lands the declared fix of a
+# red head (and nothing else does). The release base needs no run of its own. This holds for a branch an open or frozen
+# lc release integrates; a side branch (no release of its own yet) lands on the task's evidence alone and gets no full run. Never forces, never touches origin. --dry-run: checks run, mutating commands are
 # only printed (a failed check is shown as WOULD REFUSE and the commands are still printed).
 # Exit 0 landed (or dry-run all checks ok); 1 refused/failed; 2 usage.
 set -u
 source ${0:A:h}/.lib.zsh
-dry=0; a=(); for x in "$@"; do [[ $x == --dry-run ]] && dry=1 || a+=($x); done
-(( ${#a} == 2 )) || { echo 'usage: land <slug> <worktree> [--dry-run]'; exit 2; }
+dry=0; fixes=0; a=(); for x in "$@"; do case $x in --dry-run) dry=1;; --fixes-red) fixes=1;; *) a+=($x);; esac; done
+(( ${#a} == 2 )) || { echo 'usage: land <slug> <worktree> [--fixes-red] [--dry-run]'; exit 2; }
 slug=$a[1]; wt=$a[2]; B=$(integration_branch) || exit 2
 [[ -d $wt ]] || { echo "no worktree $wt"; exit 2; }
 G=(git -C $wt)
@@ -21,6 +24,21 @@ loc=$($G[@] rev-parse -q --verify refs/heads/$B) ; rem=$($G[@] rev-parse -q --ve
 $G[@] merge-base --is-ancestor $B $sha || no "$B is not an ancestor of HEAD (rebase first)"
 line=$(ready_line $slug $wt); [[ ${line%%|*} == true ]] || no "not ready: ${line%%|*} ${line#*|}"
 ai=$(ai_lines $wt $B..$sha); [[ -z $ai ]] || no "AI lines in commits: $(print -r -- $ai | head -2 | tr '\n' ' ')"
+# The head this task lands onto: its full run is green, or this landing is the declared fix of a red one.
+live=($(node $LC status --repo /Users/iposukhoff/L2Solo 2>/dev/null | awk '$2=="open"||$2=="frozen"{print $4}'))
+(( ${live[(Ie)$B]} )) && rel=1 || { rel=0; echo "side branch $B (no open or frozen release integrates it): no full run asked"; }
+if [[ -n $rem ]] && (( rel )); then
+  relbase=; [[ -n ${RC_RELEASE:-} ]] && relbase=$(node $LC get $RC_RELEASE base --repo /Users/iposukhoff/L2Solo 2>/dev/null)
+  fr=($(full_run $rem)); start="git push fork $rem:refs/heads/ci-${rem[1,9]} && gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-${rem[1,9]}"
+  case ${fr[1]} in
+    ERR) no "cannot read the CI state of the branch head ${rem[1,9]} (gh failed): try again";;
+    none) [[ $rem == $relbase ]] || no "the branch head ${rem[1,9]} has no full run: start it ($start), wait for it, then land";;
+    *) if [[ ${fr[2]} != completed ]]; then no "the full run ${fr[1]} of the branch head ${rem[1,9]} is still going: wait-ci ${fr[1]}, then land"
+       elif [[ ${fr[3]} == success ]]; then (( fixes )) && no "--fixes-red, but the branch head ${rem[1,9]} is green (run ${fr[1]})"
+       elif [[ ${fr[3]} == cancelled ]]; then no "the full run ${fr[1]} of the branch head ${rem[1,9]} was cancelled: start it again ($start)"
+       else (( fixes )) || no "the branch head ${rem[1,9]} is red (run ${fr[1]}): only its fix lands, with --fixes-red"; fi;;
+  esac
+fi
 if (( bad && ! dry )); then exit 1; fi
 (( bad )) && echo "dry-run: WOULD REFUSE (above); commands that would run if it did not:"
 run() { if (( dry )); then echo "DRY: $*"; else "$@"; fi }
@@ -29,9 +47,17 @@ run /Users/iposukhoff/L2Solo/.claude/gpush.sh fork $B || { echo "push failed"; e
 if (( dry )); then
   echo "DRY: git fetch fork; verify fork/$B == $sha"
   echo "DRY: node $W record-land $slug --remote fork --branch $B --root $wt"
+  (( rel )) && echo "DRY: start the full run of ${sha[1,9]} unless one exists (push ci-${sha[1,9]}, gh workflow run pr-checks.yml)"
   echo "DRY: would print ${loc[1,9]} -> ${sha[1,9]}"; exit $bad
 fi
 $G[@] fetch -q fork; now=$($G[@] rev-parse refs/remotes/fork/$B)
 [[ $now == $sha ]] || { echo "after push fork/$B = ${now[1,9]}, not ${sha[1,9]}"; exit 1; }
 node $W record-land $slug --remote fork --branch $B --root $wt || { echo "record-land failed"; exit 1; }
 echo "landed: ${loc[1,9]} -> ${sha[1,9]}"
+# The new head's full suite: started here so that every landing has one; the next landing reads its result.
+(( rel )) || exit 0
+s9=${sha[1,9]}; fr=($(full_run $sha))
+if [[ ${fr[1]} == <-> && ${fr[3]} != cancelled ]]; then echo "full run of the new head: ${fr[1]} (${fr[2]} ${fr[3]})"
+elif /Users/iposukhoff/L2Solo/.claude/gpush.sh fork $sha:refs/heads/ci-$s9 && gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-$s9; then
+  echo "full run of the new head started on ci-$s9: record it with ci-finish $slug $wt; the next landing waits for it"
+else echo "COULD NOT START the full run of $s9: git push fork $sha:refs/heads/ci-$s9 && gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-$s9 (the next landing is refused without it)"; fi
