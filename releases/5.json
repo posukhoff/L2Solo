@@ -15,7 +15,7 @@
  "gates": {},
  "steps": [
   {"key":"5.hot-travel-and","title":"Hot travel and activation as cold: WOR-7, town-2, town-3, threads-1","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"5.skill-reuse","title":"Skill reuse, MP cost, cast time, attack speed, raid forecast: CMB-1, CMB-2, N11, N12, combat-8","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"5.skill-reuse","title":"Skill reuse, MP cost, cast time, attack speed, raid forecast: CMB-1, CMB-2, N11, N12","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"5.exposure-to-aggressive","title":"Exposure to aggressive mobs: combat-3","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"5.death-wait-and","title":"Death wait and restart: combat-1 (decided 11-03)","P":"**high**","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"5.pvp-stay-flee","title":"PvP stay/flee/retreat, consumables: combat-4, combat-5","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
