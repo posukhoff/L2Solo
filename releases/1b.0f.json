@@ -14,7 +14,7 @@
  "openedAt": "2026-11-12T14:22:41.841Z",
  "steps": [
   {"key":"1b.0g6","title":"The hot town walk finds long detours (DT-360, critical)","P":"","S":"","who":"","needs":[],"st":"active","tasks":["dt360-town-detour"],"landed":null,"carried":[{"from":"1b.0g","reason":"maintainer 11-12 (M32): first what a player sees in a 30 min run","at":"2026-11-12T08:50:19.361Z"}]},
-  {"key":"1b.0f3","title":"No server exit from a kill reward throw (DT-306)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0f3","title":"No server exit from a kill reward throw (DT-306)","P":"","S":"","who":"","needs":[],"st":"active","tasks":["dt306-kill-boundary"],"landed":null},
   {"key":"1b.0f1","title":"A DoT tick takes at most HP-1 and is booked to its real source, hot and cold (CMB-35, CMB-39, CMB-41, CMB-37)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0f10","title":"Teardown ends a body's timers: cubics and the PvP flag end in Actor.destructor (CMB-40, DT-307)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0f11","title":"Small fixes: failures that show (DT-375, DT-300, DT-313)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
