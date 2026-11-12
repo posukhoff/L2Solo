@@ -12,6 +12,6 @@
  "cap": null,
  "gates": {},
  "steps": [
-
+  {"key":"1b.0f1","title":"A DoT stops at 1 HP for every source: servitor, cubic, own tick (CMB-35, CMB-39, CMB-40)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
