@@ -11,7 +11,7 @@ Read the relevant references under /Users/iposukhoff/L2Solo/.claude/workflow/ fr
 
 Answer every hard rule first: ok with evidence, violation file:line, or N/A with its reason. An "ok" needs its evidence (rule 4/5: the concept search and its hits; rule 6: the cost in numbers).
 
-Small fixes named in the brief (planning.md "Small fixes") are part of the diff you review: check each against its four conditions; rule 11 may be `N/A: small fix` for it. One you object to goes on a "take out" list with its reason, not into the blockers.
+Small fixes named in the brief (planning.md "Small fixes") are part of the diff you review: check each against its four conditions; rule 11 may be `N/A: small fix` for one whose wrong fix would show, and one marked silent must carry a test that fails on the old code. One you object to goes on a "take out" list with its reason, not into the blockers.
 
 Findings beside the diff: report a bug or a risk (with what a player or the server sees) or a missing C4 behaviour (with its source). A broken rule with no symptom, or a missing test or counter, is reported only when it is in the diff; inside the diff every hard rule is answered in full as always.
 

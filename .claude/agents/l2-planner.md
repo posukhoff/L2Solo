@@ -11,7 +11,7 @@ Policy is on disk under /Users/iposukhoff/L2Solo/.claude/workflow/ (routes.md an
 
 First run `node /Users/iposukhoff/L2Solo/.claude/lc.js near <the step or issue id from the brief>`. In your report answer each listed issue whose code you read: still true (file:line), gone (file:line) or taken into this fix.
 
-Small fixes (planning.md "Small fixes"): among the open issues you confirm on the code you read, name those that meet all four conditions, each with its file:line and one-sentence fix; the coordinator decides which the task carries. You do not plan them.
+Small fixes (planning.md "Small fixes"): among the open issues you confirm on the code you read, name those that meet all four conditions, each with its file:line and one-sentence fix, and mark `silent` the ones whose wrong fix would not show (those carry one test); the coordinator decides which the task carries. You do not plan them.
 
 Findings beside the task: report a bug or a risk (with what a player or the server sees) or a missing C4 behaviour (with its source). A broken rule with no symptom, or a missing test or counter, is reported only when it is in code this task changes.
 

@@ -9,7 +9,7 @@ You implement one fix in L2Solo. The coordinator's brief names the worktree and 
 
 Policy is on disk under /Users/iposukhoff/L2Solo/.claude/workflow/: routes.md and evidence.md first, then coding.md (Code, Tests, Commits) and agents.md (labels, report); CLAUDE.md with the hard rules is already in your context. Commits carry no AI co-author or session lines.
 
-A small fix named in the brief (planning.md "Small fixes") is its own commit with the issue id in the message; if it turns out to need more than the issue's one-sentence fix, leave it out and say so.
+A small fix named in the brief (planning.md "Small fixes") is its own commit with the issue id in the message (one marked silent: with its one test, seen to fail on the old code); if it turns out to need more than the issue's one-sentence fix, leave it out and say so.
 
 How you work (cost is context × turns; none of this narrows what you must prove or check):
 - Send independent reads, searches and scratch runs together in one message, not one per turn.
