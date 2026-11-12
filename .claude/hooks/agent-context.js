@@ -5,14 +5,16 @@
 // The main session is not touched (no agent id in the hook input): its context is the maintainer's and compaction's.
 // How: the agent's own transcript is <session transcript without .jsonl>/subagents/agent-<agent_id>.jsonl; the usage of
 // its last answer is the context it now pays for. Past WARN the first call is denied once with the hand-off order and the
-// agent may finish its step; past STOP only Write, Edit and the hand-back pass, so it can write the hand-off and must return.
+// agent may finish its step; past STOP only Write, Edit, reading or stopping its own background command and the hand-back
+// pass, so it can write the hand-off and must return.
 // A fork starts with its parent's whole context by design and is not limited. The transcript lags by a turn at most.
 // L2SOLO_AGENT_CONTEXT=off disables it; a missing or unreadable transcript never blocks a call.
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const WARN = 200000, STOP = 240000;
 const order = (ctx, hard) => `Context ${Math.round(ctx / 1000)}k tokens: every further turn costs about twice a fresh agent's. `
-    + (hard ? 'Only Write, Edit and your return work now. ' : 'This call was refused once; you may finish the step you are in (a few calls), then stop. ')
-    + 'Hand over: write to the file your brief names for your result (or return it as your final message if it names none) '
+    + (hard ? 'Only Write, Edit, reading or stopping a background command of yours, and your return work now. ' : 'This call was refused once; you may finish the step you are in (a few calls), then stop. ')
+    + 'If a command of yours still runs in the background, read its result or stop it first: nobody else will see it. '
+    + 'Hand over: write to the file your brief names for your result (if it names none or you have no Write tool, return it as your final message) '
     + 'what is established with its handles (file:line, test, run), what is done and committed, what is half-done and in which files, '
     + 'and the next three steps you would take. Leave no uncommitted edit unexplained. Then return; the coordinator starts a fresh agent on your hand-over.';
 let raw = '';
@@ -35,7 +37,7 @@ process.stdin.on('data', c => raw += c).on('end', () => {
         }
         if (ctx < WARN) return;
         const hard = ctx >= STOP, mark = path.join(os.tmpdir(), `l2solo-agent-context-${id}`);
-        if (hard ? /^(Write|Edit|SubagentHandback|SendMessage)$/.test(h.tool_name) : fs.existsSync(mark)) return;
+        if (hard ? /^(Write|Edit|SubagentHandback|SendMessage|BashOutput|KillShell|TaskOutput|TaskStop)$/.test(h.tool_name) : fs.existsSync(mark)) return;
         if (!hard) fs.writeFileSync(mark, String(ctx));
         console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: order(ctx, hard) } }));
     } catch (_) { /* a hook fault must not stop an agent */ }
