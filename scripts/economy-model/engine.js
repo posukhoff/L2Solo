@@ -23,6 +23,11 @@
 //                 or dropped by null). Today's mode gives a fitted periodic
 //                 rule, the design mode the situations that send a bot to town.
 //   report        every simulated hour: counters only, never a decision.
+// In the design mode (simulate's design: design.js) the run also holds the
+// account plane: crafter twins seated in towns, woken by account_wake (a line
+// filled, its main's arrival) and batch_done (a craft batch's MP deadline);
+// mains hunt at the design's yields and, without shots of their grade, at
+// the hour without shots, and their visits are the design's.
 //
 // hunt and visit are pure: they take a main and the view and return the new
 // main with the flows it caused; the engine commits both. Rolls are seeded per
@@ -60,7 +65,7 @@ function viewOf(snapshot, options = {}) {
         hours: snapshot.hours, kits: snapshot.kits, yields: snapshot.yields, items: snapshot.items, exp: snapshot.exp,
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(),
-        spotHours: snapshot.spotHours?.rows || null
+        spotHours: snapshot.spotHours?.rows || null, yieldsDesign: snapshot.yieldsDesign || null
     };
 }
 
@@ -164,6 +169,63 @@ function hunt(main, view, huntHours, random) {
     const shotId = shotOf(view, main, hour), wanted = Math.round(best.shots * huntHours), held = main.shots[shotId] || 0;
     delta.shotsWanted = wanted;
     delta.shotsUsed = Math.min(held, wanted);
+    const shots = delta.shotsUsed ? { ...main.shots, [shotId]: held - delta.shotsUsed } : main.shots;
+    const exp = main.exp + delta.exp;
+    return { main: { ...main, exp, level: levelOf(view, exp, main.level), money: main.money + flows.huntCold, bag, shots }, delta };
+}
+
+// The design's adena per kill over today's at a spot row's spawn mix (1
+// where today's yields carry no adena).
+function designAdenaFactor(view, row, level) {
+    const key = `${row.spotId}@${level}`, today = view.yields[key]?.drop?.[ADENA] || 0, design = view.yieldsDesign?.[key]?.drop?.[ADENA] || 0;
+    return today > 0 ? design / today : 1;
+}
+
+// [[item, per kill]] at the design's yields for a spot row (or its hour
+// without shots), at the row's own kill-mix correction.
+function designYieldRows(view, line, level, row, bare) {
+    const key = `design@${line}@${level}@${row.spotId}@${bare ? 'bare' : 'shots'}`;
+    if (view.yieldRows.has(key)) return view.yieldRows.get(key);
+    const yields = view.yieldsDesign?.[`${row.spotId}@${level}`], factor = killMixCorrection(view, row, level), rows = [];
+    for (const kind of yields ? ['drop', 'spoil'] : []) {
+        for (const [id, perKill] of Object.entries(yields[kind])) if (Number(id) !== ADENA) rows.push([Number(id), perKill * factor[kind]]);
+    }
+    view.yieldRows.set(key, rows);
+    return rows;
+}
+
+// Hunting in the design mode: the design's adena and items (rules/dropRule at
+// the preset's design rates) at the row's kills and kill mix; the shots the
+// main holds of its grade last shotsHeld / shots per hour, and past them it
+// hunts at the same spot's hour without shots (fewer kills, less exp and
+// loot) until it restocks. delta as hunt's, with shotsGrade and huntBare.
+function huntDesign(main, view, huntHours, random) {
+    const hour = hourOf(view, main), best = spotRowOf(view, main), flows = emptyFlows();
+    const delta = { flows, exp: 0, drops: [], shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0, shotId: 0, huntBare: 0 };
+    if (!best || !(huntHours > 0)) { delta.noSpot = best ? 0 : 1; return { main, delta }; }
+    delta.huntHours = huntHours;
+    delta.ownSpot = best === ownRow(view, main.line, main.level, main.spot);
+    const shotId = shotOf(view, main, hour), held = main.shots[shotId] || 0, perHour = best.shots || 0;
+    const shotHours = perHour > 0 ? Math.min(huntHours, held / perHour) : huntHours;
+    const bare = best.shotless ? { ...best, ...best.shotless } : best, adenaFactor = designAdenaFactor(view, best, main.level);
+    const bag = { ...main.bag }, counts = new Map();
+    for (const [row, hours, isBare] of [[best, shotHours, false], [bare, huntHours - shotHours, true]]) {
+        if (!(hours > 0)) continue;
+        flows.huntCold += row.adena * adenaFactor * hours;
+        delta.exp += row.exp * hours;
+        for (const [id, perKill] of designYieldRows(view, main.line, main.level, row, isBare)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * hours);
+    }
+    flows.huntCold = Math.round(flows.huntCold);
+    for (const [id, mean] of counts) {
+        const count = wholeCount(mean, random);
+        if (!count) continue;
+        bag[id] = (bag[id] || 0) + count;
+        delta.drops.push([id, count]);
+    }
+    delta.shotId = shotId;
+    delta.shotsWanted = Math.round(perHour * huntHours);
+    delta.shotsUsed = Math.min(held, delta.shotsWanted);
+    delta.huntBare = huntHours - shotHours;
     const shots = delta.shotsUsed ? { ...main.shots, [shotId]: held - delta.shotsUsed } : main.shots;
     const exp = main.exp + delta.exp;
     return { main: { ...main, exp, level: levelOf(view, exp, main.level), money: main.money + flows.huntCold, bag, shots }, delta };
@@ -337,13 +399,17 @@ function heap() {
 //   huntShare the band's share of wall time spent hunting
 // The snapshot has no bag capacity or carry weight (items carry a weight, the
 // class carry limit is not read), so a rule on "the bag is full" has no number yet.
+// design: null (today's and the plain mode) or the design mode's plane
+// (design.js plane()): its start({ view, mains, ledger, push, seed, rateOf })
+// returns the hooks the run calls (hunt, visit, levelUp, event, hour, finish).
 // Returns the model ledger.
-function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, onProgress = null, inputs = {} }) {
+function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, onProgress = null, inputs = {}, design = null }) {
     if (typeof nextArrival !== 'function') throw new Error('simulate needs nextArrival(main, view)');
     const rateOf = band => rates[band] || rates.default;
     const mains = accounts.map((account, index) => mainOf(account, index, view, bands));
-    const ledger = Ledger.create({ bands, mains, view });
+    const ledger = Ledger.create({ bands, mains, view, extraSinks: design ? design.sinks : [] });
     const queue = heap();
+    const plane = design ? design.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf }) : null;
     const randomFor = main => mulberry(hash(`${seed}:${main.id}:${main.counter}`));
     let events = 0;
 
@@ -367,8 +433,9 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // Hunting from the main's last situation to now, committed.
     const huntTo = (main, now) => {
         const share = rateOf(main.band).huntShare;
-        const { main: next, delta } = hunt({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main));
+        const { main: next, delta } = (plane ? huntDesign : hunt)({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main));
         Ledger.recordHunt(ledger, next, delta);
+        if (plane) plane.hunt(next, delta, now);
         return next;
     };
 
@@ -385,8 +452,12 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         if (event.at > hours) break;
         events++;
         if (event.kind === 'report') {
-            Ledger.recordHour(ledger, mains, event.at);
+            Ledger.recordHour(ledger, mains, event.at, plane ? plane.hour(event.at) : 0);
             if (onProgress && event.at % 10 === 0) onProgress({ hour: event.at, hours, events, seconds: (Date.now() - startedAt) / 1000 });
+            continue;
+        }
+        if (event.kind === 'account_wake' || event.kind === 'batch_done') {
+            plane.event(event);
             continue;
         }
         if (event.kind === 'arrived_town') {
@@ -398,13 +469,14 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             const band = bandOf(bands, main.level), spot = ownRow(view, main.line, main.level, main.spot) ? main.spot : null;
             if (main.spot && !spot) ledger.counters.leftOwnSpot++;
             main = { ...main, band, spot };
+            if (plane) plane.levelUp(main, event.at);
             scheduleLevel(main, event.at);
             mains[event.who] = main;
             reschedule(main, event.at, 'level_up');
         } else {
             // The restock covers an outing as long as the one just ended.
             const outingHours = (event.at - main.lastVisit) * rateOf(main.band).huntShare;
-            const { main: after, delta } = visit(main, view, { outingHours });
+            const { main: after, delta } = plane ? plane.visit(main, event.at, { outingHours }) : visit(main, view, { outingHours });
             Ledger.recordVisit(ledger, after, delta);
             main = { ...after, lastVisit: event.at };
             mains[event.who] = main;
@@ -412,7 +484,10 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         }
     }
     for (let i = 0; i < mains.length; i++) if (!mains[i].station) mains[i] = huntTo(mains[i], hours);
-    return Ledger.build(ledger, { mains, hours, events, inputs, view });
+    if (!plane) return Ledger.build(ledger, { mains, hours, events, inputs, view });
+    const report = plane.finish(hours, mains);
+    return { ...Ledger.build(ledger, { mains, hours, events, inputs, view, held: report.money }), design: report.design };
 }
 
-module.exports = { viewOf, hunt, visit, errands, sellerOf, mainOf, simulate, levelOf, bandOf, wholeCount, heap, spotRowOf, killMixCorrection, SHOT_LINE_HOURS };
+module.exports = { viewOf, hunt, huntDesign, visit, errands, sellerOf, mainOf, simulate, levelOf, bandOf, wholeCount, heap, spotRowOf, hourOf, shotOf,
+    killMixCorrection, designAdenaFactor, designYieldRows, isGear, isWeapon, expAt, SHOT_LINE_HOURS };

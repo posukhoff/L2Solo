@@ -25,13 +25,14 @@ const round = (value, digits = 1) => {
 };
 const ratio = (value, base) => (base ? value / base : 0);
 
-function create({ bands, mains, view }) {
-    const bandNames = [...bands.map(([name]) => name), STATION];
-    const byBand = Object.fromEntries(bandNames.map(name => [name, { flows: Object.fromEntries([...FAUCETS, ...SINKS].map(kind => [kind, 0])) }]));
+// extraSinks: the design mode's own sinks (warehouse fees); today's ledger has none.
+function create({ bands, mains, view, extraSinks = [] }) {
+    const bandNames = [...bands.map(([name]) => name), STATION], sinks = [...SINKS, ...extraSinks];
+    const byBand = Object.fromEntries(bandNames.map(name => [name, { flows: Object.fromEntries([...FAUCETS, ...sinks].map(kind => [kind, 0])) }]));
     return {
-        bands, view, byBand,
+        bands, view, byBand, sinks,
         start: mains.map(main => ({ band: main.band, money: main.money, exp: main.exp, level: main.level })),
-        totals: Object.fromEntries([...FAUCETS, ...SINKS].map(kind => [kind, 0])),
+        totals: Object.fromEntries([...FAUCETS, ...sinks].map(kind => [kind, 0])),
         shots: { used: 0, wanted: 0, boughtNpc: 0, boughtFixed: 0, soldNpc: 0 },
         gear: { toNpcUnits: 0, boughtNpcUnits: 0 },
         recipes: {},
@@ -54,6 +55,11 @@ function addFlows(ledger, index, flows) {
         ledger.totals[kind] += adena;
         band[kind] += adena;
     }
+}
+
+// Flows of an account's twin (its NPC purchases, fares, warehouse fees), under its main's start band.
+function recordFlows(ledger, index, flows) {
+    addFlows(ledger, index, flows);
 }
 
 function recordHunt(ledger, main, delta) {
@@ -95,10 +101,11 @@ function recordVisit(ledger, main, delta) {
 }
 
 // The hourly report: the money stock, the flows so far and the mains per
-// current stage band. Counters only.
-function recordHour(ledger, mains, hour) {
+// current stage band. Counters only. held: money the mains do not hold (the
+// design mode's twins).
+function recordHour(ledger, mains, hour, held = 0) {
     const bands = {};
-    let money = 0;
+    let money = held;
     for (const main of mains) {
         money += main.money;
         bands[main.band] = (bands[main.band] || 0) + 1;
@@ -106,13 +113,14 @@ function recordHour(ledger, mains, hour) {
     ledger.hourly.push({ hour, money, totals: { ...ledger.totals }, bands });
 }
 
-function build(ledger, { mains, hours, events, inputs }) {
+// held: { start, end } money the mains do not hold (the design mode's twins).
+function build(ledger, { mains, hours, events, inputs, held = { start: 0, end: 0 } }) {
     const botHours = mains.length * hours;
     const totals = ledger.totals;
     const faucets = FAUCETS.reduce((sum, kind) => sum + totals[kind], 0);
-    const sinks = SINKS.reduce((sum, kind) => sum + totals[kind], 0);
-    const stockStart = ledger.start.reduce((sum, row) => sum + row.money, 0);
-    const stockEnd = mains.reduce((sum, main) => sum + main.money, 0);
+    const sinks = ledger.sinks.reduce((sum, kind) => sum + totals[kind], 0);
+    const stockStart = ledger.start.reduce((sum, row) => sum + row.money, held.start);
+    const stockEnd = mains.reduce((sum, main) => sum + main.money, held.end);
     const groups = {};
     for (const main of mains) {
         const start = ledger.start[main.index], group = groups[start.band] ||= { bots: 0, moneyStart: 0, moneyEnd: 0, exp: 0, levelUps: 0, entries: 0, exits: 0 };
@@ -178,4 +186,4 @@ function build(ledger, { mains, hours, events, inputs }) {
     };
 }
 
-module.exports = { SCHEMA, STATION, FAUCETS, SINKS, create, recordHunt, recordVisit, recordHour, build };
+module.exports = { SCHEMA, STATION, FAUCETS, SINKS, create, recordFlows, recordHunt, recordVisit, recordHour, build };

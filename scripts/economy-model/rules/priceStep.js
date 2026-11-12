@@ -42,7 +42,7 @@ function startPrice(side, { floor, cap, rival = null, known = null, first = null
 }
 
 // line: { side: 'sell' | 'buy', start, atBound } or { side } before its first
-// look (look 0 lists it). view: { look, floor (the seller's; a buyer's view
+// look (look 0 lists it at its start price; a line given a start keeps it). view: { look, floor (the seller's; a buyer's view
 // may carry it too), cap and capBy (the buyer's, bounds.cap; a seller's view
 // may carry the cap too), rival, known, first (look 0), persona
 // { looksToFloor >= 1, buyerStart }, roll in [0, 1) }. Prices are whole
@@ -58,7 +58,7 @@ function priceStep(line, view) {
     if (Math.ceil(floor) > Math.floor(cap)) return { side, start: null, look, price: null, bound: null, atBound: 0, close: null, noMarket: true };
     if (side === 'sell' && !(Number(view.persona?.looksToFloor) >= 1)) throw new Error(`looksToFloor ${view.persona?.looksToFloor} is under 1`);
     if (side === 'buy' && cap === Infinity) throw new Error('a buyer needs its cap');
-    const start = look === 0 || !finite(line.start) ? startPrice(side, { ...view, floor, cap }) : Number(line.start);
+    const start = finite(line.start) ? Number(line.start) : startPrice(side, { ...view, floor, cap });
     let price, bound;
     if (side === 'sell') {
         const share = Math.min(1, look / view.persona.looksToFloor);

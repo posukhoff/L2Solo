@@ -23,6 +23,8 @@ const Weights = require('./weights');
 const STATION_ACCOUNT_PREFIX = 'bot_craft_';
 const MERCHANT_ACTIVITY = 'merchant';
 const ADENA = 57;
+// The seeder's starting adena per level (GeneratedColdSeeder: level x 85).
+const SEEDER_ADENA_PER_LEVEL = 85;
 
 // class -> the lines whose kit passes through it at some level.
 function linesByClass(snapshot) {
@@ -117,4 +119,30 @@ function synthetic({ count, low, high, seed = 1 }, snapshot) {
     return { accounts, source: `synthetic ${count} accounts, levels ${low}-${high}, class weights`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 
-module.exports = { fromSave, savedBots, synthetic, lineOf, linesByClass, STATION_ACCOUNT_PREFIX, MERCHANT_ACTIVITY };
+// A new world's start level of the bot at an index: copies the unexported
+// level rule of GeneratedColdSeeder.profileForIndex (index % 20: 2-3 for two
+// in twenty, 4-8 for nine, 8-12 for seven, 13-16 for two).
+function seederLevel(index) {
+    const roll = index % 20;
+    if (roll < 2) return 2 + (index % 2);
+    if (roll < 11) return 4 + (index % 5);
+    if (roll < 18) return 8 + (index % 5);
+    return 13 + (index % 4);
+}
+
+// A fresh world: count accounts at the seeder's start levels, lines by the
+// class weights, each kitted for its level, with the seeder's level x 85 adena and no shots.
+function fresh({ count, seed = 1 }, snapshot) {
+    const random = mulberry(hash(`fresh:${seed}`));
+    const lines = Object.keys(snapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0);
+    const accounts = [];
+    for (let i = 0; i < count; i++) {
+        const line = weightedPick(lines, random), level = seederLevel(i), kit = snapshot.kits[line]?.[level] || [];
+        accounts.push({ id: i + 1, station: false, classId: snapshot.hours[line][level]?.classId ?? Number(line), line, level,
+            exp: snapshot.exp[level - 1], money: level * SEEDER_ADENA_PER_LEVEL, spot: null, shots: {}, held: kit.map(piece => piece.selfId),
+            worn: Object.fromEntries(kit.map(piece => [piece.slot, piece.selfId])) });
+    }
+    return { accounts, source: `fresh ${count} accounts at the seeder's levels, class weights`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
+}
+
+module.exports = { fromSave, savedBots, synthetic, fresh, seederLevel, lineOf, linesByClass, STATION_ACCOUNT_PREFIX, MERCHANT_ACTIVITY };

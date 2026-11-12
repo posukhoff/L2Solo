@@ -65,4 +65,25 @@ assert.ok(Object.values(snapshot.yields[key].drop).reduce((a, b) => a + b, 0)
 assert.deepEqual(snapshot.npcOffers.x1[1785], x1.npcOffers.preset[1785], 'NPC offers at x1 in every snapshot');
 assert.ok(snapshot.npcOffers.preset[1785][0].price > 2 * x1.npcOffers.preset[1785][0].price, 'and today\'s x50 NPC prices scaled up');
 
+// The design mode's additions, each the owner's own number: the hour without
+// shots, a twin's max MP and store slots, a line's race, the crystal ids and
+// the per-kill yields at the design's rates.
+Boot.usePreset('x50');
+const bare = Table.value(String(hour.best.spotId), line, level, false);
+for (const field of Inputs.SHOTLESS_FIELDS) assert.equal(hour.best.shotless[field], bare[field], `shotless ${field}`);
+assert.ok(hour.best.shotless.kills < hour.best.kills, 'fewer kills without shots');
+const Profile = invoke('GameServer/Bot/Population/ColdCombatProfile');
+assert.equal(snapshot.twins[30].maxMp, Profile.profileFor({ level: 30, stats: { classId: 56 } }, 0).maxMp, 'an Artisan at 30');
+assert.equal(snapshot.twins[55].classId, 57, 'a Warsmith from 40');
+assert.deepEqual(snapshot.twins[30].storeSlots, { sell: 4, buy: 5 }, 'a dwarf\'s store slots');
+assert.equal(snapshot.twins[10].createItem, 1, 'twins below 20 are read too');
+assert.equal(snapshot.races['55'], 4, 'a Bounty Hunter is a dwarf');
+assert.equal(snapshot.crystalIds.D, 1458);
+const DesignIncome = require('../scripts/economy-model/design-income');
+const { DESIGN_RATES } = require('../scripts/economy-model/rules/dropRule');
+const designKey = keys[0], designRow = snapshot.yields[designKey];
+assert.deepEqual(snapshot.yieldsDesign[designKey], DesignIncome.designYields(snapshot, designRow.spotId, designRow.level, designRow.spoilSkill, DESIGN_RATES.x50, DesignIncome.gameRules()),
+    'the design yields are the drop rule at the design\'s x50 rates');
+assert.ok(snapshot.yieldsDesign[designKey].drop[57] < snapshot.yields[designKey].drop[57], 'design adena at 25 under today\'s 50');
+
 console.log('PASS economy model inputs snapshot');

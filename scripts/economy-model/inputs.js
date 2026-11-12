@@ -6,7 +6,11 @@
 // table's hours (SpotValueTable), the drop and spoil rule (itemDropYield over
 // ProgressionRates), recipes (C4RecipeItems), kits (BotGear), NPC shops
 // (NpcShopBuyLists), today's static stores (MerchantStoreConfigs), seated MP
-// and craft skills (ColdRest, CraftEligibility).
+// and craft skills (ColdRest, CraftEligibility), a twin's max MP
+// (ColdCombatProfile) and store slots (PrivateStoreLimits), the hour without
+// shots (SpotValueTable.value with shots off), each line's race (class
+// templates) and the design's per-kill yields (rules/dropRule at the
+// design's rates of the preset).
 //
 //   node scripts/economy-model/inputs.js [--preset x1,x10,x50] [--out <dir>] [--spots <save.sqlite>]
 //
@@ -27,11 +31,17 @@ const path = require('path');
 const Boot = require('./boot');
 const Capacity = require('./capacity');
 const Cohort = require('./cohort');
+const DesignIncome = require('./design-income');
+const { DESIGN_RATES } = require('./rules/dropRule');
 const common = require('../hunt-tables/common');
 
 const SCHEMA = 1;
 const LEVELS = Object.freeze([1, common.MAX_LEVEL]);
-const TWIN_LEVELS = Object.freeze([20, common.MAX_LEVEL]);
+const TWIN_LEVELS = Object.freeze([1, common.MAX_LEVEL]);
+// Private store types (PrivateStoreLimits.tradeLimit) and Expand Trade, the skill that adds slots.
+const STORE_SELL = 1, STORE_BUY = 3, EXPAND_TRADE = 1370, DWARF = 4;
+// The fields of an hour without shots (SpotValueTable.value(spot, line, level, false)).
+const SHOTLESS_FIELDS = Object.freeze(['kills', 'exp', 'adena', 'dropLoot', 'spoilLoot', 'loot']);
 const TOP_SPOTS = 3;
 // Spot hours of a save's bot at its level and this many levels above it: a
 // bot of the real runs gains at most 10 levels in a 25-minute window.
@@ -45,7 +55,8 @@ const NOTES = Object.freeze([
     'best (SpotValueTable.best) and top[0] (rankedIncome) are two owners and differ on some line-levels: read best for the income of the hour, top for the candidates a bot ranks.',
     'Per-kill item yields (yields) are taken at the spot\'s spawn mix; the hour\'s income (best, top) uses the kill mix the spot table measured for the line.',
     'spotHours (with --spots): spotHours.rows[line][level][spotId] is the spot table\'s hour at the spot a save\'s bot stood at, for the line the model draws for it, null where that line may fight nothing there.',
-    'rates are today\'s presets as the game applies them, not the design\'s per-kind rates.'
+    'rates are today\'s presets as the game applies them, not the design\'s per-kind rates; yieldsDesign holds the per-kill yields at the design\'s rates of the preset (rules/dropRule), at the same spawn mix and Spoil level as yields.',
+    'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off).'
 ]);
 
 function readJson(relative) {
@@ -68,6 +79,14 @@ function gitRevision() {
 function hourRow(row) {
     const out = {};
     for (const field of HOUR_FIELDS) out[field] = row[field];
+    return out;
+}
+
+// An hour row with the same spot's hour without shots beside it (null where
+// the line fights nothing there without shots).
+function hourRowWithShotless(row, line, level, Table) {
+    const out = hourRow(row), bare = Table.value(String(row.spotId), String(line), level, false);
+    out.shotless = bare && bare.kills > 0 ? Object.fromEntries(SHOTLESS_FIELDS.map(field => [field, bare[field]])) : null;
     return out;
 }
 
@@ -144,7 +163,9 @@ function gameOwners() {
         Shops: invoke('GameServer/World/Generics/NpcShopBuyLists'),
         Stores: invoke('GameServer/Bot/MerchantStoreConfigs'),
         BotGear: invoke('GameServer/Bot/AI/BotGear'),
-        HuntCycle: invoke('GameServer/Bot/AI/HuntCycle')
+        HuntCycle: invoke('GameServer/Bot/AI/HuntCycle'),
+        Profile: invoke('GameServer/Bot/Population/ColdCombatProfile'),
+        StoreLimits: require('../../src/GameServer/PrivateStoreLimits')
     };
 }
 
@@ -174,7 +195,7 @@ function staticInputs(owners, spots) {
         luxury[row[0]] = { npcId: row[luxuryAt][0], crystals: row[luxuryAt][1].map(([selfId, amount]) => ({ selfId, amount })) };
     }
     const world = Capacity.gameWorld(), twins = {};
-    for (let level = TWIN_LEVELS[0]; level <= TWIN_LEVELS[1]; level++) twins[level] = world.twin(level);
+    for (let level = TWIN_LEVELS[0]; level <= TWIN_LEVELS[1]; level++) twins[level] = twinRow(world.twin(level), level, owners);
     // Reward groups by reward id and each spot's NPCs: the drop rule's inputs.
     const rewards = {}, compositions = {};
     for (const [id, spot] of spots) {
@@ -184,7 +205,25 @@ function staticInputs(owners, spots) {
         for (const entry of entries) if (entry.reward) rewards[entry.reward.selfId] ||= { rewards: entry.reward.rewards || [], spoils: entry.reward.spoils || [] };
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
-    return { recipes, stores, luxury, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies() };
+    return { recipes, stores, luxury, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
+        races: lineRaces(Data), crystalIds: { ...owners.Enchant.CRYSTAL_IDS } };
+}
+
+// A crafter twin at a level: its seated MP per hour, Create Item level and
+// crystallize grade (Capacity.gameWorld().twin), its max MP (the cold combat
+// profile of its class, bare) and its private store slots (a dwarf, at its
+// Expand Trade level from its class's skill tree).
+function twinRow(twin, level, owners) {
+    const state = { level, stats: { classId: twin.classId } };
+    const expand = owners.Profile.skillsFor(state, twin.classId, level).find(skill => Number(skill.selfId) === EXPAND_TRADE)?.level || 0;
+    return { ...twin, maxMp: owners.Profile.profileFor(state, 0).maxMp,
+        storeSlots: { sell: owners.StoreLimits.tradeLimit(DWARF, expand, STORE_SELL), buy: owners.StoreLimits.tradeLimit(DWARF, expand, STORE_BUY) } };
+}
+
+// The race of every class (its template's race: 0 human, 1 elf, 2 dark elf,
+// 3 orc, 4 dwarf), by class id; a line's race is its final class's.
+function lineRaces(Data) {
+    return Object.fromEntries(Data.classTemplates.map(row => [String(row.classId), Number(row.template?.race)]));
 }
 
 // The shot of each kind by weapon grade (ShotStock's tables, by rank none, d,
@@ -240,7 +279,7 @@ function spotHours(save, hours, levels, owners, pairs) {
             const at = ((rows[line] ||= {})[level] ||= {});
             if (at[spotId] !== undefined) continue;
             const row = Table.value(spotId, line, level, true);
-            at[spotId] = row && row.kills > 0 ? hourRow({ ...row, spotId }) : null;
+            at[spotId] = row && row.kills > 0 ? hourRowWithShotless({ ...row, spotId }, line, level, Table) : null;
             if (!at[spotId]) continue;
             const key = `${spotId}@${level}`, held = pairs.get(key), skill = Table.roleSpoilLevel(line, level);
             pairs.set(key, { spotId, level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
@@ -264,7 +303,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
             const kit = owners.BotGear.planFor({ classId, level, characterId: owners.HuntCycle.referenceId(classId, Number(line)) }).items;
             kits[line][level] = kit.map(({ selfId, slot }) => ({ selfId: Number(selfId), slot: Number(slot) }));
             hours[line][level] = { classId, shotId: Capacity.referenceShot(classId, level, line),
-                best: best && hourRow(best), top: top.map(hourRow) };
+                best: best && hourRowWithShotless(best, line, level, Table), top: top.map(hourRow) };
             const skill = Table.roleSpoilLevel(line, level);
             for (const row of [best, ...top]) if (row) {
                 const key = `${row.spotId}@${level}`, held = pairs.get(key);
@@ -273,11 +312,13 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
         }
     }
     const spotRows = save ? spotHours(save, hours, levels, owners, pairs) : null;
-    const yields = {};
+    const yields = {}, yieldsDesign = {}, game = DesignIncome.gameRules();
     for (const [key, { spotId, level, spoilSkill }] of pairs) {
         const spot = spots.get(spotId);
         if (!spot) continue;
         yields[key] = { spotId, level, town: spot.town, spoilSkill, ...spotYields(composition(spot, owners), level, spoilSkill, owners) };
+        const design = DesignIncome.designYields(fixed, spotId, level, spoilSkill, DESIGN_RATES[preset], game);
+        if (design) yieldsDesign[key] = design;
     }
     const offers = npcOffers(owners);
     const ids = new Set();
@@ -302,7 +343,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const { quests, ...kept } = fixed;
     return {
         header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES },
-        hours, kits, yields, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}),
+        hours, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}),
         sources: rawSources(owners, ids)
     };
 }
@@ -361,4 +402,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { extract, spotHours, rewardSpots, spotYields, composition, HOUR_FIELDS, SCHEMA, SPOT_LEVELS_AHEAD };
+module.exports = { extract, spotHours, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, SCHEMA, SPOT_LEVELS_AHEAD };

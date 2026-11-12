@@ -219,4 +219,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { designHour, gameRules, loadSnapshot, walkBackHours, fmt, BANDS };
+module.exports = { designHour, designYields, gameRules, loadSnapshot, walkBackHours, fmt, BANDS };

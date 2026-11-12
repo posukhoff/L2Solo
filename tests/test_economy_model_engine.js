@@ -43,6 +43,13 @@ const accounts = [
 ];
 const run = (seed, hours = 3) => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours, seed, nextArrival: hourly });
 
+// The design mode leaves the plain and today's ledger as they were: this
+// fixture's 40-hour ledger hashes to the value recorded before the design
+// mode existed.
+const crypto = require('node:crypto');
+assert.equal(crypto.createHash('sha256').update(JSON.stringify(run(3, 40))).digest('hex'), 'c8d5027d85bfd9ee63c979f9d53871285ec8f9731abfaa2bb1c4dee1d14f5888',
+    'the ledger without the design mode is unchanged');
+
 // The same seed gives the same ledger; another seed rolls other drops.
 const first = run(7);
 assert.deepEqual(run(7), first, 'a run is a function of its seed');

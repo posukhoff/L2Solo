@@ -4,12 +4,18 @@
 //
 //   node scripts/economy-model/run.js [--preset x50] [--snapshot <file>] [--hours 100] [--seed 1]
 //       [--cohort <economy ledger JSON>: its start save's accounts | --accounts 1700 --levels 20-39]
-//       [--mode plain|today] [--fit <economy ledger JSON>] [--hunt-share 1] [--visits 2] [--json <out file>]
+//       [--mode plain|today|design] [--fit <economy ledger JSON>] [--hunt-share 1] [--visits 2] [--json <out file>]
+//       [--start late|fresh] [--design '{"field": value}'] [--fit-preset x50: the preset of the --fit run] (design mode)
 //
 // plain: NPC trade only, one hunting share and visit rate for every band.
 // today: today's fixed stores and NPC prices (today.js), the hunting share
 // and visits per band fitted on --fit (default: the --cohort ledger).
-// Both come to town at today's periodic arrivals (Today.nextArrival).
+// design: the economy design's account plane (design.js): crafter twins,
+// the workshop, own lines, the town books and the stock side of a main's
+// visit, NPC prices at x1 and the design's rates; --start late is the
+// --cohort ledger's start save, fresh the seeder's start levels (--accounts,
+// default 1700); the hunting share and arrivals are fitted on --fit as in today mode.
+// All come to town at today's periodic arrivals (Today.nextArrival).
 //
 // Prints per stage band (by start level) the faucets and sinks per bot-hour,
 // the money stock, the bands over the hours, town visits and the run's
@@ -20,6 +26,8 @@ const Boot = require('./boot');
 const Cohort = require('./cohort');
 const Engine = require('./engine');
 const Today = require('./today');
+const Design = require('./design');
+const { levelForGrade } = require('../../src/GameServer/Bot/AI/GearGradeRule');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
 const { STAGE_BANDS } = require('../economy/ledger-rules');
 
@@ -105,7 +113,7 @@ function modeOf(argv, snapshot, cohort) {
         return { view: Engine.viewOf(snapshot),
             rates: { default: { huntShare: Number(Boot.option(argv, 'hunt-share', 1)), visitsPerBotHour: Number(Boot.option(argv, 'visits', 2)) } } };
     }
-    if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain or today)`);
+    if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
     const fitFile = Boot.option(argv, 'fit', Boot.option(argv, 'cohort', null));
     if (!fitFile) throw new Error('today mode needs --fit <economy ledger JSON> (or --cohort)');
     const view = Engine.viewOf(snapshot, { market: Today.marketOf(snapshot), npcPrices: Today.TODAY.npcPrices });
@@ -123,17 +131,107 @@ function printFit(basis) {
     }
 }
 
+// The design mode's view, rates, cohort and plane.
+function designOf(argv, snapshot) {
+    const start = Boot.option(argv, 'start', 'late'), seed = Number(Boot.option(argv, 'seed', 1));
+    if (!['late', 'fresh'].includes(start)) throw new Error(`unknown start ${start} (late or fresh)`);
+    const fitFile = Boot.option(argv, 'fit', Boot.option(argv, 'cohort', null));
+    if (!fitFile) throw new Error('design mode needs --fit <economy ledger JSON> (or --cohort): its start save and its fitted rates');
+    const baseline = JSON.parse(fs.readFileSync(fitFile, 'utf8')), late = Cohort.fromSave(baseline.inputs.start.db, snapshot);
+    const cohort = start === 'late' ? late : Cohort.fresh({ count: Number(Boot.option(argv, 'accounts', 1700)), seed }, snapshot);
+    const view = Engine.viewOf(snapshot, { npcPrices: 'x1' });
+    if (!view.yieldsDesign) throw new Error('the snapshot has no design yields: write it again with inputs.js');
+    // The hunting share is a share of time, fitted at the ledger's own preset (the late run's x50):
+    // a snapshot of another preset is not divided into that run's exp.
+    const fitPreset = Boot.option(argv, 'fit-preset', 'x50'), fitSnapshot = snapshot.header.preset === fitPreset ? snapshot : loadSnapshot(fitPreset, null).snapshot;
+    const fitView = fitSnapshot === snapshot ? view : Engine.viewOf(fitSnapshot);
+    const { rates, basis } = Today.fit(baseline, fitSnapshot === snapshot ? late.accounts : Cohort.fromSave(baseline.inputs.start.db, fitSnapshot).accounts, fitView, STAGE_BANDS);
+    console.log(`DESIGN start ${start}; rates fitted on ${fitFile} at ${fitPreset}`);
+    printFit(basis);
+    const grades = ['d', 'c', 'b', 'a', 's'].map(grade => [grade, levelForGrade(grade)]);
+    const config = Object.freeze({ ...Design.DESIGN, ...JSON.parse(Boot.option(argv, 'design', '{}')) });
+    const began = Date.now(), game = Design.gameOf(snapshot, view, config);
+    console.log(`DESIGN game tables in ${((Date.now() - began) / 1000).toFixed(1)} s: ${Object.keys(game.firstPrice).length} first prices; `
+        + `SSD ${fmt(game.firstPrice[1463])}, SSC ${fmt(game.firstPrice[1464])}, D crystal ${fmt(game.firstPrice[1458])}, Soul Ore ${fmt(game.firstPrice[1785])}`);
+    console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStockHours are high-sensitivity): ${JSON.stringify(config)}`);
+    console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : config[field] === r.ours ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
+    return { view, rates, cohort, design: Design.plane({ snapshot, game, config, start, grades }) };
+}
+
+const fmt = value => (value === null || value === undefined || !Number.isFinite(value) ? '-' : Math.abs(value) >= 1e4 ? k(value) : Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(2));
+const pct = (value, base) => (base > 0 ? `${(100 * value / base).toFixed(1)} %` : '-');
+
+function printDesign(design, hours) {
+    const c = design.crafters;
+    console.log(`CRAFTERS ${c.crafterAccounts} of ${c.accounts} accounts (${pct(c.crafterAccounts, c.accounts)}): Bounty Hunter pairs ${c.bountyHunterPairs}, other pairs ${c.otherPairs}; `
+        + `twins by band ${Object.entries(c.byBand).map(([b, n]) => `${b} ${n}`).join(' | ')}; by class ${Object.entries(c.byClass).map(([b, n]) => `${b} ${n}`).join(' | ')}`);
+    console.log(`  twins by town: ${Object.entries(c.byTown).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${n}`).join(' | ')}`);
+    console.log('SHOTS per grade (fired / wanted over the run, by current band; top towns by shots wanted):');
+    for (const [grade, row] of Object.entries(design.shots.byGrade)) {
+        console.log(`  ${grade.padEnd(5)} wanted ${k(row.wanted)} fired ${k(row.fired)} coverage ${pct(row.fired, row.wanted)}; `
+            + `${Object.entries(row.byBand).map(([band, b]) => `${band} ${pct(b.fired, b.wanted)}`).join(' | ')}`);
+        console.log(`        towns: ${row.byTown.slice(0, 10).map(t => `${t.town} ${pct(t.fired, t.wanted)}`).join(' | ')}`);
+    }
+    console.log('SHOT COVERAGE over the hours (each 10-hour window, fired / wanted):');
+    for (let from = 0; from < design.hourly.length; from += 10) {
+        const window = design.hourly.slice(from, from + 10), sum = {};
+        for (const row of window) for (const [grade, s] of Object.entries(row.shots)) { const t = sum[grade] ||= { wanted: 0, fired: 0 }; t.wanted += s.wanted; t.fired += s.fired; }
+        console.log(`  h${pad(window[window.length - 1].hour, 4)} ${Object.entries(sum).map(([grade, t]) => `${grade} ${pct(t.fired, t.wanted)}`).join(' | ')}`);
+    }
+    const s = design.shots.supply, seen = design.shots.worthSeen;
+    console.log(`SHOT SUPPLY units: from the own twin ${s.own}, bought on twin lines ${s.lines}, NPC ${s.npc}; visits with a twin line in town ${seen.visitsWithLine}: `
+        + `cheapest at or under the shot's worth ${pct(seen.cheapestAtOrUnderWorth, seen.visitsWithLine)}`);
+    console.log(`SHOT WORTH at the start against the first price a twin asks: ${Object.entries(design.shots.worthAtStart).map(([grade, w]) => `${grade} ${pct(w.worthAtOrAboveFirstPrice, w.mains)} of ${w.mains}`).join(' | ')}`);
+    console.log(`MP used ${k(design.mp.used)} of ${k(design.mp.available)} available (${pct(design.mp.used, design.mp.available)}); a full shot use would take ${k(design.mp.neededForFullShots)} (${pct(design.mp.neededForFullShots, design.mp.available)} of available); idle MP lost at max ${k(design.mp.lost)}`);
+    const t = design.twins.seat, twinHours = t.sell + t.buy + t.idleSell + t.idleBuy;
+    console.log(`TWINS seat-hours: selling (sell lines shown) ${fmt(t.sell)} (${pct(t.sell, twinHours)}), buying (buy lines shown) ${fmt(t.buy)} (${pct(t.buy, twinHours)}), `
+        + `idle (store empty) ${fmt(t.idleSell + t.idleBuy)} (${pct(t.idleSell + t.idleBuy, twinHours)}: in sell mode ${fmt(t.idleSell)}, in buy mode ${fmt(t.idleBuy)}); `
+        + `crafting (a batch running, beside the store) ${fmt(design.twins.batchHours)} (${pct(design.twins.batchHours, twinHours)})`);
+    const mk = design.money, money = row => `${row.accounts} accounts ${(row.money / 1e6).toFixed(1)}M`;
+    console.log(`ACCOUNT MONEY (main + twin wallet) start -> end: crafter accounts ${money(mk.start.crafters)} -> ${(mk.end.crafters.money / 1e6).toFixed(1)}M `
+        + `(${k((mk.end.crafters.money - mk.start.crafters.money) / Math.max(1, mk.start.crafters.accounts) / hours)} per account-hour); `
+        + `others ${money(mk.start.others)} -> ${(mk.end.others.money / 1e6).toFixed(1)}M (${k((mk.end.others.money - mk.start.others.money) / Math.max(1, mk.start.others.accounts) / hours)} per account-hour)`);
+    const f = design.firsts;
+    console.log(`FIRSTS (hour): crystal ${Object.entries(f.crystal).map(([g, h]) => `${g} ${h.toFixed(1)}`).join(' | ') || '-'}; shot ${Object.entries(f.shot).map(([g, h]) => `${g} ${h.toFixed(1)}`).join(' | ') || '-'}; `
+        + `crafted piece ${Object.entries(f.piece).map(([g, p]) => `${g} ${p.h.toFixed(1)} (${p.selfId})`).join(' | ') || '-'}`);
+    console.log(`PIECES per grade (crafted gear per hour / mains entering the grade per hour): ${Object.entries(design.pieces).map(([g, p]) => `${g} ${p.craftedPerHour.toFixed(2)}/${p.entriesPerHour.toFixed(2)}`).join(' | ')}`);
+    const m = design.materials, mTotal = m.own + m.bought + m.npc;
+    console.log(`MATERIALS twins got: from their own main ${m.own} (${pct(m.own, mTotal)}), bought on their lines ${m.bought} (${pct(m.bought, mTotal)}), NPC ${m.npc} (${pct(m.npc, mTotal)})`);
+    const cr = design.crystals;
+    console.log(`CRYSTALS made: from pieces bought on bids ${cr.bids}, from own pieces ${cr.own}, through NPC gear ${cr.npcRoute}; used in crafts ${cr.used}`);
+    console.log('MARGIN per MP on each grade\'s shots (median of the hourly medians in each 10-hour window, batches started):');
+    for (let from = 0; from < design.hourly.length; from += 10) {
+        const window = design.hourly.slice(from, from + 10), byGrade = {};
+        for (const row of window) for (const [grade, mg] of Object.entries(row.margin)) { const e = byGrade[grade] ||= { medians: [], crafts: 0 }; if (mg.median !== null) e.medians.push(mg.median); e.crafts += mg.crafts; }
+        const med = values => { const v = [...values].sort((a, b) => a - b); return v.length ? v[v.length >> 1] : null; };
+        console.log(`  h${pad(window[window.length - 1].hour, 4)} ${Object.entries(byGrade).map(([g, e]) => `${g} ${fmt(med(e.medians))} (${e.crafts})`).join(' | ') || '-'}`);
+    }
+    console.log(`RECIPES per grade: ${Object.entries(design.recipes).map(([g, r]) => `${g} dropped ${r.dropped} sold to twins ${r.soldToTwins} kept ${r.kept} learned ${r.learned} to NPC ${r.toNpc}`).join(' | ')}`);
+    console.log('WAITS (opened / done / withdrawn / failed / deadline / open at the end):');
+    for (const [kind, w] of Object.entries(design.liveness.waits)) console.log(`  ${kind.padEnd(9)} ${w.opened} / ${w.done} / ${w.withdrawn} / ${w.failed} / ${w.deadline} / ${w.open}`);
+    console.log(`  lines open at the end ${design.liveness.linesOpen}, at a bound ${design.liveness.linesAtBound} (${pct(design.liveness.linesAtBound, design.liveness.linesOpen)}), `
+        + `at a bound for 3 looks or more ${design.liveness.linesAtBoundThreeLooks}, parked at the input cost ${design.liveness.linesAtCost}`);
+    console.log(`GOODS ${design.goods.items} items moved; closure (start + produced - destroyed - to NPC = end) fails for ${design.goods.failing}${design.goods.failing ? ` ${JSON.stringify(design.goods.worst)}` : ''}; `
+        + `${Object.entries(design.goods.totals).map(([field, n]) => `${field} ${k(n)}`).join(' | ')}`);
+    console.log(`BOT-TO-BOT adena ${k(design.botToBot)} (${(design.botToBot / hours / 1e6).toFixed(2)}M per hour); COUNTERS ${Object.entries(design.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
+    console.log('STAND-INS until the mains\' market rules exist:');
+    for (const line of design.standIns) console.log(`  - ${line}`);
+}
+
 function main(argv) {
     const preset = Boot.option(argv, 'preset', 'x50'), hours = Number(Boot.option(argv, 'hours', 100)), seed = Number(Boot.option(argv, 'seed', 1));
     const { snapshot, file } = loadSnapshot(preset, Boot.option(argv, 'snapshot', null));
-    const cohort = cohortOf(argv, snapshot);
-    const { view, rates } = modeOf(argv, snapshot, cohort);
+    const designMode = Boot.option(argv, 'mode', 'plain') === 'design';
+    const picked = designMode ? designOf(argv, snapshot) : null;
+    const cohort = picked ? picked.cohort : cohortOf(argv, snapshot);
+    const { view, rates } = picked || modeOf(argv, snapshot, cohort);
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)})`);
     console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}`);
     const began = Date.now();
     const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: Today.nextArrival,
-        onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates } });
+        onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates }, design: picked ? picked.design : null });
     printRun(out, { rates });
+    if (out.design) printDesign(out.design, hours);
     console.log(`RUN ${out.counters.events} events in ${((Date.now() - began) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);
     printFooter();
     const json = Boot.option(argv, 'json', null);
@@ -142,4 +240,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { loadSnapshot, cohortOf, printRun, printFit, printFooter, progress, LEFT_OUT, STAGE_BANDS };
+module.exports = { loadSnapshot, cohortOf, designOf, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, STAGE_BANDS };
