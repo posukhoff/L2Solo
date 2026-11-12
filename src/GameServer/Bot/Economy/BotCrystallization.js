@@ -180,7 +180,7 @@ function completionKey(state) {
     if (plan?.strategy !== 'luxury_exchange' || plan.status !== 'active' || !plan.target?.slot) return null;
     const Luxury = require('./BotLuxuryExchange'), exchange = Luxury.resolve(plan.exchange);
     if (!exchange || Number(plan.target.selfId) !== exchange.itemId || !Luxury.eligible(state, exchange)) return null;
-    const freeOf = id => invoke('GameServer/Bot/Economy/WealthCraftDecision').freeAmount(state, state.inventory?.[id] || {});
+    const freeOf = freeReader(state);
     const crystalsReady = exchange.materials.every(row => freeOf(row.selfId) >= row.amount);
     const receivedInputs = (plan.materials || []).some(row => reward(Index.find(invoke('GameServer/DataCache').items, row.selfId))
         && freeOf(row.selfId) > 0);
