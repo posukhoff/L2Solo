@@ -36,6 +36,24 @@
     "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/ab-verdict.md",
     "sha256": "768bc8d033417eb1665e8ebef768e506c5172c31f823ba8c303cca710fdc6627"
    }
+  },
+  "trace": {
+   "at": "2026-11-12T06:03:29.138Z",
+   "run": "e6eee6dd4-script-online-player-20261112-054042",
+   "head": "e6eee6dd43d7290f49fdfcdbbc94ae1518ee47e8",
+   "save": "d2f4aa5d-dc82-4241-bdcf-d3bb256899ba",
+   "coverage": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-coverage.md",
+    "sha256": "af7f02a86745f471cbd8539dbd25857407d9cac3f786322365ba5fae58b08d8a"
+   },
+   "invariants": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-invariants.md",
+    "sha256": "a738d3ba0455076e2d23197fee48c5cf2cb306835e6126af28d05e16d4fdc375"
+   },
+   "verdict": {
+    "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/gate-trace-verdict.md",
+    "sha256": "c6206c41f9d700fedd45b3656ab385cc8ab3f7d43a912b5a6dc44e7da81b30d6"
+   }
   }
  },
  "openedAt": "2026-11-11T21:17:25.457Z",
