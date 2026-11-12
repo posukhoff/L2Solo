@@ -1,0 +1,6 @@
+test_clan_war_return_geodata.js
+test_companion_equipment_shopping.js
+test_town_trade_navigation.js
++test_ti_magic_shop_transition.js
++test_town_npc_approach.js
++test_town_transit_policy.js
