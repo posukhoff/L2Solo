@@ -11,10 +11,11 @@
  "decisions": [
   "M3",
   "M6",
-  "M10"
+  "M10",
+  "M33"
  ],
  "cap": {
-  "issues": 8
+  "issues": 9
  },
  "gates": {},
  "steps": [
