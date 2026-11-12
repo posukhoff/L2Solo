@@ -345,7 +345,7 @@ function planBatch(view, held, stock, ranked, use = 'shelf') {
             routeBuys.push({ selfId: route.gearId, count: pieces, price: route.price, crystals: route.crystals, grade: row.grade });
         }
         const deadline = now + Math.max(0, crafts * recipe.mpCost - mp) / twin.regen;
-        return { batch: { recipeId: id, crafts, deadline, mpAtStart: mp, perMp: m.perMp, orderId: null, use }, npcBuys, routeBuys, counters, need: need || 0 };
+        return { batch: { recipeId: id, crafts, deadline, mpAtStart: mp, perMp: m.perMp, use }, npcBuys, routeBuys, counters, need: need || 0 };
     }
     return { batch: null, npcBuys: [], routeBuys: [], counters, need: need || 0 };
 }
@@ -380,36 +380,6 @@ function ownRows(view, after, held, stock) {
     return { rows: rows.sort((a, b) => b.m.perMp - a.m.perMp || a.id - b.id), kept };
 }
 
-// What a twin must bring to an order (supplied: the units the customer left
-// to the crafter): from its stock, else bought at its town's NPC, crystals
-// through the NPC gear route. null when a unit has none of the three or its
-// wallet with the fee cannot pay them. Returns { npcBuys, routeBuys, cost
-// (the adena the buys take) }.
-function suppliedBuys(view, supplied, fee) {
-    const { twin, game } = view, npcBuys = [], routeBuys = [];
-    let cost = 0;
-    for (const [key, count] of Object.entries(supplied || {})) {
-        const item = Number(key), short = Math.max(0, count - (twin.stock[item] || 0)), grade = game.crystalGrade[item];
-        if (!short) continue;
-        if (view.npcSell[item] > 0) { npcBuys.push({ selfId: item, count: short, price: view.npcSell[item] }); cost += short * view.npcSell[item]; continue; }
-        const route = grade ? view.crystalRoute[grade] : null;
-        if (!route) return null;
-        const pieces = Math.ceil(short / route.crystals);
-        routeBuys.push({ selfId: route.gearId, count: pieces, price: route.price, crystals: route.crystals, grade });
-        cost += pieces * route.price;
-    }
-    return cost <= twin.wallet + fee ? { npcBuys, routeBuys, cost } : null;
-}
-
-// The batch of an order: one craft of its recipe from the buyer's
-// materials and what the twin brings, at the twin's MP; deadline = now +
-// (MP cost - MP held) / regen.
-function orderBatch(view, { order, id, perMp, buys }) {
-    const { twin, game, now } = view, mp = mpAt(twin, now), recipe = game.recipes[id];
-    return { batch: { recipeId: id, crafts: 1, deadline: now + Math.max(0, recipe.mpCost - mp) / twin.regen, mpAtStart: mp, perMp, orderId: order.id, use: 'order' },
-        npcBuys: buys?.npcBuys || [], routeBuys: buys?.routeBuys || [], counters: { gearCapped: 0, stopped: [], shelfFull: 0 }, need: 0 };
-}
-
 // The goods a mode would put on offer, as one key (sorted item ids).
 const offerKey = rows => rows.map(row => row.item).sort((a, b) => a - b).join(',');
 
@@ -420,10 +390,8 @@ const offerKey = rows => rows.map(row => row.item).sort((a, b) => a - b).join(',
 // min(stock, rate) x (price - what it paid); buy = sum over wanted inputs of
 // min(want, rate) x (use value - price), a scroll counting its margin gain
 // over one seat-hour of regen (its cap holds the gain to the next grade).
-// manufacture = the fee of the best open order it takes (ours: one order
-// per seat-hour). The highest wins; a tie keeps the current mode. With a
-// buyer twin (buyer) the buy lines are its store: the crafter twin chooses
-// between sell and manufacture.
+// The highest wins; a tie keeps the current mode. With a buyer twin (buyer)
+// the buy lines are its store: the crafter twin only sells.
 // The mode memory: the running stint (twin.stint { since, units (filled on
 // its own store's lines), goods }) ends when the mode or the goods on offer
 // change, and is kept only when something was on offer and something filled
@@ -432,16 +400,16 @@ const offerKey = rows => rows.map(row => row.item).sort((a, b) => a - b).join(',
 // (not while it would offer none).
 // Returns { mode, values, stint (the running one), stints (the kept),
 // stintEnded: null | 'kept' | 'unfilled' }.
-function chooseMode(view, sells, buys, batchUnits, manufacture = 0, buyer = false) {
-    const { twin, now } = view, offer = { sell: offerKey(sells), buy: offerKey(buys), manufacture: '' };
+function chooseMode(view, sells, buys, batchUnits, buyer = false) {
+    const { twin, now } = view, offer = { sell: offerKey(sells), buy: offerKey(buys) };
     const kept = memory => Object.fromEntries(Object.entries(memory).filter(([mode, stint]) => (stint.goods === offer[mode] || !offer[mode]) && stint.hours > 0));
     let stints = kept(twin.stints || {});
     const rate = mode => (stints[mode]?.goods === offer[mode] ? stints[mode].units / stints[mode].hours : Math.max(1, batchUnits));
     const sellRate = rate('sell'), buyRate = rate('buy');
     const sell = sells.reduce((sum, row) => sum + Math.min(row.qty, sellRate) * Math.max(0, row.price - row.cost), 0);
     const buy = buys.reduce((sum, row) => sum + (row.hourValue ?? Math.min(row.qty, buyRate) * Math.max(0, row.value - row.price)), 0);
-    const values = { sell, buy, manufacture };
-    const options = buyer ? ['sell', 'manufacture'] : ['sell', 'buy', 'manufacture'];
+    const values = { sell, buy };
+    const options = buyer ? ['sell'] : ['sell', 'buy'];
     let mode = options.includes(twin.mode) ? twin.mode : options[0];
     for (const option of options) if (values[option] > values[mode]) mode = option;
     let stint = twin.stint || { since: now, units: 0, goods: '' }, stintEnded = null;
@@ -471,7 +439,7 @@ function lineIdOf(twin, side, item) {
 // rankRecipes: rank every recipe it could learn (its main's arrival), own
 // (its main's shortfall, ownRows) }.
 // Returns { learn, forget, want, wants, crystallize, batch (use: 'own' |
-// 'order' | 'shelf'), npcBuys, routeBuys, mode, modeValues, stint, stints,
+// 'shelf'), npcBuys, routeBuys, mode, modeValues, stint, stints,
 // stintEnded, buyer (the account holds a buyer twin: config.buyerTwin, opened
 // at the first wake with buy lines while its crafter twin has goods to sell;
 // it shows the buy lines, stock only, never gear: crystallizer bids stay
@@ -496,27 +464,11 @@ function workshop(view) {
     const ranked = [...held].map(id => ({ id, m: margin(game.recipes[id], after, held) })).filter(row => row.m)
         .sort((a, b) => b.m.perMp - a.m.perMp || a.id - b.id);
     // Its own main first (ownUseFirst, ours): a batch for its main's
-    // shortfall, then orders, then the shelf.
+    // shortfall, then the shelf.
     const idle = { batch: null, npcBuys: [], routeBuys: [], counters: { gearCapped: 0, stopped: [], shelfFull: 0 }, need: 0 };
     const ownPass = config.ownUseFirst ? ownRows(view, after, held, stock) : { rows: [], kept: {} }, own = ownPass.rows;
     const ownPlan = own.length ? planBatch(after, held, stock, own, 'own') : idle, shelf = planBatch(after, held, stock, ranked);
     const plan = twin.batch ? idle : ownPlan.batch ? ownPlan : shelf;
-    // Orders it can take (a buyer's "craft X for me" from the buyer's own
-    // materials, first come): a recipe it holds, ranked by the fee per MP of
-    // one craft; one is worth taking when that reaches the margin per MP of
-    // the batch it would craft otherwise (the MP's other work). The best order's fee is
-    // manufacture's value.
-    const orders = [], ownBest = plan.batch ? plan.batch.perMp : 0;
-    for (const order of plan.batch?.use === 'own' ? [] : view.orders || []) {
-        if (!held.has(order.recipeId)) continue;
-        // What it must bring is paid out of the fee: the fee less those buys per MP.
-        const buys = suppliedBuys(after, order.supplied, order.fee);
-        if (!buys) continue;
-        const perMp = (order.fee - buys.cost) / game.recipes[order.recipeId].mpCost;
-        if (perMp > 0 && perMp >= ownBest) orders.push({ order, id: order.recipeId, perMp, buys });
-    }
-    orders.sort((a, b) => b.perMp - a.perMp || a.order.id.localeCompare(b.order.id));
-    const orderPlan = twin.batch || !orders.length ? idle : orderBatch(view, orders[0]);
     const prices = {}, sells = [], buys = [];
     // The recipe it would craft next (its own main's first) and one batch of
     // its inputs, kept off its sell lines.
@@ -604,8 +556,7 @@ function workshop(view) {
     sells.sort((a, b) => b.qty * b.price - a.qty * a.price || a.item - b.item);
     // Buy lines: the inputs its best recipe lacks that no NPC here sells (one
     // batch's worth), then the scrolls of recipes it decided to add.
-    let budget = twin.wallet - plan.npcBuys.reduce((sum, row) => sum + row.count * row.price, 0) - plan.routeBuys.reduce((sum, row) => sum + row.count * row.price, 0)
-        - orderPlan.npcBuys.reduce((sum, row) => sum + row.count * row.price, 0) - orderPlan.routeBuys.reduce((sum, row) => sum + row.count * row.price, 0);
+    let budget = twin.wallet - plan.npcBuys.reduce((sum, row) => sum + row.count * row.price, 0) - plan.routeBuys.reduce((sum, row) => sum + row.count * row.price, 0);
     if (best) {
         const recipe = game.recipes[best.id], crafts = bestCrafts;
         for (const material of recipe.materials) {
@@ -644,14 +595,12 @@ function workshop(view) {
         buyLines.push({ ...row, qty, price: listed?.price ?? Math.min(known ?? row.cap, row.cap) * view.persona.buyerStart });
     }
     const batchUnits = best ? bestCrafts * game.recipes[best.id].productCount : 0;
-    const manufacture = orderPlan.batch ? orders[0].order.fee : 0;
     const buyer = !!twin.buyer || (config.buyerTwin === true && buyLines.length > 0 && offered.length > 0);
-    const { mode, values, stint, stints, stintEnded } = chooseMode(view, offered, buyLines, batchUnits, manufacture, buyer);
-    const chosen = mode === 'manufacture' && orderPlan.batch ? orderPlan : plan;
+    const { mode, values, stint, stints, stintEnded } = chooseMode(view, offered, buyLines, batchUnits, buyer);
     // Its buy lines first take what other twins' sell lines in its town offer
     // at or under the line's cap (first come), within its wallet.
     const claims = [];
-    let cash = twin.wallet - chosen.npcBuys.reduce((sum, row) => sum + row.count * row.price, 0) - chosen.routeBuys.reduce((sum, row) => sum + row.count * row.price, 0);
+    let cash = twin.wallet - plan.npcBuys.reduce((sum, row) => sum + row.count * row.price, 0) - plan.routeBuys.reduce((sum, row) => sum + row.count * row.price, 0);
     for (const row of buyLines) {
         for (const entry of view.books[view.place.twinTown]?.sell?.[row.item] || []) {
             if (row.qty <= 0 || entry.price > row.cap) break;
@@ -702,22 +651,22 @@ function workshop(view) {
     }
     // What its main reads at a visit: the adena its next batches' bought
     // inputs take (own use, then one batch to sell: the money order ranks it).
-    return { learn: recipes.learn, forget: recipes.forget, want: recipes.want.map(row => row.id), wants: recipes.want, crystallize, batch: chosen.batch, npcBuys: chosen.npcBuys, routeBuys: chosen.routeBuys,
-        mode, modeValues: values, stint, stints, stintEnded, buyer, wanted, prices, bidWanted, bidPrices, counters: chosen.counters, claims, order: chosen === orderPlan && orderPlan.batch ? orders[0].order.id : null,
+    return { learn: recipes.learn, forget: recipes.forget, want: recipes.want.map(row => row.id), wants: recipes.want, crystallize, batch: plan.batch, npcBuys: plan.npcBuys, routeBuys: plan.routeBuys,
+        mode, modeValues: values, stint, stints, stintEnded, buyer, wanted, prices, bidWanted, bidPrices, counters: plan.counters, claims,
         needs, surplus, inputMoney: ownPlan.need + shelf.need };
 }
 
 // The seat as part of the mode choice (ours): at its main's arrival in
 // another town the twin moves when its best store there, weighed on that
 // town's book, beats its best store here by more than the gatekeeper fare.
-// here, there: the workshop's mode values ({ sell, buy, manufacture },
+// here, there: the workshop's mode values ({ sell, buy },
 // adena per seat-hour) seated in each town. One twin holds one mode: the
-// best of the three; with a buyer twin (buyer) the buy lines are its store
-// beside the crafter twin's: max(sell, manufacture) + buy. seatGain returns
+// best of the two; with a buyer twin (buyer) the buy lines are its store
+// beside the crafter twin's: sell + buy. seatGain returns
 // the gain net of the fare; seatByMode returns true to move (the net gain is
 // above 0).
 function seatGain({ here, there, fare, buyer = false }) {
-    const best = values => (buyer ? Math.max(0, values?.sell || 0, values?.manufacture || 0) + Math.max(0, values?.buy || 0) : Math.max(0, ...Object.values(values || {})));
+    const best = values => (buyer ? Math.max(0, values?.sell || 0) + Math.max(0, values?.buy || 0) : Math.max(0, ...Object.values(values || {})));
     return best(there) - best(here) - fare;
 }
 function seatByMode(seat) {

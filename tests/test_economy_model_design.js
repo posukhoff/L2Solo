@@ -370,30 +370,6 @@ const runHeld = (world, kitHours, account, hours) => {
     assert.deepEqual([out.crafters.byTown.TownE, out.crafters.byTown.TownD, out.counters.reseats], [1, undefined, 1], 'both hubs pay, the second nets more: the twin sits in the second');
 }
 
-// An order no twin takes: the main leaves its two bones and the fee with
-// the order, the fee rises at its next two visits, at the third it is
-// withdrawn and the bones and the fee come back (no twin holds the armour's
-// recipe); money and goods close to the unit.
-{
-    const ARMOR = 2003, SCROLL2 = 5002;
-    const world = { ...snapshot,
-        kits: { ...snapshot.kits, 9: Object.fromEntries(levels.map(level => [level, [{ selfId: SWORD, slot: 7 }, { selfId: ARMOR, slot: 10 }]])) },
-        items: { ...snapshot.items, [ARMOR]: { kind: 'Armor.Body', grade: 'D', ref: 2000, npcBuy: 1000, crystals: 50 }, [SCROLL2]: { kind: 'Other.Recipe', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 } },
-        recipes: [...snapshot.recipes, { type: 'dwarven', recipeId: 30, recipeItemId: SCROLL2, level: 2, materials: [{ selfId: BONE, amount: 2 }], productId: ARMOR, productCount: 1, mpCost: 100, successRate: 100, quest: false }],
-        sources: { ...snapshot.sources, [SCROLL2]: { drop: [{ npcId: 2, yield: 1 }], spoil: [] } },
-        // The armour's worth (100 an hour over the empty slot): gathering its bones is priced by that use.
-        gearLadder: ladderOf('9', [[1, 30, { 10: { rungs: [ARMOR], hour: { [ARMOR]: 1100, 0: 1000 } } }]]) };
-    const view = Engine.viewOf(world, { npcPrices: 'x1' });
-    const out = Engine.simulate({ view, accounts, bands, rates, hours: 16, seed: 5, nextArrival: arrivals,
-        design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
-    const orders = out.design.market.orders, waits = out.design.liveness.waits.order;
-    assert.ok(orders.posted >= 1 && orders.claimed === 0, JSON.stringify(orders));
-    assert.deepEqual([orders.withdrawn, orders.open], [orders.posted, 0], 'every order no twin took came back');
-    assert.ok(waits.failed >= 1 && waits.opened === waits.done + waits.withdrawn + waits.failed + waits.open, JSON.stringify(waits));
-    assert.equal(out.money.closureGap, 0);
-    assert.equal(out.design.goods.failing, 0, JSON.stringify(out.design.goods.worst));
-}
-
 // The design mode's hunting share per band: the fitted shares, a config's
 // huntShare row over them, --hunt-share over every band; default follows the
 // band it stood for.
@@ -509,62 +485,6 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.ok(poor.design.liveness.waits.wtb.failed >= 1);
     assert.equal(poor.money.closureGap, 0);
     assert.equal(poor.design.goods.failing, 0, JSON.stringify(poor.design.goods.worst));
-}
-
-// An order at a workshop from the customer's own materials: a main that
-// wants a sword nobody sells gathers the five bones of its recipe at its
-// own spot (its own hour given up: none), leaves them and the fee with the
-// order; the Bounty Hunter's twin, which holds the recipe its main dropped
-// and has no other work (no craft of its own, no buy store), takes it for
-// its MP, the fee before
-// the roll. The sword reaches the buyer, who wears it. Money (the fee held
-// with the open order included) and items (the bones with the order
-// included) close; a 60 % recipe can fail: the bones are gone, the fee kept.
-{
-    const RECIPE30 = 5030, JUNK = 1869;
-    const levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
-    // Loot an hour: s1 70 (10 kills x (0.5 bones x 10 + 2 junk x 1)), s2 45 (the recipe's scroll at 0.05 a kill x 50 and the junk).
-    const plain = (spotId, shots, loot = 0) => ({ spotId, kills: 10, exp: 1, adena: 1000, shots, dropLoot: loot, spoilLoot: 0, loot, potions: 0, busyShare: 1, deaths: 0, shotless: null });
-    const byLevel = make => Object.fromEntries(levels30.map(level => [level, make(level)]));
-    const world = {
-        ...snapshot,
-        hours: { 9: byLevel(() => ({ classId: 9, shotId: 0, best: plain('s1', 0, 70), top: [] })), 55: byLevel(() => ({ classId: 55, shotId: 0, best: plain('s2', 0, 45), top: [] })) },
-        kits: { 9: byLevel(() => [{ selfId: SWORD, slot: 7 }]), 55: byLevel(() => [{ selfId: 2002, slot: 7 }]) },
-        yields: Object.fromEntries(levels30.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { 57: 100, [BONE]: 0.5, [JUNK]: 2 }, spoil: {} }], [`s2@${level}`, { town: 'TownA', drop: { 57: 100, [RECIPE30]: 0.05, [JUNK]: 2 }, spoil: {} }]])),
-        items: { ...snapshot.items, 2002: { kind: 'Weapon.Sword', grade: 'NONE', ref: 20, npcBuy: 10, crystals: 0 }, [RECIPE30]: { kind: 'Other.Recipe', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 },
-            [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
-        recipes: [{ type: 'dwarven', recipeId: 30, recipeItemId: RECIPE30, level: 1, materials: [{ selfId: BONE, amount: 5 }], productId: SWORD, productCount: 1, mpCost: 50, successRate: 100, quest: false }],
-        npcOffers: { preset: {}, x1: {} },
-        sources: { [BONE]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] }, [RECIPE30]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] } },
-        bags: { 9: { race: 1, slots: 80, maxLoad: 300 }, 55: { race: 4, slots: 80, maxLoad: 300 } },
-        gearLadder: ladderOf('9', [[1, 30, { weapon: { rungs: [SWORD], hour: { [SWORD]: 2000, 2002: 1000, 0: 500 } } }]]),
-        walkBack: { s1: 0.01, s2: 0.01 },
-        // A twin without buy-store slots: no line of its own to weigh against the order.
-        twins: Object.fromEntries(levels30.map(level => [level, { ...twin(level), storeSlots: { sell: 4, buy: 0 } }]))
-    };
-    world.yieldsDesign = world.yields;
-    const pair = [
-        { id: 21, station: false, classId: 55, line: '55', level: 25, exp: 25e9, money: 100, spot: null, shots: {}, held: [2002], worn: { 7: 2002 } },
-        { id: 22, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 100000, spot: null, shots: {}, held: [], worn: { 7: 2002 } }
-    ];
-    const runOrder = (seed, rate = 100) => {
-        const at = rate === 100 ? world : { ...world, recipes: [{ ...world.recipes[0], successRate: rate }] }, view = Engine.viewOf(at, { npcPrices: 'x1' });
-        return Engine.simulate({ view, accounts: pair, bands: [['twin', 1], ['buyer', 25]], rates, hours: 24, seed, design: plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) });
-    };
-    const done = runOrder(4), d = done.design, orders = d.market.orders;
-    assert.ok(orders.posted >= 1 && orders.claimed >= 1 && orders.delivered >= 1, JSON.stringify(orders));
-    assert.equal(d.market.obtained.d.order, 1, 'the buyer\'s sword came by the order');
-    assert.ok(d.goods.totals.craftIn >= 5, 'the bones went into the craft');
-    assert.ok(d.money.end.crafters.money - d.money.start.crafters.money >= 650, `the twin kept the fee, 50 MP x 13: ${JSON.stringify(d.money)}`);
-    assert.equal(done.money.closureGap, 0);
-    assert.equal(d.goods.failing, 0, JSON.stringify(d.goods.worst));
-    for (const [kind, w] of Object.entries(d.liveness.waits)) assert.equal(w.opened, w.done + w.withdrawn + w.failed + w.deadline + w.open, `${kind}: ${JSON.stringify(w)}`);
-    // A 60 % recipe: some seed fails a craft; the fee stays with the twin, the bones are gone, and both ledgers close.
-    const risky = [1, 2, 3, 4, 5, 6, 7, 8].map(seed => runOrder(seed, 60));
-    const failed = risky.find(r => r.design.market.orders.failed > 0);
-    assert.ok(failed, 'a failed craft among eight seeds');
-    assert.ok(failed.design.money.end.crafters.money - failed.design.money.start.crafters.money >= 650, 'the fee is kept');
-    for (const r of risky) { assert.equal(r.money.closureGap, 0); assert.equal(r.design.goods.failing, 0, JSON.stringify(r.design.goods.worst)); }
 }
 
 // path ranks pieces by their worth per adena of their route: with money for
@@ -756,36 +676,6 @@ assert.equal(armed.delta.shotsUsed, 50);
     // A C sword only the Luxury exchange gives (crystals on lines in reach it
     // cannot count on) is no priced route: the D sword stays worn through C.
     assert.deepEqual(bought(false, { luxury: true }), { npc: 1 }, 'the C sword at Luxury only: not priced, the D sword worn through C');
-}
-
-// A farm route is priced at a spot the main can hunt at its own level: a
-// level-25 main whose own spot pays 1000 an hour is not charged nothing for
-// farming its sword at a level-30 spot paying 5000 (its farm route would
-// cost 0 and its cap fall to 0, refusing every seller): it has no farm
-// route and buys the sword from the NPC once its WTB has run its looks.
-{
-    const JUNK = 1869, levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
-    const row = (spotId, adena, loot) => ({ spotId, kills: 10, exp: 1, adena, shots: 0, dropLoot: loot, spoilLoot: 0, loot, potions: 0, busyShare: 1, deaths: 0, shotless: null });
-    const world = {
-        ...snapshot,
-        hours: { 9: Object.fromEntries(levels30.map(level => [level, { classId: 9, shotId: 0, best: level < 30 ? row('s1', 1000, 20) : row('s9', 5000, 220), top: [] }])) },
-        kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: SWORD, slot: 7 }]])) },
-        items: { ...snapshot.items, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
-        yields: Object.fromEntries(levels30.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }], [`s9@${level}`, { town: 'TownA', drop: { [JUNK]: 2, [SWORD]: 0.01 }, spoil: {} }]])),
-        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
-        walkBack: { s1: 0.01, s9: 0.01 },
-        gearLadder: ladderOf('9', [[1, 30, { weapon: { rungs: [SWORD], hour: { [SWORD]: 1500, 0: 1000 } } }]])
-    };
-    world.yieldsDesign = world.yields;
-    const run2 = hourCost => {
-        const config = { ...Design.DESIGN, hourCost }, view = Engine.viewOf(world, { npcPrices: 'x1' });
-        return Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 100000, spot: null, shots: {}, held: [], worn: {} }],
-            bands: [['all', 1]], rates, hours: 10, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
-    };
-    for (const hourCost of ['opportunity', 'literal']) {
-        const out = run2(hourCost);
-        assert.deepEqual([out.market.obtained.d?.npc, out.market.routes.zero], [1, 0], `${hourCost}: ${JSON.stringify(out.market.obtained)}, zero ${out.market.routes.zero}`);
-    }
 }
 
 // A piece is worth what it adds to the kit the main wears: a sword that adds

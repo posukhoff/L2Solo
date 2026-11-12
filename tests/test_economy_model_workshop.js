@@ -158,10 +158,10 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
     // The seat with a buyer twin weighs both stores: here sells 100 and buys
     // 100 an hour, there buys 180; one twin moves (180 over 100 by more than
     // the fare of 50), a pair stays (200 here against 180 there).
-    const here = { sell: 100, buy: 100, manufacture: 0 }, there = { sell: 0, buy: 180, manufacture: 0 };
+    const here = { sell: 100, buy: 100 }, there = { sell: 0, buy: 180 };
     assert.equal(Workshop.seatByMode({ here, there, fare: 50 }), true);
     assert.equal(Workshop.seatByMode({ here, there, fare: 50, buyer: true }), false);
-    assert.equal(Workshop.seatByMode({ here, there: { sell: 90, buy: 180, manufacture: 0 }, fare: 50, buyer: true }), true, '270 against 200');
+    assert.equal(Workshop.seatByMode({ here, there: { sell: 90, buy: 180 }, fare: 50, buyer: true }), true, '270 against 200');
 }
 
 // A full book takes a recipe only over the worst it holds, which is
@@ -466,43 +466,6 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
     assert.deepEqual([line.price, line.bound, line.floorBy], [10, 'floor', 'cost'], 'the fifth look parks at the cost, rounded up');
 }
 
-// A buyer's order ("craft X for me") from its own materials for a recipe the
-// twin holds: the twin gives its MP for the fee. An order is ranked by its
-// fee per MP against the batch the twin would craft otherwise (a sword at
-// (50000 - 10 ore x 300) / 100 MP = 470 an MP): one craft of the order's
-// recipe, no inputs bought (the buyer brings them).
-{
-    const game = gameOf([recipe(1, SSD), recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: ORE, amount: 10 }] })]);
-    const twin = twinOf({ recipes: [1, 3], stock: {} });
-    const out = Workshop.workshop(viewOf(game, twin, { orders: [{ id: 'o1', item: SWORD, recipeId: 3, fee: 50000 }] }));
-    assert.equal(out.mode, 'manufacture', '500 an MP over its own sword\'s 470');
-    assert.equal(out.modeValues.manufacture, 50000);
-    assert.deepEqual([out.batch.recipeId, out.batch.crafts, out.batch.orderId, out.order, out.npcBuys.length], [3, 1, 'o1', 'o1', 0]);
-    const cheap = Workshop.workshop(viewOf(game, twin, { orders: [{ id: 'o2', item: SWORD, recipeId: 3, fee: 1300 }] }));
-    assert.notEqual(cheap.mode, 'manufacture', '13 an MP is less than its own craft pays');
-    assert.equal(cheap.order, null);
-    // A twin with no craft of its own to make (no money for inputs) takes the same fee.
-    const idle = Workshop.workshop(viewOf(game, twinOf({ recipes: [1, 3], stock: {}, wallet: 0 }), { orders: [{ id: 'o2', item: SWORD, recipeId: 3, fee: 1300 }] }));
-    assert.deepEqual([idle.mode, idle.order], ['manufacture', 'o2'], 'its MP has no other work');
-    const unheld = Workshop.workshop(viewOf(game, twinOf({ recipes: [1], stock: {}, wallet: 0 }), { orders: [{ id: 'o3', item: SWORD, recipeId: 3, fee: 50000 }] }));
-    assert.equal(unheld.order, null, 'an order of a recipe it does not hold');
-}
-
-// An order whose customer left units to the crafter (orderMaterials
-// 'customer_then_crafter'): the twin takes it only when its stock, its
-// town's NPC or the NPC gear route supplies every unit it must bring, and
-// buys them out of the fee (100 D crystals through the NPC gear route: two
-// swords at 6000, 12000 of a 62000 fee); bones nobody sells it: not taken.
-{
-    const game = gameOf([recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: ORE, amount: 10 }, { selfId: CRYSTAL, amount: 100 }] })]);
-    const route = { d: { gearId: 777, price: 6000, crystals: 50, perCrystal: 120 } };
-    const twin = twinOf({ recipes: [3], stock: {}, wallet: 0 });
-    const taken = Workshop.workshop(viewOf(game, twin, { crystalRoute: route, orders: [{ id: 'o4', item: SWORD, recipeId: 3, fee: 62000, supplied: { [CRYSTAL]: 100 } }] }));
-    assert.deepEqual([taken.order, taken.routeBuys.map(row => [row.selfId, row.count])], ['o4', [[777, 2]]], 'taken, the crystals bought through NPC gear');
-    const short = Workshop.workshop(viewOf(game, twin, { orders: [{ id: 'o5', item: SWORD, recipeId: 3, fee: 62000, supplied: { [BONE]: 5 } }] }));
-    assert.equal(short.order, null, 'a unit it cannot get: not taken');
-}
-
 // Its buy lines first take another twin's sell line in its town at or under
 // their cap: an input no NPC sells (bone) bought from twin 7's shelf.
 {
@@ -578,7 +541,7 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
 
 // The seat as part of the mode choice: it moves when its best mode there
 // beats its best mode here by more than the fare.
-assert.equal(Workshop.seatByMode({ here: { sell: 1000, buy: 200, manufacture: 0 }, there: { sell: 400, buy: 2100, manufacture: 0 }, fare: 1000 }), true);
-assert.equal(Workshop.seatByMode({ here: { sell: 1000, buy: 200, manufacture: 0 }, there: { sell: 400, buy: 1900, manufacture: 0 }, fare: 1000 }), false, 'a gain under the fare keeps it');
+assert.equal(Workshop.seatByMode({ here: { sell: 1000, buy: 200 }, there: { sell: 400, buy: 2100 }, fare: 1000 }), true);
+assert.equal(Workshop.seatByMode({ here: { sell: 1000, buy: 200 }, there: { sell: 400, buy: 1900 }, fare: 1000 }), false, 'a gain under the fare keeps it');
 
 console.log('PASS economy model workshop rules');

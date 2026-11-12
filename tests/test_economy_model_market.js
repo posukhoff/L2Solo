@@ -35,63 +35,23 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.equal(unarmed.reserve, 300);
 }
 
-// acquire: the cheapest route, hours charged at the own hour less the farm spot's.
+// acquire: the cheapest route; the own twin's wait is charged at the piece's use
+// (100 an hour) under the opportunity hour and at the whole own hour under the literal one.
 {
-    const view = { cap: 5000, ownHour: 1000, hourCost: 'opportunity', lines: [{ price: 6000, kind: 'line', where: 'Giran' }],
-        npc: [{ town: 'Giran', price: 1500, fare: 0 }], farm: { hours: 2, spotHour: 900, where: 's9' },
-        order: { recipeId: 7, fee: 400, mp: 40, units: 1, materials: [{ selfId: 200, amount: 2, held: 0, sale: 5, line: 300, npc: null, farmHours: 0 }] },
+    const view = { cap: 5000, ownHour: 1000, hourCost: 'opportunity', useHour: 100, lines: [{ price: 6000, kind: 'line', where: 'Giran' }],
+        npc: [{ town: 'Giran', price: 1500, fare: 0 }], twin: { recipeId: 7, cost: 1000, hours: 2 },
         exchange: { town: 'Giran', fare: 0, options: [{ grade: 'd', amount: 10, price: 160 }] } };
     const opportunity = acquire({ selfId: 1 }, view);
-    assert.equal(opportunity.route, 'farm', 'two hours at a spot paying 900 against its 1000: 200');
-    assert.equal(opportunity.cost, 200);
-    assert.deepEqual(opportunity.routes.map(row => row.route), ['farm', 'order', 'npc', 'exchange'], 'the line above the cap is no route');
-    assert.equal(opportunity.routeCost, 200);
-    const literal = acquire({ selfId: 1 }, { ...view, hourCost: 'literal' });
-    assert.equal(literal.route, 'order', 'the design\'s text charges the whole own hour: farming costs 2000');
-    assert.equal(literal.cost, 1000);
+    assert.equal(opportunity.route, 'twin', 'the inputs 1000 and two hours of its use: 1200');
+    assert.equal(opportunity.cost, 1200);
+    assert.deepEqual(opportunity.routes.map(row => row.route), ['twin', 'npc', 'exchange'], 'the line above the cap is no route');
+    assert.equal(opportunity.routeCost, 1200);
+    assert.equal(acquire({ selfId: 1 }, { ...view, hourCost: 'literal' }).route, 'npc', 'the design\'s text charges the whole own hour: the twin costs 3000');
     const bought = acquire({ selfId: 1 }, { ...view, lines: [{ price: 150, kind: 'ad', where: 'ad' }] });
     assert.equal(bought.route, 'buy');
-    assert.equal(bought.routeCost, 200, 'the cap\'s own route is the cheapest that is not a player\'s line');
-    assert.equal(acquire({ selfId: 1 }, { ...view, stalled: ['farm'] }).route, 'order', 'a stalled route is not offered');
+    assert.equal(bought.routeCost, 1200, 'the cap\'s own route is the cheapest that is not a player\'s line');
+    assert.equal(acquire({ selfId: 1 }, { ...view, stalled: ['twin'] }).route, 'npc', 'a stalled route is not offered');
     assert.equal(acquire({ selfId: 1 }, { cap: 1, ownHour: 1, lines: [], npc: [] }), null);
-    // A farm at its own spot is not free: the two hours the piece takes to
-    // drop cost its use, 600 an hour (opportunity reading): 1200 over the
-    // order's 1000.
-    const home = { ...view, farm: { hours: 2, spotHour: 1000, where: 's1' }, useHour: 600 };
-    assert.deepEqual([acquire({ selfId: 1 }, home).route, acquire({ selfId: 1 }, home).routes[0].cost], ['order', 1000]);
-    assert.equal(acquire({ selfId: 1 }, home).routes.find(row => row.route === 'farm').cost, 1200);
-    assert.equal(acquire({ selfId: 1 }, { ...home, useHour: 0 }).routeCost, 0, 'without its use the farm costs nothing');
-}
-// A piece with no worth row (useHour null): its use cannot be stated, so a
-// farm at its own spot and an order's gathering are not offered at 0; the
-// NPC prices it. The design's literal hour still prices the farm.
-{
-    const view = { cap: Infinity, ownHour: 1000, hourCost: 'opportunity', useHour: null, lines: [], npc: [{ town: 'Giran', price: 708000, fare: 0 }],
-        farm: { hours: 781, spotHour: 1000, where: 's1' },
-        order: { recipeId: 7, fee: 400, mp: 40, units: 1, materials: [{ selfId: 200, amount: 2, held: 0, sale: 5, line: null, npc: null, farmHours: 50, spotHour: 1000 }] } };
-    const unstated = acquire({ selfId: 1 }, view);
-    assert.deepEqual(unstated.routes.map(row => row.route), ['npc'], 'no farm and no gathered order at cost 0');
-    assert.equal(unstated.routeCost, 708000);
-    assert.equal(acquire({ selfId: 1 }, { ...view, hourCost: 'literal' }).route, 'order', 'the literal hour prices gathering: 100 h x 1000 + 400');
-    assert.equal(acquire({ selfId: 1 }, { ...view, useHour: 0 }).routeCost, 0, 'a stated use of 0 is a free farm');
-}
-
-// acquire's order: the main's own materials (those it holds at what they
-// would sell for, the rest each by its own cheapest route) + the fee, per
-// piece the craft makes (a 60 % recipe can fail: its materials are lost,
-// the fee kept).
-{
-    const materials = [{ selfId: 200, amount: 10, held: 4, sale: 5, line: 30, npc: 50, farmHours: 0 },
-        { selfId: 201, amount: 2, held: 0, sale: 8, line: null, npc: null, farmHours: 0.5, spotHour: 800 }];
-    const view = { cap: 1e9, ownHour: 1000, hourCost: 'opportunity', lines: [], npc: [], order: { recipeId: 7, fee: 520, mp: 40, units: 0.6, materials } };
-    const order = acquire({ selfId: 1 }, view);
-    assert.equal(order.route, 'order');
-    assert.deepEqual(order.materials.map(row => [row.selfId, row.via, row.price]), [[200, 'line', 30], [201, 'gather', 100]], 'six bought on a line at 30 (under the NPC\'s 50); two gathered in an hour that gives up 200');
-    assert.equal(order.adena, 520 + 6 * 30, 'the money one craft takes: the fee and what it buys');
-    assert.equal(order.cost, (520 + 4 * 5 + 180 + 200) / 0.6, 'per piece of a 60 % craft');
-    assert.equal(order.hours, 1 / 0.6);
-    assert.equal(acquire({ selfId: 1 }, { ...view, hourCost: 'literal' }).cost, (520 + 20 + 180 + 1000) / 0.6, 'the design\'s text charges the whole own hour');
-    assert.equal(acquire({ selfId: 1 }, { ...view, order: { ...view.order, materials: [materials[0], { ...materials[1], farmHours: 0 }] } }), null, 'a material nothing supplies: no order');
 }
 
 // trip: the earliest situation; a shot situation with no seller waits for an offer.
@@ -379,9 +339,8 @@ const viewOf = (patch = {}) => ({
 }
 
 // The keep rule at a visit (account_needs, ours): one piece a slot of its
-// next grade's kit stays in its bag (a second copy is offered), the
-// materials of a piece whose route is an order stay. The model before
-// (sell_all_but_kit) sells them all.
+// next grade's kit stays in its bag (a second copy is offered). The model
+// before (sell_all_but_kit) sells them all.
 {
     const keep = { keepRule: 'account_needs', order: [] };
     const ahead = visit(mainOf({ kit: { 7: 100 }, weapon: 100, bag: { 101: 1 } }), viewOf({ ...keep, ahead: [{ selfId: 101, slot: 10 }] }));
@@ -391,11 +350,7 @@ const viewOf = (patch = {}) => ({
     assert.deepEqual([two.main.bag[101], two.main.ads.wts[0]?.qty], [2, 1], 'one kept for the slot, the second offered on its WTS');
     const before = visit(mainOf({ kit: { 7: 100 }, weapon: 100, bag: { 101: 1 } }), viewOf({ order: [], ahead: [{ selfId: 101, slot: 10 }] }));
     assert.equal(before.main.ads.wts.length, 1, 'the model before offers it');
-    const route = { route: 'order', adena: 1300, cost: 1500, materials: [{ selfId: 200, amount: 4, via: 'held', price: 0 }] };
-    const pieces = { 100: { ...viewOf().pieces[100], routes: [route] } };
     const sold = out => out.stops.filter(stop => stop.kind === 'npc_sell').reduce((sum, stop) => sum + stop.items[0].count, 0);
-    assert.equal(sold(visit(mainOf({ bag: { 200: 10 } }), viewOf({ ...keep, pieces }))), 6, 'four for the order stay');
-    assert.equal(sold(visit(mainOf({ bag: { 200: 10 } }), viewOf({ order: [], pieces }))), 10);
     const emptied = visit(mainOf(), viewOf({ ...keep, twin: { wallet: 0, escrow: 0 }, surplus: { 200: 3 } }));
     assert.deepEqual([sold(emptied), emptied.claims.find(claim => claim.kind === 'own_stock')?.units], [3, 3], 'the warehouse\'s surplus is taken out and sold');
     assert.equal(emptied.claims.find(claim => claim.kind === 'own_stock').surplus, true, 'marked: its sale is not loot sold a second time');
@@ -403,44 +358,6 @@ const viewOf = (patch = {}) => ({
     // crystallizer bid, at the floor's channel: never straight to the warehouse.
     const armour = visit(mainOf({ kit: { 7: 100 }, weapon: 100, bag: { 101: 1 } }), viewOf({ ...keep, twin: { wallet: 0, escrow: 0 }, crystallizer: { d: 100 } }));
     assert.deepEqual([armour.stops.filter(stop => stop.kind === 'warehouse' && stop.target === 'deposit').length, armour.main.ads.wts.length], [0, 1], 'offered on its WTS');
-}
-
-// visit: an order placed from its own materials. It buys what a line or
-// the NPC here supplies, leaves the materials and the fee with the order;
-// a material it gathers waits in its bag (never sold) until it holds all.
-// An order no twin took raises its fee by the step at each visit while under
-// the cap, and at the third visit unmet it is withdrawn (its owner gets the
-// materials and fee back) and the route stalls.
-{
-    const orderRoute = { route: 'order', adena: 1400, cost: 1600, recipeId: 7, fee: 1300, mp: 100, materialsCost: 300,
-        materials: [{ selfId: 200, amount: 10, via: 'line', price: 10 }, { selfId: 201, amount: 2, via: 'gather', price: 50 }] };
-    const pieces = { 100: { ...viewOf().pieces[100], cap: 5000, capBy: 'order', routes: [orderRoute] } };
-    const items2 = { ...items, 201: { kind: 'Other.Material', grade: 'NONE', npcBuy: 7 } };
-    const line = { owner: 5, id: 'M5', price: 10, qty: 50, kind: 'line' };
-    const routeView = viewOf({ items: items2, pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }], book: { sell: { 200: [line] }, buy: {}, bids: {} }, feeStep: 7 });
-    // Two looks of its WTB at the order cap, then the route.
-    let main = mainOf(), out;
-    for (let look = 0; look < 6 && main.wants[100]?.state !== 'farm'; look++) { out = visit(main, routeView); main = out.main; }
-    assert.equal(main.wants[100].state, 'farm', 'it lacks a material it gathers: a farm wait for it');
-    assert.equal(main.bag[200], 10, 'the ten it lacked bought on the line');
-    assert.equal(out.orders.length, 0);
-    main = visit({ ...main, bag: { ...main.bag, 201: 1 } }, routeView).main;
-    assert.deepEqual([main.bag[200], main.bag[201]], [10, 1], 'what it gathers for the order stays in its bag, unsold');
-    out = visit({ ...main, bag: { ...main.bag, 201: 2 } }, routeView);
-    assert.deepEqual(out.orders.map(row => [row.recipeId, row.fee, row.materials[200], row.materials[201]]), [[7, 1300, 10, 2]], 'all held: the order takes the materials and the fee');
-    assert.deepEqual([out.main.bag[200], out.main.bag[201], out.main.wants[100].state], [undefined, undefined, 'order']);
-    const placed = out.main.money;
-    out = visit(out.main, routeView);
-    assert.deepEqual(out.orders.map(row => [row.fee, row.add]), [[2000, 700]], 'unclaimed at its next visit: 7 an MP more');
-    assert.equal(out.main.money, placed - 700);
-    const steep = visit(out.main, { ...routeView, feeStep: 70 });
-    assert.equal(steep.orders[0].fee, 4700, 'never over the cap less the materials');
-    out = visit(out.main, routeView);
-    assert.equal(out.orders[0].fee, 2700);
-    out = visit(out.main, routeView);
-    assert.deepEqual([out.withdrawn.length, out.stalled[0].route, out.main.wants[100]], [1, 'order', undefined], 'the third visit unmet: withdrawn, the route stalled');
-    const crafting = visit({ ...main, wants: { 100: { state: 'order', orderId: 'x', order: { fee: 1300, mp: 100, cap: 5000, materialsCost: 300 }, seen: 5, claimed: true } } }, routeView);
-    assert.deepEqual([crafting.withdrawn.length, crafting.orders.length], [0, 0], 'an order a twin took is crafting: no step, no withdrawal');
 }
 
 // buyerLadder: 'looks' (the design's text) climbs to the cap at the third
@@ -617,8 +534,7 @@ const viewOf = (patch = {}) => ({
 
 // buyerNoSeller 'standing': a C weapon nobody supplies (no line, ad, NPC,
 // Luxury or own twin) gets one WTB at its cap that stands unstepped while the
-// queue moves on to the next piece; a cap its own route (a farm) sets takes
-// that route at once. 'ladder' (the design's text) starts its WTB low.
+// queue moves on to the next piece. 'ladder' (the design's text) starts its WTB low.
 {
     const cWeapon = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 2400000, capBy: 'worth', caps: null, routes: [], noSeller: true };
     const armour = { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 6000, capBy: 'npc', caps: null, routes: [{ route: 'npc', adena: 5000, cost: 5000, where: 'Giran' }] };
@@ -628,10 +544,6 @@ const viewOf = (patch = {}) => ({
     assert.deepEqual([out.main.ads.wtb.map(ad => [ad.item, ad.price, ad.standing]), out.main.kit[10]], [[[100, 2400000, true]], 101], 'a standing WTB at the cap; the armour bought');
     const again = visit(out.main, standingView);
     assert.deepEqual([again.main.ads.wtb[0].price, again.main.ads.wtb[0].look, again.waits.filter(row => row.wait === 'wtb')], [2400000, 0, []], 'it stands unstepped, no second wait');
-    const farmed = visit(mainOf(), viewOf({ pieces: { 100: { ...cWeapon, cap: 300000, capBy: 'route', routes: [{ route: 'farm', adena: 0, hours: 300, cost: 300000, where: 's1' }] } }, order: [order[1]], buyerNoSeller: 'standing' }));
-    assert.deepEqual([farmed.main.wants[100].state, farmed.main.ads.wtb.length], ['farm', 1], 'its own route at once, the WTB standing beside it');
-    const dropped = visit({ ...farmed.main, bag: { 100: 1 } }, viewOf({ pieces: { 100: { ...cWeapon, capBy: 'route' } }, order: [order[1]], buyerNoSeller: 'standing' }));
-    assert.deepEqual(dropped.waits, [{ wait: 'farm', end: 'done' }, { wait: 'wtb', end: 'withdrawn' }], 'the piece came: both waits end');
     const ladder = visit(mainOf(), viewOf({ pieces: { 100: cWeapon }, order: [order[1]], firstPrice: { 100: 2000000 }, buyerNoSeller: 'ladder' }));
     assert.equal(ladder.main.ads.wtb[0].price, Math.floor(2000000 * 0.8), 'the design\'s text: the ladder\'s first look');
 }
@@ -644,25 +556,6 @@ const viewOf = (patch = {}) => ({
         routes: [{ route: 'twin', adena: 0, cost: 300000 }, { route: 'npc', adena: 450000, cost: 450000, where: 'Giran' }] };
     const out = visit(mainOf({ money: 600000, kit: { 7: 5 }, weapon: 5 }), viewOf({ pieces: { 100: axe }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], twin: { wallet: 0, escrow: 0, inputs: 0, workshopMoney: 'with_reserve' } }));
     assert.deepEqual([out.main.money, out.wallet], [450000, 150000 - 30], 'the piece\'s 450k stays with the main (the deposit fee from the wallet)');
-}
-
-// orderMaterials 'customer_then_crafter': a C piece's order needs a
-// crafted intermediate nobody supplies the main; the crafter brings it,
-// priced at its first price (4000) into the fee. The design's text
-// ('customer') has no order route.
-{
-    const view = { cap: Infinity, ownHour: 1000, hourCost: 'opportunity', useHour: 100, lines: [], npc: [],
-        order: { recipeId: 9, fee: 1300, mp: 100, units: 1, materials: [{ selfId: 200, amount: 2, held: 2, sale: 5, line: null, npc: null, farmHours: 0 },
-            { selfId: 201, amount: 1, held: 0, sale: 0, line: null, npc: null, farmHours: 0, crafter: 4000 }] } };
-    assert.equal(acquire({ selfId: 1 }, { ...view, orderMaterials: 'customer' }), null, 'from its own materials alone: no route');
-    const order = acquire({ selfId: 1 }, { ...view, orderMaterials: 'customer_then_crafter' });
-    assert.deepEqual([order.route, order.adena, order.materials[1].via], ['order', 5300, 'crafter']);
-    // At its visit it leaves its two units and the fee with the crafter's 4000 in it; the crafter brings the third.
-    const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 9000, capBy: 'route', caps: null, routes: [{ ...order, where: null }], noSeller: true };
-    const placed = visit(mainOf({ bag: { 200: 2 } }), viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], keepRule: 'account_needs', buyerNoSeller: 'standing' }));
-    assert.deepEqual([placed.orders[0].fee, placed.orders[0].materials, placed.orders[0].supplied, placed.main.money], [5300, { 200: 2 }, { 201: 1 }, 20000 - 5300]);
-    const atRoute = visit(mainOf({ bag: { 200: 2 }, wants: { 100: { state: 'route', tries: 0 } } }), viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], keepRule: 'account_needs' }));
-    assert.deepEqual(atRoute.orders[0].materials, { 200: 2 }, 'a want at its route keeps the order\'s materials (not sold first)');
 }
 
 // Luxury takes its own twin's crystals through the account warehouse: 300 D
@@ -680,8 +573,8 @@ const viewOf = (patch = {}) => ({
 // piece any more (its last route stalled, no worth stated).
 {
     const uncapped = { 100: { ...viewOf().pieces[100], cap: null, capBy: 'worth', routes: [] } };
-    const out = visit(mainOf({ wants: { 100: { state: 'farm', route: 'farm', seen: 2 } } }), viewOf({ pieces: uncapped }));
-    assert.deepEqual([out.waits, out.stalled, out.main.wants[100]], [[{ wait: 'farm', end: 'failed' }], [{ selfId: 100, route: 'farm' }], undefined]);
+    const out = visit(mainOf({ wants: { 100: { state: 'twin', route: 'twin', seen: 2 } } }), viewOf({ pieces: uncapped }));
+    assert.deepEqual([out.waits, out.stalled, out.main.wants[100]], [[{ wait: 'twin', end: 'failed' }], [{ selfId: 100, route: 'twin' }], undefined]);
 }
 
 // visit: the refill reserve is never stopped by a piece the main cannot pay.
@@ -768,18 +661,6 @@ const viewOf = (patch = {}) => ({
     assert.equal(routeCap.main.kit[7], 100, 'a cap its own route sets: the same');
     const worthCapped = visit(mainOf({ money: 5000 }), viewOf({ pieces: { 100: { ...npc, capBy: 'worth', cap: 4000 } } }));
     assert.equal(worthCapped.main.wants[100].state, 'wtb', 'a worth cap under the route: the ladder, not the route');
-}
-
-// visit: an order's material it lacks with no line here waits in a farm
-// wait, and is bought at a later visit where a line at or under its route
-// price stands; then the order is placed.
-{
-    const orderRoute = { route: 'order', adena: 1400, cost: 1600, recipeId: 7, fee: 1300, mp: 100, materialsCost: 100, materials: [{ selfId: 200, amount: 10, via: 'line', price: 10 }] };
-    const pieces = { 100: { ...viewOf().pieces[100], cap: 1600, capBy: 'route', routes: [orderRoute], visitsLeft: 1 } };
-    const away = visit(mainOf(), viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }] }));
-    assert.equal(away.main.wants[100].state, 'farm', 'the line stands in its twin\'s town: it waits');
-    const here = visit(away.main, viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }], book: { sell: { 200: [{ owner: 5, id: 'M', price: 10, qty: 50, kind: 'line' }] }, buy: {}, bids: {} } }));
-    assert.deepEqual(here.orders.map(row => row.materials[200]), [10], 'bought where the line stands, the order placed');
 }
 
 // stockSale 'accumulate': stock the town it visits does not buy, with a

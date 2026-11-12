@@ -37,7 +37,7 @@ const gradeOfItem = item => String(item?.grade || 'NONE').toLowerCase();
 // ctx: the design plane's state and helpers (design.js startPlane).
 function mainsSide(ctx) {
     const { snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, depositFee } = ctx;
-    const ads = Books.create(), orders = new Map(), wantsByItem = new Map();
+    const ads = Books.create(), wantsByItem = new Map();
     const marketOf = index => accounts[index].market;
     const setMarket = (index, patch) => put(index, { market: { ...accounts[index].market, ...patch } });
     const townOf = main => { const row = Engine.spotRowOf(view, main); return row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null; };
@@ -289,26 +289,6 @@ function mainsSide(ctx) {
     // The hours a piece's gain counts over and its resale (worthHorizon).
     const horizonFor = (main, selfId, slot, book, town) => Worth.horizon({ reading: config.worthHorizon, gradeHours: horizonOf(main),
         useHours: useHoursOf(main, slot, town), resale: resaleOf(selfId, book) });
-    // Farm hours of each item at the spot that drops it fastest among the
-    // spots the main can hunt at its own level (its line's rows there):
-    // item -> { hours, row, where }. Memo key: line, level, the form it
-    // hunts (the rows' inputs). The farm spot's hour is read at the main's known prices.
-    const farmMemo = new Map();
-    const farmOf = main => {
-        const form = huntForm(main), key = `${main.line}@${main.level}@${form}`;
-        if (farmMemo.has(key)) return farmMemo.get(key);
-        const best = new Map(), hour = Engine.hourOf(view, main);
-        for (const row of hour ? [hour.best, ...(hour.top || []), ...(hour.others || [])].filter(Boolean) : []) {
-            for (const item of rowItems(main, row, form).items) {
-                const held = best.get(item.id);
-                if (item.rate > 0 && (!held || item.rate > held.rate)) best.set(item.id, { rate: item.rate, hours: 1 / item.rate, row, where: String(row.spotId) });
-            }
-        }
-        farmMemo.set(key, best);
-        return best;
-    };
-    const farmRoute = (main, memory, id) => { const at = farmOf(main).get(id); return at ? { hours: at.hours, spotHour: hourAt(main, at.row, memory), where: at.where } : null; };
-
     // What a main deals on: the lines and bids of the town it stands in and
     // the ads (others' only), and its own twin's bids wherever the twin sits
     // (through the account warehouse). Its twin's town's lines it knows
@@ -341,30 +321,12 @@ function mainsSide(ctx) {
     // A price to a main: its last deal, else the cheapest line or ad it deals
     // on, else the cheapest line it knows in its twin's town, else the first price.
     const priceToMain = (memory, book, id) => Knowledge.known(memory, id) ?? book.sell[id]?.[0]?.price ?? book.seen[id] ?? game.firstPrice[id] ?? null;
-    // The recipe an order names: one a twin can hold (a scroll something
-    // drops or spoils, or an A/S quest variant its Create Item level gives),
-    // the least MP first. null when none.
-    const orderRecipe = selfId => (game.byProduct[selfId] || []).map(id => game.recipes[id])
-        .filter(row => row.type === 'dwarven' && (row.quest || game.sourced[row.recipeItemId])).sort((a, b) => a.mpCost - b.mpCost || a.recipeId - b.recipeId)[0] || null;
-    // The inputs of a piece's order: the order route reads their lines in town
-    // (a crystal or a crafted input only a twin's store sells).
-    const orderInputs = selfId => (orderRecipe(selfId)?.materials || []).map(row => row.selfId);
-
     // The routes of one piece (acquire) and its cap, for a main standing in
     // town; table: the main's kit table.
     const routesOf = (index, main, town, book, piece, table) => {
         const account = accounts[index], memory = account.memory, hour = ownHour(main, memory), selfId = piece.selfId;
         const npc = (view.offers.get(selfId) || []).filter(row => row.channel === 'npc_buy').map(row => ({ town: row.town, price: row.price, fare: fareOf(town, row.town) }))
             .filter(row => row.fare !== null);
-        const recipe = orderRecipe(selfId);
-        // A material's line: the cheapest the account knows in reach (the town it stands in, else its twin's town).
-        const order = recipe ? { recipeId: recipe.recipeId, fee: recipe.mpCost * config.orderFeePerMp, mp: recipe.mpCost, units: recipe.productCount * recipe.successRate / 100,
-            materials: recipe.materials.map(row => {
-                const farm = farmRoute(main, memory, row.selfId);
-                return { selfId: row.selfId, amount: row.amount, held: main.bag[row.selfId] || 0, sale: Knowledge.known(memory, row.selfId) ?? view.items[row.selfId]?.npcBuy ?? 0,
-                    line: book.sell[row.selfId]?.[0]?.price ?? book.seen[row.selfId] ?? null, npc: game.npcByTown[town]?.[row.selfId] ?? null, farmHours: farm?.hours || 0, spotHour: farm?.spotHour || 0,
-                    crafter: game.firstPrice[row.selfId] ?? null };
-            }) } : null;
         const lux = snapshot.luxuryOptions?.[selfId];
         const exchange = lux && fareOf(town, lux.town) !== null ? { town: lux.town, fare: fareOf(town, lux.town),
             options: [['c', lux.c], ['d', lux.d]].filter(([, amount]) => amount > 0).map(([g, amount]) => ({ grade: g, amount, price: priceToMain(memory, book, game.crystalIds[g.toUpperCase()]) })) } : null;
@@ -373,9 +335,9 @@ function mainsSide(ctx) {
         const priceOf = pricesOf(main), rows = { rung: Worth.netRow(rowIn(table, piece.slot, selfId), priceOf), worn: Worth.netRow(table?.worn ?? null, priceOf) };
         const horizon = horizonFor(main, selfId, piece.slot, book, town);
         const used = Worth.rungWorth({ formula: config.worth, ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
-        // No hour stated for either kit: its use cannot be stated (counted), and acquire offers no farm priced by it.
+        // No hour stated for either kit: its use cannot be stated (counted).
         if (used.adena === null) stats.routes.noWorth++;
-        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], npc, order, orderMaterials: config.orderMaterials, farm: farmRoute(main, memory, selfId), exchange,
+        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], npc, exchange,
             twin: account.twin ? ctx.ownCraft(index, selfId) : null, stalled: account.market.stalled[selfId] || [] };
         const routes = acquire(piece, own);
         stats.routes.priced++;
@@ -426,10 +388,10 @@ function mainsSide(ctx) {
     }
 
     // path: at its situations, from the routes acquire gives in the town the
-    // main stands in. Returns the main with what withdrawn orders gave back.
+    // main stands in.
     function pathOf(index, main, town) {
         const table = kitTableOf(main), kit = aimsOf(main, table), grade = gradeOfLevel(main.level), candidates = kit.flatMap(aim => aim.candidates);
-        const book = reachBook(index, town, [...new Set(candidates.flatMap(piece => [piece.selfId, ...orderInputs(piece.selfId)]))], [grade]);
+        const book = reachBook(index, town, [...new Set(candidates.map(piece => piece.selfId))], [grade]);
         const routes = {}, worth = {}, weapons = {}, needs = {}, perHour = {}, useHours = {}, resale = {};
         for (const piece of candidates) {
             if (piece.selfId in routes) continue;
@@ -450,22 +412,17 @@ function mainsSide(ctx) {
         stats.unpriced += answer.unpriced.length;
         // Wants of pieces no longer on the path are withdrawn with their
         // WTBs; a want of a piece of a grade the main left fails (outgrown).
-        // An order no twin took gives back its materials and fee; one a twin
-        // took is crafting and is delivered.
         const market = marketOf(index), keep = new Set(answer.pieces.map(piece => piece.selfId)), wants = {};
         const outgrown = id => { const at = gradeOfItem(view.items[id]); return at !== 'none' && at !== grade; };
-        let back = main;
         for (const [key, want] of Object.entries(market.wants)) {
-            if (keep.has(Number(key)) || (want.state === 'order' && want.claimed)) { wants[key] = want; continue; }
+            if (keep.has(Number(key))) { wants[key] = want; continue; }
             // A WTB want ends with its ad, counted below.
-            if (want.state !== 'wtb') endWait({ parked: 'parkedWant', farm: 'farm', order: 'order', route: 'route', twin: 'twin' }[want.state], key, outgrown(Number(key)));
-            if (want.state === 'order') back = refund(back, want.orderId);
+            if (want.state !== 'wtb') endWait({ parked: 'parkedWant', route: 'route', twin: 'twin' }[want.state], key, outgrown(Number(key)));
         }
         const wtb = market.ads.wtb.filter(ad => keep.has(ad.item) || ad.item === reserve?.id);
         for (const ad of market.ads.wtb) if (!wtb.includes(ad)) endWait('wtb', ad.item, outgrown(ad.item));
         setMarket(index, { path: answer, needs, pathDirty: false, goalFresh: true, wants, ads: { ...market.ads, wtb } });
         placeAds(index, 0, null);
-        return back;
     }
     // A wait its owner ended: withdrawn, or failed when the main left the
     // piece's grade without it (outgrown, counted per grade).
@@ -475,17 +432,6 @@ function mainsSide(ctx) {
         const grade = gradeOfItem(view.items[item]);
         stats.outgrown[grade] = (stats.outgrown[grade] || 0) + 1;
     }
-    // An order withdrawn before a twin took it: its materials and fee go back to the main.
-    function refund(main, orderId) {
-        const order = orders.get(orderId);
-        if (!order) return main;
-        orders.delete(orderId);
-        const bag = { ...main.bag };
-        for (const [id, count] of Object.entries(order.materials)) bag[id] = (bag[id] || 0) + count;
-        stats.orders.withdrawn++;
-        return { ...main, money: main.money + order.fee, bag };
-    }
-
     // The ads book after a main's ads changed; a new WTS raises offer_posted
     // for the mains that want its item, a new WTB raises bid_posted for the
     // mains that hold a WTS of its item at or under its price.
@@ -624,12 +570,12 @@ function mainsSide(ctx) {
         const visits = stats.visits, band = visits.byBand[main.band] ||= {};
         band[cause] = (band[cause] || 0) + 1;
         if (town !== nearest) visits.hub[cause] = (visits.hub[cause] || 0) + 1;
-        if (account.market.pathDirty || !account.market.path) main = pathOf(index, main, town);
+        if (account.market.pathDirty || !account.market.path) pathOf(index, main, town);
         setMarket(index, { visits: (marketOf(index).visits || 0) + 1 });
         const market = marketOf(index), twin = accounts[index].twin;
         const reserve = reserveOf(main, outingHours);
         const pieces = {}, ids = new Set(Object.keys(main.bag).map(Number));
-        for (const row of market.path.order) if (row.kind === 'piece') { ids.add(row.selfId); for (const id of orderInputs(row.selfId)) ids.add(id); }
+        for (const row of market.path.order) if (row.kind === 'piece') { ids.add(row.selfId); }
         if (reserve) ids.add(reserve.id);
         for (const id of Object.values(game.crystalIds)) ids.add(id);
         const grade = gradeOfLevel(main.level);
@@ -676,7 +622,7 @@ function mainsSide(ctx) {
             deposit, depositFee, twin: twin ? { wallet: twin.wallet, escrow, inputs: twin.inputMoney || 0, workshopMoney: config.workshopMoney } : null, firing,
             keepRule: config.keepRule, fires: (wornHourOf(main)?.shots || []).map(shot => shot.id), stockSale: config.stockSale, stash, stashLooks: account.stashLooks || {}, knownBids, ahead: market.path.ahead || [], surplus: twin ? Object.fromEntries(Object.entries(twin.surplus || {}).map(([id, count]) => [id, Math.min(count, twin.stock[id] || 0)])) : {},
             reserve: reserve && reserve.amount > 0 ? { id: reserve.id, amount: reserve.amount, cap: shotCap.cap, capBy: shotCap.by, own: twin?.stock[reserve.id] || 0 } : null,
-            pieces, order: market.path.order, fares: view.fares[town] || {}, waitVisits: config.waitVisits, feeStep: config.orderFeeStepPerMp,
+            pieces, order: market.path.order, fares: view.fares[town] || {}, waitVisits: config.waitVisits,
             ladder: { mode: config.buyerLadder, visitsLeft }, buyerNoSeller: config.buyerNoSeller,
             ownCrystals: twin ? Object.fromEntries(Object.values(game.crystalIds).filter(id => twin.stock[id] > 0).map(id => [id, twin.stock[id]])) : {} });
         ctx.commitVisit(index, now, out, deposit);
@@ -695,10 +641,6 @@ function mainsSide(ctx) {
             if (paid === null) bag = { ...bag, [claim.item]: (bag[claim.item] || 0) + claim.units }; else money += claim.adena;
             if (paid !== null && (claim.kind === 'sell_line' || claim.kind === 'sell_wtb') && isStock(view.items[claim.item])) sales[town === nearest ? 'nearLines' : 'hubLines'] += claim.adena;
         }
-        let back = { ...main, money, bag };
-        for (const id of out.withdrawn) back = refund(back, id);
-        money = back.money; bag = back.bag;
-        for (const order of out.orders) postOrder({ ...order, buyer: index, at: now });
         const stalled = { ...marketOf(index).stalled };
         for (const row of out.stalled) stalled[row.selfId] = [...(stalled[row.selfId] || []), row.route];
         const wants = { ...out.main.wants };
@@ -735,54 +677,6 @@ function mainsSide(ctx) {
         return { main: config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after, delta };
     }
 
-    // A buyer's order ("craft X for me") with its materials and fee left
-    // with it; a raised fee adds to it. Every twin that holds the order's
-    // recipe wakes.
-    function postOrder(order) {
-        const held = orders.get(order.id);
-        if (held) orders.set(order.id, { ...held, fee: order.fee }); else { orders.set(order.id, order); stats.orders.posted++; }
-        for (const account of accounts) {
-            if (account.twin && Workshop.heldRecipes(account.twin, game).has(order.recipeId)) wakeAt(account.index, order.at, 'order');
-        }
-    }
-    // A twin took an order: its materials and fee go to the twin (the fee
-    // before the roll); the buyer's wait is crafting.
-    function claimOrder(twinIndex, orderId) {
-        const order = orders.get(orderId);
-        if (!order) return null;
-        orders.delete(orderId);
-        stats.orders.claimed++;
-        stats.orders.fees += order.fee;
-        stats.botToBot += order.fee;
-        const market = marketOf(order.buyer), want = market.wants[order.item];
-        if (want?.orderId === orderId) setMarket(order.buyer, { wants: { ...market.wants, [order.item]: { ...want, claimed: true } } });
-        return order;
-    }
-    // Open orders' fees and materials: held with the order, the money and goods ledgers count them.
-    const orderEscrow = () => {
-        let fees = 0;
-        const goods = {};
-        for (const order of orders.values()) { fees += order.fee; for (const [id, count] of Object.entries(order.materials)) goods[id] = (goods[id] || 0) + count; }
-        return { fees, goods };
-    };
-    // The order's craft ended: the piece goes to the buyer, met at once, or
-    // the craft failed (its materials are gone, the fee kept).
-    function deliver(order, made, now) {
-        // The buyer's order wait ends here unless it ended already (its path moved on).
-        const market = marketOf(order.buyer), wants = { ...market.wants }, waiting = wants[order.item]?.state === 'order';
-        if (waiting) delete wants[order.item];
-        if (!made) {
-            stats.orders.failed++;
-            if (waiting) stats.waits.order.failed++;
-            setMarket(order.buyer, { wants });
-            return;
-        }
-        ctx.commit(order.buyer, now, main => ({ ...main, bag: { ...main.bag, [order.item]: (main.bag[order.item] || 0) + 1 } }), 'order_delivered');
-        stats.orders.delivered++;
-        if (waiting) stats.waits.order.done++;
-        stats.obtained(gradeOfItem(view.items[order.item]), 'order');
-        setMarket(order.buyer, { wants, incoming: { ...market.incoming, [order.item]: 'order' }, pathDirty: true });
-    }
     // Its main's shortfall the account's workshop serves first (ownUseFirst):
     // the shot it fires up to what its last visit's refill took, and the
     // path pieces it does not wear, each at what the piece is worth to the
@@ -795,7 +689,6 @@ function mainsSide(ctx) {
             .map(piece => ({ selfId: piece.selfId, worth: market.needs?.[piece.selfId] ?? piece.worth })).filter(piece => piece.worth > 0);
         return { shot, pieces };
     }
-    const openOrders = () => [...orders.values()].map(order => ({ id: order.id, item: order.item, recipeId: order.recipeId, fee: order.fee, supplied: order.supplied || {} }));
 
     // Stock: what a main sells to lines and the NPC (not gear, not shots).
     const isStock = item => !!item && !Engine.isGear(item) && item.kind !== 'Other.Shot';
@@ -987,7 +880,7 @@ function mainsSide(ctx) {
         const only = side => Object.fromEntries(Object.entries(all[side] || {}).map(([id, rows]) => [id, rows.filter(row => row.town === town)]).filter(([, rows]) => rows.length));
         return { sell: only('sell'), buy: only('buy'), bids: {} };
     };
-    return { visitMain, nextArrival, levelUp, kitRatio, firingOf, recipeWanted, scrollRoute, claimOrder, deliver, openOrders, orderEscrow, offerPosted, adsBook, ownNeeds,
+    return { visitMain, nextArrival, levelUp, kitRatio, firingOf, recipeWanted, scrollRoute, offerPosted, adsBook, ownNeeds,
         start: (index, main) => setMarket(index, { spotHeld: !!main.spot }) };
 }
 

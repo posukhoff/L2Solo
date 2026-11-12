@@ -213,17 +213,17 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
         const pair = design.shotsKind.pair[grade] || { wanted: 0, fired: 0 }, other = design.shotsKind.other[grade] || { wanted: 0, fired: 0 }, l = lastKind[grade] || { pairWanted: 0, pairFired: 0, wanted: 0, fired: 0 };
         return `${grade} pair mains ${pct(pair.fired, pair.wanted)} | ${pct(l.pairFired, l.pairWanted)}, others ${pct(other.fired, other.wanted)} | ${pct(l.fired - l.pairFired, l.wanted - l.pairWanted)}`;
     }).join('; ')}`);
-    const cr0 = design.crafts, craftsAll = cr0.own.crafts + cr0.order.crafts + cr0.shelf.crafts, mpAll = cr0.own.mp + cr0.order.mp + cr0.shelf.mp;
-    console.log(`TWIN CRAFTS by whom they serve (batches, crafts, share of MP): ${['own', 'order', 'shelf'].map(use => `${use} ${cr0[use].batches} / ${cr0[use].crafts} (${pct(cr0[use].mp, mpAll)})`).join(' | ')}; ${craftsAll} crafts`);
+    const cr0 = design.crafts, craftsAll = cr0.own.crafts + cr0.shelf.crafts, mpAll = cr0.own.mp + cr0.shelf.mp;
+    console.log(`TWIN CRAFTS by whom they serve (batches, crafts, share of MP): ${['own', 'shelf'].map(use => `${use} ${cr0[use].batches} / ${cr0[use].crafts} (${pct(cr0[use].mp, mpAll)})`).join(' | ')}; ${craftsAll} crafts`);
     console.log(`LOOT value at the NPC's buy price (picked up; sold at visits; kept for the account): ${['pair', 'other'].map(kind => {
         const l = design.loot[kind];
         return `${kind} ${k(l.dropped)}; sold ${k(l.sold)} (${pct(l.sold, l.dropped)}); kept ${k(l.kept)} (${pct(l.kept, l.dropped)})`;
     }).join(' | ')}`);
     console.log(`SHOT WORTH at the start against the first price a twin asks: ${Object.entries(design.shots.worthAtStart).map(([grade, w]) => `${grade} ${pct(w.worthAtOrAboveFirstPrice, w.mains)} of ${w.mains}`).join(' | ')}`);
     console.log(`MP used ${k(design.mp.used)} of ${k(design.mp.available)} available (${pct(design.mp.used, design.mp.available)}); a full shot use would take ${k(design.mp.neededForFullShots)} (${pct(design.mp.neededForFullShots, design.mp.available)} of available); idle MP lost at max ${k(design.mp.lost)}`);
-    const t = design.twins.seat, twinHours = t.sell + t.buy + t.manufacture + t.idleSell + t.idleBuy;
+    const t = design.twins.seat, twinHours = t.sell + t.buy + t.idleSell + t.idleBuy;
     console.log(`TWINS without a seat yet (their main cannot craft): ${fmt(t.unseated)} twin-hours`);
-    console.log(`TWINS seat-hours: selling (sell lines shown) ${fmt(t.sell)} (${pct(t.sell, twinHours)}), buying (buy lines shown) ${fmt(t.buy)} (${pct(t.buy, twinHours)}), manufacture ${fmt(t.manufacture)} (${pct(t.manufacture, twinHours)}), `
+    console.log(`TWINS seat-hours: selling (sell lines shown) ${fmt(t.sell)} (${pct(t.sell, twinHours)}), buying (buy lines shown) ${fmt(t.buy)} (${pct(t.buy, twinHours)}), `
         + `idle (store empty) ${fmt(t.idleSell + t.idleBuy)} (${pct(t.idleSell + t.idleBuy, twinHours)}: in sell mode ${fmt(t.idleSell)}, in buy mode ${fmt(t.idleBuy)}); `
         + `crafting (a batch running, beside the store) ${fmt(design.twins.batchHours)} (${pct(design.twins.batchHours, twinHours)})`);
     const b = design.twins.buyerSeat || { buy: 0, idleBuy: 0 };
@@ -292,7 +292,7 @@ function printTowns(design, hours, visits, real) {
 }
 
 // The market of mains: how kit pieces came, the wants left open, trips,
-// meetings, orders, caps against floors, velocity, Gini, the shot margin's spread.
+// meetings, caps against floors, velocity, Gini, the shot margin's spread.
 function printMarket(design, hours) {
     const m = design.market, g = design.gates, h = (table, grade) => (table[grade] === undefined ? '-' : (typeof table[grade] === 'number' ? table[grade] : table[grade].h).toFixed(1));
     console.log('GATES of each grade\'s soulshot (hour; - never): crafter main in the grade -> its shot recipe\'s scroll reaches a twin (how) -> a twin holds the recipe -> first crystal (from) -> first shots crafted -> first drawn by a pair\'s own main -> first sold to a main on a line -> 10 % / 50 % of the grade\'s shooters see a line at or under their shot worth:');
@@ -308,7 +308,7 @@ function printMarket(design, hours) {
     for (const row of pick) console.log(`  h${pad(row.hour, 4)} ${Object.entries(row.byTown).sort((a, b) => b[1] - a[1]).map(([town, n]) => `${town} ${n}`).join(' | ')}`);
     const own = design.ownTownLine, at = [own[0], own[Math.floor((own.length - 1) / 2)], own[own.length - 1]].filter(Boolean);
     console.log(`SHOOTERS whose own town's book holds a line of their shot (start, middle, end): ${at.map(row => `h${row.hour} ${Object.entries(row.byGrade).map(([grade, share]) => `${grade} ${pct(share, 1)}`).join(' ')}`).join(' | ')}`);
-    console.log('KIT PIECES obtained per grade (buy: a player\'s line or ad, twin: the own twin\'s shelf or craft, order, npc, exchange, farm: its own drop), wants failed as outgrown (the main left the grade without the piece) and wants open at the end:');
+    console.log('KIT PIECES obtained per grade (buy: a player\'s line or ad, twin: the own twin\'s shelf or craft, npc, exchange, drop: its own drop), wants failed as outgrown (the main left the grade without the piece) and wants open at the end:');
     for (const grade of [...new Set([...Object.keys(m.obtained), ...Object.keys(m.openWants), ...Object.keys(m.outgrown)])].sort()) {
         const row = m.obtained[grade] || {}, total = Object.values(row).reduce((a, b) => a + b, 0), open = m.openWants[grade] || {};
         console.log(`  ${grade.padEnd(5)} ${total} pieces: ${Object.entries(row).sort((a, b) => b[1] - a[1]).map(([route, n]) => `${route} ${n} (${pct(n, total)})`).join(' | ') || '-'}; `
@@ -317,11 +317,10 @@ function printMarket(design, hours) {
     const w = design.liveness.waits;
     console.log(`WTBS posted ${w.wtb.opened} filled ${w.wtb.done} failed ${w.wtb.failed} (unfunded at the meeting ${m.unfunded.wtb}, outgrown ${w.wtb.outgrown}) withdrawn ${w.wtb.withdrawn} open ${w.wtb.open}; `
         + `parked at the cap: pieces ${w.parkedWant.opened}, shots ${w.parkedShots.opened}; sales to twin lines unfunded ${m.unfunded.line}, to bids ${m.unfunded.bid}`);
-    console.log(`ROUTES priced ${m.routes.priced}, the cap's own route at 0 adena ${m.routes.zero} (${pct(m.routes.zero, m.routes.priced)}), a piece with no worth row (no farm offered) ${m.routes.noWorth} (${pct(m.routes.noWorth, m.routes.priced)})`);
+    console.log(`ROUTES priced ${m.routes.priced}, the cap's own route at 0 adena ${m.routes.zero} (${pct(m.routes.zero, m.routes.priced)}), a piece with no worth row ${m.routes.noWorth} (${pct(m.routes.noWorth, m.routes.priced)})`);
     const tripsTotal = Object.entries(m.trips).filter(([reason]) => reason !== 'shotsParked').reduce((sum, [, n]) => sum + n, 0);
     console.log(`TRIPS by situation (${tripsTotal}, ${(tripsTotal / hours).toFixed(0)}/h): ${Object.entries(m.trips).sort((a, b) => b[1] - a[1]).map(([reason, n]) => `${reason} ${n}`).join(' | ')}`);
-    console.log(`MEETINGS ${m.meetings}; offers raised ${m.events.offerPosted}, bids raised ${m.events.bidPosted}; ORDERS posted ${m.orders.posted} claimed ${m.orders.claimed} delivered ${m.orders.delivered} failed ${m.orders.failed} withdrawn ${m.orders.withdrawn} open ${m.orders.open} fees ${k(m.orders.fees || 0)}; `
-        + `twin-to-twin units ${m.twinToTwin}, twin units to the NPC at the floor ${m.twinToNpc}; paths ${m.paths}; spot changes ${Object.entries(m.occupation).map(([why, n]) => `${why} ${n}`).join(' | ')}`);
+    console.log(`MEETINGS ${m.meetings}; offers raised ${m.events.offerPosted}, bids raised ${m.events.bidPosted}; twin-to-twin units ${m.twinToTwin}, twin units to the NPC at the floor ${m.twinToNpc}; paths ${m.paths}; spot changes ${Object.entries(m.occupation).map(([why, n]) => `${why} ${n}`).join(' | ')}`);
     const occ = m.occupation, moves = ['grade_changed', 'spot_left', 'recipe_wanted', 'arrived_town'].reduce((sum, why) => sum + (occ[why] || 0), 0);
     console.log(`SPOT CHANGES ${moves} (${(moves / hours).toFixed(1)}/h): ${['grade_changed', 'spot_left', 'recipe_wanted', 'arrived_town'].map(why => `${why} ${occ[why] || 0}`).join(' | ')}; `
         + `caused by a bid seen for what the new spot yields ${occ.forBid || 0} (${pct(occ.forBid || 0, moves)}), by its workshop's scroll want ${occ.forScroll || 0} (${pct(occ.forScroll || 0, moves)}); back to the spot held before ${occ.returned || 0}; `
