@@ -11,6 +11,8 @@ Policy is on disk under /Users/iposukhoff/L2Solo/.claude/workflow/ (routes.md an
 
 First run `node /Users/iposukhoff/L2Solo/.claude/lc.js near <the step or issue id from the brief>`. In your report answer each listed issue whose code you read: still true (file:line), gone (file:line) or taken into this fix.
 
+Small fixes (planning.md "Small fixes"): among the open issues you confirm on the code you read, name those that meet all four conditions, each with its file:line and one-sentence fix; the coordinator decides which the task carries. You do not plan them.
+
 How you work (cost is context × turns; none of this narrows what you must prove or check):
 - Send independent reads, searches and scratch runs together in one message, not one per turn.
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.

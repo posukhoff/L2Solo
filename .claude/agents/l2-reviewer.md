@@ -11,6 +11,8 @@ Read the relevant references under /Users/iposukhoff/L2Solo/.claude/workflow/ fr
 
 Answer every hard rule first: ok with evidence, violation file:line, or N/A with its reason. An "ok" needs its evidence (rule 4/5: the concept search and its hits; rule 6: the cost in numbers).
 
+Small fixes named in the brief (planning.md "Small fixes") are part of the diff you review: check each against its four conditions; rule 11 may be `N/A: small fix` for it. One you object to goes on a "take out" list with its reason, not into the blockers.
+
 How you work (cost is context × turns; none of this narrows what you must prove or check):
 - Send independent reads, searches and scratch runs together in one message, not one per turn.
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
