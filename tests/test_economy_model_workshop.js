@@ -182,8 +182,8 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
 // their cost; a pair's main leaves its twin the inputs of its recipes and the
 // scrolls it lacks and can use.
 {
-    assert.deepEqual(Workshop.pool({ main: 9000, wallet: 1000, escrow: 4000, keep: 3000 }), { main: 3000, wallet: 7000, moved: 6000 });
-    assert.deepEqual(Workshop.pool({ main: 1000, wallet: 4000, escrow: 4000, keep: 3000 }), { main: 1000, wallet: 4000, moved: 0 });
+    assert.deepEqual(Workshop.pool({ main: 9000, wallet: 1000, escrow: 4000, reserve: 3000 }), { main: 3000, wallet: 7000, moved: 6000 });
+    assert.deepEqual(Workshop.pool({ main: 1000, wallet: 4000, escrow: 4000, reserve: 3000 }), { main: 1000, wallet: 4000, moved: 0 });
     const game = gameOf([recipe(1, SSD), recipe(4, RISKY, { level: 4 })]);
     const left = Workshop.depositFor({ [ORE]: 9, [BONE]: 4, 5001: 1, 5004: 1 }, twinOf({ recipes: [] }), game);
     assert.deepEqual(left, { 5001: 1 }, 'the scroll it can use, not one above its Create Item level');
@@ -191,6 +191,123 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
     assert.deepEqual(Workshop.depositFor({ 5001: 5 }, twinOf({ recipes: [] }), game), { 5001: 1 }, 'one copy of a scroll: the main sells the rest');
     assert.deepEqual(Workshop.depositFor({ 5001: 2 }, twinOf({ recipes: [], stock: { 5001: 1 } }), game), {}, 'none while a copy waits in its stock');
     assert.deepEqual(Workshop.depositFor({ 5001: 2, [ORE]: 3 }, twinOf({ recipes: [1] }), game), { [ORE]: 3 }, 'none of a recipe it holds');
+}
+
+// The money order: 'with_reserve' (ours) funds the workshop's inputs beside
+// the refill reserve, before the next piece; 'after_path' (the model before)
+// after it. 6000 of 10000 free (4000 held by open lines): reserve 2000,
+// inputs 3000, piece 2000.
+{
+    const at = workshopMoney => Workshop.pool({ main: 9000, wallet: 1000, escrow: 4000, reserve: 2000, inputs: 3000, piece: 2000, workshopMoney });
+    assert.deepEqual(at('with_reserve'), { main: 3000, wallet: 7000, moved: 6000 }, 'the piece gets what reserve and inputs leave');
+    assert.deepEqual(at('after_path'), { main: 4000, wallet: 6000, moved: 5000 }, 'reserve and piece first');
+}
+
+// The keep rule (account_needs): a pair's main leaves its twin what the
+// workshop's last answer needs, up to that amount; the rest is surplus.
+// The answer: one batch of each recipe with a positive margin (14 crafts at
+// max MP and an hour of regen: 42 ore) less stock, and the adena its next
+// batch's bought inputs take (10 crafts at the MP it holds: 24 ore at 300).
+{
+    const game = gameOf([recipe(1, SSD)]);
+    const twin = twinOf({ recipes: [1], needs: { [ORE]: 6 } });
+    assert.deepEqual(Workshop.depositFor({ [ORE]: 9, [BONE]: 4 }, twin, game, [], 'account_needs'), { [ORE]: 6 }, 'six of nine ore');
+    assert.deepEqual(Workshop.depositFor({ [ORE]: 9 }, { ...twin, needs: {} }, game, [], 'account_needs'), {}, 'nothing its answer needs');
+    assert.deepEqual(Workshop.depositFor({ [ORE]: 9 }, twin, game, [], 'sell_all_but_kit'), { [ORE]: 9 }, 'the model before: every unit');
+    const out = Workshop.workshop(viewOf(game, twinOf({ recipes: [1], stock: { [ORE]: 6, [CRYSTAL]: 100, [BONE]: 7 }, paid: { [CRYSTAL]: 100 } })));
+    assert.deepEqual(out.needs, { [ORE]: 36 });
+    assert.deepEqual(out.surplus, { [BONE]: 7 }, 'bones no recipe it holds uses: its main sells them');
+    assert.equal(out.inputMoney, 24 * 300);
+}
+
+// Own use first (ownUseFirst): its main lacks 400 of the 500 Soulshot D it
+// fires (worth 12 a shot to it, inputs 1000 a craft of 156): three crafts for
+// its main before the sword the shelf would craft, and its 100 shots stay off
+// its lines. Without the rule, or when a buyer in reach bids above its main's
+// worth, the shelf's sword. A path piece its main lacks (worth 4000, inputs
+// 3000) goes before the shots the shelf would craft.
+{
+    const sword = recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: ORE, amount: 10 }] });
+    const game = gameOf([recipe(1, SSD), sword]);
+    const twin = twinOf({ recipes: [1, 3], stock: { [ORE]: 300, [CRYSTAL]: 100, [SSD]: 100 }, paid: { [CRYSTAL]: 100 } });
+    const own = { shot: { id: SSD, amount: 500, worth: 12 }, pieces: [] };
+    const first = Workshop.workshop(viewOf(game, twin, { config: { ...TEXT, ownUseFirst: true }, own }));
+    assert.deepEqual([first.batch.recipeId, first.batch.use, first.batch.crafts], [1, 'own', 3]);
+    assert.ok(!first.wanted.some(line => line.item === SSD), 'its main\'s shots are not listed');
+    const shelf = Workshop.workshop(viewOf(game, twin, { config: { ...TEXT, ownUseFirst: false }, own }));
+    assert.deepEqual([shelf.batch.recipeId, shelf.batch.use], [3, 'shelf']);
+    assert.ok(shelf.wanted.some(line => line.item === SSD && line.qty === 100), 'the shelf lists them');
+    const books = { A: { sell: {}, buy: { [SSD]: [{ owner: 1, price: 15, qty: 1000 }] }, bids: {} } };
+    const outbid = Workshop.workshop(viewOf(game, twin, { config: { ...TEXT, ownUseFirst: true }, own, books }));
+    assert.equal(outbid.batch.use, 'shelf', 'a bid of 15 over a worth of 12');
+    assert.ok(outbid.wanted.some(line => line.item === SSD && line.qty === 100), 'and the 100 shots its main would not draw are listed for that buyer');
+    const cheap = gameOf([recipe(1, SSD), sword], {}, { [SWORD]: 3500 });
+    const piece = Workshop.workshop(viewOf(cheap, twin, { config: { ...TEXT, ownUseFirst: true }, own: { shot: null, pieces: [{ selfId: SWORD, worth: 4000 }] } }));
+    assert.deepEqual([piece.batch.recipeId, piece.batch.use], [3, 'own'], 'its main\'s sword (10 a MP) over the shelf\'s shots (14)');
+    assert.equal(Workshop.workshop(viewOf(cheap, { ...twin, stock: { ...twin.stock, [SWORD]: 1 } }, { config: { ...TEXT, ownUseFirst: true }, own: { shot: null, pieces: [{ selfId: SWORD, worth: 4000 }] } })).batch.recipeId, 1,
+        'one in the warehouse waits for its main');
+}
+
+// The twin's store sells crystals and crafted inputs: D crystals beyond its
+// crystal stock (crystalStock 'hours', the model before: 10 hours of its
+// Soulshot D at 400 MP an hour: 100), at a
+// floor of what they cost it (600 each over the NPC's 325); none while it
+// holds no more than that stock. A crafted input of a recipe it holds (a
+// mold its sword takes, made by a recipe it does not hold) beyond one
+// batch of the sword (10 molds).
+{
+    const MOLD = 1883;
+    const sword = recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: MOLD, amount: 10 }] }), mold = recipe(5, MOLD, { mpCost: 20, productCount: 1, materials: [{ selfId: BONE, amount: 5 }] });
+    const game = gameOf([recipe(1, SSD), sword, mold], { [MOLD]: { kind: 'Other.Material', grade: 'NONE', npcBuy: 30 } }, { [MOLD]: 200 });
+    const twin = twinOf({ recipes: [1, 3], stock: { [ORE]: 300, [CRYSTAL]: 160, [MOLD]: 25 }, paid: { [CRYSTAL]: 600, [MOLD]: 150 }, wallet: 0 });
+    const out = Workshop.workshop(viewOf(game, twin, { config: { ...OURS, crystalStock: 'hours', crystalStockHours: 10 } }));
+    const line = item => out.wanted.find(row => row.item === item);
+    assert.equal(out.mode, 'sell');
+    assert.equal(line(CRYSTAL)?.qty, 60, 'crystals beyond its stock of 100');
+    assert.deepEqual([out.prices[`sell:${CRYSTAL}`].floor, out.prices[`sell:${CRYSTAL}`].floorBy], [600, 'cost']);
+    assert.equal(line(MOLD)?.qty, 15, 'molds beyond one batch of its sword');
+    const lean = Workshop.workshop(viewOf(game, { ...twin, stock: { ...twin.stock, [CRYSTAL]: 100, [MOLD]: 10 } }, { config: { ...OURS, crystalStock: 'hours', crystalStockHours: 10 } }));
+    assert.ok(!lean.wanted.some(row => row.item === CRYSTAL || row.item === MOLD), 'nothing beyond what it uses');
+}
+
+// crystalStock 'queued' (ours): a twin keeps the crystals its queued
+// batches take, one batch of its Soulshot D (the MP it holds and an hour of
+// regen: (188 + 400) / 40 = 14 crafts, a crystal each), and lists the other
+// 146 of its 160; the model before keeps 10 hours' worth (100) and lists 60.
+{
+    const game = gameOf([recipe(1, SSD)]);
+    const twin = twinOf({ recipes: [1], stock: { [ORE]: 300, [CRYSTAL]: 160 }, paid: { [CRYSTAL]: 600 }, wallet: 0 });
+    const listed = config => Workshop.workshop(viewOf(game, twin, { config })).wanted.find(row => row.item === CRYSTAL)?.qty;
+    assert.equal(listed({ ...OURS, crystalStock: 'queued' }), 146);
+    assert.equal(listed({ ...OURS, crystalStock: 'hours', crystalStockHours: 10 }), 60);
+}
+
+// Its own main's need ranks a recipe beside the market: a sword whose market
+// price (2000) is under its inputs (10 ore at 300) is still learned from the
+// scroll it holds when its main's path names the sword at 4000 (10 a MP);
+// without that need it is not.
+{
+    const sword = recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: ORE, amount: 10 }] });
+    const game = gameOf([sword], {}, { [SWORD]: 2000 });
+    const twin = twinOf({ stock: { [sword.recipeItemId]: 1 } });
+    const need = { shot: null, pieces: [{ selfId: SWORD, worth: 4000 }] };
+    assert.deepEqual(Workshop.workshop(viewOf(game, twin, { own: need })).learn, [3], 'learned for its main');
+    assert.deepEqual(Workshop.workshop(viewOf(game, twin)).learn, [], 'the market alone: not learned');
+    const wanted = Workshop.workshop(viewOf(game, twinOf({}), { own: need }));
+    assert.ok(wanted.want.includes(3) && wanted.wanted.some(line => line.item === sword.recipeItemId), 'without the scroll: wanted on a buy line');
+}
+
+// ownCraft: what its own twin's craft of a piece costs the account: the
+// inputs at the twin's replacement cost per piece made (10 ore at the NPC's
+// 300), plus the scroll at its first price (1000) when the twin lacks the
+// recipe; its MP hours per piece over the twin's regen (100 / 400).
+{
+    const sword = recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: ORE, amount: 10 }] });
+    const game = { ...gameOf([sword], {}, { [sword.recipeItemId]: 1000 }), sourced: { [sword.recipeItemId]: true } };
+    const at = twin => Workshop.ownCraft({ twin, game, npcSell: { [ORE]: 300 }, crystalReach: {}, memory: [] }, SWORD);
+    assert.deepEqual(at(twinOf({})), { recipeId: 3, cost: 4000, hours: 0.25, held: false });
+    assert.deepEqual(at(twinOf({ recipes: [3] })), { recipeId: 3, cost: 3000, hours: 0.25, held: true });
+    assert.equal(at(twinOf({ createItem: 1 })), null, 'a recipe above its Create Item level');
 }
 
 // The store mode's memory: a stint in which nothing filled is not kept, so
@@ -342,6 +459,23 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
     const low = { id: 'l', side: 'sell', item: SSD, qty: 100, start: 8, look: 2, price: 7, atBound: 0 };
     const lifted = ownLines([low], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: 'l' }], prices, persona, sellerLook: 'every_look', roll: 0.5 }, 'main_arrived').lines[0];
     assert.deepEqual([lifted.price, lifted.look], [12, 0], 'restarted from the bid');
+    // Restarted, it never steps under the bid while that bid stands (its
+    // step would give 11, then 10): it holds at 12.
+    const stepped = [];
+    for (let line = lifted, look = 0; look < 2; look++) {
+        line = ownLines([line], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: 'l' }], prices, persona, sellerLook: 'every_look', roll: 0.5 }, 'main_arrived').lines[0];
+        stepped.push(line.price);
+    }
+    assert.deepEqual(stepped, [12, 12], 'held at the standing bid');
+    // An ask that started above a later bid (start 100, bid 95, floor 50)
+    // steps down to the bid and holds there: never 90, 80 under it.
+    const high = { id: 'h', side: 'sell', item: SSD, qty: 100, start: 100, look: 0, price: 100, atBound: 0 };
+    const under = { 'sell:1463': { floor: 50, floorBy: 'market', rival: null, known: 100, first: 100, bid: 95 } }, seen = [];
+    for (let line = high, look = 0; look < 3; look++) {
+        line = ownLines([line], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: 'h' }], prices: under, persona, sellerLook: 'every_look', roll: 0.5 }, 'main_arrived').lines[0];
+        seen.push(line.price);
+    }
+    assert.deepEqual(seen, [95, 95, 95], 'the ask meets the bid and stays');
     const floorPrices = { 'sell:1463': { floor: 5, floorBy: 'market', rival: null, known: 8, first: 10 } };
     const atFloor = { id: 'l', side: 'sell', item: SSD, qty: 100, start: 8, look: 5, price: 5, atBound: 1, bound: 'floor', floorBy: 'market' };
     const closed = ownLines([atFloor], { wanted: [{ side: 'sell', item: SSD, qty: 100, lineId: 'l' }], prices: floorPrices, persona, sellerLook: 'every_look', roll: 0.5 }, 'main_arrived');

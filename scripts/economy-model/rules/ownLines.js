@@ -48,11 +48,15 @@ function ownLines(lines, view, reason) {
         if (!held && want.resume) priced = priceStep({ side: want.side, start: want.resume.start }, { ...stepView, look: Math.max(0, want.resume.look - 1) });
         else if (!held) priced = priceStep({ side: want.side }, { ...stepView, look: 0 });
         // A standing WTB above a seller's ask restarts its line from the bid
-        // (the only way up a seller's ask has besides a sold-out restart);
-        // the workshop passes a bid only with sellerSeesBids (ours).
-        else if (look && want.side === 'sell' && Number.isFinite(bounds.bid) && bounds.bid > held.price) priced = priceStep({ side: 'sell', start: bounds.bid }, { ...stepView, look: 0 });
-        else if (look) priced = priceStep(held, { ...stepView, look: held.look + (stepsAtLook(held, view.sellerLook) ? 1 : 0) });
-        else priced = held;
+        // (the only way up a seller's ask has besides a sold-out restart),
+        // unless the line started at that bid already; and no step takes an
+        // ask under a standing bid: it holds at the bid while the bid stands.
+        // The workshop passes a bid only with sellerSeesBids (ours).
+        else if (look && want.side === 'sell' && Number.isFinite(bounds.bid) && bounds.bid > held.price && bounds.bid !== held.start) priced = priceStep({ side: 'sell', start: bounds.bid }, { ...stepView, look: 0 });
+        else if (look) {
+            priced = priceStep(held, { ...stepView, look: held.look + (stepsAtLook(held, view.sellerLook) ? 1 : 0) });
+            if (want.side === 'sell' && Number.isFinite(bounds.bid) && priced.price !== null && priced.price < bounds.bid) priced = { ...priced, price: Math.ceil(bounds.bid), bound: null, atBound: 0 };
+        } else priced = held;
         const line = { ...priced, id: held ? held.id : `${view.roll}:${want.side}:${want.item}`, side: want.side, item: want.item, qty: want.qty,
             floorBy: priced.bound === 'floor' ? bounds.floorBy ?? null : null, sold: held && !look ? held.sold || 0 : 0 };
         if (held) kept.add(held.id);

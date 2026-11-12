@@ -58,15 +58,30 @@ function huntCycleWorth({ incomeWith, incomeWithout, horizonHours, ownHour = inc
 // without the piece is near zero or below (a kit that dies more than it
 // earns): its gain is held to gainBound times the own hour (ours) and
 // bounded says so. row: the snapshot's pieceWorth row; null (no row: a piece
-// no line's path names) gives null, a worth nobody can state.
-function pieceWorth({ formula, row, horizonHours, ownHour, gainBound }) {
+// no line's path names) gives null, a worth nobody can state. resale: the
+// adena the piece returns when the main stops wearing it, added to the gain
+// (the horizon reading 'use_plus_resale'; 0 under the design's text).
+function pieceWorth({ formula, row, horizonHours, ownHour, gainBound, resale = 0 }) {
     if (!row) return { adena: null, perHour: 0, bounded: false };
-    if (formula === 'gear_gain') return { ...worth(positive(row.gear), horizonHours, ownHour), bounded: false };
-    if (row.with === null || row.without === null) return { ...worth(0, horizonHours, ownHour), bounded: false };
+    const plus = out => ({ ...out, adena: out.adena + positive(resale) });
+    if (formula === 'gear_gain') return { ...plus(worth(positive(row.gear), horizonHours, ownHour)), bounded: false };
+    if (row.with === null || row.without === null) return { ...plus(worth(0, horizonHours, ownHour)), bounded: false };
     const gain = Number(row.with) - Number(row.without);
     const share = gain <= 0 ? 0 : Number(row.without) > 0 ? gain / Number(row.without) : Infinity;
     const bounded = share > gainBound;
-    return { ...worth(bounded ? gainBound : share, horizonHours, ownHour), bounded };
+    return { ...plus(worth(bounded ? gainBound : share, horizonHours, ownHour)), bounded };
 }
 
-module.exports = { gearWorth, huntCycleWorth, pieceWorth };
+// The hours a piece's gain counts over and what it returns beyond them.
+// 'grade_stage' (the design's text): the hunting hours to the end of the
+// grade stage, nothing returned. 'use_plus_resale' (ours): the hunting hours
+// the main wears it until its path names another piece for the slot (the
+// grade's end when none is named), plus the least it sells for then (the
+// floor: the NPC's buy price or the best crystallizer bid it knows), so a
+// piece bought late in its grade is still worth its resale.
+function horizon({ reading, gradeHours, useHours, resale }) {
+    if (reading === 'grade_stage') return { hours: positive(gradeHours), resale: 0 };
+    return { hours: Math.min(positive(gradeHours), positive(useHours ?? gradeHours)), resale: positive(resale) };
+}
+
+module.exports = { gearWorth, huntCycleWorth, pieceWorth, horizon };

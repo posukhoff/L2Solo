@@ -5,8 +5,12 @@
 // reach at or under the buyer's cap; the NPC is a buy apart, 'npc', so the
 // outputs tell them apart), order at a workshop from its own materials (the
 // materials it holds or still has to get, each by its own cheapest route: a
-// line, gathering them, the NPC; a crafter twin gives its recipe and MP for
-// the fee, taken before the roll), farm the piece whole, exchange at Luxury;
+// line the account knows in reach (the town it stands in, its twin's town:
+// bought at a visit where the line stands), gathering them, the NPC; a
+// crafter twin gives its recipe and MP for the fee, taken before the roll),
+// its own twin crafts it (a pair: the inputs at the twin's replacement cost,
+// nothing for MP it holds idle, the recipe's scroll when the twin lacks it),
+// farm the piece whole, exchange at Luxury;
 // the cheapest of adena + hours x own hour wins. Gathering the materials is
 // the order route with gathered materials (C4: only a crafter makes the
 // piece). Read by path and visit at their situations; no wake of its own.
@@ -14,12 +18,14 @@
 
 // How the hours of a route are charged (the design: "hours x own hour").
 // 'opportunity' (ours): hours x (own hour - the hour of the spot it would
-// farm at, at its own level), what the main gives up by farming there
-// instead of hunting its own spot, never under 0. 'literal' (the design's
-// text): hours x own hour.
+// farm at, at its own level, never under 0: what the main gives up by
+// farming there instead of hunting its own spot) + hours x the piece's use
+// per hour (useHour: the adena an hour the piece adds, lost while it waits
+// for the drop, so a farm at its own spot is not free). 'literal' (the
+// design's text): hours x own hour.
 function charge(hours, spotHour, view) {
     if (!(hours > 0)) return 0;
-    return hours * (view.hourCost === 'literal' ? view.ownHour : Math.max(0, view.ownHour - (spotHour || 0)));
+    return hours * (view.hourCost === 'literal' ? view.ownHour : Math.max(0, view.ownHour - (spotHour || 0)) + (view.useHour || 0));
 }
 
 // A material of an order, for one craft: the units it holds at what they
@@ -40,12 +46,15 @@ function material(row, view) {
 }
 
 // piece: { selfId }. view: { cap (the buyer's most for a player's line),
-// ownHour, hourCost, lines: [{ price, kind: 'line' | 'ad', where }] in
-// reach, npc: [{ town, price, fare }] the NPC sellers it reaches, order:
+// ownHour, hourCost, useHour (the piece's worth per hunting hour), lines:
+// [{ price, kind: 'line' | 'ad', where }] in reach, npc: [{ town, price, fare }] the NPC sellers it reaches, order:
 // { recipeId, fee, mp, units (pieces one craft makes, its success rate
 // counted), materials: [{ selfId, amount (one craft), held, sale, line,
 // npc, farmHours, spotHour }] } | null, farm: { hours, spotHour, where } |
-// null (hours to farm one whole), exchange: { town, fare, options: [{ grade,
+// null (hours to farm one whole), twin: { recipeId, cost (adena per piece
+// made: inputs at the twin's replacement cost, plus the scroll when it lacks
+// the recipe), hours (the craft's MP hours per piece) } | null (its own twin
+// cannot craft it), exchange: { town, fare, options: [{ grade,
 // amount, price }] } | null (Luxury: the crystals of one option at their
 // known price), stalled: [route] (routes that failed twice for this piece) }.
 // Returns { route, cost, adena, hours, where, routes (every priced route,
@@ -68,6 +77,8 @@ function acquire(piece, view) {
                 (order.fee + materialsCost) / order.units, null, { recipeId: order.recipeId, fee: order.fee, mp: order.mp, materials, materialsCost });
         }
     }
+    // The own twin: no money changes hands inside the account; the wait for the craft costs the piece's use.
+    if (view.twin) add('twin', 0, view.twin.hours, view.twin.cost + charge(view.twin.hours, view.ownHour, view), null, { recipeId: view.twin.recipeId });
     if (view.farm?.hours > 0) add('farm', 0, view.farm.hours, charge(view.farm.hours, view.farm.spotHour, view), view.farm.where);
     for (const option of view.exchange?.options || []) {
         if (option.price === null || option.price === undefined) continue;

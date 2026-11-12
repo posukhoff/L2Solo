@@ -26,6 +26,7 @@ const { hash, mulberry } = require('../hunt-tables/common');
 const ADS = 'ads';
 const FORMULAS = Object.freeze(['gear_gain', 'hunt_cycle']);
 const gradeOfItem = item => String(item?.grade || 'NONE').toLowerCase();
+const GRADE_ORDER = Object.freeze(['none', 'd', 'c', 'b', 'a', 's']);
 
 // ctx: the design plane's state and helpers (design.js startPlane).
 function mainsSide(ctx) {
@@ -40,7 +41,49 @@ function mainsSide(ctx) {
         if (at < 0) return grades[0][1] - 1;
         return at + 1 < grades.length ? grades[at + 1][1] - 1 : view.maxLevel;
     };
-    const pathKit = main => view.kits[main.line]?.[Math.min(view.maxLevel, lastLevel(gradeOfLevel(main.level)))] || [];
+    const firstLevel = grade => grades.find(([name]) => name === grade)?.[1] ?? 1;
+    const kitAt = (main, level) => view.kits[main.line]?.[Math.min(view.maxLevel, level)] || [];
+    // The pieces path aims at, one a slot. pathTarget 'grade_last_level' (the
+    // model before): the kit at the grade's last level. 'own_level_then_up'
+    // (ours): the kit at the main's own level, each slot with the pieces the
+    // grade's kits name for it below that level (best first), which path
+    // tries while no route prices the one above; read again at path's
+    // situations, so the aim moves up as the main levels.
+    const aimsOf = main => {
+        const grade = gradeOfLevel(main.level);
+        if (config.pathTarget === 'grade_last_level') return kitAt(main, lastLevel(grade)).map(piece => ({ selfId: piece.selfId, slot: piece.slot, lower: [] }));
+        const from = firstLevel(grade);
+        return kitAt(main, main.level).map(piece => {
+            const lower = [];
+            for (let level = main.level - 1; level >= from; level--) {
+                for (const other of kitAt(main, level)) if (other.slot === piece.slot && other.selfId !== piece.selfId && !lower.includes(other.selfId)) lower.push(other.selfId);
+            }
+            return { selfId: piece.selfId, slot: piece.slot, lower };
+        });
+    };
+    // The next grade's kit: at its first level (own_level_then_up) or its last; none past the last grade.
+    const aheadKit = main => {
+        const at = grades.findIndex(([name]) => name === gradeOfLevel(main.level)), next = grades[at + 1];
+        if (!next) return [];
+        return kitAt(main, config.pathTarget === 'grade_last_level' ? lastLevel(next[0]) : next[1]).map(piece => ({ selfId: piece.selfId, slot: piece.slot }));
+    };
+    // The level at which path names another piece than selfId for the slot
+    // inside the main's grade (own_level_then_up), null when none does before
+    // the grade's end. Memo key: line, level, slot, piece (its inputs).
+    const replacedMemo = new Map();
+    const replacedAt = (main, selfId, slot) => {
+        if (config.pathTarget === 'grade_last_level') return null;
+        const key = `${main.line}@${main.level}@${slot}@${selfId}`;
+        if (replacedMemo.has(key)) return replacedMemo.get(key);
+        const last = lastLevel(gradeOfLevel(main.level));
+        let at = null;
+        for (let level = main.level + 1; level <= Math.min(last, view.maxLevel) && at === null; level++) {
+            const other = kitAt(main, level).find(piece => piece.slot === slot);
+            if (other && other.selfId !== selfId) at = level;
+        }
+        replacedMemo.set(key, at);
+        return at;
+    };
     const priceOfItem = (memory, id) => Knowledge.known(memory, id) ?? view.items[id]?.npcBuy ?? 0;
 
     // A spot row's items per hunting hour at the design's yields: [{ id, rate,
@@ -72,11 +115,24 @@ function mainsSide(ctx) {
         return Math.max(0, hour);
     };
     const ownHour = (main, memory) => { const row = Engine.spotRowOf(view, main); return row ? hourAt(main, row, memory) : 0; };
-    // Hunting hours to the end of the main's grade stage.
-    const horizonOf = main => {
-        const next = grades.find(([, from]) => from > main.level), row = Engine.spotRowOf(view, main);
+    // Hunting hours to a level at the main's spot, and to the end of its grade stage.
+    const hoursTo = (main, level) => {
+        const row = Engine.spotRowOf(view, main);
         if (!(row?.exp > 0)) return 0;
-        return Math.max(0, Engine.expAt(view, Math.min(next ? next[1] : view.maxLevel, view.maxLevel)) - main.exp) / row.exp;
+        return Math.max(0, Engine.expAt(view, Math.min(level, view.maxLevel)) - main.exp) / row.exp;
+    };
+    const horizonOf = main => { const next = grades.find(([, from]) => from > main.level); return hoursTo(main, next ? next[1] : view.maxLevel); };
+    // The least a piece sells for: the NPC's buy price or the best
+    // crystallizer bid in the book it deals on.
+    const resaleOf = (selfId, book) => {
+        const item = view.items[selfId], bids = (book.bids?.[gradeOfItem(item)] || []).filter(entry => entry.qty > 0);
+        const bid = item?.crystals > 0 && bids.length ? Math.max(...bids.map(entry => entry.price)) * item.crystals : null;
+        return Bounds.floor({ npcBuy: item?.npcBuy || 0, crystallizerBids: bid === null ? [] : [bid] });
+    };
+    // The hours a piece's gain counts over and its resale (worthHorizon).
+    const horizonFor = (main, selfId, slot, book) => {
+        const replaced = replacedAt(main, selfId, slot);
+        return Worth.horizon({ reading: config.worthHorizon, gradeHours: horizonOf(main), useHours: replaced === null ? null : hoursTo(main, replaced), resale: resaleOf(selfId, book) });
     };
     // Farm hours of each item at the spot that drops it fastest among the
     // spots the main can hunt at its own level (its line's rows there):
@@ -135,6 +191,9 @@ function mainsSide(ctx) {
     // the least MP first. null when none.
     const orderRecipe = selfId => (game.byProduct[selfId] || []).map(id => game.recipes[id])
         .filter(row => row.type === 'dwarven' && (row.quest || game.sourced[row.recipeItemId])).sort((a, b) => a.mpCost - b.mpCost || a.recipeId - b.recipeId)[0] || null;
+    // The inputs of a piece's order: the order route reads their lines in town
+    // (a crystal or a crafted input only a twin's store sells).
+    const orderInputs = selfId => (orderRecipe(selfId)?.materials || []).map(row => row.selfId);
 
     // The routes of one piece (acquire) and its cap, for a main standing in town.
     const routesOf = (index, main, town, book, piece, grade) => {
@@ -142,34 +201,44 @@ function mainsSide(ctx) {
         const npc = (view.offers.get(selfId) || []).filter(row => row.channel === 'npc_buy').map(row => ({ town: row.town, price: row.price, fare: fareOf(town, row.town) }))
             .filter(row => row.fare !== null);
         const recipe = orderRecipe(selfId);
+        // A material's line: the cheapest the account knows in reach (the town it stands in, else its twin's town).
         const order = recipe ? { recipeId: recipe.recipeId, fee: recipe.mpCost * config.orderFeePerMp, mp: recipe.mpCost, units: recipe.productCount * recipe.successRate / 100,
             materials: recipe.materials.map(row => {
                 const farm = farmRoute(main, memory, row.selfId);
                 return { selfId: row.selfId, amount: row.amount, held: main.bag[row.selfId] || 0, sale: Knowledge.known(memory, row.selfId) ?? view.items[row.selfId]?.npcBuy ?? 0,
-                    line: book.sell[row.selfId]?.[0]?.price ?? null, npc: game.npcByTown[town]?.[row.selfId] ?? null, farmHours: farm?.hours || 0, spotHour: farm?.spotHour || 0 };
+                    line: book.sell[row.selfId]?.[0]?.price ?? book.seen[row.selfId] ?? null, npc: game.npcByTown[town]?.[row.selfId] ?? null, farmHours: farm?.hours || 0, spotHour: farm?.spotHour || 0 };
             }) } : null;
         const lux = snapshot.luxuryOptions?.[selfId];
         const exchange = lux && fareOf(town, lux.town) !== null ? { town: lux.town, fare: fareOf(town, lux.town),
             options: [['c', lux.c], ['d', lux.d]].filter(([, amount]) => amount > 0).map(([g, amount]) => ({ grade: g, amount, price: priceToMain(memory, book, game.crystalIds[g.toUpperCase()]) })) } : null;
-        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, lines: [], npc, order, farm: farmRoute(main, memory, selfId), exchange, stalled: account.market.stalled[selfId] || [] };
+        // The piece's use per hunting hour (its gain at the own hour): what a wait for it costs.
+        const row = snapshot.pieceWorth?.[main.line]?.[grade]?.pieces?.[selfId] || null, horizon = horizonFor(main, selfId, piece.slot, book);
+        const used = Worth.pieceWorth({ formula: config.worth, row, horizonHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
+        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.perHour * hour, lines: [], npc, order, farm: farmRoute(main, memory, selfId), exchange,
+            twin: account.twin ? ctx.ownCraft(index, selfId) : null, stalled: account.market.stalled[selfId] || [] };
         const routes = acquire(piece, own);
         stats.routes.priced++;
         if (routes?.routeCost === 0) stats.routes.zero++;
-        const capped = capOf(main, memory, selfId, grade, routes?.routeCost ?? null, game.npcByTown[town]?.[selfId] ?? null, hour);
+        const capped = capOf(row, horizon, routes?.routeCost ?? null, game.npcByTown[town]?.[selfId] ?? null, hour);
         const lines = (book.sell[selfId] || []).map(entry => ({ price: entry.price, kind: entry.kind, where: entry.kind === 'ad' ? 'ad' : entry.town }));
-        return { ...capped, acquired: lines.length ? acquire(piece, { ...own, cap: capped.cap, lines }) : routes };
+        // What the piece is worth to its account's workshop: the least of its
+        // worth and its cheapest route other than a player's line or the own twin.
+        const other = routes?.routes.find(option => option.route !== 'buy' && option.route !== 'twin');
+        const need = Math.min(capped.worth ?? Infinity, other ? other.cost : Infinity);
+        return { ...capped, useHours: horizon.hours, need: Number.isFinite(need) ? need : null, acquired: lines.length ? acquire(piece, { ...own, cap: capped.cap ?? 0, lines }) : routes };
     };
     // A piece's cap: min(worth, own route, the NPC here); both formulas' caps
     // for the cap-against-floor count. A piece no path row names is capped by
-    // its routes alone.
-    const capOf = (main, memory, selfId, grade, routeCost, npcSell, hour) => {
-        const row = snapshot.pieceWorth?.[main.line]?.[grade]?.pieces?.[selfId] || null, horizon = horizonOf(main), caps = {};
+    // its routes alone; with no route either it has no cap (null).
+    const capOf = (row, horizon, routeCost, npcSell, hour) => {
+        const caps = {};
         let chosen = null;
         for (const formula of FORMULAS) {
-            const worth = Worth.pieceWorth({ formula, row, horizonHours: horizon, ownHour: hour, gainBound: config.huntCycleGainBound });
+            const worth = Worth.pieceWorth({ formula, row, horizonHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound, resale: horizon.resale });
             const capped = Bounds.cap({ worth: worth.adena ?? Number.MAX_SAFE_INTEGER, routeCost, npcSell });
-            caps[formula] = capped.cap;
-            if (formula === config.worth) chosen = { cap: capped.cap, capBy: capped.by, bounded: worth.bounded, worth: worth.adena ?? null };
+            const cap = capped.cap >= Number.MAX_SAFE_INTEGER ? null : capped.cap;
+            caps[formula] = cap;
+            if (formula === config.worth) chosen = { cap, capBy: capped.by, bounded: worth.bounded, worth: worth.adena ?? null };
         }
         return { ...chosen, caps };
     };
@@ -186,20 +255,24 @@ function mainsSide(ctx) {
     // path: at its situations, from the routes acquire gives in the town the
     // main stands in. Returns the main with what withdrawn orders gave back.
     function pathOf(index, main, town) {
-        const kit = pathKit(main), grade = gradeOfLevel(main.level);
-        const book = reachBook(index, town, [...new Set(kit.map(piece => piece.selfId))], []);
-        const routes = {}, worth = {}, weapons = {};
-        for (const piece of kit) {
+        const kit = aimsOf(main), grade = gradeOfLevel(main.level);
+        const candidates = kit.flatMap(piece => [{ selfId: piece.selfId, slot: piece.slot }, ...piece.lower.map(selfId => ({ selfId, slot: piece.slot }))]);
+        const book = reachBook(index, town, [...new Set(candidates.flatMap(piece => [piece.selfId, ...orderInputs(piece.selfId)]))], [grade]);
+        const routes = {}, worth = {}, weapons = {}, needs = {};
+        for (const piece of candidates) {
             if (main.kit[piece.slot] === piece.selfId || piece.selfId in routes) continue;
             const priced = routesOf(index, main, town, book, piece, gradeOfItem(view.items[piece.selfId]) === 'none' ? grade : gradeOfItem(view.items[piece.selfId]));
             routes[piece.selfId] = priced.acquired ? { route: priced.acquired.route, cost: priced.acquired.cost } : null;
             worth[piece.selfId] = priced.worth;
+            needs[piece.selfId] = priced.need;
             if (Engine.isWeapon(view.items[piece.selfId])) weapons[piece.selfId] = true;
         }
         const reserve = reserveOf(main, rateOf(main.band).huntShare);
         const reserveAdena = reserve ? reserve.amount * (Knowledge.known(accounts[index].memory, reserve.id) ?? game.firstPrice[reserve.id] ?? 0) : 0;
-        const answer = path(main, { kit, weapons, routes, worth, reserve: reserveAdena });
+        const held = view.items[main.weapon], weaponBelow = !main.weapon || GRADE_ORDER.indexOf(gradeOfItem(held)) < GRADE_ORDER.indexOf(grade);
+        const answer = path(main, { kit, weapons, weaponBelow, routes, worth, reserve: reserveAdena, ahead: aheadKit(main) });
         stats.paths++;
+        stats.unpriced += answer.unpriced.length;
         // Wants of pieces no longer on the path are withdrawn with their
         // WTBs; a want of a piece of a grade the main left fails (outgrown).
         // An order no twin took gives back its materials and fee; one a twin
@@ -210,12 +283,12 @@ function mainsSide(ctx) {
         for (const [key, want] of Object.entries(market.wants)) {
             if (keep.has(Number(key)) || (want.state === 'order' && want.claimed)) { wants[key] = want; continue; }
             // A WTB want ends with its ad, counted below.
-            if (want.state !== 'wtb') endWait({ parked: 'parkedWant', farm: 'farm', order: 'order', route: 'route' }[want.state], key, outgrown(Number(key)));
+            if (want.state !== 'wtb') endWait({ parked: 'parkedWant', farm: 'farm', order: 'order', route: 'route', twin: 'twin' }[want.state], key, outgrown(Number(key)));
             if (want.state === 'order') back = refund(back, want.orderId);
         }
         const wtb = market.ads.wtb.filter(ad => keep.has(ad.item) || ad.item === reserve?.id);
         for (const ad of market.ads.wtb) if (!wtb.includes(ad)) endWait('wtb', ad.item, outgrown(ad.item));
-        setMarket(index, { path: answer, pathDirty: false, goalFresh: true, wants, ads: { ...market.ads, wtb } });
+        setMarket(index, { path: answer, needs, pathDirty: false, goalFresh: true, wants, ads: { ...market.ads, wtb } });
         placeAds(index, 0, null);
         return back;
     }
@@ -372,33 +445,37 @@ function mainsSide(ctx) {
         const market = marketOf(index), twin = accounts[index].twin;
         const reserve = reserveOf(main, outingHours);
         const pieces = {}, ids = new Set(Object.keys(main.bag).map(Number));
-        for (const row of market.path.order) if (row.kind === 'piece') ids.add(row.selfId);
+        for (const row of market.path.order) if (row.kind === 'piece') { ids.add(row.selfId); for (const id of orderInputs(row.selfId)) ids.add(id); }
         if (reserve) ids.add(reserve.id);
         for (const id of Object.values(game.crystalIds)) ids.add(id);
-        const gearGrades = new Set(Object.keys(main.bag).map(id => gradeOfItem(view.items[id])));
-        const book = reachBook(index, town, ids, [...gearGrades]);
         const grade = gradeOfLevel(main.level);
+        const gearGrades = new Set([...Object.keys(main.bag).map(id => gradeOfItem(view.items[id])), grade]);
+        const book = reachBook(index, town, ids, [...gearGrades]);
+        // Its visits per wall hour so far, and its hunting share: the visits left before a piece stops being used.
+        const visitRate = (marketOf(index).visits || 0) / Math.max(1, now), share = rateOf(main.band).huntShare || 1;
         for (const row of market.path.order) {
             if (row.kind !== 'piece' || main.kit[row.slot] === row.selfId || pieces[row.selfId]) continue;
             const pieceGrade = gradeOfItem(view.items[row.selfId]) === 'none' ? grade : gradeOfItem(view.items[row.selfId]);
             const priced = routesOf(index, main, town, book, row, pieceGrade);
             if (priced.bounded) stats.worthBounded++;
             pieces[row.selfId] = { selfId: row.selfId, slot: row.slot, grade: gradeOfItem(view.items[row.selfId]), weapon: Engine.isWeapon(view.items[row.selfId]),
-                cap: priced.cap, capBy: priced.capBy, caps: priced.caps, routes: priced.acquired ? priced.acquired.routes : [], own: twin?.stock[row.selfId] || 0 };
+                cap: priced.cap, capBy: priced.capBy, caps: priced.caps, routes: priced.acquired ? priced.acquired.routes : [], own: twin?.stock[row.selfId] || 0,
+                visitsLeft: priced.useHours / share * visitRate };
         }
         const memory = account.memory, known = {};
         for (const deal of memory) known[deal.item] = deal.price;
         const firing = reserve?.id ?? 0;
         const shotCap = reserve ? Bounds.cap({ worth: shotWorth(main), npcSell: game.npcByTown[town]?.[reserve.id] ?? null }) : null;
         const escrow = twin ? twin.lines.filter(line => line.side === 'buy').reduce((sum, line) => sum + line.qty * line.price, 0) + twin.bids.reduce((sum, bid) => sum + bid.qty * bid.price, 0) : 0;
-        const before = market.ads, deposit = twin ? Workshop.depositFor(main.bag, twin, game, twin.decided) : {};
+        const before = market.ads, deposit = twin ? Workshop.depositFor(main.bag, twin, game, twin.decided, config.keepRule) : {};
         // Its expected visits left in its grade: the hours to the next grade at its own visits per hour so far.
         const toGrade = ctx.hoursToGrade(main), visitsLeft = toGrade > 0 ? toGrade * marketOf(index).visits / Math.max(1, now) : Infinity;
         const out = visit({ index, money: main.money, bag: main.bag, shots: main.shots, kit: main.kit, weapon: main.weapon, ads: market.ads, wants: market.wants,
             incoming: market.incoming, shotWait: market.shotWait }, {
-            now, town, adId: `${seed}:${index}:${main.counter}`, persona: account.persona, roll: hash(`${seed}:visit:${index}:${main.counter}`), items: view.items,
+            now, town, adId: `${seed}:${index}:${main.counter}`, persona: account.persona, roll: hash(`${seed}:visit:${index}:${main.counter}`), items: game.items,
             crystalIds: game.crystalIds, book, npcSell: game.npcByTown[town] || {}, known, firstPrice: game.firstPrice,
-            deposit, depositFee, twin: twin ? { wallet: twin.wallet, escrow } : null, firing,
+            deposit, depositFee, twin: twin ? { wallet: twin.wallet, escrow, inputs: twin.inputMoney || 0, workshopMoney: config.workshopMoney } : null, firing,
+            keepRule: config.keepRule, ahead: market.path.ahead || [], surplus: twin ? Object.fromEntries(Object.entries(twin.surplus || {}).map(([id, count]) => [id, Math.min(count, twin.stock[id] || 0)])) : {},
             reserve: reserve && reserve.amount > 0 ? { id: reserve.id, amount: reserve.amount, cap: shotCap.cap, capBy: shotCap.by, own: twin?.stock[reserve.id] || 0 } : null,
             pieces, order: market.path.order, fares: view.fares[town] || {}, waitVisits: config.waitVisits, feeStep: config.orderFeeStepPerMp,
             ladder: { mode: config.buyerLadder, visitsLeft } });
@@ -429,12 +506,19 @@ function mainsSide(ctx) {
         }
         for (const [field, adena] of Object.entries(out.flows)) flows[field] = (flows[field] || 0) + adena;
         delta.gearBought += out.obtained.filter(row => row.route === 'npc').length;
+        // The first hour a main wears a weapon of its grade.
+        if (out.main.weapon !== main.weapon && gradeOfItem(view.items[out.main.weapon]) === grade) {
+            const worn = stats.gradeWeapon[grade] ||= { middle: 0, middleArmed: 0, end: 0, endArmed: 0, first: null };
+            if (worn.first === null) worn.first = now;
+        }
         for (const stop of out.stops) if (stop.kind === 'gatekeeper') delta.towns.push(stop.target);
         placeAds(index, now, before);
         indexWants(index);
         if (out.main.shotWait === null && reserve && reserve.amount > 0 && !(out.main.shots[reserve.id] > 0)) delta.missingShots++;
         if (twin) wakeAt(index, now, 'main_arrived');
-        return { main: { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon }, delta };
+        const after = { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon };
+        // occupationAtTown (ours): its spot is re-chosen at its arrival in town too.
+        return { main: config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after, delta };
     }
 
     // A buyer's order ("craft X for me") with its materials and fee left
@@ -454,6 +538,7 @@ function mainsSide(ctx) {
         if (!order) return null;
         orders.delete(orderId);
         stats.orders.claimed++;
+        stats.orders.fees += order.fee;
         stats.botToBot += order.fee;
         const market = marketOf(order.buyer), want = market.wants[order.item];
         if (want?.orderId === orderId) setMarket(order.buyer, { wants: { ...market.wants, [order.item]: { ...want, claimed: true } } });
@@ -484,6 +569,18 @@ function mainsSide(ctx) {
         stats.obtained(gradeOfItem(view.items[order.item]), 'order');
         setMarket(order.buyer, { wants, incoming: { ...market.incoming, [order.item]: 'order' }, pathDirty: true });
     }
+    // Its main's shortfall the account's workshop serves first (ownUseFirst):
+    // the shot it fires up to what its last visit's refill took, and the
+    // path pieces it does not wear, each at what the piece is worth to the
+    // account (the least of the main's worth and its cheapest route other
+    // than a player's line or the own twin, read at path).
+    function ownNeeds(index) {
+        const market = marketOf(index), main = mains[index];
+        const shot = market.shotId && market.shotNeed > 0 ? { id: market.shotId, amount: market.shotNeed, worth: shotWorth(main) } : null;
+        const pieces = (market.path?.pieces || []).filter(piece => main.kit[piece.slot] !== piece.selfId)
+            .map(piece => ({ selfId: piece.selfId, worth: market.needs?.[piece.selfId] ?? piece.worth })).filter(piece => piece.worth > 0);
+        return { shot, pieces };
+    }
     const openOrders = () => [...orders.values()].map(order => ({ id: order.id, item: order.item, recipeId: order.recipeId, fee: order.fee }));
 
     // trip: when the main comes to town, from its state after each committed event.
@@ -501,7 +598,8 @@ function mainsSide(ctx) {
         const used = worn.length + gearHeld + bagItems.filter(([id]) => !Engine.isGear(view.items[id])).length + Object.values(main.shots).filter(count => count > 0).length;
         const weight = bagItems.reduce((sum, [id, count]) => sum + count * (view.items[id]?.weight || 0), 0) + worn.reduce((sum, id) => sum + (view.items[id]?.weight || 0), 0);
         const bagRow = snapshot.bags?.[main.line];
-        const next = market.path?.pieces.find(piece => main.kit[piece.slot] !== piece.selfId && !market.wants[piece.selfId]);
+        // The next piece it can buy by a route: one it does not want yet, or one whose want is parked (its money reaching the route re-opens it).
+        const next = market.path?.pieces.find(piece => main.kit[piece.slot] !== piece.selfId && piece.route !== null && (!market.wants[piece.selfId] || market.wants[piece.selfId].state === 'parked'));
         const reserve = reserveOf(main, rateOf(main.band).huntShare);
         const reserveAdena = reserve ? reserve.amount * (Knowledge.known(account.memory, reserve.id) ?? game.firstPrice[reserve.id] ?? 0) : 0;
         const bagValue = bagItems.reduce((sum, [id, count]) => sum + count * (view.items[id]?.npcBuy || 0), 0);
@@ -544,10 +642,26 @@ function mainsSide(ctx) {
         setMarket(index, { spotHeld: !!next.spot });
         return next;
     }
-    // occupation at a situation: the main with the spot it hunts.
-    function occupy(main, situation) {
+    // occupation at a situation: the main with the spot it hunts. At
+    // arrived_town each candidate carries its move (the fare from this town
+    // to its town and the extra walk hours at the own hour) and the hunting
+    // hours of its next outing there (the last outing's, at least the
+    // refill's hours; never past its grade's end or the spot's last level),
+    // and the spot it left at its last arrival is no candidate (counted).
+    function occupy(main, situation, outingHours = 0) {
         const index = main.index, account = accounts[index], hour = Engine.hourOf(view, main), town = townOf(main), bids = {}, prices = {};
-        const rowOf = row => { const at = rowItems(main, row, false); return { spotId: String(row.spotId), adena: at.adena, items: at.items.map(item => [item.id, item.rate]), scrolls: row.scrolls || [] }; };
+        const atTown = situation === 'arrived_town', own = atTown ? ownHour(main, account.memory) : 0, heldRow = atTown ? Engine.spotRowOf(view, main) : null;
+        const horizon = atTown ? Math.min(horizonOf(main), Math.max(config.refillMinHours, outingHours || 0)) : 0;
+        const market = account.market, left = atTown && market.lastSpot && market.visits - (market.movedAt ?? -Infinity) <= 1 ? market.lastSpot : null;
+        const rowOf = row => {
+            const at = rowItems(main, row, false), out = { spotId: String(row.spotId), adena: at.adena, items: at.items.map(item => [item.id, item.rate]), scrolls: row.scrolls || [] };
+            if (!atTown) return out;
+            const there = view.yields[`${row.spotId}@${main.level}`]?.town || null, fare = there ? fareOf(town, there) : null;
+            const walk = Math.max(0, (snapshot.walkBack?.[row.spotId] || 0) - (snapshot.walkBack?.[heldRow?.spotId] || 0));
+            const range = view.spotLevels?.[main.line]?.[String(row.spotId)], last = range ? Math.min(view.maxLevel, range[1] + 1) : null;
+            const toEnd = last !== null && row.exp > 0 ? Math.max(0, Engine.expAt(view, last) - main.exp) / row.exp : horizon;
+            return { ...out, move: fare === null ? Infinity : fare + walk * own, stay: Math.min(horizon, toEnd) };
+        };
         const rows = (hour?.top || []).map(rowOf), others = (hour?.others || []).filter(row => row.scrolls?.length).map(rowOf);
         for (const row of [...rows, ...others]) for (const [id] of row.items) {
             prices[id] = priceOfItem(account.memory, id);
@@ -561,11 +675,18 @@ function mainsSide(ctx) {
             if (cap > 0) wants[game.recipes[want.id].recipeItemId] = cap;
         }
         const roll = mulberry(hash(`${seed}:occupation:${index}:${main.counter}`))();
-        const spot = occupation({ spot: main.occupied || null }, { situation, rows, others, prices, bids, wants, roll });
+        const held = heldRow ? rowOf(heldRow) : null;
+        const spot = occupation({ spot: main.occupied || null }, { situation, rows, others, prices, bids, wants, roll, held, left });
+        if (left && spot !== left && occupation({ spot: main.occupied || null }, { situation, rows, others, prices, bids, wants, roll, held }) === left) stats.occupation.refusedBack++;
         if (spot === main.occupied) return main;
         stats.occupation[situation] = (stats.occupation[situation] || 0) + 1;
+        // A move back to the spot it held before the last one (oscillation).
+        if (account.market.lastSpot === spot) stats.occupation.returned++;
+        setMarket(index, { lastSpot: main.occupied || null, movedAt: account.market.visits });
         if (others.some(row => row.spotId === spot)) stats.occupation.scrollSpot++;
-        if (Object.keys(wants).length && spot !== occupation({ spot: main.occupied || null }, { situation, rows, others, prices, bids, wants: {}, roll })) { stats.occupation.forScroll++; stats.scrollMains.add(index); }
+        if (Object.keys(wants).length && spot !== occupation({ spot: main.occupied || null }, { situation, rows, others, prices, bids, wants: {}, roll, held, left })) { stats.occupation.forScroll++; stats.scrollMains.add(index); }
+        // A move a bid it sees for something the new spot yields caused.
+        if (Object.keys(bids).length && spot !== occupation({ spot: main.occupied || null }, { situation, rows, others, prices, bids: {}, wants, roll, held, left })) stats.occupation.forBid = (stats.occupation.forBid || 0) + 1;
         return { ...main, occupied: spot };
     }
     // The account's workshop opened or closed a recipe want: its main re-chooses its spot.
@@ -595,14 +716,14 @@ function mainsSide(ctx) {
         const only = side => Object.fromEntries(Object.entries(all[side] || {}).map(([id, rows]) => [id, rows.filter(row => row.town === town)]).filter(([, rows]) => rows.length));
         return { sell: only('sell'), buy: only('buy'), bids: {} };
     };
-    return { visitMain, nextArrival, levelUp, recipeWanted, scrollRoute, claimOrder, deliver, openOrders, orderEscrow, offerPosted, adsBook,
+    return { visitMain, nextArrival, levelUp, recipeWanted, scrollRoute, claimOrder, deliver, openOrders, orderEscrow, offerPosted, adsBook, ownNeeds,
         start: (index, main) => setMarket(index, { spotHeld: !!main.spot }) };
 }
 
 // A main's market state at the start.
 function marketStart() {
     return { ads: { wts: [], wtb: [] }, wants: {}, incoming: {}, shotWait: null, shotId: null, shotCap: null, shotNeed: 0, path: null, pathDirty: true, goalFresh: true,
-        stalled: {}, deal: null, tripReason: null, parked: false, indexed: [], spotHeld: false, visits: 0 };
+        stalled: {}, deal: null, tripReason: null, parked: false, indexed: [], spotHeld: false, visits: 0, lastSpot: null, movedAt: null, needs: {} };
 }
 
 module.exports = { mainsSide, marketStart, FORMULAS };

@@ -169,24 +169,71 @@ function marginAt(recipe, price, view, held) {
 }
 
 // The most an input is worth to a recipe: the price at which the recipe's
-// margin falls to zero with the other inputs at their unit cost.
-function useValue(recipe, item, view, held) {
-    const m = margin(recipe, view, held), material = recipe.materials.find(row => row.selfId === item);
+// margin falls to zero with the other inputs at their unit cost; price: the
+// product's (its own main's worth of it for a batch its main needs), else
+// the workshop's product price.
+function useValue(recipe, item, view, held, price = null) {
+    const m = price === null ? margin(recipe, view, held) : marginAt(recipe, price, view, held), material = recipe.materials.find(row => row.selfId === item);
     if (!m || !material) return 0;
     const own = unitCost(item, view, held);
     return Math.max(0, (m.revenue - m.cost + material.amount * (own?.cost || 0)) / material.amount);
 }
 
+// Its own main's worth of one unit of an item (view.own: the shot it fires,
+// the path pieces it does not wear), null when its main does not need it.
+function ownWorth(view, item) {
+    const own = view.own;
+    if (!own) return null;
+    if (own.shot && own.shot.id === item && own.shot.worth > 0) return own.shot.worth;
+    const piece = (own.pieces || []).find(row => row.selfId === item);
+    return piece && piece.worth > 0 ? piece.worth : null;
+}
+
+// Adena per MP of a recipe to its account (ours): the better of the market
+// margin and the margin at its own main's worth of the product (a pair's twin
+// learns the shot its main fires and the recipe of a path piece no NPC sells
+// though no buyer bids for them). null when neither prices.
+function recipeValue(recipe, view, held) {
+    const m = margin(recipe, view, held), worth = ownWorth(view, recipe.productId);
+    const own = worth === null ? null : marginAt(recipe, worth, view, held);
+    if (!own) return m;
+    return !m || own.perMp > m.perMp ? own : m;
+}
+
+// What its own twin's craft of a piece costs its account (ours): of the
+// recipes the twin holds or can learn (dwarven, not a quest variant, within
+// its Create Item level, a scroll something drops or spoils), the least per
+// piece: the inputs at their unit cost over the pieces one craft makes,
+// plus, for a recipe it lacks and whose scroll it does not hold, the scroll
+// at its known price, else its first price. hours: the craft's MP per piece
+// over the twin's regen. null when none fits or an input has no supply.
+function ownCraft(view, selfId) {
+    const { twin, game } = view, held = heldRecipes(twin, game);
+    if (!(twin.createItem >= 1) || !(twin.regen > 0)) return null;
+    let best = null;
+    for (const id of game.byProduct[selfId] || []) {
+        const recipe = game.recipes[id], has = held.has(id), made = recipe.productCount * recipe.successRate / 100;
+        if (!(made > 0) || (!has && (recipe.type !== 'dwarven' || recipe.quest || recipe.level > twin.createItem || !game.sourced[recipe.recipeItemId]))) continue;
+        const scroll = has || (twin.stock[recipe.recipeItemId] || 0) > 0 ? 0 : Knowledge.known(view.memory, recipe.recipeItemId) ?? game.firstPrice[recipe.recipeItemId] ?? null;
+        const m = scroll === null ? null : marginAt(recipe, 0, view, held);
+        if (!m) continue;
+        const cost = m.cost / made + scroll;
+        if (!best || cost < best.cost) best = { recipeId: id, cost, hours: m.mp / made / twin.regen, held: has };
+    }
+    return best;
+}
+
 // Recipes a twin may learn: dwarven, within its Create Item level, not held,
 // not a quest variant; all of them at its main's arrival, else only those
 // whose scroll it holds (a fill or a batch brings no new recipe to rank).
+// Ranked by their value to the account (recipeValue).
 function candidates(view, held) {
     const { twin, game } = view, out = [];
     const ids = view.rankRecipes ? game.dwarven : Object.keys(twin.stock).map(item => game.byScroll[item]).filter(id => id && twin.stock[game.recipes[id].recipeItemId] > 0);
     for (const id of ids) {
         const recipe = game.recipes[id];
         if (recipe.level > twin.createItem || held.has(id) || recipe.quest) continue;
-        const m = margin(recipe, view, held);
+        const m = recipeValue(recipe, view, held);
         if (m && m.perMp > 0) out.push({ id, perMp: m.perMp });
     }
     return out.sort((a, b) => b.perMp - a.perMp || a.id - b.id);
@@ -199,7 +246,7 @@ function candidates(view, held) {
 // Returns { learn: [recipeId], forget: [recipeId], want: [{ id, gain }] }.
 function decideRecipes(view, held) {
     const { twin, game } = view;
-    const book = twin.recipes.map(id => ({ id, perMp: margin(game.recipes[id], view, held)?.perMp ?? -Infinity }))
+    const book = twin.recipes.map(id => ({ id, perMp: recipeValue(game.recipes[id], view, held)?.perMp ?? -Infinity }))
         .sort((a, b) => a.perMp - b.perMp || b.id - a.id);
     let free = RECIPE_BOOK_LIMIT - book.length;
     const learn = [], forget = [], want = [], ranked = candidates(view, held);
@@ -240,16 +287,22 @@ function crystallizeList(view, held) {
 
 // One craft batch (ours): the crafts of the best positive-margin recipe whose
 // inputs are held or bought here (the NPC in its town, crystals through NPC
-// gear) that one hour of seated regen covers, at least one; gear one at a
-// time and only with no unsold piece on its shelf. deadline = now + (crafts x
-// MP cost - MP held) / regen. null when nothing pays or no input is at hand.
-function planBatch(view, held, stock, ranked) {
+// gear) that one hour of seated regen covers, at least one, and no more than
+// a row's maxCrafts (its own main's shortfall); gear one at a time and only
+// with no unsold piece on its shelf. deadline = now + (crafts x MP cost - MP
+// held) / regen. use names whom it crafts for ('own' | 'shelf'). need: the
+// adena the bought inputs of the first recipe with inputs at hand take at its
+// full size, whatever the wallet holds (the money it asks of its account).
+// batch null when nothing pays or no input is at hand.
+function planBatch(view, held, stock, ranked, use = 'shelf') {
     const { twin, game, now } = view, mp = mpAt(twin, now), counters = { gearCapped: 0, stopped: [] };
-    for (const { id, m } of ranked) {
+    let need = null;
+    for (const { id, m, maxCrafts } of ranked) {
         const recipe = game.recipes[id];
         if (!(m.perMp > 0)) { counters.stopped.push(id); continue; }
         if (isGear(game.items[recipe.productId]) && (stock[recipe.productId] || 0) > 0) { counters.gearCapped++; continue; }
         let crafts = isGear(game.items[recipe.productId]) ? 1 : Math.max(1, Math.floor((mp + twin.regen * view.config.batchHours) / recipe.mpCost));
+        if (maxCrafts !== undefined) crafts = Math.min(crafts, maxCrafts);
         // Each input: units held, then the NPC in town, then NPC gear for crystals.
         let costPerCraft = 0;
         const shortPerCraft = [];
@@ -263,9 +316,10 @@ function planBatch(view, held, stock, ranked) {
         if (crafts < 1) continue;
         // Bought inputs within the wallet: the units held come first; NPC gear comes in whole pieces.
         const spendOf = count => shortPerCraft.reduce((sum, row) => {
-            const need = Math.max(0, count * row.material.amount - row.have);
-            return sum + (row.grade ? Math.ceil(need / view.crystalRoute[row.grade].crystals) * view.crystalRoute[row.grade].price : need * row.price);
+            const short = Math.max(0, count * row.material.amount - row.have);
+            return sum + (row.grade ? Math.ceil(short / view.crystalRoute[row.grade].crystals) * view.crystalRoute[row.grade].price : short * row.price);
         }, 0);
+        if (need === null) need = spendOf(crafts);
         while (crafts >= 1) {
             if (spendOf(crafts) <= twin.wallet) break;
             crafts = Math.max(0, Math.min(crafts - 1, Math.floor(twin.wallet / Math.max(1, costPerCraft))));
@@ -273,24 +327,54 @@ function planBatch(view, held, stock, ranked) {
         if (crafts < 1) continue;
         const npcBuys = [], routeBuys = [];
         for (const row of shortPerCraft) {
-            const need = Math.max(0, crafts * row.material.amount - row.have);
-            if (!need) continue;
-            if (!row.grade) { npcBuys.push({ selfId: row.material.selfId, count: need, price: row.price }); continue; }
-            const route = view.crystalRoute[row.grade], pieces = Math.ceil(need / route.crystals);
+            const short = Math.max(0, crafts * row.material.amount - row.have);
+            if (!short) continue;
+            if (!row.grade) { npcBuys.push({ selfId: row.material.selfId, count: short, price: row.price }); continue; }
+            const route = view.crystalRoute[row.grade], pieces = Math.ceil(short / route.crystals);
             routeBuys.push({ selfId: route.gearId, count: pieces, price: route.price, crystals: route.crystals, grade: row.grade });
         }
         const deadline = now + Math.max(0, crafts * recipe.mpCost - mp) / twin.regen;
-        return { batch: { recipeId: id, crafts, deadline, mpAtStart: mp, perMp: m.perMp, orderId: null }, npcBuys, routeBuys, counters };
+        return { batch: { recipeId: id, crafts, deadline, mpAtStart: mp, perMp: m.perMp, orderId: null, use }, npcBuys, routeBuys, counters, need: need || 0 };
     }
-    return { batch: null, npcBuys: [], routeBuys: [], counters };
+    return { batch: null, npcBuys: [], routeBuys: [], counters, need: need || 0 };
+}
+
+// Its own main's shortfall it can craft (ownUseFirst, ours): the shot its
+// main fires up to the kit rule's refill (what its main took at its last
+// visit) less what the warehouse holds, and the path pieces it holds a
+// recipe for and does not hold. Inside an account there is no price: a unit
+// is crafted for its main when the main's worth of it reaches the best bid
+// in reach (else a buyer values it above its own main) and pays its inputs.
+// Rows ranked by the margin at the main's worth, each held to the crafts its
+// shortfall takes. view.own: { shot: { id, amount, worth } | null, pieces:
+// [{ selfId, worth }] }. Returns { rows, kept: { item: units } (what its
+// main will draw: the shortfall of every target no buyer values above its
+// main, kept off the twin's sell lines) }.
+function ownRows(view, after, held, stock) {
+    const own = view.own || {}, targets = [], rows = [], kept = {};
+    if (own.shot) targets.push({ item: own.shot.id, amount: own.shot.amount - (stock[own.shot.id] || 0), want: own.shot.amount, worth: own.shot.worth });
+    for (const piece of own.pieces || []) targets.push({ item: piece.selfId, amount: 1 - (stock[piece.selfId] || 0), want: 1, worth: piece.worth });
+    for (const { item, amount, want, worth } of targets) {
+        if (!(worth > 0)) continue;
+        const { bestBid } = Knowledge.reach(view.place, view.books, item, view.self, view.ads);
+        if (bestBid !== null && bestBid > worth) continue;
+        kept[item] = (kept[item] || 0) + want;
+        if (!(amount > 0)) continue;
+        for (const id of view.game.byProduct[item] || []) {
+            if (!held.has(id)) continue;
+            const recipe = view.game.recipes[id], m = marginAt(recipe, worth, after, held);
+            if (m && m.perMp > 0) rows.push({ id, m, worth, maxCrafts: Math.ceil(amount / (recipe.productCount * recipe.successRate / 100)) });
+        }
+    }
+    return { rows: rows.sort((a, b) => b.m.perMp - a.m.perMp || a.id - b.id), kept };
 }
 
 // The batch of an order: one craft of its recipe from the buyer's
 // materials, at the twin's MP; deadline = now + (MP cost - MP held) / regen.
 function orderBatch(view, { order, id, perMp }) {
     const { twin, game, now } = view, mp = mpAt(twin, now), recipe = game.recipes[id];
-    return { batch: { recipeId: id, crafts: 1, deadline: now + Math.max(0, recipe.mpCost - mp) / twin.regen, mpAtStart: mp, perMp, orderId: order.id },
-        npcBuys: [], routeBuys: [], counters: { gearCapped: 0, stopped: [] } };
+    return { batch: { recipeId: id, crafts: 1, deadline: now + Math.max(0, recipe.mpCost - mp) / twin.regen, mpAtStart: mp, perMp, orderId: order.id, use: 'order' },
+        npcBuys: [], routeBuys: [], counters: { gearCapped: 0, stopped: [] }, need: 0 };
 }
 
 // The goods a mode would put on offer, as one key (sorted item ids).
@@ -348,10 +432,13 @@ function lineIdOf(twin, side, item) {
 // { perCrystal, gearId, price, crystals } in its town }, crystalReach { grade:
 // { perCrystal (price + fare over crystals), town, fare } the cheapest it
 // reaches }, applied { item, units } after a batch, hoursToGrade,
-// rankRecipes: rank every recipe it could learn (its main's arrival) }.
-// Returns { learn, forget, want, wants, crystallize, batch, npcBuys,
-// routeBuys, mode, modeValues, stint, stints, stintEnded, wanted, prices,
-// bidWanted, bidPrices, counters }.
+// rankRecipes: rank every recipe it could learn (its main's arrival), own
+// (its main's shortfall, ownRows) }.
+// Returns { learn, forget, want, wants, crystallize, batch (use: 'own' |
+// 'order' | 'shelf'), npcBuys, routeBuys, mode, modeValues, stint, stints,
+// stintEnded, wanted, prices, bidWanted, bidPrices, counters, needs { item:
+// count } (what its main keeps for it), surplus { item: count } (what its
+// main takes out of the warehouse to sell), inputMoney }.
 function workshop(view) {
     const { twin, game, config } = view;
     let held = heldRecipes(twin, game);
@@ -369,15 +456,19 @@ function workshop(view) {
     const after = { ...view, twin: { ...twin, recipes: book, stock } };
     const ranked = [...held].map(id => ({ id, m: margin(game.recipes[id], after, held) })).filter(row => row.m)
         .sort((a, b) => b.m.perMp - a.m.perMp || a.id - b.id);
+    // Its own main first (ownUseFirst, ours): a batch for its main's
+    // shortfall, then orders, then the shelf.
+    const idle = { batch: null, npcBuys: [], routeBuys: [], counters: { gearCapped: 0, stopped: [] }, need: 0 };
+    const ownPass = config.ownUseFirst ? ownRows(view, after, held, stock) : { rows: [], kept: {} }, own = ownPass.rows;
+    const ownPlan = own.length ? planBatch(after, held, stock, own, 'own') : idle, shelf = planBatch(after, held, stock, ranked);
+    const plan = twin.batch ? idle : ownPlan.batch ? ownPlan : shelf;
     // Orders it can take (a buyer's "craft X for me" from the buyer's own
     // materials, first come): a recipe it holds, ranked by the fee per MP of
     // one craft; one is worth taking when that reaches the margin per MP of
     // the batch it would craft otherwise (the MP's other work). The best order's fee is
     // manufacture's value.
-    const idle = { batch: null, npcBuys: [], routeBuys: [], counters: { gearCapped: 0, stopped: [] } };
-    const plan = twin.batch ? idle : planBatch(after, held, stock, ranked);
     const orders = [], ownBest = plan.batch ? plan.batch.perMp : 0;
-    for (const order of view.orders || []) {
+    for (const order of plan.batch?.use === 'own' ? [] : view.orders || []) {
         if (!held.has(order.recipeId)) continue;
         const perMp = order.fee / game.recipes[order.recipeId].mpCost;
         if (perMp > 0 && perMp >= ownBest) orders.push({ order, id: order.recipeId, perMp });
@@ -385,24 +476,72 @@ function workshop(view) {
     orders.sort((a, b) => b.perMp - a.perMp || a.order.id.localeCompare(b.order.id));
     const orderPlan = twin.batch || !orders.length ? idle : orderBatch(view, orders[0]);
     const prices = {}, sells = [], buys = [];
-    // The recipe it would craft next and one batch of its inputs, kept off its sell lines.
-    const best = ranked.find(row => row.m.perMp > 0 && !(isGear(game.items[game.recipes[row.id].productId]) && (stock[game.recipes[row.id].productId] || 0) > 0));
+    // The recipe it would craft next (its own main's first) and one batch of
+    // its inputs, kept off its sell lines.
+    const capped = row => isGear(game.items[game.recipes[row.id].productId]) && (stock[game.recipes[row.id].productId] || 0) > 0;
+    const best = own.find(row => !capped(row)) || ranked.find(row => row.m.perMp > 0 && !capped(row));
+    const batchOf = recipe => (isGear(game.items[recipe.productId]) ? 1 : Math.max(1, Math.floor((twin.maxMp + twin.regen * config.batchHours) / recipe.mpCost)));
     const bestCrafts = best ? Math.max(1, Math.floor((twin.maxMp + twin.regen * config.batchHours) / game.recipes[best.id].mpCost)) : 0;
     const reserve = {};
     if (best) for (const material of game.recipes[best.id].materials) reserve[material.selfId] = bestCrafts * material.amount;
-    // Sell lines: goods of its own recipes beyond that, dearest stock first.
+    // What its own main will draw through the warehouse stays off its lines
+    // too, unless a buyer in reach values it above its main.
+    for (const [item, units] of Object.entries(ownPass.kept)) reserve[item] = (reserve[item] || 0) + units;
+    // What one batch of each recipe it holds with a positive margin or
+    // decided to add asks, the most any one asks per input: the inputs its
+    // main keeps for it (needs, less what it holds) and the crafted inputs it
+    // keeps off its lines.
+    const asks = {};
+    for (const id of [...ranked.filter(row => row.m.perMp > 0).map(row => row.id), ...recipes.want.map(row => row.id)]) {
+        const recipe = game.recipes[id];
+        for (const material of recipe.materials) asks[material.selfId] = Math.max(asks[material.selfId] || 0, batchOf(recipe) * material.amount);
+    }
+    const needs = {};
+    for (const [item, amount] of Object.entries(asks)) if (amount > (stock[item] || 0)) needs[item] = amount - (stock[item] || 0);
+    // Materials in the warehouse no recipe it holds or decided to add uses
+    // (one dropped or never learned): surplus its main takes out and sells.
+    const uses = new Set([...held].map(id => game.recipes[id].productId)), surplus = {};
+    for (const id of [...held, ...recipes.want.map(row => row.id)]) for (const material of game.recipes[id].materials) uses.add(material.selfId);
+    for (const [key, count] of Object.entries(stock)) {
+        const item = Number(key);
+        if (count > 0 && !uses.has(item) && !isGear(game.items[item]) && game.items[item]?.kind !== 'Other.Shot' && !game.crystalGrade[item] && !game.byScroll[item]) surplus[item] = count;
+    }
+    // Crystals of a grade it uses, kept off its lines and asked for by its
+    // crystallizer bid. crystalStock 'queued' (ours): what its queued
+    // batches take (the next batch, one batch of each recipe it holds with a
+    // positive margin or decided to add, the most any one asks); 'hours' (the
+    // model before): what crystalStockHours of its best recipe using them take.
+    const top = twin.crystallize ? GRADES.indexOf(twin.crystallize) : -1, crystalUse = {};
+    for (const grade of GRADES.slice(0, top + 1)) {
+        const crystal = game.crystalIds[grade.toUpperCase()];
+        const user = own.find(row => game.recipes[row.id].materials.some(material => material.selfId === crystal))
+            || ranked.find(row => row.m.perMp > 0 && game.recipes[row.id].materials.some(material => material.selfId === crystal));
+        if (!user) continue;
+        const recipe = game.recipes[user.id], perCraft = recipe.materials.find(material => material.selfId === crystal).amount;
+        const keep = config.crystalStock === 'hours' ? Math.ceil(twin.regen / recipe.mpCost * perCraft * config.crystalStockHours)
+            : Math.max(reserve[crystal] || 0, asks[crystal] || 0, batchOf(recipe) * perCraft);
+        crystalUse[grade] = { crystal, recipe, keep, price: user.worth ?? null };
+    }
+    // Sell lines: goods of its own recipes beyond that, dearest stock first,
+    // and the liquid goods of its store (the design's sell store): crystals
+    // of the grades it crystallizes beyond its crystal stock, and the crafted
+    // inputs of the recipes it holds beyond one batch of each.
     // The floor: max(npcBuy, the best crystallizer bid in reach) (the
     // design's text); with askFloorAtCost (ours, pending the maintainer)
-    // also its input cost per unit at its own unit costs, where the line
-    // parks instead of selling under what the inputs cost.
-    const products = new Set([...held].map(id => game.recipes[id].productId));
+    // also its input cost per unit at its own unit costs (a good it did not
+    // craft: what it paid), where the line parks instead of selling under
+    // what the inputs cost.
+    const products = new Set([...held].map(id => game.recipes[id].productId)), crystalGrades = {};
+    for (const grade of GRADES.slice(0, top + 1)) crystalGrades[game.crystalIds[grade.toUpperCase()]] = grade;
+    const keepOf = item => (products.has(item) ? reserve[item] || 0
+        : crystalGrades[item] ? Math.max(reserve[item] || 0, crystalUse[crystalGrades[item]]?.keep || 0) : Math.max(reserve[item] || 0, asks[item] || 0));
     for (const [key, count0] of Object.entries(stock)) {
-        const item = Number(key), count = count0 - (reserve[item] || 0);
-        if (!(count > 0) || !products.has(item)) continue;
+        const item = Number(key), count = count0 - keepOf(item);
+        if (!(count > 0) || !(products.has(item) || crystalGrades[item] || (asks[item] && game.byProduct[item]))) continue;
         const piece = game.items[item], grade = gradeOf(piece);
         const bid = isGear(piece) && piece.crystals > 0 ? Knowledge.bestCrystalBid(view.place, view.books, grade, view.self) : null;
         const market = Bounds.floor({ npcBuy: piece?.npcBuy || 0, crystallizerBids: bid ? [bid * piece.crystals] : [] });
-        const inputs = config.askFloorAtCost ? craftOf(item, after, held, 0)?.cost ?? 0 : 0;
+        const inputs = config.askFloorAtCost ? craftOf(item, after, held, 0)?.cost ?? (products.has(item) ? 0 : twin.paid[item] ?? 0) : 0;
         const floor = Math.max(market, inputs), floorBy = inputs > market ? 'cost' : 'market';
         // sellerSeesBids (ours): a standing WTB above its ask is where its ask
         // starts and restarts; the design's text: its known price is rival
@@ -425,7 +564,7 @@ function workshop(view) {
             const grade = game.crystalGrade[item];
             if (short <= 0 || view.npcSell[item] > 0 || (grade && view.crystalRoute[grade]) || twin.parked[item]) continue;
             // A crystal's cap is also the cheapest NPC gear route it reaches, the fare included.
-            const value = useValue(recipe, item, after, held), capped = Bounds.cap({ worth: value, routeCost: grade ? view.crystalReach[grade]?.perCrystal ?? null : null });
+            const value = useValue(recipe, item, after, held, best.worth ?? null), capped = Bounds.cap({ worth: value, routeCost: grade ? view.crystalReach[grade]?.perCrystal ?? null : null });
             if (!(capped.cap >= 1)) continue;
             buys.push({ item, qty: short, value, cap: capped.cap, capBy: capped.by });
         }
@@ -495,22 +634,22 @@ function workshop(view) {
     // the cheapest NPC gear route it reaches, the fare included), for the
     // crystals of its crystal-stock hours.
     const bidWanted = [], bidPrices = {};
-    const top = twin.crystallize ? GRADES.indexOf(twin.crystallize) : -1;
     for (const grade of GRADES.slice(0, top + 1)) {
-        const crystal = game.crystalIds[grade.toUpperCase()];
-        const user = ranked.find(row => row.m.perMp > 0 && game.recipes[row.id].materials.some(material => material.selfId === crystal));
-        if (!user) continue;
-        const recipe = game.recipes[user.id], perCraft = recipe.materials.find(material => material.selfId === crystal).amount;
-        const want = Math.ceil(twin.regen / recipe.mpCost * perCraft * config.crystalStockHours) - (stock[crystal] || 0);
-        const capped = Bounds.cap({ worth: useValue(recipe, crystal, after, held), routeCost: view.crystalReach[grade]?.perCrystal ?? null });
+        if (!crystalUse[grade]) continue;
+        const { crystal, recipe, keep, price } = crystalUse[grade];
+        const want = keep - (stock[crystal] || 0);
+        const capped = Bounds.cap({ worth: useValue(recipe, crystal, after, held, price), routeCost: view.crystalReach[grade]?.perCrystal ?? null });
         const qty = Math.min(want, Math.floor(budget / Math.max(1, capped.cap)));
         if (qty < 1 || !(capped.cap >= 1)) continue;
         budget -= qty * capped.cap;
         bidPrices[`buy:${grade}`] = { cap: capped.cap, capBy: capped.by, floor: 0, known: Knowledge.known(view.memory, crystal), first: game.firstPrice[crystal] ?? capped.cap };
         bidWanted.push({ side: 'buy', item: grade, qty, lineId: twin.bids.find(bid => bid.item === grade)?.id || null });
     }
+    // What its main reads at a visit: the adena its next batches' bought
+    // inputs take (own use, then one batch to sell: the money order ranks it).
     return { learn: recipes.learn, forget: recipes.forget, want: recipes.want.map(row => row.id), wants: recipes.want, crystallize, batch: chosen.batch, npcBuys: chosen.npcBuys, routeBuys: chosen.routeBuys,
-        mode, modeValues: values, stint, stints, stintEnded, wanted, prices, bidWanted, bidPrices, counters: chosen.counters, claims, order: chosen === orderPlan && orderPlan.batch ? orders[0].order.id : null };
+        mode, modeValues: values, stint, stints, stintEnded, wanted, prices, bidWanted, bidPrices, counters: chosen.counters, claims, order: chosen === orderPlan && orderPlan.batch ? orders[0].order.id : null,
+        needs, surplus, inputMoney: ownPlan.need + shelf.need };
 }
 
 // The twin's seat (ours): at its main's arrival in town X it moves to X when
@@ -548,31 +687,43 @@ function seatByMode({ here, there, fare }) {
 }
 
 // The account warehouse's money at a main's arrival (ours): the account
-// pools its money; the main keeps what its next outing and next kit piece
-// need (keep), the twin's open buy lines and bids keep their cost, the rest
-// funds the twin's wallet. Returns { main, wallet, moved }.
-function pool({ main, wallet, escrow, keep }) {
-    const total = main + wallet, toMain = Math.max(0, Math.min(keep, total - escrow));
+// pools its money; the twin's open buy lines and bids keep their cost, the
+// main keeps what its next outing (reserve) and next kit piece (piece)
+// need, the rest funds the twin's wallet. workshopMoney 'after_path' (the
+// design's money order has no place for it: the model before): the
+// workshop's inputs come after both. 'with_reserve' (ours): the inputs its
+// next batches take (inputs) rank beside the reserve, before the piece.
+// Returns { main, wallet, moved }.
+function pool({ main, wallet, escrow, reserve = 0, piece = 0, inputs = 0, workshopMoney = 'after_path' }) {
+    const total = main + wallet, free = Math.max(0, total - escrow);
+    let toMain;
+    if (workshopMoney === 'with_reserve') {
+        const kept = Math.min(Math.ceil(reserve), free), funded = Math.min(Math.ceil(inputs), free - kept);
+        toMain = kept + Math.min(Math.ceil(piece), free - kept - funded);
+    } else toMain = Math.max(0, Math.min(Math.ceil(reserve + piece), total - escrow));
     return { main: toMain, wallet: total - toMain, moved: Math.abs(main - toMain) };
 }
 
-// What a pair's main leaves its twin from its bag (ours): the materials of
-// the twin's held and decided recipes, and one copy of each recipe scroll
-// its Create Item level allows that the twin neither holds nor has in stock
-// (a recipe is learned once; the main sells the other copies). Returns
-// { item: count }.
-function depositFor(bag, twin, game, decided = []) {
+// What a pair's main leaves its twin from its bag (ours). keepRule
+// 'sell_all_but_kit' (the model before the keep rule): every material of the
+// twin's held and decided recipes. 'account_needs' (ours): the materials the
+// workshop's last answer needs (twin.needs), up to its amounts. Both: one
+// copy of each recipe scroll its Create Item level allows that the twin
+// neither holds nor has in stock (a recipe is learned once; the main sells
+// the other copies). Returns { item: count }.
+function depositFor(bag, twin, game, decided = [], keepRule = 'sell_all_but_kit') {
     const held = heldRecipes(twin, game), wanted = new Set();
-    for (const id of [...held, ...decided]) for (const material of game.recipes[id].materials) wanted.add(material.selfId);
+    if (keepRule !== 'account_needs') for (const id of [...held, ...decided]) for (const material of game.recipes[id].materials) wanted.add(material.selfId);
     const out = {};
     for (const [key, count] of Object.entries(bag)) {
         const item = Number(key), recipeId = game.byScroll[item], recipe = recipeId ? game.recipes[recipeId] : null;
         if (!(count > 0)) continue;
-        if (wanted.has(item)) out[item] = count;
+        if (keepRule === 'account_needs' && twin.needs?.[item] > 0) out[item] = Math.min(count, twin.needs[item]);
+        else if (wanted.has(item)) out[item] = count;
         else if (recipe && recipe.type === 'dwarven' && !recipe.quest && !held.has(recipeId) && recipe.level <= twin.createItem && !(twin.stock[item] > 0)) out[item] = 1;
     }
     return out;
 }
 
 module.exports = { workshop, margin, useValue, replacement, productPrice, mpAt, heldRecipes, decideRecipes, crystallizeList, planBatch,
-    chooseMode, seat, seatByMode, pool, depositFor, crystalValue, RECIPE_BOOK_LIMIT, GRADES, isGear };
+    chooseMode, seat, seatByMode, pool, depositFor, crystalValue, ownRows, ownCraft, recipeValue, RECIPE_BOOK_LIMIT, GRADES, isGear };

@@ -97,6 +97,27 @@ assert.deepEqual(run(5), out);
 // The twin's crafts use no more MP than it regenerated (it starts with none): used + lost at max <= regenerated.
 assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.available + 1e-6, JSON.stringify(design.mp));
 
+// Own use first at the engine: the Bounty Hunter fires Soulshot D too; its
+// twin crafts its main's shortfall first, its main draws them through the
+// warehouse and fires them; without the rule its twin serves the shelf.
+// Money and goods close either way.
+{
+    const shooting = { ...snapshot, hours: { ...snapshot.hours, 55: hoursOf(55, 50) } };
+    const runWith = config => {
+        const view = Engine.viewOf(shooting, { npcPrices: 'x1' });
+        return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
+            design: Design.plane({ snapshot: shooting, game: Design.gameOf(shooting, view, config), config, start: 'late', grades }) });
+    };
+    const own = runWith(Design.DESIGN);
+    assert.ok(own.design.crafts.own.batches > 0 && own.design.shots.supply.own > 0 && own.design.gates.own.d >= 0, JSON.stringify(own.design.crafts));
+    assert.ok(own.design.shotsKind.pair.d.fired > 0, 'the pair\'s main fired its twin\'s shots');
+    assert.equal(own.money.closureGap, 0);
+    assert.equal(own.design.goods.failing, 0, JSON.stringify(own.design.goods.worst));
+    const shelf = runWith({ ...Design.DESIGN, ownUseFirst: false });
+    assert.equal(shelf.design.crafts.own.batches, 0);
+    assert.equal(shelf.money.closureGap, 0);
+}
+
 // A 60 % recipe: a failed craft yields nothing and its inputs are gone (3 ore and a crystal a craft).
 {
     const risky = { ...snapshot, recipes: [{ ...snapshot.recipes[0], successRate: 60 }] };
@@ -127,6 +148,74 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     const game = Design.gameOf(world, Engine.viewOf(world, { npcPrices: 'x1' }));
     assert.equal(game.reachByTown.TownB.d.perCrystal, 30);
     assert.equal(game.reachByTown.TownA.d.perCrystal, 20, 'its own town without a fare');
+}
+
+// luxuryCrystallizes: gear Luxury sells for crystals crystallizes back as
+// the data say (true) or gives no crystals (false, ours until a second C4
+// source confirms the counts).
+{
+    const world = { ...snapshot, luxuryOptions: { [SWORD]: { town: 'TownA', c: 0, d: 300 } } }, view = Engine.viewOf(world, { npcPrices: 'x1' });
+    assert.equal(Design.gameOf(world, view, { ...Design.DESIGN, luxuryCrystallizes: true }).items[SWORD].crystals, 200);
+    const off = Design.gameOf(world, view, { ...Design.DESIGN, luxuryCrystallizes: false });
+    assert.equal(off.items[SWORD].crystals, 0);
+    assert.equal(off.items[BONE], world.items[BONE], 'other items as they are');
+}
+
+// The twin's seat follows the mains' WTB ads of its product in the town
+// its main arrives in, and only there. The twin starts in its main's
+// starter village (the starter_region reading); its main resupplies in
+// TownA. The other main, shotless, posts a WTB for Soulshot D in the town of
+// its spot: in TownA the twin moves there; in a third town it stays.
+{
+    const fares = { TownA: { TownA: 0, 'Dwarven Village': 500, TownC: 500 }, 'Dwarven Village': { TownA: 500, 'Dwarven Village': 0, TownC: 500 }, TownC: { TownA: 500, 'Dwarven Village': 500, TownC: 0 } };
+    const seated = buyerTown => {
+        const s2 = levels.map(level => [`s2@${level}`, { ...yields, town: buyerTown }]);
+        const world = { ...snapshot, fares, hours: { ...snapshot.hours, 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: row('s2', 1000, 50), top: [] }])) },
+            yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, walkBack: { s1: 0.01, s2: 0.01 } };
+        const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'starter_region' };
+        return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
+            design: Design.plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
+    };
+    const near = seated('TownA'), far = seated('TownC');
+    assert.ok(near.liveness.waits.wtb.opened > 0 && far.liveness.waits.wtb.opened > 0, 'the shotless main posted its WTB');
+    assert.deepEqual([near.crafters.byTown.TownA, near.counters.reseats], [1, 1], 'a WTB of its product where its main arrived: it moves');
+    assert.deepEqual([far.crafters.byTown['Dwarven Village'], far.counters.reseats], [1, 0], 'a WTB in a third town: it stays');
+}
+
+// An order no twin takes: the main leaves its two bones and the fee with
+// the order, the fee rises at its next two visits, at the third it is
+// withdrawn and the bones and the fee come back (no twin holds the armour's
+// recipe); money and goods close to the unit.
+{
+    const ARMOR = 2003, SCROLL2 = 5002;
+    const world = { ...snapshot,
+        kits: { ...snapshot.kits, 9: Object.fromEntries(levels.map(level => [level, [{ selfId: SWORD, slot: 7 }, { selfId: ARMOR, slot: 10 }]])) },
+        items: { ...snapshot.items, [ARMOR]: { kind: 'Armor.Body', grade: 'D', ref: 2000, npcBuy: 1000, crystals: 50 }, [SCROLL2]: { kind: 'Other.Recipe', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 } },
+        recipes: [...snapshot.recipes, { type: 'dwarven', recipeId: 30, recipeItemId: SCROLL2, level: 2, materials: [{ selfId: BONE, amount: 2 }], productId: ARMOR, productCount: 1, mpCost: 100, successRate: 100, quest: false }],
+        sources: { ...snapshot.sources, [SCROLL2]: { drop: [{ npcId: 2, yield: 1 }], spoil: [] } } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const out = Engine.simulate({ view, accounts, bands, rates, hours: 16, seed: 5, nextArrival: arrivals,
+        design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+    const orders = out.design.market.orders, waits = out.design.liveness.waits.order;
+    assert.ok(orders.posted >= 1 && orders.claimed === 0, JSON.stringify(orders));
+    assert.deepEqual([orders.withdrawn, orders.open], [orders.posted, 0], 'every order no twin took came back');
+    assert.ok(waits.failed >= 1 && waits.opened === waits.done + waits.withdrawn + waits.failed + waits.open, JSON.stringify(waits));
+    assert.equal(out.money.closureGap, 0);
+    assert.equal(out.design.goods.failing, 0, JSON.stringify(out.design.goods.worst));
+}
+
+// The design mode's hunting share per band: the fitted shares, a config's
+// huntShare row over them, --hunt-share over every band; default follows the
+// band it stood for.
+{
+    const { huntShares } = require('../scripts/economy-model/run');
+    const low = { huntShare: 0.6, visitsPerBotHour: 2 }, fitted = { '20-29': low, '30-39': { huntShare: 0.5, visitsPerBotHour: 2 }, default: low };
+    assert.deepEqual(huntShares(fitted, null, null).huntShare, { '20-29': 0.6, '30-39': 0.5 }, 'the fitted shares');
+    assert.deepEqual(huntShares(fitted, { '30-39': 0.4 }, null).huntShare, { '20-29': 0.6, '30-39': 0.4 });
+    const swept = huntShares(fitted, { '30-39': 0.4 }, '0.2');
+    assert.deepEqual(swept.huntShare, { '20-29': 0.2, '30-39': 0.2 }, '--hunt-share for every band');
+    assert.equal(swept.rates.default.huntShare, 0.2);
+    assert.equal(swept.rates['30-39'].visitsPerBotHour, 2, 'the other rates as fitted');
 }
 
 // A main without shots hunts at the same spot's hour without shots.
@@ -359,11 +448,38 @@ assert.equal(armed.delta.shotsUsed, 50);
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const grown = Engine.simulate({ view, accounts: [{ id: 51, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [], worn: {} }],
         bands: [['all', 1]], rates, hours: 8, seed: 1, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
-    const wtb = grown.liveness.waits.wtb;
-    assert.ok(wtb.outgrown >= 1 && wtb.failed >= wtb.outgrown, JSON.stringify(wtb));
-    assert.equal(wtb.withdrawn, 0, 'not a neutral withdrawal');
-    assert.equal(grown.market.outgrown.d, wtb.outgrown, 'counted under the grade it left');
-    assert.equal(wtb.opened, wtb.done + wtb.withdrawn + wtb.failed + wtb.deadline + wtb.open);
+    // One visit or none before 40: no ladder, the NPC route at once, which its 1000 adena cannot pay.
+    const waits = Object.values(grown.liveness.waits), outgrown = waits.reduce((sum, w) => sum + (w.outgrown || 0), 0);
+    assert.ok(outgrown >= 1 && waits.every(w => w.failed >= (w.outgrown || 0)), JSON.stringify(grown.liveness.waits));
+    assert.equal(waits.filter(w => w.outgrown > 0).reduce((sum, w) => sum + w.withdrawn, 0), 0, 'not a neutral withdrawal');
+    assert.equal(grown.market.outgrown.d, outgrown, 'counted under the grade it left');
+    for (const w of waits) assert.equal(w.opened, w.done + w.withdrawn + w.failed + w.deadline + w.open);
+}
+
+// pathTarget: a level-21 main with 10000 adena and no weapon. Its line's kit
+// names a 4000 sword (NPC) at 20-29 and a 40000 one at 30-39. Aiming at its
+// own level (ours) it buys the 4000 sword at its first visit; aiming at the
+// grade's last level (the model before) it waits for 40000 it never has.
+{
+    const DEAR = 2006, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 1, adena: 0, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = {
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
+        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: level < 30 ? SWORD : DEAR, slot: 7 }]])) },
+        items: { ...snapshot.items, [DEAR]: { kind: 'Weapon.Sword', grade: 'D', ref: 40000, npcBuy: 20000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }], [DEAR]: [{ town: 'TownA', price: 40000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        twins: Object.fromEntries(levels45.map(level => [level, twin(level)]))
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const aim = pathTarget => Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 21, exp: 21e9, money: 10000, spot: null, shots: {}, held: [], worn: {} }],
+        bands: [['all', 1]], rates, hours: 8, seed: 1, nextArrival: arrivals, design: Design.plane({ snapshot: world, game: Design.gameOf(world, view), config: { ...Design.DESIGN, pathTarget }, start: 'late', grades }) }).design;
+    const own = aim('own_level_then_up'), last = aim('grade_last_level');
+    assert.deepEqual(own.market.obtained.d, { npc: 1 }, 'the sword of its own level, from the NPC');
+    assert.equal(own.market.gradeWeapon.d.first !== null, true, 'a weapon of its grade worn');
+    assert.equal(last.market.obtained.d, undefined, 'aiming at the last level: nothing it can pay');
 }
 
 // A farm route is priced at a spot the main can hunt at its own level: a

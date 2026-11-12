@@ -9,7 +9,10 @@
 // Stock: a crafter's buy line (any amount) or a WTB, else the NPC. Then the
 // money queue: the refill reserve and path's pieces in path order, each
 // from a line at or under its cap, else its WTB, which after two looks at
-// its cap takes the cap's own route or is parked. An order at a workshop is
+// its cap takes the cap's own route or is parked; its own twin's craft and a
+// piece used for fewer than two more visits take the route at once. A
+// parked want opens again when its cap rises above the cap it was parked
+// at, or when its money first reaches the piece's route. An order at a workshop is
 // placed from its own materials: it buys or gathers what it lacks, then
 // leaves the materials and the fee with the order. Situations:
 // arrived_town, goal_done:visit, goal_failed:visit. Pure: the main and the
@@ -34,9 +37,10 @@ const isShot = item => item?.kind === 'Other.Shot';
 const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entry.qty > 0).reduce((best, entry) => (!best || entry.price > best.price ? entry : best), null);
 
 // main: { index, money, bag, shots, kit, weapon, ads: { wts, wtb }, wants:
-// { selfId: { state: 'wtb' | 'route' | 'parked' | 'farm' | 'order', tries,
-// seen, order (an order route's recipe, fee and materials), orderId,
-// claimed (a twin took the order) } },
+// { selfId: { state: 'wtb' | 'route' | 'parked' | 'farm' | 'order' | 'twin',
+// tries, seen, order (an order route's recipe, fee and materials), orderId,
+// claimed (a twin took the order), parkedCap and short (a parked want's cap
+// and whether its money fell short of the route when it was parked) } },
 // incoming: { selfId: route } (pieces that reached its bag by a route already
 // counted), shotWait }. view: { now, town, adId, persona, roll, items,
 // crystalIds, book: { sell: { item: [entry] } cheapest first, buy: { item:
@@ -44,10 +48,15 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // price, qty, kind: 'line' | 'ad', own }: lines of the town it stands in
 // and the ads),
 // npcSell: { item: price } in town, known: { item: price }, firstPrice,
-// deposit: { item: count }, depositFee, twin: { wallet, escrow } | null,
+// deposit: { item: count }, depositFee, twin: { wallet, escrow, inputs (the
+// adena its workshop's next batches take), workshopMoney } | null, keepRule,
+// ahead: [{ selfId, slot }] (its next grade's kit, one a slot), surplus:
+// { item: count } (its twin's warehouse stock the workshop no longer uses),
 // firing (the shot it fires), reserve: { id, amount, cap, capBy, own } |
-// null, pieces: { selfId: { selfId, slot, grade, weapon, cap, capBy, caps,
-// routes, own (units its own twin holds) } }, order: path's money queue, fares: { town: fare },
+// null, pieces: { selfId: { selfId, slot, grade, weapon, cap (null: nothing
+// caps it, no want is posted), capBy, caps, routes, own (units its own twin
+// holds), visitsLeft (its expected visits before it stops using the piece) } },
+// order: path's money queue, fares: { town: fare },
 // waitVisits (an order or a farm wait still unmet at the visit after this
 // many fails, and its route is stalled for the piece: ours), feeStep
 // (adena an MP of its recipe an unclaimed order's fee rises at each of its
@@ -82,11 +91,28 @@ function visit(main, view) {
     };
     const persona = view.persona;
     const step = (line, look, bounds, side) => priceStep(line, { ...bounds, look, persona, roll: mulberry(hash(`${view.roll}:${side}:${bounds.item}`))() });
-    // Materials it gathers for an order it will place stay in its bag.
-    const kept = {};
+    // Materials it gathers for an order it will place stay in its bag; with
+    // the keep rule (account_needs, ours) so do the materials of a piece
+    // whose own route is an order it has not begun.
+    const kept = {}, keepNeeds = view.keepRule === 'account_needs';
     for (const want of Object.values(wants)) if (want.state === 'farm' && want.order) for (const row of want.order.materials) kept[row.selfId] = (kept[row.selfId] || 0) + row.amount;
+    if (keepNeeds) {
+        for (const piece of Object.values(view.pieces)) {
+            const route = wants[piece.selfId] ? null : (piece.routes || []).find(option => option.route !== 'buy');
+            if (route?.route === 'order') for (const row of route.materials) kept[row.selfId] = (kept[row.selfId] || 0) + row.amount;
+        }
+    }
     const spare = id => Math.max(0, (bag[id] || 0) - (kept[id] || 0));
 
+    // With the keep rule its main takes out what the workshop no longer uses
+    // (surplus: a recipe dropped) and sells it with the rest.
+    if (keepNeeds) {
+        for (const [key, count] of Object.entries(view.surplus || {})) {
+            if (!(count > 0)) continue;
+            add(bag, Number(key), count);
+            claims.push({ kind: 'own_stock', item: Number(key), units: count, surplus: true });
+        }
+    }
     // A pair's main leaves its twin what it uses, a deposit fee per stack.
     for (const [key, total] of Object.entries(view.deposit || {})) {
         const id = Number(key), count = Math.min(total, spare(id));
@@ -113,7 +139,7 @@ function visit(main, view) {
             // An order no twin took yet is withdrawn: its materials and fee come back.
             const open = want.state === 'order' && !want.claimed;
             if (open) withdrawn.push(want.orderId);
-            waits.push({ wait: { farm: 'farm', order: 'order', parked: 'parkedWant', route: 'route' }[want.state] || 'wtb', end: open ? 'withdrawn' : 'done' });
+            waits.push({ wait: { farm: 'farm', order: 'order', parked: 'parkedWant', route: 'route', twin: 'twin' }[want.state] || 'wtb', end: open ? 'withdrawn' : 'done' });
             delete wants[selfId];
         }
         const ad = wtb.find(row => row.item === selfId);
@@ -151,10 +177,14 @@ function visit(main, view) {
 
     // Gear it does not wear: a standing WTB at or above its floor, else its
     // own WTS stepped at this look; at the floor for two looks, the floor's
-    // channel (the best crystallizer bid, else the NPC).
+    // channel (the best crystallizer bid, its own twin's included, else the
+    // NPC). With the keep rule (account_needs, ours) one piece a slot of its
+    // next grade's kit stays in its bag.
+    const aheadKept = {}, aheadSlots = new Set();
+    if (keepNeeds) for (const piece of view.ahead || []) if (!aheadSlots.has(piece.slot) && bag[piece.selfId] > 0) { aheadKept[piece.selfId] = 1; aheadSlots.add(piece.slot); }
     const nextWts = [], soldOut = new Set();
-    for (const [key, count] of Object.entries(bag)) {
-        const id = Number(key), item = view.items[id];
+    for (const [key, total] of Object.entries(bag)) {
+        const id = Number(key), item = view.items[id], count = total - (aheadKept[id] || 0);
         if (!isGear(item) || !(count > 0)) continue;
         const grade = String(item.grade || 'NONE').toLowerCase(), bid = item.crystals > 0 ? bestBid(view.book, grade) : null;
         const floor = Bounds.floor({ npcBuy: item.npcBuy || 0, crystallizerBids: bid ? [bid.price * item.crystals] : [] });
@@ -195,9 +225,9 @@ function visit(main, view) {
     // The account warehouse pools the money: the main keeps its reserve and its next piece.
     const reserve = view.reserve, reservePrice = reserve ? view.known[reserve.id] ?? (view.book.sell?.[reserve.id] || [])[0]?.price ?? view.firstPrice[reserve.id] ?? 0 : 0;
     const next = view.order.find(row => row.kind === 'piece' && kit[row.slot] !== row.selfId);
-    const keep = Math.ceil((reserve ? reserve.amount * reservePrice : 0) + (next ? view.pieces[next.selfId]?.routes?.[0]?.adena || 0 : 0));
     if (view.twin) {
-        const pooled = pool({ main: money, wallet, escrow: view.twin.escrow, keep });
+        const pooled = pool({ main: money, wallet, escrow: view.twin.escrow, reserve: reserve ? reserve.amount * reservePrice : 0,
+            piece: next ? view.pieces[next.selfId]?.routes?.[0]?.adena || 0 : 0, inputs: view.twin.inputs || 0, workshopMoney: view.twin.workshopMoney });
         money = pooled.main; wallet = pooled.wallet;
         if (pooled.moved > 0) {
             if (wallet >= view.depositFee) { wallet -= view.depositFee; flows.warehouseFees -= view.depositFee; } else if (money >= view.depositFee) { money -= view.depositFee; flows.warehouseFees -= view.depositFee; }
@@ -249,6 +279,24 @@ function visit(main, view) {
         waits.push({ wait: 'order', end: 'opened' });
     };
 
+    // An order's materials it lacks, bought from a line here at or under that
+    // material's own route price (a line it knows in its twin's town is
+    // bought at a visit where it stands), else the NPC here; the rest it gathers.
+    const lack = row => Math.max(0, row.amount - (bag[row.selfId] || 0));
+    const buyMaterials = order => {
+        for (const row of order.materials) {
+            if (!(lack(row) > 0) || row.via === 'gather' || row.via === 'held' || !(row.price > 0)) continue;
+            let need = lack(row);
+            const got = buyLine(row.selfId, row.price, need);
+            add(bag, row.selfId, got); need -= got;
+            const npc = view.npcSell[row.selfId];
+            if (need > 0 && npc > 0 && money >= need * npc) {
+                money -= need * npc; flows.npcBuys -= need * npc; add(bag, row.selfId, need);
+                stops.push({ kind: 'npc_buy', target: view.town, items: [{ selfId: row.selfId, count: need }] });
+            }
+        }
+    };
+
     let hopped = false;
     // A piece by the cap's own route; false when the money or the route is not there now.
     const byRoute = (piece, route) => {
@@ -263,23 +311,19 @@ function visit(main, view) {
             equip(piece.selfId, piece.slot);
             return true;
         }
+        if (route.route === 'twin') {
+            // Its own twin crafts it: the piece comes through the account warehouse when the batch is done.
+            wants[piece.selfId] = { state: 'twin', route: 'twin', seen: 0 };
+            waits.push({ wait: 'twin', end: 'opened' });
+            return true;
+        }
         if (route.route === 'order') {
-            const order = { recipeId: route.recipeId, fee: Math.ceil(route.fee), materials: route.materials.map(row => ({ selfId: row.selfId, amount: row.amount })), mp: route.mp, cap: piece.cap, materialsCost: route.materialsCost };
-            // What it lacks, bought now from a line at or under that material's own route, else the NPC here; the rest it gathers.
-            const lack = row => Math.max(0, row.amount - (bag[row.selfId] || 0));
-            const buys = route.materials.filter(row => lack(row) > 0 && row.via !== 'gather' && row.via !== 'held');
+            const order = { recipeId: route.recipeId, fee: Math.ceil(route.fee), materials: route.materials.map(row => ({ selfId: row.selfId, amount: row.amount, via: row.via, price: row.price })),
+                mp: route.mp, cap: piece.cap, materialsCost: route.materialsCost };
+            const buys = order.materials.filter(row => lack(row) > 0 && row.via !== 'gather' && row.via !== 'held');
             const cost = buys.reduce((sum, row) => sum + lack(row) * row.price, 0);
             if (money < cost + order.fee) return 'money';
-            for (const row of buys) {
-                let need = lack(row);
-                const got = buyLine(row.selfId, row.price, need);
-                add(bag, row.selfId, got); need -= got;
-                const npc = view.npcSell[row.selfId];
-                if (need > 0 && npc > 0 && money >= need * npc) {
-                    money -= need * npc; flows.npcBuys -= need * npc; add(bag, row.selfId, need);
-                    stops.push({ kind: 'npc_buy', target: view.town, items: [{ selfId: row.selfId, count: need }] });
-                }
-            }
+            buyMaterials(order);
             if (order.materials.some(row => lack(row) > 0)) {
                 wants[piece.selfId] = { state: 'farm', route: 'order', order, seen: 0 };
                 waits.push({ wait: 'farm', end: 'opened' });
@@ -339,21 +383,41 @@ function visit(main, view) {
         }
         const piece = view.pieces[row.selfId];
         if (!piece || kit[piece.slot] === piece.selfId) continue;
-        const want = wants[piece.selfId];
-        if (want?.state === 'parked') continue;
+        let want = wants[piece.selfId];
+        const ownRoute = (piece.routes || []).find(option => option.route !== 'buy');
+        // A parked want opens again when its cap rose above the cap it was
+        // parked at, or when its money first reaches the piece's route.
+        if (want?.state === 'parked') {
+            const risen = piece.cap !== null && want.parkedCap !== undefined && piece.cap > want.parkedCap;
+            const affordable = want.short && ownRoute && money >= ownRoute.adena;
+            if (!risen && !affordable) continue;
+            waits.push({ wait: 'parkedWant', end: 'withdrawn' });
+            delete wants[piece.selfId];
+            want = undefined;
+        }
+        // Nothing caps a piece no route prices and no worth states: no want is posted.
+        if (piece.cap === null) continue;
         // An order a twin took is crafting: its piece comes at the batch's end.
         if (want?.state === 'order' && want.claimed) continue;
-        // The materials of an order gathered: it places the order now.
+        // An order's materials it still lacks are bought where a line or the NPC here has them;
+        // all gathered, it places the order now.
+        if (want?.state === 'farm' && want.order) buyMaterials(want.order);
         if (want?.state === 'farm' && want.order && want.order.materials.every(row => (bag[row.selfId] || 0) >= row.amount) && money >= want.order.fee) {
             waits.push({ wait: 'farm', end: 'done' });
             placeOrder(piece, want.order);
             continue;
         }
-        // An order or a farm wait seen unmet at its third visit fails: the
-        // route is stalled for the piece (source_stalled re-reads path). An
-        // order no twin took raises its fee by the step at each visit before
-        // that, while the order stays under the piece's cap.
-        if (want?.state === 'farm' || want?.state === 'order') {
+        // An order, a farm or an own-twin wait seen unmet at its third visit
+        // fails: the route is stalled for the piece (source_stalled re-reads
+        // path). An order no twin took raises its fee by the step at each
+        // visit before that, while the order stays under the piece's cap.
+        if (want?.state === 'twin' && piece.own > 0) {
+            claims.push({ kind: 'own_stock', item: piece.selfId, units: 1 });
+            obtained.push({ selfId: piece.selfId, grade: piece.grade, route: 'twin' });
+            equip(piece.selfId, piece.slot);
+            continue;
+        }
+        if (want?.state === 'farm' || want?.state === 'order' || want?.state === 'twin') {
             const seen = (want.seen || 0) + 1;
             if (seen <= view.waitVisits) {
                 let next = { ...want, seen };
@@ -390,15 +454,30 @@ function visit(main, view) {
             equip(piece.selfId, piece.slot);
             continue;
         }
-        if (want?.state !== 'route') {
+        const park = () => {
+            wants[piece.selfId] = { state: 'parked', tries: want?.tries || 0, parkedCap: piece.cap, short: !!ownRoute && money < ownRoute.adena };
+            waits.push({ wait: 'parkedWant', end: 'opened' });
+        };
+        // Its own twin's craft needs no market, and a piece it will use for
+        // fewer than two more visits has no time for the ladder: the route at
+        // once while the cap reaches it, else the want is parked now.
+        const atOnce = ownRoute?.route === 'twin' || piece.visitsLeft < 2;
+        if (want?.state !== 'route' && atOnce && wtb.some(line => line.item === piece.selfId)) {
+            wtb = wtb.filter(line => line.item !== piece.selfId);
+            waits.push({ wait: 'wtb', end: 'withdrawn' });
+        }
+        if (want?.state !== 'route' && atOnce && !(ownRoute && ownRoute.cost <= piece.cap)) { park(); continue; }
+        if (want?.state !== 'route' && !atOnce) {
             const result = stepWtb(piece.selfId, { cap: piece.cap, capBy: piece.capBy, caps: piece.caps, floor: 0, known: view.known[piece.selfId] ?? null,
                 first: view.firstPrice[piece.selfId] ?? piece.cap, qty: 1, item: piece.selfId });
             if (result === 'open') { wants[piece.selfId] = { state: 'wtb', tries: want?.tries || 0 }; continue; }
-            if (result === 'parked') { wants[piece.selfId] = { state: 'parked', tries: want?.tries || 0 }; waits.push({ wait: 'parkedWant', end: 'opened' }); continue; }
+            if (result === 'parked') { park(); continue; }
+        }
+        if (want?.state !== 'route') {
             wants[piece.selfId] = { state: 'route', tries: want?.tries || 0 };
             waits.push({ wait: 'route', end: 'opened' });
         }
-        const route = piece.routes.find(option => option.route !== 'buy');
+        const route = ownRoute;
         const done = route ? byRoute(piece, route) : 'unavailable';
         if (done === 'money') { stopped = true; continue; }
         if (done === 'unavailable') {
@@ -409,7 +488,7 @@ function visit(main, view) {
         }
         // An order or a farm wait begins: the route wait is done (a piece
         // bought by its route ended it as it was worn).
-        if (wants[piece.selfId]?.state === 'order' || wants[piece.selfId]?.state === 'farm') waits.push({ wait: 'route', end: 'done' });
+        if (['order', 'farm', 'twin'].includes(wants[piece.selfId]?.state)) waits.push({ wait: 'route', end: 'done' });
     }
 
     return { main: { ...main, money, bag, shots, kit, weapon, wants, incoming, shotWait, ads: { wts, wtb } }, wallet, claims, stops, flows, orders, withdrawn, stalled, obtained, waits, gearChanged };
