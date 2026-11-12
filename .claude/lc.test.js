@@ -522,7 +522,7 @@ test('assembling: bugs lead the fix queue and leave it when their step lands; op
     w.ok('release', 'add', '1b.0', '--group', '1b', '--order', '0', '--type', 'fix'); w.ok('step', 'add', '1b.0', '--key', '1b.0', '--title', 'fixes: DT-800'); w.ok('assign', 'DT-800', '--to', '1b.0');
     w.ok('open', '1b.0', '--branch', 'ivan/batch-1b0', '--base', w.base);
     assert.match(w.ok('next'), /\n1b\.0 open fix · 0 h · 0\/1 steps landed\n/); // inside its limit: nothing said
-    assert.match(at('2026-11-13T02:00:00Z', 'next'), /\n1b\.0 open fix · 26 h · 0\/1 steps landed · at its limit \(6 landed steps or 24 h\)/);
+    assert.match(at('2026-11-13T02:00:00Z', 'next'), /\n1b\.0 open fix · 26 h · 0\/1 steps landed · at its limit \(24 h open\)/);
     const head = commit(w, 'ivan/batch-1b0', 'the fix'); landedTask(w, 'f1', w.base, head, 'ivan/batch-1b0', ['DT-800']);
     w.ok('start', '1b.0', '--task', 'f1'); w.sh(['push', '-q', 'fork', 'ivan/batch-1b0']); w.ok('land', '1b.0');
     assert.match(w.ok('next'), /^fix queue 1: DT-801 risk 1b\.2\n/); // a landed step holds it: it waits for its result, not for a release

@@ -214,7 +214,7 @@ const placeOf = i => i.at || (i.tail ? 'tail' : 'triage');
 const kindsLine = d => `kinds ${KINDS.map(k => `${k} ${d.issues.filter(i => i.kind === k).length}`).join(' · ')} · none ${d.issues.filter(i => !i.kind).length}`;
 
 // ---------- assembling a release (planning.md "Assembling a release"; maintainer 2026-11-12) ----------
-const STEP_ISSUES = 4, FIX_STEPS = 6, FIX_HOURS = 24, NEAR_SHARED = 12, QUEUE_SHOWN = 12; // one task's brief · a fix release's steps · and its age: one gate cycle can still name the change that hurt
+const STEP_ISSUES = 4, FIX_HOURS = 24, NEAR_SHARED = 12, QUEUE_SHOWN = 12; // one task's brief · a fix release's age: one gate cycle can still name the change that hurt
 function fixQueue(d) { // bugs, then risks, that no landed step holds: they go to a fix release before anything planned
     const st = steps(d);
     return d.issues.filter(i => ['bug', 'risk'].includes(i.kind) && !i.resolved && !(i.at && st.get(i.at).s.st === 'landed')).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'bug' ? -1 : 1));
@@ -639,8 +639,8 @@ C.next = (cx) => { // what the next release is made of and what it still needs; 
     if (loose.length) todo.push(`a fix release for ${loose.map(i => i.id).join(', ')} (lc open refuses while they have none)`);
     for (const r of Object.values(d.releases).filter(live)) {
         const hours = r.openedAt ? Math.round((Date.parse(cx.now) - Date.parse(r.openedAt)) / 36e5) : 0, landed = r.steps.filter(s => s.st === 'landed').length;
-        const over = r.type === 'fix' && r.st === 'open' && (landed >= FIX_STEPS || hours >= FIX_HOURS);
-        out.push(`${r.key} ${r.st} ${r.type} · ${hours} h · ${landed}/${r.steps.length} steps landed${over ? ` · at its limit (${FIX_STEPS} landed steps or ${FIX_HOURS} h): land what is started and freeze; the rest waits for the next fix release` : ''}`);
+        const over = r.type === 'fix' && r.st === 'open' && hours >= FIX_HOURS;
+        out.push(`${r.key} ${r.st} ${r.type} · ${hours} h · ${landed}/${r.steps.length} steps landed${over ? ` · at its limit (${FIX_HOURS} h open): land what is started and freeze; the rest waits for the next fix release` : ''}`);
     }
     const r = Object.values(d.releases).filter(x => x.st === 'planned' && x.group !== 'large' && x.steps.length).sort((a, b) => a.order - b.order)[0];
     if (r) {
