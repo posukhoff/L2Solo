@@ -205,6 +205,14 @@ function authorize(d, id, action, subject) {
 }
 const overridden = (d, i, rule) => (i.overrides || []).some(id => allows(d.decisions.find(x => x.id === id), 'rule-override', { issue: i.id, rule: rule.decision }));
 
+// ---------- kinds: what an issue is decides where it lives and how it ends (planning.md "Kinds") ----------
+// bug: a player sees wrong behaviour · risk: the server can fall, hang or lose data · missing: C4 has it, we do not ·
+// debt: a rule is broken with no symptom · gap: no counter, test or limit
+const KINDS = ['bug', 'risk', 'missing', 'debt', 'gap'];
+const saysSeen = i => !['bug', 'risk'].includes(i.kind) || /→|->/.test(i.what); // a bug or a risk says what a player or the server sees
+const placeOf = i => i.at || (i.tail ? 'tail' : 'triage');
+const kindsLine = d => `kinds ${KINDS.map(k => `${k} ${d.issues.filter(i => i.kind === k).length}`).join(' · ')} · none ${d.issues.filter(i => !i.kind).length}`;
+
 // ---------- growth: why the working context is large, each cause with its owner action; nothing is cut ----------
 const ticks = t => [...String(t).matchAll(/`([^`]+)`/g)].map(m => m[1].trim());
 const modules = t => [...new Set([...ticks(t), ...String(t).split(/[\s,;()]+/)].map(x => (x.match(/^([A-Z][A-Za-z0-9]{3,})(?![A-Za-z0-9])/) || [])[1]).filter(Boolean))];
@@ -304,6 +312,7 @@ function check(d) {
         const i = byId.get(id) || d.issues.find(x => aliasIds(x).includes(id));
         if (i && i.at && i.at !== s.key) W.push(`step ${s.key} names ${id}, which sits in ${i.at}`);
     }
+    for (const i of d.issues) if (i.kind && !KINDS.includes(i.kind)) E.push(`${i.id}: kind ${i.kind} is not one of ${KINDS.join(' ')}`);
     const triage = d.issues.filter(i => !i.at && !i.tail);
     if (triage.length) W.push(`triage ${triage.length}: ${triage.map(i => i.id).join(', ')}`);
     return { errors: E, warnings: W };
@@ -512,6 +521,7 @@ C.status = (cx) => {
     for (const [k, a] of Object.entries(d.archive)) if (a.manifest && !a.manifest.published) out.push(`${k} validated, not published (origin needs the maintainer's authorization)`);
     const size = { roadmap: renderRoadmap(d).length, problems: renderProblems(d).length };
     out.push('views ' + Object.keys(VIEWS).map(k => `${k} ${Math.ceil(size[k] / 1024)} KB`).join(' · ') + (d.meta.cutover ? '' : ' (shadow: planning files are the source)'));
+    out.push(kindsLine(d));
     out.push(growthLine(growth(d, cx)));
     for (const e of errors.slice(0, 3)) out.push('ERROR ' + e);
     console.log(out.join('\n'));
@@ -556,7 +566,7 @@ C.show = (cx, { pos, opt }) => { // lc show <issue|step|release> [--page N] [--r
     if (a) { console.log(`archived in ${a.k}: ${JSON.stringify(a.i.closed)}\n${[a.i.head, a.i.origin, a.i.rule, a.i.sites, a.i.what, a.i.fix].join('|')}`); return; }
     const i = issue(d, key);
     console.log(issueLine(d, i, st));
-    console.log(`at ${i.at || (i.tail ? 'tail' : 'triage')}${i.at ? ' (' + st.get(i.at).r.key + ' ' + st.get(i.at).r.st + ')' : ''}${i.why ? ' · ' + i.why : ''}${i.deps?.length ? ' · deps ' + i.deps.join(',') : ''}${i.overrides?.length ? ' · overrides ' + i.overrides.join(',') : ''}${i.resolved ? ' · resolved ' + JSON.stringify(i.resolved) : ''}`);
+    console.log(`at ${i.at || (i.tail ? 'tail' : 'triage')}${i.at ? ' (' + st.get(i.at).r.key + ' ' + st.get(i.at).r.st + ')' : ''}${i.kind ? ' · kind ' + i.kind : ''}${i.seen ? ' · seen ' + i.seen : ''}${i.why ? ' · ' + i.why : ''}${i.deps?.length ? ' · deps ' + i.deps.join(',') : ''}${i.overrides?.length ? ' · overrides ' + i.overrides.join(',') : ''}${i.resolved ? ' · resolved ' + JSON.stringify(i.resolved) : ''}`);
 };
 C.render = (cx, { opt }) => {
     const { sha, d } = need(cx);
@@ -614,6 +624,45 @@ C.edit = (cx, { pos, opt }) => { // an open issue's text, alias and note; its pl
     if (done.includes('sites')) for (const x of sameName(d, i.sites, i)) console.log(`same code name: ${x} (possible duplicate: lc show it; merging is a decision)`);
     write(cx, sha, d, `lc edit ${i.id}: ${done.join(', ')}`, `${i.id} edited (${done.join(', ')})`);
 };
+C.kind = (cx, { pos }) => { // lc kind: the counts · lc kind <kind> <id...>: one write for the lot
+    const { sha, d } = need(cx);
+    if (!pos.length) {
+        console.log(kindsLine(d));
+        for (const s of d.meta.sections) { const xs = d.issues.filter(i => i.sec === s.key && !i.kind); if (xs.length) console.log(`none ${s.key} ${xs.length}: ${xs.map(i => i.id).join(' ')}`); }
+        const blind = d.issues.filter(i => !saysSeen(i)); if (blind.length) console.log(`without what is seen ${blind.length}: ${blind.map(i => i.id).join(' ')}`);
+        return;
+    }
+    const k = pos[0]; if (!KINDS.includes(k)) fail(`kind <${KINDS.join('|')}> <id...>`);
+    const xs = pos.slice(1).map(id => issue(d, id)); if (!xs.length) fail(`kind ${k} <id...>`);
+    if (xs.every(i => i.kind === k)) fail(`already ${k}: nothing changes`);
+    for (const i of xs) i.kind = k;
+    for (const i of xs.filter(x => !saysSeen(x))) console.log(`note  ${i.id}: a ${k} without what is seen (lc edit ${i.id} --what "… → …")`);
+    write(cx, sha, d, `lc kind ${k}: ${xs.map(i => i.id).join(', ')}`, `${xs.length} → ${k}`);
+};
+C.seen = (cx, { pos, opt }) => { // whoever read the code confirms these still hold: one write for the lot
+    const { sha, d } = need(cx); const by = one(opt, 'by', 'who date');
+    const xs = pos.map(id => issue(d, id)); if (!xs.length) fail('seen <id...> --by <who date>');
+    for (const i of xs) i.seen = by;
+    write(cx, sha, d, `lc seen ${xs.map(i => i.id).join(', ')} by ${by}`, `${xs.length} confirmed by ${by}`);
+};
+C.list = (cx, { opt }) => { // issue lines by kind, section or place; nothing is written
+    const { d } = need(cx); const st = steps(d); const is = (k, v) => opt[k] === undefined || String(opt[k]) === v;
+    const xs = d.issues.filter(i => is('kind', i.kind || 'none') && is('sec', i.sec) && is('at', placeOf(i)) && (!opt.unseen || !i.seen));
+    for (const i of xs) console.log(`${i.kind || '-'} ${issueLine(d, i, st)}`);
+    console.log(`${xs.length} of ${d.issues.length}`);
+};
+C.near = (cx, { pos }) => { // open issues on the modules a task touches: whoever reads that code answers each
+    const { d } = need(cx); const st = steps(d); if (!pos.length) fail('near <id|step|Module>...');
+    const own = new Set(), names = new Set();
+    for (const p of pos) {
+        const mine = d.issues.filter(i => i.at === p || idsOf(i).includes(p));
+        if (!mine.length) { names.add(p); continue; }
+        for (const i of mine) { own.add(i); for (const m of modules(i.sites)) names.add(m); }
+    }
+    const xs = d.issues.filter(i => !own.has(i) && modules(i.sites).some(m => names.has(m)));
+    for (const i of xs) console.log(`${i.kind || '-'}${i.seen ? ' (seen ' + i.seen + ')' : ''} ${issueLine(d, i, st)}`);
+    console.log(`${xs.length} near ${[...names].join(', ') || '-'}: each is still true (lc seen), gone (lc drop --gone) or taken into the task (lc assign)`);
+};
 function nextId(d, prefix) { const ids = allIds(d); let n = 1; for (const x of ids) { const m = x.match(new RegExp(`^${esc(prefix)}-(\\d+)$`)); if (m) n = Math.max(n, +m[1] + 1); } return `${prefix}-${n}`; }
 C.add = (cx, { opt }) => {
     const { sha, d } = need(cx);
@@ -623,6 +672,10 @@ C.add = (cx, { opt }) => {
     const i = { id, head: id, sec, ord: Math.max(0, ...d.issues.filter(x => x.sec === sec).map(x => x.ord)) + 1, at: null, origin: one(opt, 'origin', 'who date'), rule: one(opt, 'rule', 'rule#'), sites: one(opt, 'sites', 'file:line'), what: one(opt, 'what', 'what is wrong → impact'), fix: one(opt, 'fix', 'fix'), deps: many(opt.deps) };
     if (!i.deps.length) delete i.deps;
     if (opt.tail) i.tail = true;
+    if (opt.kind !== undefined) {
+        i.kind = one(opt, 'kind', KINDS.join('|')); if (!KINDS.includes(i.kind)) fail(`kinds: ${KINDS.join(' ')}`);
+        if (!saysSeen(i)) fail(`a ${i.kind} says what a player or the server sees: --what "<what is wrong> → <what is seen>"`);
+    }
     for (const x of sameName(d, i.sites, i)) console.log(`same code name: ${x} (possible duplicate: lc show it; merging is a decision)`);
     d.issues.push(i);
     if (opt.to) place(d, i, String(opt.to), opt); else if (!i.tail) i.why = 'new';
@@ -684,6 +737,7 @@ C.split = (cx, { pos, opt }) => { // one problem holding two mechanisms becomes 
     if (!opt['keep-sites'] || !opt['keep-what'] || !opt['keep-fix']) fail(`--keep-sites, --keep-what and --keep-fix say what ${i.id} keeps`);
     for (const k of ['sites', 'what', 'fix', 'rule']) if (opt[`keep-${k}`] !== undefined) i[k] = one(opt, `keep-${k}`, `${i.id}'s ${k}`);
     delete i.tagx;
+    if (i.kind) n.kind = i.kind;
     d.issues.push(n);
     const secOrd = d.issues.filter(x => x.sec === n.sec).sort((a, b) => a.ord - b.ord); secOrd.forEach((x, k) => { x.ord = k + 1; });
     const named = opt.to && steps(d).get(String(opt.to));
@@ -693,20 +747,25 @@ C.split = (cx, { pos, opt }) => { // one problem holding two mechanisms becomes 
     write(cx, sha, d, `lc split ${i.id} → ${i.id} + ${id} (${opt.decision})`, `${i.id} kept, ${id} new${n.at ? ' in ' + n.at : ''}`);
 };
 C.drop = (cx, { pos, opt }) => {
-    const { sha, d } = need(cx); const i = issue(d, pos[0] || fail('drop <id> --reason <why> (--decision <id> | --rule0 | --fixed-by <slug>)'));
+    const { sha, d } = need(cx); const i = issue(d, pos[0] || fail('drop <id> --reason <why> (--decision <id> | --rule0 | --gone <file:line> | --fixed-by <slug>)'));
     const reason = one(opt, 'reason', 'why');
     const closed = { how: 'dropped', reason, at: cx.now };
     if (opt.decision) closed.decision = authorize(d, String(opt.decision), 'drop', { issue: i.id });
-    else if (opt.rule0) { // rule 0 clears triage and planned work; what a landed step or a frozen release holds needs its result
+    else if (opt.rule0 || opt.gone !== undefined) { // rule 0, or the code no longer has it: both clear triage and planned work; what a landed step or a frozen release holds needs its result
         const x = i.at && steps(d).get(i.at);
-        if (x && (x.s.st === 'landed' || x.r.st === 'frozen')) fail(`${i.id} is in ${x.s.st === 'landed' ? 'landed step ' + x.s.key : 'frozen release ' + x.r.key}: it needs its result (lc resolve) or a decision, not --rule0`);
-        closed.how = 'not-worth-it';
+        if (x && (x.s.st === 'landed' || x.r.st === 'frozen')) fail(`${i.id} is in ${x.s.st === 'landed' ? 'landed step ' + x.s.key : 'frozen release ' + x.r.key}: it needs its result (lc resolve) or a decision, not ${opt.rule0 ? '--rule0' : '--gone'}`);
+        if (opt.rule0) closed.how = 'not-worth-it';
+        else { // whoever read the code names where it shows
+            const where = one(opt, 'gone', 'file:line or `code name`');
+            if (!/[\w./-]+\.(c?js|json|md|sql|ini)\b|`[^`]+`/.test(where)) fail('--gone names the file:line or the `code name` that shows it is gone');
+            Object.assign(closed, { how: 'gone', where });
+        }
     }
     else if (opt['fixed-by']) {
         const t = task(cx, String(opt['fixed-by'])), l = t.evidence?.landed || fail(`${opt['fixed-by']} has not landed`);
         if (!idsOf(i).some(x => mentions(JSON.stringify(t.brief || {}), x))) fail(`${t.slug}'s brief does not name ${i.id}`);
         onRemote(cx, l.head, l.branch); Object.assign(closed, { how: 'fixed', slug: t.slug, head: l.head });
-    } else fail('a drop names --decision, --rule0 or --fixed-by');
+    } else fail('a drop names --decision, --rule0, --gone or --fixed-by');
     archiveIssue(d, i, i.at ? steps(d).get(i.at).r.key : 'triage', closed);
     write(cx, sha, d, `lc drop ${i.id}: ${closed.how}\n\n${reason}`, `${i.id} closed (${closed.how})`);
 };
@@ -1011,9 +1070,10 @@ C.get = (cx, { pos }) => { // for scripts: lc get <release> branch|head|base|st
     console.log(typeof v === 'object' ? JSON.stringify(v) : v);
 };
 C.help = () => console.log(`lc status | check | show <id|step|release> | get <release> <field> | tails
-issues:   add --sec --origin --rule --sites --what --fix [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
-          assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--fixed-by)
+issues:   add --sec --origin --rule --sites --what --fix [--kind] [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
+          assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--gone|--fixed-by)
           edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]
+          kind [<bug|risk|missing|debt|gap> <id...>] | list [--kind k|none] [--sec s] [--at step|triage|tail] [--unseen] | near <id|step|Module>... | seen <id...> --by <who date>
 releases: release add|set|drop | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
           resolve <id...> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
           publish <rel> --decision M --branch <origin branch>   (records a publication; lc never pushes origin)

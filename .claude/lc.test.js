@@ -134,7 +134,7 @@ test('decisions authorize only what they name; rules, deps, cycles, ids and drop
     w.ok('add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'DT-200', '--deps', 'DT-49', '--to', '1b.2');
     w.no(/queued later/, 'add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'DT-201', '--deps', 'DT-200', '--to', '1b.1');
     w.no(/ids are never reused/, 'add', '--sec', 'parties', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'A-11');
-    w.no(/names --decision, --rule0 or --fixed-by/, 'drop', 'S3', '--reason', 'gone');
+    w.no(/names --decision, --rule0, --gone or --fixed-by/, 'drop', 'S3', '--reason', 'gone');
     w.no(/does not allow drop/, 'drop', 'S3', '--reason', 'gone', '--decision', vague);
     w.ok('drop', 'S3', '--reason', 'not worth a line', '--rule0');
     w.no(/exists/, 'add', '--sec', 'failures', '--origin', 'x', '--rule', '1', '--sites', 's', '--what', 'w', '--fix', 'f', '--id', 'S3');
@@ -435,6 +435,42 @@ test('a hand-edited roadmap.md is replaced only on --overwrite-roadmap and its c
     w.ok('edit', 'DT-49', '--why', 'investigation: cause unverified');
     w.ok('assign', 'DT-49', '--to', '1b.2');
     assert.match(w.ok('show', 'DT-49'), /at 1b\.2 .* investigation: cause unverified/);
+});
+
+test('kinds: a bug says what is seen; one write sets many; list, near and seen read and stamp; --gone names where and spares a landed step', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    const add = (id, sites, what, ...more) => w.lc('add', '--sec', 'parties', '--origin', 'x 11-12', '--rule', '4', '--sites', sites, '--what', what, '--fix', 'f', '--id', id, ...more);
+    assert.match(add('DT-700', '`PartyStay.decide` 20', 'two leaders', '--kind', 'bug').out, /a bug says what a player or the server sees/);
+    assert.match(add('DT-700', '`PartyStay.decide` 20', 'two leaders', '--kind', 'chore').out, /kinds: bug risk missing debt gap/);
+    assert.strictEqual(add('DT-700', '`PartyStay.decide` 20', 'party forms twice → two leaders', '--kind', 'bug').code, 0);
+    assert.strictEqual(add('DT-701', '`PartyStay.leave` 44', 'nine written twice', '--kind', 'debt', '--tail').code, 0);
+    assert.strictEqual(add('DT-702', '`Elsewhere.run` 1', 'no counter').code, 0); // a kind is not required yet
+    w.no(/kind <bug\|risk\|missing\|debt\|gap> <id\.\.\.>/, 'kind', 'chore', 'DT-702');
+    w.no(/no open issue NOPE-1/, 'kind', 'gap', 'DT-702', 'NOPE-1');
+    const before = w.sh(['rev-parse', 'ivan/lifecycle-data']);
+    assert.match(w.ok('kind', 'risk', 'DT-702', 'DT-49'), /note {2}DT-702: a risk without what is seen[\s\S]*2 → risk/);
+    assert.strictEqual(w.sh(['rev-list', '--count', `${before}..ivan/lifecycle-data`]), '1'); // one write for the lot
+    w.no(/already risk/, 'kind', 'risk', 'DT-702');
+    assert.match(w.ok('status'), /kinds bug 1 · risk 2 · missing 0 · debt 1 · gap 0 · none \d+/);
+    assert.match(w.ok('kind'), /without what is seen 2: DT-49 DT-702/);
+    const bugs = w.ok('list', '--kind', 'bug'); assert.match(bugs, /^bug DT-700\|/m); assert.match(bugs, /\n1 of \d+\n$/);
+    assert.match(w.ok('list', '--kind', 'none', '--sec', 'parties'), /^- DT-114\|/m);
+    assert.match(w.ok('list', '--at', 'tail', '--kind', 'debt'), /^debt DT-701\|[\s\S]*\n1 of /);
+    const near = w.ok('near', 'DT-700'); // the same module, not the issue itself, not another module
+    assert.match(near, /^debt DT-701\|/m); assert.doesNotMatch(near, /DT-700\||DT-702\|/); assert.match(near, /1 near PartyStay: /);
+    assert.match(w.ok('near', 'Elsewhere'), /^risk DT-702\|[\s\S]*1 near Elsewhere/);
+    w.no(/--by <who date> required/, 'seen', 'DT-701');
+    assert.match(w.ok('seen', 'DT-701', 'DT-702', '--by', 'p1 planner 11-12'), /2 confirmed by p1 planner 11-12/);
+    assert.match(w.ok('show', 'DT-701'), /· kind debt · seen p1 planner 11-12/);
+    assert.match(w.ok('near', 'DT-700'), /^debt \(seen p1 planner 11-12\) DT-701\|/m);
+    assert.match(w.ok('list', '--unseen', '--kind', 'risk'), /\n1 of /);
+    w.no(/--gone names the file:line or the `code name`/, 'drop', 'DT-701', '--reason', 'one constant now', '--gone', 'looked');
+    assert.match(w.ok('drop', 'DT-701', '--reason', 'one constant now', '--gone', 'PartyStay.js:44'), /DT-701 closed \(gone\)/);
+    assert.match(w.ok('show', 'DT-701'), /archived in triage: .*"how":"gone".*"where":"PartyStay\.js:44"/);
+    openAndLand(w);
+    w.no(/DT-44 is in landed step 1b\.1: it needs its result \(lc resolve\) or a decision, not --gone/, 'drop', 'DT-44', '--reason', 'x', '--gone', '`B.js`');
+    w.ok('render', '--write'); // a kind changes no view line
+    assert.match(fs.readFileSync(path.join(w.repo, 'planning/architecture/problems.md'), 'utf8'), /^DT-700\|x 11-12\|4\|/m);
 });
 
 test('contract: records written by the real workflow.js pass lc land, resolve and gate ci', () => {
