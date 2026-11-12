@@ -467,10 +467,35 @@ test('kinds: a bug says what is seen; one write sets many; list, near and seen r
     w.no(/--gone names the file:line or the `code name`/, 'drop', 'DT-701', '--reason', 'one constant now', '--gone', 'looked');
     assert.match(w.ok('drop', 'DT-701', '--reason', 'one constant now', '--gone', 'PartyStay.js:44'), /DT-701 closed \(gone\)/);
     assert.match(w.ok('show', 'DT-701'), /archived in triage: .*"how":"gone".*"where":"PartyStay\.js:44"/);
+    w.ok('assign', 'DT-700', 'DT-702', '--to', '1b.2'); // a release opens only when every bug and risk has one
     openAndLand(w);
     w.no(/DT-44 is in landed step 1b\.1: it needs its result \(lc resolve\) or a decision, not --gone/, 'drop', 'DT-44', '--reason', 'x', '--gone', '`B.js`');
     w.ok('render', '--write'); // a kind changes no view line
     assert.match(fs.readFileSync(path.join(w.repo, 'planning/architecture/problems.md'), 'utf8'), /^DT-700\|x 11-12\|4\|/m);
+});
+
+test('assembling: next names the fix queue and what a planned release lacks; open refuses an unplaced bug; a step over four issues starts only with a plan', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    const add = (id, ...more) => w.ok('add', '--sec', 'parties', '--origin', 'x 11-12', '--rule', '4', '--sites', `\`Mod${id.slice(3)}.run\` 1`, '--what', 'w → seen', '--fix', 'f', '--id', id, ...more);
+    assert.match(w.ok('next'), /^fix queue 0\n/);
+    add('DT-800', '--kind', 'bug'); add('DT-801', '--kind', 'risk', '--to', '1b.2'); add('DT-802', '--kind', 'debt', '--to', '1b.1');
+    const n = w.ok('next');
+    assert.match(n, /^fix queue 2: DT-800 bug no release · DT-801 risk 1b\.2\n/); // bugs first; a placed one is in the queue, not loose
+    assert.match(n, /next planned 1b\.1 arch\n {2}1b\.1 · 3 issues · no kind 2 · not confirmed 3 · debt or gap 1\n/);
+    assert.match(n, /before 1b\.1 opens:\n {2}- a fix release for DT-800 /); assert.match(n, /- confirm 1b\.1's 3 issues/); assert.match(n, /- move 1b\.1's debt and gap/);
+    assert.match(w.ok('status'), /\nfix queue 2: DT-800 bug no release/);
+    w.sh(['branch', 'ivan/batch-1b1', w.base]); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
+    w.no(/1 bugs or risks have no release: DT-800; a fix release takes them first/, 'open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
+    w.ok('assign', 'DT-800', '--to', '1b.1'); add('DT-803', '--to', '1b.1'); // five issues in one step now
+    w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
+    landedTask(w, 'p1', w.base, w.base, 'ivan/batch-1b1', ['DT-44']);
+    w.no(/1b\.1 holds 5 issues, over the 4 of one task: split it .* or name its plan/, 'start', '1b.1', '--task', 'p1');
+    w.no(/no planning\/target-architecture\/parties\.md/, 'step', 'set', '1b.1', '--plan', 'target-architecture/parties.md');
+    fs.mkdirSync(path.join(w.repo, 'planning/target-architecture'), { recursive: true }); fs.writeFileSync(path.join(w.repo, 'planning/target-architecture/parties.md'), 'order of commits\n');
+    w.ok('step', 'set', '1b.1', '--plan', 'target-architecture/parties.md');
+    assert.match(w.ok('start', '1b.1', '--task', 'p1'), /1b\.1 active \(p1\)/);
+    assert.match(w.ok('next'), /1b\.1 open arch · 0 h · 0\/1 steps landed\n/);
+    w.ok('seen', 'DT-44', 'DT-49', 'DT-800', 'DT-802', 'DT-803', '--by', 'pass 11-12'); w.ok('kind', 'debt', 'DT-44', 'DT-49', 'DT-803');
 });
 
 test('contract: records written by the real workflow.js pass lc land, resolve and gate ci', () => {

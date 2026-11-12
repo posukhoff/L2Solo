@@ -213,6 +213,14 @@ const saysSeen = i => !['bug', 'risk'].includes(i.kind) || /→|->/.test(i.what)
 const placeOf = i => i.at || (i.tail ? 'tail' : 'triage');
 const kindsLine = d => `kinds ${KINDS.map(k => `${k} ${d.issues.filter(i => i.kind === k).length}`).join(' · ')} · none ${d.issues.filter(i => !i.kind).length}`;
 
+// ---------- assembling a release (planning.md "Assembling a release"; maintainer 2026-11-12) ----------
+const STEP_ISSUES = 4, FIX_STEPS = 6, FIX_HOURS = 24; // one task's brief · a fix release's steps · and its age: one gate cycle can still name the change that hurt
+function fixQueue(d) { // bugs, then risks, that no landed step holds: they go to a fix release before anything planned
+    const st = steps(d);
+    return d.issues.filter(i => ['bug', 'risk'].includes(i.kind) && !i.resolved && !(i.at && st.get(i.at).s.st === 'landed')).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'bug' ? -1 : 1));
+}
+const queueLine = d => { const q = fixQueue(d); return `fix queue ${q.length}${q.length ? ': ' + q.map(i => `${i.id} ${i.kind} ${i.at || 'no release'}`).join(' · ') : ''}`; };
+
 // ---------- growth: why the working context is large, each cause with its owner action; nothing is cut ----------
 const ticks = t => [...String(t).matchAll(/`([^`]+)`/g)].map(m => m[1].trim());
 const modules = t => [...new Set([...ticks(t), ...String(t).split(/[\s,;()]+/)].map(x => (x.match(/^([A-Z][A-Za-z0-9]{3,})(?![A-Za-z0-9])/) || [])[1]).filter(Boolean))];
@@ -522,6 +530,7 @@ C.status = (cx) => {
     const size = { roadmap: renderRoadmap(d).length, problems: renderProblems(d).length };
     out.push('views ' + Object.keys(VIEWS).map(k => `${k} ${Math.ceil(size[k] / 1024)} KB`).join(' · ') + (d.meta.cutover ? '' : ' (shadow: planning files are the source)'));
     out.push(kindsLine(d));
+    if (fixQueue(d).length) out.push(queueLine(d));
     out.push(growthLine(growth(d, cx)));
     for (const e of errors.slice(0, 3)) out.push('ERROR ' + e);
     console.log(out.join('\n'));
@@ -623,6 +632,31 @@ C.edit = (cx, { pos, opt }) => { // an open issue's text, alias and note; its pl
     if (!done.length) fail('edit names a field that changes: --origin, --rule, --sites, --what, --fix, --alias or --why');
     if (done.includes('sites')) for (const x of sameName(d, i.sites, i)) console.log(`same code name: ${x} (possible duplicate: lc show it; merging is a decision)`);
     write(cx, sha, d, `lc edit ${i.id}: ${done.join(', ')}`, `${i.id} edited (${done.join(', ')})`);
+};
+C.next = (cx) => { // what the next release is made of and what it still needs; nothing is written
+    const { d } = need(cx); const out = [queueLine(d)], todo = [];
+    const loose = fixQueue(d).filter(i => !i.at);
+    if (loose.length) todo.push(`a fix release for ${loose.map(i => i.id).join(', ')} (lc open refuses while they have none)`);
+    for (const r of Object.values(d.releases).filter(live)) {
+        const hours = Math.round((Date.parse(cx.now) - Date.parse(r.openedAt)) / 36e5), over = r.type === 'fix' && r.st === 'open' && (r.steps.length >= FIX_STEPS || hours >= FIX_HOURS);
+        out.push(`${r.key} ${r.st} ${r.type} · ${hours} h · ${r.steps.filter(s => s.st === 'landed').length}/${r.steps.length} steps landed${over ? ` · at its limit (${FIX_STEPS} steps or ${FIX_HOURS} h): land what is started and freeze; the rest waits for the next fix release` : ''}`);
+    }
+    const r = Object.values(d.releases).filter(x => x.st === 'planned' && x.group !== 'large' && x.steps.length).sort((a, b) => a.order - b.order)[0];
+    if (r) {
+        out.push(`next planned ${r.key} ${r.type}`);
+        for (const s of r.steps) {
+            const xs = d.issues.filter(i => i.at === s.key), n = f => xs.filter(f).length, side = n(i => ['debt', 'gap'].includes(i.kind));
+            out.push(`  ${s.key} · ${xs.length} issues · no kind ${n(i => !i.kind)} · not confirmed ${n(i => !i.seen)} · debt or gap ${side}${s.plan ? ' · plan ' + s.plan : ''}${s.needs.length ? ' · needs ' + s.needs.join(',') : ''}`);
+            if (xs.length > STEP_ISSUES && !s.plan) todo.push(`split ${s.key} (${xs.length} issues, ${STEP_ISSUES} a task) or name its plan (lc step set ${s.key} --plan <file>)`);
+            if (n(i => !i.seen)) todo.push(`confirm ${s.key}'s ${n(i => !i.seen)} issues against the code (lc seen, lc drop --gone)`);
+            if (n(i => !i.kind)) todo.push(`give ${s.key}'s ${n(i => !i.kind)} issues a kind (lc kind)`);
+            if (side) todo.push(`move ${s.key}'s debt and gap that its mechanism does not own to the tail (lc assign --to tail)`);
+        }
+    }
+    const triage = d.issues.filter(i => !i.at && !i.tail);
+    if (triage.length) todo.push(`empty triage: ${triage.length} issues, ${triage.filter(i => !i.kind).length} without a kind (lc kind, then lc assign or lc drop)`);
+    out.push(todo.length ? `before ${r ? r.key : 'the next release'} opens:` : `${r ? r.key : 'nothing planned'}: ready to open`);
+    console.log([...out, ...todo.map(t => '  - ' + t)].join('\n'));
 };
 C.kind = (cx, { pos }) => { // lc kind: the counts · lc kind <kind> <id...>: one write for the lot
     const { sha, d } = need(cx);
@@ -829,10 +863,14 @@ C.step = (cx, { pos, opt }) => { // step add <release> | step set <step> | step 
         r.steps = r.steps.filter(x => x !== s);
         return write(cx, sha, d, `lc step drop ${k}\n\n${reason}`, `${k} dropped`);
     }
-    if (verb !== 'set') fail('step add <release> --key --title [--P --S --who --needs] | step set <step> [--title --P --S --who --needs a,b|none --before <step>] | step move <step> --to <release> --reason | step drop <step> --reason');
+    if (verb !== 'set') fail('step add <release> --key --title [--P --S --who --needs] | step set <step> [--title --P --S --who --needs a,b|none --before <step> --plan <file|none>] | step move <step> --to <release> --reason | step drop <step> --reason');
     const { r, s } = step(d, k);
     if (r.st === 'frozen' || s.st === 'landed') fail(`${k} is fixed (${r.st}, ${s.st})`);
     for (const f of ['title', 'P', 'S', 'who']) if (opt[f] !== undefined) s[f] = opt[f] === true ? '' : String(opt[f]);
+    if (opt.plan !== undefined) { // the step's plan file under planning/: the order of commits a step over STEP_ISSUES is done in
+        const f = one(opt, 'plan', 'file under planning/ | none');
+        if (f === 'none') delete s.plan; else { if (!fs.existsSync(path.join(cx.planning, f))) fail(`no planning/${f}`); s.plan = f; }
+    }
     if (opt.needs !== undefined) s.needs = opt.needs === 'none' ? [] : many(opt.needs);
     if (opt.before) { const j = r.steps.findIndex(x => x.key === opt.before); if (j < 0) fail(`${opt.before} is not in ${r.key}`); r.steps = r.steps.filter(x => x !== s); r.steps.splice(r.steps.findIndex(x => x.key === opt.before), 0, s); }
     write(cx, sha, d, `lc step set ${k}`);
@@ -846,6 +884,8 @@ C.open = (cx, { pos, opt }) => {
     const st = steps(d);
     const waits = r.steps.flatMap(s => s.needs).filter(k => st.has(k) && st.get(k).r !== r && st.get(k).s.st !== 'landed');
     if (waits.length) fail(`${r.key} needs ${[...new Set(waits)].join(', ')} landed first`);
+    const loose = fixQueue(d).filter(i => !i.at);
+    if (loose.length) fail(`${loose.length} bugs or risks have no release: ${loose.map(i => i.id).join(', ')}; a fix release takes them first (lc assign), or each is dropped with its reason`);
     Object.assign(r, { st: 'open', branch, base, openedAt: cx.now });
     write(cx, sha, d, `lc open ${r.key} on ${branch} from ${base.slice(0, 9)}`, `${r.key} open on ${branch}`);
 };
@@ -855,6 +895,8 @@ C.start = (cx, { pos, opt }) => {
     if (s.st === 'landed') fail(`${s.key} has landed`);
     const st = steps(d); const waits = s.needs.filter(k => st.has(k) && st.get(k).s.st !== 'landed');
     if (waits.length) fail(`${s.key} needs ${waits.join(', ')} landed first`);
+    const held = d.issues.filter(i => i.at === s.key).length;
+    if (held > STEP_ISSUES && !s.plan) fail(`${s.key} holds ${held} issues, over the ${STEP_ISSUES} of one task: split it (lc step add, lc assign) or name its plan with the order of commits (lc step set ${s.key} --plan <file>)`);
     const slug = one(opt, 'task', 'V5.1 slug'), t = task(cx, slug);
     for (const { s: o } of st.values()) if (o !== s && o.tasks.includes(slug)) fail(`${slug} already belongs to ${o.key}`);
     s.st = 'active'; s.tasks = [...new Set([...s.tasks, slug])];
@@ -1069,7 +1111,7 @@ C.get = (cx, { pos }) => { // for scripts: lc get <release> branch|head|base|st
     if (v === undefined || v === null) fail(`${pos[0]} has no ${pos[1]}`);
     console.log(typeof v === 'object' ? JSON.stringify(v) : v);
 };
-C.help = () => console.log(`lc status | check | show <id|step|release> | get <release> <field> | tails
+C.help = () => console.log(`lc status | check | next | show <id|step|release> | get <release> <field> | tails
 issues:   add --sec --origin --rule --sites --what --fix [--kind] [--prefix|--id] [--to step] [--deps] [--tail] | split <id> --decision M …
           assign <id...> --to <step|triage|tail> [--decision M] | place [--apply] | dep <id> --on ids|--clear | drop <id> --reason (--decision|--rule0|--gone|--fixed-by)
           edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]
