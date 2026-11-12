@@ -17,6 +17,8 @@ rows,tot=u.count([d],'2026-01-01T01:00:00Z','2026-01-01T02:00:00Z')
 assert tot['ALL']['output']==10+100+10000, tot['ALL']; assert tot['ALL']['messages']==3, tot['ALL']
 assert tot['implementer']['output']==110, tot
 assert u.role('You are the read-only PLANNER for one fix; a reviewer reads your plan')=='planner'  # the first prompt names its own role first
+assert u.role('You are the IMPLEMENTER for one planned fix; follow the planner\'s plan')=='implementer'
+assert u.role('You are the independent REVIEWER: the planner proved the chain, the implementer changed it')=='reviewer'
 # a transcript that began before the window still counts its messages inside it; one starting inside but running past is cut
 rows,tot=u.count([d],'2026-01-01T01:15:00Z','2026-01-01T01:45:00Z')
 assert tot['ALL']['output']==10100, tot['ALL']

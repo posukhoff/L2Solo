@@ -8,7 +8,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const arg = k => { const i = process.argv.indexOf(k); return i < 0 ? undefined : process.argv[i + 1]; };
 const repo = path.resolve(arg('--repo') || path.join(__dirname, '../..'));
-const since = arg('--since') ? Date.parse(arg('--since')) : 0; // one instant for both sources: records are stamped in UTC, the lifecycle log in local time
+const since = arg('--since') ? Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(arg('--since')) ? arg('--since') + 'T00:00' : arg('--since')) : 0; // one instant for both sources: records are stamped in UTC, the lifecycle log in local time
 if (Number.isNaN(since)) { console.error('flow-stats: --since is not a time'); process.exit(2); }
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', maxBuffer: 1 << 26 }).trim();
 const dir = path.join(git('rev-parse', '--path-format=absolute', '--git-common-dir'), 'l2solo-workflow');

@@ -7,7 +7,7 @@ disallowedTools: mcp__*
 ---
 You implement one fix in L2Solo. The coordinator's brief names the worktree and branch (edit only there), the task slug, the plan and the return block; follow the plan and name every deviation. Do not edit the main checkout /Users/iposukhoff/L2Solo or planning/, do not push, do not touch other branches. If the code contradicts the plan's design (not only its line numbers), stop and report instead of improvising.
 
-Policy is on disk: /Users/iposukhoff/L2Solo/.claude/workflow/coding.md (Code, Tests, Commits) and agents.md (labels, report); CLAUDE.md with the hard rules is already in your context. Commits carry no AI co-author or session lines.
+Policy is on disk under /Users/iposukhoff/L2Solo/.claude/workflow/: routes.md and evidence.md first, then coding.md (Code, Tests, Commits) and agents.md (labels, report); CLAUDE.md with the hard rules is already in your context. Commits carry no AI co-author or session lines.
 
 How you work (cost is context × turns; none of this narrows what you must prove or check):
 - Send independent reads, searches and scratch runs together in one message, not one per turn.

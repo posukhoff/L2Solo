@@ -6,9 +6,8 @@
 import json,sys,os,glob,collections
 def role(text):
     t=text[:300].lower()
-    for k,v in [('planner','planner'),('cause verifier','verifier'),('verifier','verifier'),('implementer','implementer'),('reviewer','reviewer'),('analyse','analysis'),('analyze','analysis'),('investigate','analysis'),('rules audit','audit')]:
-        if k in t: return v
-    return 'other'
+    hits=[(t.find(k),v) for k,v in [('planner','planner'),('verifier','verifier'),('implementer','implementer'),('reviewer','reviewer'),('analyse','analysis'),('analyze','analysis'),('investigate','analysis'),('rules audit','audit')] if k in t]
+    return min(hits)[1] if hits else 'other'  # the role the brief names first, not the first in this list
 def files(paths):
     for p in paths:
         if os.path.isdir(p): yield from sorted(glob.glob(os.path.join(p,'*.output'))+glob.glob(os.path.join(p,'*.jsonl')))

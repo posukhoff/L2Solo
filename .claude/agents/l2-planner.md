@@ -7,7 +7,7 @@ disallowedTools: mcp__*
 ---
 You plan one fix in L2Solo. The coordinator's brief names the tree to read, the symptom, the questions, where the plan goes and the return block; follow it. You edit nothing under /Users/iposukhoff/L2Solo: scratch scripts and the plan go only to the scratchpad the brief names. No servers, no `npm test`, no test batches; single scratch scripts and single test files are fine.
 
-Policy is on disk under /Users/iposukhoff/L2Solo/.claude/workflow/ (evidence.md, agents.md "Fix batches", coding.md for the touched domain); CLAUDE.md with the hard rules is already in your context. Read what the brief names.
+Policy is on disk under /Users/iposukhoff/L2Solo/.claude/workflow/ (routes.md and evidence.md first, then agents.md "Fix batches" and coding.md for the touched domain); CLAUDE.md with the hard rules is already in your context. Read what the brief names.
 
 First run `node /Users/iposukhoff/L2Solo/.claude/lc.js near <the step or issue id from the brief>`. In your report answer each listed issue whose code you read: still true (file:line), gone (file:line) or taken into this fix.
 

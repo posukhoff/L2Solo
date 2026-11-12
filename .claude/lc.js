@@ -214,7 +214,7 @@ const placeOf = i => i.at || (i.tail ? 'tail' : 'triage');
 const kindsLine = d => `kinds ${KINDS.map(k => `${k} ${d.issues.filter(i => i.kind === k).length}`).join(' · ')} · none ${d.issues.filter(i => !i.kind).length}`;
 
 // ---------- assembling a release (planning.md "Assembling a release"; maintainer 2026-11-12) ----------
-const STEP_ISSUES = 4, FIX_STEPS = 6, FIX_HOURS = 24; // one task's brief · a fix release's steps · and its age: one gate cycle can still name the change that hurt
+const STEP_ISSUES = 4, FIX_STEPS = 6, FIX_HOURS = 24, NEAR_SHARED = 12; // one task's brief · a fix release's steps · and its age: one gate cycle can still name the change that hurt
 function fixQueue(d) { // bugs, then risks, that no landed step holds: they go to a fix release before anything planned
     const st = steps(d);
     return d.issues.filter(i => ['bug', 'risk'].includes(i.kind) && !i.resolved && !(i.at && st.get(i.at).s.st === 'landed')).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'bug' ? -1 : 1));
@@ -260,7 +260,7 @@ function growth(d, cx) {
         stale: cx ? staleIds(cx) : null
     };
 }
-const growthLine = g => `growth: triage ${g.triage.length} (place) · tails due ${g.tails.length} (assign or drop) · possible duplicates ${g.duplicates.length} (decide) · rows over budget ${g.broad.length} (split is a decision) · resolved waiting close ${g.waiting.length}${g.stale ? ` · stale names ${g.stale.length} (refresh or close)` : ''}`;
+const growthLine = g => `growth: triage ${g.triage.length} (place) · tails due ${g.tails.length} (assign, drop or confirm) · possible duplicates ${g.duplicates.length} (decide) · rows over budget ${g.broad.length} (split the row into steps) · resolved waiting close ${g.waiting.length}${g.stale ? ` · stale names ${g.stale.length} (refresh or close)` : ''}`;
 
 // ---------- invariants (pure; every write runs them, `lc check` prints them) ----------
 function check(d) {
@@ -638,8 +638,9 @@ C.next = (cx) => { // what the next release is made of and what it still needs; 
     const loose = fixQueue(d).filter(i => !i.at);
     if (loose.length) todo.push(`a fix release for ${loose.map(i => i.id).join(', ')} (lc open refuses while they have none)`);
     for (const r of Object.values(d.releases).filter(live)) {
-        const hours = Math.round((Date.parse(cx.now) - Date.parse(r.openedAt)) / 36e5), over = r.type === 'fix' && r.st === 'open' && (r.steps.length >= FIX_STEPS || hours >= FIX_HOURS);
-        out.push(`${r.key} ${r.st} ${r.type} · ${hours} h · ${r.steps.filter(s => s.st === 'landed').length}/${r.steps.length} steps landed${over ? ` · at its limit (${FIX_STEPS} steps or ${FIX_HOURS} h): land what is started and freeze; the rest waits for the next fix release` : ''}`);
+        const hours = r.openedAt ? Math.round((Date.parse(cx.now) - Date.parse(r.openedAt)) / 36e5) : 0, landed = r.steps.filter(s => s.st === 'landed').length;
+        const over = r.type === 'fix' && r.st === 'open' && (landed >= FIX_STEPS || hours >= FIX_HOURS);
+        out.push(`${r.key} ${r.st} ${r.type} · ${hours} h · ${landed}/${r.steps.length} steps landed${over ? ` · at its limit (${FIX_STEPS} landed steps or ${FIX_HOURS} h): land what is started and freeze; the rest waits for the next fix release` : ''}`);
     }
     const r = Object.values(d.releases).filter(x => x.st === 'planned' && x.group !== 'large' && x.steps.length).sort((a, b) => a.order - b.order)[0];
     if (r) {
@@ -650,7 +651,6 @@ C.next = (cx) => { // what the next release is made of and what it still needs; 
             if (xs.length > STEP_ISSUES && !s.plan) todo.push(`split ${s.key} (${xs.length} issues, ${STEP_ISSUES} a task) or name its plan (lc step set ${s.key} --plan <file>)`);
             if (n(i => !i.seen)) todo.push(`confirm ${s.key}'s ${n(i => !i.seen)} issues against the code (lc seen, lc drop --gone)`);
             if (n(i => !i.kind)) todo.push(`give ${s.key}'s ${n(i => !i.kind)} issues a kind (lc kind)`);
-            if (side) todo.push(`move ${s.key}'s debt and gap that its mechanism does not own to the tail (lc assign --to tail)`);
         }
     }
     const triage = d.issues.filter(i => !i.at && !i.tail);
@@ -687,14 +687,18 @@ C.list = (cx, { opt }) => { // issue lines by kind, section or place; nothing is
 };
 C.near = (cx, { pos }) => { // open issues on the modules a task touches: whoever reads that code answers each
     const { d } = need(cx); const st = steps(d); if (!pos.length) fail('near <id|step|Module>...');
-    const own = new Set(), names = new Set();
+    const own = new Set(), names = new Set(), asked = new Set();
     for (const p of pos) {
         const mine = d.issues.filter(i => i.at === p || idsOf(i).includes(p));
-        if (!mine.length) { names.add(p); continue; }
+        if (!mine.length) { if (st.has(p) || /-\d|^\d|\./.test(p)) fail(`${p}: no open issue there (a module is named as in the code: HuntingState)`); asked.add(p); continue; }
         for (const i of mine) { own.add(i); for (const m of modules(i.sites)) names.add(m); }
     }
+    const count = m => d.issues.filter(i => modules(i.sites).includes(m)).length; // a module many issues name is not evidence of one task's code: asked for by name only
+    const general = [...names].filter(m => !asked.has(m) && count(m) > NEAR_SHARED);
+    for (const m of general) names.delete(m); for (const m of asked) names.add(m);
     const xs = d.issues.filter(i => !own.has(i) && modules(i.sites).some(m => names.has(m)));
     for (const i of xs) console.log(`${i.kind || '-'}${i.seen ? ' (seen ' + i.seen + ')' : ''} ${issueLine(d, i, st)}`);
+    if (general.length) console.log(`not listed, named by over ${NEAR_SHARED} issues: ${general.map(m => `${m} ${count(m)}`).join(', ')} (lc near <Module> lists one)`);
     console.log(`${xs.length} near ${[...names].join(', ') || '-'}: each is still true (lc seen), gone (lc drop --gone) or taken into the task (lc assign)`);
 };
 function nextId(d, prefix) { const ids = allIds(d); let n = 1; for (const x of ids) { const m = x.match(new RegExp(`^${esc(prefix)}-(\\d+)$`)); if (m) n = Math.max(n, +m[1] + 1); } return `${prefix}-${n}`; }
@@ -869,7 +873,7 @@ C.step = (cx, { pos, opt }) => { // step add <release> | step set <step> | step 
     for (const f of ['title', 'P', 'S', 'who']) if (opt[f] !== undefined) s[f] = opt[f] === true ? '' : String(opt[f]);
     if (opt.plan !== undefined) { // the step's plan file under planning/: the order of commits a step over STEP_ISSUES is done in
         const f = one(opt, 'plan', 'file under planning/ | none');
-        if (f === 'none') delete s.plan; else { if (!fs.existsSync(path.join(cx.planning, f))) fail(`no planning/${f}`); s.plan = f; }
+        if (f === 'none') delete s.plan; else { if (path.isAbsolute(f) || f.split(/[\\/]/).includes('..') || !fs.existsSync(path.join(cx.planning, f))) fail(`no planning/${f}`); s.plan = f; }
     }
     if (opt.needs !== undefined) s.needs = opt.needs === 'none' ? [] : many(opt.needs);
     if (opt.before) { const j = r.steps.findIndex(x => x.key === opt.before); if (j < 0) fail(`${opt.before} is not in ${r.key}`); r.steps = r.steps.filter(x => x !== s); r.steps.splice(r.steps.findIndex(x => x.key === opt.before), 0, s); }
@@ -1068,17 +1072,17 @@ C.publish = (cx, { pos, opt }) => { // records a publication someone made with t
     m.published = { remote, branch, tip, decision: dec, at: cx.now };
     write(cx, sha, d, `lc publish ${k}: ${remote}/${branch} ${tip.slice(0, 9)} (${dec})`, `${k} recorded published`);
 };
-function dueTails(d) { // [tail]/triage lines whose origin predates the close of the release two back (planning.md)
+function dueTails(d) { // [tail]/triage lines whose origin (for a debt or gap: its last confirmation) predates the close of the release two back (planning.md)
     const closes = Object.values(d.archive).map(a => a.manifest?.validatedAt).filter(Boolean).sort();
     const tails = d.issues.filter(i => !i.at);
     if (closes.length < 2) return { tails, due: [], reason: 'fewer than two validated releases' };
     const cut = new Date(closes.at(-2)), last = new Date(closes.at(-1));
     const dateOf = o => { const m = o.match(/(?<![\d-])(\d{1,2})-(\d{2})(?![\d-])/); if (!m) return null; const dt = new Date(Date.UTC(cut.getUTCFullYear(), +m[1] - 1, +m[2])); if (dt > last) dt.setUTCFullYear(dt.getUTCFullYear() - 1); return dt; };
-    return { tails, due: tails.filter(i => { const t = dateOf(i.origin); return t && t < cut; }), reason: `origin before ${cut.toISOString().slice(0, 10)}` };
+    return { tails, due: tails.filter(i => { const t = dateOf(['debt', 'gap'].includes(i.kind) && i.seen ? i.seen : i.origin); return t && t < cut; }), reason: `origin or last confirmation before ${cut.toISOString().slice(0, 10)}` };
 }
 C.tails = (cx) => {
     const { d } = need(cx); const { tails, due, reason } = dueTails(d);
-    for (const i of due) console.log(`${i.id} ${i.origin} due: move to a row (lc assign) or drop (lc drop --rule0)`);
+    for (const i of due) console.log(`${i.id} ${i.origin} due: move to a row (lc assign), drop (lc drop --rule0 | --gone), or confirm a debt or gap that still holds (lc seen)`);
     console.log(`${due.length} due of ${tails.length} (${reason})`);
 };
 C.placement = (cx, { opt }) => { // lc placement --to <step> [--sec s] [--prefix p] --decision M: an explicit maintainer rule for place

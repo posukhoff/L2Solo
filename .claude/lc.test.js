@@ -382,6 +382,9 @@ test('split keeps the old id, aliases and history; steps are reset and reordered
     assert.strictEqual(dueTails(d).due.length, 0);
     d.archive.b = { manifest: { validatedAt: '2026-11-25T00:00:00Z' } };
     assert.deepStrictEqual(dueTails(d).due.map(i => i.id), ['DT-90']);
+    // a debt or gap that a reader confirmed is due two releases after the confirmation, not its origin; a confirmation moves nothing else
+    d.issues.push({ id: 'DT-92', origin: 'run 10-01', kind: 'debt', seen: 'p1 planner 11-12', at: null, tail: true }, { id: 'DT-93', origin: 'run 10-01', kind: 'gap', seen: 'pass 10-05', at: null, tail: true }, { id: 'DT-94', origin: 'run 10-01', kind: 'bug', seen: 'p1 planner 11-12', at: null, tail: true });
+    assert.deepStrictEqual(dueTails(d).due.map(i => i.id), ['DT-90', 'DT-93', 'DT-94']);
 });
 
 test('context, not files: show pages a step within its budget and loses no line; growth is diagnosed, never cut', () => {
@@ -474,28 +477,45 @@ test('kinds: a bug says what is seen; one write sets many; list, near and seen r
     assert.match(fs.readFileSync(path.join(w.repo, 'planning/architecture/problems.md'), 'utf8'), /^DT-700\|x 11-12\|4\|/m);
 });
 
-test('assembling: next names the fix queue and what a planned release lacks; open refuses an unplaced bug; a step over four issues starts only with a plan', () => {
+test('assembling: bugs lead the fix queue and leave it when their step lands; open refuses an unplaced bug; a fix release shows its limit; a step over four issues starts only with a plan', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     const add = (id, ...more) => w.ok('add', '--sec', 'parties', '--origin', 'x 11-12', '--rule', '4', '--sites', `\`Mod${id.slice(3)}.run\` 1`, '--what', 'w → seen', '--fix', 'f', '--id', id, ...more);
+    const at = (now, ...args) => execFileSync(process.execPath, [LC, ...args, '--repo', w.repo], { env: { ...w.env, LC_NOW: now }, encoding: 'utf8' });
     assert.match(w.ok('next'), /^fix queue 0\n/);
-    add('DT-800', '--kind', 'bug'); add('DT-801', '--kind', 'risk', '--to', '1b.2'); add('DT-802', '--kind', 'debt', '--to', '1b.1');
+    add('DT-801', '--kind', 'risk', '--to', '1b.2'); add('DT-800', '--kind', 'bug'); add('DT-802', '--kind', 'debt', '--to', '1b.1'); // the risk is older than the bug
     const n = w.ok('next');
-    assert.match(n, /^fix queue 2: DT-800 bug no release · DT-801 risk 1b\.2\n/); // bugs first; a placed one is in the queue, not loose
+    assert.match(n, /^fix queue 2: DT-800 bug no release · DT-801 risk 1b\.2\n/); // bugs first; a placed one is queued, not loose
     assert.match(n, /next planned 1b\.1 arch\n {2}1b\.1 · 3 issues · no kind 2 · not confirmed 3 · debt or gap 1\n/);
-    assert.match(n, /before 1b\.1 opens:\n {2}- a fix release for DT-800 /); assert.match(n, /- confirm 1b\.1's 3 issues/); assert.match(n, /- move 1b\.1's debt and gap/);
+    assert.match(n, /before 1b\.1 opens:\n {2}- a fix release for DT-800 /); assert.match(n, /- confirm 1b\.1's 3 issues/); assert.doesNotMatch(n, /ready to open|debt and gap/);
     assert.match(w.ok('status'), /\nfix queue 2: DT-800 bug no release/);
-    w.sh(['branch', 'ivan/batch-1b1', w.base]); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
+    for (const b of ['ivan/batch-1b0', 'ivan/batch-1b1']) { w.sh(['branch', b, w.base]); w.sh(['push', '-q', 'fork', b]); }
     w.no(/1 bugs or risks have no release: DT-800; a fix release takes them first/, 'open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
-    w.ok('assign', 'DT-800', '--to', '1b.1'); add('DT-803', '--to', '1b.1'); // five issues in one step now
+    w.ok('release', 'add', '1b.0', '--group', '1b', '--order', '0', '--type', 'fix'); w.ok('step', 'add', '1b.0', '--key', '1b.0', '--title', 'fixes: DT-800'); w.ok('assign', 'DT-800', '--to', '1b.0');
+    w.ok('open', '1b.0', '--branch', 'ivan/batch-1b0', '--base', w.base);
+    assert.match(w.ok('next'), /\n1b\.0 open fix · 0 h · 0\/1 steps landed\n/); // inside its limit: nothing said
+    assert.match(at('2026-11-13T02:00:00Z', 'next'), /\n1b\.0 open fix · 26 h · 0\/1 steps landed · at its limit \(6 landed steps or 24 h\)/);
+    const head = commit(w, 'ivan/batch-1b0', 'the fix'); landedTask(w, 'f1', w.base, head, 'ivan/batch-1b0', ['DT-800']);
+    w.ok('start', '1b.0', '--task', 'f1'); w.sh(['push', '-q', 'fork', 'ivan/batch-1b0']); w.ok('land', '1b.0');
+    assert.match(w.ok('next'), /^fix queue 1: DT-801 risk 1b\.2\n/); // a landed step holds it: it waits for its result, not for a release
     w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
-    landedTask(w, 'p1', w.base, w.base, 'ivan/batch-1b1', ['DT-44']);
-    w.no(/1b\.1 holds 5 issues, over the 4 of one task: split it .* or name its plan/, 'start', '1b.1', '--task', 'p1');
+    add('DT-803', '--to', '1b.1'); // DT-44, DT-49, DT-802, DT-803: four is one task
+    landedTask(w, 'p1', w.base, w.base, 'ivan/batch-1b1', ['DT-44']); landedTask(w, 'p2', w.base, w.base, 'ivan/batch-1b1', ['DT-49']); landedTask(w, 'p3', w.base, w.base, 'ivan/batch-1b1', ['DT-49']);
+    assert.match(w.ok('start', '1b.1', '--task', 'p1'), /1b\.1 active \(p1\)/);
+    add('DT-804', '--to', '1b.1'); // five
+    w.no(/1b\.1 holds 5 issues, over the 4 of one task: split it .* or name its plan/, 'start', '1b.1', '--task', 'p2');
     w.no(/no planning\/target-architecture\/parties\.md/, 'step', 'set', '1b.1', '--plan', 'target-architecture/parties.md');
     fs.mkdirSync(path.join(w.repo, 'planning/target-architecture'), { recursive: true }); fs.writeFileSync(path.join(w.repo, 'planning/target-architecture/parties.md'), 'order of commits\n');
+    w.no(/no planning\/\.\.\/game\.js/, 'step', 'set', '1b.1', '--plan', '../game.js'); // a plan is a planning file
     w.ok('step', 'set', '1b.1', '--plan', 'target-architecture/parties.md');
-    assert.match(w.ok('start', '1b.1', '--task', 'p1'), /1b\.1 active \(p1\)/);
-    assert.match(w.ok('next'), /1b\.1 open arch · 0 h · 0\/1 steps landed\n/);
-    w.ok('seen', 'DT-44', 'DT-49', 'DT-800', 'DT-802', 'DT-803', '--by', 'pass 11-12'); w.ok('kind', 'debt', 'DT-44', 'DT-49', 'DT-803');
+    assert.match(w.ok('start', '1b.1', '--task', 'p2'), /1b\.1 active \(p2\)/);
+    w.ok('step', 'set', '1b.1', '--plan', 'none'); w.no(/1b\.1 holds 5 issues/, 'start', '1b.1', '--task', 'p3');
+    // the next planned release is ready when its issues have a kind and a confirmation and triage is empty; its debt is a count, not a task
+    const mine = w.ok('list', '--at', '1b.2').split('\n').filter(l => l.includes('|')).map(l => l.split('|')[0].split(' ')[1]);
+    const triage = w.ok('list', '--at', 'triage').split('\n').filter(l => l.includes('|')).map(l => l.split('|')[0].split(' ')[1]);
+    if (triage.length) w.ok('assign', ...triage, '--to', 'tail');
+    w.ok('kind', 'debt', ...mine.filter(id => id !== 'DT-801')); w.ok('seen', ...mine, '--by', 'pass 11-12');
+    const ready = w.ok('next'); assert.match(ready, /\n {2}1b\.2 · \d+ issues · no kind 0 · not confirmed 0 · debt or gap \d+/); assert.match(ready, /\n1b\.2: ready to open\n$/);
+    assert.match(w.lc('near', 'DT-9999').out, /DT-9999: no open issue there/); // a mistyped id is not a module name
 });
 
 test('contract: records written by the real workflow.js pass lc land, resolve and gate ci', () => {
