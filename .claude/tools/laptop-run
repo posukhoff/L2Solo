@@ -13,7 +13,9 @@ wt=$a[1]; label=$a[2]; [[ -d $wt ]] || { echo "no worktree $wt"; exit 2; }
 main=/Users/iposukhoff/L2Solo; S=${0:A:h}; log=$main/tmp/rc-logs/$label.log
 bad=0; no() { echo "REFUSE: $1"; bad=1; }
 [[ -z $(git -C $wt status --porcelain) ]] || no "worktree is dirty"
-pgrep -f 'scripts/perf.js run' >/dev/null && no "another scripts/perf.js run is running: $(pgrep -fl 'scripts/perf.js run' | head -2 | tr '\n' ' ')"
+# Only a node process counts: a caller's shell whose command line quotes the text is not a run.
+running=$(pgrep -fl '^([^ ]*/)?node ([^ ]+ )*scripts/perf\.js run' | head -2 | tr '\n' ' ')
+[[ -z $running ]] || no "another scripts/perf.js run is running: $running"
 (( bad && ! dry )) && exit 1
 (( bad )) && echo "dry-run: WOULD REFUSE (above)"
 scen=(--scenario=hot); [[ $sc == script ]] && scen=(--scenario=script --script=tests/e2e/online-player.js --warmup=5)
@@ -44,7 +46,7 @@ first=$(sample); print -r -- $first >$load; echo "load file $load · $first"
 [[ $first =~ 'other ([0-9]+)%' ]] && (( match[1] >= 100 )) && echo "WARN: other processes use ${match[1]}% CPU: a perf measurement must run alone (release.md)"
 ( trap '' HUP; while sleep 60 && kill -0 $pid 2>/dev/null; do sample; done ) </dev/null >>$load 2>&1 &!
 for i in {1..60}; do
-  l=$(grep -m1 -E 'l2solo-perf-[A-Za-z0-9._-]+' $log); [[ -n $l ]] && { echo "$l"; exit 0; }
+  l=$(grep -m1 -E '^perf :: [^ ]*perf/runs/[^ :]+' $log); [[ -n $l ]] && { echo "$l"; exit 0; }
   kill -0 $pid 2>/dev/null || { echo "run exited early:"; tail -5 $log; exit 3; }
   sleep 5
 done
