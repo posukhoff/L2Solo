@@ -14,6 +14,7 @@
  "steps": [
   {"key":"1b.0e1","title":"1b.0e1 bug: geodata after the C4 step rule — a ledge reachable by a route but not left (DT-321); a ranged bot on a skirt hits mobs that cannot see it back (CMB-42)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0e2","title":"1b.0e2 risk: an opportunistic raid's supply preparation times out and the raid stays preparing (DT-326), investigation first","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0e3","title":"1b.0e3 bug: a bot's build answer flips stock:shots / power every 4.5 min with zero EXP (DT-327), investigation first","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"1b.0e3","title":"1b.0e3 bug: a bot's build answer flips stock:shots / power every 4.5 min with zero EXP (DT-327), investigation first","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0e4","title":"1b.0e4 risk: a bot values its shots at the city store price (DT-324); decide with the economy release","P":"low","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
