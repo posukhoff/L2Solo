@@ -91,7 +91,7 @@ symptom showed). The direction is one mechanism per rule.
 - Bot tables (`data/Bots/spot-table.json`, `spot-reward-npcs.json`, `hunt/*`) are simulated by real code and carry a
   fingerprint of their input files (`TableFingerprint`; inputs: `planning/architecture/tables.md` "When to rebuild",
   comments included). A change to an input makes them stale (say so in the commit message): `npm run check` warns
-  locally and fails on CI; rebuild them on the fork when it lands (testing.md "CI on the fork").
+  locally and fails on CI; rebuild them on the fork before the task's CI (testing.md "CI on the fork"); `land` makes the builds one commit.
 - Limits (caps, budgets, page/byte sizes, pool sizes, timeouts) live in `planning/architecture/limits.md`; a new or
   changed limit gets a row, and hitting it must be observable (a counted reason, not a silent drop).
 - A survived failure is never silent: count it through `src/FailureLog.js` (site + first stack), never rethrow from a
@@ -118,10 +118,10 @@ symptom showed). The direction is one mechanism per rule.
 
 - Dead code: prove by search that nothing reaches it (`invoke`, `require`, method names, tests, scripts) before
   deleting; batch such deletions.
-- A behaviour change is reviewed on its diff by a review agent before it lands on the integration branch, one review
-  per step (outside a step: per problem): hard rules first (rule → ok with evidence / violation file:line), then other
+- A behaviour change is reviewed on its diff by a review agent before it lands on the integration branch, every task
+  is reviewed (routes.md): the review table first (one line per hard rule and the cause, evidence.md "Review"), then other
   findings.
-- A shared commit is a theme (e.g. "DB writes and WAL"), not one per small problem; it builds and passes its tests. In
+- Commit shape: git.md (one commit per task after `land`; a small fix named in the brief is its own commit with its id in the subject); every commit builds and passes its tests. In
   a worktree commit freely; landing: git.md. No "fix the fix" commits.
 
 ### Commits and PRs

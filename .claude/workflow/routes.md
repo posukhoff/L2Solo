@@ -4,7 +4,7 @@ All hard rules and release gates remain binding. Route controls ceremony, not co
 
 | Route | Entry | Execution / verification |
 |---|---|---|
-| Fast | Localized bug/UI/config without shared rule, data, protocol or perf impact | Cause/owner/test brief, implementer, scoped independent review, rules-check |
+| Fast | Localized bug/UI/config without shared rule, data, protocol or perf impact | Cause/owner/test brief (the coordinator writes the cause chain and its deeper-cause line), implementer, independent review (all 17 table lines; its scope is the diff), rules-check |
 | Standard | Bounded gameplay change | Planner if cause/design uncertain, implementer, reviewer; traced batch when behaviour affected |
 | Critical | Shared hot/cold rule, worker/state ownership, DB, global economy, changes to how bots spread over spots/market/parties (offline simulation first), generated tables, performance claims or cross-module architecture | Explicit invariants, design review, isolated worktrees, independent review, trace/coverage/A/B per release policy |
 

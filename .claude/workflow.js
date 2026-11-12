@@ -64,6 +64,7 @@ function validateBrief(b, state) {
         !nonempty(b.cause.explanation))) fail('Fix brief requires cause {status: guess|verified, explanation}.');
     if (state.kind === 'fix' && b.cause.status === 'verified' && (!strings(b.cause.evidence) || !strings(b.regressions) || !b.regressions.every(t=>b.tests.map(norm).includes(norm(t))))) fail('Verified cause needs evidence handles and regression tests listed in tests.');
     if (state.kind === 'fix' && b.cause.status === 'verified' && (!Array.isArray(b.cause.chain) || b.cause.chain.length < 2 || !b.cause.chain.every(nonempty))) fail('Verified cause needs cause.chain: at least 2 non-empty strings (first = where the symptom shows, last = first wrong decision or broken invariant with handle).');
+    if (state.kind === 'fix' && b.cause.status === 'verified' && !/^(fixed here|left as \S+ because \S.*)$/.test(String(b.cause.deeper || '').trim())) fail('Verified cause needs cause.deeper: "fixed here", or "left as <lc id> because <the deeper cause is replaced by a planned release | needs its own critical task>" (evidence.md "Cause gate").');
     if (state.kind === 'fix' && b.cause.status === 'verified' && !strings(b.cause.excluded)) fail('Verified cause needs cause.excluded: at least 1 non-empty string (alternative ruled out with handle, or "none plausible: reason").');
 }
 // Advisory feedback only; never replaces the integration selection.
@@ -135,9 +136,9 @@ function reviewLines(text) {
         if (!m || !RULES.includes(m[1].toLowerCase())) continue;
         const key = m[1].toLowerCase(), verdict = m[2].toLowerCase().replace('n/a','na'), rest = m[3].trim();
         if (lines[key]) fail('Review table answers '+key+' twice.');
-        if (!rest) fail('Review table '+key+' '+verdict+': add its '+({ok:'evidence',na:'reason',violation:'file:line'}[verdict]||'lc issue id and reason')+'.');
+        if (!rest) fail('Review table '+key+' '+verdict+': add its '+({ok:'evidence',na:'reason',violation:'file:line (or "commit <sha>")'}[verdict]||'lc issue id and reason')+'.');
         const row = { verdict, text: rest };
-        if (verdict === 'violation' && !/\S+:\d+/.test(rest)) fail('Review table '+key+' violation: name file:line.');
+        if (verdict === 'violation' && !/\S+:\d+|\bcommit [0-9a-f]{7,40}\b/.test(rest)) fail('Review table '+key+' violation: name file:line (or "commit <sha>" for a commit message).');
         if (verdict === 'left') {
             const [ids, ...words] = rest.split(/\s+/), why = words.join(' ');
             row.ids = ids.split(',').filter(Boolean); row.decision = (/\bM\d+\b/.exec(why) || [])[0] || null;

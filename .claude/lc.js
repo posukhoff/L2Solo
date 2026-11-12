@@ -937,6 +937,9 @@ C.land = (cx, { pos, opt }) => {
             if (v.decision && !d.decisions.some(x => x.id === v.decision)) fail(`${slug}: the review leaves rule ${rule} under unknown decision ${v.decision}`);
             for (const id of v.ids || []) { const i = issue(d, id); i.leftBy = [...new Set([...(i.leftBy || []), slug])]; }
         }
+        // The deeper cause the brief left standing is an open issue, and it remembers the task that left it.
+        const deeper = /^left as (\S+) because /.exec(String(t.brief?.cause?.deeper || ''));
+        if (deeper) { const i = issue(d, deeper[1].replace(/[,;.]$/, '')); i.leftBy = [...new Set([...(i.leftBy || []), slug])]; }
         s.landed = { slug, base: t.base, head: l.head, reviewedHead: l.reviewedHead, tree: l.tree, ci: (t.evidence.ciRuns || []).filter(x => x.head === l.reviewedHead).map(x => x.id), at: cx.now,
             ...(leftRows.length ? { left: leftRows.map(([rule, v]) => ({ rule, ids: v.ids, ...(v.decision ? { decision: v.decision } : {}) })) } : {}),
             ...((t.brief?.map || []).some(x => !/^none:/.test(x)) ? { map: t.brief.map } : {}) };

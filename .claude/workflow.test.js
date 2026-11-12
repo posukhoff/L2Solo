@@ -63,9 +63,9 @@ expect('start',cmd('start','x','--base','main','--risk','standard'),0,'policy-ha
 store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],cause:{status:'guess',explanation:'hypothesis'}}));
 expect('guess',cmd('record-brief','x','--file','/brief.json'),0,'false');
 expect('guess blocks',cmd('verify','x'),1,'hypothesis');
-store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'fixed',by:'test_basic.js'}],map:['none: no owner or path changes'],tests:['test_basic.js','test_geodata.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],evidence:['trace 1']}}));
+store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'fixed',by:'test_basic.js'}],map:['none: no owner or path changes'],tests:['test_basic.js','test_geodata.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],deeper:'fixed here',evidence:['trace 1']}}));
 const verifiedBrief=cause=>JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'fixed',by:'test_basic.js'}],map:['none: no owner or path changes'],tests:['test_basic.js'],regressions:['test_basic.js'],cause});
-const okCause={status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],evidence:['trace 1']};
+const okCause={status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],deeper:'fixed here',evidence:['trace 1']};
 store.set('/nochain.json',verifiedBrief({...okCause,chain:undefined}));
 expect('verified fix without chain refused',cmd('record-brief','x','--file','/nochain.json'),1,'cause.chain');
 store.set('/onechain.json',verifiedBrief({...okCause,chain:['only one']}));
@@ -121,7 +121,7 @@ expect('a refuted guess under an older policy can still be closed',cmd('close','
 // Raw-map CI: a Picked +name run counts only with a receipt of a map-present pass, through a runner that kept the mark.
 current=head;optionalRaw=true;
 expect('raw ci start',cmd('start','rawci','--base','main','--risk','standard'),0,'policy-hash');
-store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'fixed',by:'test_basic.js'}],map:['none: no owner or path changes'],tests:['test_basic.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],evidence:['trace 1']}}));
+store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'fixed',by:'test_basic.js'}],map:['none: no owner or path changes'],tests:['test_basic.js'],regressions:['test_basic.js'],cause:{status:'verified',explanation:'cause',chain:['shows at a.js:1','first wrong decision b.js:2'],excluded:['none plausible: single path'],deeper:'fixed here',evidence:['trace 1']}}));
 expect('raw ci brief',cmd('record-brief','rawci','--file','/brief.json'),0,'true');
 receiptMode='noMap';expect('a green run without the map is no raw evidence',cmd('record-ci','rawci','--run','6'),1,'No raw-map receipt');
 receiptMode='ok';runnerDropsPlus=true;expect('a runner that drops the mark is refused',cmd('record-ci','rawci','--run','6'),1,'does not keep the raw-map mark');
@@ -352,4 +352,16 @@ current=other;
 {const r=cmd('ready','fold');if(r.code!==1||!r.log.includes('No passing scoped review for HEAD')||!r.log.includes('Mechanical rules-check missing')||!r.log.includes('"full": false'))throw Error('a commit with another tree must carry no evidence: '+r.log);}
 console.log('PASS a commit with another tree carries no evidence');
 current=head;
+// The deeper-cause line is part of a verified brief; a commit-message violation is cited by its commit.
+expect('dc start',cmd('start','dc','--base','main','--risk','standard'),0,'policy-hash');
+store.set('/b.json',briefWith({cause:{...okCause,deeper:undefined}}));
+expect('a verified cause without the deeper-cause line refused',cmd('record-brief','dc','--file','/b.json'),1,'cause.deeper');
+store.set('/b.json',briefWith({cause:{...okCause,deeper:'left for later'}}));
+expect('a free-form deeper-cause line refused',cmd('record-brief','dc','--file','/b.json'),1,'cause.deeper');
+store.set('/b.json',briefWith({cause:{...okCause,deeper:'left as DT-324 because it is replaced by release 2'}}));
+expect('a deeper cause left as a named issue accepted',cmd('record-brief','dc','--file','/b.json'),0,'true');
+store.set('/c13.txt',fullTable({13:'13 violation commit 7f8b1885a the message carries a Co-Authored-By line'}));
+expect('a commit-message violation is recorded by its commit',cmd('record-review','dc','--result','blocked','--evidence','review','--rules','/c13.txt'),0,'');
+store.set('/c13b.txt',fullTable({13:'13 violation the message carries a Co-Authored-By line'}));
+expect('a violation with neither file:line nor a commit refused',cmd('record-review','dc','--result','blocked','--evidence','review','--rules','/c13b.txt'),1,'commit <sha>');
 
