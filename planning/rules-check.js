@@ -68,7 +68,7 @@ for (const [f,lines] of scope) {
 // Clock sites in decision modules the decision registry lacks.
 for (const x of JSON.parse(run('node',[`${__dirname}/target-architecture/decision-registry.js`,'--root',root,'--json','--unclassified'],opt))) {
     const l = scope.get(F = x.file);
-    if (/Bot\/(AI|Economy|Population)\//.test(F) && l !== undefined && (!l || l.has(N = x.line))) hit('r2-clock',`unclassified ${x.kind}`);
+    if (/Bot\/(AI|Economy|Population)\//.test(F) && l !== undefined && (!l || l.has(N = x.line))) { hit('r2-clock',`unclassified ${x.kind}`); if (!ALL) ask('r2-clock',`${x.kind} ${x.key}`); }
 }
 N = 0;
 if (!ALL) for (F of git('log','--format=%h','-i','-E','--grep=Co-Authored-By:|Claude-Session:|Generated with \\[Claude',range).split('\n').filter(Boolean)) hit('r13-commit','AI co-author',1);
@@ -77,5 +77,5 @@ if (!ALL || args.includes('--list')) for (const h of hits.sort((a,b)=>a.e - b.e)
 if (ALL) console.log(`per detector: ${tally('d').map(e=>e.join(' ')).join(', ')}\n${tally('f').sort((a,b)=>b[1] - a[1]).slice(0,15).map(([f,v])=>`  ${v}\t${f}`).join('\n')}`);
 for (const a of asks) console.log(`ask   ${a.d} ${a.f}:${a.n} ${a.m}`);
 const asked = d=>asks.filter(a=>a.d === d).length;
-console.log(`rules-check ${range || '--all'}: ${errs} errors, ${hits.length - errs} warnings${ALL ? '' : ` · added to answer: timers ${asked('r2-timer')}, catches ${asked('r8-catch')}, caches ${asked('r7-cache')}`}`);
+console.log(`rules-check ${range || '--all'}: ${errs} errors, ${hits.length - errs} warnings${ALL ? '' : ` · added to answer: timers ${asked('r2-timer')}, clock or step sites ${asked('r2-clock')}, catches ${asked('r8-catch')}, caches ${asked('r7-cache')}`}`);
 process.exit(errs && !ALL ? 1 : 0);

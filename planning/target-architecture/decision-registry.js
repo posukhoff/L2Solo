@@ -115,7 +115,8 @@ function collect() {
         for (const name of names) {
             const body = bodyOf(source, name);
             if (!body) { add(file, 'step', `${name}:<missing>`, 0, `${name} body not found`); continue; }
-            const text = body.text.replace(/\/\/.*$/gm, '');
+            // Comments are blanked, not cut: a match's offset must stay its offset in the source, or the site's line drifts.
+            const text = body.text.replace(/\/\/.*$/gm, comment => ' '.repeat(comment.length));
             CALL_RE.lastIndex = 0;
             let m;
             while ((m = CALL_RE.exec(text))) {

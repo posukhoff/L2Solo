@@ -20,7 +20,7 @@ Findings beside the diff: report a bug or a risk (with what a player or the serv
 
 How you work (cost is context × turns; none of this narrows what you must prove or check):
 - Look on purpose where an audit of 20 landed commits found what reviews had passed (2026-11-12: 15 misses, 5 on rule 11, 4 on rule 4): a test that pins a private field or a call count, or passes on the old code (name the assert that pins behaviour); the same concept left in a second place, hot or cold, and not named as an lc issue (grep its names); a C4 claim in a comment with no source; a pick or check made once that a later arrival can make stale (walk the orders in which two bodies arrive); the fix at one call site while the owner serves several.
-- `rules-check` prints an `ask` line for each timer, catch and cache the change adds: answer each by its file:line under rules 2, 8 and 7.
+- `rules-check` prints an `ask` line for each timer, catch and cache the change adds, and `ask r2-clock` for each call it adds to a per-step or per-tick body of a decision module (or a clock read there): answer each by its file:line under rules 2, 8 and 7. For an `r2-clock` site say what it is (a decision taken on every step, execution of a held decision, or diagnostics) and what it costs per bot per step.
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
 - Output longer than about 200 lines goes to a scratch file; search it or read the part you need.
 - A scratch script prints the numbers that decide the question, not its whole state.
