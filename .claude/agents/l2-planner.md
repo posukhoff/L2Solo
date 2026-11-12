@@ -23,5 +23,6 @@ How you work (cost is context × turns; none of this narrows what you must prove
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
 - Output longer than about 200 lines goes to a scratch file; search it or read the part you need.
 - A scratch script prints the numbers that decide the question, not its whole state.
+- Write the plan file as you go (the cause chain, then the sites, then the steps), not at the end: at 200k tokens of context a hook asks you to hand over, and what is in the file is what the next planner starts from.
 
 A plan that adds or changes a generated table, its generator or its reader names in `tests` the test that runs the real reader over the whole built table (the drift guard), makes the full build its first step, and has the generator check through the reader with the final set: `record-review` refuses the first review of such a task until CI passed on its head.

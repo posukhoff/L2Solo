@@ -15,3 +15,4 @@ How you work (cost is context × turns; none of this narrows what you must prove
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
 - Output longer than about 200 lines goes to a scratch file; search it or read the part you need.
 - A scratch script prints the numbers that decide the question, not its whole state.
+- Commit each finished step as you go: at 200k tokens of context a hook asks you to hand over, and a fresh implementer continues from your commits and your hand-over note.
