@@ -1054,7 +1054,15 @@ C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the 
         const f = evidenceFile(opt.ref, [r.key, sha9], 'report');
         for (const [rx, tool] of [[/^total \$[\d.]+ · agents \$/m, 'token-usage.py --from <release open> --table'], [/^task records \d+/m, 'flow-stats.js --since <release open>']]) // what the release cost, measured at its close and not when somebody asks
             if (!rx.test(f.text)) fail(`report ${path.basename(f.file)} has no flow measurement: paste the output of .claude/tools/${tool}`);
-        Object.assign(rec, { file: f.file, sha256: f.sha256 });
+        // The rules a tool can count, over the whole code: a release may lower a count, never raise it unnoticed.
+        const tally = /^per detector: (.+)$/m.exec(f.text) || fail(`report ${path.basename(f.file)} has no rules tally: paste the "per detector" line of node planning/rules-check.js --all --root <the release tree>`);
+        const detectors = Object.fromEntries(tally[1].split(',').map(x => x.trim().split(/\s+/)).filter(x => x.length === 2 && /^\d+$/.test(x[1])).map(([k, v]) => [k, +v]));
+        const prev = Object.values(d.archive).map(a => a.manifest).filter(m => m?.gates?.report?.detectors).sort((a, b) => String(b.gates.report.at).localeCompare(String(a.gates.report.at)))[0];
+        for (const [k, v] of prev ? Object.entries(detectors) : []) {
+            const was = prev.gates.report.detectors[k] || 0, leave = new RegExp(`^accepted growth: ${k}\\b.*\\b(M\\d+)\\b`, 'm').exec(f.text);
+            if (v > was && !(leave && d.decisions.some(x => x.id === leave[1]))) fail(`rules-check ${k} grew ${was} → ${v} since ${prev.key}: remove the new hits, or the report says "accepted growth: ${k} <why> <decision id>"`);
+        }
+        Object.assign(rec, { file: f.file, sha256: f.sha256, detectors });
     }
     r.gates[g] = rec;
     write(cx, sha, d, `lc gate ${r.key} ${g}`, `${r.key} ${g} ✓`);
