@@ -162,7 +162,7 @@ function designOf(argv, snapshot) {
     console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStock are high-sensitivity): ${JSON.stringify(config)}`);
     console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : config[field] === r.ours ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
     const personaShares = Object.fromEntries(PersonaTypes.TYPE_IDS.map(id => [id, PersonaTypes.TYPES[id].share]));
-    return { view, rates, cohort, fresh: start === 'fresh', design: Design.plane({ snapshot, game, config, start, grades, personaShares }) };
+    return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, design: Design.plane({ snapshot, game, config, start, grades, personaShares }) };
 }
 
 // The design mode's hunting share per band (the design world's share is
@@ -181,7 +181,7 @@ function huntShares(fitted, rows, cli) {
 const fmt = value => (value === null || value === undefined || !Number.isFinite(value) ? '-' : Math.abs(value) >= 1e4 ? k(value) : Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(2));
 const pct = (value, base) => (base > 0 ? `${(100 * value / base).toFixed(1)} %` : '-');
 
-function printDesign(design, hours) {
+function printDesign(design, hours, { visits = null, real = null } = {}) {
     const c = design.crafters;
     console.log(`CRAFTERS ${c.crafterAccounts} of ${c.accounts} accounts (${pct(c.crafterAccounts, c.accounts)}): Bounty Hunter pairs ${c.bountyHunterPairs}, other pairs ${c.otherPairs}; `
         + `twins by band ${Object.entries(c.byBand).map(([b, n]) => `${b} ${n}`).join(' | ')}; by class ${Object.entries(c.byClass).map(([b, n]) => `${b} ${n}`).join(' | ')}`);
@@ -222,6 +222,8 @@ function printDesign(design, hours) {
     console.log(`TWINS seat-hours: selling (sell lines shown) ${fmt(t.sell)} (${pct(t.sell, twinHours)}), buying (buy lines shown) ${fmt(t.buy)} (${pct(t.buy, twinHours)}), manufacture ${fmt(t.manufacture)} (${pct(t.manufacture, twinHours)}), `
         + `idle (store empty) ${fmt(t.idleSell + t.idleBuy)} (${pct(t.idleSell + t.idleBuy, twinHours)}: in sell mode ${fmt(t.idleSell)}, in buy mode ${fmt(t.idleBuy)}); `
         + `crafting (a batch running, beside the store) ${fmt(design.twins.batchHours)} (${pct(design.twins.batchHours, twinHours)})`);
+    const b = design.twins.buyerSeat || { buy: 0, idleBuy: 0 };
+    console.log(`BUYER TWINS ${design.twins.buyers || 0} (buyerTwin ${design.config.buyerTwin}): seat-hours buying (buy lines shown) ${fmt(b.buy)} (${pct(b.buy, b.buy + b.idleBuy)}), idle ${fmt(b.idleBuy)}`);
     const mk = design.money, money = row => `${row.accounts} accounts ${(row.money / 1e6).toFixed(1)}M`;
     console.log(`ACCOUNT MONEY (main + twin wallet) start -> end: crafter accounts ${money(mk.start.crafters)} -> ${(mk.end.crafters.money / 1e6).toFixed(1)}M `
         + `(${k((mk.end.crafters.money - mk.start.crafters.money) / Math.max(1, mk.start.crafters.accounts) / hours)} per account-hour); `
@@ -252,6 +254,37 @@ function printDesign(design, hours) {
         + `${Object.entries(design.goods.totals).map(([field, n]) => `${field} ${k(n)}`).join(' | ')}`);
     console.log(`BOT-TO-BOT adena ${k(design.botToBot)} (${(design.botToBot / hours / 1e6).toFixed(2)}M per hour); COUNTERS ${Object.entries(design.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
     printMarket(design, hours);
+    printTowns(design, hours, visits, real);
+}
+
+// Towns and visits: visits per bot-hour by their trip's situation, overall
+// and per current band; those in a town other than the nearest; visits per
+// town as shares beside the --fit ledger's; twins per town by kind; stock
+// sold to lines in the nearest town and in hubs against the NPC.
+const CAUSES = Object.freeze(['bag_full', 'stock_low:shots', 'shots_out', 'goal_affordable', 'offer_posted', 'bid_posted', 'death', 'hub_trip', 'start']);
+function printTowns(design, hours, visits, real) {
+    const v = design.market.visits, botHours = Object.values(v.botHours).reduce((a, b) => a + b, 0);
+    const total = cause => Object.values(v.byBand).reduce((sum, row) => sum + (row[cause] || 0), 0);
+    const all = CAUSES.reduce((sum, cause) => sum + total(cause), 0);
+    const per = (n, h) => (h > 0 ? (n / h).toFixed(3) : '-');
+    console.log(`VISITS per bot-hour by cause (${all} visits, ${per(all, botHours)}/bot-h): ${CAUSES.map(cause => `${cause} ${per(total(cause), botHours)}`).join(' | ')}`);
+    for (const [band, h] of Object.entries(v.botHours)) {
+        const row = v.byBand[band] || {}, n = CAUSES.reduce((sum, cause) => sum + (row[cause] || 0), 0);
+        console.log(`  ${band.padEnd(8)} ${per(n, h)}/bot-h over ${fmt(h)} bot-h: ${CAUSES.filter(cause => row[cause]).map(cause => `${cause} ${per(row[cause], h)}`).join(' | ') || '-'}`);
+    }
+    const hub = Object.values(v.hub).reduce((a, b) => a + b, 0);
+    console.log(`VISITS in a town other than the nearest (tripTown ${design.config.tripTown}): ${hub} (${pct(hub, all)}): ${Object.entries(v.hub).sort((a, b) => b[1] - a[1]).map(([cause, n]) => `${cause} ${n}`).join(' | ') || '-'}`);
+    if (visits) {
+        const shares = rows => { const sum = rows.reduce((a, row) => a + row.perHour, 0); return new Map(rows.map(row => [row.town, sum > 0 ? row.perHour / sum : 0])); };
+        const model = shares(visits.towns), seen = real ? shares(real.towns) : new Map();
+        const towns = [...new Set([...model.keys(), ...seen.keys()])].sort((a, b) => (model.get(b) || 0) + (seen.get(b) || 0) - (model.get(a) || 0) - (seen.get(a) || 0));
+        console.log(`VISITS per town, share of visits (model${real ? ' | the --fit run' : ''}; ${visits.perHour}/h${real ? ` | ${real.perHour}/h` : ''}): ${towns.slice(0, 16).map(town => `${town} ${pct(model.get(town) || 0, 1)}${real ? ` | ${pct(seen.get(town) || 0, 1)}` : ''}`).join(', ')}`);
+    }
+    const c = design.crafters, kinds = [...new Set([...Object.keys(c.byTown), ...Object.keys(c.buyersByTown || {})])].sort((a, b) => (c.byTown[b] || 0) - (c.byTown[a] || 0));
+    console.log(`TWINS per town at the end (crafter | buyer): ${kinds.map(town => `${town} ${c.byTown[town] || 0} | ${c.buyersByTown?.[town] || 0}`).join(', ') || '-'}`);
+    const st = design.market.stock, sold = st.nearLines + st.hubLines + st.npc;
+    console.log(`STOCK sold to lines in the nearest town ${k(st.nearLines)} (${pct(st.nearLines, sold)}), in hubs ${k(st.hubLines)} (${pct(st.hubLines, sold)}), to the NPC ${k(st.npc)} (${pct(st.npc, sold)}); `
+        + `units put in the warehouse to sell later ${st.stashed}, kept at the end ${st.stashEnd.units} (${k(st.stashEnd.npc)} at the NPC) (stockSale ${design.config.stockSale})`);
 }
 
 // The market of mains: how kit pieces came, the wants left open, trips,
@@ -349,7 +382,7 @@ function main(argv) {
     printRun(out, { rates, fresh: !!picked?.fresh });
     console.log(`MONEY per start band, mean per bot start -> end: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.meanStart)} -> ${k(row.money.meanEnd)}`).join(' | ')}`);
     if (out.design) console.log(`MONEY per start band, net per bot-hour: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.deltaPerBotHour)}`).join(' | ')}`);
-    if (out.design) printDesign(out.design, hours);
+    if (out.design) printDesign(out.design, hours, { visits: out.visits, real: picked.real });
     console.log(`RUN ${out.counters.events} events in ${((Date.now() - began) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);
     if (!out.design) printFooter();
     const json = Boot.option(argv, 'json', null);

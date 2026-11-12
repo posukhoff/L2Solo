@@ -58,4 +58,13 @@ function path(main, view) {
     return { pieces: ordered, reserve: view.reserve, order, ahead, unpriced };
 }
 
-module.exports = { path };
+// The hunting hours the kit's refill carries shots for (its next outing).
+// refill 'outing' (ours): outingHours, the outing a player sets out on (it
+// ends when shots run out: stock_low, shots_out). 'last_outing' (the model
+// before): the hunting hours of the outing that just ended, at least
+// minHours (lastOuting: those hours).
+function refillHours({ refill, outingHours, minHours, lastOuting }) {
+    return refill === 'outing' ? outingHours : Math.max(minHours, lastOuting || 0);
+}
+
+module.exports = { path, refillHours };

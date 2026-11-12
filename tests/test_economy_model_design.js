@@ -218,6 +218,28 @@ assert.ok(design.mp.used > 0 && design.mp.used + design.mp.lost <= design.mp.ava
     assert.equal(swept.rates['30-39'].visitsPerBotHour, 2, 'the other rates as fitted');
 }
 
+// A death is an arrival (deathArrival): at its spot's deaths per hunting
+// hour the main dies in the field, drawn by the arrival's seeded roll, and
+// visits the respawn town of its spot; without the switch deaths stay
+// folded into the hunting share. Money and goods close.
+{
+    const { deathAt } = require('../scripts/economy-model/rules/trip');
+    near(deathAt({ since: 10, huntShare: 0.5, deathsPerHour: 0.5, roll: 1 - Math.exp(-1) }), 14, 'one mean interval: 2 hunting hours, 4 wall hours');
+    assert.equal(deathAt({ since: 10, huntShare: 0.5, deathsPerHour: 0, roll: 0.5 }), null, 'a spot where it never dies');
+    const dying = { ...snapshot, hours: { 55: hoursOf(55, 0), 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: { ...row('s1', 1000, 50), deaths: 0.5 }, top: [] }])) } };
+    const runDying = deathArrival => {
+        const view = Engine.viewOf(dying, { npcPrices: 'x1' }), config = { ...Design.DESIGN, deathArrival };
+        return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
+            design: Design.plane({ snapshot: dying, game: Design.gameOf(dying, view, config), config, start: 'late', grades }) });
+    };
+    const died = runDying(true);
+    assert.ok(died.design.market.trips.death >= 1, JSON.stringify(died.design.market.trips));
+    assert.ok(died.design.market.visits.byBand.low.death >= 1, 'a visit counted by its cause');
+    assert.equal(died.money.closureGap, 0);
+    assert.equal(died.design.goods.failing, 0);
+    assert.equal(runDying(false).design.market.trips.death, undefined, 'without the switch no death sends it to town');
+}
+
 // A main without shots hunts at the same spot's hour without shots.
 const view = Engine.viewOf(snapshot, { npcPrices: 'x1' });
 const buyer = Engine.mainOf(accounts[1], 1, view, bands);
@@ -509,6 +531,61 @@ assert.equal(armed.delta.shotsUsed, 50);
         const out = run2(hourCost);
         assert.deepEqual([out.market.obtained.d?.npc, out.market.routes.zero], [1, 0], `${hourCost}: ${JSON.stringify(out.market.obtained)}, zero ${out.market.routes.zero}`);
     }
+}
+
+// Towns A and B, 100 a fare each way. The second main hunts a spot whose
+// respawn town is A and drops 500 of a material an hour (5 at the NPC); the
+// Bounty Hunter's twin, seated in B, holds a buy line of 1000 of it at 60
+// (its workshop's answer stands in for the market here). tripTown
+// 'by_gain': a main that knows B's book (its own twin sits in B: twinSeat
+// 'hub' seats a twin in a hub though its main resupplies in A) goes there
+// and sells on the line; at a bid of 5 (the NPC's price) it never does.
+// hubKnown: a main that never saw B's book bets on its own first price for
+// the material (25) when that beats the trip; without hubKnown it never
+// learns of B. Money and goods close throughout.
+{
+    const Workshop = require('../scripts/economy-model/rules/workshop');
+    const MAT = 1900;
+    const runHub = ({ bid, config: patch }) => {
+        const rowAt = spotId => (spotId === 's3'
+            ? { ...row('s3', 10000, 50), dropLoot: 2500, loot: 2500, shotless: { kills: 5, exp: 0.5, adena: 5000, dropLoot: 1250, spoilLoot: 0, loot: 1250 } } : row(spotId, 1000, 0));
+        const s2 = levels.map(level => [`s2@${level}`, { ...yields, town: 'B' }]), s3 = levels.map(level => [`s3@${level}`, { town: 'A', drop: { 57: 100, [MAT]: 50 }, spoil: {} }]);
+        const world = { ...snapshot, fares: { A: { A: 0, B: 100 }, B: { A: 100, B: 0 } },
+            items: { ...snapshot.items, [MAT]: { kind: 'Other.Material', grade: 'NONE', ref: 10, npcBuy: 5, crystals: 0, weight: 100 } },
+            hours: { 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: rowAt('s2'), top: [] }])),
+                9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: rowAt('s3'), top: [] }])) },
+            yields: Object.fromEntries([...s2, ...s3]), yieldsDesign: Object.fromEntries([...s2, ...s3]), walkBack: { s2: 0.01, s3: 0.01 },
+            npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'A', price: 300 }], [SWORD]: [{ town: 'A', price: 4000 }] } } };
+        // A line that starts at its known price and barely steps (1000 looks to its cap).
+        const view = Engine.viewOf(world, { npcPrices: 'x1' });
+        const config = { ...Design.DESIGN, tripTown: 'by_gain', hubTowns: ['B'], crafterPersona: { looksToFloor: 1000, buyerStart: 1 }, ...patch };
+        const real = Workshop.workshop;
+        Workshop.workshop = seen => {
+            const out = real(seen);
+            if (seen.self !== 0) return out;
+            const listed = seen.twin.lines.find(line => line.side === 'buy' && line.item === MAT);
+            return { ...out, wanted: [...out.wanted.filter(line => line.item !== MAT), { side: 'buy', item: MAT, qty: 1000, lineId: listed?.id ?? null }],
+                prices: { ...out.prices, [`buy:${MAT}`]: { cap: bid > 5 ? bid + 10 : bid, capBy: 'worth', floor: 0, known: bid, first: bid } } };
+        };
+        try {
+            const game = Design.gameOf(world, view, config);
+            const out = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals, design: Design.plane({ snapshot: world, game, config, start: 'late', grades }) });
+            assert.equal(out.money.closureGap, 0);
+            assert.equal(out.design.goods.failing, 0, JSON.stringify(out.design.goods.worst));
+            return { design: out.design, first: game.firstPrice[MAT] };
+        } finally { Workshop.workshop = real; }
+    };
+    const pair = { twinSeat: 'hub', hubKnown: false, crafterShare: 0.5 };
+    const sold = runHub({ bid: 60, config: pair }).design;
+    assert.equal(sold.crafters.byTown.B, 2, 'both twins sit in the hub');
+    assert.ok(sold.market.trips.hub_trip >= 1 && sold.market.visits.hub.hub_trip >= 1, JSON.stringify(sold.market.trips));
+    assert.ok(sold.market.stock.hubLines > 0, JSON.stringify(sold.market.stock));
+    const junk = runHub({ bid: 5, config: pair }).design;
+    assert.deepEqual([junk.market.trips.hub_trip, junk.market.visits.hub, junk.market.stock.hubLines], [undefined, {}, 0], 'a bid at the NPC price: no hub visit');
+    const bet = runHub({ bid: 60, config: { hubKnown: true, crafterShare: 0 } });
+    assert.equal(bet.first, 25, 'its own first price of the material');
+    assert.ok(bet.design.market.visits.hub.hub_trip >= 1, `a bet on 25 a unit: ${JSON.stringify(bet.design.market.visits)}`);
+    assert.deepEqual(runHub({ bid: 60, config: { hubKnown: false, crafterShare: 0 } }).design.market.visits.hub, {}, 'it never learns of B');
 }
 
 console.log('PASS economy model design mode');

@@ -43,7 +43,7 @@ function gameOf(rows, extraItems = {}, firstPrice = {}) {
 const TEXT = { crystalStockHours: 10, reseatFactor: 1.25, batchHours: 1, restockLine: 'new_line', firstPriceCraft: 'inputs', mpStartValue: 13, sellerLook: 'every_look', askFloorAtCost: false };
 const OURS = { ...TEXT, firstPriceCraft: 'inputs_plus_mp', sellerLook: 'unsold_look', askFloorAtCost: true };
 const twinOf = overrides => ({ level: 25, createItem: 2, crystallize: 'd', mp: 20, mpAt: 0, maxMp: 188, regen: 400, recipes: [], stock: {}, paid: {},
-    wallet: 100000, mode: 'sell', batch: null, stints: {}, storeSlots: { sell: 4, buy: 5 }, lines: [], bids: [], parked: {}, ...overrides });
+    wallet: 100000, mode: 'sell', batch: null, stints: {}, storeSlots: { sell: 4, buy: 5, buyer: 4 }, lines: [], bids: [], parked: {}, ...overrides });
 const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A', twinTown: 'A' }, books: {}, memory: [], persona: { looksToFloor: 5, buyerStart: 0.7 },
     config: TEXT, rankRecipes: true, twin, game, npcSell: { [ORE]: 300 }, crystalRoute: {}, crystalReach: {}, hoursToGrade: 10, ...extra });
 
@@ -113,6 +113,41 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
     const selling = Workshop.workshop(viewOf(game, twinOf({ recipes: fillers.map(row => row.recipeId), stock, wallet: 0 })));
     assert.equal(selling.mode, 'sell');
     assert.equal(selling.wanted.length, 4, 'four sell lines for eight goods');
+}
+
+// The buyer twin (buyerTwin): with buy lines and goods to sell one twin
+// holds one store, and the bones it lacks (1500 an hour) outbid its one
+// line of goods (500): its goods go unshown. A buyer twin opens and holds
+// the buy lines alone (stock only); the crafter twin shows its goods.
+// Nothing to sell: no buyer twin, the one twin buys.
+{
+    const fillers = [10, 11].map(id => recipe(id, 6990 + id, { productCount: 1, mpCost: 10, materials: [{ selfId: BONE, amount: 1 }] }));
+    const extra = Object.fromEntries(fillers.map(row => [row.productId, { kind: 'Other.Material', grade: 'NONE', npcBuy: 1 }]));
+    const sword = recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: BONE, amount: 50 }] });
+    const game = gameOf([sword, ...fillers], extra, { 7000: 500, 7001: 501 });
+    const twin = twinOf({ recipes: [3, 10, 11], stock: { 7000: 1 }, wallet: 5000 });
+    const lines = out => out.wanted.map(line => `${line.side}:${line.item}`);
+    const one = Workshop.workshop(viewOf(game, twin, { config: { ...TEXT, buyerTwin: false } }));
+    assert.deepEqual([one.mode, one.buyer, lines(one)], ['buy', false, [`buy:${BONE}`]]);
+    const two = Workshop.workshop(viewOf(game, twin, { config: { ...TEXT, buyerTwin: true } }));
+    assert.deepEqual([two.mode, two.buyer, lines(two)], ['sell', true, ['sell:7000', `buy:${BONE}`]], 'the crafter twin sells, the buyer twin buys');
+    const held = Workshop.workshop(viewOf(game, { ...twin, buyer: true, mode: 'sell', stock: {} }, { config: { ...TEXT, buyerTwin: true } }));
+    assert.deepEqual([held.mode, held.buyer, lines(held)], ['sell', true, [`buy:${BONE}`]], 'once open it stays; its crafter twin never takes the buy mode');
+    const none = Workshop.workshop(viewOf(game, { ...twin, stock: {} }, { config: { ...TEXT, buyerTwin: true } }));
+    assert.deepEqual([none.mode, none.buyer], ['buy', false], 'no goods to sell: no buyer twin');
+    // A buyer twin's buy slots are a non-dwarf's (4), the crafter twin's a dwarf's (5 here).
+    const fillers8 = Array.from({ length: 8 }, (_, i) => recipe(20 + i, 7100 + i, { productCount: 1, mpCost: 10, materials: [{ selfId: BONE, amount: 1 }] }));
+    const game8 = gameOf([sword, ...fillers8], Object.fromEntries(fillers8.map(row => [row.productId, { kind: 'Other.Material', grade: 'NONE', npcBuy: 1 }])),
+        Object.fromEntries(fillers8.map((row, i) => [row.productId, 500 + i])));
+    const buyLines = buyer => Workshop.workshop(viewOf(game8, twinOf({ recipes: [3], wallet: 1e7, buyer }), { config: { ...TEXT, buyerTwin: true } })).wanted.filter(line => line.side === 'buy').length;
+    assert.deepEqual([buyLines(false), buyLines(true)], [5, 4]);
+    // The seat with a buyer twin weighs both stores: here sells 100 and buys
+    // 100 an hour, there buys 180; one twin moves (180 over 100 by more than
+    // the fare of 50), a pair stays (200 here against 180 there).
+    const here = { sell: 100, buy: 100, manufacture: 0 }, there = { sell: 0, buy: 180, manufacture: 0 };
+    assert.equal(Workshop.seatByMode({ here, there, fare: 50 }), true);
+    assert.equal(Workshop.seatByMode({ here, there, fare: 50, buyer: true }), false);
+    assert.equal(Workshop.seatByMode({ here, there: { sell: 90, buy: 180, manufacture: 0 }, fare: 50, buyer: true }), true, '270 against 200');
 }
 
 // A full book takes a recipe only over the worst it holds, which is

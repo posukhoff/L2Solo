@@ -53,4 +53,12 @@ function occupation(main, view) {
     return (best - held) * (row.stay || 0) > (row.move || 0) ? chosen : main.spot;
 }
 
-module.exports = { occupation };
+// The hunting hours a move at an arrival pays back over: its next outing
+// (outingHours: the hours its refill carries for, path.refillHours), never
+// past its grade's end (gradeHours) or the last level the spot has a row for
+// it (spotHours): it chooses again at its next arrival.
+function stayHours({ outingHours, gradeHours, spotHours = Infinity }) {
+    return Math.min(gradeHours, outingHours, spotHours);
+}
+
+module.exports = { occupation, stayHours };

@@ -388,7 +388,9 @@ const offerKey = rows => rows.map(row => row.item).sort((a, b) => a - b).join(',
 // min(want, rate) x (use value - price), a scroll counting its margin gain
 // over one seat-hour of regen (its cap holds the gain to the next grade).
 // manufacture = the fee of the best open order it takes (ours: one order
-// per seat-hour). The highest wins; a tie keeps the current mode.
+// per seat-hour). The highest wins; a tie keeps the current mode. With a
+// buyer twin (buyer) the buy lines are its store: the crafter twin chooses
+// between sell and manufacture.
 // The mode memory: the running stint (twin.stint { since, units (filled on
 // its own store's lines), goods }) ends when the mode or the goods on offer
 // change, and is kept only when something was on offer and something filled
@@ -397,7 +399,7 @@ const offerKey = rows => rows.map(row => row.item).sort((a, b) => a - b).join(',
 // (not while it would offer none).
 // Returns { mode, values, stint (the running one), stints (the kept),
 // stintEnded: null | 'kept' | 'unfilled' }.
-function chooseMode(view, sells, buys, batchUnits, manufacture = 0) {
+function chooseMode(view, sells, buys, batchUnits, manufacture = 0, buyer = false) {
     const { twin, now } = view, offer = { sell: offerKey(sells), buy: offerKey(buys), manufacture: '' };
     const kept = memory => Object.fromEntries(Object.entries(memory).filter(([mode, stint]) => (stint.goods === offer[mode] || !offer[mode]) && stint.hours > 0));
     let stints = kept(twin.stints || {});
@@ -406,8 +408,9 @@ function chooseMode(view, sells, buys, batchUnits, manufacture = 0) {
     const sell = sells.reduce((sum, row) => sum + Math.min(row.qty, sellRate) * Math.max(0, row.price - row.cost), 0);
     const buy = buys.reduce((sum, row) => sum + (row.hourValue ?? Math.min(row.qty, buyRate) * Math.max(0, row.value - row.price)), 0);
     const values = { sell, buy, manufacture };
-    let mode = twin.mode;
-    for (const option of ['sell', 'buy', 'manufacture']) if (values[option] > values[mode]) mode = option;
+    const options = buyer ? ['sell', 'manufacture'] : ['sell', 'buy', 'manufacture'];
+    let mode = options.includes(twin.mode) ? twin.mode : options[0];
+    for (const option of options) if (values[option] > values[mode]) mode = option;
     let stint = twin.stint || { since: now, units: 0, goods: '' }, stintEnded = null;
     if (mode !== twin.mode || offer[mode] !== stint.goods) {
         if (stint.goods && now > stint.since) {
@@ -426,7 +429,7 @@ function lineIdOf(twin, side, item) {
 // The decision at one wake. view: { now, self, place { town, twinTown },
 // books, memory, persona, config, twin { level, createItem, crystallize, mp,
 // mpAt, maxMp, regen, recipes, stock, paid, wallet, mode, batch, stints,
-// storeSlots { sell, buy }, lines, bids, parked }, game { recipes, dwarven,
+// storeSlots { sell, buy, buyer (a buyer twin's buy slots) }, lines, bids, parked }, game { recipes, dwarven,
 // questRecipes, byProduct, items, crystalIds, crystalGrade, firstPrice,
 // sourced }, npcSell { item: price in its town }, crystalRoute { grade:
 // { perCrystal, gearId, price, crystals } in its town }, crystalReach { grade:
@@ -436,7 +439,10 @@ function lineIdOf(twin, side, item) {
 // (its main's shortfall, ownRows) }.
 // Returns { learn, forget, want, wants, crystallize, batch (use: 'own' |
 // 'order' | 'shelf'), npcBuys, routeBuys, mode, modeValues, stint, stints,
-// stintEnded, wanted, prices, bidWanted, bidPrices, counters, needs { item:
+// stintEnded, buyer (the account holds a buyer twin: config.buyerTwin, opened
+// at the first wake with buy lines while its crafter twin has goods to sell;
+// it shows the buy lines, stock only, never gear: crystallizer bids stay
+// the crafter twin's), wanted, prices, bidWanted, bidPrices, counters, needs { item:
 // count } (what its main keeps for it), surplus { item: count } (what its
 // main takes out of the warehouse to sell), inputMoney }.
 function workshop(view) {
@@ -578,9 +584,14 @@ function workshop(view) {
         if (!(capped.cap >= 1)) continue;
         buys.push({ item, qty: 1, value: capped.cap, cap: capped.cap, capBy: capped.by, hourValue: gain * twin.regen });
     }
+    // With a buyer twin (one open, or one it opens now: goods on offer) the
+    // buy lines take its slots (storeSlots.buyer), else the crafter twin's.
+    const offered = sells.slice(0, twin.storeSlots.sell);
+    const buyerStore = !!twin.buyer || (config.buyerTwin === true && offered.length > 0);
+    const buySlots = buyerStore ? twin.storeSlots.buyer : twin.storeSlots.buy;
     const buyLines = [];
     for (const row of buys) {
-        if (buyLines.length >= twin.storeSlots.buy) break;
+        if (buyLines.length >= buySlots) break;
         const qty = Math.min(row.qty, Math.floor(budget / row.cap));
         if (qty < 1) continue;
         budget -= qty * row.cap;
@@ -590,9 +601,9 @@ function workshop(view) {
         buyLines.push({ ...row, qty, price: listed?.price ?? Math.min(known ?? row.cap, row.cap) * view.persona.buyerStart });
     }
     const batchUnits = best ? bestCrafts * game.recipes[best.id].productCount : 0;
-    const offered = sells.slice(0, twin.storeSlots.sell);
     const manufacture = orderPlan.batch ? orders[0].order.fee : 0;
-    const { mode, values, stint, stints, stintEnded } = chooseMode(view, offered, buyLines, batchUnits, manufacture);
+    const buyer = !!twin.buyer || (config.buyerTwin === true && buyLines.length > 0 && offered.length > 0);
+    const { mode, values, stint, stints, stintEnded } = chooseMode(view, offered, buyLines, batchUnits, manufacture, buyer);
     const chosen = mode === 'manufacture' && orderPlan.batch ? orderPlan : plan;
     // Its buy lines first take what other twins' sell lines in its town offer
     // at or under the line's cap (first come), within its wallet.
@@ -626,7 +637,8 @@ function workshop(view) {
                 wanted.push({ side: 'sell', item: row.item, qty: row.qty, lineId: id, resume: id ? null : resumeOf(row.item) });
             }
         }
-    } else if (mode === 'buy') {
+    }
+    if (mode === 'buy' || buyer) {
         for (const row of buyLines) if (row.qty > 0) wanted.push({ side: 'buy', item: row.item, qty: row.qty, lineId: lineIdOf(twin, 'buy', row.item) });
     }
     // Crystallizer bids (ours): one standing bid per grade it crystallizes and
@@ -648,7 +660,7 @@ function workshop(view) {
     // What its main reads at a visit: the adena its next batches' bought
     // inputs take (own use, then one batch to sell: the money order ranks it).
     return { learn: recipes.learn, forget: recipes.forget, want: recipes.want.map(row => row.id), wants: recipes.want, crystallize, batch: chosen.batch, npcBuys: chosen.npcBuys, routeBuys: chosen.routeBuys,
-        mode, modeValues: values, stint, stints, stintEnded, wanted, prices, bidWanted, bidPrices, counters: chosen.counters, claims, order: chosen === orderPlan && orderPlan.batch ? orders[0].order.id : null,
+        mode, modeValues: values, stint, stints, stintEnded, buyer, wanted, prices, bidWanted, bidPrices, counters: chosen.counters, claims, order: chosen === orderPlan && orderPlan.batch ? orders[0].order.id : null,
         needs, surplus, inputMoney: ownPlan.need + shelf.need };
 }
 
@@ -677,12 +689,14 @@ function seat(view, arrivedIn) {
 }
 
 // The seat as part of the mode choice (ours): at its main's arrival in
-// another town the twin moves when its best mode there, weighed on that
-// town's book, beats its best mode here by more than the gatekeeper fare.
+// another town the twin moves when its best store there, weighed on that
+// town's book, beats its best store here by more than the gatekeeper fare.
 // here, there: the workshop's mode values ({ sell, buy, manufacture },
-// adena per seat-hour) seated in each town. Returns true to move.
-function seatByMode({ here, there, fare }) {
-    const best = values => Math.max(0, ...Object.values(values || {}));
+// adena per seat-hour) seated in each town. One twin holds one mode: the
+// best of the three; with a buyer twin (buyer) the buy lines are its store
+// beside the crafter twin's: max(sell, manufacture) + buy. Returns true to move.
+function seatByMode({ here, there, fare, buyer = false }) {
+    const best = values => (buyer ? Math.max(0, values?.sell || 0, values?.manufacture || 0) + Math.max(0, values?.buy || 0) : Math.max(0, ...Object.values(values || {})));
     return best(there) - best(here) > fare;
 }
 
