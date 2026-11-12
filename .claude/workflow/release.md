@@ -11,7 +11,7 @@
   and keeps behaviour (the A/B shows no player-visible change), its behaviour changes come in their own release. Bugs
   are still fixed in the rule's owner with a test of what the player sees, never as a call-site patch: small releases
   on a dirty codebase otherwise turn into endless symptom fixing.
-- Scope closes after the release's final traced run: from then on only fixes of what the runs and the A/B show.
+- Scope closes after the release's final traced run: from then on only fixes of what the runs and the A/B show. Such a fix of a frozen release: `lc unfreeze <release> --decision <id> --reason <what the runs showed>`, the fix as a new step (`lc step add`, `lc assign`, `lc start`, `lc land`, `lc resolve`), `lc freeze` at the new tip, then every gate again on that head (no earlier gate carries over).
   Code freezes before the final A/B: a change landing after it repeats the A/B, so everything else waits for the next
   release (maintainer 2026-11-10: most of a day went to re-running after late fixes).
 - When a release's changes are done: full CI on the release head; the world test: an A/B against the version

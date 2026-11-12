@@ -518,6 +518,30 @@ test('assembling: bugs lead the fix queue and leave it when their step lands; op
     assert.match(w.lc('near', 'DT-9999').out, /DT-9999: no open issue there/); // a mistyped id is not a module name
 });
 
+test('unfreeze: a frozen release takes the fix its final runs asked for only by a decision; the old head and gates become history and the new tip is frozen', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    const old = openAndLand(w); w.ok('freeze', '1b.1');
+    w.no(/1b\.1 is frozen/, 'step', 'add', '1b.1', '--key', '1b.1b', '--title', 'stuck party');
+    w.no(/unfreeze \{"release":"1b\.1"\} needs --decision/, 'unfreeze', '1b.1', '--reason', 'A\/B: one stuck party');
+    const other = w.decide('unfreeze another', 'action=unfreeze,release=2');
+    w.no(new RegExp(`${other} does not allow unfreeze`), 'unfreeze', '1b.1', '--decision', other, '--reason', 'x');
+    const m = w.decide('the A/B showed a stuck party: fix it in 1b.1', 'action=unfreeze,release=1b.1');
+    w.no(/--reason <what the final runs showed> required/, 'unfreeze', '1b.1', '--decision', m);
+    assert.match(w.ok('unfreeze', '1b.1', '--decision', m, '--reason', 'A/B: one stuck party'), /1b\.1 open again/);
+    w.no(/1b\.1 is open/, 'unfreeze', '1b.1', '--decision', m, '--reason', 'again');
+    w.no(/gates are recorded on the frozen head; 1b\.1 is open/, 'gate', '1b.1', 'report', '--file', 'x');
+    assert.strictEqual(w.ok('get', '1b.1', 'st').trim(), 'open'); w.no(/1b\.1 has no head/, 'get', '1b.1', 'head'); assert.strictEqual(w.ok('get', '1b.1', 'gates').trim(), '{}');
+    const thawed = JSON.parse(w.ok('get', '1b.1', 'thawed'));
+    assert.strictEqual(thawed.length, 1); assert.strictEqual(thawed[0].head, old); assert.strictEqual(thawed[0].decision, m); assert.match(thawed[0].reason, /stuck party/);
+    w.ok('step', 'add', '1b.1', '--key', '1b.1b', '--title', 'stuck party');
+    w.ok('add', '--sec', 'parties', '--origin', 'ab 11-12', '--rule', '3', '--sites', '`SpotContest.step` 3', '--what', 'a party leaves an empty camp → it stands', '--fix', 'f', '--id', 'DT-900', '--kind', 'bug', '--to', '1b.1b');
+    w.no(/not landed: 1b\.1b/, 'freeze', '1b.1'); // the fix lands before the release freezes again
+    const head = commit(w, 'ivan/batch-1b1', 'the stuck party fix'); landedTask(w, 'p2', old, head, 'ivan/batch-1b1', ['DT-900']);
+    w.ok('start', '1b.1b', '--task', 'p2'); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']); w.ok('land', '1b.1b');
+    assert.match(w.ok('freeze', '1b.1'), new RegExp(`1b\\.1 frozen at ${head.slice(0, 9)}`));
+    assert.strictEqual(w.ok('get', '1b.1', 'head').trim(), head);
+});
+
 test('contract: records written by the real workflow.js pass lc land, resolve and gate ci', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     // a minimal game checkout and policy home the real workflow.js accepts

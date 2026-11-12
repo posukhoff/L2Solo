@@ -35,7 +35,7 @@ console.log(`CI runs kept on landed heads ${count(landed, r => (r.evidence.ciRun
 console.log(`routes: ${['fast', 'standard', 'critical'].map(k => `${k} ${records.filter(r => r.risk === k).length}`).join(' · ')}`);
 console.log('review rounds: not recorded (record-review keeps only the last)');
 // Lifecycle data: a commit whose subject is not an lc command's was written past the commands.
-const COMMANDS = /^lc (add|edit|kind|seen|assign|place|dep|split|drop|decide|gates|release|step|open|start|land|resolve|defer|freeze|gate|close|publish|render|placement|import|sync|absorb)\b/;
+const COMMANDS = /^lc (add|edit|kind|seen|assign|place|dep|split|drop|decide|gates|release|step|open|start|land|resolve|defer|freeze|unfreeze|gate|close|publish|render|placement|import|sync|absorb)\b/;
 let log = [];
 try { log = git('log', '--format=%cI\t%s', 'ivan/lifecycle-data').split('\n').filter(Boolean).map(l => l.split('\t')).filter(([at]) => Date.parse(at) >= since); } catch { /* no lifecycle data here */ }
 const off = log.filter(([, s]) => !COMMANDS.test(s));

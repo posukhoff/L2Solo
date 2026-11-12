@@ -193,7 +193,7 @@ function cycles(edges) {
     for (const n of edges.keys()) visit(n, []);
     return out;
 }
-const ACTIONS = ['rule-override', 'scope-add', 'cap', 'order', 'land-no-code', 'drop', 'split', 'publish', 'gates', 'placement-rule']; // every action lc checks
+const ACTIONS = ['rule-override', 'scope-add', 'cap', 'order', 'land-no-code', 'drop', 'split', 'publish', 'gates', 'placement-rule', 'unfreeze']; // every action lc checks
 const rulesFor = (d, i, r) => (d.meta.rules || []).filter(x => x.sec === i.sec && r && !x.only.includes(r.group));
 // A decision authorizes only the actions it names, on the subjects it names (issue, step, release, value, ...).
 const allows = (dec, action, subject) => (dec?.allows || []).some(a => a.action === action && Object.entries(a).every(([k, v]) => k === 'action' || String(subject[k]) === String(v)));
@@ -984,6 +984,14 @@ C.freeze = (cx, { pos }) => { // the frozen head is the fork's actual tip, nothi
     Object.assign(r, { st: 'frozen', head, frozenAt: cx.now });
     write(cx, sha, d, `lc freeze ${r.key} at ${head.slice(0, 9)}`, `${r.key} frozen at ${head.slice(0, 9)}`);
 };
+C.unfreeze = (cx, { pos, opt }) => { // the final runs showed a defect: the release opens again for its fix; the old head's gates do not carry over
+    const { sha, d } = need(cx); const r = release(d, pos[0] || fail('unfreeze <release> --decision <id> --reason <what the final runs showed>'));
+    if (r.st !== 'frozen') fail(`${r.key} is ${r.st}`);
+    const decision = authorize(d, opt.decision, 'unfreeze', { release: r.key }), reason = one(opt, 'reason', 'what the final runs showed');
+    (r.thawed ||= []).push({ head: r.head, frozenAt: r.frozenAt, gates: r.gates, at: cx.now, decision, reason });
+    Object.assign(r, { st: 'open', head: null, gates: {}, decisions: [...new Set([...(r.decisions || []), decision])] }); delete r.frozenAt;
+    write(cx, sha, d, `lc unfreeze ${r.key} (${decision})\n\n${reason}`, `${r.key} open again: add the fix as a step, land it, freeze at the new tip and record every gate on it`);
+};
 function ciComplete(cx, r, slug, root) { // "CI is complete" has one owner, workflow.js `ready`; lc reads its verdict on the frozen head
     const t = task(cx, slug), head = r.head;
     if (!root || root === true) fail('--root <worktree at the frozen head> lets the workflow name the selection');
@@ -1121,7 +1129,7 @@ issues:   add --sec --origin --rule --sites --what --fix [--kind] [--prefix|--id
           edit <id> [--origin|--rule|--sites|--what|--fix <text>] [--alias <id>] [--why <note>]
           kind [<bug|risk|missing|debt|gap> <id...>] | list [--kind k|none] [--sec s] [--at step|triage|tail] [--unseen] | near <id|step|Module>... | seen <id...> --by <who date>
 releases: release add|set|drop | step add|set|move|drop | open <rel> --branch --base | start <step> --task <slug> | land <step> [--keep ids]
-          resolve <id...> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
+          resolve <id...> --test|--run --verdict | show <step|release> [--page N] [--role rc] | defer <step> --to <rel> --reason | freeze <rel> | unfreeze <rel> --decision M --reason | gate <rel> <ci|trace|ab|behaviour|report> … | close <rel> [--carry]
           publish <rel> --decision M --branch <origin branch>   (records a publication; lc never pushes origin)
 views:    render --out <dir> | render --check | render --write [--overwrite-roadmap|--overwrite-problems]      data: import [--dry-run|--compare] | decide --allow | gates | placement | sync`);
 
