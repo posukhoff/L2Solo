@@ -6,7 +6,7 @@
 import json,sys,os,glob,collections
 def role(text):
     t=text[:300].lower()
-    for k,v in [('cause verifier','verifier'),('verifier','verifier'),('implementer','implementer'),('reviewer','reviewer'),('analyse','analysis'),('analyze','analysis'),('investigate','analysis'),('rules audit','audit')]:
+    for k,v in [('planner','planner'),('cause verifier','verifier'),('verifier','verifier'),('implementer','implementer'),('reviewer','reviewer'),('analyse','analysis'),('analyze','analysis'),('investigate','analysis'),('rules audit','audit')]:
         if k in t: return v
     return 'other'
 def files(paths):
