@@ -52,6 +52,11 @@
     "file": "/Users/iposukhoff/L2Solo/tmp/1b-evidence/ab-verdict-1b0e.md",
     "sha256": "b7b31a353adb5e4dda85cb0610d97e855acb1b491e5480387b6a48630b96cecd"
    }
+  },
+  "report": {
+   "at": "2026-11-12T12:15:56.000Z",
+   "file": "/Users/iposukhoff/L2Solo/tmp/release-1b0e-report.md",
+   "sha256": "5bd9a6542544d513cb49864b1fa4c019e342134ce116fd2119eb525464de1c96"
   }
  },
  "openedAt": "2026-11-12T06:06:57.652Z",
