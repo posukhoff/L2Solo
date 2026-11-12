@@ -47,7 +47,7 @@ pushing.
   `gh workflow run pr-checks.yml -R posukhoff/L2Solo --ref ci-$sha`. Shard 1 runs `npm run check` first: stale tables
   fail it before its tests run, so a run on stale tables is not green. Do not wait in a CI loop. After a red run re-run
   only the failed files and the tests of what the fixes touch. GitHub sometimes creates fewer than 12 jobs: re-run.
-- Picked tests (`.github/workflows/tests.yml`, a push starts it): `git push fork HEAD:refs/heads/tests/$sha/<a,b,c>`
+- Picked tests (`.github/workflows/tests.yml`, a push starts it): `git push fork HEAD:refs/heads/tests/$sha/<a,b,c>` for a hand check of a few files (a task's evidence list always goes as the `tests/list-$sha` commit that `.claude/ci-dispatch.sh` makes: `ci-finish` and `check-candidate` read only that and `ci-<sha>`)
   (x = `tests/test_x.js`); each file runs as in PR checks, 8 files a shard. A long list: a throwaway commit on top with
   `ci-tests.txt` (one name per line, `+name` for optional raw-map tests) pushed to `tests/list-$sha`, never on the work branch. The separate name avoids a ref collision with `tests/$sha/<list>`. This is how a red file is
   re-checked after a fix.

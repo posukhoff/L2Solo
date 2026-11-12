@@ -11,7 +11,7 @@ process.stdin.on('data', c => raw += c).on('end', () => {
     if (t.subagent_type === 'fork') return;
     const miss = ['model', 'effort'].filter(k => !t[k]);
     const second = /second attempt|attempt 2\b/i.test(`${t.description || ''} ${String(t.prompt || '').slice(0, 400)}`);
-    const why = miss.length ? `name ${miss.join(' and ')} on this launch (agents.md model table: opus high by default, sonnet medium for work a plan fixes)`
+    const why = miss.length ? `name ${miss.join(' and ')} on this launch as the role's definition gives them (/Users/iposukhoff/L2Solo/.claude/agents/l2-<role>.md frontmatter; its description says when to pass another); for an agent with no role: opus high for reading and judging, sonnet medium for work a plan fixes`
         : /fable/i.test(t.model) && !(second && t.effort === 'medium') ? 'fable only as a second attempt at medium effort: say "second attempt" in the description and what the first one failed on'
         : (() => {
             const text = `${t.description || ''} ${String(t.prompt || '').slice(0, 400)}`.toLowerCase();

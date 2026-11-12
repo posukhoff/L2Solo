@@ -33,7 +33,8 @@ console.log(`record-rebase used on ${records.filter(r => (r.rebases || []).lengt
 console.log(`record to landing, minutes: p50 ${pct(0.5)} · p90 ${pct(0.9)} (a short time means the record was written after the work)`);
 console.log(`CI runs kept on landed heads ${count(landed, r => (r.evidence.ciRuns || []).length)} (runs on earlier heads are not kept) · selection acks ${landed.filter(r => r.evidence.review?.selectionAcknowledged).length}`);
 console.log(`routes: ${['fast', 'standard', 'critical'].map(k => `${k} ${records.filter(r => r.risk === k).length}`).join(' · ')}`);
-console.log('review rounds: not recorded (record-review keeps only the last)');
+{ const rounds = landed.filter(r => Array.isArray(r.reviews)).map(r => r.reviews.length), n = k => rounds.filter(x => k(x)).length;
+  console.log(rounds.length ? `review rounds on ${rounds.length} landed tasks: one ${n(x => x === 1)} · two ${n(x => x === 2)} · more ${n(x => x > 2)}` : 'review rounds: no landed task keeps them yet (kept since 2026-11-12)'); }
 // Lifecycle data: a commit whose subject is not an lc command's was written past the commands.
 const COMMANDS = /^lc (add|edit|kind|seen|assign|place|dep|split|drop|decide|gates|release|step|open|start|land|resolve|defer|freeze|unfreeze|gate|close|publish|render|placement|import|sync|absorb)\b/;
 let log = [];

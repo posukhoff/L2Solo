@@ -14,12 +14,13 @@
 - Scope closes at the freeze (a fix release: at 24 h open, planning.md "Assembling a release"): from then on only fixes of what the final runs and the A/B show. Such a fix of a frozen release: `lc unfreeze <release> --decision <id> --reason <what the runs showed>`, the fix as a new step (`lc step add`, `lc assign`, `lc start`, `lc land`, `lc resolve`), `lc freeze` at the new tip, then every gate again on that head (no earlier gate carries over).
   Code freezes before the final A/B: a change landing after it repeats the A/B, so everything else waits for the next
   release (maintainer 2026-11-10: most of a day went to re-running after late fixes).
-- When a release's changes are done: full CI on the release head; the world test: an A/B against the version
+- When a release's changes are done: full CI on the release head (`lc gate <rel> ci --task <the last landed task's slug> --root <a worktree at the frozen head>`: that task's record holds the head's full run, recorded with `ci-finish <slug> <worktree> --sha <head>` after the last landing, and its `verify --check`); the world test: an A/B against the version
   players have (the late save, same flags, cold with a player online 30 min and hot 20 min, each side alone on the
   laptop; the early save adds nothing; the party case is its e2e scenario, not an A/B), thresholds: EXP and income
   per bot-hour not below −10 %, no bots stuck (no progress all run, no visible loop), deaths not below; checks of the
   release's behaviours in logs and the DB; my in-game check (the client is on my other laptop); fix what broke, refresh
   the map, then the PR.
+- The release report holds five lines the gate reads (`lc gate <rel> report --ref <report> --audit <file>`; detail in lc.md "Measurement"): the last line of `.claude/tools/token-usage.py --from <release open> --table --only <the release sessions' ids>`; the first line of `.claude/tools/flow-stats.js --since <release open>`; the `per detector:` line of `node planning/rules-check.js --all --root <the release tree>`; the last line of `node planning/architecture/check.js --root <the release tree>` at zero; `sample audit: <n> claimed · recorded <lc ids|none> · refuted <n>` for the tasks `lc sample <rel>` names.
 - Map refresh at the release close, on the frozen head: `node planning/architecture/check.js --root <the release tree>`
   lists map names gone from the code (the report gate takes its last line only at zero, and asks the sample audit of
   three landed tasks: lc.md "Measurement", audit.md); one agent updates the touched entries from each file's
@@ -66,7 +67,7 @@
   written; a comparable base (world, scenario, settings); diagnostics, trace, kept world and artifact folder set;
   needed now, not after the next integration step. Compatible checks share one integration SHA unless that hides which
   change caused a regression; evidence is kept under SHA, scenario and world. A useless full run is a candidate
-  (`record-retro --useless-run --minutes <blocked>`): why it ran, what it showed, why useless, the cheaper check that
+  (`record-retro <slug> --cause <key> --text <why it ran, what it showed, the cheaper check> --useless-run --minutes <blocked>`): why it ran, what it showed, why useless, the cheaper check that
   was due, the guard. A well-posed run that refuted a hypothesis is not useless.
 - zsh does not split an unquoted variable: pass perf arguments as an array (`P=(--save=… --saves=…)`, then
   `node scripts/perf.js run $P …`).

@@ -13,11 +13,11 @@ Start with this file, `planning/architecture/README.md` and the touched area of 
 | Planning / review | agents.md, planning.md; touched map and plan; `node .claude/lc.js status` |
 | Runtime/benchmark/release | testing.md, release.md, planning/perf-tooling/test-recipe.md |
 
-The files above are under `.claude/workflow/`. This entry point and routes.md control workflow cadence; detailed references preserve project-specific engineering policy. If a detailed reference describes the old universal review or audit cadence, routes.md supersedes that cadence only. No gameplay, security, performance or release gate is relaxed.
+The files above are under `.claude/workflow/`. This entry point and routes.md control workflow cadence; detailed references preserve project-specific engineering policy. No gameplay, security, performance or release gate is relaxed.
 
 ### Hard rules (every change; a review answers each one for the diff)
 
-Each as the question a review asks (each answered: ok with evidence, violation file:line, or N/A with its reason); detail in coding.md.
+Each as the question a review asks (each answered: ok with evidence, violation file:line, or N/A with its reason; a review also answers `cause`, all as the review table of evidence.md "Review"); detail in coding.md.
 0. Need: for each added piece of code, state, message, special case or test: what breaks for a player or the server
    without it (a number or a concrete case)? Nothing observable → do not add it. Of two correct fixes take the cheaper
    per bot per step, then the one adding less mechanism (state, paths, special cases; not fewer lines); deleting is a
@@ -43,7 +43,7 @@ Each as the question a review asks (each answered: ok with evidence, violation f
 10. Data: named fields across modules, the worker boundary and storage; state objects replaced, not edited in place?
 11. Tests: do they pin behaviour a player or the world sees, not internals, and fail on the old code?
 12. C4: does behaviour follow C4 (source named when chosen), or say it is our choice?
-13. Text: do comments state the rule (never cite `planning/`); does the map follow the change; are commits free of AI
+13. Text: do comments state the rule (never cite `planning/`); does the brief's `map` name every map entry the change makes untrue (they are refreshed at the release close); are commits free of AI
     co-author/session lines? (`node planning/rules-check.js <base>..<head> --root <tree>`: the mechanical part.)
 14. Trade: one line per change: its cost, what a C4 player does here, what it gives up (simulation, realism,
     performance). A review asks "would a player do this?" as it asks the cost.

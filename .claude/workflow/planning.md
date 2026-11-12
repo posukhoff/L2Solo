@@ -10,7 +10,7 @@
   `[large]` (its own plan), `[tail]` (small, here only, or triage). At each release boundary a `[tail]` whose origin
   date (for a debt or gap: its last confirmation, `lc seen`) is two releases old moves to a roadmap row (`[rN]`), is deleted with its reason (rule 0: not worth its cost; `--gone`: the code no longer has it), or, a debt or gap that still holds, is confirmed again;
   `lc tails` lists the due ones (part of the growth diagnosis; maintainer 2026-11-10, sizes as guides 11-11).
-- Kinds (maintainer 2026-11-12): what an issue is decides where it lives and how it ends. Set with `lc add --kind` or `lc kind <kind> <id...>`, read with `lc list --kind <kind>`; optional until the open issues are classified.
+- Kinds (maintainer 2026-11-12): what an issue is decides where it lives and how it ends. Set with `lc add --kind` or `lc kind <kind> <id...>`, read with `lc list --kind <kind>`; required at `lc add` (`lc kind` classifies the older issues).
   - `bug`: a player sees wrong behaviour. `risk`: the server can fall, hang or lose data. Both say what is seen after `→` in the what field, go to a fix release (or sit in the planned step whose mechanism is their fix) and close by their own result (`lc resolve`; a small fix: `lc drop --fixed-by`, below). A risk may instead be accepted by my decision. Their count does not grow from one release close to the next (`lc status`, the kinds line).
   - `missing`: C4 has it and we do not, or we differ on purpose. It names its C4 source and sits in a feature release.
   - `debt`: a rule broken with no symptom. `gap`: no counter, test or limit. Both stay with the code (`[tail]`), not parked in a release row: the task that touches their site takes them in, or one task closes a module's batch.

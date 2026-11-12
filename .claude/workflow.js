@@ -44,7 +44,7 @@ const norm = x => path.basename(String(x).replace(/^\+/,'')).replace(/^\+/,'').r
 const nonempty = x => typeof x === 'string' && x.trim().length > 0;
 const strings = x => Array.isArray(x) && x.length > 0 && x.every(nonempty);
 function validateBrief(b, state) {
-    if (!b || b.base !== state.base || !nonempty(b.symptom) || !strings(b.evidence)) fail('Brief needs exact base, symptom/goal and evidence refs.');
+    if (!b || b.base !== state.base || !nonempty(b.symptom) || !strings(b.evidence)) fail('Brief needs exact base, symptom (for a feature or chore: the goal, in the same field) and evidence refs.');
     if (state.kind === 'fix' && b.cause?.status === 'guess' && nonempty(b.cause.explanation)) return;
     if (!nonempty(b.owner) || !strings(b.scope) ||
         !strings(b.evidence) || !strings(b.tests) || !Array.isArray(b.nonGoals) ||
@@ -335,12 +335,10 @@ function main() {
         }
         const plan=select(state.base,state.brief);
         const {normal,tests,...details}=plan;
-        const pickedAfterFull=[...plan.geodataOnly,...plan.optionalGeodata.map(t=>'+'+t)];
         // The Picked tests list that alone covers the task: its whole selection, a raw-map file marked with +.
         const picked=[...tests.filter(t=>!plan.optionalGeodata.includes(t)),...plan.optionalGeodata.map(t=>'+'+t)];
         if (flag('--picked-list')) { console.log(picked.join('\n')); return; }
-        console.log(JSON.stringify({base:state.base,head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,pickedCount:picked.length,pickedAfterFull,
-            listCommitRecommended:Buffer.byteLength('tests/'+head+'/'+pickedAfterFull.join(','))>240,...(flag('--show-tests')?{tests}:{})},null,2));
+        console.log(JSON.stringify({base:state.base,head,risk:state.risk,...details,normalCount:normal.length,testCount:tests.length,pickedCount:picked.length,pickedList:'verify <slug> --picked-list (ci-dispatch.sh sends it as one tests/list-<sha9> commit)',...(flag('--show-tests')?{tests}:{})},null,2));
         if (plan.critical && state.risk!=='critical') fail('Escalate to critical route before verification.');
         if (flag('--raw-geodata')) {
             const test=norm(opt('--test')||'');
@@ -356,7 +354,8 @@ function main() {
         }
         if (flag('--check')) {
             // Syntax and table freshness (Picked tests do not run them; PR checks does) and the mechanical rules (CI does not).
-            console.log(run('npm',['run','check']));
+            // CI=true makes check-tables refuse stale tables as CI does; on a bare working copy it only warns.
+            console.log(execFileSync('npm',['run','check'],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024,stdio:['ignore','pipe','pipe'],env:{...process.env,CI:'true'}}).trim());
             console.log(run(process.execPath,[path.join(home,'planning/rules-check.js'),state.base+'..HEAD','--root',root]));
             save(s=>{s.evidence.rules={head,at:now(),check:true};}); return;
         }
@@ -470,7 +469,7 @@ function main() {
         const {full,missing,missingRaw,reasons:ciReasons}=ciGaps(plan,e,head);
         reasons.push(...ciReasons);
         if (plan.warnings.length && !e.review?.selectionAcknowledged) reasons.push('Uncertain selection needs explicit review --selection-ack.');
-        if (!sameChange(e.rules?.head,head)) reasons.push('Mechanical rules-check missing for HEAD (verify --rules).');
+        if (!sameChange(e.rules?.head,head)) reasons.push('Mechanical rules-check missing for HEAD (verify --check).');
         else if (!e.rules.check && !full) reasons.push('Syntax and table check missing for HEAD: verify --check (Picked tests do not run it; a full PR checks run on HEAD does).');
         if (state.kind==='fix') {
             const proven=new Set((e.regressions||[]).filter(r=>sameChange(r.head,head) && r.old===state.base).map(r=>r.test));

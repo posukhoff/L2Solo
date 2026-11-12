@@ -5,7 +5,8 @@
 // Usage: node planning/architecture/check.js [--root <checkout of the code to check against>]
 // Run before each release (map refresh) and after a change that removes or renames a module. The release report gate
 // (lc gate <release> report) asks for the last line, run with --root on the frozen head: "map references gone: 0 (code at <sha>)".
-// problems.md is not read: it is generated from lc, which counts its stale names itself.
+// problems.md is generated from lc and is not part of the map check; --problems reads only it (lc status calls that
+// for its "stale names" count).
 // Not checked: lines that record removed code (deleted/removed/gone/paid), and a quoted name followed by
 // " (proposed)" (a fix's name that does not exist yet) or " (C4" (a name from the C4 reference code).
 
@@ -69,7 +70,8 @@ function check(span) {
 }
 
 const missing = [];
-for (const file of fs.readdirSync(mapDir).filter(name => name.endsWith('.md') && name !== 'problems.md').sort()) {
+const onlyProblems = process.argv.includes('--problems');
+for (const file of fs.readdirSync(mapDir).filter(name => name.endsWith('.md') && (name === 'problems.md') === onlyProblems).sort()) {
     const lines = text(path.join(mapDir, file)).split('\n');
     lines.forEach((line, index) => {
         // Entries recorded as removed name the dead code on purpose.
@@ -88,4 +90,4 @@ if (missing.length) {
     console.log(missing.join('\n'));
     process.exitCode = 1;
 }
-console.log(`map references gone: ${missing.length} (code at ${codeAt})`);
+console.log(`${onlyProblems ? 'issue' : 'map'} references gone: ${missing.length} (code at ${codeAt})`);

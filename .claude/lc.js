@@ -245,7 +245,7 @@ function staleIds(cx) { // code names planning/architecture/check.js finds gone,
     const f = path.join(cx.planning, 'architecture/check.js'), pf = path.join(cx.planning, VIEWS.problems);
     if (!fs.existsSync(f) || !fs.existsSync(pf)) return null;
     let out = '';
-    try { out = execFileSync(process.execPath, [f], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { out = String(e.stdout || ''); }
+    try { out = execFileSync(process.execPath, [f, '--problems'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { out = String(e.stdout || ''); }
     const L = fs.readFileSync(pf, 'utf8').split('\n');
     return [...new Set(out.split('\n').map(l => l.match(/^problems\.md:(\d+)/)).filter(Boolean).map(m => (L[+m[1] - 1] || '').split(/[| ]/)[0]).filter(Boolean))];
 }
@@ -928,7 +928,8 @@ C.land = (cx, { pos, opt }) => {
         if (!s.tasks.includes(slug)) fail(`${slug} is not a task of ${s.key}`);
         const t = task(cx, slug), l = t.evidence?.landed || fail(`${slug}: no record-land in V5.1`);
         if (l.branch !== r.branch) fail(`${slug} landed on ${l.branch}, ${r.key} integrates ${r.branch}`);
-        if (t.evidence?.review?.result !== 'pass' || t.evidence?.review?.head !== l.reviewedHead || t.evidence?.ready?.head !== l.reviewedHead) fail(`${slug}: review/ready evidence does not cover the landed head`);
+        const sameTree = (a, b) => a === b || (!!a && !!b && !!cx.tryGit(['rev-parse', a + '^{tree}']) && cx.tryGit(['rev-parse', a + '^{tree}']) === cx.tryGit(['rev-parse', b + '^{tree}'])); // the same tree is the same change (evidence.md)
+        if (t.evidence?.review?.result !== 'pass' || !sameTree(t.evidence?.review?.head, l.reviewedHead) || !sameTree(t.evidence?.ready?.head, l.reviewedHead)) fail(`${slug}: review/ready evidence does not cover the landed head`);
         onRemote(cx, l.head, r.branch);
         // What the review let stand (the "left" lines of its table): each names an open issue, which remembers the
         // task that left it, and a decision it cites exists. The map entries the brief names are checked at the report gate.
@@ -1076,7 +1077,7 @@ C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the 
         Object.assign(rec, { verdict: { file: v.file, sha256: v.sha256 } });
     } else {
         const f = evidenceFile(opt.ref, [r.key, sha9], 'report');
-        for (const [rx, tool] of [[/^total \$[\d.]+ · agents \$/m, 'token-usage.py --from <release open> --table'], [/^task records \d+/m, 'flow-stats.js --since <release open>']]) // what the release cost, measured at its close and not when somebody asks
+        for (const [rx, tool] of [[/^total \$[\d.]+ · agents \$.* · \d+ of \d+ sessions, all \$/m, 'token-usage.py --from <release open> --table --only <the release sessions\' ids> (its last line; without --only the total also holds the other tracks)'], [/^task records \d+/m, 'flow-stats.js --since <release open>']]) // what the release cost, measured at its close and not when somebody asks
             if (!rx.test(f.text)) fail(`report ${path.basename(f.file)} has no flow measurement: paste the output of .claude/tools/${tool}`);
         // The rules a tool can count, over the whole code: a release may lower a count, never raise it unnoticed.
         const tally = /^per detector: (.+)$/m.exec(f.text) || fail(`report ${path.basename(f.file)} has no rules tally: paste the "per detector" line of node planning/rules-check.js --all --root <the release tree>`);

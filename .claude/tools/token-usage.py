@@ -70,15 +70,16 @@ def table(rows,tot):
         if k not in ('ALL','EVERY'): out.append(f"  {k:<12} {v['launches']:>3}  ${v['usd']:>7.2f}  ${v['usd']/max(1,v['launches']):>6.2f}  {v['batched']}/{v['tool_turns']} ({100*v['batched']//max(1,v['tool_turns'])} %)")
     a=tot['ALL']; out.append(f"total ${a['usd']:.2f} · agents ${a['usd']-tot['session']['usd']:.2f} · sessions ${tot['session']['usd']:.2f} · batched tool turns {a['batched']}/{a['tool_turns']} ({100*a['batched']//max(1,a['tool_turns'])} %)")
     e=tot['EVERY']; every=sum(1 for k in e if isinstance(k,tuple)); mine=len({x['session'] for x in rows})
-    if mine<every: out[-1]+=f" · {mine} of {every} sessions, all ${e['usd']:.2f}"
+    if tot['EVERY'].get('only') or mine<every: out[-1]+=f" · {mine} of {every} sessions, all ${e['usd']:.2f}"
     return '\n'.join(out)
 if __name__=='__main__':
     a=sys.argv[1:]
-    if '--from' not in a: sys.exit('usage: token-usage.py [<dir-or-file>...] --from <iso> [--to <iso>] [--table]')
+    if '--from' not in a: sys.exit('usage: token-usage.py [<dir-or-file>...] --from <iso> [--to <iso>] [--table] [--only <session id prefixes, comma>]  (a release report: --table --only <the release sessions>)')
     lo=a[a.index('--from')+1]; hi=a[a.index('--to')+1] if '--to' in a else '9999'
     only=a[a.index('--only')+1].split(',') if '--only' in a else None
     paths=[x for i,x in enumerate(a) if not x.startswith('--') and (i==0 or a[i-1] not in ('--from','--to','--only'))] or [os.path.expanduser('~/.claude/projects/-Users-iposukhoff-L2Solo')]
     rows,tot=count(paths,lo,hi,only)
+    if only: tot['EVERY']['only']=1
     if '--table' in a: print(table(rows,tot))
     else:
         for x in sorted(rows,key=lambda x:x['first']): print(json.dumps(x))

@@ -135,7 +135,7 @@ expect('raw ci evidence in status',cmd('status','rawci'),0,'"source": "ci"');
 current=head;optionalRaw=false;
 expect('dev feedback only',cmd('verify','rawci','--dev'),0,'Development feedback only');
 expect('dev-local runs non-map tests',cmd('verify','rawci','--dev-local'),0,'test_basic.js');
-expect('integration plan retains map tests',cmd('verify','rawci'),0,'pickedAfterFull');
+expect('integration plan retains map tests',cmd('verify','rawci'),0,'pickedCount');
 if(JSON.parse(store.get('/git/l2solo-workflow/rawci.json')).evidence.local)throw Error('dev-local must record nothing');
 console.log('PASS dev-local records nothing toward ready');
 expect('the removed --local path says so',cmd('verify','rawci','--local'),1,'--local was removed');
