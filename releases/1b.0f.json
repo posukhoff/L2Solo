@@ -1,0 +1,17 @@
+{
+ "key": "1b.0f",
+ "group": "1b",
+ "order": 19.3,
+ "type": "fix",
+ "st": "planned",
+ "title": "1b.0f combat timing, server exits, geodata points, loops (fix)",
+ "branch": null,
+ "base": null,
+ "head": null,
+ "decisions": [],
+ "cap": null,
+ "gates": {},
+ "steps": [
+
+ ]
+}
