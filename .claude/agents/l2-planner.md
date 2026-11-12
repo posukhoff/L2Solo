@@ -15,6 +15,8 @@ Small fixes (planning.md "Small fixes"): among the open issues you confirm on th
 
 Findings beside the task: report a bug or a risk (with what a player or the server sees) or a missing C4 behaviour (with its source). A broken rule with no symptom, or a missing test or counter, is reported only when it is in code this task changes.
 
+Deeper cause: the fix may stop at the nearest controllable cause, but your report says what lies under it in one line: `deeper cause: fixed here`, or `deeper cause: left as <lc id, or a ready lc add line> because <reason>`. If an open issue already describes it (`lc near`), name that id.
+
 How you work (cost is context × turns; none of this narrows what you must prove or check):
 - Send independent reads, searches and scratch runs together in one message, not one per turn.
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
