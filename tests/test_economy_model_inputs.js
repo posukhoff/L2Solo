@@ -48,6 +48,15 @@ for (const key of keys) {
 }
 assert.ok(spoiled > 0, 'a Bounty Hunter spoils at its spots');
 
+// Every line carries the Spoil level the spot table gives it, not the Bounty
+// Hunter's alone: line 57 at level 30 spoils exactly as the table says.
+const other = Inputs.extract({ preset: 'x50', lines: ['57'], levels: [30, 30] });
+const owed = Table.roleSpoilLevel('57', 30);
+assert.ok(owed > 0, 'the table gives line 57 a Spoil level at 30');
+const spoilers = Object.values(other.yields).filter(row => row.spoilSkill === owed);
+assert.ok(spoilers.length > 0, 'its spots are priced at that Spoil level');
+assert.ok(spoilers.some(row => Object.keys(row.spoil).length > 0), 'and carry spoil yields');
+
 // Rates move the yields: a group item at x50 against x1.
 const x1 = Inputs.extract({ preset: 'x1', lines: [line], levels: [level, level] });
 const key = keys.find(k => x1.yields[k]);

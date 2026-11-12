@@ -8,7 +8,10 @@
 // (NpcShopBuyLists), today's static stores (MerchantStoreConfigs), seated MP
 // and craft skills (ColdRest, CraftEligibility).
 //
-//   node scripts/economy-model/inputs.js [--preset x1,x10,x50] [--out <dir>]
+//   node scripts/economy-model/inputs.js [--preset x1,x10,x50] [--out <dir>] [--spots <save.sqlite>]
+//
+// --spots adds the hours at the spots a save's bots stand at (spotHours), so
+// a model run that starts from that save hunts where its bots hunted.
 //
 // Writes <out>/inputs-<preset>-<revision>-<fingerprint>.json (default
 // tmp/economy-model in the tree). The snapshot reads more than the hunt tables'
@@ -23,13 +26,16 @@ const fs = require('fs');
 const path = require('path');
 const Boot = require('./boot');
 const Capacity = require('./capacity');
-const Weights = require('./weights');
+const Cohort = require('./cohort');
 const common = require('../hunt-tables/common');
 
 const SCHEMA = 1;
 const LEVELS = Object.freeze([1, common.MAX_LEVEL]);
 const TWIN_LEVELS = Object.freeze([20, common.MAX_LEVEL]);
 const TOP_SPOTS = 3;
+// Spot hours of a save's bot at its level and this many levels above it: a
+// bot of the real runs gains at most 10 levels in a 25-minute window.
+const SPOT_LEVELS_AHEAD = 10;
 const HOUR_FIELDS = Object.freeze(['spotId', 'kills', 'deaths', 'exp', 'adena', 'dropLoot', 'spoilLoot', 'loot',
     'shots', 'potions', 'busyShare']);
 // Items the generated hunt sources lack or leave without a drop row: shots,
@@ -38,6 +44,7 @@ const OTHER_GAP_IDS = Object.freeze([1785, 3031, 1804, 1805, 3953, 1060, 736, 17
 const NOTES = Object.freeze([
     'best (SpotValueTable.best) and top[0] (rankedIncome) are two owners and differ on some line-levels: read best for the income of the hour, top for the candidates a bot ranks.',
     'Per-kill item yields (yields) are taken at the spot\'s spawn mix; the hour\'s income (best, top) uses the kill mix the spot table measured for the line.',
+    'spotHours (with --spots): spotHours.rows[line][level][spotId] is the spot table\'s hour at the spot a save\'s bot stood at, for the line the model draws for it, null where that line may fight nothing there.',
     'rates are today\'s presets as the game applies them, not the design\'s per-kind rates.'
 ]);
 
@@ -96,7 +103,7 @@ function rewardItemIds(reward, kind) {
 
 // Expected items per kill at a spot for a killer of the level: drops by the
 // drop rule (itemDropYield, deep blue at each NPC's level), spoils at the
-// spoiler's Spoil skill level times its landing chance (0 without Spoil).
+// killer's Spoil skill level (the spot table's own rule for its line and level, roleSpoilLevel) times its landing chance (0 without Spoil).
 // Adena is item 57 of the drops. The NPCs are the spot's spawns; the spot
 // table's hour prices the species a line fights there at its level (its
 // measured kill mix), so the two moneys per kill differ where they differ.
@@ -177,7 +184,27 @@ function staticInputs(owners, spots) {
         for (const entry of entries) if (entry.reward) rewards[entry.reward.selfId] ||= { rewards: entry.reward.rewards || [], spoils: entry.reward.spoils || [] };
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
-    return { recipes, stores, luxury, exp: [...Data.experience], twins, rewards, compositions, quests };
+    return { recipes, stores, luxury, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies() };
+}
+
+// The shot of each kind by weapon grade (ShotStock's tables, by rank none, d,
+// c, b, a, s): a bot fires the shot of its weapon's grade.
+function shotFamilies() {
+    const shots = invoke('GameServer/Inventory/ShotStock');
+    return { grades: ['NONE', 'D', 'C', 'B', 'A', 'S'], ids: [shots.SOULSHOT_IDS, shots.SPIRITSHOT_IDS, shots.BLESSED_SPIRITSHOT_IDS].map(ids => [...ids]) };
+}
+
+// The gatekeeper fee of a trip from one town into another, by town name: the
+// trip rule's own route (TravelRoutes.between, Floran through Dion), null
+// without a route. C4 fees, the same at every rate.
+function gatekeeperFares() {
+    const towns = Object.values(invoke('GameServer/World/TownRespawn').towns), routes = invoke('GameServer/Bot/Travel/TravelRoutes');
+    const point = town => ({ locX: town.locX, locY: town.locY, locZ: town.locZ }), fares = {};
+    for (const from of towns) {
+        fares[from.name] = {};
+        for (const to of towns) fares[from.name][to.name] = routes.between(point(from), point(to)).route?.fee ?? null;
+    }
+    return fares;
 }
 
 // Every NPC's drops and spoils of an item from the raw reward data, at a
@@ -198,13 +225,36 @@ function rawSources(owners, itemIds) {
 
 // One preset's snapshot. lines, levels: a subset (tests); by default every
 // spot-table line at levels 1-78.
-function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base = null } = {}) {
+// The hours at the spots a save's bots stand at (bot_life_state.spotId): for
+// the line the cohort gives each bot (Cohort.lineOf, the same seeded draw), at
+// its level and SPOT_LEVELS_AHEAD above it, the spot table's value of the
+// spot, null where the line may fight nothing there. Each found spot-level is
+// added to pairs, so its yields are written too.
+function spotHours(save, hours, levels, owners, pairs) {
+    const { Table } = owners, rows = {}, byClass = Cohort.linesByClass({ hours });
+    for (const bot of Cohort.savedBots(save).bots) {
+        const picked = !bot.station && bot.spotId ? Cohort.lineOf(Number(bot.classId), bot.characterId, { hours }, byClass) : null;
+        if (!picked) continue;
+        const spotId = String(bot.spotId), line = picked.line;
+        for (let level = Number(bot.level); level <= Math.min(levels[1], Number(bot.level) + SPOT_LEVELS_AHEAD); level++) {
+            const at = ((rows[line] ||= {})[level] ||= {});
+            if (at[spotId] !== undefined) continue;
+            const row = Table.value(spotId, line, level, true);
+            at[spotId] = row && row.kills > 0 ? hourRow({ ...row, spotId }) : null;
+            if (!at[spotId]) continue;
+            const key = `${spotId}@${level}`, held = pairs.get(key), skill = Table.roleSpoilLevel(line, level);
+            pairs.set(key, { spotId, level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
+        }
+    }
+    return { source: save, levelsAhead: SPOT_LEVELS_AHEAD, rows };
+}
+
+function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base = null, spots: save = null } = {}) {
     const owners = gameOwners(), { Table, Data, Index, Enchant, Sell, Rates } = owners;
     if (!x1Offers) { Boot.usePreset('x1'); x1Offers = npcOffers(owners); }
     Boot.usePreset(preset);
     const spots = rewardSpots(), fixed = base || staticInputs(owners, spots);
     const hours = {}, kits = {}, pairs = new Map();
-    const spoiler = String(Weights.BOUNTY_HUNTER);
     for (const line of lines || Table.roles()) {
         hours[line] = {}; kits[line] = {};
         for (let level = levels[0]; level <= levels[1]; level++) {
@@ -215,13 +265,14 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
             kits[line][level] = kit.map(({ selfId, slot }) => ({ selfId: Number(selfId), slot: Number(slot) }));
             hours[line][level] = { classId, shotId: Capacity.referenceShot(classId, level, line),
                 best: best && hourRow(best), top: top.map(hourRow) };
-            const skill = line === spoiler ? Table.roleSpoilLevel(line, level) : 0;
+            const skill = Table.roleSpoilLevel(line, level);
             for (const row of [best, ...top]) if (row) {
                 const key = `${row.spotId}@${level}`, held = pairs.get(key);
                 pairs.set(key, { spotId: String(row.spotId), level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
             }
         }
     }
+    const spotRows = save ? spotHours(save, hours, levels, owners, pairs) : null;
     const yields = {};
     for (const [key, { spotId, level, spoilSkill }] of pairs) {
         const spot = spots.get(spotId);
@@ -251,7 +302,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const { quests, ...kept } = fixed;
     return {
         header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES },
-        hours, kits, yields, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept,
+        hours, kits, yields, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}),
         sources: rawSources(owners, ids)
     };
 }
@@ -284,7 +335,7 @@ function main(argv) {
     fs.mkdirSync(out, { recursive: true });
     for (const preset of presets) {
         const began = Date.now();
-        const snapshot = extract({ preset, x1Offers, base });
+        const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null) });
         snapshot.header = { ...snapshot.header, fingerprint, spotTable, revision };
         const file = path.join(out, `inputs-${preset}-${revision}-${fingerprint}.json`), text = `${JSON.stringify(snapshot)}\n`;
         fs.writeFileSync(file, text);
@@ -295,6 +346,10 @@ function main(argv) {
             + `items ${Object.keys(snapshot.items).length}; recipes ${snapshot.recipes.length} (${snapshot.header.quests.withRecipe} of ${snapshot.header.quests.scrolls} quest scrolls with a row); `
             + `NPC-offered items ${Object.keys(snapshot.npcOffers.preset).length}; static stores ${snapshot.stores.length}; Luxury items ${Object.keys(snapshot.luxury).length}; `
             + `spots ${Object.keys(snapshot.compositions).length}; reward rows ${Object.keys(snapshot.rewards).length}; twin levels ${Object.keys(snapshot.twins).length}`);
+        if (snapshot.spotHours) {
+            const cells = Object.values(snapshot.spotHours.rows).flatMap(byLevel => Object.values(byLevel).flatMap(Object.values));
+            console.log(`  spot hours from ${snapshot.spotHours.source}: ${cells.filter(Boolean).length} rows, ${cells.filter(row => !row).length} spot-levels where the line fights nothing`);
+        }
         if (preset !== presets[0]) continue;
         console.log(`  raw sources for ${Object.keys(snapshot.sources).length} items, ${gaps.lacking} of them without a drop or spoil row in the hunt sources table:`);
         for (const line of gaps.named) console.log(`    ${line}`);
@@ -306,4 +361,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { extract, rewardSpots, spotYields, composition, HOUR_FIELDS, SCHEMA };
+module.exports = { extract, spotHours, rewardSpots, spotYields, composition, HOUR_FIELDS, SCHEMA, SPOT_LEVELS_AHEAD };
