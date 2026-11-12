@@ -15,7 +15,7 @@
  "steps": [
   {"key":"1b.0e1","title":"1b.0e1 bug: geodata after the C4 step rule — a ledge reachable by a route but not left (DT-321); a ranged bot on a skirt hits mobs that cannot see it back (CMB-42)","P":"mid","S":"low","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0e2","title":"1b.0e2 risk: an opportunistic raid's supply preparation times out and the raid stays preparing (DT-326), investigation first","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0e3","title":"Recipe data path resolved from the module, not the working folder (DT-335)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0e3","title":"Recipe data path resolved from the module, not the working folder (DT-335)","P":"","S":"","who":"","needs":[],"st":"active","tasks":["dt335-recipe-path"],"landed":null},
   {"key":"1b.0e5","title":"A hot death before a hot party join stays on the row (DT-353, investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0e6","title":"Cold worker turn: economy context build sliced (DT-354)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0e4","title":"A partyless bot with no solo ground hunts (DT-352, investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
