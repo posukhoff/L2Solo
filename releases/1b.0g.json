@@ -16,6 +16,7 @@
   {"key":"1b.0g3","title":"Ground items expire (DT-296)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g4","title":"Repeat chance cap re-found (DT-356, check first)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g5","title":"No resurrect-and-kill cycle in a running PvP fight (DT-272, investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0g6","title":"The hot town walk finds long detours (DT-360, critical)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"1b.0g6","title":"The hot town walk finds long detours (DT-360, critical)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0g7","title":"An interrupted recall is traced and the scroll handled by C4 (DT-361)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
