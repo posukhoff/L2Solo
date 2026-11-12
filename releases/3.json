@@ -20,7 +20,7 @@
   {"key":"3.supply-errand-with","title":"Supply errand with two owners: races-R15","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.hot-cold-handover","title":"Hot/cold handover windows: races-R5, races-R7, POP-4, POP-5, POP-22, threads-9, DT-127, DT-223, DT-236, DT-241","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.cold-command-dropped","title":"Cold command dropped without an ack: S3","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"3.uncounted-failures","title":"Uncounted failures: threads-4, town-12, parties-12, DT-1, X6, X17, SF-4, DT-130, DT-110, DT-168, DT-212, DT-245","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"3.uncounted-failures","title":"Uncounted failures: threads-4, town-12, parties-12, DT-1, X6, X17, SF-4, DT-130, DT-110, DT-168, DT-245","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.refusals-by-one","title":"Refusals by one classifier hot and cold, not faults: RM-34, DT-142, DT-148, DT-234, DT-235, RA3-1","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.trace-gaps","title":"Trace gaps: RM-37, DT-86, DT-128, DT-178, DT-179, DT-215, DT-259","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"3.main-writes-far","title":"Main writes far rows on a raise (release 1 exception, rule 15 away, maintainer 11-09): `raiseOnRow`/`raiseOn` → a named raise message the worker applies in its commit; RC-2, RC-4, SF-2, threads-7","P":"low","S":"mid","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
