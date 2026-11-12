@@ -29,6 +29,7 @@
   {"key":"1b.0g13","title":"Bodies the server moves never drop more than 333 (DT-381, M33)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g14","title":"Aden Lorenzo is reachable: a counter point on the floor when the spawn z lies under it (DT-391)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
   {"key":"1b.0g15","title":"Room for bots at a crowded open-air NPC: Rune gatekeeper (DT-393)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0g16","title":"Far walks (spot to spot, cross-town, karma) find the walking way, not the straight leg (DT-407; critical, own design)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"1b.0g16","title":"Far walks (spot to spot, cross-town, karma) find the walking way, not the straight leg (DT-407; critical, own design)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0f18","title":"Two shoppers never end on one counter point, whatever order they arrive in (DT-397)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null,"carried":[{"from":"1b.0f","reason":"1b.0f reached 6 landed steps (fix release limit); waits for the next fix release","at":"2026-11-12T20:07:14.316Z"}]}
  ]
 }
