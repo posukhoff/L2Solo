@@ -1,0 +1,48 @@
+#!/usr/bin/env node
+'use strict';
+// Installs flow files from this worktree's HEAD into the live checkout and logs it.
+// Usage (from the flow worktree): .claude/tools/flow-install --from <installed sha> [--dry] [--defect "<why it cannot wait>"] [--skip-lc-tests]
+//   --from: the commit the live checkout holds now (the last line of the live .claude/flow-install.log names it).
+// Refuses: a dirty worktree; a live file that differs from its --from version (somebody edited it in place); a digest
+// file (workflow.js, evidence.md, routes.md) while lc has a release open or frozen, unless --defect names the defect
+// that blocks work (evidence.md "Digest"); failing tests of what it installs.
+const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
+const a = process.argv.slice(2), opt = k => { const i = a.indexOf(k); return i < 0 ? undefined : a[i + 1]; };
+const tree = path.resolve(__dirname, '../..');
+const git = (...args) => execFileSync('git', args, { cwd: tree, encoding: 'utf8', maxBuffer: 1 << 26 }).replace(/\n$/, '');
+const fail = m => { console.error('flow-install: ' + m); process.exit(1); };
+const live = path.dirname(path.resolve(tree, git('rev-parse', '--git-common-dir')));
+const DIGEST = ['.claude/workflow.js', '.claude/workflow/evidence.md', '.claude/workflow/routes.md'];
+const digest = read => { const h = crypto.createHash('sha256'); for (const f of DIGEST) { h.update(f + '\0'); h.update(read(f)); } return h.digest('hex').slice(0, 8); };
+
+if (live === tree) fail('run it from the flow worktree, not the live checkout');
+const from = opt('--from') || fail('--from <the commit the live checkout holds now>');
+if (git('status', '--porcelain')) fail('commit the worktree first: only a commit is installed');
+const head = git('rev-parse', 'HEAD'), base = git('rev-parse', '--verify', from + '^{commit}');
+const changes = git('diff', '--name-status', '--no-renames', base, head).split('\n').filter(Boolean).map(l => l.split('\t'));
+if (!changes.length) fail('nothing differs between ' + base.slice(0, 9) + ' and HEAD');
+for (const [st, f] of changes) { // the live copy is still what was installed
+    const was = st === 'A' ? null : execFileSync('git', ['show', base + ':' + f], { cwd: tree, maxBuffer: 1 << 26 });
+    const now = fs.existsSync(path.join(live, f)) ? fs.readFileSync(path.join(live, f)) : null;
+    if (was === null ? now !== null && !now.equals(fs.readFileSync(path.join(tree, f))) : now === null || !now.equals(was)) fail('live ' + f + ' is not its ' + base.slice(0, 9) + ' version: somebody changed it in place; take that change into the branch first');
+}
+const touched = changes.map(c => c[1]), digestFiles = touched.filter(f => DIGEST.includes(f));
+if (digestFiles.length) {
+    const status = execFileSync(process.execPath, [path.join(live, '.claude/lc.js'), 'status'], { cwd: live, encoding: 'utf8' });
+    const held = status.split('\n').filter(l => /^\S+ (open|frozen) /.test(l)).map(l => l.split(' ').slice(0, 2).join(' '));
+    if (held.length && !opt('--defect')) fail(digestFiles.join(', ') + ' void every open task record and lc holds ' + held.join(', ') + ': install between releases, or name the blocking defect with --defect');
+}
+execFileSync(process.execPath, [path.join(tree, '.claude/workflow.test.js')], { cwd: tree, stdio: ['ignore', 'ignore', 'inherit'] });
+if (touched.some(f => /^\.claude\/lc(\.test)?\.js$/.test(f)) && !a.includes('--skip-lc-tests')) execFileSync(process.execPath, ['--test', path.join(tree, '.claude/lc.test.js')], { cwd: tree, stdio: ['ignore', 'ignore', 'inherit'] });
+const before = digest(f => fs.readFileSync(path.join(live, f))), after = digest(f => fs.readFileSync(path.join(tree, f)));
+const line = `${new Date().toISOString()} ${base.slice(0, 9)}..${head.slice(0, 9)} digest ${before}${before === after ? ' unchanged' : ' -> ' + after}${opt('--defect') ? ' defect: ' + opt('--defect') : ''} · ${touched.join(' ')}`;
+if (a.includes('--dry')) { console.log('would install: ' + line); process.exit(0); }
+for (const [st, f] of changes) {
+    const to = path.join(live, f);
+    if (st === 'D') fs.rmSync(to, { force: true });
+    else { fs.mkdirSync(path.dirname(to), { recursive: true }); fs.copyFileSync(path.join(tree, f), to); fs.chmodSync(to, fs.statSync(path.join(tree, f)).mode); }
+}
+fs.appendFileSync(path.join(live, '.claude/flow-install.log'), line + '\n');
+console.log('installed: ' + line);
+if (before !== after) console.log('The policy digest changed: every task record opened under ' + before + ' needs a new slug.');

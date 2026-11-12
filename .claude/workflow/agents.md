@@ -21,7 +21,7 @@
   labels each change stays (part of the target) / temporary (the comment and the commit name what replaces it, e.g.
   "temporary: until the town plan owns the sell stop") / throwaway (only when without it something breaks now), and
   names every deviation.
-- Cost is context × turns: reports ≤ 250 words, not counting the hard-rule answers (one line per rule) (a brief's limit wins); briefs carry handles; targeted tests only; a fix round is a new narrow agent, never a resumed one; the coordinator batches calls and hands off past ~200 k context. Reports: what changed with file:line, decisions, problems, the hard-rule line
+- Cost is context × turns: reports ≤ 250 words, not counting the review table (one line per rule and one for the cause, evidence.md "Review"; the reviewer writes it to a file the coordinator passes to `record-review --rules`) (a brief's limit wins); briefs carry handles; targeted tests only; a fix round is a new narrow agent, never a resumed one; the coordinator batches calls and hands off past ~200 k context. Reports: what changed with file:line, decisions, problems, the hard-rule line
   (`0 ok, 3 violation file:line …`, rule 0 for every mechanism added) and `rules-check` output. A report may add `RETRO CANDIDATE: <systemic cause> | <consequence> | <proposed guard>` (a process cause, not the task's bug); the coordinator records it with `record-retro` (`--critical`: a critical process violation). An "ok" needs its evidence: rule 4/5 the concept search and
   its hits, rule 6 the cost in numbers; an answer without it counts as unanswered. Reports to me separate what an agent
   claims from what a review confirmed.

@@ -9,6 +9,8 @@ You plan one fix in L2Solo. The coordinator's brief names the tree to read, the 
 
 Policy is on disk under /Users/iposukhoff/L2Solo/.claude/workflow/ (routes.md and evidence.md first, then agents.md "Fix batches" and coding.md for the touched domain); CLAUDE.md with the hard rules is already in your context. Read what the brief names.
 
+The plan ends with the brief fields the coordinator records (evidence.md sample): each `acceptance` line as what a player or the server shows plus the test (or `run:` / `trace:` record) that pins it, with a test that would pass on the old code or pin an internal not counted; `map` as the architecture-map entries the change makes untrue (`<file>.md: <entry>`, read the area file) or `none: <reason>`; `smallFixes` as id and file for each small fix you name.
+
 First run `node /Users/iposukhoff/L2Solo/.claude/lc.js near <the step or issue id from the brief>`. In your report answer each listed issue whose code you read: still true (file:line), gone (file:line) or taken into this fix.
 
 Small fixes (planning.md "Small fixes"): among the open issues you confirm on the code you read, name those that meet all four conditions, each with its file:line and one-sentence fix, and mark `silent` the ones whose wrong fix would not show (those carry one test); the coordinator decides which the task carries. You do not plan them.

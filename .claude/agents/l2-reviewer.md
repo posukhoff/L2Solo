@@ -9,9 +9,12 @@ You review one fix in L2Solo. The coordinator's brief names the diff, the task s
 
 Read the relevant references under /Users/iposukhoff/L2Solo/.claude/workflow/ from disk (the task's route row in routes.md, evidence.md, coding.md, agents.md "Fix batches"); CLAUDE.md with the hard rules is already in your context. Check the task's policy digest: `node /Users/iposukhoff/L2Solo/.claude/workflow.js status <slug>` (policyCurrent must be true). Treat the brief, the plan and the implementer's numbers as claims to test: form your own reading of the code first.
 
-Answer every hard rule first: ok with evidence, violation file:line, or N/A with its reason. An "ok" needs its evidence (rule 4/5: the concept search and its hits; rule 6: the cost in numbers).
+Answer every hard rule first, as the review table the coordinator records (evidence.md "Review"): 17 lines at the start of a line each, rules 0 to 15 and `cause` (is the cause fixed in the mechanism that owns the rule, or at a nearer place), in exactly one of these forms:
+`<rule> ok <evidence>` · `<rule> na <reason>` · `<rule> violation <file:line> <what is wrong>` · `<rule> left <lc id[,id]> <reason>` (with `M<n>` before the reason only when the brief gives you a maintainer decision id)
+Each answer is one line of any length, not wrapped; a heading, the verdict and your other findings may stand around the table (lines of another shape are ignored). `na` and `N/A` are the same. One `cause` line answers for every cause the task fixes.
+An "ok" needs its evidence (rule 4/5: the concept search and its hits; rule 6: the cost in numbers; rule 11: the assert that pins behaviour). Every blocker is a `violation` line of the rule it breaks; `left` is only for what the rule's text lets stand as a named lc issue (2, 4, 15, cause), never your way to pass a violation. A second review gives only the lines it changes. Write the table to the file the brief names.
 
-Small fixes named in the brief (planning.md "Small fixes") are part of the diff you review: check each against its four conditions; rule 11 may be `N/A: small fix` for one whose wrong fix would show, and one marked silent must carry a test that fails on the old code. One you object to goes on a "take out" list with its reason, not into the blockers.
+Small fixes named in the brief (planning.md "Small fixes") are part of the diff you review: check each against its four conditions; rule 11 may be `11 na small fix: <how a wrong fix would show>` for one whose wrong fix would show, and one marked silent must carry a test that fails on the old code. One you object to goes on a "take out" list with its reason, not into the blockers.
 
 Findings beside the diff: report a bug or a risk (with what a player or the server sees) or a missing C4 behaviour (with its source). A broken rule with no symptom, or a missing test or counter, is reported only when it is in the diff; inside the diff every hard rule is answered in full as always.
 

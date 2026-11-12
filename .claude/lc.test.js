@@ -559,11 +559,23 @@ test('unfreeze: a frozen release takes the fix its final runs asked for only by 
     assert.strictEqual(w.ok('get', '1b.1', 'head').trim(), head);
 });
 
+test('step drop: an emptied step leaves the roadmap whether planned or started; one holding issues stays', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    w.sh(['branch', 'ivan/batch-1b1', w.base]); w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']);
+    w.ok('open', '1b.1', '--branch', 'ivan/batch-1b1', '--base', w.base);
+    w.ok('step', 'add', '1b.1', '--key', '1b.1x', '--title', 'Small fixes');
+    landedTask(w, 'sx', w.base, w.base, 'ivan/batch-1b1');
+    w.ok('start', '1b.1x', '--task', 'sx');
+    w.no(/1b\.1 still holds/, 'step', 'drop', '1b.1', '--reason', 'x');
+    assert.match(w.ok('step', 'drop', '1b.1x', '--reason', 'its small fixes did not hold'), /1b\.1x dropped/);
+    assert.doesNotMatch(w.ok('status'), /1b\.1x/);
+});
 test('contract: records written by the real workflow.js pass lc land, resolve and gate ci', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     // a minimal game checkout and policy home the real workflow.js accepts
     const home = path.join(w.dir, 'home'), put = (f, text) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); };
     for (const f of ['workflow.js', 'workflow/evidence.md', 'workflow/routes.md']) put(path.join(home, '.claude', f), fs.readFileSync(path.join(__dirname, f)));
+    put(path.join(home, 'planning/architecture/combat.md'), '# Combat\n');
     put(path.join(home, 'planning/tests-for.js'), "console.log('test_basic.js');\n"); put(path.join(home, 'planning/rules-check.js'), "console.log('ok');\n");
     put(path.join(w.repo, 'package.json'), '{}'); put(path.join(w.repo, 'src/foo.js'), '1\n'); put(path.join(w.repo, 'tests/test_basic.js'), '\n');
     put(path.join(w.repo, 'scripts/run-tests.js'), "const a = process.argv; console.log(a.includes('--needs-geodata') ? 'false' : a.includes('--geodata') ? '' : 'tests/test_basic.js');\n");
@@ -577,17 +589,34 @@ test('contract: records written by the real workflow.js pass lc land, resolve an
     wf('start', 'p1', '--base', base, '--risk', 'standard', '--kind', 'fix');
     w.sh(['checkout', '-q', 'ivan/batch-1b1']); fs.writeFileSync(path.join(w.repo, 'src/foo.js'), '2\n'); w.sh(['commit', '-qam', 'fix']); const head = w.sh(['rev-parse', 'HEAD']);
     const brief = path.join(w.dir, 'brief.json');
-    fs.writeFileSync(brief, JSON.stringify({ base, symptom: 'DT-44 and DT-49: forming retries', owner: 'forming', scope: ['src/foo.js'], acceptance: ['a'], evidence: ['trace'], tests: ['test_basic.js'], regressions: ['test_basic.js'], nonGoals: [],
+    fs.writeFileSync(brief, JSON.stringify({ base, symptom: 'DT-44 and DT-49: forming retries', owner: 'forming', scope: ['src/foo.js'], acceptance: [{ expect: 'a', by: 'test_basic.js' }], map: ['combat.md: Hit core'], evidence: ['trace'], tests: ['test_basic.js'], regressions: ['test_basic.js'], nonGoals: [],
         cause: { status: 'verified', explanation: 'x', evidence: ['src/foo.js:1'], chain: ['src/foo.js:1 symptom', 'src/foo.js:1 first wrong decision'], excluded: ['none plausible: one line'] } }));
     wf('record-brief', 'p1', '--file', brief); wf('verify', 'p1', '--rules');
     wf('record-regression', 'p1', '--test', 'test_basic.js', '--old', base, '--evidence', 'old fails at :1, new passes');
     fs.writeFileSync(ghJson, JSON.stringify({ headSha: head, headBranch: 'ci-x', status: 'completed', conclusion: 'success', url: 'u', workflowName: 'PR checks', jobs: Array.from({ length: 12 }, (_, n) => ({ name: `Node tests (${n + 1}/12)`, conclusion: 'success' })) }));
-    wf('record-ci', 'p1', '--run', '7'); wf('record-review', 'p1', '--result', 'pass', '--evidence', 'review ok');
+    // the review table: 17 answers; what it leaves standing must be an open issue and, off the rules that allow leaving, a known decision
+    const table = over => file(w, 'table.md', [...Array(16).keys(), 'cause'].map(k => over[k] || `${k} ok evidence for ${k}`).join('\n'));
+    const review = over => wf('record-review', 'p1', '--result', 'pass', '--evidence', 'review ok', '--rules', table(over));
+    wf('record-ci', 'p1', '--run', '7'); review({ 4: '4 left DT-999 the cold copy stays', 11: '11 left DT-44 M99 the old test stays' });
     assert.match(wf('ready', 'p1'), /"taskReady": true/);
     w.sh(['push', '-q', 'fork', 'ivan/batch-1b1']); wf('record-land', 'p1', '--remote', 'fork', '--branch', 'ivan/batch-1b1');
-    w.ok('start', '1b.1', '--task', 'p1'); w.ok('land', '1b.1');
+    w.ok('start', '1b.1', '--task', 'p1');
+    w.no(/no open issue DT-999/, 'land', '1b.1');
+    review({ 4: '4 left DT-44 the cold copy stays', 11: '11 left DT-44 M99 the old test stays' }); wf('ready', 'p1');
+    w.no(/leaves rule 11 under unknown decision M99/, 'land', '1b.1');
+    review({ 4: '4 left DT-44 the cold copy stays' }); wf('ready', 'p1');
+    w.ok('land', '1b.1');
+    assert.match(w.ok('show', 'DT-44'), /left standing by p1/);
+    assert.match(w.ok('get', '1b.1', 'steps'), /"left":\[\{"rule":"4","ids":\["DT-44"\]\}\],"map":\["combat\.md: Hit core"\]/);
     assert.match(w.ok('resolve', 'DT-44', 'DT-49', '--test', 'test_basic.js'), /DT-44, DT-49 resolved/); // one command for a step's issues
     w.ok('freeze', '1b.1');
     assert.match(w.ok('gate', '1b.1', 'ci', '--task', 'p1', '--root', w.repo), /1b\.1 ci ✓/);
     assert.match(w.ok('get', '1b.1', 'gates'), /"ci":\{"at":"[^"]+","task":"p1","runs":\["7"\]\}/);
+    // the report gate: a map file the landed task named must be refreshed on a commit that holds the landing
+    const report = file(w, 'r.md', `release 1b.1 at ${head.slice(0, 9)}\ntotal $14.46 · agents $7.53 · sessions $6.93 · batched tool turns 14/259 (5 %)\ntask records 2 · landed 1 · records per landing 2\nper detector: r8-catch 2\n`);
+    w.no(/map combat\.md is checked at no commit/, 'gate', '1b.1', 'report', '--ref', report);
+    put(path.join(w.repo, 'planning/architecture/combat.md'), `# Combat\n\nChecked at ${base.slice(0, 9)} (2026-11-11).\n`);
+    w.no(/map combat\.md is checked at [0-9a-f]{9}, before .* landed \(p1 changes "combat\.md: Hit core"\)/, 'gate', '1b.1', 'report', '--ref', report);
+    put(path.join(w.repo, 'planning/architecture/combat.md'), `# Combat\n\nChecked at ${head.slice(0, 9)} (2026-11-12).\n`);
+    assert.match(w.ok('gate', '1b.1', 'report', '--ref', report), /1b\.1 report ✓/);
 });

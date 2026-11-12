@@ -575,7 +575,7 @@ C.show = (cx, { pos, opt }) => { // lc show <issue|step|release> [--page N] [--r
     if (a) { console.log(`archived in ${a.k}: ${JSON.stringify(a.i.closed)}\n${[a.i.head, a.i.origin, a.i.rule, a.i.sites, a.i.what, a.i.fix].join('|')}`); return; }
     const i = issue(d, key);
     console.log(issueLine(d, i, st));
-    console.log(`at ${i.at || (i.tail ? 'tail' : 'triage')}${i.at ? ' (' + st.get(i.at).r.key + ' ' + st.get(i.at).r.st + ')' : ''}${i.kind ? ' · kind ' + i.kind : ''}${i.seen ? ' · seen ' + i.seen : ''}${i.why ? ' · ' + i.why : ''}${i.deps?.length ? ' · deps ' + i.deps.join(',') : ''}${i.overrides?.length ? ' · overrides ' + i.overrides.join(',') : ''}${i.resolved ? ' · resolved ' + JSON.stringify(i.resolved) : ''}`);
+    console.log(`at ${i.at || (i.tail ? 'tail' : 'triage')}${i.at ? ' (' + st.get(i.at).r.key + ' ' + st.get(i.at).r.st + ')' : ''}${i.kind ? ' · kind ' + i.kind : ''}${i.seen ? ' · seen ' + i.seen : ''}${i.why ? ' · ' + i.why : ''}${i.deps?.length ? ' · deps ' + i.deps.join(',') : ''}${i.overrides?.length ? ' · overrides ' + i.overrides.join(',') : ''}${i.leftBy?.length ? ' · left standing by ' + i.leftBy.join(',') : ''}${i.resolved ? ' · resolved ' + JSON.stringify(i.resolved) : ''}`);
 };
 C.render = (cx, { opt }) => {
     const { sha, d } = need(cx);
@@ -867,9 +867,9 @@ C.step = (cx, { pos, opt }) => { // step add <release> | step set <step> | step 
         return write(cx, sha, d, `lc step add ${k} ${key}`);
     }
     if (verb === 'move') return C.defer(cx, { pos: [k], opt });
-    if (verb === 'drop') { // a planned row with nothing left in it (its issues closed or moved) leaves the roadmap
+    if (verb === 'drop') { // a row with nothing left in it (its issues closed or moved), planned or started, leaves the roadmap
         const { r, s } = step(d, k); const reason = one(opt, 'reason', 'why');
-        if (s.st !== 'planned' || r.st === 'frozen') fail(`${k} is ${s.st} in a ${r.st} release`);
+        if (s.st === 'landed' || r.st === 'frozen') fail(`${k} is ${s.st} in a ${r.st} release`);
         const held = d.issues.filter(i => i.at === k); if (held.length) fail(`${k} still holds ${held.map(i => i.id).join(', ')}`);
         r.steps = r.steps.filter(x => x !== s);
         return write(cx, sha, d, `lc step drop ${k}\n\n${reason}`, `${k} dropped`);
@@ -930,7 +930,16 @@ C.land = (cx, { pos, opt }) => {
         if (l.branch !== r.branch) fail(`${slug} landed on ${l.branch}, ${r.key} integrates ${r.branch}`);
         if (t.evidence?.review?.result !== 'pass' || t.evidence?.review?.head !== l.reviewedHead || t.evidence?.ready?.head !== l.reviewedHead) fail(`${slug}: review/ready evidence does not cover the landed head`);
         onRemote(cx, l.head, r.branch);
-        s.landed = { slug, head: l.head, reviewedHead: l.reviewedHead, tree: l.tree, ci: (t.evidence.ciRuns || []).filter(x => x.head === l.reviewedHead).map(x => x.id), at: cx.now };
+        // What the review let stand (the "left" lines of its table): each names an open issue, which remembers the
+        // task that left it, and a decision it cites exists. The map entries the brief names are checked at the report gate.
+        const leftRows = Object.entries(t.evidence.review.table || {}).filter(([, v]) => v.verdict === 'left');
+        for (const [rule, v] of leftRows) {
+            if (v.decision && !d.decisions.some(x => x.id === v.decision)) fail(`${slug}: the review leaves rule ${rule} under unknown decision ${v.decision}`);
+            for (const id of v.ids || []) { const i = issue(d, id); i.leftBy = [...new Set([...(i.leftBy || []), slug])]; }
+        }
+        s.landed = { slug, head: l.head, reviewedHead: l.reviewedHead, tree: l.tree, ci: (t.evidence.ciRuns || []).filter(x => x.head === l.reviewedHead).map(x => x.id), at: cx.now,
+            ...(leftRows.length ? { left: leftRows.map(([rule, v]) => ({ rule, ids: v.ids, ...(v.decision ? { decision: v.decision } : {}) })) } : {}),
+            ...((t.brief?.map || []).some(x => !/^none:/.test(x)) ? { map: t.brief.map } : {}) };
     }
     s.st = 'landed';
     for (const id of many(opt.keep)) { const i = issue(d, id); if (i.at !== s.key) fail(`${id} is not in ${s.key}`); place(d, i, 'triage', { reason: `kept open when ${s.key} landed` }); }
@@ -1061,6 +1070,12 @@ C.gate = (cx, { pos, opt }) => { // each gate's evidence is checked against the 
         for (const [k, v] of prev ? Object.entries(detectors) : []) {
             const was = prev.gates.report.detectors[k] || 0, leave = new RegExp(`^accepted growth: ${k}\\b.*\\b(M\\d+)\\b`, 'm').exec(f.text);
             if (v > was && !(leave && d.decisions.some(x => x.id === leave[1]))) fail(`rules-check ${k} grew ${was} → ${v} since ${prev.key}: remove the new hits, or the report says "accepted growth: ${k} <why> <decision id>"`);
+        }
+        // The map entries the landed tasks said they change: each named file was refreshed on a commit that holds the landing.
+        for (const st of r.steps) for (const entry of st.landed?.map || []) {
+            const file = entry.split(':')[0], full = path.join(cx.planning, 'architecture', file);
+            const at = fs.existsSync(full) && (/^Checked at ([0-9a-f]{7,40})\b/m.exec(fs.readFileSync(full, 'utf8')) || [])[1], checked = at && rev(cx, at);
+            if (!checked || !cx.ok(['merge-base', '--is-ancestor', st.landed.head, checked])) fail(`map ${file} is checked at ${at || 'no commit'}, before ${st.key} landed (${st.landed.slug} changes "${entry}"): refresh the entry and set "Checked at" to the release head`);
         }
         Object.assign(rec, { file: f.file, sha256: f.sha256, detectors });
     }
