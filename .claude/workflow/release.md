@@ -11,6 +11,7 @@
   and keeps behaviour (the A/B shows no player-visible change), its behaviour changes come in their own release. Bugs
   are still fixed in the rule's owner with a test of what the player sees, never as a call-site patch: small releases
   on a dirty codebase otherwise turn into endless symptom fixing.
+- A script release (lc type `script`; maintainer 2026-11-12: the economy ledger and the paper model beside 1b) changes only `scripts/` and `tests/`: it passes CI and the report, with no trace and no A/B, and may run beside an open code release because it starts no server and changes no behaviour. A rule it models moves into `src/` only in the code release that first calls it.
 - Scope closes after the release's final traced run: from then on only fixes of what the runs and the A/B show. Such a fix of a frozen release: `lc unfreeze <release> --decision <id> --reason <what the runs showed>`, the fix as a new step (`lc step add`, `lc assign`, `lc start`, `lc land`, `lc resolve`), `lc freeze` at the new tip, then every gate again on that head (no earlier gate carries over).
   Code freezes before the final A/B: a change landing after it repeats the A/B, so everything else waits for the next
   release (maintainer 2026-11-10: most of a day went to re-running after late fixes).

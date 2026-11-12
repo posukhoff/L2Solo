@@ -542,6 +542,30 @@ test('unfreeze: a frozen release takes the fix its final runs asked for only by 
     assert.strictEqual(w.ok('get', '1b.1', 'head').trim(), head);
 });
 
+test('a script release needs only ci and report, and lands and freezes only while its diff stays in scripts/ and tests/', () => {
+    const w = world(); w.ok('import', '--decisions', w.seed);
+    w.ok('release', 'add', '2e', '--group', '2', '--order', '79', '--type', 'script'); w.ok('step', 'add', '2e', '--key', '2e.1', '--title', 'ledger');
+    w.ok('add', '--sec', 'economy', '--origin', 'design 11-12', '--rule', '8', '--sites', '`Ledger.run`', '--what', 'no ledger', '--fix', 'a report', '--id', 'DT-950', '--kind', 'gap', '--to', '2e.1', '--decision', 'M2');
+    w.sh(['branch', 'ivan/econ-e1', w.base]); w.sh(['push', '-q', 'fork', 'ivan/econ-e1']);
+    w.ok('open', '2e', '--branch', 'ivan/econ-e1', '--base', w.base);
+    assert.match(w.ok('status'), /\n2e open script ivan\/econ-e1 · steps 0\/1 landed · unresolved 0 · gates ci· report·\n/);
+    w.no(/script releases need gates ci, report/, 'gate', '2e', 'trace', '--run', 'x');
+    w.no(/a script release has the fixed gates ci, report/, 'gates', 'script', 'ci', '--decision', 'M2');
+    const put = (file, text) => { w.sh(['checkout', '-q', 'ivan/econ-e1']); fs.mkdirSync(path.dirname(path.join(w.repo, file)), { recursive: true }); fs.writeFileSync(path.join(w.repo, file), text); w.sh(['add', file]); w.sh(['commit', '-qm', file]); return w.sh(['rev-parse', 'HEAD']); };
+    put('scripts/economy/ledger.js', '1\n'); const h1 = put('tests/test_economy_ledger.js', '1\n');
+    landedTask(w, 'e1', w.base, h1, 'ivan/econ-e1', ['DT-950']); w.ok('start', '2e.1', '--task', 'e1'); w.sh(['push', '-q', 'fork', 'ivan/econ-e1']);
+    assert.match(w.ok('land', '2e.1'), /2e\.1 landed/);
+    assert.match(w.ok('freeze', '2e'), /2e frozen at/);
+    w.no(/gates missing: ci, report$/m, 'close', '2e'); // nothing else is asked of it
+    const m = w.decide('the report showed a gap', 'action=unfreeze,release=2e'); w.ok('unfreeze', '2e', '--decision', m, '--reason', 'report: a missing column');
+    w.ok('step', 'add', '2e', '--key', '2e.2', '--title', 'a rule moved early');
+    const h2 = commit(w, 'ivan/econ-e1', 'a price rule in game code'); // game.js: not a script
+    landedTask(w, 'e2', h1, h2, 'ivan/econ-e1', ['DT-950']); w.ok('start', '2e.2', '--task', 'e2'); w.sh(['push', '-q', 'fork', 'ivan/econ-e1']);
+    w.no(/2e is a script release: it changes only scripts\/ and tests\/, not game\.js; game code and data go in a code release/, 'land', '2e.2');
+    w.ok('step', 'move', '2e.2', '--to', '2', '--reason', 'game code waits for release 2');
+    w.no(/2e is a script release: it changes only scripts\/ and tests\/, not game\.js/, 'freeze', '2e'); // the tip still carries it
+});
+
 test('contract: records written by the real workflow.js pass lc land, resolve and gate ci', () => {
     const w = world(); w.ok('import', '--decisions', w.seed);
     // a minimal game checkout and policy home the real workflow.js accepts
