@@ -157,4 +157,38 @@ assert.equal(snapshot.tradeTowns.none[String(island[0])], 'Talking Island', `${i
 const markets = new Set(Object.values(snapshot.tradeTowns.none));
 assert.ok([...markets].every(town => villages.includes(town)) && markets.size >= 4, [...markets].join(', '));
 
+// A servitor costs a player crystals (the game spares bots): the Warlock's
+// line at 40 casts the first summon its cold fight lists, each cast paying the
+// rank's itemCount and, over the servitor's life, itemConsumeSteps payments of
+// itemCountOT; the life loses timeLostActive ms each second it fights and
+// timeLostIdle ms otherwise, at the busy share of the level's best row.
+const summoner = Inputs.extract({ preset: 'x1', lines: ['14', '2'], levels: [40, 40] });
+const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
+const warlock = Profile.profileFor(HuntCycle.referenceState(Table.roleClass('14', 40), 40, { line: 14 }), 0);
+const cast = Profile.summonSkills(warlock)[0], skillRows = require('../data/Skills/Active/active.json');
+const summonRow = skillRows.find(row => row.selfId === cast.selfId), rank = summonRow.levels.find(row => row.level === cast.level);
+assert.equal(summonRow.template.name, 'Summon Kai the Cat', 'a Warlock at 40 casts Kai the Cat');
+const due = summoner.upkeep['14'][40], busy = summoner.hours['14'][40].best.busyShare;
+assert.equal(summonRow.summon.itemIdOT, rank.itemId, 'the cast and the upkeep take one crystal');
+assert.deepEqual(due.map(row => [row.id, row.what.skill, row.what.level, row.what.name]), [[rank.itemId, cast.selfId, cast.level, 'Summon Kai the Cat']]);
+assert.equal(rank.itemId, 1459, 'C crystals');
+const life = summonRow.summon.totalLifeTime / (busy * summonRow.summon.timeLostActive + (1 - busy) * summonRow.summon.timeLostIdle);
+close(due[0].perHour, 3600 * (rank.itemCount + summonRow.summon.itemConsumeSteps * rank.itemCountOT) / life, 'crystals per hunt hour from the skill data');
+// Rank 1: 1 at the cast and 4 steps of 1 over a 1,200,000 ms life lost at 500 ms a second idle, 1000 fighting.
+close(due[0].perHour, 3600 * 5 * (500 + 500 * busy) / 1200000, `5 crystals a life at busy share ${busy}`);
+assert.equal(summoner.upkeep['2'], undefined, 'a fighter line keeps no servitor');
+assert.equal(snapshot.upkeep[line], undefined, 'nor does a Bounty Hunter');
+// Below 20 the line's Mage has no summon; from 20 its Wizard casts Mew the
+// Cat, then Kat the Cat, and each of their first ranks waits 6 hours to be
+// cast again: one cast of each per 6 hours (1 and 3 D crystals).
+const early = Inputs.extract({ preset: 'x1', lines: ['14'], levels: [19, 20] });
+assert.ok(early.hours['14'][19].best, 'the line hunts at 19');
+assert.equal(early.upkeep['14'][19], undefined, 'no summon below 20');
+assert.deepEqual(early.upkeep['14'][20].map(row => [row.id, row.what.name, row.perHour]), [[1458, 'Summon Mew the Cat', 1 / 6], [1458, 'Summon Kat the Cat', 3 / 6]]);
+// The arrow of each bow grade, as the game's arrow stock names it.
+const ArrowStock = invoke('GameServer/Inventory/ArrowStock');
+assert.deepEqual(snapshot.arrowIds, { ...ArrowStock.BY_RANK });
+assert.equal(snapshot.arrowIds.d, 1341, 'Bone Arrow for a D bow');
+assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items');
+
 console.log('PASS economy model inputs snapshot');

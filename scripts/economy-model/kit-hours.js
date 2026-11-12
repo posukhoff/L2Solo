@@ -31,7 +31,13 @@ const { wornKit } = Worth;
 // Spiritshot; a kind the anchor has no price for is left out) the hour gross of shots (gross) and the shots it fires an
 // hour (units) at the worn weapon's own count per action; empty for a
 // weapon that fires none or bare hands. A decision prices the shots
-// (rules/worth firing).
+// (rules/worth firing). A worn bow spends one arrow per attack: its hour
+// states per option the arrows it spends, { id: the arrow of the bow's
+// grade, units: an hour }, on each shot kind (arrows) and for the hour
+// firing none (noneArrows, beside none when none is stated); `arrows: null`
+// on a bow means the attacks are not stated, never zero arrows; absent for any
+// other weapon. The hour is gross of
+// arrows as it is of shots.
 
 // The spots a main's occupation ranks (its line's first spots by income).
 const TOP_SPOTS = 10;
@@ -84,11 +90,26 @@ function referenceBot(owners, line, level, pieces) {
 // rowCharge(role, spotId, shotRows): the charge a spot row counts its shots at,
 // null where the table has no reference count for it: a row that fires shots
 // without one is no cell of that kind.
+// Per cell also the bow attacks a kill takes at the row's own fight
+// (attacks): a bow spends one arrow per attack, landed or missed, and none
+// on a skill (Actor/BowResources at the normal attack); the table counts no
+// attacks, only shot actions (a landed attack or a skill that loads a
+// shot), so a kill's attacks are its shot actions: a row firing shots,
+// perKill over its charge; a row firing none, its fight seconds at the
+// rate of the spot's row firing the plain shot (that row's shot actions
+// over its fight seconds: a shot changes an attack's damage, not the
+// attack cycle). null where that row fires no shots or has no reference
+// count.
 function referenceHunt(owners, line, level, state, best, deathHours, useShots, rowCharge) {
     const { Table, HuntCycle, ShotStock, Hunt, Rewards } = owners;
     const spots = [String(best.spotId), ...Table.rankedIncome(line, level).slice(0, TOP_SPOTS).map(row => String(row.spotId))], cells = new Map();
     const role = Table.roleFor(state), shotRows = ShotStock.shotRows(ShotStock.planForState(state), useShots);
     const rewardOptions = { spoilSkillLevel: Rewards.spoilSkillLevel(state) }, price = Hunt.consumablePrices(state).shots;
+    const shotlessAttacks = id => {
+        const own = Table.cycle(id, role, Number(state.level), shotRows, rewardOptions), fired = Table.cycle(id, role, Number(state.level), true, rewardOptions);
+        const ref = own && fired?.shots > 0 && fired.fight > 0 ? rowCharge(role, id, true) : null;
+        return ref === null ? null : own.fight * fired.shots / ref / fired.fight;
+    };
     for (const spotId of spots) {
         if (cells.has(spotId)) continue;
         const reader = HuntCycle.reader(state, { deathHours, hunt: useShots === false ? { spotId, useShots: false } : { spotId } });
@@ -97,23 +118,25 @@ function referenceHunt(owners, line, level, state, best, deathHours, useShots, r
             const perKill = shotRows ? Table.cycle(id, role, Number(state.level), shotRows, rewardOptions)?.shots || 0 : 0;
             const ref = perKill > 0 ? rowCharge(role, id, shotRows) : null;
             if (perKill > 0 && ref === null) return;
-            cells.set(String(id), { reader, index, perKill, perCharge: ref === null ? 0 : perKill / ref, price });
+            const perCharge = ref === null ? 0 : perKill / ref;
+            cells.set(String(id), { reader, index, perKill, perCharge, price, attacks: shotRows ? perCharge : shotlessAttacks(id) });
         });
     }
     return [...cells.values()];
 }
 
 // An option's hour over its cells: per cell the reader's hour of the kit
-// (numbers) with its shot bill given back (gross, times the band's scale)
-// and the shots fired at the kit's charge (units); the cell taken is the one
-// that nets most at the anchor price of the option's shot (price; 0 firing
-// none). Returns { gross, units }.
+// (numbers) with its shot bill given back (gross, times the band's scale),
+// the shots fired at the kit's charge (units) and the bow attacks (attacks:
+// the kills' attacks at the kit's fight, null where the cell states none);
+// the cell taken is the one that nets most at the anchor price of the
+// option's shot (price; 0 firing none). Returns { gross, units, attacks }.
 function optionHour(cells, numbers, charge, price, scale) {
     let best = null;
     for (const cell of cells) {
         const one = cell.reader.hourAt(numbers, cell.index), fired = one.kills * one.share;
         const gross = (one.income + fired * cell.perKill * cell.price) * scale, units = fired * cell.perCharge * charge;
-        if (!best || gross - units * price > best.net) best = { gross, units, net: gross - units * price };
+        if (!best || gross - units * price > best.net) best = { gross, units, net: gross - units * price, attacks: cell.attacks === null ? null : fired * cell.attacks };
     }
     return best;
 }
@@ -133,7 +156,8 @@ function kitOwners() {
         Rewards: require('../../src/GameServer/Bot/Economy/SpotRewardExpectation'),
         ColdRest: invoke('GameServer/Bot/Population/ColdRest'),
         Enchant: invoke('GameServer/Items/C4EnchantRules'),
-        Grades: require('../../src/GameServer/Bot/AI/GearGradeRule')
+        Grades: require('../../src/GameServer/Bot/AI/GearGradeRule'),
+        Arrows: require('../../src/GameServer/Inventory/ArrowStock')
     };
 }
 
@@ -187,7 +211,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     // evidence, else the first price), never through the live server's board,
     // whose module needs the World and the database.
     invoke('GameServer/Bot/Economy/StaticMerchantPricing').useBoard(() => null);
-    const owners = kitOwners(), { Data, Index, Table, Profile, Valuation, ColdRest, Enchant, Grades, ShotStock } = owners;
+    const owners = kitOwners(), { Data, Index, Table, Profile, Valuation, ColdRest, Enchant, Grades, ShotStock, Arrows } = owners;
     const lines = snapshot.gearLadder?.lines || {};
     // A shot the anchor has no price for (no route makes it) is no option for
     // the spot choice: null. A price of 0 is a free shot.
@@ -252,7 +276,9 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     // (line, band index, weapon) -> the options the weapon fires (ShotStock's
     // plans of the body), all a reader reads of the weapon: the body's own
     // plan (its shot key, which the shotless readers' death hour reads) and
-    // per kind { kind, id, charge, key }.
+    // per kind { kind, id, charge, key }; and the arrow a bow spends (arrow:
+    // ArrowStock's of the bow's grade, as Actor/BowResources takes it; null
+    // for any other weapon).
     const shots = new Map();
     const firesOf = (line, at, weapon, body) => {
         const key = `${line}:${at}:${weapon}`;
@@ -263,7 +289,9 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
                 const blessed = plain.kind === 'soulshot' ? null : ShotStock.planForState(state, { blessed: true });
                 for (const plan of [plain, blessed]) if (plan?.selfId) kinds.push({ kind: plan.kind, id: Number(plan.selfId), charge, key: `${plan.kind}:${plan.selfId}` });
             }
-            shots.set(key, { own: own ? `${own.kind}:${own.selfId}` : 'none', kinds });
+            const item = weapon ? Index.find(Data.items, weapon) : null;
+            const arrow = item?.template?.kind === 'Weapon.Bow' ? Arrows.BY_RANK[String(item.etc?.rank ?? 'none').toLowerCase()] ?? null : null;
+            shots.set(key, { own: own ? `${own.kind}:${own.selfId}` : 'none', kinds, arrow });
         }
         return shots.get(key);
     };
@@ -286,19 +314,25 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
             return hunts.get(key);
         };
         return {
+            arrow: fires.arrow,
             none: build(`${line}:${at}:none:${fires.own}:${regen}`, false, bodyOf),
             kinds: fires.kinds.filter(row => anchorOf(row.id) !== null).map(row => ({ ...row, cells: build(`${line}:${at}:${row.key}:${regen}`, true, () => kindBody(bodyOf(), row.kind)) }))
         };
     };
     // A kit's hour of its options' cells at its numbers.
+    // A bow's options carry their arrows ({ id, units }, null where the cell
+    // states no attacks); any other weapon's carry none.
+    const arrowsOf = (arrow, at) => (at.attacks === null ? null : { id: arrow, units: at.attacks });
     const hourOf = (options, numbers, scale) => {
-        const none = options.none ? optionHour(options.none, numbers, 0, 0, scale).gross : null, out = [];
+        const shotless = options.none ? optionHour(options.none, numbers, 0, 0, scale) : null, none = shotless ? shotless.gross : null, out = [];
         for (const row of options.kinds) {
             if (!row.cells) continue;
             const at = optionHour(row.cells, numbers, row.charge, anchorOf(row.id), scale);
-            out.push({ id: row.id, kind: row.kind, gross: at.gross, units: at.units });
+            out.push(options.arrow ? { id: row.id, kind: row.kind, gross: at.gross, units: at.units, arrows: arrowsOf(options.arrow, at) }
+                : { id: row.id, kind: row.kind, gross: at.gross, units: at.units });
         }
-        return none === null && !out.length ? null : { none, shots: out };
+        if (none === null && !out.length) return null;
+        return shotless && options.arrow ? { none, noneArrows: arrowsOf(options.arrow, shotless), shots: out } : { none, shots: out };
     };
     // A worn list's hour and numbers by a whole profile pass, with the body
     // wearing it and its regeneration terms (hour null: not stated).

@@ -32,8 +32,9 @@ function usePreset(preset) {
 // Every game file the model's hours read beyond the hunt tables' own hash
 // (TableFingerprint 'hunt'): the spot table's reader, the hunt reader, the
 // reward expectation, the walk back, the shot and item pricing, the death
-// valuation and the caster mark. A change to one changes an hour or a mark
-// of the snapshot.
+// valuation and the caster mark, the servitor's life rule and the skill model
+// its upkeep is read through, the arrow of each bow grade. A change to one
+// changes an hour, a mark, an upkeep or an id of the snapshot.
 const EXTRA_FILES = Object.freeze([
     'src/GameServer/Bot/AI/SpotValueTable.js',
     'src/GameServer/Bot/AI/BotHuntEfficiency.js',
@@ -41,7 +42,11 @@ const EXTRA_FILES = Object.freeze([
     'src/GameServer/Bot/Economy/WalkBack.js',
     'src/GameServer/Bot/Economy/StaticMerchantPricing.js',
     'src/GameServer/Bot/Economy/EconomicValuation.js',
-    'src/GameServer/Bot/Economy/BotImprovementPolicy.js'
+    'src/GameServer/Bot/Economy/BotImprovementPolicy.js',
+    'src/GameServer/Npc/SummonControl.js',
+    'src/GameServer/Model/Skill.js',
+    'src/GameServer/Inventory/ArrowStock.js',
+    'src/GameServer/Actor/BowResources.js'
 ]);
 
 function extraFilesHash() {

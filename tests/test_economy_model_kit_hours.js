@@ -4,7 +4,8 @@
 // gear ladder's spots, read without a World or a database. It states the
 // hour firing no shots and, per kind of shot the worn weapon fires, the hour
 // gross of shots and the shots fired an hour at that weapon's own count per
-// action; a decision prices the shots (rules/worth firing).
+// action, and for a bow the arrows each option spends an hour; a decision
+// prices the shots (rules/worth firing).
 const assert = require('node:assert/strict');
 const os = require('os');
 
@@ -84,7 +85,7 @@ function gamePass(line, row, kit, kind, price) {
             const refLevel = perKill > 0 ? Table.referenceLevel(id, role, shots) : null, refWeapon = refLevel ? weaponOf(kitOf(line, refLevel)) : 0;
             const refCharge = refWeapon ? Number(etc(refWeapon)[field]) || 0 : 0, raw = one.kills * one.share * perKill;
             const gross = (one.income + raw * costs.shots) * row.scale, units = refCharge > 0 ? raw / refCharge * charge : 0;
-            if (!out || gross - units * price > out.net) out = { spotId: String(id), gross, units, raw, refWeapon, refCharge, charge, income: one.income * row.scale, net: gross - units * price, id: plan.selfId };
+            if (!out || gross - units * price > out.net) out = { spotId: String(id), gross, units, raw, refWeapon, refCharge, charge, income: one.income * row.scale, net: gross - units * price, id: plan.selfId, kills: one.kills, fight: one.fight };
         });
     }
     return out;
@@ -228,6 +229,43 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
     };
     within(perRow(bKit), 1, 1e-9, 'with the B sword: the units over the rows\' shots at the count ratio');
     within(perRow(cKit), 1, 1e-9, 'with Flamberge: the units over the rows\' shots at the count ratio');
+}
+
+// (2c) A bow spends one arrow per attack, of its grade (Actor/BowResources):
+// a bow kit's hour states the arrows of each option, against game owners
+// the service does not compute with: the arrow ArrowStock names for the
+// state's equipped bow, and the count a fight spends per action
+// (ColdCombatProfile.shotSupply).
+{
+    const ArrowStock = require('../src/GameServer/Inventory/ArrowStock');
+    const row = band(archer, 52, 52, 1, false), arch = KitHours.gameKitHours({ snapshot: { header: snapshot.header, gearLadder: { lines: { [archer]: [row] } } }, anchor });
+    const kit = kitOf(archer, 52), bow = weaponOf(kit), hour = arch.hour(archer, 52, kit), shot = hour.shots.find(entry => entry.kind === 'soulshot');
+    const arrowOf = worn => ArrowStock.currentId(stateIn(archer, row, worn));
+    // (a) The soulshot option: one arrow per shot action, its shots an hour
+    // over the count a fight spends per action with that bow.
+    const count = spentPerAction(archer, row, kit);
+    assert.ok(count > 1, `the archer's bow at 52 fires ${count} soulshots an action`);
+    assert.equal(shot.arrows.id, arrowOf(kit), 'the arrow of the bow\'s grade');
+    within(shot.arrows.units, shot.units / count, 1e-9, 'arrows an hour: the shots over the count per action');
+    // (b) A sword spends no arrows: its hour states none.
+    const sword = kitHours.hour(fighter, 47, kitOf(fighter, 47));
+    assert.ok(!('noneArrows' in sword) && sword.shots.length && sword.shots.every(entry => !('arrows' in entry)), 'a sword kit states no arrows');
+    // (c) A bow of another grade (the archer's C bow of 47) spends its own arrow;
+    // the piece put on states the same hour as the kit worn with it.
+    const cBow = weaponOf(kitOf(archer, 47)), slot = kit[7] ? 7 : 14, cKit = { ...kit, [slot]: cBow }, cHour = arch.hour(archer, 52, cKit);
+    assert.notEqual(arrowOf(cKit), arrowOf(kit), 'a C bow and a B bow spend different arrows');
+    assert.ok(cHour.shots.length && cHour.shots.every(entry => entry.arrows.id === arrowOf(cKit)) && cHour.noneArrows.id === arrowOf(cKit), 'the C bow\'s arrows');
+    assert.deepEqual(arch.swaps(archer, 52, kit, [{ slot, selfId: cBow }]).swaps[0].hour, cHour, 'the C bow put on');
+    assert.notEqual(bow, cBow, 'another bow');
+    // (d) The hour firing none: its kills' fight seconds at the attack rate
+    // of the spot's row firing soulshots (that row's shots per kill over the
+    // count the table's reference bow spent per action, over its fight
+    // seconds), at the cell the game's shotless pass takes.
+    const game = gamePass(archer, row, kit, 'none', 0), role = Table.roleFor(stateIn(archer, row, kit)), options = { spoilSkillLevel: Rewards.spoilSkillLevel(stateIn(archer, row, kit)) };
+    const fired = Table.cycle(game.spotId, role, row.level, true, options), refCount = spentPerAction(archer, row, kitOf(archer, Table.referenceLevel(game.spotId, role, true)));
+    near(hour.none, game.gross, 'the shotless hour');
+    assert.equal(hour.noneArrows.id, arrowOf(kit), 'the shotless hour\'s arrow');
+    within(hour.noneArrows.units, game.kills * game.fight * fired.shots / refCount / fired.fight, 1e-9, `the shotless hour's arrows at spot ${game.spotId}`);
 }
 
 
