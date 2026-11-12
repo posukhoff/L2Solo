@@ -13,6 +13,7 @@
  "gates": {},
  "steps": [
   {"key":"1b.0g1","title":"Enchant refused with the scroll in the bag (DT-226, investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
-  {"key":"1b.0g2","title":"Heine merchants killed in one millisecond (DT-271, investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
+  {"key":"1b.0g2","title":"Heine merchants killed in one millisecond (DT-271, investigation)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null},
+  {"key":"1b.0g3","title":"Ground items expire (DT-296)","P":"","S":"","who":"","needs":[],"st":"planned","tasks":[],"landed":null}
  ]
 }
