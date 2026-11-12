@@ -2,17 +2,18 @@
 'use strict';
 // What the flow cost, from its own records (read-only): task records per landing, restarts of one task, records lost to
 // a policy change, time from record to landing, and lifecycle writes made outside an lc command.
-// Usage: node .claude/tools/flow-stats.js [--since <ISO date>] [--repo <checkout>]
+// Usage: node .claude/tools/flow-stats.js [--since <ISO time, local unless it ends in Z>] [--repo <checkout>]
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const arg = k => { const i = process.argv.indexOf(k); return i < 0 ? undefined : process.argv[i + 1]; };
 const repo = path.resolve(arg('--repo') || path.join(__dirname, '../..'));
-const since = arg('--since') || '';
+const since = arg('--since') ? Date.parse(arg('--since')) : 0; // one instant for both sources: records are stamped in UTC, the lifecycle log in local time
+if (Number.isNaN(since)) { console.error('flow-stats: --since is not a time'); process.exit(2); }
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', maxBuffer: 1 << 26 }).trim();
 const dir = path.join(git('rev-parse', '--path-format=absolute', '--git-common-dir'), 'l2solo-workflow');
 const records = fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')))
-    .filter(r => r.slug && r.created >= since);
+    .filter(r => r.slug && Date.parse(r.created) >= since);
 const landed = records.filter(r => r.evidence?.landed);
 // One task restarted under new slugs: n-dt208, n2-dt208, dt201b, dt201c are the same task by name.
 const family = s => s.replace(/^[a-z]\d*-/, '').split('-')[0].replace(/(?<=\d)[a-z]$/, '');
@@ -36,7 +37,7 @@ console.log('review rounds: not recorded (record-review keeps only the last)');
 // Lifecycle data: a commit whose subject is not an lc command's was written past the commands.
 const COMMANDS = /^lc (add|edit|assign|place|dep|split|drop|decide|gates|release|step|open|start|land|resolve|defer|freeze|gate|close|publish|render|placement|import|sync|absorb)\b/;
 let log = [];
-try { log = git('log', '--format=%cI\t%s', 'ivan/lifecycle-data').split('\n').filter(Boolean).map(l => l.split('\t')).filter(([at]) => at >= since); } catch { /* no lifecycle data here */ }
+try { log = git('log', '--format=%cI\t%s', 'ivan/lifecycle-data').split('\n').filter(Boolean).map(l => l.split('\t')).filter(([at]) => Date.parse(at) >= since); } catch { /* no lifecycle data here */ }
 const off = log.filter(([, s]) => !COMMANDS.test(s));
 const used = new Map();
 for (const [, s] of log) { const m = COMMANDS.exec(s); if (m) used.set(m[1], (used.get(m[1]) || 0) + 1); }
