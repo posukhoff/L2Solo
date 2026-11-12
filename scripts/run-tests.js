@@ -786,6 +786,8 @@ const tests = [
     'tests/test_economy_model_inputs.js',
     'tests/test_economy_model_engine.js',
     'tests/test_economy_model_today.js',
+    'tests/test_economy_model_rules.js',
+    'tests/test_economy_model_worth.js',
     'tests/test_table_roles_and_blessed.js',
     'tests/test_c4_shot_multipliers.js',
     'tests/test_table_class_lines.js',
