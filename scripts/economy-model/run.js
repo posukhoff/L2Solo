@@ -38,7 +38,7 @@ const { STAGE_BANDS } = require('../economy/ledger-rules');
 const LEFT_OUT = Object.freeze([
     'parties: per-bot drops and exp are a solo bot\'s (a little high for party members)',
     'travel time and deaths: folded into the hunting share; the Scroll of Escape a trip reads is not bought',
-    'occupation does not answer prices: a main hunts the spot its bot stood at in the save while the snapshot has that spot\'s hour (inputs.js --spots), else its line\'s best spot for its level',
+    'occupation does not answer prices: a main hunts the spot its bot stood at in the save (else the one its travel or stay names there) while the snapshot has that spot\'s hour (inputs.js --spots), else its line\'s best spot for its level',
     'per-kill item yields at the kill mix: the spawn-mix yields scaled per spot row by its drop and spoil loot (Engine.killMixCorrection)',
     'potions, enchanting, augments, henna, quests, clans, the player, sessions, entry and retirement (a closed cohort)',
     'bot-to-bot trade, crafting, crafter twins, seller twins and field deals',

@@ -57,17 +57,19 @@ function lineOf(classId, id, snapshot, byClass) {
 }
 
 // A save's bots, read-only: { characterId, accountName, level, exp, activity,
-// spotId, classId, station, partyIds } without the merchants (partyIds: the
+// spotId (the spot the bot stands at, else the one its travel or its stay
+// names, else null), classId, station, partyIds } without the merchants (partyIds: the
 // member ids of the active background party the bot is in, else null); with
 // items, every item row.
 function savedBots(file, { items = false } = {}) {
     if (!fs.existsSync(file)) throw new Error(`missing start save ${file}`);
     const db = new DatabaseSync(file, { readOnly: true });
     try {
-        const bots = db.prepare(`SELECT b.characterId, b.accountName, b.level, b.exp, b.activity, b.spotId, c.classId
+        const bots = db.prepare(`SELECT b.characterId, b.accountName, b.level, b.exp, b.activity, b.spotId, c.classId,
+            json_extract(b.statsJson, '$.travel.spotId') AS travelSpotId, json_extract(b.statsJson, '$.stay.spotId') AS staySpotId
             FROM bot_life_state b JOIN characters c ON c.id = b.characterId ORDER BY b.characterId`).all()
             .filter(bot => bot.activity !== MERCHANT_ACTIVITY)
-            .map(bot => ({ ...bot, station: String(bot.accountName || '').startsWith(STATION_ACCOUNT_PREFIX) }));
+            .map(({ travelSpotId, staySpotId, ...bot }) => ({ ...bot, spotId: bot.spotId || travelSpotId || staySpotId || null, station: String(bot.accountName || '').startsWith(STATION_ACCOUNT_PREFIX) }));
         const parties = new Map();
         for (const row of db.prepare(`SELECT memberIdsJson FROM bot_background_parties WHERE status = 'active'`).all()) {
             const ids = JSON.parse(row.memberIdsJson || '[]').map(Number);
