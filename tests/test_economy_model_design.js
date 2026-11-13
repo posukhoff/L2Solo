@@ -263,15 +263,17 @@ const shareKit = (share, shots) => ({ ...kitHoursOf(() => 500, () => shots, (lin
 // The level situation is read by the hour the hunt reaches the level, and
 // only then: 11 exp to the next level at the row's 1 exp an hour (firing
 // none) times the kit's kill share. The reads: [[hour, level]] over a run;
-// atHour(context, hour), if given, acts on the run at each report hour.
+// atHour(context, hour), if given, acts on the run at each report hour. 1e6
+// exp a level to 25 (not 1e9): the 10 exp between the levels above are then
+// far above the rounding a level read allows (1e-9 of the level's exp).
 const levelReads = (share, shots, hours, atHour = null) => {
     const flat = { ...row('s1', 1000, 0), shotless: undefined };
-    const world = { ...keptKit(snapshot), exp: levels.map(level => (level <= 25 ? level * 1e9 : 25e9 + (level - 25) * 10)),
+    const world = { ...keptKit(snapshot), exp: levels.map(level => (level <= 25 ? level * 1e6 : 25e6 + (level - 25) * 10)),
         hours: { 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: flat, top: [] }])) } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, shots) }), read = [];
     const design = { ...real, start: context => { const hooks = real.start(context); return { ...hooks, levelUp: (main, now) => { read.push([now, main.level]); return hooks.levelUp(main, now); },
         hour: now => { if (atHour) atHour(context, now); return hooks.hour(now); } }; } };
-    Engine.simulate({ view, accounts: [accounts[1]], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
+    Engine.simulate({ view, accounts: [{ ...accounts[1], exp: 25e6 }], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
     return read;
 };
 // At share 2 (a kit making twice the row's kills) it is read at 5 hours, never at the row's 10.
@@ -501,14 +503,16 @@ const levelReads = (share, shots, hours, atHour = null) => {
 {
     const Mains = require('../scripts/economy-model/mains');
     const s0 = levels.map(level => [`s0@${level}`, yields]);
-    const world = { ...snapshot, walkBack: { s0: 0.01, s1: 0.25 }, fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+    // 1e6 exp a level (not the snapshot's 1e9): the 7.2 exp to level 26 below is then far above the
+    // rounding a level read allows (1e-9 of the level's exp).
+    const world = { ...snapshot, exp: levels.map(level => level * 1e6), walkBack: { s0: 0.01, s1: 0.25 }, fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
         hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: row('s0', 1000, 0), top: [] }])) },
         yields: { ...snapshot.yields, ...Object.fromEntries(s0) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s0) },
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s0: 'TownA', s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'], stockLowMinutes: 72 };
     // The shooter's (index 1) first visit, its level-ups, the hours its arrival rule is asked and its first shot trip's planned arrival; postAt: the hour a line of its shot is raised in TownD.
-    const runWith = ({ exp = 25e9, postAt = null }) => {
+    const runWith = ({ exp = 25e6, postAt = null }) => {
         const design = plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }), start = design.start, mainsSide = Mains.mainsSide;
         const seen = { visit: null, levelUps: [], asked: [], planned: null };
         let side = null;
@@ -531,7 +535,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
             return hooks;
         };
         try {
-            const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, design });
+            const out = Engine.simulate({ view, accounts: [{ ...accounts[0], exp: 25e6 }, { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, design });
             assert.equal(out.money.closureGap, 0);
             assert.equal(out.design.goods.failing, 0);
             return { ...seen, offers: out.design.market.events.offerPosted };
@@ -544,8 +548,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const posted = runWith({ postAt: 8 });
     assert.equal(posted.offers, 0, 'a main on its way to a seller is not woken by the line');
     assert.deepEqual([posted.visit.at, posted.visit.towns], [plain.visit.at, plain.visit.towns], 'a line raised on its way: the visit\'s hour and town unchanged');
-    // Level 26 starts at 26e9 exp: at 1 exp an hour it is reached and read at h7.2, on its spot.
-    const leveled = runWith({ exp: 26e9 - 7.2 });
+    // Level 26 starts at 26e6 exp: at 1 exp an hour it is reached and read at h7.2, on its spot.
+    const leveled = runWith({ exp: 26e6 - 7.2 });
     assert.deepEqual(leveled.levelUps.filter(at => at < leveled.planned).map(at => Math.round(at * 100) / 100), [7.2], `level 26 read once on its spot, none on the way: ${JSON.stringify(leveled)}`);
     // It sets out the walk and two hops before its arrival (the level read moves that hour by a float's rounding).
     const left = leveled.planned - 0.5 - 2 * config.hopHours;

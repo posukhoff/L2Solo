@@ -294,6 +294,22 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     assert.deepEqual(levels, [[100.5, 2]], 'level 2 read once, at the hour it hunts again');
 }
 
+// The level is read when the exp the hunt credits reaches it: the main fires
+// its 40 shots (20 an hour) at 50 exp an hour, then hunts bare at 25; its row
+// has a blessed hour of 100 exp it does not fire. Level 2 (100 exp) comes at
+// 2 h, level 3 (300 exp) 8 bare hours later; no read comes before its level,
+// and a read gains only the level it hunted.
+{
+    const row = { ...hour(100, 50, 20).best, shotless: { exp: 25 }, blessed: { exp: 100 } }, line = { ...hour(100, 50, 20), best: row };
+    const fired = { ...snapshot, hours: { 9: { 1: line, 2: line, 3: line, 4: line } } }, at = Engine.viewOf(fired), levels = [];
+    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => Engine.visit(main, at, options), nextArrival: () => null,
+        firing: () => ({ id: 1463, perHour: 20 }), kills: () => ({ shots: 1, bare: 1, blessed: 1 }), event() {}, hour: () => 0,
+        levelUp: (main, now) => { levels.push([Math.round(now * 1e6) / 1e6, main.level, Math.round(main.exp * 1e6) / 1e6]); return main; },
+        finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
+    Engine.simulate({ view: at, accounts: [{ ...accounts[0], shots: { 1463: 40 } }], bands, rates: silent, hours: 11, seed: 7, design });
+    assert.deepEqual(levels, [[2, 2, 100], [10, 3, 300]], 'each level read once, at the hour its hunted exp reaches it, with that exp');
+}
+
 // The hunt rule is pure: the main it is given is left as it was.
 const main = Engine.mainOf(accounts[0], 0, Engine.viewOf(snapshot), bands);
 const frozen = JSON.stringify(main);

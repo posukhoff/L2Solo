@@ -87,11 +87,17 @@ function viewOf(snapshot, options = {}) {
 
 // The exp at which a level starts (the table's index 0 is level 1).
 const expAt = (view, level) => view.exp[level - 1];
-function levelOf(view, exp, from = 1) {
+// The level an exp reaches; rounding: the share of a level's exp it may fall
+// short by and still reach it (LEVEL_ROUNDING at the level's read, none in a hunt).
+function levelOf(view, exp, from = 1, rounding = 0) {
     let level = from;
-    while (level < view.maxLevel && exp >= expAt(view, level + 1)) level++;
+    while (level < view.maxLevel && expAt(view, level + 1) - exp <= rounding * expAt(view, level + 1)) level++;
     return level;
 }
+// The level's read is scheduled at the hour the hunt's credit reaches the level's exp, but that credit
+// is a float sum that can land a few ulps under it at that hour. 1e-9 of the level's exp is far above
+// that rounding and at most a few exp at the table's highest levels.
+const LEVEL_ROUNDING = 1e-9;
 
 function bandOf(bands, level) {
     let name = bands[0][0];
@@ -264,21 +270,33 @@ function designYieldRows(view, line, level, row, form) {
 // hunted (kills: { bare, shots, blessed }, the design plane's killsOf; null
 // reads 1), and firing's perHour is already its worn kit's. delta as hunt's,
 // with shotId and huntBare.
+// The shot a design hunt fires and the hunting hours its held stock lasts
+// (held over the shots an hour; then it hunts bare), and the form of its
+// row it fires in (formOf).
+function firedOf(view, main, firing) {
+    const shotId = firing?.id || 0, held = shotId ? main.shots[shotId] || 0 : 0, perHour = shotId ? firing.perHour || 0 : 0;
+    return { shotId, held, perHour, lasts: perHour > 0 ? held / perHour : 0, form: formOf(view, shotId) };
+}
+
+// The exp a form of a spot row credits for its hunting hours, at the worn
+// kit's kills in that form (kills: per form over the reference kit's; none: 1).
+const formExp = (main, best, form, hours, kills) => huntExp(main, rowIn(best, form), hours * (kills?.[form] ?? 1));
+
 function huntDesign(main, view, huntHours, random, firing = null, kills = null) {
     const best = spotRowOf(view, main), flows = emptyFlows();
     const delta = { flows, exp: 0, drops: [], shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0, shotId: 0, huntBare: 0 };
     if (!best || !(huntHours > 0)) { delta.noSpot = best ? 0 : 1; return { main, delta }; }
     delta.huntHours = huntHours;
     delta.ownSpot = best === ownRow(view, main.line, main.level, main.spot);
-    const shotId = firing?.id || 0, held = shotId ? main.shots[shotId] || 0 : 0, perHour = shotId ? firing.perHour || 0 : 0;
-    const shotHours = perHour > 0 ? Math.min(huntHours, held / perHour) : 0;
-    const form = formOf(view, shotId), adenaFactor = designAdenaFactor(view, best, main.level);
+    const { shotId, held, perHour, lasts, form } = firedOf(view, main, firing);
+    const shotHours = perHour > 0 ? Math.min(huntHours, lasts) : 0;
+    const adenaFactor = designAdenaFactor(view, best, main.level);
     const bag = { ...main.bag }, counts = new Map();
     for (const [at, hours] of [[form, shotHours], ['bare', huntHours - shotHours]]) {
         if (!(hours > 0)) continue;
         const row = rowIn(best, at), worn = hours * (kills?.[at] ?? 1);
         flows.huntCold += row.adena * adenaFactor * worn;
-        delta.exp += huntExp(main, row, worn);
+        delta.exp += formExp(main, best, at, hours, kills);
         for (const [id, perKill] of designYieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * worn);
     }
     flows.huntCold = Math.round(flows.huntCold);
@@ -493,36 +511,46 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     const randomFor = main => mulberry(hash(`${seed}:${main.id}:${main.counter}`));
     let events = 0;
 
-    // The level is scheduled at the most exp an hour the main may hunt its
-    // spot row at (the design mode's mains: the most of its forms, each at
-    // its worn kit's kills over the reference kit's; a kind of shot that is
-    // no option at its row counts no kills, so a fighter is not scheduled at
-    // the reference kit's hour through Blessed Spiritshots it cannot fire),
-    // so the situation does not come after the level is reached; one that
-    // comes before it is scheduled again from the exp then held. A committed
-    // visit or deal may change the kit or the row, so the level is scheduled
-    // again after each from the exp then held; the one pending level time per
-    // main is the one read, an earlier one still queued is skipped.
+    // The level is scheduled at the hour the exp the hunt credits reaches it
+    // (as levelOf reads it), counted from the hour its exp stands at (its
+    // last credited hunt, or the hour it hunts again after a visit's onward
+    // stops): a situation reads the main as it stands, not hunted to now. The
+    // design mode's hunt credits the form it fires while its held shots last,
+    // then the bare form (firedOf, formExp: as huntDesign credits), so the
+    // crossing is read on those two pieces; the plain and today hunts credit
+    // one exp an hour. A committed visit or deal may change the kit, the shots
+    // or the row, so the level is scheduled again after each from the exp then
+    // held; the one pending level time per main is the one read, an earlier
+    // one still queued is skipped.
     const pendingLevel = new Map(), unlevelable = new Set();
     const scheduleLevel = (main, now) => {
-        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, kills = plane && row ? plane.kills(main) : null;
-        const exp = !row ? 0 : kills ? Math.max(...['shots', 'bare', 'blessed'].map(form => huntExp(main, rowIn(row, form), kills[form] ?? 0))) : huntExp(main, row, 1);
-        const held = pendingLevel.get(main.index) ?? null;
-        if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) {
-            // Below the max level, a main with no exp at its row or no hunting share never levels: counted once per main.
+        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, held = pendingLevel.get(main.index) ?? null;
+        let at = Infinity;
+        if (row && share > 0 && main.level < view.maxLevel) {
+            // A need within float rounding of the level's exp is reached: the read is due at once.
+            const gap = expAt(view, main.level + 1) - main.exp, need = gap <= LEVEL_ROUNDING * expAt(view, main.level + 1) ? 0 : gap;
+            if (!plane) {
+                const exp = huntExp(main, row, 1);
+                if (exp > 0) at = main.since + need / (exp * share);
+            } else {
+                const kills = plane.kills(main), { lasts, form } = firedOf(view, main, plane.firing(main));
+                const fired = lasts > 0 ? formExp(main, row, form, lasts, kills) : 0;
+                const hours = need <= fired ? need / formExp(main, row, form, 1, kills) : lasts + (need - fired) / formExp(main, row, 'bare', 1, kills);
+                at = main.since + hours / share;
+            }
+        }
+        if (!Number.isFinite(at)) {
+            // Below the max level, a main whose hunt credits it no exp to the level (no row, no exp at its
+            // row once its shots are spent) or with no hunting share never levels: counted once per main.
             if (main.level < view.maxLevel && !unlevelable.has(main.index)) { unlevelable.add(main.index); ledger.counters.unlevelableMains++; }
             pendingLevel.set(main.index, null);
             return;
         }
-        // The level is reached when the exp reaches the next level's start (as levelOf reads it), counted
-        // from the hour its exp stands at (its last credited hunt, or the hour it hunts again after a
-        // visit's onward stops): a situation reads the main as it stands, not hunted to now.
-        const at = main.since + Math.max(0, expAt(view, main.level + 1) - main.exp) / (exp * share);
         // A level not reached before it leaves is not reached on its way: the arrival's visit schedules it again.
         const trip = pending.get(main.index);
         if (trip && trip.departs !== null && at > trip.departs) { pendingLevel.set(main.index, null); return; }
         pendingLevel.set(main.index, at);
-        if (at !== held) queue.push({ at, kind: 'level_up', who: main.index, level: main.level + 1 });
+        if (at !== held) queue.push({ at, kind: 'level_up', who: main.index });
     };
     // The one pending arrival (or situation to read) per main, replaced by the
     // rule's answer after each committed event; departs: the hour it leaves its
@@ -600,14 +628,11 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         if (event.kind !== 'level_up' && event.kind !== 'arrived_town') throw new Error(`an event of an unknown kind: ${event.kind}`);
         let main = event.kind === 'arrived_town' ? huntTo(mains[event.who], event.at, departs) : huntTo(mains[event.who], event.at);
         if (event.kind === 'level_up') {
-            // The level_up is the crossing: at its hour the level it was scheduled for is reached. The float
-            // credit to that hour can fall a few ulps short of the level's exp; levelOf would then keep the old
-            // level and the same crossing would be scheduled again at the same hour without end. So the read
-            // raises the exp to at least that level's exp (a level already passed leaves it as it is).
-            const exp = Math.max(main.exp, expAt(view, event.level)), level = levelOf(view, exp, main.level);
+            // The read takes a level its hunted exp reaches within float rounding (LEVEL_ROUNDING), no more.
+            const level = levelOf(view, main.exp, main.level, LEVEL_ROUNDING);
             const band = bandOf(bands, level), spot = ownRow(view, main.line, level, main.spot) ? main.spot : null;
             if (main.spot && !spot) ledger.counters.leftOwnSpot++;
-            main = { ...main, exp, level, band, spot };
+            main = { ...main, level, band, spot };
             if (plane) main = plane.levelUp(main, event.at);
             scheduleLevel(main, event.at);
             mains[event.who] = main;
