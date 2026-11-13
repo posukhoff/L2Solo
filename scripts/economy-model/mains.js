@@ -17,7 +17,7 @@ const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
 const { path, refillHours } = require('./rules/path');
 const { acquire } = require('./rules/acquire');
-const { trip, goalOf, deathAt } = require('./rules/trip');
+const { trip, goalOf, deathAt, shotTown, shotsLow } = require('./rules/trip');
 const { visit } = require('./rules/visit');
 const { occupation, stayHours } = require('./rules/occupation');
 const Workshop = require('./rules/workshop');
@@ -465,24 +465,35 @@ function mainsSide(ctx) {
     }
     // A line of an item entered reach (a twin's line in town, or an ad when
     // town is null): offer_posted for the mains that want it, at the gain
-    // over the price at their cap.
+    // over the price at their cap. A line of the shot a main fires, in the
+    // town it stands in or a trade town of the shot's grade or above, at or
+    // under its worth there, while it is low or out of the shot and no shot
+    // trip is pending: its sellers are read again (trip). A main with shots
+    // to spare reads them at its own stock_low.
     function offerPosted(item, town, price, owner, now) {
         for (const index of wantsByItem.get(item) || []) {
             if (index === owner || mains[index].station) continue;
+            const market = marketOf(index), want = market.wants[item];
+            if (!want) {
+                const main = mains[index], fired = firingOf(main);
+                if (town === null || fired?.id !== item) continue;
+                if (market.tripReason === 'stock_low:shots' || market.tripReason === 'shots_out') continue;
+                if (!shotsLow({ held: main.shots[item] || 0, perHour: fired.perHour }, { since: main.since, now, huntShare: rateOf(main.band).huntShare, stockLowHours: config.stockLowMinutes / 60 })) continue;
+                if (town !== townOf(main) && !ctx.tradeTownsOf(index, [item], true).includes(town)) continue;
+                if (!(Bounds.cap({ worth: fired.worth, npcSell: game.npcByTown[town]?.[item] ?? null }).cap >= price)) continue;
+                stats.events.offerPosted++;
+                ctx.rearrive(index, now, 'offer_posted');
+                continue;
+            }
             if (town !== null && townOf(mains[index]) !== town) continue;
-            const market = marketOf(index), want = market.wants[item], cap = want?.cap ?? (item === market.shotId ? market.shotCap : null);
-            if (!(cap >= price)) continue;
-            const units = want ? 1 : Math.max(1, market.shotNeed || 0);
-            if (want?.state === 'parked') {
+            if (!(want.cap >= price)) continue;
+            if (want.state === 'parked') {
                 const wants = { ...market.wants };
                 delete wants[item];
                 setMarket(index, { wants });
                 stats.waits.parkedWant.done++;
-            } else if (item === market.shotId && market.shotWait === 'parked') {
-                setMarket(index, { shotWait: null });
-                stats.waits.parkedShots.done++;
             }
-            setMarket(index, { deal: { gain: (cap - price) * units, item } });
+            setMarket(index, { deal: { gain: want.cap - price, item } });
             stats.events.offerPosted++;
             ctx.rearrive(index, now, 'offer_posted');
         }
@@ -490,7 +501,7 @@ function mainsSide(ctx) {
     const indexWants = index => {
         const market = marketOf(index), items = new Set();
         for (const [key, want] of Object.entries(market.wants)) if (want.state === 'parked' || want.state === 'wtb') items.add(Number(key));
-        if (market.shotWait === 'wtb' || market.shotWait === 'parked') items.add(market.shotId);
+        if (market.shotId) items.add(market.shotId);
         for (const item of market.indexed || []) if (!items.has(item)) wantsByItem.get(item)?.delete(index);
         for (const item of items) { if (!wantsByItem.has(item)) wantsByItem.set(item, new Set()); wantsByItem.get(item).add(index); }
         setMarket(index, { indexed: [...items] });
@@ -503,14 +514,12 @@ function mainsSide(ctx) {
     // adena moved, null when it failed.
     function meet(claim, buyer, now) {
         const other = claim.owner, item = view.items[claim.item], adena = claim.units * claim.price;
-        const shot = item?.kind === 'Other.Shot';
         if (claim.kind === 'sell_wtb' && buyer !== other && mains[other].money < adena) {
             const market = marketOf(other), ad = market.ads.wtb.find(row => row.id === claim.id);
             const patch = { ads: { ...market.ads, wtb: market.ads.wtb.filter(row => row.id !== claim.id) } };
             if (ad) {
                 stats.waits.wtb.failed++;
-                if (ad.item === market.shotId) patch.shotWait = null;
-                else if (market.wants[ad.item]?.state === 'wtb') { const wants = { ...market.wants }; delete wants[ad.item]; patch.wants = wants; }
+                if (market.wants[ad.item]?.state === 'wtb') { const wants = { ...market.wants }; delete wants[ad.item]; patch.wants = wants; }
             }
             setMarket(other, patch);
             placeAds(other, now, null);
@@ -521,9 +530,7 @@ function mainsSide(ctx) {
         ctx.commit(other, now, main => {
             if (buyer === other) return main;
             if (claim.kind === 'sell_wtb') {
-                const bag = shot ? main.bag : { ...main.bag, [claim.item]: (main.bag[claim.item] || 0) + claim.units };
-                const shots = shot ? { ...main.shots, [claim.item]: (main.shots[claim.item] || 0) + claim.units } : main.shots;
-                return { ...main, money: main.money - adena, bag, shots };
+                return { ...main, money: main.money - adena, bag: { ...main.bag, [claim.item]: (main.bag[claim.item] || 0) + claim.units } };
             }
             const bag = { ...main.bag, [claim.item]: main.bag[claim.item] - claim.units };
             if (!bag[claim.item]) delete bag[claim.item];
@@ -535,11 +542,9 @@ function mainsSide(ctx) {
         if (closed) stats.waits[side].done++;
         const patch = { ads: { ...market.ads, [side]: adsNow } };
         if (claim.kind === 'sell_wtb') {
-            if (shot) { if (market.shotWait) patch.shotWait = null; } else {
-                patch.incoming = { ...market.incoming, [claim.item]: 'buy' };
-                stats.obtained(gradeOfItem(item), 'buy');
-                if (market.wants[claim.item]) { const wants = { ...market.wants }; delete wants[claim.item]; patch.wants = wants; }
-            }
+            patch.incoming = { ...market.incoming, [claim.item]: 'buy' };
+            stats.obtained(gradeOfItem(item), 'buy');
+            if (market.wants[claim.item]) { const wants = { ...market.wants }; delete wants[claim.item]; patch.wants = wants; }
         }
         setMarket(other, patch);
         put(other, { memory: Knowledge.remember(accounts[other].memory, { item: claim.item, price: claim.price }) });
@@ -558,14 +563,16 @@ function mainsSide(ctx) {
         const flows = { huntCold: 0, npcSales: 0, fixedBuyers: 0, npcBuys: 0, fixedSellers: 0, fares: 0, warehouseFees: 0 };
         const delta = { flows, towns: [], gearToNpc: 0, gearBought: 0, shotsBoughtFixed: 0, shotsBoughtNpc: 0, shotsSoldNpc: 0, unsold: 0, missingPieces: 0, missingShots: 0, noTown: 0 };
         if (!nearest) { delta.noTown = 1; return { main, delta }; }
-        // The town trip chose: another town costs the gatekeeper fare there
-        // and back (from the nearest), paid as it leaves; short of it, the nearest.
-        const chosen = account.market.tripTown, hop = chosen && chosen !== nearest ? fareOf(nearest, chosen) : null;
-        const town = hop !== null && main.money >= 2 * hop ? chosen : nearest;
-        if (town !== nearest) { main = { ...main, money: main.money - 2 * hop }; flows.fares -= 2 * hop; }
+        // The town of a shot trip is read as it arrives (trip's shotTown over
+        // the sellers that stand now): another town costs the gatekeeper fare
+        // there and back (from the nearest), paid as it leaves; with no seller
+        // standing, and for any other trip, the nearest.
+        const cause = account.market.tripReason || 'start';
+        const sellers = cause === 'stock_low:shots' || cause === 'shots_out' ? shotTowns(main, nearest, firingOf(main)) : null;
+        const town = (sellers && shotTown({ here: nearest, ...sellers })) || nearest;
+        if (town !== nearest) { const hop = fareOf(nearest, town); main = { ...main, money: main.money - 2 * hop }; flows.fares -= 2 * hop; }
         delta.towns.push(town);
         put(index, { lastTown: town });
-        const cause = account.market.tripReason || 'start', refusedTowns = account.market.tripRefused || [];
         stats.trips[cause] = (stats.trips[cause] || 0) + 1;
         const visits = stats.visits, band = visits.byBand[main.band] ||= {};
         band[cause] = (band[cause] || 0) + 1;
@@ -589,8 +596,8 @@ function mainsSide(ctx) {
             const priced = routesOf(index, main, town, book, row, table ??= kitTableOf(main));
             if (priced.bounded) stats.worthBounded++;
             const routes = priced.acquired ? priced.acquired.routes : [];
-            // No seller in the towns it knows: no line or ad in reach, none in its twin's town or a town book it keeps, no NPC, Luxury or own twin.
-            const noSeller = !book.sell[row.selfId]?.length && book.seen[row.selfId] === undefined && !Object.values(account.townBooks || {}).some(known => known?.sell?.[row.selfId])
+            // No seller in reach: no line or ad in the book it reads or its twin's town, no NPC, Luxury or own twin.
+            const noSeller = !book.sell[row.selfId]?.length && book.seen[row.selfId] === undefined
                 && !routes.some(option => option.route === 'npc' || option.route === 'exchange' || option.route === 'twin');
             pieces[row.selfId] = { selfId: row.selfId, slot: row.slot, grade: gradeOfItem(view.items[row.selfId]), weapon: Engine.isWeapon(view.items[row.selfId]),
                 cap: priced.cap, capBy: priced.capBy, caps: priced.caps, routes, own: twin?.stock[row.selfId] || 0,
@@ -602,36 +609,24 @@ function mainsSide(ctx) {
         const shotCap = reserve ? Bounds.cap({ worth: reserve.worth, npcSell: game.npcByTown[town]?.[reserve.id] ?? null }) : null;
         const escrow = twin ? twin.lines.filter(line => line.side === 'buy').reduce((sum, line) => sum + line.qty * line.price, 0) + twin.bids.reduce((sum, bid) => sum + bid.qty * bid.price, 0) : 0;
         const before = market.ads, deposit = twin ? Workshop.depositFor(main.bag, twin, game, twin.decided, config.keepRule) : {};
-        // The dearest buy line it knows in another town for its stock, with
-        // the units it takes (stockSale 'accumulate').
-        const stash = account.stash || {}, knownBids = {};
-        if (config.stockSale === 'accumulate') {
-            const stockIds = [...new Set([...Object.keys(main.bag), ...Object.keys(stash)].map(Number))].filter(id => isStock(view.items[id]));
-            const elsewhere = new Set([...Object.keys(account.townBooks || {}), twin?.town].filter(other => other && other !== town));
-            for (const other of elsewhere) {
-                const book = knownBook(index, other, stockIds);
-                for (const id of stockIds) if (book?.buy?.[id] && book.buy[id].price > (knownBids[id]?.price || 0)) knownBids[id] = book.buy[id];
-            }
-        }
         // Its expected visits left in its grade: the hours to the next grade at its own visits per hour so far.
         const toGrade = ctx.hoursToGrade(main), visitsLeft = toGrade > 0 ? toGrade * marketOf(index).visits / Math.max(1, now) : Infinity;
         const out = visit({ index, money: main.money, bag: main.bag, shots: main.shots, kit: main.kit, weapon: main.weapon, ads: market.ads, wants: market.wants,
-            incoming: market.incoming, shotWait: market.shotWait }, {
+            incoming: market.incoming }, {
             now, town, adId: `${seed}:${index}:${main.counter}`, persona: account.persona, roll: hash(`${seed}:visit:${index}:${main.counter}`), items: game.items,
             crystalIds: game.crystalIds, book, npcSell: game.npcByTown[town] || {}, known, firstPrice: game.firstPrice,
             deposit, depositFee, twin: twin ? { wallet: twin.wallet, escrow, inputs: twin.inputMoney || 0, workshopMoney: config.workshopMoney } : null, firing,
-            keepRule: config.keepRule, fires: (wornHourOf(main)?.shots || []).map(shot => shot.id), stockSale: config.stockSale, stash, stashLooks: account.stashLooks || {}, knownBids, ahead: market.path.ahead || [], surplus: twin ? Object.fromEntries(Object.entries(twin.surplus || {}).map(([id, count]) => [id, Math.min(count, twin.stock[id] || 0)])) : {},
-            reserve: reserve && reserve.amount > 0 ? { id: reserve.id, amount: reserve.amount, cap: shotCap.cap, capBy: shotCap.by, own: twin?.stock[reserve.id] || 0 } : null,
+            keepRule: config.keepRule, fires: (wornHourOf(main)?.shots || []).map(shot => shot.id), ahead: market.path.ahead || [], surplus: twin ? Object.fromEntries(Object.entries(twin.surplus || {}).map(([id, count]) => [id, Math.min(count, twin.stock[id] || 0)])) : {},
+            reserve: reserve && reserve.amount > 0 ? { id: reserve.id, amount: reserve.amount, cap: shotCap.cap, own: twin?.stock[reserve.id] || 0 } : null,
             pieces, order: market.path.order, fares: view.fares[town] || {}, waitVisits: config.waitVisits,
             ladder: { mode: config.buyerLadder, visitsLeft }, buyerNoSeller: config.buyerNoSeller,
             ownCrystals: twin ? Object.fromEntries(Object.values(game.crystalIds).filter(id => twin.stock[id] > 0).map(id => [id, twin.stock[id]])) : {} });
         ctx.commitVisit(index, now, out, deposit);
-        put(index, { stash: out.stash, stashLooks: out.stashLooks });
-        // Stock sold to lines here (a hub: a town other than the nearest) and to the NPC, kept in the warehouse.
+        if (reserve && (cause === 'stock_low:shots' || cause === 'shots_out') && !((out.main.shots[reserve.id] || 0) > (main.shots[reserve.id] || 0))) stats.shotReport.bareTrips++;
+        // Stock sold to lines (in the nearest town or another one) and to the NPC.
         const sales = stats.stock;
         for (const stop of out.stops) for (const { selfId: id, count } of stop.items) {
             if (stop.kind === 'npc_sell' && isStock(view.items[id])) sales.npc += Math.round(count * (view.items[id]?.npcBuy || 0));
-            if (stop.kind === 'warehouse' && stop.target === 'stash') sales.stashed += count;
         }
         // Sales are paid at their meeting; a sale whose buyer cannot pay gives its units back.
         let money = out.main.money, bag = out.main.bag;
@@ -647,8 +642,8 @@ function mainsSide(ctx) {
         for (const [key, want] of Object.entries(wants)) if (want.state === 'parked') wants[key] = { ...want, cap: pieces[key]?.cap ?? want.cap };
         // Did it see a line of its shot at or under the shot's worth (the gate count)?
         const lineSeen = reserve ? { grade: ctx.shotGrade(reserve.id), seen: (book.sell[reserve.id] || []).some(entry => entry.price <= shotCap.cap) || (twin?.stock[reserve.id] || 0) > 0 } : marketOf(index).lineSeen;
-        setMarket(index, { lineSeen, ads: out.main.ads, wants, incoming: out.main.incoming, shotWait: out.main.shotWait, shotId: reserve?.id ?? null, shotCap: shotCap?.cap ?? null,
-            shotNeed: reserve?.amount || 0, stalled, pathDirty: out.gearChanged || out.stalled.length > 0, goalFresh: false, tripReason: null, tripTown: null, tripRefused: [] });
+        setMarket(index, { lineSeen, ads: out.main.ads, wants, incoming: out.main.incoming, shotId: reserve?.id ?? null,
+            shotNeed: reserve?.amount || 0, stalled, pathDirty: out.gearChanged || out.stalled.length > 0, goalFresh: false, tripReason: null });
         for (const row of out.obtained) stats.obtained(row.grade, row.route);
         for (const wait of out.waits) {
             const kind = stats.waits[wait.wait] || (stats.waits[wait.wait] = ctx.wait());
@@ -659,19 +654,8 @@ function mainsSide(ctx) {
         for (const stop of out.stops) if (stop.kind === 'gatekeeper') delta.towns.push(stop.target);
         placeAds(index, now, before);
         indexWants(index);
-        if (out.main.shotWait === null && reserve && reserve.amount > 0 && !(out.main.shots[reserve.id] > 0)) delta.missingShots++;
+        if (reserve && reserve.amount > 0 && !(out.main.shots[reserve.id] > 0)) delta.missingShots++;
         if (twin) wakeAt(index, now, 'main_arrived');
-        // What it saw of this town's book, for its next trips, as it stands
-        // after its deals: the bids for the stock it carried, keeps or drops
-        // at its spot and the asks for what it wants; a town whose trip was
-        // refused for want of gain at three visits in a row is forgotten.
-        const spotRow = Engine.spotRowOf(view, main), dropped = spotRow ? rowItems(main, spotRow, 'shots').items.map(item => item.id) : [];
-        const bidIds = [...new Set([...Object.keys(main.bag).map(Number), ...Object.keys(accounts[index].stash || {}).map(Number), ...dropped])].filter(id => isStock(view.items[id]));
-        const seenNow = Knowledge.remembered(books.towns[town], { bids: bidIds, asks: [...new Set(wantsOf(marketOf(index)).map(want => want.id))] }, index);
-        stats.counters.bookRowsDropped += seenNow.dropped;
-        const kept = Knowledge.afterVisit({ books: accounts[index].townBooks, refusals: accounts[index].bookRefusals, refused: refusedTowns, visited: town, asleep: accounts[index].asleep || [] });
-        stats.counters.booksForgotten += kept.forgotten.length;
-        put(index, { townBooks: { ...kept.books, [town]: seenNow.book }, bookRefusals: kept.refusals, asleep: kept.asleep });
         const after = { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon };
         // occupationAtTown (ours): its spot is re-chosen at its arrival in town too.
         return { main: config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after, delta };
@@ -692,52 +676,28 @@ function mainsSide(ctx) {
 
     // Stock: what a main sells to lines and the NPC (not gear, not shots).
     const isStock = item => !!item && !Engine.isGear(item) && item.kind !== 'Other.Shot';
-    // A town's book as the account knows it: live for its twin's town, as
-    // its main saw it at its last visit for a town it visited, else none.
-    const knownBook = (index, town, ids) => (town && town === accounts[index].twin?.town ? Knowledge.seen(books.towns[town], { buy: ids, sell: ids }, index) : accounts[index].townBooks?.[town] || null);
-    // A main's open wants with their caps: its WTBs, its parked path pieces
-    // and its parked shot restock.
-    function wantsOf(market) {
-        const wants = [];
-        for (const ad of market.ads.wtb) if (ad.cap > 0) wants.push({ id: ad.item, qty: ad.qty, cap: ad.cap });
-        for (const [key, want] of Object.entries(market.wants)) if (want.state === 'parked' && (want.cap ?? want.parkedCap) > 0) wants.push({ id: Number(key), qty: 1, cap: want.cap ?? want.parkedCap });
-        if (market.shotWait === 'parked' && market.shotId && market.shotCap > 0) wants.push({ id: market.shotId, qty: Math.max(1, market.shotNeed || 0), cap: market.shotCap });
-        return wants;
-    }
-    // trip's view of the towns (tripTown 'by_gain'): the stock it carries
-    // (bag and kept stock with their drop rates), its open wants with their
-    // caps, the nearest town's known book (with the NPC's sales there) and
-    // every other town a gatekeeper reaches that it knows a book of, or
-    // that is a hub (hubKnown: a hub with no remembered book at its own
-    // first prices, a bet the visit's book then replaces).
-    function tripTowns(index, main, nearest, items) {
-        const account = accounts[index], market = account.market, stash = account.stash || {};
-        const rates = new Map(items.filter(item => isStock(view.items[item.id])).map(item => [item.id, item.rate]));
-        const stockIds = new Set([...Object.keys(main.bag).map(Number).filter(id => main.bag[id] > 0 && isStock(view.items[id])), ...Object.keys(stash).map(Number).filter(id => stash[id] > 0), ...rates.keys()]);
-        const wants = wantsOf(market);
-        // hubTowns 'by_grade': the game's trade town of the stock it carries and of what it wants.
-        const hubs = !config.hubKnown ? [] : config.hubTowns !== 'by_grade' ? config.hubTowns
-            : [...new Set([[...stockIds], wants.map(want => want.id)].filter(lot => lot.length).flatMap(lot => ctx.tradeTownsOf(index, lot)))];
-        const asleep = new Set(account.asleep || []);
-        const others = [...new Set([...Object.keys(account.townBooks || {}), account.twin?.town, ...hubs].filter(Boolean))]
-            .filter(town => town !== nearest && fareOf(nearest, town) !== null && (!asleep.has(town) || town === account.twin?.town));
-        if (!others.length) return { towns: [] };
-        const stock = [...stockIds].map(id => ({ id, held: (main.bag[id] || 0) + (stash[id] || 0), rate: rates.get(id) || 0, npc: view.items[id]?.npcBuy || 0 }));
-        const ids = [...stockIds, ...wants.map(want => want.id)];
-        const askOf = book => Object.fromEntries(Object.entries(book?.sell || {}).map(([id, row]) => [id, row.price]));
-        const nearBook = knownBook(index, nearest, ids), npc = game.npcByTown[nearest] || {}, nearAsks = askOf(nearBook);
-        for (const want of wants) if (npc[want.id] > 0) nearAsks[want.id] = Math.min(nearAsks[want.id] ?? Infinity, npc[want.id]);
-        const towns = [];
-        for (const town of others) {
-            const book = knownBook(index, town, ids) ?? (hubs.includes(town) ? Knowledge.estimated(account.memory, game.firstPrice, ids) : null);
-            if (book) towns.push({ town, fare: fareOf(nearest, town), hours: config.hopHours, bids: book.buy || {}, asks: askOf(book) });
+    // The sellers of its shot that stand now (trip's shotTown): its own
+    // twin's stock, the NPC where it stands at or under the shot's worth, and
+    // per town, the one it stands in and each trade town of the shot's grade
+    // and above the gatekeeper reaches, the cheapest other owner's line there
+    // and the most it pays a unit there.
+    function shotTowns(main, nearest, fired) {
+        if (!fired?.id) return null;
+        const index = main.index, towns = [], trade = ctx.tradeTownsOf(index, [fired.id], true);
+        for (const town of trade.includes(nearest) ? trade : [nearest, ...trade]) {
+            const fare = fareOf(nearest, town);
+            if (fare === null) continue;
+            const line = Books.rowsOf(books, town, 'sell', fired.id).find(entry => entry.owner !== index && entry.qty > 0);
+            towns.push({ town, fare, ask: line ? line.price : null, cap: Bounds.cap({ worth: fired.worth, npcSell: game.npcByTown[town]?.[fired.id] ?? null }).cap });
         }
-        return { money: main.money, stock, wants, near: { bids: nearBook?.buy || {}, asks: nearAsks }, towns };
+        return { ownHeld: (accounts[index].twin?.stock[fired.id] || 0) > 0, npcHere: game.npcByTown[nearest]?.[fired.id] <= fired.worth, money: main.money, towns, hopHours: config.hopHours };
     }
 
     // trip: when the main comes to town, and which town, from its state
     // after each committed event; with deathArrival a death drawn earlier
     // than trip's arrival is the arrival (in the respawn town of its spot).
+    // Returns the arrival's hour, or { at, read: true } when trip names a
+    // shot situation to read at that hour (the engine asks again then).
     function nextArrival(main, ev) {
         const index = main.index, row = Engine.spotRowOf(view, main);
         if (!row) return null;
@@ -745,6 +705,8 @@ function mainsSide(ctx) {
         if (!accounts[index].market.path) pathOf(index, main, townOf(main));
         const account = accounts[index], market = account.market;
         const fired = firingOf(main);
+        // The shot it fires is indexed for offer_posted from its first situation on.
+        if ((fired?.id ?? null) !== market.shotId) { setMarket(index, { shotId: fired?.id ?? null }); indexWants(index); }
         const at = rowItems(main, row, huntForm(main));
         const bagItems = Object.entries(main.bag).filter(([, count]) => count > 0);
         const worn = Object.values(main.kit).filter(Boolean);
@@ -757,26 +719,23 @@ function mainsSide(ctx) {
         const bagValue = bagItems.reduce((sum, [id, count]) => sum + count * (view.items[id]?.npcBuy || 0), 0);
         const deal = (ev.event === 'offer_posted' || ev.event === 'bid_posted') ? market.deal : null;
         const nearest = townOf(main);
-        const towns = config.tripTown === 'by_gain' ? tripTowns(index, main, nearest, at.items) : {};
         const own = ownHour(main, account.memory);
         let answer = trip(main, {
             now: ev.now, since: main.since, huntShare: ev.huntShare, tripHours: 2 * (snapshot.walkBack?.[row.spotId] || 0), town: nearest,
             stockLowHours: config.stockLowMinutes / 60, loadShare: config.loadShare,
-            shots: fired ? { held: main.shots[fired.id] || 0, perHour: fired.perHour, waiting: market.shotWait !== null } : null,
+            shots: fired ? { held: main.shots[fired.id] || 0, perHour: fired.perHour } : null,
             bag: bagRow ? { slots: bagRow.slots, maxLoad: bagRow.maxLoad, used, weight, items: at.items.map(item => ({ ...item, held: (main.bag[item.id] || 0) > 0 })) } : null,
             goal: goalOf({ pieces: market.path?.pieces, kit: main.kit, wants: market.wants, reserve: reserveAdena, money: main.money, bagValue, perHour: at.npc, fresh: market.goalFresh }),
-            event: ev.event, deal, ownHour: own, tripTown: config.tripTown, ...towns });
+            event: ev.event, deal, ownHour: own, shotTowns: shotTowns(main, nearest, fired) });
         if (config.deathArrival) {
             const died = deathAt({ since: main.since, huntShare: ev.huntShare, deathsPerHour: row.deaths || 0, roll: ev.roll });
-            if (died !== null && died > ev.now && (answer.at === null || died < answer.at)) answer = { ...answer, at: died, reason: 'death', town: nearest, refused: [] };
+            if (died !== null && died > ev.now && (answer.at === null || died < answer.at)) answer = { at: died, reason: 'death', town: nearest };
         }
         if (deal) setMarket(index, { deal: null });
-        if (answer.parked && !market.parked) stats.trips.shotsParked = (stats.trips.shotsParked || 0) + 1;
-        const refused = answer.refused || [];
-        if (answer.parked !== market.parked || answer.reason !== market.tripReason || answer.town !== market.tripTown || refused.join() !== (market.tripRefused || []).join()) {
-            setMarket(index, { parked: answer.parked, tripReason: answer.reason, tripTown: answer.town, tripRefused: refused });
-        }
-        return answer.at;
+        // tripReason: the reason of the pending arrival (none while a shot situation is only to be read).
+        const reason = answer.read ? null : answer.reason;
+        if (reason !== market.tripReason) setMarket(index, { tripReason: reason });
+        return answer.read ? { at: answer.at, read: true } : answer.at;
     }
 
     // occupation at grade_changed and when its spot leaves its levels (the
@@ -796,9 +755,6 @@ function mainsSide(ctx) {
                 if (want.state === 'parked') endWait('parkedWant', key, gradeOfItem(view.items[key]) !== 'none' && gradeOfItem(view.items[key]) !== grade); else wants[key] = want;
             }
             setMarket(index, { pathDirty: true, wants, stalled: {} });
-            // A new grade is something new about every town: the forgotten ones wake.
-            put(index, { asleep: [] });
-            if (market.shotWait === 'parked' || market.shotWait === 'unwanted') { if (market.shotWait === 'parked') stats.waits.parkedShots.withdrawn++; setMarket(index, { shotWait: null }); }
             indexWants(index);
         }
         const situation = gradeChanged ? 'grade_changed' : left ? 'spot_left' : null;
@@ -886,8 +842,8 @@ function mainsSide(ctx) {
 
 // A main's market state at the start.
 function marketStart() {
-    return { ads: { wts: [], wtb: [] }, wants: {}, incoming: {}, shotWait: null, shotId: null, shotCap: null, shotNeed: 0, path: null, pathDirty: true, goalFresh: true,
-        stalled: {}, deal: null, tripReason: null, tripTown: null, tripRefused: [], parked: false, indexed: [], spotHeld: false, visits: 0, lastSpot: null, movedAt: null, needs: {} };
+    return { ads: { wts: [], wtb: [] }, wants: {}, incoming: {}, shotId: null, shotNeed: 0, path: null, pathDirty: true, goalFresh: true,
+        stalled: {}, deal: null, tripReason: null, indexed: [], spotHeld: false, visits: 0, lastSpot: null, movedAt: null, needs: {} };
 }
 
 module.exports = { mainsSide, marketStart, FORMULAS };

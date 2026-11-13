@@ -516,8 +516,10 @@ function workshop(view) {
             : Math.max(reserve[crystal] || 0, asks[crystal] || 0, batchOf(recipe) * perCraft);
         crystalUse[grade] = { crystal, recipe, keep, price: user.worth ?? null };
     }
-    // Sell lines: goods of its own recipes beyond that, dearest stock first,
-    // and the liquid goods of its store (the design's sell store): crystals
+    // Sell lines: goods of its own recipes beyond that and every shot it
+    // holds (a private store sells what the inventory holds: a crafter who
+    // dropped a shot recipe still sells the shots it made), dearest stock
+    // first, and the liquid goods of its store (the design's sell store): crystals
     // of the grades it crystallizes beyond its crystal stock, and the crafted
     // inputs of the recipes it holds beyond one batch of each.
     // The floor: max(npcBuy, the best crystallizer bid in reach) (the
@@ -531,7 +533,7 @@ function workshop(view) {
         : crystalGrades[item] ? Math.max(reserve[item] || 0, crystalUse[crystalGrades[item]]?.keep || 0) : Math.max(reserve[item] || 0, asks[item] || 0));
     for (const [key, count0] of Object.entries(stock)) {
         const item = Number(key), count = count0 - keepOf(item);
-        if (!(count > 0) || !(products.has(item) || crystalGrades[item] || (asks[item] && game.byProduct[item]))) continue;
+        if (!(count > 0) || !(products.has(item) || crystalGrades[item] || game.items[item]?.kind === 'Other.Shot' || (asks[item] && game.byProduct[item]))) continue;
         const piece = game.items[item], grade = gradeOf(piece);
         const bid = isGear(piece) && piece.crystals > 0 ? Knowledge.bestCrystalBid(view.place, view.books, grade, view.self) : null;
         const market = Bounds.floor({ npcBuy: piece?.npcBuy || 0, crystallizerBids: bid ? [bid * piece.crystals] : [] });

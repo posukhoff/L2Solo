@@ -3,8 +3,9 @@
 // The economy design's market of mains on inline fixtures: path spends the
 // refill reserve before its pieces and an unarmed main's weapon before the
 // reserve; acquire takes the cheapest of the routes, its hours charged at
-// what the main gives up; trip goes at the earliest of its situations and
-// holds a shot situation with no seller until an offer comes; visit turns a
+// what the main gives up; trip goes at the earliest of its situations, takes
+// its shot situations from its stock and use alone and reads the sellers of
+// the shot only while it is low or out; visit turns a
 // want with no line into a WTB, gives one line to its first claimer, reads
 // every line it reaches and keeps every price between its floor and cap; a
 // WTB two looks at a worth cap is parked, at a route cap takes the route;
@@ -14,7 +15,7 @@
 const assert = require('node:assert/strict');
 const { path } = require('../scripts/economy-model/rules/path');
 const { acquire } = require('../scripts/economy-model/rules/acquire');
-const { trip, goalOf } = require('../scripts/economy-model/rules/trip');
+const { trip, goalOf, shotTown } = require('../scripts/economy-model/rules/trip');
 const { visit } = require('../scripts/economy-model/rules/visit');
 const { occupation, stayHours } = require('../scripts/economy-model/rules/occupation');
 const { refillHours } = require('../scripts/economy-model/rules/path');
@@ -54,97 +55,77 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.equal(acquire({ selfId: 1 }, { cap: 1, ownHour: 1, lines: [], npc: [] }), null);
 }
 
-// trip: the earliest situation; a shot situation with no seller waits for an offer.
+// trip: the earliest situation. A shot situation comes from the main's
+// stock and its use alone: trip names it to be read at its hour, and there a
+// seller sends it.
 {
+    const here = { ownHeld: false, npcHere: true, money: 0, towns: [], hopHours: 0 };
     const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Giran', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
-        shots: { held: 600, perHour: 300, waiting: false }, bag: { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 10, weight: 10, stack: true, held: false }] },
+        shots: { held: 600, perHour: 300 }, shotTowns: here, bag: { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 10, weight: 10, stack: true, held: false }] },
         goal: { need: 5000, have: 1000, perHour: 1000, fresh: false } };
-    const first = trip({}, base);
-    assert.equal(first.reason, 'stock_low:shots', '600 shots at 300 an hour run low at 1.83 hunting hours');
-    assert.ok(Math.abs(first.at - (10 + (600 - 50) / 300 / 0.5 + 0.02)) < 1e-9, `wall hours over the hunting share, plus the walk: ${first.at}`);
+    const first = trip({}, base), lowAt = 10 + (600 - 50) / 300 / 0.5;
+    assert.deepEqual([first.reason, first.read], ['stock_low:shots', true], '600 shots at 300 an hour run low at 1.83 hunting hours: read then');
+    assert.ok(Math.abs(first.at - lowAt) < 1e-9, `wall hours over the hunting share: ${first.at}`);
+    const then = trip({}, { ...base, now: first.at });
+    assert.equal(then.reason, 'stock_low:shots');
+    assert.ok(Math.abs(then.at - (lowAt + 0.02)) < 1e-9, `read at its hour with a seller where it stands: it goes, plus the walk: ${then.at}`);
     const loaded = trip({}, { ...base, bag: { ...base.bag, items: [{ rate: 100, weight: 10, stack: true, held: false }] } });
     assert.equal(loaded.reason, 'bag_full', '1000 load an hour reaches 2/3 of 1000 in 0.67 hunting hours');
     const rich = trip({}, { ...base, goal: { ...base.goal, have: 5000, fresh: true } });
     assert.equal(rich.reason, 'goal_affordable', 'a new goal it can pay sends it now');
     assert.equal(rich.at, 10.02);
-    const parked = trip({}, { ...base, shots: { held: 0, perHour: 300, waiting: true }, goal: null, bag: null });
-    assert.equal(parked.at, null, 'no seller known: no shot situation, nothing else pending');
-    assert.equal(parked.parked, true, 'the held-back shot situation is counted');
-    const offer = trip({}, { ...base, shots: { held: 0, perHour: 300, waiting: true }, goal: null, bag: null, event: 'offer_posted', deal: { gain: 500 } });
+    const out = trip({}, { ...base, shots: { held: 0, perHour: 300 }, goal: null, bag: null });
+    assert.deepEqual([out.reason, out.at], ['shots_out', 10.02], 'out of shots with a seller where it stands: it goes now');
+    const offer = trip({}, { ...base, goal: null, bag: null, event: 'offer_posted', deal: { gain: 500 } });
     assert.equal(offer.reason, 'offer_posted', 'a line in reach worth more than the walk sends it now');
-    assert.equal(trip({}, { ...base, shots: { held: 0, perHour: 300, waiting: true }, goal: null, bag: null, event: 'offer_posted', deal: { gain: 10 } }).at, null,
+    assert.equal(trip({}, { ...base, shots: null, goal: null, bag: null, event: 'offer_posted', deal: { gain: 10 } }).at, null,
         'a gain under the trip\'s 0.02 h x 1000 waits for its next visit');
 }
 
-// trip's town (tripTown 'by_gain'): a town it knows a book of when what its
-// stock sells for there above the nearest town's best price beats the fare
-// there and back and the hop hours at its own hour; the gain turning
-// positive is a situation of its own (hub_trip). Junk (best known price the
-// NPC's) never sends it to a hub.
+// A shot restock goes where a seller of the shot stands now: where the main
+// stands when its own twin holds the shot or its NPC sells it at its worth;
+// else, of the trade towns of the shot's grade (and above) holding a line at
+// or under its worth whose fare there and back it can pay, the one it stands
+// in, else the nearest by fare. With no seller standing at a shot situation
+// there is no trip: the next one is read at its hour. Asked at any event
+// while low or out, it reads its sellers and goes to one that stands.
 {
-    const giran = { town: 'Giran', fare: 12200, hours: 0.1, bids: { 200: { price: 60, qty: 1000 } }, asks: {} };
-    const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Gludio', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
-        shots: { held: 600, perHour: 300, waiting: false }, bag: null, goal: null, tripTown: 'by_gain', money: 100000,
-        stock: [{ id: 200, held: 500, rate: 0, npc: 5 }], wants: [], near: { bids: {}, asks: {} }, towns: [giran] };
-    const hub = trip({}, base);
-    assert.deepEqual([hub.reason, hub.town], ['hub_trip', 'Giran'], '500 x (60 - 5) = 27500 over 2 x 12200 + 2 x 0.1 h x 1000 = 24600');
-    assert.ok(Math.abs(hub.at - (10 + 0.02 + 0.1)) < 1e-9, `now, plus the walk and the hop: ${hub.at}`);
-    const short = trip({}, { ...base, stock: [{ id: 200, held: 400, rate: 0, npc: 5 }] });
-    assert.deepEqual([short.reason, short.town], ['stock_low:shots', 'Gludio'], '400 x 55 = 22000 under 24600: the nearest town at its shot situation');
-    const growing = trip({}, { ...base, stock: [{ id: 200, held: 400, rate: 100, npc: 5 }], shots: null });
-    assert.equal(growing.reason, 'hub_trip');
-    assert.ok(Math.abs(growing.at - (10 + (24600 / 55 - 400) / 100 / 0.5 + 0.12)) < 1e-6, `the gain turns positive at 47.3 more units: ${growing.at}`);
-    assert.equal(trip({}, { ...base, near: { bids: { 200: { price: 60, qty: 10 } }, asks: {} } }).town, 'Gludio', 'the nearest town bids as much: no gain');
-    assert.equal(trip({}, { ...base, money: 20000 }).town, 'Gludio', 'it cannot pay the fare there and back');
-    assert.equal(trip({}, { ...base, tripTown: 'nearest' }).town, 'Gludio', 'the model before: always the nearest');
-    const junk = { ...base, stock: [{ id: 200, held: 1e6, rate: 1000, npc: 5 }], towns: [{ ...giran, bids: { 200: { price: 5, qty: 1e9 } } }], bag: { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 100, weight: 10, stack: true, held: true }] } };
-    const dumped = trip({}, junk);
-    assert.deepEqual([dumped.reason, dumped.town], ['bag_full', 'Gludio'], 'a bid at the NPC price: junk goes to the nearest NPC however much of it');
-    // A want: a line in Giran at 3000 for a piece capped at 5000 that no line or NPC in Gludio sells.
-    const wanted = { ...base, stock: [], wants: [{ id: 100, qty: 1, cap: 5000 }], towns: [{ ...giran, fare: 500, asks: { 100: 3000 } }] };
-    assert.equal(trip({}, wanted).town, 'Giran', '5000 - 3000 over 2 x 500 + 200');
-    assert.equal(trip({}, { ...wanted, near: { bids: {}, asks: { 100: 3500 } } }).town, 'Gludio', 'Gludio sells it at 3500: 500 under the trip\'s 1200');
-    assert.equal(trip({}, { ...wanted, money: 3500 }).town, 'Gludio', 'after the fares its money does not reach the line');
-}
-
-// hubKnown: a hub it never saw a book of is weighed at its own first prices
-// (its last deal, else the game's first price), any quantity: the first trip
-// there is a bet on its estimate. An estimate at the NPC's price is junk and
-// never pays for the trip. trip names the towns whose gain is not positive
-// (refused for want of gain).
-{
-    const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Gludio', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
-        shots: { held: 600, perHour: 300, waiting: false }, bag: null, goal: null, tripTown: 'by_gain', money: 100000,
-        stock: [{ id: 200, held: 500, rate: 0, npc: 5 }], wants: [], near: { bids: {}, asks: {} } };
-    const hub = book => ({ town: 'Giran', fare: 12200, hours: 0.1, bids: book.buy, asks: Object.fromEntries(Object.entries(book.sell).map(([id, row]) => [id, row.price])) });
-    const guess = Knowledge.estimated([], { 200: 60 }, [200]);
-    assert.deepEqual(guess.buy[200], { price: 60, qty: Infinity }, 'the first price, any quantity');
-    assert.equal(Knowledge.estimated([{ item: 200, enchant: 0, price: 40 }], { 200: 60 }, [200]).buy[200].price, 40, 'its own last deal before the first price');
-    const bet = trip({}, { ...base, towns: [hub(guess)] });
-    assert.deepEqual([bet.reason, bet.town, bet.refused], ['hub_trip', 'Giran', []], '500 x (60 - 5) over the trip\'s 24600');
-    // Bet on an unseen hub only once: the visit found no line, three refused trips forget the book, the hub is not estimated again.
-    {
-        const hubs = ['Giran'], firstPrice = { 200: 60 };
-        // As mains.tripTowns reads them: a town asleep (forgotten) is out of the view.
-        const bookOf = (books, town, asleep = []) => (asleep.includes(town) ? null : books[town] ?? (hubs.includes(town) ? Knowledge.estimated([], firstPrice, [200]) : null));
-        const towns = state => [bookOf(state.books, 'Giran', state.asleep)].filter(Boolean).map(hub);
-        let state = { books: {}, refusals: {} };
-        assert.equal(trip({}, { ...base, towns: [hub(bookOf(state.books, 'Giran'))] }).reason, 'hub_trip', 'never visited: estimated');
-        state = { books: { Giran: Knowledge.remembered({ buy: {}, sell: {} }, { bids: [200], asks: [] }, 0).book }, refusals: {} };
-        for (let i = 0; i < Knowledge.FORGET_REFUSALS; i++) {
-            const answer = trip({}, { ...base, towns: [hub(bookOf(state.books, 'Giran'))] });
-            assert.deepEqual([answer.town, answer.refused], ['Gludio', ['Giran']], 'the visited empty book: refused');
-            state = Knowledge.afterVisit({ ...state, refused: answer.refused, visited: 'Gludio' });
-        }
-        const again = trip({}, { ...base, towns: towns(state) });
-        assert.deepEqual([again.reason, again.town, state.asleep], ['stock_low:shots', 'Gludio', ['Giran']], 'forgotten: no second bet');
-        // Forgotten only until something new is learned: a visit there wakes it (its book replaced by the caller).
-        const woken = Knowledge.afterVisit({ ...state, refused: [], visited: 'Giran' });
-        assert.deepEqual(woken.asleep, [], 'a visit there wakes it');
-        assert.equal(trip({}, { ...base, towns: towns(woken) }).reason, 'hub_trip', 'and the hub is weighed again');
+    const towns = [{ town: 'Gludio', fare: 2000, ask: null, cap: 20 }, { town: 'Dion', fare: 1500, ask: null, cap: 20 }, { town: 'Giran', fare: 3000, ask: 15, cap: 20 }];
+    const heine = { here: 'Heine', ownHeld: false, npcHere: false, money: 100000, towns };
+    assert.equal(shotTown(heine), 'Giran', 'the cheap line stands only in the farther town: it goes there');
+    assert.equal(shotTown({ ...heine, towns: towns.map(row => ({ ...row, ask: 15 })) }), 'Dion', 'lines in all three: the least fare');
+    assert.equal(shotTown({ ...heine, towns: towns.map(row => ({ ...row, ask: row.town === 'Giran' ? 25 : null })) }), null, 'a line over its worth is no seller');
+    assert.equal(shotTown({ ...heine, money: 5000 }), null, 'a fare there and back it cannot pay is no seller');
+    assert.equal(shotTown({ ...heine, here: 'Giran', towns: [...towns.slice(0, 2), { town: 'Giran', fare: 0, ask: 15, cap: 20 }] }), 'Giran', 'standing in the town of the line: it stays');
+    assert.equal(shotTown({ ...heine, npcHere: true }), 'Heine', 'the NPC here sells it at its worth: no fare');
+    assert.equal(shotTown({ ...heine, ownHeld: true, towns: [] }), 'Heine', 'its own twin holds it: where it stands');
+    assert.equal(shotTown({ ...heine, towns: [] }), null, 'no town reached: no seller');
+    const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Heine', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
+        shots: { held: 600, perHour: 300 }, bag: null, goal: null, shotTowns: { ownHeld: false, npcHere: false, money: 100000, towns, hopHours: 0.1 } };
+    const lowAt = 10 + (600 - 50) / 300 / 0.5, low = trip({}, { ...base, now: lowAt });
+    assert.deepEqual([low.reason, low.town], ['stock_low:shots', 'Giran'], 'a main low on shots goes to the only town holding a line at its worth');
+    assert.ok(Math.abs(low.at - (lowAt + 0.02 + 0.1)) < 1e-9, `the hop hours added: ${low.at}`);
+    assert.equal(trip({}, { ...base, shots: { held: 0, perHour: 300 } }).town, 'Giran', 'shots_out too');
+    const bag = { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 100, weight: 10, stack: true, held: false }] };
+    const full = trip({}, { ...base, bag });
+    assert.deepEqual([full.reason, full.town], ['bag_full', 'Heine'], 'any other reason keeps its town');
+    assert.equal(trip({}, { ...base, now: lowAt, shotTowns: { ...base.shotTowns, npcHere: true } }).town, 'Heine');
+    const bare = { ...base, shotTowns: { ...base.shotTowns, towns: towns.map(row => ({ ...row, ask: null })) } };
+    const ahead = trip({}, bare);
+    assert.deepEqual([ahead.reason, ahead.read], ['stock_low:shots', true], 'no line anywhere now: its stock_low is still read at its hour');
+    const unsold = trip({}, { ...bare, now: lowAt });
+    assert.deepEqual([unsold.reason, unsold.read, unsold.at], ['shots_out', true, 14], 'no line at its stock_low: no trip, its shots_out read next');
+    assert.equal(trip({}, { ...bare, now: 12, shots: { held: 0, perHour: 300 } }).at, null, 'out of shots, read again with still no line: none planned');
+    // Low (held under its mark of 50 since 10), with no situation of its own
+    // until it runs out: asked at any event, it reads its sellers.
+    const lowNow = { ...base, now: 10.1, shots: { held: 40, perHour: 300 } };
+    for (const event of ['level_up', 'visit', 'offer_posted']) {
+        const asked = trip({}, { ...lowNow, event });
+        assert.deepEqual([asked.reason, asked.town, asked.read], ['stock_low:shots', 'Giran', undefined], `low, asked at ${event}: the line in Giran is read and it goes`);
     }
-    const junk = trip({}, { ...base, towns: [hub(Knowledge.estimated([], { 200: 5 }, [200]))] });
-    assert.deepEqual([junk.reason, junk.town, junk.refused], ['stock_low:shots', 'Gludio', ['Giran']], 'an estimate at the NPC price: no trip, refused');
+    const lowBare = trip({}, { ...bare, now: 10.1, shots: { held: 40, perHour: 300 }, event: 'level_up' });
+    assert.deepEqual([lowBare.reason, lowBare.read], ['shots_out', true], 'low with no seller: its shots_out read next');
+    assert.equal(trip({}, { ...base, event: 'offer_posted' }).read, true, 'with shots to spare a posted line sends it nowhere');
 }
 
 // The game's trade towns of a lot (MarketTownPolicy as data): anything of
@@ -155,32 +136,10 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200, 1463, 71], spotId: 's1' }), ['Giran']);
     assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200, 1463], spotId: 's1' }), ['Gludio', 'Dion'], 'both D markets, no split by the bot\'s id');
     assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200], spotId: 's1' }), ['Gludin']);
+    assert.deepEqual(Knowledge.tradeTowns(trade, { items: [1463], spotId: 's1', andAbove: true }), ['Gludio', 'Dion', 'Giran'], 'a D lot also reaches the town of the grades above');
+    assert.deepEqual(Knowledge.tradeTowns(trade, { items: [71], spotId: 's1', andAbove: true }), ['Giran']);
+    assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200], spotId: 's1', andAbove: true }), ['Gludin'], 'a no-grade lot has no grade above');
     assert.deepEqual(Knowledge.tradeTowns(undefined, { items: [200], spotId: 's1' }), [], 'no trade data: no hub');
-}
-
-// A remembered town book holds what trip reads, the asks first, then the
-// bids by the adena they take, at most TOWN_BOOK_ROWS rows (the rest counted);
-// a town refused for want of gain at three visits in a row is forgotten
-// (asleep until a visit there, its twin there or a new grade), a visit there
-// or a trip not refused starts its count again.
-{
-    const book = { buy: { 200: [{ owner: 1, price: 60, qty: 10 }], 201: [{ owner: 1, price: 9, qty: 1000 }], 202: [{ owner: 0, price: 99, qty: 99 }] },
-        sell: { 100: [{ owner: 1, price: 3000, qty: 1 }], 200: [{ owner: 1, price: 70, qty: 5 }] } };
-    const seen = Knowledge.remembered(book, { bids: [200, 201, 202], asks: [100] }, 0);
-    assert.deepEqual(seen, { book: { buy: { 200: { price: 60, qty: 10 }, 201: { price: 9, qty: 1000 } }, sell: { 100: { price: 3000, qty: 1 } } }, dropped: 0 },
-        'its own line and the ask of a thing it does not want are not kept');
-    const many = { buy: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [300 + i, [{ owner: 1, price: 10 + i, qty: 1 }]])), sell: {} };
-    const capped = Knowledge.remembered(many, { bids: Array.from({ length: 40 }, (_, i) => 300 + i), asks: [] }, 0);
-    assert.equal(Object.keys(capped.book.buy).length, Knowledge.TOWN_BOOK_ROWS);
-    assert.equal(capped.dropped, 40 - Knowledge.TOWN_BOOK_ROWS);
-    assert.ok(!capped.book.buy[300] && capped.book.buy[339], 'the bids that take the least adena go');
-    let state = { books: { Giran: seen.book, Dion: seen.book }, refusals: {} };
-    const step = (refused, visited = 'Gludio') => { state = Knowledge.afterVisit({ ...state, refused, visited }); return state; };
-    step(['Giran', 'Dion']); step(['Giran']);
-    assert.deepEqual(state.refusals, { Giran: 2 }, 'Dion was not refused at the second visit: its count starts again');
-    assert.deepEqual(step(['Giran', 'Dion']).forgotten, ['Giran'], 'the third refusal in a row: forgotten');
-    assert.deepEqual([Object.keys(state.books), state.refusals, state.asleep], [['Dion'], { Dion: 1 }, ['Giran']], 'its book goes; it sleeps until something new is learned');
-    assert.deepEqual(step(['Dion'], 'Dion').refusals, {}, 'a visit there starts its count again');
 }
 
 // The refill (the kit rule's): 'outing' carries shots for outingHours of
@@ -191,9 +150,9 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     const nextOuting = (refill, lastOuting) => {
         const held = Math.ceil(300 * refillHours({ refill, outingHours: 2, minHours: 1, lastOuting }));
         const out = trip({}, { now: 0, since: 0, huntShare: 1, tripHours: 0, town: 'Gludio', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 0,
-            shots: { held, perHour: 300, waiting: false }, bag: null, goal: null });
-        assert.equal(out.reason, 'stock_low:shots');
-        return out.at - 1 / 60;
+            shots: { held, perHour: 300 }, shotTowns: { ownHeld: false, npcHere: true, money: 0, towns: [], hopHours: 0 }, bag: null, goal: null });
+        assert.deepEqual([out.reason, out.read], ['stock_low:shots', true]);
+        return out.at;
     };
     near(nextOuting('outing', 0.5), 2 - 1 / 6, 'after a half-hour outing');
     near(nextOuting('outing', 5), 2 - 1 / 6, 'after a five-hour outing');
@@ -208,7 +167,7 @@ const items = {
     200: { kind: 'Other.Material', grade: 'NONE', npcBuy: 5 },
     300: { kind: 'Other.Shot', grade: 'NONE', npcBuy: 1 }
 };
-const mainOf = (patch = {}) => ({ index: 0, money: 20000, bag: {}, shots: {}, kit: { 7: 0 }, weapon: 0, ads: { wts: [], wtb: [] }, wants: {}, incoming: {}, shotWait: null, ...patch });
+const mainOf = (patch = {}) => ({ index: 0, money: 20000, bag: {}, shots: {}, kit: { 7: 0 }, weapon: 0, ads: { wts: [], wtb: [] }, wants: {}, incoming: {}, ...patch });
 const viewOf = (patch = {}) => ({
     now: 1, town: 'Giran', adId: 'a1', persona: { looksToFloor: 3, buyerStart: 0.8 }, roll: 7, items, crystalIds: { D: 1458 },
     book: { sell: {}, buy: {}, bids: {} }, npcSell: {}, known: {}, firstPrice: { 100: 4000, 300: 10 }, deposit: {}, depositFee: 30, twin: null, firing: 300,
@@ -323,19 +282,15 @@ const viewOf = (patch = {}) => ({
     assert.equal(stock.flows.npcSales, 20, 'four to the NPC at 5');
 }
 {
-    // Shots: a line at or under the shot's worth, else a WTB; at the worth cap twice, parked.
-    const reserve = { id: 300, amount: 100, cap: 8, capBy: 'worth', own: 0 };
+    // Shots: a line at or under the shot's worth; with none, no WTB is posted
+    // (it goes for shots only where a seller stands).
+    const reserve = { id: 300, amount: 100, cap: 8, own: 0 };
     const line = [{ owner: 2, id: 'S2', price: 7, qty: 60, kind: 'line' }];
     const got = visit(mainOf(), viewOf({ reserve, order: [{ kind: 'reserve' }], book: { sell: { 300: line }, buy: {}, bids: {} } }));
     assert.equal(got.main.shots[300], 60);
-    assert.equal(got.main.shotWait, null, 'it holds shots: its trip runs on them');
-    let main = mainOf();
-    const none = viewOf({ reserve, order: [{ kind: 'reserve' }] });
-    main = visit(main, none).main;
-    assert.equal(main.shotWait, 'wtb', 'no line: a WTB for the shots');
-    for (let look = 0; look < 4; look++) main = visit(main, none).main;
-    assert.equal(main.shotWait, 'parked', 'two looks at the worth cap park the want');
-    assert.equal(visit(mainOf(), viewOf({ reserve: { ...reserve, cap: 0.5 }, order: [{ kind: 'reserve' }] })).main.shotWait, 'unwanted', 'a shot worth under an adena is not wanted');
+    const none = visit(mainOf(), viewOf({ reserve, order: [{ kind: 'reserve' }] }));
+    assert.deepEqual([none.main.shots[300], none.main.ads.wtb.length], [undefined, 0], 'no line: no shots and no WTB for them');
+    assert.ok(!none.waits.some(row => row.wait === 'wtb'), 'no WTB wait opened');
 }
 
 // The keep rule at a visit (account_needs, ours): one piece a slot of its
@@ -661,34 +616,6 @@ const viewOf = (patch = {}) => ({
     assert.equal(routeCap.main.kit[7], 100, 'a cap its own route sets: the same');
     const worthCapped = visit(mainOf({ money: 5000 }), viewOf({ pieces: { 100: { ...npc, capBy: 'worth', cap: 4000 } } }));
     assert.equal(worthCapped.main.wants[100].state, 'wtb', 'a worth cap under the route: the ladder, not the route');
-}
-
-// stockSale 'accumulate': stock the town it visits does not buy, with a
-// known price above the NPC's in another town, goes to the account
-// warehouse (30 a stack) instead of the NPC; kept stock is sold at a visit
-// where a line takes it; kept stock with no known price above the NPC goes
-// to the NPC at the third such visit; units it brings without one go to the NPC now.
-{
-    const view = patch => viewOf({ pieces: {}, order: [], stockSale: 'accumulate', ...patch });
-    const kept = visit(mainOf({ bag: { 200: 10 } }), view({ knownBids: { 200: { price: 40, qty: 100 } } }));
-    assert.deepEqual([kept.stash, kept.flows.npcSales, kept.flows.warehouseFees, kept.main.money], [{ 200: 10 }, 0, -30, 20000 - 30], 'to the warehouse, the fee paid');
-    assert.equal(visit(mainOf({ bag: { 200: 10 } }), view({ knownBids: { 200: { price: 40, qty: 100 } }, stockSale: 'where_it_stands' })).flows.npcSales, 50, 'the first version: the NPC where it stands');
-    assert.equal(visit(mainOf({ bag: { 200: 10 } }), view({ knownBids: { 200: { price: 5, qty: 100 } } })).flows.npcSales, 50, 'a bid at the NPC price elsewhere: junk to the NPC');
-    const line = { owner: 7, id: 'B7', price: 40, qty: 10, kind: 'line' };
-    const sold = visit(mainOf(), view({ stash: { 200: 10 }, knownBids: {}, book: { sell: {}, buy: { 200: [line] }, bids: {} } }));
-    assert.deepEqual(sold.claims.map(row => [row.kind, row.units, row.adena]), [['sell_line', 10, 400]], 'the kept stock sold where a line stands');
-    assert.deepEqual([sold.stash, sold.flows.npcSales], [{}, 0]);
-    const waiting = visit(mainOf({ bag: { 200: 4 } }), view({ stash: { 200: 10 }, stashLooks: { 200: 1 }, knownBids: {} }));
-    assert.deepEqual([waiting.stash, waiting.stashLooks, waiting.flows.npcSales, waiting.flows.warehouseFees], [{ 200: 10 }, { 200: 2 }, 20, 0],
-        'the second visit without a known price: the kept ten wait, the four it brought go to the NPC');
-    const dumped = visit(mainOf(), view({ stash: { 200: 10 }, stashLooks: { 200: 2 }, knownBids: {} }));
-    assert.deepEqual([dumped.stash, dumped.flows.npcSales], [{}, 50], 'the third: to the NPC');
-    assert.deepEqual(visit(mainOf(), view({ stash: { 200: 10 }, stashLooks: { 200: 2 }, knownBids: { 200: { price: 40, qty: 100 } } })).stash, { 200: 10 }, 'a known price again: kept, its count reset');
-    // Kept only up to the units the known line takes: 5 at 60 elsewhere keeps 5 of 10, the other 5 go to the NPC here.
-    const five = visit(mainOf({ bag: { 200: 10 } }), view({ knownBids: { 200: { price: 60, qty: 5 } } }));
-    assert.deepEqual([five.stash, five.flows.npcSales, five.flows.warehouseFees, five.main.bag[200] || 0], [{ 200: 5 }, 25, -30, 0], 'five kept, five to the NPC');
-    const stale = visit(mainOf(), view({ stash: { 200: 10 }, knownBids: { 200: { price: 60, qty: 5 } } }));
-    assert.deepEqual([stale.stash, stale.flows.npcSales, stale.flows.warehouseFees], [{ 200: 5 }, 25, 0], 'the warehouse keeps no more than the line takes');
 }
 
 // occupation at arrived_town: the spot it left at its last arrival is no

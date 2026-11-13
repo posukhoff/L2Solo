@@ -242,6 +242,9 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
     console.log(`CRYSTALS made: from pieces bought on bids ${cr.bids}, from own pieces ${cr.own}, through NPC gear ${cr.npcRoute}; used in crafts ${cr.used}`);
     console.log(`CRYSTALS per grade (made from bids / own pieces / NPC gear; used in crafts; sold to mains on twin lines): ${Object.entries(cr.byGrade || {}).map(([g, r]) => `${g} ${r.bids} / ${r.own} / ${r.npcRoute}; used ${r.used}; sold ${r.sold}`).join(' | ') || '-'}`);
     console.log(`SHOTS per grade (wanted; crafted; drawn by own mains; sold on twin lines): ${Object.entries(design.shotGrades || {}).map(([g, r]) => `${g} ${k(design.shots.byGrade[g]?.wanted || 0)}; ${k(r.crafted)}; ${k(r.own)}; ${k(r.sold)}`).join(' | ') || '-'}`);
+    console.log(`SHOTS on twin shelves at the end (units per grade): ${Object.entries(design.market.stock.shotsOnShelves || {}).map(([g, n]) => `${g} ${k(n)}`).join(' | ') || '-'}`);
+    console.log(`SHOTS on no twin line at the end (units per grade): ${Object.entries(design.market.stock.shotsOffLines || {}).map(([g, n]) => `${g} ${k(n)}`).join(' | ') || '-'}; `
+        + `shot trips that bought no shot ${design.market.shotReport.bareTrips}; shot recipes forgotten (per grade): ${Object.entries(design.market.shotReport.forgets).map(([g, n]) => `${g} ${n}`).join(' | ') || '-'}`);
     console.log('MARGIN per MP on each grade\'s shots (median of the hourly medians in each 10-hour window, batches started):');
     for (let from = 0; from < design.hourly.length; from += 10) {
         const window = design.hourly.slice(from, from + 10), byGrade = {};
@@ -264,8 +267,8 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
 // Towns and visits: visits per bot-hour by their trip's situation, overall
 // and per current band; those in a town other than the nearest; visits per
 // town as shares beside the --fit ledger's; twins per town by kind; stock
-// sold to lines in the nearest town and in hubs against the NPC.
-const CAUSES = Object.freeze(['bag_full', 'stock_low:shots', 'shots_out', 'goal_affordable', 'offer_posted', 'bid_posted', 'death', 'hub_trip', 'start']);
+// sold to lines in the nearest town and in another town against the NPC.
+const CAUSES = Object.freeze(['bag_full', 'stock_low:shots', 'shots_out', 'goal_affordable', 'offer_posted', 'bid_posted', 'death', 'start']);
 function printTowns(design, hours, visits, real) {
     const v = design.market.visits, botHours = Object.values(v.botHours).reduce((a, b) => a + b, 0);
     const total = cause => Object.values(v.byBand).reduce((sum, row) => sum + (row[cause] || 0), 0);
@@ -277,7 +280,7 @@ function printTowns(design, hours, visits, real) {
         console.log(`  ${band.padEnd(8)} ${per(n, h)}/bot-h over ${fmt(h)} bot-h: ${CAUSES.filter(cause => row[cause]).map(cause => `${cause} ${per(row[cause], h)}`).join(' | ') || '-'}`);
     }
     const hub = Object.values(v.hub).reduce((a, b) => a + b, 0);
-    console.log(`VISITS in a town other than the nearest (tripTown ${design.config.tripTown}): ${hub} (${pct(hub, all)}): ${Object.entries(v.hub).sort((a, b) => b[1] - a[1]).map(([cause, n]) => `${cause} ${n}`).join(' | ') || '-'}`);
+    console.log(`VISITS in a town other than the nearest (shot trips): ${hub} (${pct(hub, all)}): ${Object.entries(v.hub).sort((a, b) => b[1] - a[1]).map(([cause, n]) => `${cause} ${n}`).join(' | ') || '-'}`);
     if (visits) {
         const shares = rows => { const sum = rows.reduce((a, row) => a + row.perHour, 0); return new Map(rows.map(row => [row.town, sum > 0 ? row.perHour / sum : 0])); };
         const model = shares(visits.towns), seen = real ? shares(real.towns) : new Map();
@@ -287,8 +290,7 @@ function printTowns(design, hours, visits, real) {
     const c = design.crafters, kinds = [...new Set([...Object.keys(c.byTown), ...Object.keys(c.buyersByTown || {})])].sort((a, b) => (c.byTown[b] || 0) - (c.byTown[a] || 0));
     console.log(`TWINS per town at the end (crafter | buyer): ${kinds.map(town => `${town} ${c.byTown[town] || 0} | ${c.buyersByTown?.[town] || 0}`).join(', ') || '-'}`);
     const st = design.market.stock, sold = st.nearLines + st.hubLines + st.npc;
-    console.log(`STOCK sold to lines in the nearest town ${k(st.nearLines)} (${pct(st.nearLines, sold)}), in hubs ${k(st.hubLines)} (${pct(st.hubLines, sold)}), to the NPC ${k(st.npc)} (${pct(st.npc, sold)}); `
-        + `units put in the warehouse to sell later ${st.stashed}, kept at the end ${st.stashEnd.units} (${k(st.stashEnd.npc)} at the NPC) (stockSale ${design.config.stockSale})`);
+    console.log(`STOCK sold to lines in the nearest town ${k(st.nearLines)} (${pct(st.nearLines, sold)}), in another town ${k(st.hubLines)} (${pct(st.hubLines, sold)}), to the NPC ${k(st.npc)} (${pct(st.npc, sold)})`);
 }
 
 // The market of mains: how kit pieces came, the wants left open, trips,
@@ -316,9 +318,9 @@ function printMarket(design, hours) {
     }
     const w = design.liveness.waits;
     console.log(`WTBS posted ${w.wtb.opened} filled ${w.wtb.done} failed ${w.wtb.failed} (unfunded at the meeting ${m.unfunded.wtb}, outgrown ${w.wtb.outgrown}) withdrawn ${w.wtb.withdrawn} open ${w.wtb.open}; `
-        + `parked at the cap: pieces ${w.parkedWant.opened}, shots ${w.parkedShots.opened}; sales to twin lines unfunded ${m.unfunded.line}, to bids ${m.unfunded.bid}`);
+        + `pieces parked at the cap ${w.parkedWant.opened}; sales to twin lines unfunded ${m.unfunded.line}, to bids ${m.unfunded.bid}`);
     console.log(`ROUTES priced ${m.routes.priced}, the cap's own route at 0 adena ${m.routes.zero} (${pct(m.routes.zero, m.routes.priced)}), a piece with no worth row ${m.routes.noWorth} (${pct(m.routes.noWorth, m.routes.priced)})`);
-    const tripsTotal = Object.entries(m.trips).filter(([reason]) => reason !== 'shotsParked').reduce((sum, [, n]) => sum + n, 0);
+    const tripsTotal = Object.values(m.trips).reduce((sum, n) => sum + n, 0);
     console.log(`TRIPS by situation (${tripsTotal}, ${(tripsTotal / hours).toFixed(0)}/h): ${Object.entries(m.trips).sort((a, b) => b[1] - a[1]).map(([reason, n]) => `${reason} ${n}`).join(' | ')}`);
     console.log(`MEETINGS ${m.meetings}; offers raised ${m.events.offerPosted}, bids raised ${m.events.bidPosted}; twin-to-twin units ${m.twinToTwin}, twin units to the NPC at the floor ${m.twinToNpc}; paths ${m.paths}; spot changes ${Object.entries(m.occupation).map(([why, n]) => `${why} ${n}`).join(' | ')}`);
     const occ = m.occupation, moves = ['grade_changed', 'spot_left', 'recipe_wanted', 'arrived_town'].reduce((sum, why) => sum + (occ[why] || 0), 0);

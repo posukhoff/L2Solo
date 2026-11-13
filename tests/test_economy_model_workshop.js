@@ -297,6 +297,14 @@ const viewOf = (game, twin, extra = {}) => ({ now: 0, self: 0, place: { town: 'A
         'one in the warehouse waits for its main');
 }
 
+// A twin that holds no recipe of the shot still lists the shots it holds:
+// a private store sells what the inventory holds.
+{
+    const sword = recipe(3, SWORD, { mpCost: 100, productCount: 1, materials: [{ selfId: ORE, amount: 10 }] });
+    const out = Workshop.workshop(viewOf(gameOf([sword]), twinOf({ recipes: [3], stock: { [SSD]: 100, [ORE]: 100 } })));
+    assert.ok(out.wanted.some(line => line.item === SSD && line.qty === 100), JSON.stringify(out.wanted));
+}
+
 // The twin's store sells crystals and crafted inputs: D crystals beyond its
 // crystal stock (crystalStock 'hours', the model before: 10 hours of its
 // Soulshot D at 400 MP an hour: 100), at a

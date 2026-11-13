@@ -23,6 +23,9 @@
 //                 level-up), its answer is the one pending arrival (replaced,
 //                 or dropped by null). Today's mode gives a fitted periodic
 //                 rule, the design mode the situations that send a bot to town.
+//   situation     a situation the arrival rule names to be read at its hour
+//                 without going to town (its answer { at, read: true }, held
+//                 in the same pending slot): the rule is asked again then.
 //   report        every simulated hour: counters only, never a decision.
 // In the design mode (simulate's design: design.js) the run also holds the
 // account plane: crafter twins seated in towns, woken by account_wake (a line
@@ -441,11 +444,12 @@ function heap() {
 
 // A run: accounts (cohort.js), the view, the stage bands [[name, fromLevel]],
 // per band { huntShare, ... } and nextArrival(main, view): the time of the
-// main's next arrival in town (null: none), asked on the main as it is after
-// the committed event. view is the plain data a trip rule may read:
-//   event     'start' | 'visit' | 'level_up'
+// main's next arrival in town, or { at, read: true } for a situation to read
+// at that hour without going (null: neither), asked on the main as it is
+// after the committed event. view is the plain data a trip rule may read:
+//   event     'start' | 'visit' | 'level_up' | 'situation'
 //   now       the time of the event, hours
-//   pending   the arrival already scheduled (null after a visit or at the start)
+//   pending   the hour of the arrival or situation already scheduled (null after a visit or at the start)
 //   rate      the main's band's rates
 //   roll      a seeded number in [0, 1)
 //   hour      the main's spot row: exp, adena, kills, shots, dropLoot, spoilLoot, loot, potions per hunting hour (null without one)
@@ -489,15 +493,16 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         const need = expAt(view, main.level + 1) - main.exp + 1;
         queue.push({ at: now + Math.max(0, need) / (exp * share), kind: 'level_up', who: main.index });
     };
-    // The one pending arrival per main, replaced by the rule's answer after each committed event.
+    // The one pending arrival (or situation to read) per main, replaced by the rule's answer after each committed event.
     const pending = new Map();
     const reschedule = (main, now, event) => {
         const row = spotRowOf(view, main), rate = rateOf(main.band), held = pending.get(main.index) ?? null;
-        const at = arrivalRule(main, { event, now, pending: held, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
+        const answer = arrivalRule(main, { event, now, pending: held && held.at, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
             hour: row || null, shotsPerHour: row?.shots || 0, huntShare: rate.huntShare });
-        const next = Number.isFinite(at) && at > now ? at : null;
+        const at = answer !== null && typeof answer === 'object' ? answer.at : answer, kind = answer?.read ? 'situation' : 'arrived_town';
+        const next = Number.isFinite(at) && at > now ? { at, kind } : null;
         pending.set(main.index, next);
-        if (next !== null && next !== held) queue.push({ at: next, kind: 'arrived_town', who: main.index });
+        if (next !== null && !(held && held.at === at && held.kind === kind)) queue.push({ at, kind, who: main.index });
     };
     // Hunting from the main's last situation to now, committed.
     const huntTo = (main, now) => {
@@ -530,9 +535,12 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             plane.event(event);
             continue;
         }
-        if (event.kind === 'arrived_town') {
-            if (pending.get(event.who) !== event.at) continue; // replaced by a later answer
+        if (event.kind === 'arrived_town' || event.kind === 'situation') {
+            const held = pending.get(event.who);
+            if (!held || held.at !== event.at || held.kind !== event.kind) continue; // replaced by a later answer
             pending.set(event.who, null);
+            // A situation is read on the main as it stands (no hunt committed), as a situation raised outside its events is.
+            if (event.kind === 'situation') { reschedule(mains[event.who], event.at, 'situation'); continue; }
         }
         let main = huntTo(mains[event.who], event.at);
         if (event.kind === 'level_up') {
