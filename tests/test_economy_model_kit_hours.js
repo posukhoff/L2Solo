@@ -420,16 +420,18 @@ assert.throws(() => KitHours.gameKitHours({ snapshot: wrongBest, anchor }).hour(
 // ran is the one it finds before.
 {
     const Afk = invoke('GameServer/AfkTrade/AfkTradeService'), boardIndex = Afk.boardIndex;
-    let looked = 0;
-    Afk.boardIndex = () => { looked++; return { first: () => null }; };
     try {
+        Pricing.useBoard(() => null);
+        const npc = Pricing.botBuyPrice(SSD), cheaper = Math.floor(npc / 2);
+        assert.ok(npc > 1 && cheaper > 0 && cheaper < npc, 'the shot has an NPC price to undercut');
+        // A board whose one ask for the shot (a shop's row) stands below the NPC price.
+        Afk.boardIndex = () => ({ first: (id, side, options) => { const row = { kind: 'shop', count: 5, price: cheaper }; return Number(id) === SSD && options.accept(row) ? row : null; } });
         Pricing.useBoard(null);
-        const shot = () => { looked = 0; Pricing.botBuyPrice(SSD); return looked; };
-        assert.ok(shot() > 0, 'before the model: the game prices a shot through its board');
+        assert.equal(Pricing.botBuyPrice(SSD), cheaper, 'before the model: the game prices the shot at the board ask');
         const run = KitHours.gameKitHours({ snapshot, anchor });
-        assert.ok(shot() > 0, 'after the model is built: the game prices a shot through its board');
+        assert.equal(Pricing.botBuyPrice(SSD), cheaper, 'after the model is built: the game prices the shot at the board ask');
         run.hour(fighter, 32, kitOf(fighter, bandAt(fighter, 32).level));
-        assert.ok(shot() > 0, 'after the model read an hour: the game prices a shot through its board');
+        assert.equal(Pricing.botBuyPrice(SSD), cheaper, 'after the model read an hour: the game prices the shot at the board ask');
     } finally {
         Afk.boardIndex = boardIndex;
         Pricing.useBoard(null);
