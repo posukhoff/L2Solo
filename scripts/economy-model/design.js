@@ -580,8 +580,9 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         // Visits by their trip's situation per current band, those in a town
         // other than the nearest by situation, and wall hours per current band.
         visits: { byBand: {}, hub: {}, botHours: {} },
-        // Stock sold to lines in the nearest town and in a hub, and to the
-        // NPC (adena); units its mains put in the warehouse to sell later.
+        // Stock its mains sold (adena) to lines in the town nearest their
+        // spot, to lines in another town (where a shot trip took them), and
+        // to the NPC.
         stock: { nearLines: 0, hubLines: 0, npc: 0 }, paths: 0, capFloor: {}, worthBounded: 0,
         // Shot trips that bought no shot, and shot recipes forgotten per grade.
         shotReport: { bareTrips: 0, forgets: {} },
