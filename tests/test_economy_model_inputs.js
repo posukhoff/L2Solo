@@ -128,6 +128,29 @@ const Formulas = invoke('GameServer/Formulas');
 assert.deepEqual(snapshot.bags[line], { race: 4, slots: Inventory.capacity(4, 0), maxLoad: Math.round(Formulas.calcMaxLoad(45)) }, 'a dwarf\'s 100 slots and the CON 45 load');
 assert.equal(snapshot.walkBack[hour.best.spotId], Load.walkBackHours(hour.best.spotId, {}));
 assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a walk back');
+
+// A trip's hours are the game's cold trip (ColdTrip, no Scroll of Escape
+// held): from a spot's centre into its town, from every town back to the
+// centre, and from town to town; every spot and every town is present.
+const ColdTrip = invoke('GameServer/Bot/Population/ColdTrip'), townRows = Object.values(invoke('GameServer/World/TownRespawn').towns);
+const townPoint = town => ({ locX: town.locX, locY: town.locY, locZ: town.locZ }), planHours = plan => plan.durationMs / 3600000;
+assert.ok(snapshot.tripHours && snapshot.townHours, 'the snapshot carries the game\'s trip hours');
+assert.deepEqual(Object.keys(snapshot.tripHours.to).sort(), Object.keys(snapshot.compositions).sort(), 'every spot has its trip into town');
+for (const id of Object.keys(snapshot.compositions)) assert.deepEqual(Object.keys(snapshot.tripHours.back[id]).sort(), townRows.map(town => town.name).sort(), `spot ${id} has a way back from every town`);
+{
+    const cardRows = require('../data/Bots/hunt/spots.json'), centerAt = cardRows.spotFields.indexOf('center'), cardTownAt = cardRows.spotFields.indexOf('town');
+    const sampled = [String(hour.best.spotId), String(cardRows.spots.find(row => row[cardTownAt] === 'Floran Village')[0]), String(cardRows.spots[cardRows.spots.length - 1][0])];
+    for (const id of sampled) {
+        const row = cardRows.spots.find(card => String(card[0]) === id), center = { locX: row[centerAt][0], locY: row[centerAt][1], locZ: row[centerAt][2] };
+        const into = townRows.find(town => town.name === row[cardTownAt]);
+        assert.equal(snapshot.tripHours.to[id], planHours(ColdTrip.townPlan({ loc: center, stats: {}, inventory: {} }, townPoint(into))), `spot ${id}: the trip into ${into.name} is ColdTrip's`);
+        for (const town of townRows) assert.equal(snapshot.tripHours.back[id][town.name], planHours(ColdTrip.spotPlan({ loc: townPoint(town), stats: {} }, center)), `spot ${id}: the way back from ${town.name} is ColdTrip's`);
+    }
+}
+for (const from of townRows) for (const into of townRows) {
+    assert.equal(snapshot.townHours[from.name][into.name], planHours(ColdTrip.townPlan({ loc: townPoint(from), stats: {}, inventory: {} }, townPoint(into))), `${from.name} to ${into.name} is ColdTrip's`);
+}
+assert.ok(snapshot.townHours.Dion.Giran > 0 && snapshot.tripHours.to[hour.best.spotId] > 0, 'a trip takes time');
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
 assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
 assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', crystals: [{ selfId: 1459, amount: 573 }, { selfId: 1458, amount: 2865 }] }, 'Flamberge for 573 C and 2865 D crystals together');

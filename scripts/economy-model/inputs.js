@@ -324,7 +324,7 @@ function staticInputs(owners, spots) {
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
     return { recipes, stores, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
-        races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), walkBack: walkBack(spots) };
+        races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), walkBack: walkBack(spots), ...tripHours(spots) };
 }
 
 // A crafter twin at a level: its seated MP per hour, Create Item level and
@@ -349,6 +349,42 @@ function lineRaces(Data) {
 function shotFamilies() {
     const shots = invoke('GameServer/Inventory/ShotStock');
     return { grades: ['NONE', 'D', 'C', 'B', 'A', 'S'], ids: [shots.SOULSHOT_IDS, shots.SPIRITSHOT_IDS, shots.BLESSED_SPIRITSHOT_IDS].map(ids => [...ids]) };
+}
+
+// The game's cold trip hours (ColdTrip, the builder of every cold bot's
+// trip), with no Scroll of Escape held (on foot or through the gatekeepers):
+// tripHours.to[spot] from the spot card's centre into its town (townPlan),
+// tripHours.back[spot][town] from each town to the centre (spotPlan), and
+// townHours[from][to] from one town into another (townPlan). Every spot of
+// the reward table and every town is present: a spot with no card centre or
+// a trip with no route throws.
+function tripHours(spots) {
+    const Trip = invoke('GameServer/Bot/Population/ColdTrip');
+    const towns = Object.values(invoke('GameServer/World/TownRespawn').towns), byName = new Map(towns.map(town => [town.name, town]));
+    const table = Load.spotCards(), centerAt = table.spotFields.indexOf('center');
+    const centers = new Map(table.spots.filter(row => row[centerAt]).map(row => [String(row[0]), row[centerAt]]));
+    const point = place => ({ locX: place.locX, locY: place.locY, locZ: place.locZ });
+    const hours = plan => plan.durationMs / 3600000;
+    const to = {}, back = {};
+    for (const [id, spot] of spots) {
+        const at = centers.get(id), town = byName.get(spot.town);
+        if (!at || !town) throw new Error(`spot ${id} has no card centre or no town (${spot.town}): its trip hours are unknown`);
+        const center = { locX: at[0], locY: at[1], locZ: at[2] };
+        const plan = Trip.townPlan({ loc: center, stats: {}, inventory: {} }, point(town));
+        if (!plan) throw new Error(`spot ${id} has no route into ${town.name}`);
+        to[id] = hours(plan);
+        back[id] = Object.fromEntries(towns.map(from => [from.name, hours(Trip.spotPlan({ loc: point(from), stats: {} }, center))]));
+    }
+    const townHours = {};
+    for (const from of towns) {
+        townHours[from.name] = {};
+        for (const into of towns) {
+            const plan = Trip.townPlan({ loc: point(from), stats: {}, inventory: {} }, point(into));
+            if (!plan) throw new Error(`no route from ${from.name} into ${into.name}`);
+            townHours[from.name][into.name] = hours(plan);
+        }
+    }
+    return { tripHours: { to, back }, townHours };
 }
 
 // The gatekeeper fee of a trip from one town into another, by town name: the
