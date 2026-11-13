@@ -9,6 +9,7 @@
 // its weapon's grade, and comes to town when the run's arrival rule says.
 const assert = require('node:assert/strict');
 const Engine = require('../scripts/economy-model/engine');
+const Today = require('../scripts/economy-model/today');
 
 // Loot 30 an hour: the per-kill yields below at the NPC's price (10 kills x (0.5 x 5 + 0.01 x 50)).
 const hour = (adena, exp, shots, loot = 30) => ({ classId: 9, shotId: 1463,
@@ -132,7 +133,7 @@ assert.equal(partied({ levels: [1, 50], self: 0 }).delta.exp, 0, 'under the squa
 // shots; with the D weapon it restocks D shots.
 const plain = { ...Engine.mainOf(accounts[0], 0, view, bands), shots: { 1835: 1000 } };
 assert.equal(plain.weapon, 100);
-assert.equal(Engine.hunt(plain, view, 1, () => 0.5, { id: Engine.shotOf(view, plain, snapshot.hours[9][1]), perHour: 20 }).main.shots[1835], 980, 'no-grade shots fired');
+assert.equal(Engine.hunt(plain, view, 1, () => 0.5, Today.hunter(view).firing(plain)).main.shots[1835], 980, 'no-grade shots fired');
 const armed = { ...plain, weapon: 101, shots: {} };
 assert.deepEqual(Engine.errands(armed, view, snapshot.hours[9][1], { outingHours: 0.5 }).find(errand => errand.kind === 'shots'),
     { kind: 'shots', id: 1463, amount: 20 }, 'D shots, one hour of use');

@@ -43,6 +43,37 @@ function nextArrival(main, { event, now, pending, rate, roll }) {
     return now + (event === 'start' ? roll : 1) / visits;
 }
 
+// The run's hunter in today's and the plain mode (the design mode's is its
+// plane): what a main fires as it hunts and its worn kit's kills, the two
+// answers the engine's one hunt reads. firing(main): the hour's shot at the
+// grade of the weapon in hand (shotOf) at the shots its spot row's hour of
+// that kind fires (shotsPerHour: times the worn weapon's count per action,
+// scaleOf(main, row, form), and the worn kit's shots, factorsOf(main)[form]);
+// null where the hour fires no shot or that count is 0. kills(main): per form
+// the worn kit's kills over the reference kit's (factorsOf(main)[form].kills;
+// 1 unstated). factorsOf null: every main hunts the row's own kit (the plain
+// mode). Held per main until its kit, weapon, level or spot row changes (the
+// inputs of both answers).
+function hunter(view, factorsOf = null, scaleOf = null) {
+    const held = new Map();
+    const answerOf = main => {
+        const row = Engine.spotRowOf(view, main), last = held.get(main.index);
+        if (last && last.kit === main.kit && last.weapon === main.weapon && last.level === main.level && last.row === row) return last;
+        const factors = factorsOf ? factorsOf(main) : null, hour = Engine.hourOf(view, main);
+        let firing = null;
+        if (row && hour?.shotId) {
+            const id = Engine.shotOf(view, main, hour), form = Engine.formOf(view, id);
+            const perHour = Engine.shotsPerHour(row, form, scaleOf ? scaleOf(main, row, form) : 1, factors?.[form]);
+            firing = perHour > 0 ? { id, perHour } : null;
+        }
+        const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(form => [form, factors?.[form]?.kills ?? 1]));
+        const answer = { kit: main.kit, weapon: main.weapon, level: main.level, row, firing, kills };
+        held.set(main.index, answer);
+        return answer;
+    };
+    return { firing: main => answerOf(main).firing, kills: main => answerOf(main).kills };
+}
+
 // A configured line's price (StaticMerchantPricing.configuredPrice): the
 // item's reference price times the line's rate, scaled by the adena rate and
 // floored, at least 1.
@@ -138,4 +169,4 @@ function fit(baseline, accounts, view, bands, factorOf = null) {
     return { rates, basis, visitsPerBotHour };
 }
 
-module.exports = { TODAY, configuredPrice, fixedBuyerPrice, marketOf, fit, nextArrival, SELL, BUY };
+module.exports = { TODAY, configuredPrice, fixedBuyerPrice, marketOf, fit, nextArrival, hunter, SELL, BUY };
