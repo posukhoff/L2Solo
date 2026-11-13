@@ -407,23 +407,6 @@ function spotHours(save, hours, levels, owners, pairs) {
     return { source: save, levelsAhead: SPOT_LEVELS_AHEAD, rows };
 }
 
-// Expected units of one item per kill at a spot for a killer of the level:
-// its drops by the drop rule and its spoils at the Spoil level times the
-// landing chance (spotYields for one item).
-function itemYield(entries, id, killerLevel, spoilSkillLevel, owners) {
-    const { Planner, Formulas } = owners, total = entries.reduce((sum, entry) => sum + entry.count, 0);
-    let out = 0;
-    for (const entry of entries) {
-        const share = entry.count / total, context = { npcLevel: entry.level, killerLevel };
-        out += share * (Planner.itemDropYield(entry.reward, id, 'drop', context).expectedYield || 0);
-        if (spoilSkillLevel > 0) {
-            const landed = Formulas.spoilSuccessChance({ skillId: 254, skillLevel: spoilSkillLevel, attackerLevel: killerLevel, targetLevel: entry.level });
-            out += share * (Planner.itemDropYield(entry.reward, id, 'spoil', context).expectedYield || 0) * landed;
-        }
-    }
-    return out;
-}
-
 // The shot recipes' scrolls and the spots whose NPCs drop or spoil each:
 // scroll -> [spotId], with each spot's NPC level span.
 function scrollSpots(fixed, spots, owners) {
@@ -463,6 +446,12 @@ function moreRows(line, levels, hours, scrolls, owners) {
     }
     // The scroll spots: per scroll and level, the SCROLL_SPOTS that give the most scrolls an hour.
     const entries = new Map(), entriesOf = spotId => { if (!entries.has(spotId)) entries.set(spotId, composition(owners.spots.get(spotId), owners)); return entries.get(spotId); };
+    // A spot's per-kill yields at a level (spotYields; the line's Spoil level there), read for every scroll.
+    const yields = new Map(), yieldsAt = (spotId, level) => {
+        const key = `${spotId}@${level}`;
+        if (!yields.has(key)) yields.set(key, spotYields(entriesOf(spotId), level, Table.roleSpoilLevel(line, level), owners));
+        return yields.get(key);
+    };
     for (const [id, spotIds] of Object.entries(scrolls.byScroll)) {
         const best = {};
         for (const spotId of spotIds) {
@@ -470,7 +459,7 @@ function moreRows(line, levels, hours, scrolls, owners) {
             for (let level = Math.max(levels[0], low - SCROLL_LEVEL_REACH); level <= Math.min(levels[1], high + SCROLL_LEVEL_REACH); level++) {
                 const row = rowAt(spotId, level);
                 if (!row) continue;
-                const perHour = row.kills * itemYield(entriesOf(spotId), Number(id), level, Table.roleSpoilLevel(line, level), owners);
+                const { drop, spoil } = yieldsAt(spotId, level), perHour = row.kills * ((drop[id] || 0) + (spoil[id] || 0));
                 if (perHour > 0) (best[level] ||= []).push({ spotId, perHour });
             }
         }
@@ -518,7 +507,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
             const top = Table.rankedIncome(line, level).slice(0, TOP_SPOTS);
             const classId = Table.roleClass(line, level);
             kits[line][level] = KitHours.lineKit(owners, line, level);
-            hours[line][level] = { classId, shotId: Capacity.referenceShot(classId, level, line),
+            hours[line][level] = { classId, shotId: KitHours.referenceShot(classId, level, line),
                 best: best && hourRowWithForms(best, line, level, Table), top: top.map(row => hourRowWithForms(row, line, level, Table)) };
             const skill = Table.roleSpoilLevel(line, level);
             for (const row of [best, ...top]) if (row) {

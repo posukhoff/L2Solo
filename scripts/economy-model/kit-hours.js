@@ -75,6 +75,15 @@ function lineKit(owners, line, level) {
         .map(row => ({ selfId: Number(row.selfId), slot: Number(row.slot) }));
 }
 
+// The shot a line's reference bot (the author's kit) fires at a level: the
+// class's own kind at the kit's weapon grade (ShotStock.planForState,
+// blessed false). The one rule for the reference kit's shot; firesOf reads the
+// same plan of any body. Needs Boot.boot().
+function referenceShot(classId, level, line) {
+    const state = invoke('GameServer/Bot/AI/HuntCycle').referenceState(classId, level, { line: Number(line) });
+    return invoke('GameServer/Inventory/ShotStock').planForState(state, { blessed: false })?.selfId || null;
+}
+
 // A line's reference bot at a level wearing pieces ([{ selfId, slot }]).
 function referenceBot(owners, line, level, pieces) {
     const { Table, HuntCycle, Data } = owners;
@@ -205,8 +214,14 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     // No player board stands beside the model: a reader prices shots as a
     // hunt with no board in view does (the NPC price, else the market's
     // evidence, else the first price), never through the live server's board,
-    // whose module needs the World and the database.
-    invoke('GameServer/Bot/Economy/StaticMerchantPricing').useBoard(() => null);
+    // whose module needs the World and the database. The no-board view stands
+    // only while one of the returned readers runs; the module's board source
+    // is then back at its default (nothing else in the model's process sets one).
+    const Pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
+    const noBoard = read => (...args) => {
+        Pricing.useBoard(() => null);
+        try { return read(...args); } finally { Pricing.useBoard(null); }
+    };
     const owners = kitOwners(), { Data, Index, Table, Profile, Valuation, ColdRest, Enchant, Grades, ShotStock, Arrows } = owners;
     const lines = snapshot.gearLadder?.lines || {};
     // A shot the anchor has no price for (no route makes it) is no option for
@@ -392,7 +407,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
             if (held) pass(line, at, band, held, wornKit(Object.fromEntries(lineKit(owners, line, band.level).map(row => [row.slot, row.selfId]))));
         });
     };
-    return { hour, swaps, shotScale, warm, stats };
+    return { hour: noBoard(hour), swaps: noBoard(swaps), shotScale: noBoard(shotScale), warm: noBoard(warm), stats };
 }
 
-module.exports = { gameKitHours, wornKit, lineKit, referenceBot, referenceNumbers, TOP_SPOTS };
+module.exports = { gameKitHours, wornKit, lineKit, referenceShot, referenceBot, referenceNumbers, TOP_SPOTS };
