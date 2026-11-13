@@ -607,6 +607,7 @@ test('contract: records written by the real workflow.js pass lc land, resolve an
     fs.writeFileSync(brief, JSON.stringify({ base, symptom: 'DT-44 and DT-49: forming retries', owner: 'forming', scope: ['src/foo.js'], acceptance: [{ expect: 'a', by: 'test_basic.js' }], map: ['combat.md: Hit core'], evidence: ['trace'], tests: ['test_basic.js'], regressions: ['test_basic.js'], nonGoals: [],
         cause: { status: 'verified', explanation: 'x', evidence: ['src/foo.js:1'], chain: ['src/foo.js:1 symptom', 'src/foo.js:1 first wrong decision'], excluded: ['none plausible: one line'], deeper: 'left as DT-44 because it needs its own critical task' } }));
     wf('record-brief', 'p1', '--file', brief); wf('verify', 'p1', '--rules');
+    wf('record-report', 'p1', '--file', file(w, 'report.md', 'added beyond the plan: none\ndeviations from the plan: none\ntests run: test_basic.js\n'));
     wf('record-regression', 'p1', '--test', 'test_basic.js', '--old', base, '--evidence', 'old fails at :1, new passes');
     fs.writeFileSync(ghJson, JSON.stringify({ headSha: head, headBranch: 'ci-x', status: 'completed', conclusion: 'success', url: 'u', workflowName: 'PR checks', jobs: Array.from({ length: 12 }, (_, n) => ({ name: `Node tests (${n + 1}/12)`, conclusion: 'success' })) }));
     // the review table: 17 answers; what it leaves standing must be an open issue and, off the rules that allow leaving, a known decision

@@ -57,6 +57,9 @@ function validateBrief(b, state) {
     const mapFile = x => (/^([\w-]+\.md):\s*\S/.exec(x) || [])[1];
     if (!strings(b.map) || !(b.map.length === 1 && /^none:\s*\S/.test(b.map[0]) || b.map.every(x => mapFile(x) && fs.existsSync(path.join(home,'planning/architecture',mapFile(x))))))
         fail('Brief map: the architecture-map entries the task changes, each "<file>.md: <entry>" for a file in planning/architecture, or one "none: <reason>".');
+    // What must not get worse while the target moves: a feature or chore changes numbers (a fix has its regression tests).
+    if (state.kind !== 'fix' && !(Array.isArray(b.guards) && b.guards.length && (b.guards.length === 1 && typeof b.guards[0] === 'string' ? /^none:\s*\S/.test(b.guards[0]) : b.guards.every(g => g && nonempty(g.expect) && nonempty(g.by)))))
+        fail('Brief guards (feature or chore): what must not get worse while the target moves, each {"expect": <the number and its bound>, "by": <a test, or "run: <record>">}, or one "none: <reason>".');
     // Small fixes ride by name (planning.md "Small fixes"): at most 4, each its lc issue id and the one source file it changes.
     if (b.smallFixes !== undefined && !(Array.isArray(b.smallFixes) && b.smallFixes.length <= 4 && b.smallFixes.every(f => f && /^[\w.-]+$/.test(f.id || '') && nonempty(f.file)) && new Set(b.smallFixes.map(f => f.id)).size === b.smallFixes.length))
         fail('Brief smallFixes: at most 4, each {"id": <lc issue id>, "file": <the one source file it changes>}, no id twice.');
@@ -128,7 +131,7 @@ function ciGaps(plan, e, head) {
 // A later round answers only what changed: its lines replace the earlier answers. Other lines of the file are ignored.
 const RULES = [...Array(16).keys()].map(String).concat('cause');
 // Rules whose own text lets a named lc issue stand; a violation of any other rule stands only with a maintainer decision.
-const LEAVABLE = new Set(['2','4','15','cause']);
+const LEAVABLE = new Set(['2','4','cause']); // a step away from the target architecture (15) stands only by the maintainer's decision
 function reviewLines(text) {
     const lines = {};
     for (const l of text.split('\n')) {
@@ -165,7 +168,7 @@ function smallFixProblems(base, brief, takenOut) {
     return out;
 }
 function main() {
-    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-regression|record-review|record-ci|ready|record-land|record-rebase|record-retro|close> <slug> [options]');
+    if (!command || !slug || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) fail('Usage: workflow.js <start|status|record-brief|verify|record-report|record-regression|record-review|record-ci|ready|record-land|record-rebase|record-retro|close> <slug> [options]');
     if (!fs.existsSync(path.join(root,'package.json')) || !fs.existsSync(path.join(root,'src'))) fail('Use a real L2Solo game checkout, not the workflow snapshot.');
     const stateDir = path.join(git('rev-parse','--path-format=absolute','--git-common-dir'),'l2solo-workflow');
     fs.mkdirSync(stateDir,{recursive:true});
@@ -276,6 +279,7 @@ function main() {
             const touched=sameOldCode?[]:git('diff','--name-only',state.base,newBase,'--',...paths).split('\n').filter(Boolean);
             const carried={};
             if(sameOldCode&&state.evidence.review?.head===oldHead) carried.review={...state.evidence.review,head:newHead,carriedFrom:oldHead,patchId:pid};
+            if(sameOldCode&&state.evidence.report?.head===oldHead) carried.report={...state.evidence.report,head:newHead,carriedFrom:oldHead};
             if(sameOldCode) carried.regressions=(state.evidence.regressions||[]).filter(r=>r.head===oldHead&&r.old===state.base).map(r=>({...r,head:newHead,old:newBase,carriedFrom:oldHead}));
             const brief={...state.brief,base:newBase,evidence:[...state.brief.evidence,'Restack (same patch '+pid.slice(0,12)+'): '+reason]};
             validateBrief(brief,{...state,base:newBase});
@@ -314,6 +318,17 @@ function main() {
     try { git('merge-base','--is-ancestor',state.base,'HEAD'); } catch { fail('Task base is not an ancestor of HEAD.'); }
     const head=sha();
     if (head===state.base) fail('No committed task changes yet.');
+    if (command === 'record-report') {
+        // The implementer's report in a fixed form, so that what it added and what it ran is not left to prose a coordinator retells.
+        const f=opt('--file'); if(!f) fail('record-report requires --file <the implementer\'s report>');
+        const text=fs.readFileSync(path.resolve(f),'utf8');
+        const line=k=>(new RegExp('^\\s*(?:[-*]\\s*)?'+k+':\\s*(\\S.*)$','im').exec(text)||[])[1]?.trim()||'';
+        const added=line('added beyond the plan'), deviations=line('deviations from the plan'), tests=line('tests run');
+        if(!added||!deviations||!tests) fail('The report needs three lines: "added beyond the plan: none | <each addition and what breaks without it>", "deviations from the plan: none | <each>", "tests run: <files; which were seen to fail on the old code>".');
+        const guards=(state.brief?.guards||[]).filter(g=>g&&typeof g==='object'), got=[...text.matchAll(/^\s*(?:[-*]\s*)?guard:\s*(\S.*)$/gim)].map(m=>m[1].trim());
+        if(got.length<guards.length) fail('The brief names '+guards.length+' guard number(s); the report needs a line "guard: <the number, before -> after>" for each.');
+        save(s=>{s.evidence.report={head,added,deviations,tests,guards:got,at:now()};}); return;
+    }
     if (command === 'record-regression') {
         const test=opt('--test'), old=opt('--old'), evidence=opt('--evidence');
         if (!test || !old || !evidence || !state.brief.regressions?.map(norm).includes(norm(test))) fail('record-regression requires a brief test, --old <base SHA>, --evidence <old expected failure and new pass reference>.');
@@ -469,6 +484,7 @@ function main() {
         const {full,missing,missingRaw,reasons:ciReasons}=ciGaps(plan,e,head);
         reasons.push(...ciReasons);
         if (plan.warnings.length && !e.review?.selectionAcknowledged) reasons.push('Uncertain selection needs explicit review --selection-ack.');
+        if (!sameChange(e.report?.head,head)) reasons.push('Implementer report missing for HEAD (record-report --file <report>: added beyond the plan, deviations from the plan, tests run, a guard line per guard).');
         if (!sameChange(e.rules?.head,head)) reasons.push('Mechanical rules-check missing for HEAD (verify --check).');
         else if (!e.rules.check && !full) reasons.push('Syntax and table check missing for HEAD: verify --check (Picked tests do not run it; a full PR checks run on HEAD does).');
         if (state.kind==='fix') {

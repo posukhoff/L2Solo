@@ -47,10 +47,16 @@ const exec=(p,a)=>{
     throw Error('unexpected '+p+' '+a.join(' '));
 };
 const req=x=>x==='node:os'?{tmpdir:()=>'/tmp'}:x==='node:fs'?fsFake:x==='node:path'?pathFake:x==='node:crypto'?{createHash:()=>({update(){},digest:()=>'policy-hash'})}:x==='node:child_process'?{execFileSync:exec}:null;
-function cmd(...args){
+let autoReport=true;
+function cmd0(...args){
     const proc={argv:['node','workflow.js',...args],execPath:'node',pid:1,exitCode:0},logs=[];
     execute(req,proc,'/home/.claude',{log:x=>logs.push(String(x)),error:x=>logs.push(String(x))},Buffer);
     return {code:proc.exitCode,log:logs.join('\n')};
+}
+function cmd(...args){
+    const r=cmd0(...args);
+    if(autoReport&&args[0]==='record-brief'&&r.code===0&&r.log.includes('true'))cmd0('record-report',args[1],'--file','/report.txt');
+    return r;
 }
 function expect(label,result,code,contains){
     if(result.code!==code||!result.log.includes(contains))throw Error(label+' failed '+JSON.stringify(result));
@@ -58,6 +64,7 @@ function expect(label,result,code,contains){
 }
 const fullTable=over=>[...Array(16).keys(),'cause'].map(k=>over?.[k]||k+' ok evidence for '+k).join('\n');
 store.set('/table.txt','Review of x\n'+fullTable());
+store.set('/report.txt','Report\nadded beyond the plan: none\ndeviations from the plan: none\ntests run: test_basic.js (fails on the old code at its first assert)\nguard: coverage 44 % -> 44 %\n');
 store.set('/blocked.txt','3 violation src/foo.js:1 a guard at the call site');
 expect('start',cmd('start','x','--base','main','--risk','standard'),0,'policy-hash');
 store.set('/brief.json',JSON.stringify({base,symptom:'bad',evidence:['trace'],cause:{status:'guess',explanation:'hypothesis'}}));
@@ -76,7 +83,7 @@ store.set('/okcause.json',verifiedBrief(okCause));
 expect('verified fix with chain and excluded accepted',cmd('record-brief','x','--file','/okcause.json'),0,'true');
 expect('verified',cmd('record-brief','x','--file','/brief.json'),0,'true');
 expect('chore start',cmd('start','chore1','--base','main','--risk','fast','--kind','chore'),0,'policy-hash');
-store.set('/chore.json',JSON.stringify({base,symptom:'tidy',evidence:['note'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'done',by:'run: tidy-1'}],map:['combat.md: Hit core'],tests:['test_basic.js']}));
+store.set('/chore.json',JSON.stringify({base,symptom:'tidy',evidence:['note'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'done',by:'run: tidy-1'}],guards:['none: a tidy-up moves no number'],map:['combat.md: Hit core'],tests:['test_basic.js']}));
 expect('chore brief needs no chain',cmd('record-brief','chore1','--file','/chore.json'),0,'true');
 
 expect('review',cmd('record-review','x','--result','pass','--rules','/table.txt','--evidence','review'),0,'');
@@ -364,4 +371,32 @@ store.set('/c13.txt',fullTable({13:'13 violation commit 7f8b1885a the message ca
 expect('a commit-message violation is recorded by its commit',cmd('record-review','dc','--result','blocked','--evidence','review','--rules','/c13.txt'),0,'');
 store.set('/c13b.txt',fullTable({13:'13 violation the message carries a Co-Authored-By line'}));
 expect('a violation with neither file:line nor a commit refused',cmd('record-review','dc','--result','blocked','--evidence','review','--rules','/c13b.txt'),1,'commit <sha>');
+// The implementer's report is fixed-form evidence; a feature names what must not get worse; rule 15 is not the reviewer's to leave.
+autoReport=false;
+expect('rp start',cmd('start','rp','--base','main','--risk','standard','--kind','feature'),0,'policy-hash');
+const feat=over=>JSON.stringify({base,symptom:'raise coverage',evidence:['spec'],owner:'foo',scope:['src/foo.js'],nonGoals:[],acceptance:[{expect:'total coverage 55 %',by:'test_basic.js'}],map:['none: no owner changes'],tests:['test_basic.js'],...over});
+store.set('/f.json',feat({}));
+expect('a feature brief without guards refused',cmd('record-brief','rp','--file','/f.json'),1,'Brief guards');
+store.set('/f.json',feat({guards:['whatever']}));
+expect('a guards line that is neither a guard nor a reasoned none refused',cmd('record-brief','rp','--file','/f.json'),1,'Brief guards');
+store.set('/f.json',feat({guards:[{expect:'levels 20-39 stay at 44 % or more',by:'run: model-7'}]}));
+expect('a feature brief with a guard accepted',cmd('record-brief','rp','--file','/f.json'),0,'true');
+expect('rp review',cmd('record-review','rp','--result','pass','--evidence','review','--rules','/table.txt'),0,'');
+expect('rp check',cmd('verify','rp','--check'),0,'ok');
+expect('rp picked map test',cmd('record-ci','rp','--run','2'),0,'');
+expect('rp picked selection',cmd('record-ci','rp','--run','6'),0,'');
+expect('ready refuses a task with no implementer report',cmd('ready','rp'),1,'Implementer report missing for HEAD');
+store.set('/r1.txt','done\nadded beyond the plan: none\ntests run: test_basic.js\n');
+expect('a report without the deviations line refused',cmd('record-report','rp','--file','/r1.txt'),1,'three lines');
+store.set('/r2.txt','added beyond the plan: a retry so trips do not loop (nothing breaks without it)\ndeviations from the plan: none\ntests run: test_basic.js\n');
+expect('a report without the guard line of the brief refused',cmd('record-report','rp','--file','/r2.txt'),1,'guard number');
+store.set('/r3.txt','- added beyond the plan: none\n- deviations from the plan: none\n- tests run: test_basic.js\n- guard: levels 20-39 44 % -> 46 %\n');
+expect('a full report recorded',cmd('record-report','rp','--file','/r3.txt'),0,'');
+expect('rp review again after the report',cmd('record-review','rp','--result','pass','--evidence','review','--rules','/table.txt'),0,'');
+expect('the report completes readiness',cmd('ready','rp'),0,'"taskReady": true');
+store.set('/l15.txt',fullTable({15:'15 left DT-9 a step away from the target, replaced in release 2'}));
+expect('rule 15 left without a decision refused',cmd('record-review','rp','--result','pass','--evidence','review','--rules','/l15.txt'),1,'maintainer decision');
+store.set('/l15.txt',fullTable({15:'15 left DT-9 M40 a step away from the target, replaced in release 2'}));
+expect('rule 15 left with a decision recorded',cmd('record-review','rp','--result','pass','--evidence','review','--rules','/l15.txt'),0,'');
+autoReport=true;
 

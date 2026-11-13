@@ -47,8 +47,8 @@ Each as the question a review asks (each answered: ok with evidence, violation f
     co-author/session lines? (`node planning/rules-check.js <base>..<head> --root <tree>`: the mechanical part.)
 14. Trade: one line per change: its cost, what a C4 player does here, what it gives up (simulation, realism,
     performance). A review asks "would a player do this?" as it asks the cost.
-15. Direction: toward the target architecture (coding.md "Target architecture"), neutral, or away? Away only with its reason, an lc issue
-    and the named replacement; a review counts it like a violation otherwise.
+15. Direction: toward the target architecture (coding.md "Target architecture"), neutral, or away? Away only with its reason, an lc issue,
+    the named replacement and the maintainer's decision id; a review counts it like a violation otherwise.
 
 
 ## Routes and stopping conditions

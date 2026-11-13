@@ -1,0 +1,71 @@
+#!/usr/bin/env node
+'use strict';
+// brief <slug> <worktree> <planner|implementer|reviewer> --out <dir> [--round <n>] [--notes <file>]
+// Prints an agent's brief from the task record and writes it to <dir>/<slug>-<role>-brief[-<n>].md. The coordinator
+// does not retell rules: the role's rules live in its definition (.claude/agents/l2-<role>.md), the task's facts in the
+// record (workflow.js), and what only the coordinator knows goes into --notes as facts of this task. A rule written in a
+// brief by hand is how "the nearest cause and the minimal fix" reached a night of agents (2026-11-12).
+// The last line it prints is the launch prompt; the Agent launch hook refuses a role launch without the brief file.
+const fs = require('node:fs'), path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const a = process.argv.slice(2), opt = k => { const i = a.indexOf(k); return i < 0 ? undefined : a[i + 1]; };
+const pos = a.filter((x, i) => !x.startsWith('--') && !(i && a[i - 1].startsWith('--')));
+const fail = m => { console.error('brief: ' + m); process.exit(1); };
+const HOME = '/Users/iposukhoff/L2Solo', W = process.env.L2SOLO_WORKFLOW_JS || path.join(HOME, '.claude/workflow.js');
+const [slug, wt, role] = pos, out = opt('--out'), round = +(opt('--round') || 1), notes = opt('--notes');
+if (!slug || !wt || !['planner', 'implementer', 'reviewer'].includes(role) || !out) fail('usage: brief <slug> <worktree> <planner|implementer|reviewer> --out <dir> [--round <n>] [--notes <file>]');
+if (!fs.existsSync(wt)) fail('no worktree ' + wt);
+if (notes && !fs.existsSync(notes)) fail('no notes file ' + notes);
+const wf = (...args) => execFileSync(process.execPath, [W, ...args, '--root', wt], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+let s; try { s = JSON.parse(wf('status', slug)); } catch (e) { fail('no task record ' + slug + ' (workflow.js start first): ' + String(e.stderr || e.message).split('\n')[0]); }
+if (s.closed) fail(slug + ' is closed');
+if (!s.policyCurrent) fail(slug + ' was opened under an older policy digest: close it and start a new slug');
+const b = s.brief || {}, e = s.evidence || {}, def = `${HOME}/.claude/agents/l2-${role}.md`, root = path.resolve(wt);
+if (role !== 'planner' && (!b.owner || !b.tests)) fail(slug + ' has no full brief yet (record-brief): an implementer or a reviewer works from it');
+const branch = (() => { try { return execFileSync('git', ['-C', wt, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { return '?'; } })();
+const list = (x, f = y => y) => (x || []).map(y => '  - ' + f(y)).join('\n') || '  - (none)';
+const L = [];
+L.push(`# L2Solo brief · ${slug} · ${role} · round ${round} · digest ${String(s.policy).slice(0, 8)}`);
+L.push(`Read ${def} in full and act as that agent; it outranks everything below (launched as type l2-${role}, it already is your instructions).`);
+L.push('', '## Task (from the task record)');
+L.push(`- slug ${slug} · route ${s.risk} · kind ${s.kind} · base ${s.base}`, `- worktree ${root} (branch ${branch}) · head ${String(s.head).slice(0, 9)}`);
+if (b.symptom) L.push(`- ${s.kind === 'fix' ? 'symptom' : 'goal'}: ${b.symptom}`);
+if (b.owner) L.push(`- owner: ${b.owner}`, `- scope: ${(b.scope || []).join(', ')}`, `- non-goals: ${(b.nonGoals || []).join('; ') || 'none'}`);
+if (b.cause) {
+    L.push(`- cause (${b.cause.status}): ${b.cause.explanation}`);
+    if (b.cause.chain) L.push('- chain:', list(b.cause.chain));
+    if (b.cause.excluded) L.push('- excluded:', list(b.cause.excluded));
+    if (b.cause.deeper) L.push(`- deeper cause: ${b.cause.deeper}`);
+}
+if (b.evidence) L.push('- evidence handles:', list(b.evidence));
+if (b.acceptance) L.push('- acceptance:', list(b.acceptance, x => `${x.expect}  [by ${x.by}]`));
+if (b.guards) L.push('- guards (must not get worse):', list(b.guards, x => typeof x === 'string' ? x : `${x.expect}  [by ${x.by}]`));
+if (b.tests) L.push(`- tests: ${b.tests.join(', ')}`, `- regression tests: ${(b.regressions || []).join(', ') || 'none'}`);
+if (b.smallFixes?.length) L.push('- small fixes (each its own commit, id in the subject):', list(b.smallFixes, x => `${x.id}: ${x.file}`));
+if (b.map) L.push(`- map entries the task changes: ${b.map.join('; ')}`);
+L.push('', '## Your inputs');
+if (role === 'planner') L.push(`- the tree to read: ${root}`, `- first: \`node ${HOME}/.claude/lc.js near <the step or issue id in the notes>\``);
+if (role === 'implementer') L.push(`- edit only in ${root} on branch ${branch}`, round > 1 ? `- this is fix round ${round - 1}: the review table lines to fix are below` : '- the plan: the file the notes name, or the brief above when no planner ran');
+if (role === 'reviewer') {
+    L.push(`- the diff: \`git -C ${root} diff ${s.base}..HEAD\` (commits: \`git -C ${root} log --oneline ${s.base}..HEAD\`)`);
+    L.push(`- the mechanical asks to answer: \`node ${HOME}/planning/rules-check.js ${s.base}..HEAD --root ${root}\``);
+    const r = e.report;
+    L.push(r ? `- the implementer's report (recorded): added beyond the plan: ${r.added} · deviations from the plan: ${r.deviations} · tests run: ${r.tests}${r.guards?.length ? ' · guards: ' + r.guards.join('; ') : ''}` : '- the implementer\'s report: NOT RECORDED (the coordinator records it with record-report before this review)');
+    try { const v = JSON.parse(wf('verify', slug)); if (v.warnings?.length) L.push('- selection warnings to answer one by one:', list(v.warnings)); } catch { /* verify refuses (a route or a guess): nothing to add */ }
+}
+const prev = e.review;
+if (round > 1 && prev?.table) {
+    const standing = Object.entries(prev.table).filter(([, v]) => v.verdict === 'violation');
+    L.push(`- review round ${prev.round} (${prev.result}) left these violation lines:`, list(standing, ([k, v]) => `${k} violation ${v.text}`));
+}
+L.push('', '## Your outputs');
+const o = n => path.join(path.resolve(out), n);
+if (role === 'planner') L.push(`- the plan, written as you go: ${o(slug + '-plan.md')}`);
+if (role === 'implementer') L.push(`- your report: ${o(`${slug}-report-${round}.md`)}, holding these lines exactly (the coordinator records it; \`ready\` refuses a task without them):`, '  - `added beyond the plan: none` or each addition with what breaks for a player or the server without it', '  - `deviations from the plan: none` or each one', '  - `tests run: <files>` and, for each regression test, the assert that fails on the old code with the base SHA', ...(b.guards || []).filter(g => typeof g === 'object').map(g => `  - \`guard: <before -> after>\` for: ${g.expect}`));
+if (role === 'reviewer') L.push(`- the review table (17 lines${round > 1 ? '; this round: only the lines you change' : ''}): ${o(`${slug}-review-${round}.txt`)}`, '- other findings: in your final message, each as a ready `lc add` line');
+L.push('', '## Coordinator\'s notes (facts of this task only; a rule stated here does not count)');
+L.push(notes ? fs.readFileSync(notes, 'utf8').trim() : '(none)');
+const file = o(`${slug}-${role}-brief${round > 1 ? '-' + round : ''}.md`);
+fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, L.join('\n') + '\n');
+console.log(L.join('\n'));
+console.log(`\nlaunch prompt: Read ${def} in full and act as that agent; it outranks this brief. Your task brief: ${file}`);
