@@ -126,4 +126,17 @@ assert.equal(buy.close, 'parked', 'the want is parked after two looks at its wor
     assert.equal(Worth.firing({ ...bow, noneArrows: null, shots: [{ ...bow.shots[0], arrows: null }] }, price(0.1)), null, 'arrows null on every option: no answer');
 }
 
+// The worn kit's hunt over the reference kit's per form, by kind of shot: a
+// lower-grade weapon fires another id of the same kind; a form either hour
+// does not state the shares of has no factor.
+{
+    const share = (killShare, shotShare) => ({ killShare, shotShare });
+    const worn = { none: 1, noneShare: share(0.4, 0.3), shots: [{ id: 2509, kind: 'spiritshot', ...share(0.5, 0.6) }, { id: 3947, kind: 'blessedSpiritshot', ...share(0.9, 0.9) }] };
+    const reference = { none: 1, noneShare: share(0.8, 0.6), shots: [{ id: 2510, kind: 'spiritshot', ...share(1, 1.2) }, { id: 3948, kind: 'blessedSpiritshot', ...share(null, null) }] };
+    assert.deepEqual(Worth.huntFactors(worn, reference), { bare: { kills: 0.5, shots: 0.5 }, shots: { kills: 0.5, shots: 0.5 }, blessed: null },
+        'each form the worn share over the reference\'s, matched by kind; the reference states no blessed shares: none');
+    assert.deepEqual(Worth.huntFactors(null, reference), { bare: null, shots: null, blessed: null }, 'no worn hour: no factor');
+    assert.equal(Worth.huntFactors(worn, { ...reference, noneShare: share(0, 0) }).bare, null, 'a reference share of 0: no factor');
+}
+
 console.log('test_economy_model_worth: ok');

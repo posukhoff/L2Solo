@@ -119,6 +119,15 @@ assert.equal(partied({ levels: [1, 50], self: 0 }).delta.exp, 0, 'under the squa
 const designed = party => Engine.huntDesign({ ...Engine.mainOf(accounts[0], 0, view, bands), party }, view, 100, () => 0.5).delta.exp;
 assert.equal(designed(null), 5000);
 assert.equal(designed({ levels: [1, 1, 1], self: 0 }), 6950, 'three equal members: 1.39 x a solo bot\'s exp');
+// The design hunt is the worn kit's: a kit making half the row's kills
+// gains half its exp, adena and drops an hour.
+{
+    const main = Engine.mainOf(accounts[0], 0, view, bands), full = Engine.huntDesign(main, view, 100, () => 0.5);
+    const half = Engine.huntDesign(main, view, 100, () => 0.5, null, { bare: 0.5, shots: 0.5, blessed: 0.5 });
+    assert.equal(half.delta.exp, 2500, 'half the row\'s exp');
+    assert.ok(Math.abs(half.delta.flows.huntCold - full.delta.flows.huntCold / 2) <= 1, `half the row's adena: ${half.delta.flows.huntCold} of ${full.delta.flows.huntCold}`);
+    assert.ok(Math.abs((half.main.bag[200] || 0) - (full.main.bag[200] || 0) / 2) <= 1, `half the row's drops: ${half.main.bag[200]} of ${full.main.bag[200]}`);
+}
 
 // A main with a no-grade weapon fires no-grade shots where the hour names D
 // shots; with the D weapon it restocks D shots.

@@ -73,9 +73,15 @@ const ladderOf = (line, bands) => ({ slots: {}, lines: { [line]: bands.map(([fro
 // hour firing none) and shotsOf(line, level, kit, hour) -> [{ id, gross,
 // units }] (the hour per kind of shot the kit fires) with the seam of
 // kit-hours.js: a piece put on in a slot takes the other hand's weapon off;
-// a weapon fires the row's count (shotScale 1).
-const kitHoursOf = (hourOf, shotsOf = () => []) => {
-    const hour = (line, level, kit) => { const none = hourOf(line, level, kit); return none === null ? null : { none, shots: shotsOf(line, level, kit, none) }; };
+// a weapon fires the row's count (shotScale 1). shareOf(line, level, kit) ->
+// { killShare, shotShare } | null: the kit's kill and shot share, stated on
+// every option of its hour (none: not stated).
+const kitHoursOf = (hourOf, shotsOf = () => [], shareOf = () => null) => {
+    const hour = (line, level, kit) => {
+        const none = hourOf(line, level, kit), share = none === null ? null : shareOf(line, level, kit);
+        if (none === null) return null;
+        return share ? { none, noneShare: share, shots: shotsOf(line, level, kit, none).map(shot => ({ ...shot, ...share })) } : { none, shots: shotsOf(line, level, kit, none) };
+    };
     const swaps = (line, level, kit, pieces) => {
         const numbers = value => (value === null ? null : { pAtk: 1, mAtk: 1, pDef: 1, mDef: 1 }), base = hour(line, level, kit);
         return { hour: base, numbers: numbers(base), caster: false, deathHours: 0, swaps: pieces.map(({ slot, selfId }) => {
@@ -235,6 +241,38 @@ const runHeld = (world, kitHours, account, hours) => {
     const noCount = { ...kitHours, shotScale: (line, level, spotId, weapon, blessed) => (blessed ? scaleOf(true) : null) };
     const counted = runHeld(casterWorld({ plainPrice: 5, blessedPrice: 10, blessed: blessedHour, yields: { town: 'TownA', drop: { 57: 100 }, spoil: {} } }), noCount, { ...accounts[1], money: 0 }, 0);
     assert.equal(counted.hooks.firing(counted.main), null, 'the plain shot has no count at the row: no option, it fires none');
+}
+// A main hunts its worn kit's hour, not the reference kit's (the spot row):
+// the level's reference kit is the sword and an armour, the main wears the
+// sword alone, and its kit makes share of the reference kit's kills (kill
+// and shot share 1 in the reference kit). At share 0.5 one hour firing
+// Spiritshots at its row (1000 adena, 1 exp, 50 shots) credits 500 adena,
+// 0.5 exp and fires 25 shots.
+const ARMOR_WORN = 2101;
+const keptKit = world => ({ ...world, kits: { 9: Object.fromEntries(levels.map(level => [level, [{ selfId: SWORD, slot: 7 }, { selfId: ARMOR_WORN, slot: 10 }]])) },
+    items: { ...world.items, [ARMOR_WORN]: { kind: 'Armor.Body', grade: 'D', ref: 2000, npcBuy: 1000, crystals: 0 } } });
+const shareKit = (share, shots) => ({ ...kitHoursOf(() => 500, () => shots, (line, level, kit) => (Number(kit[10]) === ARMOR_WORN ? { killShare: 1, shotShare: 1 } : { killShare: share, shotShare: share })), shotScale: () => 1 });
+{
+    const world = keptKit(casterWorld({ plainPrice: 5, blessedPrice: 10, blessed: null, yields: { town: 'TownA', drop: { 57: 100 }, spoil: {} } }));
+    const kitHours = shareKit(0.5, [{ id: SPSD, kind: 'spiritshot', gross: 1000, units: 50 }, { id: BSPSD, kind: 'blessedSpiritshot', gross: 1500, units: 140 }]);
+    const { hooks, main, view } = runHeld(world, kitHours, { ...accounts[1], money: 0 }, 0), firing = hooks.firing(main);
+    assert.equal(main.kit[10], 0, 'the main wears no armour');
+    const hunted = Engine.huntDesign({ ...main, shots: { [SPSD]: 1000 } }, view, 1, () => 0.5, firing, hooks.kills(main)).delta;
+    assert.deepEqual([firing.id, hunted.flows.huntCold, hunted.exp, hunted.shotsUsed], [SPSD, 500, 0.5, 25], 'half the row\'s kills: half its adena, exp and shots');
+}
+// At share 2 (a kit making twice the row's kills) the level situation is read
+// by the hour the hunt reaches the level: 11 exp to the next level at 2 an
+// hour (the row's 1 exp an hour, firing none) is read at 5.5 hours, never at
+// the row's 11.
+{
+    const flat = { ...row('s1', 1000, 0), shotless: undefined };
+    const world = { ...keptKit(snapshot), exp: levels.map(level => (level <= 25 ? level * 1e9 : 25e9 + (level - 25) * 10)),
+        hours: { 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: flat, top: [] }])) } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(2, []) }), read = [];
+    const design = { ...real, start: context => { const hooks = real.start(context); return { ...hooks, levelUp: (main, now) => { read.push([now, main.level]); return hooks.levelUp(main, now); } }; } };
+    Engine.simulate({ view, accounts: [accounts[1]], bands, rates, hours: 8, seed: 1, nextArrival: arrivals, design });
+    const first = read.find(([, level]) => level === 26);
+    assert.ok(first && Math.abs(first[0] - 5.5) < 1e-9, `the level read at 5.5 hours: ${JSON.stringify(read)}`);
 }
 // (3) A fighter fires its soulshot at its row: one hunting hour credits the
 // row (1000 adena, 1 exp) and fires its 50 shots.

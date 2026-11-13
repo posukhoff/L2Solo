@@ -34,6 +34,13 @@ const SHARED_KIT_TABLES = 5000;
 const SHOT_KINDS = 2;
 const gradeOfItem = item => String(item?.grade || 'NONE').toLowerCase();
 
+// The kit a main wears: its kit with the weapon in hand in its own slot.
+function wornKit(snapshot, main) {
+    const worn = { ...main.kit, 7: 0, 14: 0 };
+    if (main.weapon) worn[Object.keys(main.kit).find(slot => main.kit[slot] === main.weapon) || snapshot.gearLadder.slots?.[main.weapon] || 7] = main.weapon;
+    return worn;
+}
+
 // ctx: the design plane's state and helpers (design.js startPlane).
 function mainsSide(ctx) {
     const { snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, depositFee } = ctx;
@@ -50,12 +57,7 @@ function mainsSide(ctx) {
     const ladderOf = main => bandAt(main.line, main.level);
     const groupOf = Worth.ladderGroup;
     const slotsOf = pieces => Object.fromEntries(pieces.map(piece => [piece.slot, piece.selfId]));
-    // The kit a main wears: its kit with the weapon in hand in its own slot.
-    const wornOf = main => {
-        const worn = { ...main.kit, 7: 0, 14: 0 };
-        if (main.weapon) worn[Object.keys(main.kit).find(slot => main.kit[slot] === main.weapon) || snapshot.gearLadder.slots?.[main.weapon] || 7] = main.weapon;
-        return worn;
-    };
+    const wornOf = main => wornKit(snapshot, main);
     // A shot's price to a main: its last deal, else the first price; null
     // for a shot it knows no price of. pricesOf(main): that reader for a main.
     const shotPrice = (memory, id) => Knowledge.known(memory, id) ?? game.firstPrice[id] ?? null;
@@ -201,22 +203,25 @@ function mainsSide(ctx) {
         else if (table.arrowIds[at]) hour.noneArrows = { id: table.arrowIds[at], units: table.noneArrowUnits[at] };
         return { hour, gear: table.gears[at] };
     };
-    // The hour of the kit a main wears (kit-hours): its kit table's when one
-    // is held for its line, band and kit, else read alone (one profile pass,
-    // no piece swapped in) and kept for every main by those inputs (key), the
-    // least recently read first past SHARED_KIT_TABLES.
+    // The hour of a kit (kit-hours) on a main's line in the band of its
+    // level, the kit by its key (Worth.kitKey) and kitOf() giving it: a kit
+    // table's when one is held for the line, band and kit, else read alone
+    // (one profile pass, no piece swapped in) and kept for every main by
+    // those inputs (key), the least recently read first past
+    // SHARED_KIT_TABLES. wornHourOf: the kit the main wears.
     const wornHours = new Map();
-    const wornHourOf = main => {
+    const kitHourOf = (main, kitKey, kitOf) => {
         const band = ladderOf(main);
         if (!band) return null;
-        const key = `${main.line}@${band.from}@${wornKeyOf(main)}`, account = accounts[main.index], table = account.kitTable?.key === key ? account.kitTable : shared.get(key);
+        const key = `${main.line}@${band.from}@${kitKey}`, account = accounts[main.index], table = account.kitTable?.key === key ? account.kitTable : shared.get(key);
         if (table) return table.worn?.hour ?? null;
         let hour = wornHours.get(key);
-        if (hour === undefined) hour = ctx.kitHours.hour(main.line, main.level, wornOf(main)); else wornHours.delete(key);
+        if (hour === undefined) hour = ctx.kitHours.hour(main.line, main.level, kitOf()); else wornHours.delete(key);
         wornHours.set(key, hour);
         if (wornHours.size > SHARED_KIT_TABLES) { wornHours.delete(wornHours.keys().next().value); stats.kitTables.wornEvicted++; }
         return hour;
     };
+    const wornHourOf = main => kitHourOf(main, wornKeyOf(main), () => wornOf(main));
     // The one answer to whether a main fires shots and which kind: its worn
     // kit's hour (wornHourOf) at the prices it knows (Worth.firing), the
     // shot it fires there and its worth, and the shots that kind fires an
@@ -227,12 +232,21 @@ function mainsSide(ctx) {
     // account until one of its inputs changes: the worn hour, the account's
     // memory (its prices), the spot row and the weapon. At a row without an
     // hour firing Blessed Spiritshots (the spot table measured no such fight
-    // there) they are no option.
+    // there) they are no option. The shots an hour are the row's times the
+    // worn kit's shot share over the reference kit's (Worth.huntFactors), and
+    // the record holds the kill factors of each form (killsOf), taken again
+    // only when the worn hour or the row changed (a level's row and
+    // reference kit change together).
     const firings = new Map();
     const isBlessed = shot => Engine.formOf(view, shot.id) === 'blessed';
     const firingOf = main => {
         const hour = wornHourOf(main), memory = accounts[main.index].memory, row = Engine.spotRowOf(view, main), held = firings.get(main.index);
         if (held && held.hour === hour && held.memory === memory && held.row === row && held.weapon === main.weapon) return held.answer;
+        let factors = held && held.hour === hour && held.row === row ? held.factors : null;
+        if (!factors) {
+            const ref = slotsOf(kitAt(main, main.level));
+            factors = Worth.huntFactors(hour, kitHourOf(main, Worth.kitKey(ref), () => ref));
+        }
         // The options its spot row states: Blessed Spiritshots only at a row with
         // a blessed hour, and a kind only where the table has a reference count.
         const scaled = [];
@@ -241,9 +255,21 @@ function mainsSide(ctx) {
             if (scale !== null) scaled.push({ shot, scale });
         }
         const fired = Worth.firing(hour && { ...hour, shots: scaled.map(entry => entry.shot) }, pricesOf(main)), form = fired?.id ? Engine.formOf(view, fired.id) : 'bare', hunted = row && fired?.id ? Engine.rowIn(row, form) : null;
-        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: hunted.shots * scaled.find(entry => entry.shot.id === fired.id).scale, worth: fired.worth } : null;
-        firings.set(main.index, { hour, memory, row, weapon: main.weapon, answer });
+        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: hunted.shots * scaled.find(entry => entry.shot.id === fired.id).scale * (factors[form]?.shots ?? 1), worth: fired.worth } : null;
+        const kills = { bare: factors.bare?.kills ?? 1, shots: factors.shots?.kills ?? 1, blessed: factors.blessed?.kills ?? 1 };
+        firings.set(main.index, { hour, memory, row, weapon: main.weapon, answer, factors, kills, form: answer ? form : 'bare' });
         return answer;
+    };
+    // The worn kit's kills an hour over the reference kit's per form the main
+    // hunts its row in ({ bare, shots, blessed }; 1 where not stated): what
+    // its hunt and every hour predicted from its row are multiplied by.
+    // Counted (stats.huntFactors): reads, and those whose form fired states none.
+    const killsOf = main => {
+        firingOf(main);
+        const held = firings.get(main.index);
+        stats.huntFactors.read++;
+        if (!held.factors[held.form]) stats.huntFactors.unstated++;
+        return held.kills;
     };
     // The slots path aims at, one a ladder group of the main's kit at its own
     // level (both hands one aim, the weapon's first), each with its
@@ -905,7 +931,7 @@ function mainsSide(ctx) {
         const only = side => Object.fromEntries(Object.entries(all[side] || {}).map(([id, rows]) => [id, rows.filter(row => row.town === town)]).filter(([, rows]) => rows.length));
         return { sell: only('sell'), buy: only('buy'), bids: {} };
     };
-    return { visitMain, nextArrival, levelUp, kitRatio, firingOf, recipeWanted, scrollRoute, offerPosted, adsBook, ownNeeds,
+    return { visitMain, nextArrival, levelUp, kitRatio, firingOf, killsOf, recipeWanted, scrollRoute, offerPosted, adsBook, ownNeeds,
         start: (index, main) => setMarket(index, { spotHeld: !!main.spot }) };
 }
 
@@ -915,4 +941,4 @@ function marketStart() {
         stalled: {}, deal: null, tripReason: null, indexed: [], spotHeld: false, visits: 0, lastSpot: null, movedAt: null, needs: {} };
 }
 
-module.exports = { mainsSide, marketStart, FORMULAS };
+module.exports = { mainsSide, marketStart, wornKit, FORMULAS };

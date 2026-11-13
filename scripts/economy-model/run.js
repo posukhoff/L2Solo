@@ -29,6 +29,8 @@ const Engine = require('./engine');
 const Today = require('./today');
 const Design = require('./design');
 const KitHours = require('./kit-hours');
+const Mains = require('./mains');
+const Worth = require('./rules/worth');
 const PersonaTypes = require('../../src/GameServer/Bot/AI/BotPersonaTypes');
 const { levelForGrade } = require('../../src/GameServer/Bot/AI/GearGradeRule');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
@@ -133,7 +135,7 @@ function printFit(basis) {
     console.log('FIT per stage band: real exp/bot-h, mean exp per hunting hour at the mains\' spots, the hunting share fitted; beside it (not fitted): the share at the best spots and the end snapshot\'s hunting, grouped and resting fractions');
     const share = value => (value === null ? '-' : value.toFixed(3));
     for (const [band, row] of Object.entries(basis)) {
-        console.log(`  ${band.padEnd(8)} ${pad(k(row.realExp), 10)} ${pad(k(row.meanExp), 10)} share ${row.huntShare.toFixed(3)}${row.huntShare > 1 ? ' (ABOVE 1)' : ''}  at best ${row.bestShare.toFixed(3)}  hunting ${share(row.activityHunting)} grouped ${share(row.activityGrouped)} resting ${share(row.activityResting)}  (${row.bots} mains, ${row.atOwnSpot} at their own spot)`);
+        console.log(`  ${band.padEnd(8)} ${pad(k(row.realExp), 10)} ${pad(k(row.meanExp), 10)} share ${row.huntShare.toFixed(3)}${row.huntShare > 1 ? ' (ABOVE 1)' : ''}${row.kitFactor === undefined ? '' : `  kit factor ${row.kitFactor.toFixed(3)}`}  at best ${row.bestShare.toFixed(3)}  hunting ${share(row.activityHunting)} grouped ${share(row.activityGrouped)} resting ${share(row.activityResting)}  (${row.bots} mains, ${row.atOwnSpot} at their own spot)`);
     }
 }
 
@@ -151,21 +153,30 @@ function designOf(argv, snapshot) {
     // a snapshot of another preset is not divided into that run's exp.
     const fitPreset = Boot.option(argv, 'fit-preset', 'x50'), fitSnapshot = snapshot.header.preset === fitPreset ? snapshot : loadSnapshot(fitPreset, null).snapshot;
     const fitView = fitSnapshot === snapshot ? view : Engine.viewOf(fitSnapshot);
-    const { rates: fitted, basis } = Today.fit(baseline, fitSnapshot === snapshot ? late.accounts : Cohort.fromSave(baseline.inputs.start.db, fitSnapshot).accounts, fitView, STAGE_BANDS);
-    console.log(`DESIGN start ${start}; rates fitted on ${fitFile} at ${fitPreset}`);
-    printFit(basis);
-    const grades = ['d', 'c', 'b', 'a', 's'].map(grade => [grade, levelForGrade(grade)]);
-    const overrides = JSON.parse(Boot.option(argv, 'design', '{}')), shared = huntShares(fitted, overrides.huntShare, Boot.option(argv, 'hunt-share', null));
-    const rates = shared.rates, config = Object.freeze({ ...Design.DESIGN, ...overrides, huntShare: shared.huntShare });
-    const began = Date.now(), game = Design.gameOf(snapshot, view, config);
+    // The game tables and the kit hours read no fitted share; the fit reads
+    // the kit hours: a main's exp an hour is its row's times its worn kit's
+    // kills over the reference kit's, the factor its hunt reads (the shots
+    // form: the fit's mains fire their row's shot), so the share is a share
+    // of time and the kit counts once.
+    const overrides = JSON.parse(Boot.option(argv, 'design', '{}'));
+    const began = Date.now(), game = Design.gameOf(snapshot, view, { ...Design.DESIGN, ...overrides });
     console.log(`DESIGN game tables in ${((Date.now() - began) / 1000).toFixed(1)} s: ${Object.keys(game.firstPrice).length} first prices; `
         + `SSD ${fmt(game.firstPrice[1463])}, SSC ${fmt(game.firstPrice[1464])}, D crystal ${fmt(game.firstPrice[1458])}, Soul Ore ${fmt(game.firstPrice[1785])}`);
-    console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStock are high-sensitivity): ${JSON.stringify(config)}`);
-    console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : [].concat(r.ours).includes(config[field]) ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
-    const personaShares = Object.fromEntries(PersonaTypes.TYPE_IDS.map(id => [id, PersonaTypes.TYPES[id].share]));
     const booted = Date.now(), kitHours = KitHours.gameKitHours({ snapshot, anchor: game.firstPrice });
     kitHours.warm();
     console.log(`DESIGN kit hours: the game's hunt cycle booted and every band's body built in ${((Date.now() - booted) / 1000).toFixed(1)} s`);
+    const slotsOf = pieces => Object.fromEntries(pieces.map(piece => [piece.slot, piece.selfId]));
+    const factorOf = main => Worth.huntFactors(kitHours.hour(main.line, main.level, Mains.wornKit(snapshot, main)),
+        kitHours.hour(main.line, main.level, slotsOf(view.kits[main.line]?.[main.level] || []))).shots?.kills ?? 1;
+    const { rates: fitted, basis } = Today.fit(baseline, fitSnapshot === snapshot ? late.accounts : Cohort.fromSave(baseline.inputs.start.db, fitSnapshot).accounts, fitView, STAGE_BANDS, factorOf);
+    console.log(`DESIGN start ${start}; rates fitted on ${fitFile} at ${fitPreset}`);
+    printFit(basis);
+    const grades = ['d', 'c', 'b', 'a', 's'].map(grade => [grade, levelForGrade(grade)]);
+    const shared = huntShares(fitted, overrides.huntShare, Boot.option(argv, 'hunt-share', null));
+    const rates = shared.rates, config = Object.freeze({ ...Design.DESIGN, ...overrides, huntShare: shared.huntShare });
+    console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStock are high-sensitivity): ${JSON.stringify(config)}`);
+    console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : [].concat(r.ours).includes(config[field]) ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
+    const personaShares = Object.fromEntries(PersonaTypes.TYPE_IDS.map(id => [id, PersonaTypes.TYPES[id].share]));
     return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, design: Design.plane({ snapshot, game, config, start, grades, personaShares, kitHours }) };
 }
 
@@ -336,6 +347,8 @@ function printMarket(design, hours) {
     console.log(`KIT TABLES taken ${kt.taken} (a main's line, band or worn kit changed): read ${kt.read}, shared from another main's ${kt.shared} (${pct(kt.shared, kt.taken)}), let go past the bound ${kt.evicted}, worn hours ${kt.wornEvicted}; `
         + `kit hours: swaps ${kh.swaps - mr.swaps}, of them by the formula over the worn kit ${kh.fast - mr.fast}, whole profile passes ${kh.fresh - mr.fresh}, cell builds ${kh.builds}; `
         + `read apart by KIT HOUR over the kit it could pay now: swaps ${mr.swaps}, of them by the formula ${mr.fast}, whole profile passes ${mr.fresh}`);
+    const hf = m.huntFactors;
+    console.log(`HUNT FACTORS (the worn kit's kills over the reference kit's that a main's hunt reads) read ${hf.read}, not stated for the form fired (read as 1) ${hf.unstated} (${pct(hf.unstated, hf.read)})`);
     console.log(`PATH pieces no route prices ${m.unpriced || 0}`);
     console.log('CAP>=FLOOR per grade: static (the best buyer among the lines entering the grade, path kit pieces; floors npc | npc + D crystals at the NPC gear route) under gear_gain / hunt_cycle; dynamic over pieces offered (a WTB in reach whose cap reaches the WTS floor):');
     for (const [grade, row] of Object.entries(m.capFloorStatic)) {

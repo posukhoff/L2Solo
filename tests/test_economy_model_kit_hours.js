@@ -112,6 +112,26 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
         near(shot.shotShare, game.kills * game.share / game.kph, `line ${line} at ${level}, ${shot.kind}: shot share`);
     }
 }
+// A cell whose table row states no kills an hour (a cycle without kph)
+// states no kill or shot share (null, never a share over 0); its hour is the
+// same. The game's reader is built on the table as it is.
+{
+    const cycle = Table.cycle, reader = HuntCycle.reader;
+    let building = false;
+    HuntCycle.reader = (...args) => { building = true; try { return reader(...args); } finally { building = false; } };
+    Table.cycle = (...args) => { const row = cycle(...args); return building || !row ? row : { ...row, kph: 0 }; };
+    try {
+        const kit = kitOf(fighter, bandAt(fighter, 32).level), hour = KitHours.gameKitHours({ snapshot, anchor }).hour(fighter, 32, kit), known = kitHours.hour(fighter, 32, kit);
+        assert.deepEqual(hour.noneShare, { killShare: null, shotShare: null }, 'no kph: the shotless hour states no shares');
+        assert.deepEqual(hour.shots.map(shot => [shot.killShare, shot.shotShare]), [[null, null]], 'no kph: the soulshot states no shares');
+        near(hour.none, known.none, 'the shotless hour as with kph');
+        near(hour.shots[0].gross, known.shots[0].gross, 'the soulshot hour as with kph');
+    } finally {
+        Table.cycle = cycle;
+        HuntCycle.reader = reader;
+    }
+}
+
 // Where the worn weapon fires the table's reference count, the kind the game
 // fires, priced as the game's reader prices it (its shot price, times the
 // band's scale), nets the game's own hour (a scale of 1 and the game's

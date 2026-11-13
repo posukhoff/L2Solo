@@ -253,9 +253,13 @@ function designYieldRows(view, line, level, row, form) {
 // { id, perHour }, the design plane's answer, perHour that hour's shots at
 // its weapon's count; null fires none) last shots held / shots per hour,
 // and past them, or firing none, it hunts at the same spot's hour without
-// shots (fewer kills, less exp and loot) until it restocks. delta as
-// hunt's, with shotId and huntBare.
-function huntDesign(main, view, huntHours, random, firing = null) {
+// shots (fewer kills, less exp and loot) until it restocks. The row is the
+// reference kit's hour: the main hunts its worn kit's, the row's adena, exp
+// and loot times the worn kit's kills over the reference kit's in the form
+// hunted (kills: { bare, shots, blessed }, the design plane's killsOf; null
+// reads 1), and firing's perHour is already its worn kit's. delta as hunt's,
+// with shotId and huntBare.
+function huntDesign(main, view, huntHours, random, firing = null, kills = null) {
     const best = spotRowOf(view, main), flows = emptyFlows();
     const delta = { flows, exp: 0, drops: [], shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0, shotId: 0, huntBare: 0 };
     if (!best || !(huntHours > 0)) { delta.noSpot = best ? 0 : 1; return { main, delta }; }
@@ -267,10 +271,10 @@ function huntDesign(main, view, huntHours, random, firing = null) {
     const bag = { ...main.bag }, counts = new Map();
     for (const [at, hours] of [[form, shotHours], ['bare', huntHours - shotHours]]) {
         if (!(hours > 0)) continue;
-        const row = rowIn(best, at);
-        flows.huntCold += row.adena * adenaFactor * hours;
-        delta.exp += huntExp(main, row, hours);
-        for (const [id, perKill] of designYieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * hours);
+        const row = rowIn(best, at), worn = hours * (kills?.[at] ?? 1);
+        flows.huntCold += row.adena * adenaFactor * worn;
+        delta.exp += huntExp(main, row, worn);
+        for (const [id, perKill] of designYieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * worn);
     }
     flows.huntCold = Math.round(flows.huntCold);
     for (const [id, mean] of counts) {
@@ -482,12 +486,13 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     let events = 0;
 
     // The level is scheduled at the most exp an hour the main may hunt its
-    // spot row at (the design mode's mains: the row or its blessed hour), so
-    // the situation never comes after the level is reached; one that comes
-    // before it is scheduled again from the exp then held.
+    // spot row at (the design mode's mains: the most of its forms, each at
+    // its worn kit's kills over the reference kit's), so the situation never
+    // comes after the level is reached; one that comes before it is
+    // scheduled again from the exp then held.
     const scheduleLevel = (main, now) => {
-        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare;
-        const fastest = plane && row?.blessed && row.blessed.exp > row.exp ? rowIn(row, 'blessed') : row, exp = fastest && huntExp(main, fastest, 1);
+        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, kills = plane && row ? plane.kills(main) : null;
+        const exp = !row ? 0 : kills ? Math.max(...['shots', 'bare', 'blessed'].map(form => huntExp(main, rowIn(row, form), kills[form]))) : huntExp(main, row, 1);
         if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) return;
         // One exp over the next level's start, so the level is reached however the hour's exp rounds.
         const need = expAt(view, main.level + 1) - main.exp + 1;
@@ -507,7 +512,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // Hunting from the main's last situation to now, committed.
     const huntTo = (main, now) => {
         const share = rateOf(main.band).huntShare;
-        const { main: next, delta } = plane ? huntDesign({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main), plane.firing(main))
+        const { main: next, delta } = plane ? huntDesign({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main), plane.firing(main), plane.kills(main))
             : hunt({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main));
         Ledger.recordHunt(ledger, next, delta);
         if (plane) plane.hunt(next, delta, now);
