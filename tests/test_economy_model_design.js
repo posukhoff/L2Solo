@@ -27,12 +27,12 @@ const twin = level => ({ classId: level < 40 ? 56 : 57, mp: 3000, createItem: le
 const yields = { town: 'TownA', drop: { 57: 100, [BONE]: 0.5, [SCROLL]: 0.2 }, spoil: {} };
 // A test world's game trip hours (the snapshot's tripHours and townHours):
 // `to` from each spot into its town, `back` from every town to each spot (a
-// number, or a function of the spot and the town), `hop` between two towns,
-// `self` from a town into itself (the game's Floran Village holds one).
-const tripsOf = (spots, towns, { to = 0.01, back = 0.01, hop = 0.1, self = 0 } = {}) => {
+// number, or a function of the spot and the town), `hop` between two towns
+// (none into itself, as the snapshot's).
+const tripsOf = (spots, towns, { to = 0.01, back = 0.01, hop = 0.1 } = {}) => {
     const hours = (value, ...keys) => (typeof value === 'function' ? value(...keys) : value);
     return { tripHours: { to: Object.fromEntries(spots.map(id => [id, hours(to, id)])), back: Object.fromEntries(spots.map(id => [id, Object.fromEntries(towns.map(town => [town, hours(back, id, town)]))])) },
-        townHours: Object.fromEntries(towns.map(from => [from, Object.fromEntries(towns.map(into => [into, from === into ? self : hop]))])) };
+        townHours: Object.fromEntries(towns.map(from => [from, Object.fromEntries(towns.map(into => [into, from === into ? 0 : hop]))])) };
 };
 const snapshot = {
     header: { levels: [1, 30], rates: { adena: 1 } },
@@ -519,7 +519,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const s0 = levels.map(level => [`s0@${level}`, yields]);
     // 1e6 exp a level (not the snapshot's 1e9): the 7.2 exp to level 26 below is then far above the
     // rounding a level read allows (1e-9 of the level's exp).
-    const world = { ...snapshot, exp: levels.map(level => level * 1e6), ...tripsOf(['s0', 's1'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : town === 'TownD' ? 0.4 : 0.25), hop: 0.15, self: 0.07 }), fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+    const world = { ...snapshot, exp: levels.map(level => level * 1e6), ...tripsOf(['s0', 's1'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : town === 'TownD' ? 0.4 : 0.25), hop: 0.15 }), fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
         hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: row('s0', 1000, 0), top: [] }])) },
         yields: { ...snapshot.yields, ...Object.fromEntries(s0) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s0) },
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
@@ -574,7 +574,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
     // from TownD, where its visit ends: the move is priced from TownD (no way
     // longer than s1's), so it moves and hunts again after the hop and 0.01 h.
     const s2 = levels.map(level => [`s2@${level}`, yields]);
-    const richer = { ...world, ...tripsOf(['s0', 's1', 's2'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : id === 's2' ? (town === 'TownD' ? 0.01 : 50) : town === 'TownD' ? 0.4 : 0.25), hop: 0.15, self: 0.07 }),
+    const richer = { ...world, ...tripsOf(['s0', 's1', 's2'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : id === 's2' ? (town === 'TownD' ? 0.01 : 50) : town === 'TownD' ? 0.4 : 0.25), hop: 0.15 }),
         hours: { ...world.hours, 9: Object.fromEntries(levels.map(level => [level, { ...world.hours[9][level], top: level >= 26 ? [row('s2', 5000, 50), row('s1', 1000, 50)] : [] }])) },
         yields: { ...world.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...world.yieldsDesign, ...Object.fromEntries(s2) }, tradeTowns: { ...world.tradeTowns, none: { ...world.tradeTowns.none, s2: 'TownA' } } };
     const moved = runWith({ exp: 26e6 - 7.2, at: richer });

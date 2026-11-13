@@ -751,11 +751,11 @@ function mainsSide(ctx) {
         const after = { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon };
         // occupationAtTown (ours): its spot is re-chosen at its arrival in town too.
         // The hours after its arrival are the game's trip hours: on from the
-        // town it arrived in through each other town it visits, then back from
+        // town it arrived in through each town it visits (none into itself), then back from
         // the last one to the spot it hunts next (a move is priced from there
         // too). Nothing more in town (ours: the game has no stay of its own
         // beyond the trip).
-        const visited = [nearest, ...delta.towns].filter((at, i, all) => i === 0 || at !== all[i - 1]), endsIn = visited[visited.length - 1];
+        const visited = [nearest, ...delta.towns], endsIn = visited[visited.length - 1];
         const left = config.occupationAtTown ? occupy(after, 'arrived_town', outingHours, endsIn) : after;
         let afterHours = backHoursOf(Engine.spotRowOf(view, left).spotId, endsIn);
         for (let i = 1; i < visited.length; i++) afterHours += townHoursOf(visited[i - 1], visited[i]);
