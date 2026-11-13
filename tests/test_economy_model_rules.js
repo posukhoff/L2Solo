@@ -178,6 +178,10 @@ assert.deepEqual(Bounds.firstPrice({}), { price: null, route: null }, 'no supply
     const shared = routeOf(1000, [{ id: 'a', price: 100, qty: 1865 }]);
     assert.equal(shared.adena, 1865 * 100 + 500, 'its own twin\'s crystals cost no adena');
     assert.equal(shared.adena, crystalsStanding(shared, 1000, [{ id: 'a', price: 100, qty: 1865 }]).adena + 500, 'the visit\'s count over the route gives its price');
+    // The most it pays a crystal, read when the route is weighed: the dearest
+    // of the cheapest 2865 on its lines, a dearer line left out.
+    const needed = crystalsStanding({ amount: 2865, perCrystal: Infinity }, 0, [{ id: 'a', price: 99, qty: 1 }, { id: 'b', price: 100, qty: 2865 }, { id: 'c', price: 500, qty: 10 }]);
+    assert.deepEqual([needed.top, needed.adena], [100, 99 + 2864 * 100], 'the dearest crystal it needs is the most it pays');
 }
 
 console.log('test_economy_model_rules: ok');

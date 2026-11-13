@@ -73,7 +73,7 @@ function crystalsStanding(route, ownCrystals, lines, left = entry => entry.qty) 
     let have = own, adena = 0, top = null;
     for (const entry of lines) {
         if (!(entry.price <= route.perCrystal)) continue;
-        const units = left(entry), taken = Math.min(units, Math.max(0, route.amount - have));
+        const units = left(entry), taken = Math.min(units, route.amount - have);
         if (taken > 0) { adena += taken * entry.price; top = entry.price; }
         have += units;
     }
