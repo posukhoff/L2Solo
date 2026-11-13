@@ -17,7 +17,7 @@
 //
 //   node scripts/economy-model/inputs.js [--preset x1,x10,x50] [--out <dir>] [--spots <save.sqlite>]
 //
-// --spots adds the hours at the spots a save's bots stand at (spotHours), so
+// --spots adds the hours at the spots a save's bots start at (spotHours), so
 // a model run that starts from that save hunts where its bots hunted.
 //
 // Writes <out>/inputs-<preset>-<revision>-<fingerprint>.json (default
@@ -75,7 +75,7 @@ const UPKEEP_WINDOW_S = 24 * 3600;
 const NOTES = Object.freeze([
     'best (SpotValueTable.best) and top[0] (rankedIncome) are two owners and differ on some line-levels: read best for the income of the hour, top for the candidates a bot ranks.',
     'Per-kill item yields (yields) are taken at the spot\'s spawn mix; the hour\'s income (best, top) uses the kill mix the spot table measured for the line.',
-    'spotHours (with --spots): spotHours.rows[line][level][spotId] is the spot table\'s hour at the spot a save\'s bot stood at, for the line the model draws for it, null where that line may fight nothing there.',
+    'spotHours (with --spots): spotHours.rows[line][level][spotId] is the spot table\'s hour at the spot a save\'s bot starts at (Cohort.savedBots: the spot it stands at, else its travel\'s, else its stay\'s), for the line the model draws for it, null where that line may fight nothing there.',
     'rates are today\'s presets as the game applies them, not the design\'s per-kind rates; yieldsDesign holds the per-kill yields at the design\'s rates of the preset (rules/dropRule), at the same spawn mix and Spoil level as yields.',
     'hours[line][level].others: rows of spots outside the top at that level that a main may hold (a spot of its top at an earlier level, while the level stays in the spot\'s range) or rank for a shot recipe\'s scroll (scrolls: the ones it yields); spotLevels[line][spotId] is the lowest and highest level the spot table has a row for the line there.',
     'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off).',
@@ -439,7 +439,8 @@ function rawSources(owners, itemIds) {
 
 // One preset's snapshot. lines, levels: a subset (tests); by default every
 // spot-table line at levels 1-78.
-// The hours at the spots a save's bots stand at (bot_life_state.spotId): for
+// The hours at the spots a save's bots start at (Cohort.savedBots' spotId: the
+// spot it stands at, else its travel's, else its stay's): for
 // the line the cohort gives each bot (Cohort.lineOf, the same seeded draw), at
 // its level and SPOT_LEVELS_AHEAD above it, the spot table's value of the
 // spot, null where the line may fight nothing there. Each found spot-level is

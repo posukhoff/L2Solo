@@ -264,9 +264,9 @@ function mainsSide(ctx) {
     const ownHour = (main, memory) => { const row = Engine.spotRowOf(view, main); return row ? hourAt(main, row, memory) : 0; };
     // Hunting hours to a level at the main's spot, and to the end of its grade stage.
     const hoursTo = (main, level) => {
-        const row = Engine.spotRowOf(view, main);
-        if (!(row?.exp > 0)) return 0;
-        return Math.max(0, Engine.expAt(view, Math.min(level, view.maxLevel)) - main.exp) / row.exp;
+        const row = Engine.spotRowOf(view, main), exp = row ? Engine.huntExp(main, row, 1) : 0;
+        if (!(exp > 0)) return 0;
+        return Math.max(0, Engine.expAt(view, Math.min(level, view.maxLevel)) - main.exp) / exp;
     };
     const horizonOf = main => { const next = grades.find(([, from]) => from > main.level); return hoursTo(main, next ? next[1] : view.maxLevel); };
     // The least a piece sells for: the NPC's buy price or the best
@@ -823,7 +823,7 @@ function mainsSide(ctx) {
             const there = view.yields[`${row.spotId}@${main.level}`]?.town || null, fare = there ? fareOf(town, there) : null;
             const walk = Math.max(0, (snapshot.walkBack?.[row.spotId] || 0) - (snapshot.walkBack?.[heldRow?.spotId] || 0));
             const range = view.spotLevels?.[main.line]?.[String(row.spotId)], last = range ? Math.min(view.maxLevel, range[1] + 1) : null;
-            const toEnd = last !== null && row.exp > 0 ? Math.max(0, Engine.expAt(view, last) - main.exp) / row.exp : Infinity;
+            const exp = Engine.huntExp(main, row, 1), toEnd = last !== null && exp > 0 ? Math.max(0, Engine.expAt(view, last) - main.exp) / exp : Infinity;
             return { ...out, move: fare === null ? Infinity : fare + walk * own, stay: stayHours({ outingHours: nextOuting(outingHours), gradeHours, spotHours: toEnd }) };
         };
         const rows = (hour?.top || []).map(rowOf), others = (hour?.others || []).filter(row => row.scrolls?.length).map(rowOf);

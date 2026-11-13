@@ -7,7 +7,7 @@
 const assert = require('node:assert/strict');
 const Today = require('../scripts/economy-model/today');
 const Engine = require('../scripts/economy-model/engine');
-const { judged, sharedRows, todayRows } = require('../scripts/economy-model/compare');
+const { judged, sharedRows, todayRows, requireSpots } = require('../scripts/economy-model/compare');
 
 // The fixed buyer pays the line's rate of the reference price times the adena
 // rate, at most 0.9 of the cheapest repeatable supply.
@@ -70,6 +70,10 @@ assert.equal(basis['20-29'].activityHunting, 0.5, 'printed beside the fit, not f
 assert.equal(basis['20-29'].activityGrouped, 0.5);
 assert.equal(rates['20-29'].visitsPerBotHour, 5, '10 visits an hour over 2 hunting mains');
 assert.deepEqual(rates['30-39'], { huntShare: 0.6, visitsPerBotHour: 5, fittedOn: '20-29' });
+// A band whose mains are one party of three equal members fits its share
+// over a member's exp at the row: the C4 3-member bonus 1.39, split evenly.
+const trio = [1, 2, 3].map((id, self) => ({ ...account, id, party: { levels: [25, 25, 25], self } }));
+assert.equal(Today.fit(baseline, trio, view, bands).basis['20-29'].huntShare, 600 / 1390, 'real exp over 1.39 x the row\'s exp');
 
 // Today's arrivals: periodic at the band's fitted rate, the first at the
 // seeded share of the interval, none at a rate of 0.
@@ -146,11 +150,51 @@ assert.equal(LedgerRules.stageBandOf({ accountName: `${Cohort.STATION_ACCOUNT_PR
 assert.notEqual(LedgerRules.stageBandOf({ accountName: `${Cohort.STATION_ACCOUNT_PREFIX.slice(0, -1)}`, level: 30 }), 'station', 'and no shorter prefix');
 assert.equal(LedgerRules.population([{ activity: Cohort.MERCHANT_ACTIVITY }]).merchants, 1, 'the ledger counts the cohort\'s merchant activity as a merchant');
 
+// The cohort carries, from the save, the active background party a bot is in:
+// its members' start levels and the bot's place among them; a dissolved party
+// and a party of one member the save holds as a bot carry none.
+const { DatabaseSync } = require('node:sqlite');
+const os = require('node:os'), fs = require('node:fs'), path = require('node:path');
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'party-save-')), file = path.join(folder, 'database.sqlite');
+const save = new DatabaseSync(file);
+save.exec(`CREATE TABLE characters (id INTEGER PRIMARY KEY, classId INTEGER);
+    CREATE TABLE bot_life_state (characterId INTEGER PRIMARY KEY, accountName TEXT, level INTEGER, exp INTEGER, activity TEXT, spotId TEXT, statsJson TEXT);
+    CREATE TABLE items (characterId INTEGER, selfId INTEGER, amount INTEGER, equipped INTEGER, slot INTEGER);
+    CREATE TABLE bot_background_parties (partyId TEXT, memberIdsJson TEXT, status TEXT);`);
+// Spot-less bots start on the spot the save names for them (a travel's, else a stay's), a bot on a spot keeps it.
+const spots = { 1: [null, '{"travel":{"spotId":"X"},"stay":{"spotId":"Y"}}'], 2: [null, '{"stay":{"spotId":"Y"}}'],
+    3: ['Z', '{"travel":{"spotId":"X"}}'], 4: [null, '{"travel":{}}'], 5: [null, null] };
+for (const [id, level] of [[1, 20], [2, 24], [3, 30], [4, 30], [5, 41]]) {
+    save.prepare('INSERT INTO characters VALUES (?, 7)').run(id);
+    save.prepare('INSERT INTO bot_life_state VALUES (?, ?, ?, 0, ?, ?, ?)').run(id, `bot_${id}`, level, 'hunting', ...spots[id]);
+}
+save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('a', '[1,2,99]', 'active');
+save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('b', '[3,4]', 'dissolved');
+save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('c', '[5,98]', 'active');
+save.close();
+const cohort = Cohort.fromSave(file, { hours: { 9: { 20: { classId: 7 } } }, items: {} });
+fs.rmSync(folder, { recursive: true });
+assert.deepEqual(cohort.accounts.map(account => account.party), [{ levels: [20, 24], self: 0 }, { levels: [20, 24], self: 1 }, null, null, null]);
+assert.deepEqual(cohort.accounts.map(account => account.spot), ['X', 'Y', 'Z', null, null], 'the save\'s own spot, else its travel\'s, else its stay\'s');
+
 const verdict = (baseline, model, baselineHigh) => judged({ baseline, model, baselineHigh }, 'relative').verdict;
 assert.equal(verdict(-100, -88), 'PASS', 'a negative flow within the tolerance passes');
 assert.equal(verdict(-100, -130), 'FAIL', 'a negative flow too far fails');
 assert.equal(verdict(-100, 88), 'FAIL', 'the wrong sign fails');
 assert.equal(verdict(100, 130, 110), 'PASS', 'within the tolerance of the upper end of a range');
 assert.equal(verdict(100, 140, 110), 'FAIL', 'beyond it');
+
+// A comparison needs the snapshot's rows for the baseline's own save: a snapshot
+// with none, or with another save's, is refused with the way to build one.
+const start = { inputs: { start: { db: '/saves/a/database.sqlite' } } };
+assert.throws(() => requireSpots({ header: {} }, start, []), /no spot rows.*inputs\.js --preset <preset> --spots \/saves\/a\/database\.sqlite/);
+assert.throws(() => requireSpots({ spotHours: { source: '/saves/b/database.sqlite', rows: {} } }, start, []), /another save \(\/saves\/b/);
+// A snapshot of that save built before the save named a main's spot (no entry
+// for it) is refused too; an entry of null (its line fights nothing there), a
+// station's spot and a level above the snapshot's are not asked for.
+const named = { header: { levels: [1, 30] }, spotHours: { source: '/saves/a/database.sqlite', rows: { 9: { 25: { s1: null } } } } };
+const holding = spot => ({ station: false, line: '9', level: 25, spot });
+assert.equal(requireSpots(named, start, [holding('s1'), holding(null), { ...holding('s2'), station: true }, { ...holding('s2'), level: 31 }]), '/saves/a/database.sqlite');
+assert.throws(() => requireSpots(named, start, [holding('s1'), holding('s2')]), /lack 1 spots the save names.*--spots \/saves\/a\/database\.sqlite/);
 
 console.log('economy model today mode: ok');

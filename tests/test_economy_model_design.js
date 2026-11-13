@@ -767,4 +767,59 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.deepEqual(runHub({ bid: 60, config: { hubKnown: false, crafterShare: 0 } }).design.market.visits.hub, {}, 'it never learns of B');
 }
 
+// A party member's exp an hour is the game's share of the party's kills
+// (PartyRewardMath), read by every reader of the hours a main needs: the
+// workshop's hours to the next grade, the hours to the end of its grade a
+// move pays back over, the hours to the end of its spot's levels. Three
+// equal members hunting the same spot get 1.39 times a solo main's; a member
+// under the squared-level cut gets none, and its hours are not stated (0).
+{
+    const Workshop = require('../scripts/economy-model/rules/workshop');
+    const PartyRewardMath = require('../src/GameServer/Actor/PartyRewardMath');
+    const factor = PartyRewardMath.sharesForLevels([25, 25, 25], 3e9)[0].exp / 1e9;
+    const three = { levels: [25, 25, 25], self: 0 }, cut = { levels: [25, 80, 80], self: 0 };
+    const rowOf = (spotId, adena) => ({ spotId, kills: 10, exp: 5e8, adena, shots: 50, dropLoot: 0, spoilLoot: 0, loot: 0, potions: 0, busyShare: 1, deaths: 0, shotless: null });
+    // The hours to the next grade the workshop's rules see for the first account's main.
+    const gradeHoursOf = party => {
+        const world = { ...snapshot, hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: { ...rowOf('s1', 1000), exp: 1e8 }, top: [] }])) } };
+        const real = Workshop.workshop, seen = [];
+        Workshop.workshop = view => { if (view.self === 0) seen.push(view.hoursToGrade); return real(view); };
+        try {
+            const view = Engine.viewOf(world, { npcPrices: 'x1' });
+            Engine.simulate({ view, accounts: accounts.map(account => (account.id === 1 ? { ...account, party } : account)), bands, rates, hours: 2, seed: 5, nextArrival: arrivals,
+                design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+        } finally { Workshop.workshop = real; }
+        return seen[0];
+    };
+    const solo = gradeHoursOf(null);
+    // The first wake is a little after the start, the party's exp having grown the faster: within 0.5 %.
+    const ratio = solo / gradeHoursOf(three);
+    assert.ok(Math.abs(ratio / factor - 1) < 0.005, `hours to the grade: a member of three reads ${ratio} times faster, not ${factor}`);
+    assert.equal(gradeHoursOf(cut), 0, 'a member under the cut gains no exp: its hours to the grade are not stated');
+
+    // Two spots in one town: the held A and a dearer B (200 an hour), a walk
+    // that costs 0.65 (0.33) hours of A's 1000 an hour. At its first return to
+    // town the main moves when the gain over the hours it stays beats that.
+    // Hunt adena over 3 hours says where it hunted: 3000 all at A, more after a move.
+    const config = { ...Design.DESIGN, outingHours: 100 };
+    const huntAdena = (party, ranges, level, walk) => {
+        const world = { ...snapshot,
+            hours: { 9: Object.fromEntries(levels.map(at => [at, { classId: 9, shotId: SSD, best: rowOf('A', 1000), top: [rowOf('B', 1200), rowOf('A', 1000)] }])) },
+            spotLevels: { 9: ranges }, kits: { 9: Object.fromEntries(levels.map(at => [at, [{ selfId: SWORD, slot: 7 }]])) },
+            yields: Object.fromEntries(levels.flatMap(at => ['A', 'B'].map(id => [`${id}@${at}`, { town: 'TownA', drop: {}, spoil: {} }]))), walkBack: { A: 0, B: walk } };
+        world.yieldsDesign = world.yields;
+        const view = Engine.viewOf(world, { npcPrices: 'x1' });
+        return Engine.simulate({ view, accounts: [{ id: 51, station: false, classId: 9, line: '9', level, exp: level * 1e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD }, party }],
+            bands: [['all', 1]], rates, hours: 3, seed: 1, nextArrival: arrivals, design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).flows.totals.huntCold;
+    };
+    // The hours to the end of B's levels (26): 4 for a solo main, 2.9 for a member of three; a move over 0.65 hours of walk (650) pays for 4 only.
+    const toEnd = { A: [1, 30], B: [1, 26] };
+    assert.equal(huntAdena(null, toEnd, 25, 0.65), 3597, 'a solo main moves to B');
+    assert.equal(huntAdena(three, toEnd, 25, 0.65), 3000, 'a member of three reaches its spot\'s last level sooner: the move does not pay');
+    // The hours to the end of its grade (30): 2 against 1.4; a walk of 330 pays for 2 only.
+    assert.equal(huntAdena(null, {}, 29, 0.33), 3597, 'a solo main moves to B');
+    assert.equal(huntAdena({ levels: [29, 29, 29], self: 0 }, {}, 29, 0.33), 3000, 'a member of three reaches the end of its grade sooner: the move does not pay');
+    assert.equal(huntAdena({ levels: [29, 80, 80], self: 0 }, {}, 29, 0.33), 3000, 'a member under the cut: its hours to the grade are not stated, the move pays for none');
+}
+
 console.log('PASS economy model design mode');
