@@ -26,6 +26,8 @@ const Boot = require('./boot');
 const Weights = require('./weights');
 const { dropRule, npcKind, DESIGN_RATES } = require('./rules/dropRule');
 
+// Where inputs.js writes the snapshots by default.
+const SNAPSHOT_DIR = path.join(Boot.root, 'tmp', 'economy-model');
 const BANDS = Object.freeze([[20, 29], [30, 39], [40, 51], [52, 60], [61, 75]]);
 const ADENA = 57, SPOIL_SKILL = 254;
 
@@ -38,12 +40,19 @@ function fmt(value) {
     return `${+value.toFixed(abs >= 10 ? 1 : abs >= 1 ? 2 : 3)}`;
 }
 
-// The newest snapshot of a preset in dir.
-function loadSnapshot(dir, preset) {
-    const files = fs.readdirSync(dir).filter(name => name.startsWith(`inputs-${preset}-`) && name.endsWith('.json'))
-        .map(name => path.join(dir, name)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-    if (!files.length) throw new Error(`no inputs-${preset}-*.json in ${dir} (node scripts/economy-model/inputs.js)`);
-    return { file: files[0], snapshot: JSON.parse(fs.readFileSync(files[0], 'utf8')) };
+// The snapshot of a preset whose stamp equals the live game data's
+// (Boot.stampMatches): the file named, else the first such in dir by name.
+// None: the run refuses, with the command that builds one.
+function loadSnapshot(dir, preset, file = null) {
+    const build = `node scripts/economy-model/inputs.js --preset ${preset}`;
+    const files = file ? [path.resolve(file)] : (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
+        .filter(name => name.startsWith(`inputs-${preset}-`) && name.endsWith('.json')).sort().map(name => path.join(dir, name));
+    for (const candidate of files) {
+        const snapshot = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+        if (Boot.stampMatches(snapshot.header)) return { file: candidate, snapshot };
+    }
+    throw new Error(file ? `${file} is not a snapshot of the live game data (its stamp differs); build one: ${build}`
+        : `no inputs-${preset}-*.json in ${dir} is a snapshot of the live game data (${files.length} with another stamp); build one: ${build}`);
 }
 
 // The game's deep-blue penalty and spoil landing, the drop rule's arguments.
@@ -180,7 +189,7 @@ function bandHour(snapshot, band, rates, game) {
 }
 
 function main(argv) {
-    const dir = path.resolve(Boot.option(argv, 'dir', path.join(Boot.root, 'tmp', 'economy-model')));
+    const dir = path.resolve(Boot.option(argv, 'dir', SNAPSHOT_DIR));
     const presets = Boot.presetsOption(argv), startedAt = Date.now();
     Boot.boot('x1');
     const game = gameRules(), recipes = [];
@@ -219,4 +228,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { designHour, designYields, gameRules, loadSnapshot, walkBackHours, fmt, BANDS };
+module.exports = { designHour, designYields, gameRules, loadSnapshot, SNAPSHOT_DIR, walkBackHours, fmt, BANDS };

@@ -14,6 +14,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 const common = require('../hunt-tables/common');
+const TableFingerprint = require('../../src/GameServer/Bot/AI/TableFingerprint');
 
 const PRESETS = Object.freeze(['x1', 'x10', 'x50']);
 
@@ -29,41 +30,43 @@ function usePreset(preset) {
     invoke('GameServer/ProgressionRates').reset();
 }
 
-// Every game file the model's hours read beyond the hunt tables' own hash
-// (TableFingerprint 'hunt'): the spot table's reader, the hunt reader, the
-// reward expectation, the walk back, the shot and item pricing, the death
-// valuation and the caster mark, the servitor's life rule and the skill model
-// its upkeep is read through, the arrow of each bow grade, the party exp split. A change to one
-// changes an hour, a mark, an upkeep or an id of the snapshot.
-const EXTRA_FILES = Object.freeze([
-    'src/GameServer/Bot/AI/SpotValueTable.js',
-    'src/GameServer/Bot/AI/BotHuntEfficiency.js',
-    'src/GameServer/Bot/Economy/SpotRewardExpectation.js',
-    'src/GameServer/Bot/Economy/WalkBack.js',
-    'src/GameServer/Bot/Economy/StaticMerchantPricing.js',
-    'src/GameServer/Bot/Economy/EconomicValuation.js',
-    'src/GameServer/Bot/Economy/BotImprovementPolicy.js',
-    'src/GameServer/Npc/SummonControl.js',
-    'src/GameServer/Model/Skill.js',
-    'src/GameServer/Inventory/ArrowStock.js',
-    'src/GameServer/Actor/BowResources.js',
-    'src/GameServer/Actor/PartyRewardMath.js'
-]);
+// The tree files this process has loaded through require, as root-relative
+// paths: after an extract, every module of the extract (the model's own
+// scripts, inputs.js itself, the game modules it reads and theirs) and the
+// data they require. Derived from the module graph, so a module the extract
+// starts to read joins without a list to keep.
+function loadedFiles() {
+    const prefix = common.root + path.sep;
+    return Object.keys(require.cache).filter(file => file.startsWith(prefix) && !file.includes(`${path.sep}node_modules${path.sep}`))
+        .map(file => path.relative(common.root, file).split(path.sep).join('/')).sort();
+}
 
-function extraFilesHash() {
+// The contents of these tree files; a file gone hashes as missing.
+function sourcesHash(files) {
     const hash = crypto.createHash('sha256');
-    for (const file of EXTRA_FILES) hash.update(`${file}\n`).update(fs.readFileSync(path.join(common.root, file))).update('\n');
+    for (const file of files) {
+        const full = path.join(common.root, file);
+        hash.update(`${file}\n`).update(fs.existsSync(full) ? fs.readFileSync(full) : 'missing').update('\n');
+    }
     return hash.digest('hex').slice(0, 16);
 }
 
 // The live game data a snapshot is made from: the hunt tables' fingerprint
 // (TableFingerprint 'hunt', over the code and data the hunt tables and the
-// hunt cycle are simulated by), the spot table's own (its header) and the
-// contents of the extra files.
-function dataStamp() {
-    return { fingerprint: invoke('GameServer/Bot/AI/TableFingerprint').fingerprint('hunt').hash,
+// hunt cycle are simulated by, data/Npcs, Items, Skills, Templates and
+// Recipes among them), the spot table's own (its header) and the contents of
+// the extract's loaded files (loadedFiles).
+function dataStamp(files) {
+    return { fingerprint: TableFingerprint.fingerprint('hunt').hash,
         spotTable: JSON.parse(fs.readFileSync(path.join(common.root, 'data', 'Bots', 'spot-table.json'), 'utf8')).header?.fingerprint?.hash || null,
-        extraFiles: extraFilesHash() };
+        sources: sourcesHash(files) };
+}
+
+// A snapshot header's stamp equals the live game data's.
+function stampMatches(header) {
+    if (!Array.isArray(header?.sourceFiles)) return false;
+    const live = dataStamp(header.sourceFiles);
+    return Object.keys(live).every(field => header[field] && header[field] === live[field]);
 }
 
 // --name value and --name=value command-line options.
@@ -79,4 +82,4 @@ function presetsOption(argv) {
     return String(option(argv, 'preset', PRESETS.join(','))).split(',').map(text => text.trim()).filter(Boolean);
 }
 
-module.exports = { boot, EXTRA_FILES, usePreset, dataStamp, option, presetsOption, PRESETS, root: common.root };
+module.exports = { boot, usePreset, loadedFiles, dataStamp, stampMatches, option, presetsOption, PRESETS, root: common.root };

@@ -34,9 +34,8 @@ const band = (line, from, to, scale, caster) => ({ from, to, level: Math.floor((
 const bandsOf = (line, caster, scale = null) => [band(line, 25, 29, scale ?? 0.46, caster), band(line, 30, 34, scale ?? 0.8, caster), band(line, 35, 39, scale ?? 1, caster),
     band(line, 45, 49, scale ?? 1.3, caster), band(line, 57, 60, scale ?? 1.1, caster)];
 const fighter = '46', mage = '12', archer = '9';
-const stamp = Boot.dataStamp();
 const ladder = scale => ({ [fighter]: bandsOf(fighter, false, scale), [mage]: bandsOf(mage, true, scale), [archer]: bandsOf(archer, false, scale) });
-const snapshot = { header: { preset: 'x50', ...stamp }, gearLadder: { lines: ladder(null) } };
+const snapshot = { header: { preset: 'x50' }, gearLadder: { lines: ladder(null) } };
 const kitHours = KitHours.gameKitHours({ snapshot, anchor });
 const bandAt = (line, level) => snapshot.gearLadder.lines[line].find(row => level >= row.from && level <= row.to);
 
@@ -396,25 +395,19 @@ assert.equal(kitHours.hour(fighter, 32, { ...firstKit, 9: 999999 }), null, 'an i
 assert.equal(kitHours.swaps(fighter, 32, firstKit, [{ slot: 15, selfId: fullPlate }]).swaps[0].hour, null, 'put on over a D kit');
 assert.deepEqual(kitHours.swaps(fighter, 32, { ...firstKit, 15: fullPlate }, [{ slot: 6, selfId: firstKit[6] }]).swaps.map(swap => swap.hour), [null], 'over a kit not stated');
 
-// (12) Another game's snapshot is refused.
-assert.throws(() => KitHours.gameKitHours({ snapshot: { ...snapshot, header: { ...snapshot.header, fingerprint: 'other' } }, anchor }), /fingerprint other is not the live game data's/);
-
-// (13) The anchor is required; a snapshot without the extra files stamp is refused.
+// (12) The anchor is required.
 assert.throws(() => KitHours.gameKitHours({ snapshot }), /anchor .* required/);
-assert.throws(() => KitHours.gameKitHours({ snapshot: { ...snapshot, header: { ...snapshot.header, extraFiles: undefined } }, anchor }), /no extraFiles stamp/);
-assert.throws(() => KitHours.gameKitHours({ snapshot: { ...snapshot, header: { ...snapshot.header, extraFiles: 'other' } }, anchor }), /extraFiles other is not the live/);
 
-// (14) A band's best spot must be the live one.
+// (13) A band's best spot must be the live one.
 const wrongBest = { ...snapshot, gearLadder: { lines: { ...snapshot.gearLadder.lines, [fighter]: snapshot.gearLadder.lines[fighter].map(row => ({ ...row, best: '1' })) } } };
 assert.throws(() => KitHours.gameKitHours({ snapshot: wrongBest, anchor }).hour(fighter, 32, firstKit), new RegExp(`line ${fighter} band 1 .*best spot 1 in the snapshot`));
 
-// (15) The cell is chosen at the anchor price: at x1 a line 8 body at level 27
+// (14) The cell is chosen at the anchor price: at x1 a line 8 body at level 27
 // fires fewer shots at a spot that nets more once the shot costs its price.
 // Last: it boots x1.
 {
     const line = '8', level = 27, x1 = { header: { preset: 'x1' }, gearLadder: { lines: {} } };
     Boot.boot('x1');
-    Object.assign(x1.header, Boot.dataStamp());
     x1.gearLadder.lines[line] = [band(line, 25, 29, 1, false)];
     const classId = Table.roleClass(line, level);
     const kit = Object.fromEntries(BotGear.planFor({ classId, level, characterId: HuntCycle.referenceId(classId, Number(line)) }).items.map(row => [row.slot, row.selfId]));

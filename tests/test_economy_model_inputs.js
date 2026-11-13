@@ -3,7 +3,10 @@
 // a spot hour as the spot table gives it, and per-item yields that price to
 // the spot value's drop and spoil money per kill.
 const assert = require('node:assert/strict');
+const childProcess = require('child_process');
+const fs = require('fs');
 const os = require('os');
+const path = require('path');
 
 // Started from another folder, the snapshot still finds the recipe data
 // (read relative to the working directory).
@@ -190,5 +193,54 @@ const ArrowStock = invoke('GameServer/Inventory/ArrowStock');
 assert.deepEqual(snapshot.arrowIds, { ...ArrowStock.BY_RANK });
 assert.equal(snapshot.arrowIds.d, 1341, 'Bone Arrow for a D bow');
 assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items');
+
+// A run reads the snapshot of the live game data, never the newest file. Its
+// stamp holds every tree file the extract loaded: the fares, static stores,
+// craft eligibility, store slots, bags, market towns, Luxury lists, raid
+// safety and inputs.js itself. An edit to one refuses the old snapshot, with
+// the command that builds one, in every mode that reads a snapshot.
+{
+    const DesignIncome = require('../scripts/economy-model/design-income');
+    const loaded = Boot.loadedFiles();
+    for (const file of ['src/GameServer/Bot/MerchantStoreConfigs.js', 'src/GameServer/Bot/Economy/CraftEligibility.js', 'src/GameServer/PrivateStoreLimits.js',
+        'src/GameServer/Inventory/InventoryLimits.js', 'src/GameServer/Bot/Economy/MarketTownPolicy.js', 'src/GameServer/Bot/Economy/MarketCounters.js',
+        'src/GameServer/Bot/Travel/TravelRoutes.js', 'src/GameServer/World/Generics/NpcExchangeShopLists.js', 'src/GameServer/Bot/AI/BotRaidSafety.js',
+        'scripts/economy-model/inputs.js']) assert.ok(loaded.includes(file), `the stamp holds ${file}`);
+    // The fares in a temp copy inside the tree, one of the snapshot's files.
+    fs.mkdirSync(path.join(Boot.root, 'tmp'), { recursive: true });
+    const scratch = fs.mkdtempSync(path.join(Boot.root, 'tmp', 'economy-stamp-')), dir = path.join(scratch, 'snapshots');
+    fs.mkdirSync(dir);
+    const fares = path.join(scratch, 'TravelRoutes.js');
+    fs.copyFileSync(path.join(Boot.root, 'src/GameServer/Bot/Travel/TravelRoutes.js'), fares);
+    const files = [...loaded, path.relative(Boot.root, fares).split(path.sep).join('/')];
+    const write = (name, mtime) => {
+        const file = path.join(dir, name);
+        fs.writeFileSync(file, JSON.stringify({ header: { preset: 'x50', ...Boot.dataStamp(files), sourceFiles: files } }));
+        fs.utimesSync(file, mtime, mtime);
+        return file;
+    };
+    try {
+        // The stale one is the newest file and first by name.
+        const stale = write('inputs-x50-a.json', new Date(2026, 0, 2));
+        fs.appendFileSync(fares, '\n// a fare edited\n');
+        const live = write('inputs-x50-b.json', new Date(2026, 0, 1));
+        assert.equal(DesignIncome.loadSnapshot(dir, 'x50').file, live, 'the snapshot whose stamp is the live one, not the newest file');
+        fs.rmSync(live);
+        const build = /build one: node scripts\/economy-model\/inputs\.js --preset x50/;
+        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), build, 'no snapshot of the live data: refused');
+        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50', stale), build, 'a stale snapshot named on the command line: refused');
+        const baseline = path.join(scratch, 'baseline.json');
+        fs.writeFileSync(baseline, '{}');
+        const node = args => childProcess.spawnSync(process.execPath, args, { cwd: Boot.root, encoding: 'utf8' });
+        for (const mode of ['design', 'today', 'plain']) {
+            const run = node(['scripts/economy-model/run.js', '--preset', 'x50', '--mode', mode, '--snapshot', stale, '--fit', baseline, '--cohort', baseline]);
+            assert.ok(run.status !== 0 && build.test(run.stderr), `${mode} mode refuses the stale snapshot: ${run.stderr.split('\n').find(text => /Error/.test(text))}`);
+        }
+        const compare = node(['scripts/economy-model/compare.js', '--preset', 'x50', '--baseline', baseline, '--snapshot', stale]);
+        assert.ok(compare.status !== 0 && build.test(compare.stderr), `compare refuses the stale snapshot: ${compare.stderr.split('\n').find(text => /Error/.test(text))}`);
+    } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
+}
 
 console.log('PASS economy model inputs snapshot');

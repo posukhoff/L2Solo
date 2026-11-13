@@ -197,21 +197,13 @@ const HAND_SLOTS = Object.freeze([7, 14]);
 // null: no band for the level, an item without a template, a piece above the
 // band's grade (the cold profile applies no grade penalty, so the hour of
 // such a kit is not stated) or no spot weighed.
-// The game data must be the snapshot's: the hunt tables' fingerprint (the
-// code and data of the hunt cycle, the cold profile and the reference bot)
-// and the spot table's (its rows) must equal the live ones.
+// The game data must be the snapshot's: the loader (design-income.js
+// loadSnapshot) gives a run only the snapshot whose stamp equals the live one.
 function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     const header = snapshot?.header || {};
     if (preset !== header.preset) throw new Error(`kit hours: preset ${preset} against the snapshot's ${header.preset}`);
     if (!anchor || typeof anchor !== 'object') throw new Error('kit hours: the anchor (item -> adena, the design\'s first price of each shot) is required');
     Boot.boot(preset);
-    const live = Boot.dataStamp();
-    for (const field of ['fingerprint', 'spotTable', 'extraFiles']) {
-        if (!header[field] || header[field] !== live[field]) {
-            throw new Error(header[field] ? `kit hours: the snapshot's ${field} ${header[field]} is not the live game data's ${live[field]}; extract the snapshot again (scripts/economy-model/inputs.js)`
-                : `kit hours: the snapshot has no ${field} stamp (an older snapshot); extract the snapshot again (scripts/economy-model/inputs.js)`);
-        }
-    }
     // No player board stands beside the model: a reader prices shots as a
     // hunt with no board in view does (the NPC price, else the market's
     // evidence, else the first price), never through the live server's board,

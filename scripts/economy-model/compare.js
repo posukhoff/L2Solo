@@ -23,6 +23,7 @@
 const fs = require('node:fs');
 const Boot = require('./boot');
 const Cohort = require('./cohort');
+const DesignIncome = require('./design-income');
 const Engine = require('./engine');
 const Today = require('./today');
 const Run = require('./run');
@@ -218,7 +219,7 @@ function main(argv) {
     const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
     const baseline = read(baselineFile), fitFile = Boot.option(argv, 'fit', baselineFile), seed = Number(Boot.option(argv, 'seed', 1));
     const preset = Boot.option(argv, 'preset', 'x50');
-    const { snapshot, file } = Run.loadSnapshot(preset, Boot.option(argv, 'snapshot', null));
+    const { snapshot, file } = DesignIncome.loadSnapshot(DesignIncome.SNAPSHOT_DIR, preset, Boot.option(argv, 'snapshot', null));
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}); baseline ${baselineFile} (code ${baseline.inputs?.end?.sha || '?'}, ${(baseline.window.hours * 60).toFixed(1)} min, ${baseline.population.bots} bots)`);
     const startCohort = Cohort.fromSave(baseline.inputs.start.db, snapshot);
     console.log(`SPOTS the mains start at their bots' spots in ${requireSpots(snapshot, baseline, startCohort.accounts)}`);

@@ -21,12 +21,13 @@
 // a model run that starts from that save hunts where its bots hunted.
 //
 // Writes <out>/inputs-<preset>-<revision>-<fingerprint>.json (default
-// tmp/economy-model in the tree). The snapshot reads more than the hunt tables'
-// input hash covers (static stores, craft eligibility, NPC price scale, the
-// town catalogue, the spot table's own rows), so the file name carries the
-// git revision, "-dirty" with uncommitted code or data, beside the hunt
-// tables' hash (TableFingerprint 'hunt'). The header repeats both and adds
-// the spot table's own fingerprint and the notes a reader of the numbers needs.
+// tmp/economy-model in the tree): the git revision, "-dirty" with uncommitted
+// code or data, beside the hunt tables' hash (TableFingerprint 'hunt'). The
+// header repeats both and adds the notes a reader of the numbers needs and
+// the stamp a run reads the snapshot by (Boot.dataStamp): the hunt tables'
+// hash, the spot table's own fingerprint and the contents of every tree file
+// the extract loaded (sourceFiles, the static stores, fares, bags, market
+// towns and inputs.js itself among them).
 
 const childProcess = require('child_process');
 const fs = require('fs');
@@ -671,7 +672,7 @@ function main(argv) {
     const out = path.resolve(Boot.option(argv, 'out', path.join(Boot.root, 'tmp', 'economy-model')));
     Boot.boot('x1');
     const startedAt = Date.now();
-    const { fingerprint, spotTable, extraFiles } = Boot.dataStamp(), revision = gitRevision();
+    const revision = gitRevision();
     const owners = gameOwners();
     // NPC prices at x1 ride in every snapshot: the design's NPC prices at every preset.
     const x1Offers = npcOffers(owners), base = staticInputs(owners, rewardSpots());
@@ -679,7 +680,10 @@ function main(argv) {
     for (const preset of presets) {
         const began = Date.now();
         const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null) });
-        snapshot.header = { ...snapshot.header, fingerprint, spotTable, extraFiles, revision };
+        // The files the extract has loaded by now are the ones it read: the
+        // stamp a run checks the live game data against.
+        const sourceFiles = Boot.loadedFiles(), { fingerprint, spotTable, sources } = Boot.dataStamp(sourceFiles);
+        snapshot.header = { ...snapshot.header, fingerprint, spotTable, sources, sourceFiles, revision };
         const file = path.join(out, `inputs-${preset}-${revision}-${fingerprint}.json`), text = `${JSON.stringify(snapshot)}\n`;
         fs.writeFileSync(file, text);
         const gaps = sourceGaps(snapshot), lineCount = Object.keys(snapshot.hours).length;
