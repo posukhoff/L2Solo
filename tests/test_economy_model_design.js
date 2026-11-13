@@ -767,4 +767,14 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.deepEqual(runHub({ bid: 60, config: { hubKnown: false, crafterShare: 0 } }).design.market.visits.hub, {}, 'it never learns of B');
 }
 
+// A main whose line has no hour at its level has no spot row: its level is not
+// scheduled and the run does not throw; it hunts nothing.
+{
+    const bare = { ...snapshot, hours: {} };
+    const view = Engine.viewOf(bare, { npcPrices: 'x1' });
+    const none = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
+        design: plane({ snapshot: bare, game: Design.gameOf(bare, view), start: 'late', grades }) });
+    assert.equal(none.flows.totals.huntCold || 0, 0, 'no spot row: no hunt adena');
+}
+
 console.log('PASS economy model design mode');

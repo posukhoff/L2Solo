@@ -753,7 +753,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     const hoursToGrade = main => {
         const next = grades.find(([, from]) => from > main.level), row = Engine.spotRowOf(view, main), share = rateOf(main.band).huntShare;
         if (!next || !(row?.exp > 0) || !(share > 0)) return 0;
-        return Math.max(0, Engine.expAt(view, Math.min(next[1], view.maxLevel)) - main.exp) / (row.exp * share);
+        return Math.max(0, Engine.expAt(view, Math.min(next[1], view.maxLevel)) - main.exp) / (Engine.huntExp(main, row, 1) * share);
     };
     const markMp = (twin, now) => { stats.mp.available += twin.regen * Math.max(0, now - twin.mpFrom); return { ...twin, mpFrom: now }; };
 
