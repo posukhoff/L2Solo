@@ -277,6 +277,23 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     assert.deepEqual(before.seen.levels, [[2, 2]], 'a level reached on the spot before it leaves is read once, on the spot');
 }
 
+// A level crossed at a large exp is read once although the float credit to
+// its hour falls short: the main hunts to 4 ulps under level 2 (1e9 exp) by
+// its visit at 0.5 h, whose onward stops keep it in town to 100.5 h, so the
+// crossing's hour rounds to 100.5 and the hunt to it credits nothing. The
+// plane stops the run after 100 reads, so a read that does not reach the
+// level fails here instead of hanging.
+{
+    const T = 1e9, rate = 2 * (T - 4 * 2 ** -23), row = hour(100, rate, 20);
+    const big = { ...snapshot, exp: [0, T, 4 * T, 9 * T], hours: { 9: { 1: row, 2: row, 3: row, 4: row } } }, at = Engine.viewOf(big), levels = [];
+    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => ({ ...Engine.visit(main, at, options), afterHours: 100 }),
+        nextArrival: (main, ev) => (ev.event === 'start' ? 0.5 : null), firing: () => null, kills: () => null, event() {}, hour: () => 0,
+        levelUp: (main, now) => { levels.push([now, main.level]); if (levels.length > 100) throw new Error(`100 level reads, level ${main.level} at ${now} h`); return main; },
+        finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
+    Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 101, seed: 7, design });
+    assert.deepEqual(levels, [[100.5, 2]], 'level 2 read once, at the hour it hunts again');
+}
+
 // The hunt rule is pure: the main it is given is left as it was.
 const main = Engine.mainOf(accounts[0], 0, Engine.viewOf(snapshot), bands);
 const frozen = JSON.stringify(main);

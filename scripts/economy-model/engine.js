@@ -522,7 +522,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         const trip = pending.get(main.index);
         if (trip && trip.departs !== null && at > trip.departs) { pendingLevel.set(main.index, null); return; }
         pendingLevel.set(main.index, at);
-        if (at !== held) queue.push({ at, kind: 'level_up', who: main.index });
+        if (at !== held) queue.push({ at, kind: 'level_up', who: main.index, level: main.level + 1 });
     };
     // The one pending arrival (or situation to read) per main, replaced by the
     // rule's answer after each committed event; departs: the hour it leaves its
@@ -600,9 +600,14 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         if (event.kind !== 'level_up' && event.kind !== 'arrived_town') throw new Error(`an event of an unknown kind: ${event.kind}`);
         let main = event.kind === 'arrived_town' ? huntTo(mains[event.who], event.at, departs) : huntTo(mains[event.who], event.at);
         if (event.kind === 'level_up') {
-            const band = bandOf(bands, main.level), spot = ownRow(view, main.line, main.level, main.spot) ? main.spot : null;
+            // The level_up is the crossing: at its hour the level it was scheduled for is reached. The float
+            // credit to that hour can fall a few ulps short of the level's exp; levelOf would then keep the old
+            // level and the same crossing would be scheduled again at the same hour without end. So the read
+            // raises the exp to at least that level's exp (a level already passed leaves it as it is).
+            const exp = Math.max(main.exp, expAt(view, event.level)), level = levelOf(view, exp, main.level);
+            const band = bandOf(bands, level), spot = ownRow(view, main.line, level, main.spot) ? main.spot : null;
             if (main.spot && !spot) ledger.counters.leftOwnSpot++;
-            main = { ...main, band, spot };
+            main = { ...main, exp, level, band, spot };
             if (plane) main = plane.levelUp(main, event.at);
             scheduleLevel(main, event.at);
             mains[event.who] = main;
