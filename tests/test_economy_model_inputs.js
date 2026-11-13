@@ -117,7 +117,8 @@ const { DESIGN_RATES } = require('../scripts/economy-model/rules/dropRule');
 const designKey = keys[0], designRow = snapshot.yields[designKey];
 assert.deepEqual(snapshot.yieldsDesign[designKey], DesignIncome.designYields(snapshot, designRow.spotId, designRow.level, designRow.spoilSkill, DESIGN_RATES.x50, DesignIncome.gameRules()),
     'the design yields are the drop rule at the design\'s x50 rates');
-assert.ok(Math.abs(snapshot.yieldsDesign[designKey].drop[57] / snapshot.yields[designKey].drop[57] - 1) < 0.01, 'design adena at 50 matches today\'s 50');
+const designAtX1 = DesignIncome.designYields(snapshot, designRow.spotId, designRow.level, designRow.spoilSkill, DESIGN_RATES.x1, DesignIncome.gameRules());
+assert.ok(Math.abs(snapshot.yieldsDesign[designKey].drop[57] / (DESIGN_RATES.x50.adena * designAtX1.drop[57]) - 1) < 1e-9, 'design adena at x50 is the adena rate times its x1 yield');
 
 // The market's additions, each the owner's own number: a line's bag slots
 // and max load, the walk back from a spot, each top spot's hour without
