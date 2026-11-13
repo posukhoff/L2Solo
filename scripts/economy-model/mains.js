@@ -65,10 +65,52 @@ function mainsSide(ctx) {
     // read through ctx.kitHours, each firing what nets most at the prices the
     // main knows (Worth.firing). ratio null: no hour stated for either kit,
     // or a reference hour not above 0. unarmed: no weapon in hand.
+    // attainable: the worn kit's hour over the hour of the kit it could wear
+    // by paying now (attainableKit); 1 when it can pay nothing better.
     const kitRatio = (main, level) => {
         const priceOf = pricesOf(main), netOf = kit => Worth.firing(ctx.kitHours.hour(main.line, level, kit), priceOf)?.net ?? null;
-        const own = netOf(wornOf(main)), reference = netOf(slotsOf(kitAt(main, level)));
-        return { ratio: own === null || reference === null || !(reference > 0) ? null : own / reference, unarmed: !main.weapon };
+        const worn = wornOf(main), own = netOf(worn), reference = netOf(slotsOf(kitAt(main, level)));
+        const best = own === null ? null : netOf(attainableKit(main, level, worn, own, priceOf));
+        return { ratio: own === null || reference === null || !(reference > 0) ? null : own / reference, unarmed: !main.weapon,
+            attainable: best === null || !(Math.max(own, best) > 0) ? null : own / Math.max(own, best) };
+    };
+    // The kit a main could wear by paying now, from the routes that stand now
+    // (the measure; no decision of a main reads it): the band pieces of the
+    // level whose swap over the worn kit nets more, highest gain first, each
+    // taken when its cheapest standing route (a line in reach, the NPC, a
+    // Luxury route whose crystals stand on lines or its twin's shelf) is
+    // within the money left, one piece a slot, the money not returned by what
+    // it takes off. Gains are not additive: the kit's hour is read whole.
+    const attainableKit = (main, level, worn, own, priceOf) => {
+        const band = bandAt(main.line, level);
+        if (!band) return worn;
+        const pieces = bandPieces(main.line, band).list, read = Worth.swapRows(ctx.kitHours.swaps(main.line, level, worn, pieces)), base = Worth.netRow(read.worn, priceOf);
+        if (!base) return worn;
+        const gains = pieces.map((piece, at) => ({ piece, gain: (Worth.netRow(read.rows[at], priceOf)?.hour ?? -Infinity) - base.hour })).filter(row => row.gain > 0).sort((a, b) => b.gain - a.gain);
+        const index = main.index, town = accounts[index].lastTown || townOf(main);
+        if (!town || !gains.length) return worn;
+        const book = reachBook(index, town, [...new Set([...gains.map(row => row.piece.selfId), ...Object.values(game.crystalIds)])], []), twin = accounts[index].twin;
+        // The reads below count priced routes of the path's decisions: held as they were.
+        const counted = { ...stats.routes };
+        let kit = worn, money = main.money;
+        const taken = new Set();
+        for (const { piece } of gains) {
+            if (taken.has(piece.slot)) continue;
+            const routes = routesOf(index, main, town, book, { ...piece }, null).acquired?.routes || [];
+            const standing = routes.filter(route => route.route === 'npc' || (route.route === 'exchange' && crystalsStand(book, twin, route)));
+            const line = book.sell[piece.selfId]?.[0]?.price;
+            const cost = Math.min(line ?? Infinity, ...standing.map(route => route.cost));
+            if (!(cost <= money)) continue;
+            money -= cost; taken.add(piece.slot);
+            kit = Object.fromEntries([...Object.entries(kit).filter(([slot]) => !Worth.slotsConflict(piece.slot, slot)), [piece.slot, piece.selfId]]);
+        }
+        Object.assign(stats.routes, counted);
+        return kit;
+    };
+    // A Luxury route's crystals stand: its twin's shelf and the lines in reach at its price.
+    const crystalsStand = (book, twin, route) => {
+        const crystal = game.crystalIds[route.grade.toUpperCase()], own = Math.min(route.amount, twin?.stock[crystal] || 0);
+        return own + (book.sell[crystal] || []).filter(entry => entry.price <= route.perCrystal).reduce((sum, entry) => sum + entry.qty, 0) >= route.amount;
     };
     // The piece a main wears in a slot (its weapon for either hand), 0 for none.
     const wornIn = (main, slot) => (groupOf(slot) === 'weapon' ? main.weapon || 0 : main.kit[slot] || 0);

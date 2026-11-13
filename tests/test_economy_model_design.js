@@ -840,15 +840,15 @@ assert.equal(armed.delta.shotsUsed, 50);
     // over the reference kit's (the D sword) 1200, and it is counted unarmed;
     // a main holding the reference kit reads 1.
     const ratio = 200 / 1200;
-    assert.deepEqual(grown.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: ratio, p10: ratio, none: 0, unarmed: 1 });
+    assert.deepEqual(grown.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: ratio, p10: ratio, none: 0, unarmed: 1, attainable: { sampled: 1, atLeast95: 1, median: 1 } });
     const armed = Engine.simulate({ view, accounts: [{ id: 52, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: {} }],
         bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
-    assert.deepEqual(armed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 1, median: 1, p10: 1, none: 0, unarmed: 0 });
+    assert.deepEqual(armed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 1, median: 1, p10: 1, none: 0, unarmed: 0, attainable: { sampled: 1, atLeast95: 1, median: 1 } });
     // A kit hour source given to the plane is the one read: a stub stating 300 for a bare-handed kit and 900 for an armed one.
     const stub = kitHoursOf((line, level, kit) => (line === '9' && level === 39 ? (kit[7] ? 900 : 300) : null));
     const stubbed = Engine.simulate({ view, accounts: [{ id: 53, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [], worn: {} }],
         bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: stub }) }).design;
-    assert.deepEqual(stubbed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: 300 / 900, p10: 300 / 900, none: 0, unarmed: 1 });
+    assert.deepEqual(stubbed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: 300 / 900, p10: 300 / 900, none: 0, unarmed: 1, attainable: { sampled: 1, atLeast95: 1, median: 1 } });
 }
 
 // path's candidates are the class's gear ladder: a level-21 main with 10000
@@ -1062,6 +1062,38 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.equal(huntAdena(null, {}, 29, 0.33), 3597, 'a solo main moves to B');
     assert.equal(huntAdena({ levels: [29, 29, 29], self: 0 }, {}, 29, 0.33), 3000, 'a member of three reaches the end of its grade sooner: the move does not pay');
     assert.equal(huntAdena({ levels: [29, 80, 80], self: 0 }, {}, 29, 0.33), 3000, 'a member under the cut: its hours to the grade are not stated, the move pays for none');
+}
+
+// KIT HOUR beside the reference ratio states the kit the main could wear by
+// paying now: a main of 336000 adena leaving D in a no-grade weapon (hour
+// 300) has a D sword (1200) at the NPC for 900000 it cannot pay and a D body
+// armour (adds 100) at the NPC for 50000 it can. The reference kit (sword and
+// armour, 1300) reads 300 / 1300; the attainable kit holds the armour alone
+// (400), 300 / 400; a main that can pay nothing better (the armour dearer than
+// its money) reads 1.
+{
+    const NG = 2010, DEAR = 2011, ARM = 2012, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 4e8, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = {
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
+        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: DEAR, slot: 7 }, { selfId: ARM, slot: 10 }]])) },
+        items: { ...snapshot.items, [NG]: { kind: 'Weapon.Sword', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 }, [DEAR]: { kind: 'Weapon.Sword', grade: 'D', ref: 900000, npcBuy: 450000, crystals: 0 },
+            [ARM]: { kind: 'Armor.Body', grade: 'D', ref: 50000, npcBuy: 25000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        recipes: [], npcOffers: { preset: {}, x1: { [DEAR]: [{ town: 'TownA', price: 900000 }], [ARM]: [{ town: 'TownA', price: 50000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
+        gearLadder: ladderOf('9', [[1, 39, { weapon: { rungs: [DEAR, NG], hour: { [DEAR]: 1200, [NG]: 300, 0: 200 } }, 10: { rungs: [ARM], hour: { [ARM]: 100, 0: 0 } } }]])
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const leave = money => Engine.simulate({ view, accounts: [{ id: 71, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money, spot: null, shots: {}, held: [NG], worn: { 7: NG } }],
+        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design.market.kitHour['d end'];
+    const rich = leave(336000), poor = leave(1000);
+    near(rich.median, 300 / 1300, 'the reference ratio');
+    near(rich.attainable.median, 300 / 400, 'the attainable kit holds the armour alone');
+    assert.deepEqual([rich.attainable.sampled, rich.attainable.atLeast95], [1, 0]);
+    assert.equal(poor.attainable.median, 1, 'nothing payable: the worn kit is the attainable one');
 }
 
 console.log('PASS economy model design mode');

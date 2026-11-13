@@ -331,12 +331,14 @@ const median = values => {
 };
 // Per sampling point: mains sampled, those at 90 % of the reference kit's
 // hour or more, the median and 10th percentile ratio (nearest rank), mains
-// with no ratio and mains with no weapon in hand.
+// with no ratio and mains with no weapon in hand; attainable: the same for
+// the worn kit's hour over the kit it could wear by paying now (at 95 %).
 function kitHourSummary(points) {
-    return Object.fromEntries(Object.entries(points).map(([key, { level, ratios, none, unarmed }]) => {
+    return Object.fromEntries(Object.entries(points).map(([key, { level, ratios, none, unarmed, attainable }]) => {
         const sorted = [...ratios].sort((a, b) => a - b);
         return [key, { level, sampled: ratios.length + none, atLeast90: ratios.filter(ratio => ratio >= 0.9).length, median: median(ratios),
-            p10: sorted.length ? sorted[Math.max(0, Math.ceil(0.1 * sorted.length) - 1)] : null, none, unarmed }];
+            p10: sorted.length ? sorted[Math.max(0, Math.ceil(0.1 * sorted.length) - 1)] : null, none, unarmed,
+            attainable: { sampled: attainable.length, atLeast95: attainable.filter(ratio => ratio >= 0.95).length, median: median(attainable) } }];
     }));
 }
 
@@ -1116,8 +1118,9 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             if (gradeChanged) stats.entries[to] = (stats.entries[to] || 0) + 1;
             // The worn kit's hour over the reference kit's at the grade's middle level and as it leaves the grade (its last level).
             const sample = (key, level) => {
-                const row = stats.kitHour[key] ||= { level, ratios: [], none: 0, unarmed: 0 }, { ratio, unarmed } = side.kitRatio(main, level);
+                const row = stats.kitHour[key] ||= { level, ratios: [], none: 0, unarmed: 0, attainable: [] }, { ratio, unarmed, attainable } = side.kitRatio(main, level);
                 if (ratio === null) row.none++; else row.ratios.push(ratio);
+                if (attainable !== null) row.attainable.push(attainable);
                 if (unarmed) row.unarmed++;
             };
             const at = grades.findIndex(([name]) => name === to), middle = at >= 0 && at + 1 < grades.length ? Math.floor((grades[at][1] + grades[at + 1][1]) / 2) : null;

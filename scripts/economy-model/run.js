@@ -327,10 +327,10 @@ function printMarket(design, hours) {
     console.log(`SPOT CHANGES ${moves} (${(moves / hours).toFixed(1)}/h): ${['grade_changed', 'spot_left', 'recipe_wanted', 'arrived_town'].map(why => `${why} ${occ[why] || 0}`).join(' | ')}; `
         + `caused by a bid seen for what the new spot yields ${occ.forBid || 0} (${pct(occ.forBid || 0, moves)}), by its workshop's scroll want ${occ.forScroll || 0} (${pct(occ.forScroll || 0, moves)}); back to the spot held before ${occ.returned || 0}; `
         + `a move back to the spot left at the last arrival refused ${occ.refusedBack || 0}`);
-    console.log('KIT HOUR (the hunt hour of the kit a main wears over the reference kit\'s at the level, by the game\'s hunt cycle; mains crossing each grade\'s middle level and leaving the grade at its last level; the >=0.9 share of those with a ratio):');
+    console.log('KIT HOUR (the hunt hour of the kit a main wears over the reference kit\'s at the level, by the game\'s hunt cycle; mains crossing each grade\'s middle level and leaving the grade at its last level; the >=0.9 share of those with a ratio; then the worn kit\'s hour over the kit it could wear by paying now from the routes that stand now):');
     for (const [point, row] of Object.entries(m.kitHour || {}).sort((a, b) => a[1].level - b[1].level)) {
         const ratio = value => (value === null ? '-' : value.toFixed(2));
-        console.log(`  ${point.padEnd(11)} lv${row.level}: sampled ${row.sampled}, >=0.9 ${row.atLeast90} (${pct(row.atLeast90, row.sampled - row.none)}), median ${ratio(row.median)}, p10 ${ratio(row.p10)}, no ratio ${row.none}, unarmed ${row.unarmed}`);
+        console.log(`  ${point.padEnd(11)} lv${row.level}: sampled ${row.sampled}, >=0.9 ${row.atLeast90} (${pct(row.atLeast90, row.sampled - row.none)}), median ${ratio(row.median)}, p10 ${ratio(row.p10)}, no ratio ${row.none}, unarmed ${row.unarmed}; over the kit it could pay now: median ${ratio(row.attainable.median)}, >=0.95 ${row.attainable.atLeast95} of ${row.attainable.sampled} (${pct(row.attainable.atLeast95, row.attainable.sampled)})`);
     }
     const kh = m.kitHours || {}, kt = m.kitTables;
     console.log(`KIT TABLES taken ${kt.taken} (a main's line, band or worn kit changed): read ${kt.read}, shared from another main's ${kt.shared} (${pct(kt.shared, kt.taken)}), let go past the bound ${kt.evicted}, worn hours ${kt.wornEvicted}; `
