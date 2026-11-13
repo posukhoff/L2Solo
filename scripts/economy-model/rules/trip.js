@@ -22,8 +22,6 @@
 // deathAt is not a decision: the drawn fact that ends an outing in the
 // respawn town (a death is an arrival), read beside trip's answer.
 
-// A trip takes at least this long (ours: a spot with no walk back measured).
-const MIN_TRIP_HOURS = 1 / 60;
 // Hunting hours searched for a full bag (beyond it the bag never fills).
 const BAG_HORIZON = 1000;
 
@@ -99,18 +97,20 @@ function shotsLow(shots, at) {
 }
 
 // main: unused beyond the view (the engine reads it into the view). view:
-// { now, since (the time the main's state is taken at), huntShare, tripHours,
+// { now, since (the time the main's state is taken at), huntShare, toHours
+// (the game's trip from its spot into its town), backHours (the game's way
+// from that town back to the spot),
 // town (the nearest), stockLowHours, loadShare, shots: { held, perHour },
 // bag: { slots, used, weight, maxLoad, items: [{ rate (per hunting hour),
 // weight, stack, held }] }, goal (goalOf) | null, event, deal: { gain } |
-// null, ownHour, shotTowns: { ownHeld, npcAsk, money, towns, hopHours }
+// null, ownHour, shotTowns: { ownHeld, npcAsk, money, towns }
 // (shotTown's sellers, read only while it is low or out) }.
 // Returns { at, away, reason, town, read } (at: the wall hour it arrives in
-// town, null without a situation; away: the hours it is away from its spot,
-// lumped before the visit: the walk to town and back, and for another town
-// a gatekeeper hop there and one back, 0 without a trip, so a death drawn
-// before at beats a situation to read; read: at is instead the hour of its
-// next shot situation, read then without going).
+// town, null without a situation; away: the hours before it from leaving
+// its spot, its trip into its town (the visit owns the hours after the
+// arrival: a hop on to another town and the way back), 0 without a trip, so
+// a death drawn before at beats a situation to read; read: at is instead the
+// hour of its next shot situation, read then without going).
 function trip(main, view) {
     const wall = hunting => view.since + hunting / Math.max(1e-9, view.huntShare);
     const triggers = [];
@@ -135,21 +135,20 @@ function trip(main, view) {
     if (goal && goal.need > 0) {
         if (goal.have >= goal.need) { if (goal.fresh) triggers.push({ at: view.now, reason: 'goal_affordable' }); } else if (goal.perHour > 0) triggers.push({ at: wall((goal.need - goal.have) / goal.perHour), reason: 'goal_affordable' });
     }
-    const walk = view.tripHours > 0 ? view.tripHours : MIN_TRIP_HOURS;
+    const walk = view.toHours + view.backHours;
     if ((view.event === 'offer_posted' || view.event === 'bid_posted') && view.deal && view.deal.gain > walk * view.ownHour) triggers.push({ at: view.now, reason: view.event });
     if (!triggers.length) return { at: null, away: 0, reason: null, town: view.town };
     const first = triggers.reduce((best, row) => (row.at < best.at ? row : best));
     if (first.read) return { at: first.at, away: 0, reason: first.reason, town: view.town, read: true };
     const at = Math.max(view.now, first.at);
     const shotTrip = first.reason === 'stock_low:shots' || first.reason === 'shots_out';
-    const there = shotTrip && shotAt !== view.town ? { town: shotAt, hours: 2 * view.shotTowns.hopHours } : { town: view.town, hours: 0 };
-    const away = walk + there.hours;
-    return { at: at + away, away, reason: first.reason, town: there.town };
+    const town = shotTrip && shotAt !== view.town ? shotAt : view.town;
+    return { at: at + view.toHours, away: view.toHours, reason: first.reason, town };
 }
 
 // The wall hour a main dies in the field (a death is an arrival in the
-// respawn town of its spot with no walk there; the walk back to its spot is
-// the hours it is away): its deaths per hunting hour at its
+// respawn town of its spot at the hour it dies, away 0; its way back to its
+// spot is the visit's, as after any arrival): its deaths per hunting hour at its
 // spot's hour row, the hunting hours to the next death drawn from the
 // seeded roll (exponential: a death is as likely in any hunting hour), null
 // without deaths. view: { since, huntShare, deathsPerHour, roll in [0, 1) }.

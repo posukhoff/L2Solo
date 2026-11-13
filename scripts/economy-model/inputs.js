@@ -81,7 +81,7 @@ const NOTES = Object.freeze([
     'An hour row\'s blessed holds the same spot\'s hour for the same line and level firing Blessed Spiritshots (SpotValueTable.value with shots 2); only a line the spot table measures firing them there (a spiritshot class) has it, and the row itself is the hour firing its plain shot.',
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
-    'fallbacks names what the snapshot filled in: noMarketToC the spots with no no-grade market near their centre (tradeTowns.none holds the C town), walkBackZero the spots with no walk back (walkBack 0).',
+    'fallbacks names what the snapshot filled in: noMarketToC the spots with no no-grade market near their centre (tradeTowns.none holds the C town).',
     'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
 ]);
 
@@ -258,12 +258,6 @@ function luxuryOptions(owners) {
     return out;
 }
 
-// The hours of a death's walk back from each spot (WalkBack over the hunt
-// tables' spot centers, Load.walkBackHours): spotId -> hours.
-function walkBack(spots) {
-    return Object.fromEntries([...spots.keys()].map(id => [id, Load.walkBackHours(id, {})]));
-}
-
 // The game's trade town of a lot (MarketTownPolicy.targetTownForItems) as
 // plain data: each item's market grade (MarketCounters.gradeOf: gear by its
 // rank, shots, crystals and gemstones by name, recipes by their product,
@@ -324,7 +318,7 @@ function staticInputs(owners, spots) {
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
     return { recipes, stores, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
-        races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), walkBack: walkBack(spots), ...tripHours(spots) };
+        races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), ...tripHours(spots) };
 }
 
 // A crafter twin at a level: its seated MP per hour, Create Item level and
@@ -609,7 +603,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     for (const row of gearTable.items) if (items[row[0]]) slots[row[0]] = Number(row[3]);
     const { quests, ...kept } = fixed;
     const { noMarket, ...trade } = tradeTowns(Object.keys(items).map(Number));
-    const fallbacks = { noMarketToC: noMarket, walkBackZero: Object.keys(kept.walkBack).filter(id => !(kept.walkBack[id] > 0)) };
+    const fallbacks = { noMarketToC: noMarket };
     return {
         header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES },
         hours, spotLevels, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}), bags, gearLadder: { bands, slots, lines: gearLadders }, tradeTowns: trade,
@@ -666,8 +660,7 @@ function build(argv, reads) {
             + `items ${Object.keys(snapshot.items).length}; recipes ${snapshot.recipes.length} (${snapshot.header.quests.withRecipe} of ${snapshot.header.quests.scrolls} quest scrolls with a row); `
             + `NPC-offered items ${Object.keys(snapshot.npcOffers.preset).length}; static stores ${snapshot.stores.length}; Luxury items ${Object.keys(snapshot.luxuryOptions).length}; `
             + `spots ${Object.keys(snapshot.compositions).length}; reward rows ${Object.keys(snapshot.rewards).length}; twin levels ${Object.keys(snapshot.twins).length}`);
-        console.log(`  fallbacks: no no-grade market (the C town) ${snapshot.fallbacks.noMarketToC.length} spots [${snapshot.fallbacks.noMarketToC.join(' ')}], `
-            + `walk back 0 ${snapshot.fallbacks.walkBackZero.length} spots [${snapshot.fallbacks.walkBackZero.join(' ')}]`);
+        console.log(`  fallbacks: no no-grade market (the C town) ${snapshot.fallbacks.noMarketToC.length} spots [${snapshot.fallbacks.noMarketToC.join(' ')}]`);
         if (snapshot.spotHours) {
             const cells = Object.values(snapshot.spotHours.rows).flatMap(byLevel => Object.values(byLevel).flatMap(Object.values));
             console.log(`  spot hours from ${snapshot.spotHours.source}: ${cells.filter(Boolean).length} rows, ${cells.filter(row => !row).length} spot-levels where the line fights nothing`);

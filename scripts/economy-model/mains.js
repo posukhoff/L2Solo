@@ -48,6 +48,13 @@ function mainsSide(ctx) {
     const setMarket = (index, patch) => put(index, { market: { ...accounts[index].market, ...patch } });
     const townOf = main => { const row = Engine.spotRowOf(view, main); return row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null; };
     const fareOf = (from, to) => (from === to ? 0 : view.fares[from]?.[to] ?? null);
+    // The game's trip hours (the snapshot's tripHours and townHours, built for
+    // every spot and town): into the spot's town, back from a town to the
+    // spot, from town to town. A missing one throws.
+    const tripLeg = (hours, what) => { if (typeof hours !== 'number') throw new Error(`no trip hours for ${what}`); return hours; };
+    const toHoursOf = spotId => tripLeg(snapshot.tripHours.to[spotId], `spot ${spotId}`);
+    const backHoursOf = (spotId, town) => tripLeg(snapshot.tripHours.back[spotId]?.[town], `spot ${spotId} from ${town}`);
+    const townHoursOf = (from, to) => tripLeg(snapshot.townHours[from]?.[to], `${from} to ${to}`);
     const firstLevel = grade => grades.find(([name]) => name === grade)?.[1] ?? 1;
     const kitAt = (main, level) => view.kits[main.line]?.[Math.min(view.maxLevel, level)] || [];
     // The gear ladder (the snapshot's gearLadder) of a main's line in the
@@ -737,10 +744,6 @@ function mainsSide(ctx) {
         for (const [field, adena] of Object.entries(out.flows)) flows[field] = (flows[field] || 0) + adena;
         delta.gearBought += out.obtained.filter(row => row.route === 'npc').length;
         for (const stop of out.stops) if (stop.kind === 'gatekeeper') delta.towns.push(stop.target);
-        // Each onward stop keeps it in town a gatekeeper hop there and one back.
-        const afterHours = (delta.towns.length - 1) * 2 * config.hopHours;
-        const time = stats.time[main.band] ||= { spot: 0, way: 0, town: 0 };
-        time.town += afterHours;
         placeAds(index, now, before);
         indexWants(index);
         if (reserve && reserve.amount > 0 && !(out.main.shots[reserve.id] > 0)) delta.missingShots++;
@@ -748,6 +751,15 @@ function mainsSide(ctx) {
         const after = { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon };
         // occupationAtTown (ours): its spot is re-chosen at its arrival in town too.
         const left = config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after;
+        // The hours after its arrival are the game's trip hours: on from the
+        // town it arrived in through each town it visits, then back from the
+        // last one to the spot it hunts next. Nothing more in town (ours: the
+        // game has no stay of its own beyond the trip).
+        const visited = [nearest, ...delta.towns];
+        let afterHours = backHoursOf(Engine.spotRowOf(view, left).spotId, visited[visited.length - 1]);
+        for (let i = 1; i < visited.length; i++) afterHours += townHoursOf(visited[i - 1], visited[i]);
+        const time = stats.time[main.band] ||= { spot: 0, way: 0 };
+        time.way += afterHours;
         // The money it leaves town with: what the KIT HOUR measure spends until its next visit.
         put(index, { leftWith: left.money });
         return { main: left, delta, afterHours };
@@ -783,15 +795,16 @@ function mainsSide(ctx) {
             towns.push({ town, fare, ask: line ? line.price : null, cap: Bounds.cap({ worth: fired.worth, npcSell: game.npcByTown[town]?.[fired.id] ?? null }).cap });
         }
         const npc = game.npcByTown[nearest]?.[fired.id] ?? null;
-        return { ownHeld: (accounts[index].twin?.stock[fired.id] || 0) > 0, npcAsk: npc !== null && npc <= fired.worth ? npc : null, money: main.money, towns, hopHours: config.hopHours };
+        return { ownHeld: (accounts[index].twin?.stock[fired.id] || 0) > 0, npcAsk: npc !== null && npc <= fired.worth ? npc : null, money: main.money, towns };
     }
 
     // trip: when the main comes to town, and which town, from its state
     // after each committed event; with deathArrival a death drawn before
     // the main leaves its spot on trip's arrival is the arrival (in the
-    // respawn town of its spot): it dies at its hunting hour and is away the
-    // walk back (the spot table's row holds the respawn wait of its deaths,
-    // not the walk back: EconomicValuation.deathHours adds it per death).
+    // respawn town of its spot): it arrives at the hour it dies, away 0, and
+    // its way back is the visit's (the spot table's row holds the respawn
+    // wait of its deaths, not the way back: EconomicValuation.deathHours adds
+    // it per death).
     // Returns { at, away } (the arrival's hour, the hours away from its spot
     // before it), or { at, read: true } when trip names a shot situation to
     // read at that hour (the engine asks again then).
@@ -819,7 +832,7 @@ function mainsSide(ctx) {
         const nearest = townOf(main);
         const own = ownHour(main, account.memory);
         let answer = trip(main, {
-            now: ev.now, since: main.since, huntShare: ev.huntShare, tripHours: 2 * (snapshot.walkBack?.[row.spotId] || 0), town: nearest,
+            now: ev.now, since: main.since, huntShare: ev.huntShare, toHours: toHoursOf(row.spotId), backHours: backHoursOf(row.spotId, nearest), town: nearest,
             stockLowHours: config.stockLowMinutes / 60, loadShare: config.loadShare,
             shots: fired ? { held: main.shots[fired.id] || 0, perHour: fired.perHour } : null,
             bag: bagRow ? { slots: bagRow.slots, maxLoad: bagRow.maxLoad, used, weight, items: at.items.map(item => ({ ...item, rate: item.rate * kills, held: (main.bag[item.id] || 0) > 0 })) } : null,
@@ -827,8 +840,7 @@ function mainsSide(ctx) {
             event: ev.event, deal, ownHour: own, shotTowns: shotTowns(main, nearest, fired) });
         if (config.deathArrival) {
             const died = deathAt({ since: main.since, huntShare: ev.huntShare, deathsPerHour: row.deaths || 0, roll: ev.roll });
-            const back = snapshot.walkBack?.[row.spotId] || 0;
-            if (died !== null && died > ev.now && (answer.at === null || died < answer.at - answer.away)) answer = { at: died + back, away: back, reason: 'death', town: nearest };
+            if (died !== null && died > ev.now && (answer.at === null || died < answer.at - answer.away)) answer = { at: died, away: 0, reason: 'death', town: nearest };
         }
         if (deal) setMarket(index, { deal: null });
         // tripReason: the reason of the pending arrival (none while a shot situation is only to be read).
@@ -878,7 +890,7 @@ function mainsSide(ctx) {
             const at = rowItems(main, row, 'shots'), out = { spotId: String(row.spotId), adena: at.adena * kills, items: at.items.map(item => [item.id, item.rate * kills]), scrolls: row.scrolls || [] };
             if (!atTown) return out;
             const there = view.yields[`${row.spotId}@${main.level}`]?.town || null, fare = there ? fareOf(town, there) : null;
-            const walk = Math.max(0, (snapshot.walkBack?.[row.spotId] || 0) - (snapshot.walkBack?.[heldRow?.spotId] || 0));
+            const walk = Math.max(0, backHoursOf(row.spotId, town) - backHoursOf(heldRow.spotId, town));
             const range = view.spotLevels?.[main.line]?.[String(row.spotId)], last = range ? Math.min(view.maxLevel, range[1] + 1) : null;
             const exp = Engine.huntExp(main, row, kills), toEnd = last !== null && exp > 0 ? Math.max(0, Engine.expAt(view, last) - main.exp) / exp : Infinity;
             return { ...out, move: fare === null ? Infinity : fare + walk * own, stay: stayHours({ outingHours: nextOuting(outingHours), gradeHours, spotHours: toEnd }) };
