@@ -128,6 +128,23 @@ function firing(hour, priceOf) {
     return { id: best.id, units: best.units, net: best.net, worth: best.id && best.units > 0 ? Math.max(0, (best.gross - rival) / best.units) : 0 };
 }
 
+// The worn kit's hunt over the reference kit's at a level (two kit hours:
+// kit-hours, each option with its kill share and shot share, the kit's kills
+// an hour and its kills times fight share over the cell row's), per form a
+// main hunts its spot row in (Engine.formOf): bare (firing none), shots (its
+// plain shot: a soulshot or a Spiritshot) and blessed (Blessed Spiritshots),
+// matched by kind, since a lower-grade weapon fires another id. Each form
+// { kills, shots }: the worn share over the reference's; null where either
+// hour does not state the form's shares or the reference's share is not above
+// 0. The spot row is the reference kit's hour, so a main's hunt is the row
+// times kills (adena, exp, drops) and its shots the row's times shots.
+function huntFactors(worn, reference) {
+    const ratio = (w, r) => (w && r && Number.isFinite(w.killShare) && Number.isFinite(w.shotShare) && r.killShare > 0 && r.shotShare > 0
+        ? { kills: w.killShare / r.killShare, shots: w.shotShare / r.shotShare } : null);
+    const kind = (hour, blessed) => (hour?.shots || []).find(shot => (shot.kind === 'blessedSpiritshot') === blessed) || null;
+    return { bare: ratio(worn?.noneShare, reference?.noneShare), shots: ratio(kind(worn, false), kind(reference, false)), blessed: ratio(kind(worn, true), kind(reference, true)) };
+}
+
 // The pieces a body wears of a kit ({ paperdoll slot: selfId }): [[slot,
 // selfId]] in paperdoll order, each piece taking off what it cannot be worn
 // with (slotsConflict): one weapon (a two-handed one over a one-handed), a
@@ -181,4 +198,4 @@ function horizon({ reading, gradeHours, useHours, resale }) {
     return { hours: positive(useHours ?? gradeHours), resale: positive(resale) };
 }
 
-module.exports = { gearWorth, huntCycleWorth, rungWorth, horizon, ladderGroup, slotsConflict, wornKit, kitKey, swapRows, firing, netRow };
+module.exports = { gearWorth, huntCycleWorth, rungWorth, horizon, ladderGroup, slotsConflict, wornKit, kitKey, swapRows, firing, netRow, huntFactors };

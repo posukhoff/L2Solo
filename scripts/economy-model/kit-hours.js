@@ -38,6 +38,10 @@ const { wornKit } = Worth;
 // on a bow means the attacks are not stated, never zero arrows; absent for any
 // other weapon. The hour is gross of
 // arrows as it is of shots.
+// Each option also states killShare, the kit's kills an hour over the cell
+// row's (the table's reference bot at the band's level), and shotShare, its
+// kills times fight share over them; the shotless hour states them in
+// noneShare { killShare, shotShare }. null where the row states no kills.
 
 // The spots a main's occupation ranks (its line's first spots by income).
 const TOP_SPOTS = 10;
@@ -115,11 +119,11 @@ function referenceHunt(owners, line, level, state, best, deathHours, useShots, r
         const reader = HuntCycle.reader(state, { deathHours, hunt: useShots === false ? { spotId, useShots: false } : { spotId } });
         reader.spotIds.forEach((id, index) => {
             if (cells.has(String(id))) return;
-            const perKill = shotRows ? Table.cycle(id, role, Number(state.level), shotRows, rewardOptions)?.shots || 0 : 0;
+            const cycle = Table.cycle(id, role, Number(state.level), shotRows, rewardOptions), perKill = shotRows ? cycle?.shots || 0 : 0;
             const ref = perKill > 0 ? rowCharge(role, id, shotRows) : null;
             if (perKill > 0 && ref === null) return;
             const perCharge = ref === null ? 0 : perKill / ref;
-            cells.set(String(id), { reader, index, perKill, perCharge, price, attacks: shotRows ? perCharge : shotlessAttacks(id) });
+            cells.set(String(id), { reader, index, perKill, perCharge, price, kph: cycle?.kph || 0, attacks: shotRows ? perCharge : shotlessAttacks(id) });
         });
     }
     return [...cells.values()];
@@ -130,13 +134,15 @@ function referenceHunt(owners, line, level, state, best, deathHours, useShots, r
 // the shots fired at the kit's charge (units) and the bow attacks (attacks:
 // the kills' attacks at the kit's fight, null where the cell states none);
 // the cell taken is the one that nets most at the anchor price of the
-// option's shot (price; 0 firing none). Returns { gross, units, attacks }.
+// option's shot (price; 0 firing none). Returns { gross, units, attacks,
+// killShare, shotShare }: the kit's kills an hour over the cell row's (kph),
+// and its kills times fight share over them (null where the row states no kph).
 function optionHour(cells, numbers, charge, price, scale) {
     let best = null;
     for (const cell of cells) {
         const one = cell.reader.hourAt(numbers, cell.index), fired = one.kills * one.share;
         const gross = (one.income + fired * cell.perKill * cell.price) * scale, units = fired * cell.perCharge * charge;
-        if (!best || gross - units * price > best.net) best = { gross, units, net: gross - units * price, attacks: cell.attacks === null ? null : fired * cell.attacks };
+        if (!best || gross - units * price > best.net) best = { gross, units, net: gross - units * price, attacks: cell.attacks === null ? null : fired * cell.attacks, killShare: cell.kph > 0 ? one.kills / cell.kph : null, shotShare: cell.kph > 0 ? fired / cell.kph : null };
     }
     return best;
 }
@@ -328,11 +334,12 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
         for (const row of options.kinds) {
             if (!row.cells) continue;
             const at = optionHour(row.cells, numbers, row.charge, anchorOf(row.id), scale);
-            out.push(options.arrow ? { id: row.id, kind: row.kind, gross: at.gross, units: at.units, arrows: arrowsOf(options.arrow, at) }
-                : { id: row.id, kind: row.kind, gross: at.gross, units: at.units });
+            out.push(options.arrow ? { id: row.id, kind: row.kind, gross: at.gross, units: at.units, arrows: arrowsOf(options.arrow, at), killShare: at.killShare, shotShare: at.shotShare }
+                : { id: row.id, kind: row.kind, gross: at.gross, units: at.units, killShare: at.killShare, shotShare: at.shotShare });
         }
         if (none === null && !out.length) return null;
-        return shotless && options.arrow ? { none, noneArrows: arrowsOf(options.arrow, shotless), shots: out } : { none, shots: out };
+        const noneShare = shotless ? { killShare: shotless.killShare, shotShare: shotless.shotShare } : null;
+        return shotless && options.arrow ? { none, noneArrows: arrowsOf(options.arrow, shotless), noneShare, shots: out } : { none, noneShare, shots: out };
     };
     // A worn list's hour and numbers by a whole profile pass, with the body
     // wearing it and its regeneration terms (hour null: not stated).

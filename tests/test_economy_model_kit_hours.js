@@ -81,11 +81,11 @@ function gamePass(line, row, kit, kind, price) {
         reader.spotIds.forEach((id, index) => {
             if (seen.has(String(id))) return;
             seen.add(String(id));
-            const one = reader.hourAt(numbers, index), perKill = shots ? Table.cycle(id, role, row.level, shots, options).shots : 0;
+            const one = reader.hourAt(numbers, index), cycle = Table.cycle(id, role, row.level, shots, options), perKill = shots ? cycle.shots : 0;
             const refLevel = perKill > 0 ? Table.referenceLevel(id, role, shots) : null, refWeapon = refLevel ? weaponOf(kitOf(line, refLevel)) : 0;
             const refCharge = refWeapon ? Number(etc(refWeapon)[field]) || 0 : 0, raw = one.kills * one.share * perKill;
             const gross = (one.income + raw * costs.shots) * row.scale, units = refCharge > 0 ? raw / refCharge * charge : 0;
-            if (!out || gross - units * price > out.net) out = { spotId: String(id), gross, units, raw, refWeapon, refCharge, charge, income: one.income * row.scale, net: gross - units * price, id: plan.selfId, kills: one.kills, fight: one.fight };
+            if (!out || gross - units * price > out.net) out = { spotId: String(id), gross, units, raw, refWeapon, refCharge, charge, income: one.income * row.scale, net: gross - units * price, id: plan.selfId, kills: one.kills, fight: one.fight, kph: cycle.kph, share: one.share };
         });
     }
     return out;
@@ -98,15 +98,40 @@ const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected
 // price is the game's decomposed pass at that price, at the same cell.
 for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
     const row = bandAt(line, level), kit = kitOf(line, row.level), hour = kitHours.hour(line, level, kit);
-    near(hour.none, gamePass(line, row, kit, 'none', 0).gross, `line ${line} at ${level}: the shotless hour`);
+    const bare = gamePass(line, row, kit, 'none', 0);
+    near(hour.none, bare.gross, `line ${line} at ${level}: the shotless hour`);
+    near(hour.noneShare.killShare, bare.kills / bare.kph, `line ${line} at ${level}: the shotless hour's kill share`);
+    near(hour.noneShare.shotShare, bare.kills * bare.share / bare.kph, `line ${line} at ${level}: the shotless hour's shot share`);
     assert.deepEqual(hour.shots.map(shot => shot.kind), line === mage ? ['spiritshot', 'blessedSpiritshot'] : ['soulshot'], `line ${line}: the kinds its weapon fires`);
     for (const shot of hour.shots) {
         const game = gamePass(line, row, kit, shot.kind, anchor[shot.id]);
         assert.equal(shot.id, game.id, `line ${line} at ${level}: the ${shot.kind} of its weapon's grade`);
         near(shot.gross - shot.units * anchor[shot.id], game.net, `line ${line} at ${level}, ${shot.kind}: net at the anchor`);
         near(shot.units, game.units, `line ${line} at ${level}, ${shot.kind}: shots an hour`);
+        near(shot.killShare, game.kills / game.kph, `line ${line} at ${level}, ${shot.kind}: kill share`);
+        near(shot.shotShare, game.kills * game.share / game.kph, `line ${line} at ${level}, ${shot.kind}: shot share`);
     }
 }
+// A cell whose table row states no kills an hour (a cycle without kph)
+// states no kill or shot share (null, never a share over 0); its hour is the
+// same. The game's reader is built on the table as it is.
+{
+    const cycle = Table.cycle, reader = HuntCycle.reader;
+    let building = false;
+    HuntCycle.reader = (...args) => { building = true; try { return reader(...args); } finally { building = false; } };
+    Table.cycle = (...args) => { const row = cycle(...args); return building || !row ? row : { ...row, kph: 0 }; };
+    try {
+        const kit = kitOf(fighter, bandAt(fighter, 32).level), hour = KitHours.gameKitHours({ snapshot, anchor }).hour(fighter, 32, kit), known = kitHours.hour(fighter, 32, kit);
+        assert.deepEqual(hour.noneShare, { killShare: null, shotShare: null }, 'no kph: the shotless hour states no shares');
+        assert.deepEqual(hour.shots.map(shot => [shot.killShare, shot.shotShare]), [[null, null]], 'no kph: the soulshot states no shares');
+        near(hour.none, known.none, 'the shotless hour as with kph');
+        near(hour.shots[0].gross, known.shots[0].gross, 'the soulshot hour as with kph');
+    } finally {
+        Table.cycle = cycle;
+        HuntCycle.reader = reader;
+    }
+}
+
 // Where the worn weapon fires the table's reference count, the kind the game
 // fires, priced as the game's reader prices it (its shot price, times the
 // band's scale), nets the game's own hour (a scale of 1 and the game's

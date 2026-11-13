@@ -74,6 +74,12 @@ assert.deepEqual(rates['30-39'], { huntShare: 0.6, visitsPerBotHour: 5, fittedOn
 // over a member's exp at the row: the C4 3-member bonus 1.39, split evenly.
 const trio = [1, 2, 3].map((id, self) => ({ ...account, id, party: { levels: [25, 25, 25], self } }));
 assert.equal(Today.fit(baseline, trio, view, bands).basis['20-29'].huntShare, 600 / 1390, 'real exp over 1.39 x the row\'s exp');
+// The design fit counts the kit once: with mains whose worn kit makes half
+// the row's kills (the factor their design hunt reads) the band hunted twice
+// the time for its exp; the plain fit (today mode) reads no kit.
+const kitFit = Today.fit(baseline, accounts, view, bands, () => 0.5).basis['20-29'];
+assert.deepEqual([kitFit.huntShare, kitFit.kitFactor], [1.2, 0.5], 'twice the plain share, the band\'s kit factor 0.5');
+assert.equal(basis['20-29'].kitFactor, undefined, 'the plain fit states no kit factor');
 
 // Today's arrivals: periodic at the band's fitted rate, the first at the
 // seeded share of the interval, none at a rate of 0.

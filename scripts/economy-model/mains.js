@@ -34,6 +34,13 @@ const SHARED_KIT_TABLES = 5000;
 const SHOT_KINDS = 2;
 const gradeOfItem = item => String(item?.grade || 'NONE').toLowerCase();
 
+// The kit a main wears: its kit with the weapon in hand in its own slot.
+function wornKit(snapshot, main) {
+    const worn = { ...main.kit, 7: 0, 14: 0 };
+    if (main.weapon) worn[Object.keys(main.kit).find(slot => main.kit[slot] === main.weapon) || snapshot.gearLadder.slots?.[main.weapon] || 7] = main.weapon;
+    return worn;
+}
+
 // ctx: the design plane's state and helpers (design.js startPlane).
 function mainsSide(ctx) {
     const { snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, depositFee } = ctx;
@@ -50,12 +57,7 @@ function mainsSide(ctx) {
     const ladderOf = main => bandAt(main.line, main.level);
     const groupOf = Worth.ladderGroup;
     const slotsOf = pieces => Object.fromEntries(pieces.map(piece => [piece.slot, piece.selfId]));
-    // The kit a main wears: its kit with the weapon in hand in its own slot.
-    const wornOf = main => {
-        const worn = { ...main.kit, 7: 0, 14: 0 };
-        if (main.weapon) worn[Object.keys(main.kit).find(slot => main.kit[slot] === main.weapon) || snapshot.gearLadder.slots?.[main.weapon] || 7] = main.weapon;
-        return worn;
-    };
+    const wornOf = main => wornKit(snapshot, main);
     // A shot's price to a main: its last deal, else the first price; null
     // for a shot it knows no price of. pricesOf(main): that reader for a main.
     const shotPrice = (memory, id) => Knowledge.known(memory, id) ?? game.firstPrice[id] ?? null;
@@ -201,22 +203,25 @@ function mainsSide(ctx) {
         else if (table.arrowIds[at]) hour.noneArrows = { id: table.arrowIds[at], units: table.noneArrowUnits[at] };
         return { hour, gear: table.gears[at] };
     };
-    // The hour of the kit a main wears (kit-hours): its kit table's when one
-    // is held for its line, band and kit, else read alone (one profile pass,
-    // no piece swapped in) and kept for every main by those inputs (key), the
-    // least recently read first past SHARED_KIT_TABLES.
+    // The hour of a kit (kit-hours) on a main's line in the band of its
+    // level, the kit by its key (Worth.kitKey) and kitOf() giving it: a kit
+    // table's when one is held for the line, band and kit, else read alone
+    // (one profile pass, no piece swapped in) and kept for every main by
+    // those inputs (key), the least recently read first past
+    // SHARED_KIT_TABLES. wornHourOf: the kit the main wears.
     const wornHours = new Map();
-    const wornHourOf = main => {
+    const kitHourOf = (main, kitKey, kitOf) => {
         const band = ladderOf(main);
         if (!band) return null;
-        const key = `${main.line}@${band.from}@${wornKeyOf(main)}`, account = accounts[main.index], table = account.kitTable?.key === key ? account.kitTable : shared.get(key);
+        const key = `${main.line}@${band.from}@${kitKey}`, account = accounts[main.index], table = account.kitTable?.key === key ? account.kitTable : shared.get(key);
         if (table) return table.worn?.hour ?? null;
         let hour = wornHours.get(key);
-        if (hour === undefined) hour = ctx.kitHours.hour(main.line, main.level, wornOf(main)); else wornHours.delete(key);
+        if (hour === undefined) hour = ctx.kitHours.hour(main.line, main.level, kitOf()); else wornHours.delete(key);
         wornHours.set(key, hour);
         if (wornHours.size > SHARED_KIT_TABLES) { wornHours.delete(wornHours.keys().next().value); stats.kitTables.wornEvicted++; }
         return hour;
     };
+    const wornHourOf = main => kitHourOf(main, wornKeyOf(main), () => wornOf(main));
     // The one answer to whether a main fires shots and which kind: its worn
     // kit's hour (wornHourOf) at the prices it knows (Worth.firing), the
     // shot it fires there and its worth, and the shots that kind fires an
@@ -227,12 +232,21 @@ function mainsSide(ctx) {
     // account until one of its inputs changes: the worn hour, the account's
     // memory (its prices), the spot row and the weapon. At a row without an
     // hour firing Blessed Spiritshots (the spot table measured no such fight
-    // there) they are no option.
+    // there) they are no option. The shots an hour are the row's times the
+    // worn kit's shot share over the reference kit's (Worth.huntFactors), and
+    // the record holds the kill factors of each form (killsOf), taken again
+    // only when the worn hour or the row changed (a level's row and
+    // reference kit change together).
     const firings = new Map();
     const isBlessed = shot => Engine.formOf(view, shot.id) === 'blessed';
     const firingOf = main => {
         const hour = wornHourOf(main), memory = accounts[main.index].memory, row = Engine.spotRowOf(view, main), held = firings.get(main.index);
         if (held && held.hour === hour && held.memory === memory && held.row === row && held.weapon === main.weapon) return held.answer;
+        let factors = held && held.hour === hour && held.row === row ? held.factors : null;
+        if (!factors) {
+            const ref = slotsOf(kitAt(main, main.level));
+            factors = Worth.huntFactors(hour, kitHourOf(main, Worth.kitKey(ref), () => ref));
+        }
         // The options its spot row states: Blessed Spiritshots only at a row with
         // a blessed hour, and a kind only where the table has a reference count.
         const scaled = [];
@@ -241,9 +255,24 @@ function mainsSide(ctx) {
             if (scale !== null) scaled.push({ shot, scale });
         }
         const fired = Worth.firing(hour && { ...hour, shots: scaled.map(entry => entry.shot) }, pricesOf(main)), form = fired?.id ? Engine.formOf(view, fired.id) : 'bare', hunted = row && fired?.id ? Engine.rowIn(row, form) : null;
-        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: hunted.shots * scaled.find(entry => entry.shot.id === fired.id).scale, worth: fired.worth } : null;
-        firings.set(main.index, { hour, memory, row, weapon: main.weapon, answer });
+        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: hunted.shots * scaled.find(entry => entry.shot.id === fired.id).scale * (factors[form]?.shots ?? 1), worth: fired.worth } : null;
+        const options = new Set(['bare', ...scaled.map(entry => Engine.formOf(view, entry.shot.id))]);
+        const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(at => [at, options.has(at) ? factors[at]?.kills ?? 1 : null]));
+        firings.set(main.index, { hour, memory, row, weapon: main.weapon, answer, factors, kills, form: answer ? form : 'bare' });
         return answer;
+    };
+    // The worn kit's kills an hour over the reference kit's per form the main
+    // can hunt its row in ({ bare, shots, blessed }: without shots, and the
+    // kinds its row states as options; 1 where not stated, null for a kind
+    // that is no option there): what its hunt and every hour predicted from
+    // its row are multiplied by.
+    // Counted (stats.huntFactors): reads, and those whose form fired states none.
+    const killsOf = main => {
+        firingOf(main);
+        const held = firings.get(main.index);
+        stats.huntFactors.read++;
+        if (!held.factors[held.form]) stats.huntFactors.unstated++;
+        return held.kills;
     };
     // The slots path aims at, one a ladder group of the main's kit at its own
     // level (both hands one aim, the weapon's first), each with its
@@ -308,25 +337,33 @@ function mainsSide(ctx) {
     // The own hour: income per hunting hour at its spot at known prices (its
     // memory, else the NPC's buy price), in the form it hunts (huntForm: the
     // hour of the kind it fires, without shots when it fires none or holds
-    // none of what it fires: firingOf). hourAt: the same for any row at its level.
+    // none of what it fires: firingOf), at its worn kit's kills (killsOf).
+    // hourAt: the same for any row at its level.
     const huntForm = main => { const fired = firingOf(main); return fired && (main.shots[fired.id] || 0) > 0 ? Engine.formOf(view, fired.id) : 'bare'; };
     const hourAt = (main, row, memory) => {
-        const at = rowItems(main, row, huntForm(main));
+        const form = huntForm(main), at = rowItems(main, row, form);
         let hour = at.npc;
         for (const deal of memory) {
             const item = at.items.find(entry => entry.id === deal.item);
             if (item) hour += item.rate * (deal.price - (view.items[deal.item]?.npcBuy || 0));
         }
-        return Math.max(0, hour);
+        return Math.max(0, hour) * killsOf(main)[form];
     };
     const ownHour = (main, memory) => { const row = Engine.spotRowOf(view, main); return row ? hourAt(main, row, memory) : 0; };
-    // Hunting hours to a level at the main's spot, and to the end of its grade stage.
+    // Hunting hours to a level at the main's spot at its worn kit's kills,
+    // and to the end of its grade stage; hoursToGrade: the hours of the run
+    // to its next grade (hunting hours over its band's hunting share), 0
+    // past the last grade.
     const hoursTo = (main, level) => {
-        const row = Engine.spotRowOf(view, main), exp = row ? Engine.huntExp(main, row, 1) : 0;
+        const row = Engine.spotRowOf(view, main), exp = row ? Engine.huntExp(main, row, killsOf(main).shots ?? 1) : 0;
         if (!(exp > 0)) return 0;
         return Math.max(0, Engine.expAt(view, Math.min(level, view.maxLevel)) - main.exp) / exp;
     };
     const horizonOf = main => { const next = grades.find(([, from]) => from > main.level); return hoursTo(main, next ? next[1] : view.maxLevel); };
+    const hoursToGrade = main => {
+        const next = grades.find(([, from]) => from > main.level), share = rateOf(main.band).huntShare;
+        return next && share > 0 ? hoursTo(main, next[1]) / share : 0;
+    };
     // The least a piece sells for: the NPC's buy price or the best
     // crystallizer bid in the book it deals on.
     const resaleOf = (selfId, book) => {
@@ -676,7 +713,7 @@ function mainsSide(ctx) {
         const escrow = twin ? twin.lines.filter(line => line.side === 'buy').reduce((sum, line) => sum + line.qty * line.price, 0) + twin.bids.reduce((sum, bid) => sum + bid.qty * bid.price, 0) : 0;
         const before = market.ads, deposit = twin ? Workshop.depositFor(main.bag, twin, game, twin.decided, config.keepRule) : {};
         // Its expected visits left in its grade: the hours to the next grade at its own visits per hour so far.
-        const toGrade = ctx.hoursToGrade(main), visitsLeft = toGrade > 0 ? toGrade * marketOf(index).visits / Math.max(1, now) : Infinity;
+        const toGrade = hoursToGrade(main), visitsLeft = toGrade > 0 ? toGrade * marketOf(index).visits / Math.max(1, now) : Infinity;
         const out = visit({ index, money: main.money, bag: main.bag, shots: main.shots, kit: main.kit, weapon: main.weapon, ads: market.ads, wants: market.wants,
             incoming: market.incoming }, {
             now, town, adId: `${seed}:${index}:${main.counter}`, persona: account.persona, roll: hash(`${seed}:visit:${index}:${main.counter}`), items: game.items,
@@ -776,7 +813,8 @@ function mainsSide(ctx) {
         const fired = firingOf(main);
         // The shot it fires is indexed for offer_posted from its first situation on.
         if ((fired?.id ?? null) !== market.shotId) { setMarket(index, { shotId: fired?.id ?? null }); indexWants(index); }
-        const at = rowItems(main, row, huntForm(main));
+        // The row's item and income rates at its worn kit's kills in the form it hunts.
+        const form = huntForm(main), at = rowItems(main, row, form), kills = killsOf(main)[form];
         const bagItems = Object.entries(main.bag).filter(([, count]) => count > 0);
         const worn = Object.values(main.kit).filter(Boolean);
         const gearHeld = bagItems.filter(([id]) => Engine.isGear(view.items[id])).reduce((sum, [, count]) => sum + count, 0);
@@ -793,8 +831,8 @@ function mainsSide(ctx) {
             now: ev.now, since: main.since, huntShare: ev.huntShare, tripHours: 2 * (snapshot.walkBack?.[row.spotId] || 0), town: nearest,
             stockLowHours: config.stockLowMinutes / 60, loadShare: config.loadShare,
             shots: fired ? { held: main.shots[fired.id] || 0, perHour: fired.perHour } : null,
-            bag: bagRow ? { slots: bagRow.slots, maxLoad: bagRow.maxLoad, used, weight, items: at.items.map(item => ({ ...item, held: (main.bag[item.id] || 0) > 0 })) } : null,
-            goal: goalOf({ pieces: market.path?.pieces, kit: main.kit, wants: market.wants, reserve: reserveAdena, money: main.money, bagValue, perHour: at.npc, fresh: market.goalFresh }),
+            bag: bagRow ? { slots: bagRow.slots, maxLoad: bagRow.maxLoad, used, weight, items: at.items.map(item => ({ ...item, rate: item.rate * kills, held: (main.bag[item.id] || 0) > 0 })) } : null,
+            goal: goalOf({ pieces: market.path?.pieces, kit: main.kit, wants: market.wants, reserve: reserveAdena, money: main.money, bagValue, perHour: at.npc * kills, fresh: market.goalFresh }),
             event: ev.event, deal, ownHour: own, shotTowns: shotTowns(main, nearest, fired) });
         if (config.deathArrival) {
             const died = deathAt({ since: main.since, huntShare: ev.huntShare, deathsPerHour: row.deaths || 0, roll: ev.roll });
@@ -842,13 +880,15 @@ function mainsSide(ctx) {
         const atTown = situation === 'arrived_town', own = atTown ? ownHour(main, account.memory) : 0, heldRow = atTown ? Engine.spotRowOf(view, main) : null;
         const gradeHours = atTown ? horizonOf(main) : 0;
         const market = account.market, left = atTown && market.lastSpot && market.visits - (market.movedAt ?? -Infinity) <= 1 ? market.lastSpot : null;
+        // Each candidate's rates at its worn kit's kills (the shots form, as its row's items).
+        const kills = killsOf(main).shots ?? 1;
         const rowOf = row => {
-            const at = rowItems(main, row, 'shots'), out = { spotId: String(row.spotId), adena: at.adena, items: at.items.map(item => [item.id, item.rate]), scrolls: row.scrolls || [] };
+            const at = rowItems(main, row, 'shots'), out = { spotId: String(row.spotId), adena: at.adena * kills, items: at.items.map(item => [item.id, item.rate * kills]), scrolls: row.scrolls || [] };
             if (!atTown) return out;
             const there = view.yields[`${row.spotId}@${main.level}`]?.town || null, fare = there ? fareOf(town, there) : null;
             const walk = Math.max(0, (snapshot.walkBack?.[row.spotId] || 0) - (snapshot.walkBack?.[heldRow?.spotId] || 0));
             const range = view.spotLevels?.[main.line]?.[String(row.spotId)], last = range ? Math.min(view.maxLevel, range[1] + 1) : null;
-            const exp = Engine.huntExp(main, row, 1), toEnd = last !== null && exp > 0 ? Math.max(0, Engine.expAt(view, last) - main.exp) / exp : Infinity;
+            const exp = Engine.huntExp(main, row, kills), toEnd = last !== null && exp > 0 ? Math.max(0, Engine.expAt(view, last) - main.exp) / exp : Infinity;
             return { ...out, move: fare === null ? Infinity : fare + walk * own, stay: stayHours({ outingHours: nextOuting(outingHours), gradeHours, spotHours: toEnd }) };
         };
         const rows = (hour?.top || []).map(rowOf), others = (hour?.others || []).filter(row => row.scrolls?.length).map(rowOf);
@@ -860,7 +900,7 @@ function mainsSide(ctx) {
         // The scrolls its own workshop decided to add, at the workshop's cap for each.
         const wants = {}, twin = account.twin;
         if (config.occupationRecipeWant && twin) for (const want of twin.wants || []) {
-            const cap = want.gain * twin.regen * Math.max(1, ctx.hoursToGrade(main) || 0);
+            const cap = want.gain * twin.regen * Math.max(1, hoursToGrade(main) || 0);
             if (cap > 0) wants[game.recipes[want.id].recipeItemId] = cap;
         }
         const roll = mulberry(hash(`${seed}:occupation:${index}:${main.counter}`))();
@@ -905,7 +945,7 @@ function mainsSide(ctx) {
         const only = side => Object.fromEntries(Object.entries(all[side] || {}).map(([id, rows]) => [id, rows.filter(row => row.town === town)]).filter(([, rows]) => rows.length));
         return { sell: only('sell'), buy: only('buy'), bids: {} };
     };
-    return { visitMain, nextArrival, levelUp, kitRatio, firingOf, recipeWanted, scrollRoute, offerPosted, adsBook, ownNeeds,
+    return { visitMain, nextArrival, levelUp, kitRatio, firingOf, killsOf, hoursToGrade, recipeWanted, scrollRoute, offerPosted, adsBook, ownNeeds,
         start: (index, main) => setMarket(index, { spotHeld: !!main.spot }) };
 }
 
@@ -915,4 +955,4 @@ function marketStart() {
         stalled: {}, deal: null, tripReason: null, indexed: [], spotHeld: false, visits: 0, lastSpot: null, movedAt: null, needs: {} };
 }
 
-module.exports = { mainsSide, marketStart, FORMULAS };
+module.exports = { mainsSide, marketStart, wornKit, FORMULAS };

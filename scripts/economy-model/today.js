@@ -101,7 +101,12 @@ function marketOf(snapshot, config = TODAY) {
 // populate takes its nearest populated band's numbers. Printed beside the
 // fit, never fitted to: the share at the best spots, the end snapshot's
 // hunting and grouped fractions, and the members at their own spot.
-function fit(baseline, accounts, view, bands) {
+// factorOf(main): the main's exp an hour over its row's (the design mode's
+// worn kit over the reference kit, the factor its hunt reads), so the share
+// is a share of time and the kit is counted once; kitFactor in the basis is
+// the band's mean exp with it over the mean without. Without it every main
+// hunts its row (today mode: its hunt reads no kit either).
+function fit(baseline, accounts, view, bands, factorOf = null) {
     const mains = accounts.map((account, index) => Engine.mainOf(account, index, view, bands)).filter(main => !main.station);
     const visitsPerBotHour = Number(baseline.visits?.perHour || 0) / Math.max(1, mains.length);
     const mean = values => values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
@@ -109,13 +114,15 @@ function fit(baseline, accounts, view, bands) {
     for (const [band] of bands) {
         const real = baseline.progress?.stageBands?.[band];
         const members = mains.filter(main => main.band === band);
-        const meanExp = mean(members.map(main => { const row = Engine.spotRowOf(view, main); return row ? Engine.huntExp(main, row, 1) : 0; }));
+        const expOf = factored => mean(members.map(main => { const row = Engine.spotRowOf(view, main); return row ? Engine.huntExp(main, row, factored ? factorOf(main) : 1) : 0; }));
+        const meanExp = expOf(!!factorOf), plainExp = factorOf ? expOf(false) : meanExp;
         const bestExp = mean(members.map(main => view.hours[main.line]?.[main.level]?.best?.exp || 0));
         if (!real || !members.length || !(meanExp > 0)) continue;
         const activity = real.activityAtEnd || {}, of = count => (real.bots ? (count || 0) / real.bots : null);
         basis[band] = { realExp: real.expPerBotHour, meanExp, huntShare: real.expPerBotHour / meanExp, bestExp, bestShare: real.expPerBotHour / bestExp,
             activityHunting: of(activity.hunting), activityGrouped: of(activity.grouped), activityResting: of(activity.resting),
             atOwnSpot: members.filter(main => main.spot).length, bots: members.length };
+        if (factorOf) basis[band].kitFactor = meanExp / plainExp;
     }
     const fitted = Object.keys(basis);
     if (!fitted.length) throw new Error('the baseline populates no stage band the cohort has');

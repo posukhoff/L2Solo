@@ -597,8 +597,10 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         // tables (mains.kitTableOf) taken as a main's line, band or kit
         // changed, read through kitHours, shared from another main's and
         // let go past the bound; the kit hour reads of the KIT HOUR measure
-        // of the kit a main could pay now (mains.kitRatio), apart.
-        unpriced: 0, kitHour: {}, kitTables: { taken: 0, read: 0, shared: 0, evicted: 0, wornEvicted: 0 }, measureReads: { swaps: 0, fast: 0, fresh: 0 },
+        // of the kit a main could pay now (mains.kitRatio), apart; the reads
+        // of a main's hunt factors (mains.killsOf) and those whose form
+        // fired states none (read as 1).
+        unpriced: 0, kitHour: {}, kitTables: { taken: 0, read: 0, shared: 0, evicted: 0, wornEvicted: 0 }, measureReads: { swaps: 0, fast: 0, fresh: 0 }, huntFactors: { read: 0, unstated: 0 },
         // Routes acquire priced, and those whose cap's own route cost 0; sales
         // whose buyer could not pay at the meeting; failed waits outgrown, by grade.
         routes: { priced: 0, zero: 0, noWorth: 0 }, unfunded: { wtb: 0, line: 0, bid: 0 }, outgrown: {},
@@ -724,12 +726,6 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     const scrollReached = (id, from, now, where = null) => { const grade = shotScrollGrade(id); if (grade) firstAt(stats.gates.scroll, grade, now, where ? { from, where } : { from }); };
     // Crafter mains already in a grade at the start opened its first gate at hour 0.
     for (const account of accounts) if (account.twin) for (const [grade, from] of grades) if (account.level >= from) firstAt(stats.gates.crafter, grade, 0);
-    const hoursToGrade = main => {
-        const next = grades.find(([, from]) => from > main.level), row = Engine.spotRowOf(view, main), share = rateOf(main.band).huntShare;
-        const exp = row ? Engine.huntExp(main, row, 1) : 0;
-        if (!next || !(exp > 0) || !(share > 0)) return 0;
-        return Math.max(0, Engine.expAt(view, Math.min(next[1], view.maxLevel)) - main.exp) / (exp * share);
-    };
     const markMp = (twin, now) => { stats.mp.available += twin.regen * Math.max(0, now - twin.mpFrom); return { ...twin, mpFrom: now }; };
 
     // The rules' view of an account's twin at a wake.
@@ -738,7 +734,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         const account = accounts[index], twin = seatAt ? { ...account.twin, town: seatAt } : account.twin, main = mains[index];
         return { now, self: index, place: seatAt ? { town: null, twinTown: seatAt } : { town: account.lastTown, twinTown: twin.town }, books: books.towns, memory: account.memory, persona: account.persona,
             config, twin, game, npcSell: game.npcByTown[twin.town] || {}, crystalRoute: game.routeByTown[twin.town] || {}, crystalReach: game.reachByTown[twin.town] || {},
-            applied, hoursToGrade: hoursToGrade(main), fares: view.fares, rankRecipes, ads: side.adsBook(seatAt),
+            applied, hoursToGrade: side.hoursToGrade(main), fares: view.fares, rankRecipes, ads: side.adsBook(seatAt),
             own: config.ownUseFirst ? side.ownNeeds(index) : null };
     };
 
@@ -1076,7 +1072,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         const twin = accounts[index].twin;
         return twin ? Workshop.ownCraft({ twin, game, npcSell: game.npcByTown[twin.town] || {}, crystalReach: game.reachByTown[twin.town] || {}, memory: accounts[index].memory, books: books.towns, self: index }, selfId) : null;
     };
-    side = Mains.mainsSide({ snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, shotGrade, hoursToGrade,
+    side = Mains.mainsSide({ snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, shotGrade,
         depositFee: DEPOSIT_FEE, kitHours, rearrive, commit, commitVisit, claimOnTwin, wait, ownCraft, tradeTownsOf });
 
     // At the start: the share of mains, per grade of the shot their spot row
@@ -1113,6 +1109,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         visit: (main, now, context) => side.visitMain(main, now, context),
         nextArrival: (main, context) => side.nextArrival(main, context),
         firing: main => side.firingOf(main),
+        kills: main => side.killsOf(main),
         levelUp(main, now) {
             const index = main.index, account = accounts[index], seen = account.level, before = account.twin?.highest ?? seen;
             const from = gradeOfLevel(seen), to = gradeOfLevel(main.level), gradeChanged = to !== from && main.level > seen;
@@ -1272,7 +1269,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             config,
             biases: BIASES,
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
-                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves(), shotsOffLines: shotsOffLines() }, shotReport: stats.shotReport, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null, measureReads: stats.measureReads,
+                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves(), shotsOffLines: shotsOffLines() }, shotReport: stats.shotReport, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null, measureReads: stats.measureReads, huntFactors: { ...stats.huntFactors },
                 capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
                 velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),
