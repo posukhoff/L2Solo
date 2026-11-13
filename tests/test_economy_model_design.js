@@ -716,24 +716,33 @@ assert.equal(armed.delta.shotsUsed, 50);
 // wearing the better piece (38 an hour over the other's 28), the arrow
 // priced 1 by the NPC. Net of arrows the piece nets 23, below the other's
 // 28 (and above the 20 the main earns without either), so the main buys the
-// other piece (3000, not 2900); gross of arrows it buys the better one.
+// other piece (3000, not 2900); gross of arrows it buys the better one. Each
+// kit also states a shot option (free, 10 an hour over none) with the same
+// 15 arrows, so the shot is what a main fires and its arrows are what the
+// pieces are compared by, and a shot option with arrows null (1000 over
+// none) is no option: with either dropped the main buys the better piece.
 {
-    const LOW = 2003, HIGH = 2004, JUNK = 1869, ARROW = 1341, levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
+    const LOW = 2003, HIGH = 2004, JUNK = 1869, ARROW = 1341, FREE = 1342, UNSTATED = 1343, levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
     const hourRow = { spotId: 's1', kills: 10, exp: 1e7, adena: 0, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const world = {
         ...snapshot,
         hours: { 9: Object.fromEntries(levels30.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
         kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: LOW, slot: 6 }, { selfId: HIGH, slot: 10 }]])) },
         items: { ...snapshot.items, [LOW]: { kind: 'Armor.Body', grade: 'D', ref: 3000, npcBuy: 1500, crystals: 0 }, [HIGH]: { kind: 'Armor.Legs', grade: 'D', ref: 3000, npcBuy: 1500, crystals: 0 },
-            [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 }, [ARROW]: { kind: 'Other.Material', grade: 'D', ref: 1, npcBuy: 0, crystals: 0, weight: 1 } },
+            [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 }, [ARROW]: { kind: 'Other.Material', grade: 'D', ref: 1, npcBuy: 0, crystals: 0, weight: 1 },
+            [FREE]: { kind: 'Other.Material', grade: 'D', ref: 1, npcBuy: 0, crystals: 0, weight: 1 }, [UNSTATED]: { kind: 'Other.Material', grade: 'D', ref: 1, npcBuy: 0, crystals: 0, weight: 1 } },
         yields: Object.fromEntries(levels30.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
         bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
-        recipes: [], npcOffers: { preset: {}, x1: { [LOW]: [{ town: 'TownA', price: 3000 }], [HIGH]: [{ town: 'TownA', price: 2900 }], [ARROW]: [{ town: 'TownA', price: 1 }] } },
+        recipes: [], npcOffers: { preset: {}, x1: { [LOW]: [{ town: 'TownA', price: 3000 }], [HIGH]: [{ town: 'TownA', price: 2900 }], [ARROW]: [{ town: 'TownA', price: 1 }], [FREE]: [{ town: 'TownA', price: 1 }], [UNSTATED]: [{ town: 'TownA', price: 1 }] } },
         gearLadder: ladderOf('9', [[1, 30, { 6: { rungs: [LOW], hour: { [LOW]: 28, 0: 20 } }, 10: { rungs: [HIGH], hour: { [HIGH]: 38, 0: 20 } } }]])
     };
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), base = stubKitHours(world);
-    const arrowed = (hour, kit) => hour && { ...hour, noneArrows: { id: ARROW, units: kit[10] === HIGH ? 15 : 0 } };
+    const arrowed = (hour, kit) => {
+        if (!hour) return hour;
+        const units = kit[10] === HIGH ? 15 : 0;
+        return { ...hour, noneArrows: { id: ARROW, units }, shots: [{ id: FREE, kind: 'a', gross: hour.none + 10, units: 0, arrows: { id: ARROW, units } }, { id: UNSTATED, kind: 'b', gross: hour.none + 1000, units: 0, arrows: null }] };
+    };
     const bow = {
         hour: (line, level, kit) => arrowed(base.hour(line, level, kit), kit),
         swaps: (line, level, kit, pieces) => { const read = base.swaps(line, level, kit, pieces); return { ...read, hour: arrowed(read.hour, kit), swaps: read.swaps.map((swap, at) => ({ ...swap, hour: arrowed(swap.hour, { ...kit, [pieces[at].slot]: pieces[at].selfId }) })) }; },

@@ -95,14 +95,13 @@ function slotsConflict(slot, other) {
 // of 0 is a shot that is free). Ties keep firing none, then the first kind. Returns { id (0: none),
 // units (shots an hour), net (the hour less the shots' and the arrows' cost: a
 // bow's options state the arrows they spend, { id, units }, null where its
-// attacks are not stated, which makes the option none), arrows (the chosen
-// option's, null for none or a kit without a bow), worth (the
+// attacks are not stated, which makes the option no option), worth (the
 // most a shot of the chosen kind may cost and stay chosen, the other options
 // at their prices; 0 firing none) }, null for a kit with no hour.
 function firing(hour, priceOf) {
     if (!hour) return null;
     // The adena an hour of an option's arrows at the price the main knows
-    // (undefined: a kit that fires none, 0; null: a bow's attacks not stated;
+    // (undefined: a kit without a bow, 0; null: a bow's attacks not stated;
     // NaN: an arrow it cannot price: the option is no option).
     const arrowCost = arrows => {
         if (arrows === undefined) return 0;
@@ -111,11 +110,11 @@ function firing(hour, priceOf) {
         return arrows.units * price;
     };
     const options = [], noneCost = arrowCost(hour.noneArrows);
-    if (hour.none !== null && hour.none !== undefined && Number.isFinite(noneCost)) options.push({ id: 0, units: 0, gross: hour.none - noneCost, net: hour.none - noneCost, arrows: hour.noneArrows ?? null });
+    if (hour.none !== null && hour.none !== undefined && Number.isFinite(noneCost)) options.push({ id: 0, units: 0, gross: hour.none - noneCost, net: hour.none - noneCost });
     for (const shot of hour.shots) {
         const known = priceOf(shot.id), price = known === null || known === undefined ? NaN : Number(known), cost = arrowCost(shot.arrows);
         if (!Number.isFinite(price) || !Number.isFinite(cost)) continue;
-        options.push({ id: shot.id, units: shot.units, gross: shot.gross - cost, net: shot.gross - cost - shot.units * price, arrows: shot.arrows ?? null });
+        options.push({ id: shot.id, units: shot.units, gross: shot.gross - cost, net: shot.gross - cost - shot.units * price });
     }
     if (!options.length) return null;
     let best = options[0];
@@ -126,7 +125,7 @@ function firing(hour, priceOf) {
         for (const option of options) if (option !== best) rival = Math.max(rival, option.net);
         if (rival === -Infinity) rival = 0;
     }
-    return { id: best.id, units: best.units, net: best.net, arrows: best.arrows, worth: best.id && best.units > 0 ? Math.max(0, (best.gross - rival) / best.units) : 0 };
+    return { id: best.id, units: best.units, net: best.net, worth: best.id && best.units > 0 ? Math.max(0, (best.gross - rival) / best.units) : 0 };
 }
 
 // The pieces a body wears of a kit ({ paperdoll slot: selfId }): [[slot,

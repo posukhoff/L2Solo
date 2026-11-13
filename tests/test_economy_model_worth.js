@@ -100,7 +100,7 @@ assert.equal(buy.close, 'parked', 'the want is parked after two looks at its wor
     const unknown = Worth.firing(hour, id => (id === 1 ? 2 : null));
     assert.deepEqual([unknown.id, unknown.units, unknown.net, unknown.worth], [1, 100, 1400, 6], 'shot 2 has no price: shot 1 (1600 - 100 x 2) over none (1000), worth (1600 - 1000) / 100');
     assert.equal(Worth.firing(hour, id => (id === 1 ? 2 : undefined)).id, 1, 'an undefined price is no price either');
-    assert.deepEqual(Worth.firing(hour, () => null), { id: 0, units: 0, net: 1000, arrows: null, worth: 0 }, 'no price for any shot: none');
+    assert.deepEqual(Worth.firing(hour, () => null), { id: 0, units: 0, net: 1000, worth: 0 }, 'no price for any shot: none');
     const free = Worth.firing(hour, id => (id === 1 ? 2 : 0));
     assert.deepEqual([free.id, free.net, free.worth], [2, 2000, 6], 'a price of 0 is a free shot: shot 2 nets 2000, worth (2000 - 1400) / 100');
     assert.equal(Worth.firing({ none: null, shots: hour.shots }, () => null), null, 'no hour firing none and no priced shot: no answer');
@@ -115,9 +115,9 @@ assert.equal(buy.close, 'parked', 'the want is parked after two looks at its wor
     const bow = { none: 1000, noneArrows: { id: 9, units: 100 }, shots: [{ id: 1, kind: 'a', gross: 1500, units: 1000, arrows: { id: 9, units: 700 } }] };
     const price = arrow => id => (id === 1 ? 0.3 : id === 9 ? arrow : null);
     const dear = Worth.firing(bow, price(1));
-    assert.deepEqual([dear.id, dear.net, dear.arrows], [0, 900, { id: 9, units: 100 }], 'arrows at 1: none nets 900, the shot 500');
+    assert.deepEqual([dear.id, dear.net], [0, 900], 'arrows at 1: none nets 900, the shot 500');
     const cheap = Worth.firing(bow, price(0.1));
-    assert.deepEqual([cheap.id, cheap.units, cheap.arrows], [1, 1000, { id: 9, units: 700 }], 'arrows at 0.1: the shot nets 1130 over none 990');
+    assert.deepEqual([cheap.id, cheap.units], [1, 1000], 'arrows at 0.1: the shot nets 1130 over none 990');
     near(cheap.net, 1500 - 300 - 70, 'net of shots and arrows');
     near(cheap.worth, (1430 - 990) / 1000, 'worth: the shot margin net of its arrows over the rival');
     assert.equal(Worth.firing(bow, id => (id === 1 ? 0.3 : null)), null, 'an arrow it cannot price: no option, no answer');
