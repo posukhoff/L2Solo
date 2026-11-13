@@ -79,7 +79,8 @@ function viewOf(snapshot, options = {}) {
     return {
         hours: snapshot.hours, kits: snapshot.kits, yields: snapshot.yields, items: snapshot.items, exp: snapshot.exp,
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
-        shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(),
+        shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(), rowItems: new Map(),
+        tripHours: snapshot.tripHours || null,
         spotHours: snapshot.spotHours?.rows || null, yieldsDesign: snapshot.yieldsDesign || null, spotLevels: snapshot.spotLevels || null,
         huntYields: (options.yields === 'design' ? snapshot.yieldsDesign : snapshot.yields) || null,
         blessedShots: new Set(snapshot.shotFamilies?.ids?.[BLESSED_FAMILY] || [])
@@ -194,6 +195,32 @@ function yieldRows(view, line, level, row, form) {
     view.yieldRows.set(key, rows);
     return rows;
 }
+
+// A spot row's items per hunting hour at the hunt's yields in a form
+// (formOf: without shots, its plain shot, Blessed Spiritshots):
+// { items: [{ id, rate, weight, stack }], adena, npc: its income at the NPC's buy price }.
+// One per line, level, spot and form.
+function rowItems(view, main, row, form) {
+    const key = `${main.line}@${main.level}@${row.spotId}@${form}`;
+    if (view.rowItems.has(key)) return view.rowItems.get(key);
+    const hour = rowIn(row, form);
+    const items = yieldRows(view, main.line, main.level, hour, form).map(([id, perKill]) => ({ id, rate: perKill * hour.kills,
+        weight: view.items[id]?.weight || 0, stack: !isGear(view.items[id]) }));
+    const adena = hour.adena * adenaFactor(view, row, main.level);
+    const out = { items, adena, npc: adena + items.reduce((sum, item) => sum + item.rate * (view.items[item.id]?.npcBuy || 0), 0) };
+    view.rowItems.set(key, out);
+    return out;
+}
+
+// The game's trip hours (the snapshot's tripHours, built for every spot and
+// town): into the spot's town (toHoursOf), back from a town to the spot
+// (backHoursOf). A missing one throws.
+function tripLeg(hours, what) {
+    if (typeof hours !== 'number') throw new Error(`no trip hours for ${what}`);
+    return hours;
+}
+const toHoursOf = (view, spotId) => tripLeg(view.tripHours.to[spotId], `spot ${spotId}`);
+const backHoursOf = (view, spotId, town) => tripLeg(view.tripHours.back[spotId]?.[town], `spot ${spotId} from ${town}`);
 
 function poisson(mean, random) {
     const limit = Math.exp(-mean);
@@ -531,4 +558,4 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
 }
 
 module.exports = { viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
-    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt };
+    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf };

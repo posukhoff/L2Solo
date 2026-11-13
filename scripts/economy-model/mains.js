@@ -48,13 +48,10 @@ function mainsSide(ctx) {
     const setMarket = (index, patch) => put(index, { market: { ...accounts[index].market, ...patch } });
     const townOf = main => { const row = Engine.spotRowOf(view, main); return row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null; };
     const fareOf = (from, to) => (from === to ? 0 : view.fares[from]?.[to] ?? null);
-    // The game's trip hours (the snapshot's tripHours and townHours, built for
-    // every spot and town): into the spot's town, back from a town to the
-    // spot, from town to town. A missing one throws.
-    const tripLeg = (hours, what) => { if (typeof hours !== 'number') throw new Error(`no trip hours for ${what}`); return hours; };
-    const toHoursOf = spotId => tripLeg(snapshot.tripHours.to[spotId], `spot ${spotId}`);
-    const backHoursOf = (spotId, town) => tripLeg(snapshot.tripHours.back[spotId]?.[town], `spot ${spotId} from ${town}`);
-    const townHoursOf = (from, to) => tripLeg(snapshot.townHours[from]?.[to], `${from} to ${to}`);
+    // The game's trip hours from town to town (the snapshot's townHours, built
+    // for every town; into a spot's town and back: Engine.toHoursOf, backHoursOf). A missing one throws.
+    const toHoursOf = spotId => Engine.toHoursOf(view, spotId), backHoursOf = (spotId, town) => Engine.backHoursOf(view, spotId, town);
+    const townHoursOf = (from, to) => Engine.tripLeg(snapshot.townHours[from]?.[to], `${from} to ${to}`);
     const firstLevel = grade => grades.find(([name]) => name === grade)?.[1] ?? 1;
     const kitAt = (main, level) => view.kits[main.line]?.[Math.min(view.maxLevel, level)] || [];
     // The gear ladder (the snapshot's gearLadder) of a main's line in the
@@ -323,22 +320,8 @@ function mainsSide(ctx) {
     };
     const priceOfItem = (memory, id) => Knowledge.known(memory, id) ?? view.items[id]?.npcBuy ?? 0;
 
-    // A spot row's items per hunting hour at the design's yields in a form
-    // (Engine.formOf: without shots, its plain shot, Blessed Spiritshots):
-    // [{ id, rate, weight, stack }] and its income at the NPC's buy price.
-    // Memo key: line, level, spot, form (the row's inputs).
-    const rowMemo = new Map();
-    const rowItems = (main, row, form) => {
-        const key = `${main.line}@${main.level}@${row.spotId}@${form}`;
-        if (rowMemo.has(key)) return rowMemo.get(key);
-        const hour = Engine.rowIn(row, form);
-        const items = Engine.yieldRows(view, main.line, main.level, hour, form).map(([id, perKill]) => ({ id, rate: perKill * hour.kills,
-            weight: view.items[id]?.weight || 0, stack: !Engine.isGear(view.items[id]) }));
-        const adena = hour.adena * Engine.adenaFactor(view, row, main.level);
-        const out = { items, adena, npc: adena + items.reduce((sum, item) => sum + item.rate * (view.items[item.id]?.npcBuy || 0), 0) };
-        rowMemo.set(key, out);
-        return out;
-    };
+    // A spot row's items per hunting hour in a form (Engine.rowItems).
+    const rowItems = (main, row, form) => Engine.rowItems(view, main, row, form);
     // The own hour: income per hunting hour at its spot at known prices (its
     // memory, else the NPC's buy price), in the form it hunts (huntForm: the
     // hour of the kind it fires, without shots when it fires none or holds
