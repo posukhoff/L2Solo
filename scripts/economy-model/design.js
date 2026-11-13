@@ -508,8 +508,8 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             gearCapped: 0, shelfFull: 0, shotsOwn: 0, shotsLine: 0, shotsNpc: 0, deposits: 0, stintsKept: 0, stintsUnfilled: 0, twinToTwin: 0, twinToNpc: 0, unseatedWakes: 0, firstSeats: 0, buyerTwins: 0 },
         stopped: new Set(), botToBot: 0, botToBotHour: 0,
         // The market of mains: pieces obtained by route and grade, trips by
-        // their situation, meetings, the cap-against-floor count over
-        // pieces offered, hunt-cycle worths held at the bound, spot changes.
+        // their situation, meetings, hunt-cycle worths held at the
+        // bound, spot changes.
         pieces_: {}, trips: {}, meetings: 0,
         // Visits by their trip's situation per current band, those in a town
         // other than the nearest by situation, and wall hours per current band.

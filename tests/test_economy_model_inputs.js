@@ -132,12 +132,11 @@ assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', cryst
 
 // The gear ladder: a Scavenger's (the Bounty Hunter at 30) band 30-34 holds
 // the gear table's D weapon rungs and the no-grade ones below, none above D,
-// its best spot, its scale to the design's money and its caster mark (a
-// Scavenger weighs a piece's attack by P.Atk); a kit's hours are read
+// its best spot, its scale to the design's money; a kit's hours are read
 // through kit-hours.js, not stored.
 const name = id => snapshot.items[id]?.name;
 const band = snapshot.gearLadder.lines[line];
-assert.deepEqual(band.map(row => [row.from, row.to, row.level, row.grade, row.caster]), [[30, 34, 32, 'd', false]], 'the band of the levels asked, read at its middle');
+assert.deepEqual(band.map(row => [row.from, row.to, row.level, row.grade]), [[30, 34, 32, 'd']], 'the band of the levels asked, read at its middle');
 const weapons = band[0].rungs.weapon, club = weapons.find(id => name(id) === 'Spiked Club');
 for (const wanted of ['Hand Axe', 'Tomahawk', 'Spiked Club']) assert.ok(weapons.some(id => name(id) === wanted), `${wanted} is a rung`);
 assert.ok(weapons.every(id => ['D', 'NONE'].includes(snapshot.items[id].grade)), 'no rung above the band\'s grade');

@@ -142,7 +142,7 @@ function swapRows(read) {
 }
 
 // The hours a piece's gain counts over and what it returns beyond them.
-// The hunting hours the main wears it (useHours: to the end of its grade, and on to the end of
+// The hunting hours (ours) the main wears it (useHours: to the end of its grade, and on to the end of
 // the next grade when that grade's piece of the slot has no priced route for
 // the main: it keeps wearing it, never further), plus the least it sells for then (the floor: the NPC's
 // buy price or the best crystallizer bid it knows), so a piece bought late in

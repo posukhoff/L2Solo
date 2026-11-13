@@ -83,10 +83,10 @@ const kitHoursOf = (hourOf, shotsOf = () => [], shareOf = () => null) => {
         return share ? { none, noneShare: share, shots: shotsOf(line, level, kit, none).map(shot => ({ ...shot, ...share })) } : { none, shots: shotsOf(line, level, kit, none) };
     };
     const swaps = (line, level, kit, pieces) => {
-        const numbers = value => (value === null ? null : { pAtk: 1, mAtk: 1, pDef: 1, mDef: 1 }), base = hour(line, level, kit);
-        return { hour: base, numbers: numbers(base), caster: false, deathHours: 0, swaps: pieces.map(({ slot, selfId }) => {
+        const base = hour(line, level, kit);
+        return { hour: base, swaps: pieces.map(({ slot, selfId }) => {
             const next = [7, 14].includes(Number(slot)) ? { ...kit, 7: 0, 14: 0, [slot]: selfId } : { ...kit, [slot]: selfId }, at = hour(line, level, next);
-            return { hour: at, numbers: numbers(at) };
+            return { hour: at };
         }) };
     };
     return { hour, swaps, shotScale: () => 1 };

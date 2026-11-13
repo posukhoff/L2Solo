@@ -138,8 +138,8 @@ function mainsSide(ctx) {
     // The hours of a main's kit and of the kit with each rung of its band put
     // on in a slot (kit-hours: no shot price in them): { key, worn: { hour }
     // | null, per band piece none (the hour firing none; NaN none or not
-    // stated), SHOT_KINDS columns of ids (0: none), gross and units, stated
-    // (1 where the piece's row is stated), at (the band's piece places) }.
+    // stated), SHOT_KINDS columns of ids (0: none), gross and units,
+    // at (the band's piece places) }.
     // Its inputs are the line, the band and the kit
     // worn (key): it is taken when one of them changed and held on the
     // account until the next change (a new table replaces the held one); a
@@ -162,11 +162,10 @@ function mainsSide(ctx) {
             const pieces = bandPieces(main.line, band), read = Worth.swapRows(ctx.kitHours.swaps(main.line, main.level, wornOf(main), pieces.list)), count = read.rows.length;
             table = { key, worn: read.worn, none: new Float64Array(count).fill(NaN), ids: new Int32Array(count * SHOT_KINDS), gross: new Float64Array(count * SHOT_KINDS),
                 units: new Float64Array(count * SHOT_KINDS), arrowUnits: new Float64Array(count * SHOT_KINDS),
-                arrowIds: new Int32Array(count), noneArrowUnits: new Float64Array(count), stated: new Uint8Array(count), at: pieces.at };
+                arrowIds: new Int32Array(count), noneArrowUnits: new Float64Array(count), at: pieces.at };
             read.rows.forEach((row, at) => {
                 if (!row) return;
                 if (row.hour.none !== null) table.none[at] = row.hour.none;
-                table.stated[at] = 1;
                 // every option of a kit spends the same arrow (kit-hours): one id a row, the units an option
                 const arrowed = row.hour.noneArrows ?? row.hour.shots.find(shot => shot.arrows)?.arrows;
                 if (arrowed) table.arrowIds[at] = arrowed.id;
@@ -186,7 +185,7 @@ function mainsSide(ctx) {
     // A rung's row in a kit table ({ hour }), null where not stated or not of the band.
     const rowIn = (table, slot, selfId) => {
         const at = table?.at.get(`${slot}:${selfId}`);
-        if (at === undefined || !table.stated[at]) return null;
+        if (at === undefined) return null;
         const shots = [];
         for (let kind = 0; kind < SHOT_KINDS; kind++) {
             const cell = at * SHOT_KINDS + kind;
