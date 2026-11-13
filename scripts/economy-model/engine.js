@@ -44,7 +44,9 @@
 // main with the flows it caused; the engine commits both. Rolls are seeded per
 // (run seed, account id, the account's situation counter).
 const { hash, mulberry } = require('../hunt-tables/common');
+require('../../src/Global');
 const PartyRewardMath = require('../../src/GameServer/Actor/PartyRewardMath');
+const ProgressionCap = invoke('GameServer/Progression/ProgressionCap');
 const Ledger = require('./ledger');
 
 const ADENA = 57;
@@ -91,12 +93,12 @@ function viewOf(snapshot, options = {}) {
 
 // The exp at which a level starts (the table's index 0 is level 1).
 const expAt = (view, level) => view.exp[level - 1];
-// The level an exp reaches; rounding: the share of a level's exp it may fall
-// short by and still reach it (LEVEL_ROUNDING at the level's read, none in a hunt).
+// The level an exp reaches, by the game's own rule (ProgressionCap.levelForExperience over the
+// table and the run's cap). A level never goes down: a main whose exp stands under its level's
+// table exp keeps the level. rounding: the share of a level's exp the exp may fall short by and
+// still reach it (LEVEL_ROUNDING at the level's read, none in a hunt).
 function levelOf(view, exp, from = 1, rounding = 0) {
-    let level = from;
-    while (level < view.maxLevel && expAt(view, level + 1) - exp <= rounding * expAt(view, level + 1)) level++;
-    return level;
+    return Math.max(from, ProgressionCap.levelForExperience(exp / (1 - rounding), from, { General: { maxLevel: view.maxLevel } }, view.exp));
 }
 // The level's read is scheduled at the hour the hunt's credit reaches the level's exp, but that credit
 // is a float sum that can land a few ulps under it at that hour. 1e-9 of the level's exp is far above

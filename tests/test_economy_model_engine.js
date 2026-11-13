@@ -17,7 +17,7 @@ const hour = (adena, exp, shots, loot = 30) => ({ classId: 9, shotId: 1463,
 const yields = { town: 'TownA', drop: { 57: 10, 200: 0.5, 300: 0.01 }, spoil: {} };
 const snapshot = {
     header: { levels: [1, 4], rates: { adena: 1 } },
-    exp: [0, 100, 300, 600],
+    exp: [0, 100, 300, 600, 1e12],
     hours: { 9: { 1: hour(100, 50, 20), 2: hour(100, 50, 20), 3: hour(100, 50, 20), 4: hour(100, 50, 20) } },
     kits: { 9: { 1: [{ selfId: 100, slot: 7 }], 2: [{ selfId: 101, slot: 7 }], 3: [{ selfId: 101, slot: 7 }], 4: [{ selfId: 101, slot: 7 }] } },
     yields: { 's1@1': yields, 's1@2': yields, 's1@3': yields, 's1@4': yields },
@@ -302,7 +302,7 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
 // level fails here instead of hanging.
 {
     const T = 1e9, rate = 2 * (T - 4 * 2 ** -23), row = hour(100, rate, 20);
-    const big = { ...snapshot, exp: [0, T, 4 * T, 9 * T], hours: { 9: { 1: row, 2: row, 3: row, 4: row } } }, at = Engine.viewOf(big), levels = [];
+    const big = { ...snapshot, exp: [0, T, 4 * T, 9 * T, 1e12 * T], hours: { 9: { 1: row, 2: row, 3: row, 4: row } } }, at = Engine.viewOf(big), levels = [];
     const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => ({ ...Engine.visit(main, at, options), afterHours: 100 }),
         nextArrival: (main, ev) => (ev.event === 'start' ? 0.5 : null), firing: () => null, kills: () => null, event() {}, hour: () => 0,
         levelUp: (main, now) => { levels.push([now, main.level]); if (levels.length > 100) throw new Error(`100 level reads, level ${main.level} at ${now} h`); return main; },
