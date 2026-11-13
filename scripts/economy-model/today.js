@@ -137,7 +137,7 @@ function marketOf(snapshot, config = TODAY) {
 // factorOf(main): the main's worn kit's exp factor over the reference kit (the
 // factor its hunt, restock and this fit all read). The fitted share is real exp
 // per wall bot-hour over the row's exp x that factor: the time at the spot x an
-// unexplained residual (.63-1.04 by band, DT-527), not a share of time alone.
+// unexplained residual (.63-1.04 by band), not a share of time alone.
 // Without factorOf every main is fitted on its bare row.
 function fit(baseline, accounts, view, bands, factorOf = null) {
     const mains = accounts.map((account, index) => Engine.mainOf(account, index, view, bands)).filter(main => !main.station);
