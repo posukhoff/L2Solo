@@ -99,7 +99,8 @@ function shotsLow({ held, perHour }, { since, now, huntShare, stockLowHours }) {
 // Returns { at, away, reason, town, read } (at: the wall hour it arrives in
 // town, null without a situation; away: the hours it is away from its spot,
 // lumped before the visit: the walk to town and back, and for another town
-// a gatekeeper hop there and one back; read: at is instead the hour of its
+// a gatekeeper hop there and one back, 0 without a trip, so a death drawn
+// before at beats a situation to read; read: at is instead the hour of its
 // next shot situation, read then without going).
 function trip(main, view) {
     const wall = hunting => view.since + hunting / Math.max(1e-9, view.huntShare);
@@ -127,9 +128,9 @@ function trip(main, view) {
     }
     const walk = view.tripHours > 0 ? view.tripHours : MIN_TRIP_HOURS;
     if ((view.event === 'offer_posted' || view.event === 'bid_posted') && view.deal && view.deal.gain > walk * view.ownHour) triggers.push({ at: view.now, reason: view.event });
-    if (!triggers.length) return { at: null, reason: null, town: view.town };
+    if (!triggers.length) return { at: null, away: 0, reason: null, town: view.town };
     const first = triggers.reduce((best, row) => (row.at < best.at ? row : best));
-    if (first.read) return { at: first.at, reason: first.reason, town: view.town, read: true };
+    if (first.read) return { at: first.at, away: 0, reason: first.reason, town: view.town, read: true };
     const at = Math.max(view.now, first.at);
     const shotTrip = first.reason === 'stock_low:shots' || first.reason === 'shots_out';
     const there = shotTrip && shotAt !== view.town ? { town: shotAt, hours: 2 * view.shotTowns.hopHours } : { town: view.town, hours: 0 };
