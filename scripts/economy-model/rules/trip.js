@@ -6,9 +6,13 @@
 // main hunts at) and offer_posted, bid_posted (raised by the engine
 // when a matching line enters reach). A field deal sends it now when the
 // deal's gain over its next best channel beats the trip's hours x its own
-// hour, else the deal is met at its next visit. A shot situation exists
-// only while a seller of the shot stands now (shotTown); a line of its shot
-// posted later raises offer_posted, and the situation is read again then.
+// hour, else the deal is met at its next visit. The shot situations come
+// from its stock and its use alone (the hour it crosses its low mark, the
+// hour it runs out), whatever the board holds: trip names the next one as a
+// situation read at its hour, and only then are the sellers read
+// (shotTown): a seller sends it, none leaves it hunting, low or out, until
+// its next situation (a line of its shot posted while it is low or out
+// raises offer_posted, and the sellers are read again then).
 // player_command and clan_call have no source in the model. The town: the
 // town the main stands in, except a shot trip, which goes to the town of
 // the seller (shotTown).
@@ -76,24 +80,41 @@ function shotTown({ here, ownHeld = false, npcHere, money, towns }) {
     return sold.reduce((best, row) => (row.fare < best.fare ? row : best)).town;
 }
 
+// Is the main low or out of its shot at wall hour now: what it held at
+// since, less what it fired hunting since, at or under its low mark (its
+// shots for stockLowHours of hunting). shots: { held, perHour }; at: { since,
+// now, huntShare, stockLowHours }.
+function shotsLow({ held, perHour }, { since, now, huntShare, stockLowHours }) {
+    return held - perHour * huntShare * (now - since) <= perHour * stockLowHours;
+}
+
 // main: unused beyond the view (the engine reads it into the view). view:
 // { now, since (the time the main's state is taken at), huntShare, tripHours,
 // town (the nearest), stockLowHours, loadShare, shots: { held, perHour },
 // bag: { slots, used, weight, maxLoad, items: [{ rate (per hunting hour),
 // weight, stack, held }] }, goal (goalOf) | null, event, deal: { gain } |
 // null, ownHour, shotTowns: { ownHeld, npcHere, money, towns, hopHours }
-// (shotTown's sellers; with no seller standing, no shot situation) }.
-// Returns { at, reason, town } (at: the wall hour it arrives in town, null
-// without a situation).
+// (shotTown's sellers, read only at a shot situation) }.
+// Returns { at, reason, town, read } (at: the wall hour it arrives in town,
+// null without a situation; read: at is instead the hour of its next shot
+// situation, read then without going).
 function trip(main, view) {
     const wall = hunting => view.since + hunting / Math.max(1e-9, view.huntShare);
     const triggers = [];
     const shots = view.shots;
-    const shotAt = shots && shots.perHour > 0 && view.shotTowns ? shotTown({ here: view.town, ...view.shotTowns }) : null;
-    if (shotAt) {
-        const low = shots.perHour * view.stockLowHours;
-        if (shots.held > low) triggers.push({ at: wall((shots.held - low) / shots.perHour), reason: 'stock_low:shots' });
-        triggers.push({ at: wall(shots.held / shots.perHour), reason: 'shots_out' });
+    let shotAt = null;
+    if (shots && shots.perHour > 0) {
+        const low = shots.perHour * view.stockLowHours, situations = [];
+        if (shots.held > low) situations.push({ at: wall((shots.held - low) / shots.perHour), reason: 'stock_low:shots' });
+        situations.push({ at: wall(shots.held / shots.perHour), reason: 'shots_out' });
+        // A situation come by now, or a line of its shot posted while it is low.
+        const due = situations.filter(row => row.at <= view.now);
+        if ((due.length || (view.event === 'offer_posted' && shotsLow(shots, view))) && view.shotTowns) {
+            shotAt = shotTown({ here: view.town, ...view.shotTowns });
+            if (shotAt) triggers.push({ at: view.now, reason: due.length ? due[due.length - 1].reason : 'stock_low:shots' });
+        }
+        const next = situations.find(row => row.at > view.now);
+        if (next) triggers.push({ ...next, read: true });
     }
     const full = bagFullHours(view.bag, view.loadShare);
     if (full !== null) triggers.push({ at: wall(full), reason: 'bag_full' });
@@ -105,6 +126,7 @@ function trip(main, view) {
     if ((view.event === 'offer_posted' || view.event === 'bid_posted') && view.deal && view.deal.gain > walk * view.ownHour) triggers.push({ at: view.now, reason: view.event });
     if (!triggers.length) return { at: null, reason: null, town: view.town };
     const first = triggers.reduce((best, row) => (row.at < best.at ? row : best));
+    if (first.read) return { at: first.at, reason: first.reason, town: view.town, read: true };
     const at = Math.max(view.now, first.at);
     const shotTrip = first.reason === 'stock_low:shots' || first.reason === 'shots_out';
     const there = shotTrip && shotAt !== view.town ? { town: shotAt, hours: view.shotTowns.hopHours } : { town: view.town, hours: 0 };
@@ -121,4 +143,4 @@ function deathAt({ since, huntShare, deathsPerHour, roll }) {
     return since + -Math.log(1 - roll) / deathsPerHour / huntShare;
 }
 
-module.exports = { trip, goalOf, deathAt, shotTown };
+module.exports = { trip, goalOf, deathAt, shotTown, shotsLow };

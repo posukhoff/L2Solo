@@ -368,6 +368,36 @@ const runHeld = (world, kitHours, account, hours) => {
     assert.equal(out.design.goods.failing, 0);
 }
 
+// The shot situations come from the main's stock and its use alone. The
+// world above: the twin's line in TownD is posted at h4.55, while the
+// shooter (300 shots at 50 an hour) still holds 75, over its low mark: the
+// line raises no offer event for it, and it reads its sellers when it runs
+// low (h5.83), finds the line and goes. With 3000 shots it never runs low in
+// the run: the line raises no offer event and it makes no shot trip. With a
+// low mark of 10 hours of shots (500) it is low from the start with no
+// seller: the posted line wakes it, and it goes and buys while still low.
+{
+    const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+        npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), hub = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'] };
+    const runWith = (shots, config = hub) => {
+        const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], shots: { [SSD]: shots } }], bands, rates, hours: 24, seed: 5, nextArrival: arrivals,
+            design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+        assert.equal(out.money.closureGap, 0);
+        assert.equal(out.design.goods.failing, 0);
+        return { m: out.design.market, bought: out.design.counters.shotsLine };
+    };
+    const spare = runWith(300);
+    assert.deepEqual([spare.m.events.offerPosted, spare.m.visits.hub['stock_low:shots'] >= 1, spare.bought > 0], [0, true, true],
+        `no offer event; it goes for its shots at its stock_low: ${JSON.stringify([spare.m.events, spare.m.visits.hub])}`);
+    const plenty = runWith(3000);
+    assert.deepEqual([plenty.m.events.offerPosted, plenty.m.visits.hub, plenty.bought], [0, {}, 0], 'shots to spare all run: no offer event, no shot trip');
+    const low = runWith(300, { ...hub, stockLowMinutes: 600 });
+    assert.deepEqual([low.m.events.offerPosted >= 1, low.m.visits.hub['stock_low:shots'] >= 1, low.bought > 0], [true, true, true],
+        `low with no seller: the posted line wakes it and it buys before it runs out: ${JSON.stringify([low.m.events, low.m.visits.hub])}`);
+}
+
 // A D shooter out of shots with no seller standing anywhere stays out (no
 // trip); when a twin's line of its shots is posted in TownE, a D trade town
 // that is neither the town of its spot (TownA) nor the D town of the least

@@ -17,7 +17,7 @@ const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
 const { path, refillHours } = require('./rules/path');
 const { acquire } = require('./rules/acquire');
-const { trip, goalOf, deathAt, shotTown } = require('./rules/trip');
+const { trip, goalOf, deathAt, shotTown, shotsLow } = require('./rules/trip');
 const { visit } = require('./rules/visit');
 const { occupation, stayHours } = require('./rules/occupation');
 const Workshop = require('./rules/workshop');
@@ -467,8 +467,9 @@ function mainsSide(ctx) {
     // town is null): offer_posted for the mains that want it, at the gain
     // over the price at their cap. A line of the shot a main fires, in the
     // town it stands in or a trade town of the shot's grade or above, at or
-    // under its worth there: its shot situation is read again (trip: a
-    // seller now stands).
+    // under its worth there, while it is low or out of the shot and no shot
+    // trip is pending: its sellers are read again (trip). A main with shots
+    // to spare reads them at its own stock_low.
     function offerPosted(item, town, price, owner, now) {
         for (const index of wantsByItem.get(item) || []) {
             if (index === owner || mains[index].station) continue;
@@ -476,6 +477,8 @@ function mainsSide(ctx) {
             if (!want) {
                 const main = mains[index], fired = firingOf(main);
                 if (town === null || fired?.id !== item) continue;
+                if (market.tripReason === 'stock_low:shots' || market.tripReason === 'shots_out') continue;
+                if (!shotsLow({ held: main.shots[item] || 0, perHour: fired.perHour }, { since: main.since, now, huntShare: rateOf(main.band).huntShare, stockLowHours: config.stockLowMinutes / 60 })) continue;
                 if (town !== townOf(main) && !ctx.tradeTownsOf(index, [item], true).includes(town)) continue;
                 if (!(Bounds.cap({ worth: fired.worth, npcSell: game.npcByTown[town]?.[item] ?? null }).cap >= price)) continue;
                 stats.events.offerPosted++;
@@ -693,6 +696,8 @@ function mainsSide(ctx) {
     // trip: when the main comes to town, and which town, from its state
     // after each committed event; with deathArrival a death drawn earlier
     // than trip's arrival is the arrival (in the respawn town of its spot).
+    // Returns the arrival's hour, or { at, read: true } when trip names a
+    // shot situation to read at that hour (the engine asks again then).
     function nextArrival(main, ev) {
         const index = main.index, row = Engine.spotRowOf(view, main);
         if (!row) return null;
@@ -724,11 +729,13 @@ function mainsSide(ctx) {
             event: ev.event, deal, ownHour: own, shotTowns: shotTowns(main, nearest, fired) });
         if (config.deathArrival) {
             const died = deathAt({ since: main.since, huntShare: ev.huntShare, deathsPerHour: row.deaths || 0, roll: ev.roll });
-            if (died !== null && died > ev.now && (answer.at === null || died < answer.at)) answer = { ...answer, at: died, reason: 'death', town: nearest };
+            if (died !== null && died > ev.now && (answer.at === null || died < answer.at)) answer = { at: died, reason: 'death', town: nearest };
         }
         if (deal) setMarket(index, { deal: null });
-        if (answer.reason !== market.tripReason) setMarket(index, { tripReason: answer.reason });
-        return answer.at;
+        // tripReason: the reason of the pending arrival (none while a shot situation is only to be read).
+        const reason = answer.read ? null : answer.reason;
+        if (reason !== market.tripReason) setMarket(index, { tripReason: reason });
+        return answer.read ? { at: answer.at, read: true } : answer.at;
     }
 
     // occupation at grade_changed and when its spot leaves its levels (the

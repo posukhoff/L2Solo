@@ -54,15 +54,20 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.equal(acquire({ selfId: 1 }, { cap: 1, ownHour: 1, lines: [], npc: [] }), null);
 }
 
-// trip: the earliest situation; a shot situation only while a seller stands.
+// trip: the earliest situation. A shot situation comes from the main's
+// stock and its use alone: trip names it to be read at its hour, and there a
+// seller sends it.
 {
     const here = { ownHeld: false, npcHere: true, money: 0, towns: [], hopHours: 0 };
     const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Giran', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
         shots: { held: 600, perHour: 300 }, shotTowns: here, bag: { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 10, weight: 10, stack: true, held: false }] },
         goal: { need: 5000, have: 1000, perHour: 1000, fresh: false } };
-    const first = trip({}, base);
-    assert.equal(first.reason, 'stock_low:shots', '600 shots at 300 an hour run low at 1.83 hunting hours');
-    assert.ok(Math.abs(first.at - (10 + (600 - 50) / 300 / 0.5 + 0.02)) < 1e-9, `wall hours over the hunting share, plus the walk: ${first.at}`);
+    const first = trip({}, base), lowAt = 10 + (600 - 50) / 300 / 0.5;
+    assert.deepEqual([first.reason, first.read], ['stock_low:shots', true], '600 shots at 300 an hour run low at 1.83 hunting hours: read then');
+    assert.ok(Math.abs(first.at - lowAt) < 1e-9, `wall hours over the hunting share: ${first.at}`);
+    const then = trip({}, { ...base, now: first.at });
+    assert.equal(then.reason, 'stock_low:shots');
+    assert.ok(Math.abs(then.at - (lowAt + 0.02)) < 1e-9, `read at its hour with a seller where it stands: it goes, plus the walk: ${then.at}`);
     const loaded = trip({}, { ...base, bag: { ...base.bag, items: [{ rate: 100, weight: 10, stack: true, held: false }] } });
     assert.equal(loaded.reason, 'bag_full', '1000 load an hour reaches 2/3 of 1000 in 0.67 hunting hours');
     const rich = trip({}, { ...base, goal: { ...base.goal, have: 5000, fresh: true } });
@@ -72,7 +77,7 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.deepEqual([out.reason, out.at], ['shots_out', 10.02], 'out of shots with a seller where it stands: it goes now');
     const offer = trip({}, { ...base, goal: null, bag: null, event: 'offer_posted', deal: { gain: 500 } });
     assert.equal(offer.reason, 'offer_posted', 'a line in reach worth more than the walk sends it now');
-    assert.equal(trip({}, { ...base, shotTowns: null, goal: null, bag: null, event: 'offer_posted', deal: { gain: 10 } }).at, null,
+    assert.equal(trip({}, { ...base, shots: null, goal: null, bag: null, event: 'offer_posted', deal: { gain: 10 } }).at, null,
         'a gain under the trip\'s 0.02 h x 1000 waits for its next visit');
 }
 
@@ -80,8 +85,9 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 // stands when its own twin holds the shot or its NPC sells it at its worth;
 // else, of the trade towns of the shot's grade (and above) holding a line at
 // or under its worth whose fare there and back it can pay, the one it stands
-// in, else the nearest by fare. With no seller standing there is no shot
-// situation at all, and an evaluation later plans none either.
+// in, else the nearest by fare. With no seller standing at a shot situation
+// there is no trip: the next one is read at its hour, and a main low or out
+// goes when a line of its shot is posted.
 {
     const towns = [{ town: 'Gludio', fare: 2000, ask: null, cap: 20 }, { town: 'Dion', fare: 1500, ask: null, cap: 20 }, { town: 'Giran', fare: 3000, ask: 15, cap: 20 }];
     const heine = { here: 'Heine', ownHeld: false, npcHere: false, money: 100000, towns };
@@ -95,17 +101,26 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.equal(shotTown({ ...heine, towns: [] }), null, 'no town reached: no seller');
     const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Heine', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
         shots: { held: 600, perHour: 300 }, bag: null, goal: null, shotTowns: { ownHeld: false, npcHere: false, money: 100000, towns, hopHours: 0.1 } };
-    const low = trip({}, base);
+    const lowAt = 10 + (600 - 50) / 300 / 0.5, low = trip({}, { ...base, now: lowAt });
     assert.deepEqual([low.reason, low.town], ['stock_low:shots', 'Giran'], 'a main low on shots goes to the only town holding a line at its worth');
-    assert.ok(Math.abs(low.at - (10 + (600 - 50) / 300 / 0.5 + 0.02 + 0.1)) < 1e-9, `the hop hours added: ${low.at}`);
+    assert.ok(Math.abs(low.at - (lowAt + 0.02 + 0.1)) < 1e-9, `the hop hours added: ${low.at}`);
     assert.equal(trip({}, { ...base, shots: { held: 0, perHour: 300 } }).town, 'Giran', 'shots_out too');
     const bag = { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 100, weight: 10, stack: true, held: false }] };
     const full = trip({}, { ...base, bag });
     assert.deepEqual([full.reason, full.town], ['bag_full', 'Heine'], 'any other reason keeps its town');
-    assert.equal(trip({}, { ...base, shotTowns: { ...base.shotTowns, npcHere: true } }).town, 'Heine');
+    assert.equal(trip({}, { ...base, now: lowAt, shotTowns: { ...base.shotTowns, npcHere: true } }).town, 'Heine');
     const bare = { ...base, shotTowns: { ...base.shotTowns, towns: towns.map(row => ({ ...row, ask: null })) } };
-    assert.equal(trip({}, bare).at, null, 'no line anywhere: no trip is planned');
+    const ahead = trip({}, bare);
+    assert.deepEqual([ahead.reason, ahead.read], ['stock_low:shots', true], 'no line anywhere now: its stock_low is still read at its hour');
+    const unsold = trip({}, { ...bare, now: lowAt });
+    assert.deepEqual([unsold.reason, unsold.read, unsold.at], ['shots_out', true, 14], 'no line at its stock_low: no trip, its shots_out read next');
     assert.equal(trip({}, { ...bare, now: 12, shots: { held: 0, perHour: 300 } }).at, null, 'out of shots, read again with still no line: none planned');
+    // Low (held under its mark of 50 since 10) with no seller at its last
+    // situation: a line of its shot posted now sends it at once.
+    const lowNow = { ...base, now: 10.1, shots: { held: 40, perHour: 300 } };
+    assert.equal(trip({}, lowNow).read, true, 'no situation of its own until it runs out');
+    assert.deepEqual([trip({}, { ...lowNow, event: 'offer_posted' }).reason, trip({}, { ...lowNow, event: 'offer_posted' }).town], ['stock_low:shots', 'Giran'], 'the posted line is read: it goes');
+    assert.equal(trip({}, { ...base, event: 'offer_posted' }).read, true, 'with shots to spare a posted line sends it nowhere');
 }
 
 // The game's trade towns of a lot (MarketTownPolicy as data): anything of
@@ -131,8 +146,8 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
         const held = Math.ceil(300 * refillHours({ refill, outingHours: 2, minHours: 1, lastOuting }));
         const out = trip({}, { now: 0, since: 0, huntShare: 1, tripHours: 0, town: 'Gludio', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 0,
             shots: { held, perHour: 300 }, shotTowns: { ownHeld: false, npcHere: true, money: 0, towns: [], hopHours: 0 }, bag: null, goal: null });
-        assert.equal(out.reason, 'stock_low:shots');
-        return out.at - 1 / 60;
+        assert.deepEqual([out.reason, out.read], ['stock_low:shots', true]);
+        return out.at;
     };
     near(nextOuting('outing', 0.5), 2 - 1 / 6, 'after a half-hour outing');
     near(nextOuting('outing', 5), 2 - 1 / 6, 'after a five-hour outing');
