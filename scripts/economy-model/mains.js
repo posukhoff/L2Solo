@@ -16,7 +16,7 @@ const Bounds = require('./rules/bounds');
 const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
 const { path, refillHours } = require('./rules/path');
-const { acquire } = require('./rules/acquire');
+const { acquire, crystalsStanding, payableKit } = require('./rules/acquire');
 const { trip, goalOf, deathAt, shotTown, shotsLow } = require('./rules/trip');
 const { visit } = require('./rules/visit');
 const { occupation, stayHours } = require('./rules/occupation');
@@ -70,47 +70,45 @@ function mainsSide(ctx) {
     const kitRatio = (main, level) => {
         const priceOf = pricesOf(main), netOf = kit => Worth.firing(ctx.kitHours.hour(main.line, level, kit), priceOf)?.net ?? null;
         const worn = wornOf(main), own = netOf(worn), reference = netOf(slotsOf(kitAt(main, level)));
-        const best = own === null ? null : netOf(attainableKit(main, level, worn, own, priceOf));
+        const kit = own === null ? null : attainableKit(main, level, worn, priceOf), best = kit === null ? null : kit === worn ? own : netOf(kit);
         return { ratio: own === null || reference === null || !(reference > 0) ? null : own / reference, unarmed: !main.weapon,
             attainable: best === null || !(Math.max(own, best) > 0) ? null : own / Math.max(own, best) };
     };
-    // The kit a main could wear by paying now, from the routes that stand now
-    // (the measure; no decision of a main reads it): the band pieces of the
-    // level whose swap over the worn kit nets more, highest gain first, each
-    // taken when its cheapest standing route (a line in reach, the NPC, a
-    // Luxury route whose crystals stand on lines or its twin's shelf) is
-    // within the money left, one piece a slot, the money not returned by what
-    // it takes off. Gains are not additive: the kit's hour is read whole.
-    const attainableKit = (main, level, worn, own, priceOf) => {
+    // The kit a main could have worn by paying as it last stood in town (the
+    // measure; no decision of a main reads it): the money it left that visit
+    // with, the band pieces of the level whose swap over the worn kit nets
+    // more, each by its cheapest route standing now from that town (a line
+    // or ad in reach, the NPC, a Luxury route whose crystals stand; not its
+    // own twin's craft, which is not paid now), picked by Acquire.payableKit.
+    // The gains are read from the kit table the main holds, or the one shared
+    // for its line, band and worn kit, else read alone (nothing kept).
+    const attainableKit = (main, level, worn, priceOf) => {
         const band = bandAt(main.line, level);
         if (!band) return worn;
-        const pieces = bandPieces(main.line, band).list, read = Worth.swapRows(ctx.kitHours.swaps(main.line, level, worn, pieces)), base = Worth.netRow(read.worn, priceOf);
+        const index = main.index, account = accounts[index], pieces = bandPieces(main.line, band).list;
+        const key = `${main.line}@${band.from}@${wornKeyOf(main)}`, table = account.kitTable?.key === key ? account.kitTable : shared.get(key);
+        const read = table ? null : Worth.swapRows(ctx.kitHours.swaps(main.line, level, worn, pieces));
+        const base = Worth.netRow(table ? table.worn : read.worn, priceOf);
         if (!base) return worn;
-        const gains = pieces.map((piece, at) => ({ piece, gain: (Worth.netRow(read.rows[at], priceOf)?.hour ?? -Infinity) - base.hour })).filter(row => row.gain > 0).sort((a, b) => b.gain - a.gain);
-        const index = main.index, town = accounts[index].lastTown || townOf(main);
+        const gains = pieces.map((piece, at) => ({ ...piece, gain: (Worth.netRow(table ? rowIn(table, piece.slot, piece.selfId) : read.rows[at], priceOf)?.hour ?? -Infinity) - base.hour }))
+            .filter(row => row.gain > 0);
+        const town = account.lastTown || townOf(main);
         if (!town || !gains.length) return worn;
-        const book = reachBook(index, town, [...new Set([...gains.map(row => row.piece.selfId), ...Object.values(game.crystalIds)])], []), twin = accounts[index].twin;
-        // The reads below count priced routes of the path's decisions: held as they were.
-        const counted = { ...stats.routes };
-        let kit = worn, money = main.money;
-        const taken = new Set();
-        for (const { piece } of gains) {
-            if (taken.has(piece.slot)) continue;
-            const routes = routesOf(index, main, town, book, { ...piece }, null).acquired?.routes || [];
-            const standing = routes.filter(route => route.route === 'npc' || (route.route === 'exchange' && crystalsStand(book, twin, route)));
-            const line = book.sell[piece.selfId]?.[0]?.price;
-            const cost = Math.min(line ?? Infinity, ...standing.map(route => route.cost));
-            if (!(cost <= money)) continue;
-            money -= cost; taken.add(piece.slot);
-            kit = Object.fromEntries([...Object.entries(kit).filter(([slot]) => !Worth.slotsConflict(piece.slot, slot)), [piece.slot, piece.selfId]]);
-        }
-        Object.assign(stats.routes, counted);
-        return kit;
-    };
-    // A Luxury route's crystals stand: its twin's shelf and the lines in reach at its price.
-    const crystalsStand = (book, twin, route) => {
-        const crystal = game.crystalIds[route.grade.toUpperCase()], own = Math.min(route.amount, twin?.stock[crystal] || 0);
-        return own + (book.sell[crystal] || []).filter(entry => entry.price <= route.perCrystal).reduce((sum, entry) => sum + entry.qty, 0) >= route.amount;
+        const book = reachBook(index, town, [...new Set([...gains.map(row => row.selfId), ...Object.values(game.crystalIds)])], []), twin = account.twin;
+        const candidates = gains.map(row => {
+            const lines = (book.sell[row.selfId] || []).map(entry => ({ price: entry.price, kind: entry.kind, where: entry.kind === 'ad' ? 'ad' : entry.town }));
+            const got = acquire(row, { cap: Infinity, ownHour: 0, hourCost: config.hourCost, useHour: null, lines, ...reachRoutes(account.memory, town, book, row.selfId),
+                twin: null, stalled: account.market.stalled[row.selfId] || [] });
+            const routes = [];
+            for (const route of got?.routes || []) {
+                const hop = route.route !== 'buy' && route.where !== town;
+                if (route.route !== 'exchange') { routes.push({ cost: route.cost, hop }); continue; }
+                const crystal = game.crystalIds[route.grade.toUpperCase()], { own, have } = crystalsStanding(route, twin?.stock[crystal], book.sell[crystal] || []);
+                if (have >= route.amount) routes.push({ cost: route.cost - own * route.perCrystal, hop });
+            }
+            return { ...row, routes };
+        });
+        return payableKit(worn, candidates, account.leftWith);
     };
     // The piece a main wears in a slot (its weapon for either hand), 0 for none.
     const wornIn = (main, slot) => (groupOf(slot) === 'weapon' ? main.weapon || 0 : main.kit[slot] || 0);
@@ -378,15 +376,21 @@ function mainsSide(ctx) {
     // A price to a main: its last deal, else the cheapest line or ad it deals
     // on, else the cheapest line it knows in its twin's town, else the first price.
     const priceToMain = (memory, book, id) => Knowledge.known(memory, id) ?? book.sell[id]?.[0]?.price ?? book.seen[id] ?? game.firstPrice[id] ?? null;
-    // The routes of one piece (acquire) and its cap, for a main standing in
-    // town; table: the main's kit table.
-    const routesOf = (index, main, town, book, piece, table) => {
-        const account = accounts[index], memory = account.memory, hour = ownHour(main, memory), selfId = piece.selfId;
+    // The NPC sellers of a piece a main reaches from the town it stands in
+    // and its Luxury route (the crystals at the prices it knows): acquire's
+    // npc and exchange.
+    const reachRoutes = (memory, town, book, selfId) => {
         const npc = (view.offers.get(selfId) || []).filter(row => row.channel === 'npc_buy').map(row => ({ town: row.town, price: row.price, fare: fareOf(town, row.town) }))
             .filter(row => row.fare !== null);
         const lux = snapshot.luxuryOptions?.[selfId];
         const exchange = lux && fareOf(town, lux.town) !== null ? { town: lux.town, fare: fareOf(town, lux.town),
             options: [['c', lux.c], ['d', lux.d]].filter(([, amount]) => amount > 0).map(([g, amount]) => ({ grade: g, amount, price: priceToMain(memory, book, game.crystalIds[g.toUpperCase()]) })) } : null;
+        return { npc, exchange };
+    };
+    // The routes of one piece (acquire) and its cap, for a main standing in
+    // town; table: the main's kit table.
+    const routesOf = (index, main, town, book, piece, table) => {
+        const account = accounts[index], memory = account.memory, hour = ownHour(main, memory), selfId = piece.selfId;
         // The piece's use per hunting hour (the net hunt hour of the worn kit with it over the worn kit's, each
         // firing what nets most at the prices the main knows): what a wait for it costs.
         const priceOf = pricesOf(main), rows = { rung: Worth.netRow(rowIn(table, piece.slot, selfId), priceOf), worn: Worth.netRow(table?.worn ?? null, priceOf) };
@@ -394,7 +398,7 @@ function mainsSide(ctx) {
         const used = Worth.rungWorth({ formula: config.worth, ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
         // No hour stated for either kit: its use cannot be stated (counted).
         if (used.adena === null) stats.routes.noWorth++;
-        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], npc, exchange,
+        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], ...reachRoutes(memory, town, book, selfId),
             twin: account.twin ? ctx.ownCraft(index, selfId) : null, stalled: account.market.stalled[selfId] || [] };
         const routes = acquire(piece, own);
         stats.routes.priced++;
@@ -715,7 +719,10 @@ function mainsSide(ctx) {
         if (twin) wakeAt(index, now, 'main_arrived');
         const after = { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon };
         // occupationAtTown (ours): its spot is re-chosen at its arrival in town too.
-        return { main: config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after, delta };
+        const left = config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after;
+        // The money it leaves town with: what the KIT HOUR measure spends until its next visit.
+        put(index, { leftWith: left.money });
+        return { main: left, delta };
     }
 
     // Its main's shortfall the account's workshop serves first (ownUseFirst):

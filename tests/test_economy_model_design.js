@@ -1096,4 +1096,54 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.equal(poor.attainable.median, 1, 'nothing payable: the worn kit is the attainable one');
 }
 
+// The kit it could pay is read with the money it left its last visit with
+// (adena hunted since has met no town) and the routes that stand now from
+// the town it last stood in: the D armour (adds 100) on another owner's
+// line at 40000 in TownA; a D helmet (adds 50) at Luxury in TownA for 10 D
+// crystals, standing only while 10 D crystals stand on a line at or under
+// the price it knows (50); gloves (adds 80) and boots (adds 60) at 30000 at
+// the NPC of TownB only, a hop of 1000: one of them, as a visit hops once.
+{
+    const Mains = require('../scripts/economy-model/mains'), Knowledge = require('../scripts/economy-model/rules/knowledge');
+    const NG = 2010, ARM = 2012, HELM = 2013, GLOVES = 2014, BOOTS = 2015, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 1, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const armour = (kind, ref) => ({ kind, grade: 'D', ref, npcBuy: ref / 2, crystals: 0 });
+    const world = {
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
+        fares: { TownA: { TownA: 0, TownB: 1000 }, TownB: { TownA: 1000, TownB: 0 } },
+        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: NG, slot: 7 }]])) },
+        items: { ...snapshot.items, [NG]: { kind: 'Weapon.Sword', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 }, [ARM]: armour('Armor.Body', 50000), [HELM]: armour('Armor.Head', 8000),
+            [GLOVES]: armour('Armor.Gloves', 30000), [BOOTS]: armour('Armor.Feet', 30000), [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        recipes: [], npcOffers: { preset: {}, x1: { [GLOVES]: [{ town: 'TownB', price: 30000 }], [BOOTS]: [{ town: 'TownB', price: 30000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        luxuryOptions: { [HELM]: { town: 'TownA', c: 0, d: 10 } },
+        twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
+        gearLadder: ladderOf('9', [[1, 39, { weapon: { rungs: [NG], hour: { [NG]: 300, 0: 200 } }, 10: { rungs: [ARM], hour: { [ARM]: 100, 0: 0 } }, 6: { rungs: [HELM], hour: { [HELM]: 50, 0: 0 } },
+            9: { rungs: [GLOVES], hour: { [GLOVES]: 80, 0: 0 } }, 12: { rungs: [BOOTS], hour: { [BOOTS]: 60, 0: 0 } } }]])
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), game = Design.gameOf(world, view), crystal = game.crystalIds.D, price = 50;
+    const mainsSide = Mains.mainsSide;
+    let side = null, ctx = null;
+    Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
+    try {
+        Engine.simulate({ view, accounts: [{ id: 81, station: false, classId: 9, line: '9', level: 30, exp: 30e9, money: 0, spot: null, shots: {}, held: [NG], worn: { 7: NG } }],
+            bands: [['all', 1]], rates, hours: 1, seed: 1, design: plane({ snapshot: world, game, start: 'late', grades }) });
+    } finally { Mains.mainsSide = mainsSide; }
+    // The main as it crosses 39 in TownA wearing the no-grade sword (300) with 1e9 adena hunted since its visit.
+    const main = { ...ctx.mains[0], level: 39, money: 1e9, kit: { 7: NG }, weapon: NG };
+    const read = ({ leftWith, crystals = 0 }) => {
+        // Its last deal of a D crystal was at 50: the price it knows.
+        ctx.accounts[0] = { ...ctx.accounts[0], lastTown: 'TownA', leftWith, memory: Knowledge.remember([], { item: crystal, price }), kitTable: null, twin: null };
+        Books.place(ctx.books, 98, 'TownA', [{ side: 'sell', item: ARM, price: 40000, qty: 1 }, { side: 'sell', item: crystal, price, qty: crystals }], []);
+        return side.kitRatio(main, 39).attainable;
+    };
+    near(read({ leftWith: 40000 }), 300 / 400, 'the armour on the line, paid with the money it left town with');
+    assert.equal(read({ leftWith: 30000 }), 1, 'the adena hunted since its visit pays nothing');
+    near(read({ leftWith: 40000 + 10 * price }), 300 / 400, 'no D crystal on a line: the helmet\'s Luxury route does not stand');
+    near(read({ leftWith: 40000 + 10 * price, crystals: 10 }), 300 / 450, 'its 10 crystals stand: the helmet too');
+    near(read({ leftWith: 40000 + 10 * price + 62000, crystals: 10 }), 300 / 530, 'the gloves in TownB, the boots not: one hop');
+}
+
 console.log('PASS economy model design mode');

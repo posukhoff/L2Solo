@@ -659,7 +659,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
                 needs: {}, surplus: {}, inputMoney: 0 };
             twin.town = config.twinSeat === 'main_town' ? (crafts ? spotTown : null) : config.twinSeat === 'hub' ? (crafts ? firstHub(spotTown, main.index, twin) : null) : starter;
         }
-        accounts.push({ index: main.index, crafter, persona: personaOf(config, personaShares, seed, main, crafter), memory: [], twin, counter: 0, lastTown: null, wake: null,
+        accounts.push({ index: main.index, crafter, persona: personaOf(config, personaShares, seed, main, crafter), memory: [], twin, counter: 0, lastTown: null, leftWith: main.money, wake: null,
             shotless: false, level: main.level, market: { ...Mains.marketStart(), spotHeld: !!main.spot } });
     }
     // Items held at the start (the goods ledger's opening stock).
