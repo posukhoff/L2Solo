@@ -292,14 +292,14 @@ const BUYER_SLOTS = StoreLimits.tradeLimit(0, 0, 3);
 const BIASES = Object.freeze([
     'shot coverage reads high: the ads are global (no regional chat), no party shares shots',
     'the share of crafter accounts needed reads high (conservative): no clan dwarf crafts at cost for its members',
-    'first crystal and crafted piece read late for B and above (no clan pools materials to one dwarf) and early through free trips',
+    'first crystal and crafted piece read late for B and above (no clan pools materials to one dwarf) and early through visits that take no time in town',
     'pieces per hour against grade entries read high: solo yields, no party split, no crowding at a spot',
     'the share of materials a pair gathers itself reads high: its spoil reaches its twin through the warehouse at once',
     'recipes learned read high: global ads and meetings that cost nothing',
     'faucets net of sinks and money per band read high (inflation reads high): no clan levels, unsealing, enchanting, no adena lost walking back after a death',
     'the share of pieces whose buyer cap reaches the floor reads high: a solo own hour is above a party member\'s',
     'markets go quiet early: a closed cohort with no entry or retirement, no enchant breaking',
-    'looks come faster without travel: a price settles or oscillates earlier than it would',
+    'looks come faster with no time in town (the way is a walk back and a gatekeeper hop of ours): a price settles or oscillates earlier than it would',
     'a main hunts the spot its occupation chose alone: a spot is never full',
     'left out as in today mode: potions, enchanting, augments, henna, quests, clans, the player, sessions, hot bodies near a player'
 ]);
