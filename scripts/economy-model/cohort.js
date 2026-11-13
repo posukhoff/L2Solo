@@ -126,20 +126,26 @@ function fromSave(file, snapshot) {
     return { accounts, source: file, lines: counts };
 }
 
-// count accounts, lines by the class weights, levels uniform in [low, high],
-// each fully kitted for its level, no money and no shots.
-function synthetic({ count, low, high, seed = 1 }, snapshot) {
-    const random = mulberry(hash(`cohort:${seed}`));
+// The one account builder of the cohorts built from the class weights alone:
+// count accounts, each line drawn by the class weights from random, then its
+// level by levelOf(index, random) (called after the line's draw), each fully
+// kitted for its level, holding moneyOf(level) and no shots.
+function accountsOf({ count, random, levelOf, moneyOf }, snapshot) {
     const lines = Object.keys(snapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0);
     const accounts = [];
     for (let i = 0; i < count; i++) {
-        const line = weightedPick(lines, random);
-        const level = low + Math.floor(random() * (high - low + 1));
-        const kit = snapshot.kits[line]?.[level] || [];
+        const line = weightedPick(lines, random), level = levelOf(i, random), kit = snapshot.kits[line]?.[level] || [];
         accounts.push({ id: i + 1, station: false, classId: snapshot.hours[line][level]?.classId ?? Number(line), line, level,
-            exp: snapshot.exp[level - 1], money: 0, spot: null, shots: {}, held: kit.map(piece => piece.selfId),
+            exp: snapshot.exp[level - 1], money: moneyOf(level), spot: null, shots: {}, held: kit.map(piece => piece.selfId),
             worn: Object.fromEntries(kit.map(piece => [piece.slot, piece.selfId])) });
     }
+    return accounts;
+}
+
+// count accounts, lines by the class weights, levels uniform in [low, high],
+// each fully kitted for its level, no money and no shots.
+function synthetic({ count, low, high, seed = 1 }, snapshot) {
+    const accounts = accountsOf({ count, random: mulberry(hash(`cohort:${seed}`)), levelOf: (_, random) => low + Math.floor(random() * (high - low + 1)), moneyOf: () => 0 }, snapshot);
     return { accounts, source: `synthetic ${count} accounts, levels ${low}-${high}, class weights`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 
@@ -154,18 +160,12 @@ function seederLevel(index) {
     return 13 + (index % 4);
 }
 
-// A fresh world: count accounts at the seeder's start levels, lines by the
-// class weights, each kitted for its level, with the seeder's level x 85 adena and no shots.
+// A fresh world: count accounts at the seeder's start levels, each kitted for
+// its level, with the seeder's level x 85 adena and no shots. The lines are
+// drawn by the model's class weights, ours until the new seeder (weights.js),
+// not by the seeder's own mix.
 function fresh({ count, seed = 1 }, snapshot) {
-    const random = mulberry(hash(`fresh:${seed}`));
-    const lines = Object.keys(snapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0);
-    const accounts = [];
-    for (let i = 0; i < count; i++) {
-        const line = weightedPick(lines, random), level = seederLevel(i), kit = snapshot.kits[line]?.[level] || [];
-        accounts.push({ id: i + 1, station: false, classId: snapshot.hours[line][level]?.classId ?? Number(line), line, level,
-            exp: snapshot.exp[level - 1], money: level * SEEDER_ADENA_PER_LEVEL, spot: null, shots: {}, held: kit.map(piece => piece.selfId),
-            worn: Object.fromEntries(kit.map(piece => [piece.slot, piece.selfId])) });
-    }
+    const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), levelOf: seederLevel, moneyOf: level => level * SEEDER_ADENA_PER_LEVEL }, snapshot);
     return { accounts, source: `fresh ${count} accounts at the seeder's levels, class weights`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 
