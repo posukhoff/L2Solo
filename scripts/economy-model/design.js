@@ -231,9 +231,10 @@ const DESIGN = Object.freeze({
     // drawn by its own main) since its last batch of it.
     shelfStock: 'by_sales',
     shelfStockFactor: 1,
-    // Luxury (Lisvus multisell) sells C gear for C or D crystals, and the
-    // data crystallizes that gear back to more crystals than it cost (a
-    // Flamberge: 573 C in, 916 C out), an NPC faucet of crystals and adena.
+    // Luxury (Lisvus multisell) sells C gear: its catalogue row lists C and
+    // D crystals, the game's bots pay the D ones only (a Flamberge: 2865 D),
+    // and the data crystallizes that gear to C crystals (a Flamberge: 916 C),
+    // a source of C crystals out of D ones.
     // true: the data as it is. false (ours until a second C4 source confirms
     // the counts): gear Luxury sells does not crystallize.
     luxuryCrystallizes: false,
