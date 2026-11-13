@@ -256,13 +256,16 @@ function mainsSide(ctx) {
         }
         const fired = Worth.firing(hour && { ...hour, shots: scaled.map(entry => entry.shot) }, pricesOf(main)), form = fired?.id ? Engine.formOf(view, fired.id) : 'bare', hunted = row && fired?.id ? Engine.rowIn(row, form) : null;
         const answer = hunted?.shots > 0 ? { id: fired.id, perHour: hunted.shots * scaled.find(entry => entry.shot.id === fired.id).scale * (factors[form]?.shots ?? 1), worth: fired.worth } : null;
-        const kills = { bare: factors.bare?.kills ?? 1, shots: factors.shots?.kills ?? 1, blessed: factors.blessed?.kills ?? 1 };
+        const options = new Set(['bare', ...scaled.map(entry => Engine.formOf(view, entry.shot.id))]);
+        const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(at => [at, options.has(at) ? factors[at]?.kills ?? 1 : null]));
         firings.set(main.index, { hour, memory, row, weapon: main.weapon, answer, factors, kills, form: answer ? form : 'bare' });
         return answer;
     };
     // The worn kit's kills an hour over the reference kit's per form the main
-    // hunts its row in ({ bare, shots, blessed }; 1 where not stated): what
-    // its hunt and every hour predicted from its row are multiplied by.
+    // can hunt its row in ({ bare, shots, blessed }: without shots, and the
+    // kinds its row states as options; 1 where not stated, null for a kind
+    // that is no option there): what its hunt and every hour predicted from
+    // its row are multiplied by.
     // Counted (stats.huntFactors): reads, and those whose form fired states none.
     const killsOf = main => {
         firingOf(main);
@@ -352,7 +355,7 @@ function mainsSide(ctx) {
     // to its next grade (hunting hours over its band's hunting share), 0
     // past the last grade.
     const hoursTo = (main, level) => {
-        const row = Engine.spotRowOf(view, main), exp = row ? Engine.huntExp(main, row, killsOf(main).shots) : 0;
+        const row = Engine.spotRowOf(view, main), exp = row ? Engine.huntExp(main, row, killsOf(main).shots ?? 1) : 0;
         if (!(exp > 0)) return 0;
         return Math.max(0, Engine.expAt(view, Math.min(level, view.maxLevel)) - main.exp) / exp;
     };
@@ -878,7 +881,7 @@ function mainsSide(ctx) {
         const gradeHours = atTown ? horizonOf(main) : 0;
         const market = account.market, left = atTown && market.lastSpot && market.visits - (market.movedAt ?? -Infinity) <= 1 ? market.lastSpot : null;
         // Each candidate's rates at its worn kit's kills (the shots form, as its row's items).
-        const kills = killsOf(main).shots;
+        const kills = killsOf(main).shots ?? 1;
         const rowOf = row => {
             const at = rowItems(main, row, 'shots'), out = { spotId: String(row.spotId), adena: at.adena * kills, items: at.items.map(item => [item.id, item.rate * kills]), scrolls: row.scrolls || [] };
             if (!atTown) return out;

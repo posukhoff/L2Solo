@@ -487,12 +487,14 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
 
     // The level is scheduled at the most exp an hour the main may hunt its
     // spot row at (the design mode's mains: the most of its forms, each at
-    // its worn kit's kills over the reference kit's), so the situation never
-    // comes after the level is reached; one that comes before it is
-    // scheduled again from the exp then held.
+    // its worn kit's kills over the reference kit's; a kind of shot that is
+    // no option at its row counts no kills, so a fighter is not scheduled at
+    // the reference kit's hour through Blessed Spiritshots it cannot fire),
+    // so the situation never comes after the level is reached; one that
+    // comes before it is scheduled again from the exp then held.
     const scheduleLevel = (main, now) => {
         const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, kills = plane && row ? plane.kills(main) : null;
-        const exp = !row ? 0 : kills ? Math.max(...['shots', 'bare', 'blessed'].map(form => huntExp(main, rowIn(row, form), kills[form]))) : huntExp(main, row, 1);
+        const exp = !row ? 0 : kills ? Math.max(...['shots', 'bare', 'blessed'].map(form => huntExp(main, rowIn(row, form), kills[form] ?? 0))) : huntExp(main, row, 1);
         if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) return;
         // One exp over the next level's start, so the level is reached however the hour's exp rounds.
         const need = expAt(view, main.level + 1) - main.exp + 1;

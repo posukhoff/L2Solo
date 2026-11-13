@@ -260,19 +260,30 @@ const shareKit = (share, shots) => ({ ...kitHoursOf(() => 500, () => shots, (lin
     const hunted = Engine.huntDesign({ ...main, shots: { [SPSD]: 1000 } }, view, 1, () => 0.5, firing, hooks.kills(main)).delta;
     assert.deepEqual([firing.id, hunted.flows.huntCold, hunted.exp, hunted.shotsUsed], [SPSD, 500, 0.5, 25], 'half the row\'s kills: half its adena, exp and shots');
 }
-// At share 2 (a kit making twice the row's kills) the level situation is read
-// by the hour the hunt reaches the level: 11 exp to the next level at 2 an
-// hour (the row's 1 exp an hour, firing none) is read at 5.5 hours, never at
-// the row's 11.
-{
+// The level situation is read by the hour the hunt reaches the level, and
+// only then: 11 exp to the next level at the row's 1 exp an hour (firing
+// none) times the kit's kill share. The reads: [[hour, level]] over a run.
+const levelReads = (share, shots, hours) => {
     const flat = { ...row('s1', 1000, 0), shotless: undefined };
     const world = { ...keptKit(snapshot), exp: levels.map(level => (level <= 25 ? level * 1e9 : 25e9 + (level - 25) * 10)),
         hours: { 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: flat, top: [] }])) } };
-    const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(2, []) }), read = [];
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, shots) }), read = [];
     const design = { ...real, start: context => { const hooks = real.start(context); return { ...hooks, levelUp: (main, now) => { read.push([now, main.level]); return hooks.levelUp(main, now); } }; } };
-    Engine.simulate({ view, accounts: [accounts[1]], bands, rates, hours: 8, seed: 1, nextArrival: arrivals, design });
-    const first = read.find(([, level]) => level === 26);
+    Engine.simulate({ view, accounts: [accounts[1]], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
+    return read;
+};
+// At share 2 (a kit making twice the row's kills) it is read at 5.5 hours, never at the row's 11.
+{
+    const read = levelReads(2, [], 8), first = read.find(([, level]) => level === 26);
     assert.ok(first && Math.abs(first[0] - 5.5) < 1e-9, `the level read at 5.5 hours: ${JSON.stringify(read)}`);
+}
+// A fighter under its reference kit (share 0.5, its kit hour stating its
+// soulshot and no Blessed Spiritshots) reaches the level at 22 hours and is
+// read there once: never at the reference kit's hour through a shot it cannot fire.
+{
+    const read = levelReads(0.5, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }], 30);
+    assert.equal(read.length, 1, `one level gained, one read: ${JSON.stringify(read)}`);
+    assert.ok(read[0][1] === 26 && Math.abs(read[0][0] - 22) < 1e-9, `the level read at 22 hours: ${JSON.stringify(read)}`);
 }
 // A weaker kit's goal arrival follows its kill share: the main without the
 // armour aims at it (a path piece it can buy for 20000) and, firing its
