@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const Engine = require('../scripts/economy-model/engine');
 const Design = require('../scripts/economy-model/design');
 const Worth = require('../scripts/economy-model/rules/worth');
+const Books = require('../scripts/economy-model/books');
 
 const ORE = 1785, CRYSTAL = 1458, SSD = 1463, SCROLL = 5001, SWORD = 2001, BONE = 1872;
 // Loot 150 an hour: the per-kill yields below at the NPC's price (10 kills x (0.5 x 10 + 0.2 x 50)).
@@ -383,6 +384,78 @@ const runHeld = (world, kitHours, account, hours) => {
     // The wake sets no deal: the main reads its situation again, now shots_out with a seller standing.
     assert.ok(m.events.offerPosted >= 1 && m.visits.hub.shots_out >= 1, JSON.stringify([m.events, m.visits.hub]));
     assert.ok(out.design.counters.shotsLine > 0, 'it bought its shots from the line');
+    assert.equal(out.money.closureGap, 0);
+    assert.equal(out.design.goods.failing, 0);
+}
+
+// The town of a shot trip is read again as the main arrives. The fixture
+// above: the main out of shots sets out for its twin's line in TownE; as it
+// arrives the line is no longer in TownE (the fixture takes the twin's rows
+// off the board just before the visit). Rows standing in TownD instead (a D
+// trade town, 300 a fare): it visits TownD, pays TownD's fare there and back
+// and buys from the line. No row anywhere: it visits the town it stands in
+// (TownA) and pays no fare.
+{
+    const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 300, TownE: 500 }, TownD: { TownA: 300, TownD: 0, TownE: 300 }, TownE: { TownA: 500, TownD: 300, TownE: 0 } },
+        npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownE', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownE', price: 4000 }] } },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD', 'TownE'], higher: 'TownC' } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownE'] };
+    // The owner's rows moved to another town's book (the twin's state is untouched: no unit or adena moves).
+    const moveRows = (board, owner, to) => {
+        for (const row of board.placed.get(owner) || []) {
+            const from = board.towns[row.town][row.side][row.key];
+            from.splice(from.indexOf(row.entry), 1);
+            if (!from.length) delete board.towns[row.town][row.side][row.key];
+            ((board.towns[to] ||= { sell: {}, buy: {}, bids: {} })[row.side][row.key] ||= []).push(row.entry);
+            row.town = to;
+        }
+    };
+    // The buyer's (index 1) first visit once its twin's line stands in TownE, after change(board).
+    const arrival = change => {
+        const design = plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }), made = [], create = Books.create, start = design.start;
+        let seen = null;
+        design.start = context => {
+            const hooks = start(context), visit = hooks.visit;
+            hooks.visit = (main, now, options) => {
+                if (seen || main.index !== 1 || !made[0].towns.TownE?.sell[SSD]?.length) return visit(main, now, options);
+                change(made[0]);
+                const out = visit(main, now, options);
+                seen = { towns: out.delta.towns, fares: out.delta.flows.fares, bought: (out.main.shots[SSD] || 0) - (main.shots[SSD] || 0) };
+                return out;
+            };
+            return hooks;
+        };
+        Books.create = () => { const board = create(); made.push(board); return board; };
+        try {
+            const out = Engine.simulate({ view, accounts, bands, rates, hours: 24, seed: 5, design });
+            assert.equal(out.money.closureGap, 0);
+            assert.equal(out.design.goods.failing, 0);
+        } finally { Books.create = create; }
+        return seen;
+    };
+    const moved = arrival(board => moveRows(board, 0, 'TownD'));
+    assert.deepEqual([moved.towns, moved.fares], [['TownD'], -600], 'the line stands in TownD now: it visits TownD at its fare');
+    assert.ok(moved.bought > 0, 'it buys its shots from the line in TownD');
+    const gone = arrival(board => Books.remove(board, 0));
+    assert.deepEqual([gone.towns, gone.fares, gone.bought], [['TownA'], 0, 0], 'no line anywhere: it visits the town it stands in, no fare');
+}
+
+// A line of its shot in the town a main stands in is a seller there, even
+// when that town is no trade town of the shot's grade (TownA, a village to
+// the D market TownD): its twin's line there wakes the main out of shots,
+// and it restocks from the line without travelling (no visit elsewhere, no fare).
+{
+    const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 300 }, TownD: { TownA: 300, TownD: 0 } },
+        npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownA'] };
+    const out = Engine.simulate({ view, accounts, bands, rates, hours: 24, seed: 5,
+        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+    const m = out.design.market;
+    assert.equal(out.design.crafters.byTown.TownA, 1, 'the twin sits in TownA');
+    assert.ok(m.events.offerPosted >= 1 && (m.trips.shots_out || 0) + (m.trips['stock_low:shots'] || 0) >= 1, JSON.stringify([m.events, m.trips]));
+    assert.ok(out.design.counters.shotsLine > 0, 'it bought its shots from the line where it stands');
+    assert.deepEqual([m.visits.hub, out.flows.totals.fares], [{}, 0], 'no visit off the town it stands in, no fare');
     assert.equal(out.money.closureGap, 0);
     assert.equal(out.design.goods.failing, 0);
 }

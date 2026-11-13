@@ -59,10 +59,12 @@ function goalOf({ pieces, kit, wants, reserve, money, bagValue, perHour, fresh }
 // board stands for trade chat: a public fact read when the situation is
 // read, no memory of past prices): the town it stands in when its own twin
 // holds the shot (ownHeld: the account warehouse) or its NPC sells the shot
-// at or under its worth (npcHere); else, of the trade towns of the shot's
-// grade and above (MarketTownPolicy), those where a line of the shot stands
-// at or under its worth there and whose gatekeeper fare there and back the
-// main can pay, the one it stands in, else the one with the least fare.
+// at or under its worth (npcHere); else, of the town it stands in and the
+// trade towns of the shot's grade and above (MarketTownPolicy), those where
+// a line of the shot stands at or under its worth there and whose gatekeeper
+// fare there and back the main can pay, the one it stands in, else the one
+// with the least fare. The same read at its arrival on a shot trip names
+// the town of the visit (the line it set out for may have sold meanwhile).
 // towns: [{ town, fare (one way), ask (the cheapest line's price there,
 // null without one), cap (the most it pays a unit there) }]. Returns the
 // town's name, null when no seller stands.
