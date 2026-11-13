@@ -60,6 +60,7 @@ const weaponOf = kit => Number(kit[7] || kit[14]) || 0;
 // over the count of the table's reference weapon at the level it hunted the
 // spot at (item data). The cell taken nets most at price.
 function gamePass(line, row, kit, kind, price) {
+    Pricing.useBoard(() => null);
     const classId = Table.roleClass(line, row.level), base = HuntCycle.referenceState(classId, row.level, { line: Number(line) }), inventory = {};
     for (const [slot, selfId] of KitHours.wornKit(kit)) {
         const key = `kit-${selfId}`, prior = inventory[key], amount = (prior?.amount || 0) + 1;
@@ -136,8 +137,7 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
 // band's scale), nets the game's own hour (a scale of 1 and the game's
 // prices as the anchor: the same cell).
 {
-    Pricing.useBoard(() => null);
-    const price = id => Pricing.botBuyPrice(id), unit = KitHours.gameKitHours({ snapshot: { header: snapshot.header, gearLadder: { lines: ladder(1) } },
+    const price = id => { Pricing.useBoard(() => null); return Pricing.botBuyPrice(id); }, unit = KitHours.gameKitHours({ snapshot: { header: snapshot.header, gearLadder: { lines: ladder(1) } },
         anchor: Object.fromEntries([SSD, SSC, SPSD, SPSC, BSPSD, BSPSC].map(id => [id, price(id)])) });
     for (const [line, level] of [[fighter, 32], [fighter, 47], [mage, 32]]) {
         const row = band(...[line, bandAt(line, level).from, bandAt(line, level).to, 1, line === mage]), kit = kitOf(line, row.level);
@@ -207,11 +207,11 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
 // some, the service charges the worn weapon's own count (as a fight spends
 // it): it equals the reader's best hour with each row's shots at that count.
 {
-    Pricing.useBoard(() => null);
-    const price = id => Pricing.botBuyPrice(id), unit = KitHours.gameKitHours({ snapshot: { header: snapshot.header, gearLadder: { lines: ladder(1) } },
+    const price = id => { Pricing.useBoard(() => null); return Pricing.botBuyPrice(id); }, unit = KitHours.gameKitHours({ snapshot: { header: snapshot.header, gearLadder: { lines: ladder(1) } },
         anchor: Object.fromEntries([SSD, SSC, SPSD, SPSC, BSPSD, BSPSC].map(id => [id, price(id)])) });
     let exact = 0;
     for (const [line, level] of [[fighter, 32], [fighter, 47], [mage, 32], [mage, 47], [archer, 32], [archer, 47]]) {
+        Pricing.useBoard(() => null);
         const row = bandAt(line, level), kit = kitOf(line, row.level), state = stateIn(line, row, kit), own = ShotStock.planForState(state), best = Table.best(line, row.level, true, 'income');
         const deathHours = Valuation.deathHours(state, { expPerHour: best.exp || 0, walkBackHours: Load.walkBackHours(best.spotId, state) });
         const numbers = KitHours.referenceNumbers(Profile.profileFor(state, 0, { store: false }));
@@ -414,5 +414,25 @@ assert.throws(() => KitHours.gameKitHours({ snapshot: wrongBest, anchor }).hour(
     const priced = KitHours.gameKitHours({ snapshot: x1, anchor }).hour(line, level, kit).shots[0];
     const free = KitHours.gameKitHours({ snapshot: x1, anchor: Object.fromEntries(Object.keys(anchor).map(id => [id, 0])) }).hour(line, level, kit).shots[0];
     assert.ok(priced.units < free.units && priced.gross < free.gross, 'priced shots choose a cell that fires fewer shots');
+}
+// The model's readers stand on no board while they run and leave the game's
+// board source as it was: a board the game's pricing finds after the model
+// ran is the one it finds before.
+{
+    const Afk = invoke('GameServer/AfkTrade/AfkTradeService'), boardIndex = Afk.boardIndex;
+    let looked = 0;
+    Afk.boardIndex = () => { looked++; return { first: () => null }; };
+    try {
+        Pricing.useBoard(null);
+        const shot = () => { looked = 0; Pricing.botBuyPrice(SSD); return looked; };
+        assert.ok(shot() > 0, 'before the model: the game prices a shot through its board');
+        const run = KitHours.gameKitHours({ snapshot, anchor });
+        assert.ok(shot() > 0, 'after the model is built: the game prices a shot through its board');
+        run.hour(fighter, 32, kitOf(fighter, bandAt(fighter, 32).level));
+        assert.ok(shot() > 0, 'after the model read an hour: the game prices a shot through its board');
+    } finally {
+        Afk.boardIndex = boardIndex;
+        Pricing.useBoard(null);
+    }
 }
 console.log('PASS economy model kit hours');
