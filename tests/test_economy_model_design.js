@@ -738,21 +738,26 @@ assert.equal(armed.delta.shotsUsed, 50);
     };
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), base = stubKitHours(world);
-    const arrowed = (hour, kit) => {
+    // unstated: the kit hour does not state the shotless hour (none null, no noneArrows).
+    const arrowed = (hour, kit, unstated) => {
         if (!hour) return hour;
         const units = kit[10] === HIGH ? 15 : 0;
-        return { ...hour, noneArrows: { id: ARROW, units }, shots: [{ id: FREE, kind: 'a', gross: hour.none + 10, units: 0, arrows: { id: ARROW, units } }, { id: UNSTATED, kind: 'b', gross: hour.none + 1000, units: 0, arrows: null }] };
+        return { ...hour, ...(unstated ? { none: null } : { noneArrows: { id: ARROW, units } }), shots: [{ id: FREE, kind: 'a', gross: hour.none + 10, units: 0, arrows: { id: ARROW, units } }, { id: UNSTATED, kind: 'b', gross: hour.none + 1000, units: 0, arrows: null }] };
     };
-    const bow = {
-        hour: (line, level, kit) => arrowed(base.hour(line, level, kit), kit),
-        swaps: (line, level, kit, pieces) => { const read = base.swaps(line, level, kit, pieces); return { ...read, hour: arrowed(read.hour, kit), swaps: read.swaps.map((swap, at) => ({ ...swap, hour: arrowed(swap.hour, { ...kit, [pieces[at].slot]: pieces[at].selfId }) })) }; },
+    const bowOf = unstated => ({
+        hour: (line, level, kit) => arrowed(base.hour(line, level, kit), kit, unstated),
+        swaps: (line, level, kit, pieces) => { const read = base.swaps(line, level, kit, pieces); return { ...read, hour: arrowed(read.hour, kit, unstated), swaps: read.swaps.map((swap, at) => ({ ...swap, hour: arrowed(swap.hour, { ...kit, [pieces[at].slot]: pieces[at].selfId }, unstated) })) }; },
         shotScale: base.shotScale
-    };
+    }), bow = bowOf(false), bowNoneUnstated = bowOf(true);
     const run = kitHours => Engine.simulate({ view, accounts: [{ id: 31, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 4000, spot: null, shots: {}, held: [], worn: {} }],
         bands: [['all', 1]], rates, hours: 12, seed: 2, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours }) });
     assert.equal(Math.round(run(base).flows.perBotHour.npcBuys * 12), -2900, 'without arrows the better piece');
     const net = run(bow);
     assert.deepEqual([net.design.goods.totals.fromNpc, Math.round(net.flows.perBotHour.npcBuys * 12)], [1, -3000], 'net of arrows the other piece');
+    // A kit that states no shotless hour still names its arrow through its shot option: the shot is
+    // netted of its 15 arrows and the other piece bought; without the arrow id the shot is gross.
+    const unstated = run(bowNoneUnstated);
+    assert.deepEqual([unstated.design.goods.totals.fromNpc, Math.round(unstated.flows.perBotHour.npcBuys * 12)], [1, -3000], 'net of arrows with the shotless hour unstated');
 }
 
 // spot_left: a main holds the spot it chose until its level leaves the spot
