@@ -349,7 +349,7 @@ function shotFamilies() {
 // trip), with no Scroll of Escape held (on foot or through the gatekeepers):
 // tripHours.to[spot] from the spot card's centre into its town (townPlan),
 // tripHours.back[spot][town] from each town to the centre (spotPlan), and
-// townHours[from][to] from one town into another (townPlan). Every spot of
+// townHours[from][to] from one town into another (townPlan; 0 into itself). Every spot of
 // the reward table and every town is present: a spot with no card centre or
 // a trip with no route throws.
 function tripHours(spots) {
@@ -366,6 +366,8 @@ function tripHours(spots) {
         const center = { locX: at[0], locY: at[1], locZ: at[2] };
         const plan = Trip.townPlan({ loc: center, stats: {}, inventory: {} }, point(town));
         if (!plan) throw new Error(`spot ${id} has no route into ${town.name}`);
+        // A trip of no hours would be answered at its own hour and never visit.
+        if (!(hours(plan) > 0)) throw new Error(`spot ${id} reaches ${town.name} in no time: its trip hours are unknown`);
         to[id] = hours(plan);
         back[id] = Object.fromEntries(towns.map(from => [from.name, hours(Trip.spotPlan({ loc: point(from), stats: {} }, center))]));
     }
@@ -373,6 +375,8 @@ function tripHours(spots) {
     for (const from of towns) {
         townHours[from.name] = {};
         for (const into of towns) {
+            // Into the town it stands in it is already there (the game: no trip).
+            if (into === from) { townHours[from.name][into.name] = 0; continue; }
             const plan = Trip.townPlan({ loc: point(from), stats: {}, inventory: {} }, point(into));
             if (!plan) throw new Error(`no route from ${from.name} into ${into.name}`);
             townHours[from.name][into.name] = hours(plan);

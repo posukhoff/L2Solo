@@ -750,13 +750,14 @@ function mainsSide(ctx) {
         if (twin) wakeAt(index, now, 'main_arrived');
         const after = { ...main, money, bag, shots: out.main.shots, kit: out.main.kit, weapon: out.main.weapon };
         // occupationAtTown (ours): its spot is re-chosen at its arrival in town too.
-        const left = config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after;
         // The hours after its arrival are the game's trip hours: on from the
-        // town it arrived in through each town it visits, then back from the
-        // last one to the spot it hunts next. Nothing more in town (ours: the
-        // game has no stay of its own beyond the trip).
-        const visited = [nearest, ...delta.towns];
-        let afterHours = backHoursOf(Engine.spotRowOf(view, left).spotId, visited[visited.length - 1]);
+        // town it arrived in through each other town it visits, then back from
+        // the last one to the spot it hunts next (a move is priced from there
+        // too). Nothing more in town (ours: the game has no stay of its own
+        // beyond the trip).
+        const visited = [nearest, ...delta.towns].filter((at, i, all) => i === 0 || at !== all[i - 1]), endsIn = visited[visited.length - 1];
+        const left = config.occupationAtTown ? occupy(after, 'arrived_town', outingHours, endsIn) : after;
+        let afterHours = backHoursOf(Engine.spotRowOf(view, left).spotId, endsIn);
         for (let i = 1; i < visited.length; i++) afterHours += townHoursOf(visited[i - 1], visited[i]);
         const time = stats.time[main.band] ||= { spot: 0, way: 0 };
         time.way += afterHours;
@@ -875,11 +876,12 @@ function mainsSide(ctx) {
     }
     // occupation at a situation: the main with the spot it hunts. At
     // arrived_town each candidate carries its move (the fare from this town
-    // to its town and the extra walk hours at the own hour) and the hunting
+    // to its town and the extra way back from the town its visit ends in
+    // (endsIn), at the own hour) and the hunting
     // hours of its next outing there (the last outing's, at least the
     // refill's hours; never past its grade's end or the spot's last level),
     // and the spot it left at its last arrival is no candidate (counted).
-    function occupy(main, situation, outingHours = 0) {
+    function occupy(main, situation, outingHours = 0, endsIn = null) {
         const index = main.index, account = accounts[index], hour = Engine.hourOf(view, main), town = townOf(main), bids = {}, prices = {};
         const atTown = situation === 'arrived_town', own = atTown ? ownHour(main, account.memory) : 0, heldRow = atTown ? Engine.spotRowOf(view, main) : null;
         const gradeHours = atTown ? horizonOf(main) : 0;
@@ -890,7 +892,7 @@ function mainsSide(ctx) {
             const at = rowItems(main, row, 'shots'), out = { spotId: String(row.spotId), adena: at.adena * kills, items: at.items.map(item => [item.id, item.rate * kills]), scrolls: row.scrolls || [] };
             if (!atTown) return out;
             const there = view.yields[`${row.spotId}@${main.level}`]?.town || null, fare = there ? fareOf(town, there) : null;
-            const walk = Math.max(0, backHoursOf(row.spotId, town) - backHoursOf(heldRow.spotId, town));
+            const walk = Math.max(0, backHoursOf(row.spotId, endsIn) - backHoursOf(heldRow.spotId, endsIn));
             const range = view.spotLevels?.[main.line]?.[String(row.spotId)], last = range ? Math.min(view.maxLevel, range[1] + 1) : null;
             const exp = Engine.huntExp(main, row, kills), toEnd = last !== null && exp > 0 ? Math.max(0, Engine.expAt(view, last) - main.exp) / exp : Infinity;
             return { ...out, move: fare === null ? Infinity : fare + walk * own, stay: stayHours({ outingHours: nextOuting(outingHours), gradeHours, spotHours: toEnd }) };

@@ -145,8 +145,16 @@ for (const id of Object.keys(snapshot.compositions)) assert.deepEqual(Object.key
         for (const town of townRows) assert.equal(snapshot.tripHours.back[id][town.name], planHours(ColdTrip.spotPlan({ loc: townPoint(town), stats: {} }, center)), `spot ${id}: the way back from ${town.name} is ColdTrip's`);
     }
 }
+// Into the town it stands in it is there already: 0 hours (Floran Village too, whose plan into itself runs through Dion).
 for (const from of townRows) for (const into of townRows) {
-    assert.equal(snapshot.townHours[from.name][into.name], planHours(ColdTrip.townPlan({ loc: townPoint(from), stats: {}, inventory: {} }, townPoint(into))), `${from.name} to ${into.name} is ColdTrip's`);
+    if (from === into) assert.equal(snapshot.townHours[from.name][into.name], 0, `${from.name} into itself: no trip`);
+    else assert.equal(snapshot.townHours[from.name][into.name], planHours(ColdTrip.townPlan({ loc: townPoint(from), stats: {}, inventory: {} }, townPoint(into))), `${from.name} to ${into.name} is ColdTrip's`);
+}
+// A spot whose trip into town takes no hours is a hole in the game's data, not a trip: the snapshot is not built.
+{
+    const townPlan = ColdTrip.townPlan;
+    ColdTrip.townPlan = (...args) => ({ ...townPlan(...args), durationMs: 0 });
+    try { assert.throws(() => Inputs.extract({ preset: 'x50', lines: [line], levels: [level, level] }), /in no time/, 'a to-town leg of 0 hours throws'); } finally { ColdTrip.townPlan = townPlan; }
 }
 assert.ok(snapshot.townHours.Dion.Giran > 0 && snapshot.tripHours.to[hour.best.spotId] > 0, 'a trip takes time');
 assert.ok(!('walkBack' in snapshot) && !('walkBackZero' in snapshot.fallbacks), 'one owner of a trip\'s hours: no walk back beside them');

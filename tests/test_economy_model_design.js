@@ -27,11 +27,12 @@ const twin = level => ({ classId: level < 40 ? 56 : 57, mp: 3000, createItem: le
 const yields = { town: 'TownA', drop: { 57: 100, [BONE]: 0.5, [SCROLL]: 0.2 }, spoil: {} };
 // A test world's game trip hours (the snapshot's tripHours and townHours):
 // `to` from each spot into its town, `back` from every town to each spot (a
-// number, or a function of the spot and the town), `hop` between two towns.
-const tripsOf = (spots, towns, { to = 0.01, back = 0.01, hop = 0.1 } = {}) => {
+// number, or a function of the spot and the town), `hop` between two towns,
+// `self` from a town into itself (the game's Floran Village holds one).
+const tripsOf = (spots, towns, { to = 0.01, back = 0.01, hop = 0.1, self = 0 } = {}) => {
     const hours = (value, ...keys) => (typeof value === 'function' ? value(...keys) : value);
     return { tripHours: { to: Object.fromEntries(spots.map(id => [id, hours(to, id)])), back: Object.fromEntries(spots.map(id => [id, Object.fromEntries(towns.map(town => [town, hours(back, id, town)]))])) },
-        townHours: Object.fromEntries(towns.map(from => [from, Object.fromEntries(towns.map(into => [into, from === into ? 0 : hop]))])) };
+        townHours: Object.fromEntries(towns.map(from => [from, Object.fromEntries(towns.map(into => [into, from === into ? self : hop]))])) };
 };
 const snapshot = {
     header: { levels: [1, 30], rates: { adena: 1 } },
@@ -518,15 +519,16 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const s0 = levels.map(level => [`s0@${level}`, yields]);
     // 1e6 exp a level (not the snapshot's 1e9): the 7.2 exp to level 26 below is then far above the
     // rounding a level read allows (1e-9 of the level's exp).
-    const world = { ...snapshot, exp: levels.map(level => level * 1e6), ...tripsOf(['s0', 's1'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : town === 'TownD' ? 0.4 : 0.25), hop: 0.15 }), fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+    const world = { ...snapshot, exp: levels.map(level => level * 1e6), ...tripsOf(['s0', 's1'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : town === 'TownD' ? 0.4 : 0.25), hop: 0.15, self: 0.07 }), fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
         hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: row('s0', 1000, 0), top: [] }])) },
         yields: { ...snapshot.yields, ...Object.fromEntries(s0) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s0) },
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s0: 'TownA', s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'], stockLowMinutes: 72 };
     // The shooter's (index 1) first visit, its level-ups, the hours its arrival rule is asked and its first shot trip's planned arrival; postAt: the hour a line of its shot is raised in TownD.
-    const runWith = ({ exp = 25e6, postAt = null, gone = false }) => {
-        const design = plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }), start = design.start, mainsSide = Mains.mainsSide;
+    const runWith = ({ exp = 25e6, postAt = null, gone = false, at = world }) => {
+        const atView = at === world ? view : Engine.viewOf(at, { npcPrices: 'x1' });
+        const design = plane({ snapshot: at, game: Design.gameOf(at, atView, config), config, start: 'late', grades }), start = design.start, mainsSide = Mains.mainsSide;
         const seen = { visit: null, levelUps: [], asked: [], planned: null };
         let side = null, ctx = null;
         Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
@@ -543,14 +545,14 @@ const levelReads = (share, shots, hours, atHour = null) => {
                 // gone: the twin's line in TownD is taken off before the shooter arrives.
                 if (gone && main.index === 1 && !seen.visit) Books.remove(ctx.books, 0);
                 const out = visit(main, now, options);
-                if (main.index === 1 && !seen.visit) seen.visit = { at: now, towns: out.delta.towns, held: main.shots[SSD] || 0, bought: (out.main.shots[SSD] || 0) - (main.shots[SSD] || 0), afterHours: out.afterHours };
+                if (main.index === 1 && !seen.visit) seen.visit = { at: now, towns: out.delta.towns, held: main.shots[SSD] || 0, bought: (out.main.shots[SSD] || 0) - (main.shots[SSD] || 0), afterHours: out.afterHours, spot: out.main.occupied };
                 return out;
             };
             hooks.hour = now => { if (now === postAt) side.offerPosted(SSD, 'TownD', 1, 0, now); return hour(now); };
             return hooks;
         };
         try {
-            const out = Engine.simulate({ view, accounts: [{ ...accounts[0], exp: 25e6 }, { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, design });
+            const out = Engine.simulate({ view: atView, accounts: [{ ...accounts[0], exp: 25e6 }, { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, design });
             assert.equal(out.money.closureGap, 0);
             assert.equal(out.design.goods.failing, 0);
             return { ...seen, offers: out.design.market.events.offerPosted };
@@ -568,6 +570,16 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const gone = runWith({ gone: true });
     assert.deepEqual(gone.visit.towns, ['TownA'], `no seller in TownD at its arrival: ${JSON.stringify(gone.visit)}`);
     near(gone.visit.afterHours, 0.25, 'a shot trip whose seller is gone costs no hop: it hunts again after its way back from TownA');
+    // At level 26 a richer s2 ranks above s1, 50 h back from TownA but 0.01 h
+    // from TownD, where its visit ends: the move is priced from TownD (no way
+    // longer than s1's), so it moves and hunts again after the hop and 0.01 h.
+    const s2 = levels.map(level => [`s2@${level}`, yields]);
+    const richer = { ...world, ...tripsOf(['s0', 's1', 's2'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : id === 's2' ? (town === 'TownD' ? 0.01 : 50) : town === 'TownD' ? 0.4 : 0.25), hop: 0.15, self: 0.07 }),
+        hours: { ...world.hours, 9: Object.fromEntries(levels.map(level => [level, { ...world.hours[9][level], top: level >= 26 ? [row('s2', 5000, 50), row('s1', 1000, 50)] : [] }])) },
+        yields: { ...world.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...world.yieldsDesign, ...Object.fromEntries(s2) }, tradeTowns: { ...world.tradeTowns, none: { ...world.tradeTowns.none, s2: 'TownA' } } };
+    const moved = runWith({ exp: 26e6 - 7.2, at: richer });
+    assert.deepEqual([moved.visit.towns, moved.visit.spot], [['TownD'], 's2'], `the move priced from TownD, where its visit ends: ${JSON.stringify(moved.visit)}`);
+    near(moved.visit.afterHours, 0.15 + 0.01, 'it hunts again after the hop on to TownD and its way back from there to s2');
     // Level 26 starts at 26e6 exp: at 1 exp an hour it is reached and read at h7.2, on its spot.
     const leveled = runWith({ exp: 26e6 - 7.2 });
     assert.deepEqual(leveled.levelUps.filter(at => at < leveled.planned).map(at => Math.round(at * 100) / 100), [7.2], `level 26 read once on its spot, none on the way: ${JSON.stringify(leveled)}`);
