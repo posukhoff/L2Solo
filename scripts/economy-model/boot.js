@@ -36,9 +36,27 @@ function usePreset(preset) {
 // data they require. Derived from the module graph, so a module the extract
 // starts to read joins without a list to keep.
 function loadedFiles() {
+    return Object.keys(require.cache).map(treeRelative).filter(Boolean).sort();
+}
+
+// A file's root-relative path when it is a tree file (not node_modules), else null.
+function treeRelative(file) {
     const prefix = common.root + path.sep;
-    return Object.keys(require.cache).filter(file => file.startsWith(prefix) && !file.includes(`${path.sep}node_modules${path.sep}`))
-        .map(file => path.relative(common.root, file).split(path.sep).join('/')).sort();
+    if (!file.startsWith(prefix) || file.includes(`${path.sep}node_modules${path.sep}`)) return null;
+    return path.relative(common.root, file).split(path.sep).join('/');
+}
+
+// The tree files read through fs.readFileSync (the config, the item csv, the
+// hunt tables' bytes) from this call until stop(): files() lists them,
+// root-relative and sorted. Files that came through require are loadedFiles.
+function recordReads() {
+    const real = fs.readFileSync, seen = new Set();
+    fs.readFileSync = function (file, ...rest) {
+        const data = real.call(this, file, ...rest);
+        if (typeof file === 'string') seen.add(path.resolve(file));
+        return data;
+    };
+    return { stop: () => { fs.readFileSync = real; }, files: () => [...seen].map(treeRelative).filter(Boolean).sort() };
 }
 
 // The contents of these tree files; a file gone hashes as missing.
@@ -82,4 +100,4 @@ function presetsOption(argv) {
     return String(option(argv, 'preset', PRESETS.join(','))).split(',').map(text => text.trim()).filter(Boolean);
 }
 
-module.exports = { boot, usePreset, loadedFiles, dataStamp, stampMatches, option, presetsOption, PRESETS, root: common.root };
+module.exports = { boot, usePreset, loadedFiles, recordReads, dataStamp, stampMatches, option, presetsOption, PRESETS, root: common.root };

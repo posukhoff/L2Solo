@@ -220,6 +220,27 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
         return file;
     };
     try {
+        // inputs.js builds the header: the stamp of a built x1 snapshot holds
+        // the files the extract read through fs, not only its modules.
+        const built = childProcess.spawnSync(process.execPath, ['scripts/economy-model/inputs.js', '--preset', 'x1', '--out', path.join(scratch, 'built')], { cwd: Boot.root, encoding: 'utf8', maxBuffer: 1 << 28 });
+        assert.equal(built.status, 0, built.stderr);
+        const header = JSON.parse(fs.readFileSync(path.join(scratch, 'built', fs.readdirSync(path.join(scratch, 'built')).find(name => name.startsWith('inputs-x1-'))), 'utf8')).header;
+        for (const file of ['config/default.ini', 'data/ExtractableItems/extractable_items.csv', 'data/Bots/hunt/gear.json', 'data/Bots/hunt/sources.json', 'scripts/economy-model/inputs.js'])
+            assert.ok(header.sourceFiles.includes(file), `the stamp holds ${file}`);
+        assert.ok(Boot.stampMatches(header), 'a fresh header matches the live data');
+        // Another fingerprint, or no list of source files: refused with the build command.
+        const odd = (name, change) => {
+            const file = path.join(dir, name);
+            fs.writeFileSync(file, JSON.stringify({ header: { preset: 'x50', ...Boot.dataStamp(loaded), sourceFiles: loaded, ...change } }));
+            return file;
+        };
+        const buildX50 = /build one: node scripts\/economy-model\/inputs\.js --preset x50/;
+        odd('inputs-x50-c.json', { fingerprint: 'another' });
+        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), buildX50, 'a header with another fingerprint: refused');
+        fs.rmSync(path.join(dir, 'inputs-x50-c.json'));
+        odd('inputs-x50-d.json', { sourceFiles: undefined });
+        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), buildX50, 'a header with no sourceFiles: refused');
+        fs.rmSync(path.join(dir, 'inputs-x50-d.json'));
         // The stale one is the newest file and first by name.
         const stale = write('inputs-x50-a.json', new Date(2026, 0, 2));
         fs.appendFileSync(fares, '\n// a fare edited\n');

@@ -26,8 +26,10 @@
 // header repeats both and adds the notes a reader of the numbers needs and
 // the stamp a run reads the snapshot by (Boot.dataStamp): the hunt tables'
 // hash, the spot table's own fingerprint and the contents of every tree file
-// the extract loaded (sourceFiles, the static stores, fares, bags, market
-// towns and inputs.js itself among them).
+// the extract loaded or read (sourceFiles: the static stores, fares, bags,
+// market towns, inputs.js itself, config/default.ini, the extractable items
+// csv and the hunt tables' files among them). A config layer outside the
+// tree (L2NODE_CONFIG_FILE and the like) is not stamped.
 
 const childProcess = require('child_process');
 const fs = require('fs');
@@ -667,7 +669,14 @@ function sourceGaps(snapshot) {
     return { lacking: lacking.length, named };
 }
 
+// The tree files read through fs are part of the stamp beside the modules
+// loaded: reads are recorded from before the boot to the last extract.
 function main(argv) {
+    const reads = Boot.recordReads();
+    try { build(argv, reads); } finally { reads.stop(); }
+}
+
+function build(argv, reads) {
     const presets = Boot.presetsOption(argv);
     const out = path.resolve(Boot.option(argv, 'out', path.join(Boot.root, 'tmp', 'economy-model')));
     Boot.boot('x1');
@@ -680,9 +689,9 @@ function main(argv) {
     for (const preset of presets) {
         const began = Date.now();
         const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null) });
-        // The files the extract has loaded by now are the ones it read: the
-        // stamp a run checks the live game data against.
-        const sourceFiles = Boot.loadedFiles(), { fingerprint, spotTable, sources } = Boot.dataStamp(sourceFiles);
+        // The files the extract has loaded or read by now are the ones it
+        // used: the stamp a run checks the live game data against.
+        const sourceFiles = [...new Set([...Boot.loadedFiles(), ...reads.files()])].sort(), { fingerprint, spotTable, sources } = Boot.dataStamp(sourceFiles);
         snapshot.header = { ...snapshot.header, fingerprint, spotTable, sources, sourceFiles, revision };
         const file = path.join(out, `inputs-${preset}-${revision}-${fingerprint}.json`), text = `${JSON.stringify(snapshot)}\n`;
         fs.writeFileSync(file, text);
