@@ -22,7 +22,7 @@ const Pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
 const Rewards = require('../src/GameServer/Bot/Economy/SpotRewardExpectation');
 const Index = require('../src/GameServer/Item/ItemTemplateIndex');
 const Grades = require('../src/GameServer/Bot/AI/GearGradeRule');
-const DesignIncome = require('../scripts/economy-model/design-income');
+const Load = require('../scripts/economy-model/load');
 const Worth = require('../scripts/economy-model/rules/worth');
 
 const SSNG = 1835, SSD = 1463, SSC = 1464, SSB = 1465, SPSD = 2510, SPSC = 2511, BSPSD = 3948, BSPSC = 3949;
@@ -67,7 +67,7 @@ function gamePass(line, row, kit, kind, price) {
     }
     let state = { ...base, inventory, stats: { ...base.stats, exp: Data.experience[row.level - 1] } };
     const best = Table.best(line, row.level, true, 'income');
-    const deathHours = Valuation.deathHours(state, { expPerHour: best.exp || 0, walkBackHours: DesignIncome.walkBackHours(best.spotId, state) });
+    const deathHours = Valuation.deathHours(state, { expPerHour: best.exp || 0, walkBackHours: Load.walkBackHours(best.spotId, state) });
     if (kind === 'spiritshot' || kind === 'blessedSpiritshot') state = { ...state, stats: { ...state.stats, earning: { shotKind: kind } } };
     const numbers = KitHours.referenceNumbers(Profile.profileFor(state, 0, { store: false })), plan = ShotStock.planForState(state);
     const shots = ShotStock.shotRows(plan, kind === 'none' ? false : undefined), role = Table.roleFor(state), options = { spoilSkillLevel: Rewards.spoilSkillLevel(state) };
@@ -213,7 +213,7 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
     let exact = 0;
     for (const [line, level] of [[fighter, 32], [fighter, 47], [mage, 32], [mage, 47], [archer, 32], [archer, 47]]) {
         const row = bandAt(line, level), kit = kitOf(line, row.level), state = stateIn(line, row, kit), own = ShotStock.planForState(state), best = Table.best(line, row.level, true, 'income');
-        const deathHours = Valuation.deathHours(state, { expPerHour: best.exp || 0, walkBackHours: DesignIncome.walkBackHours(best.spotId, state) });
+        const deathHours = Valuation.deathHours(state, { expPerHour: best.exp || 0, walkBackHours: Load.walkBackHours(best.spotId, state) });
         const numbers = KitHours.referenceNumbers(Profile.profileFor(state, 0, { store: false }));
         const spots = [String(best.spotId), ...Table.rankedIncome(line, row.level).slice(0, KitHours.TOP_SPOTS).map(spot => String(spot.spotId))];
         const shot = unit.hour(line, level, kit).shots.find(entry => entry.id === own.selfId), net = shot.gross - shot.units * price(own.selfId);

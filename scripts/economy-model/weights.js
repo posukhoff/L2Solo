@@ -1,9 +1,14 @@
 'use strict';
 
-// The class mix of the economy design: one weight per final class (the second
-// profession, also the spot table's line), in % of mains. Start values are our
-// estimate of a C4 server's mix, no source. Warsmith has no main (weight 0):
-// it is only a crafter twin.
+// The class mix of the economy model's mains: one weight per final class (the
+// second profession, also the spot table's line), in % of mains. It is ours
+// until the new seeder: our estimate of a C4 server's mix, no source, and not
+// the game's own (PopulationConfig.classMix names starter classes and counts
+// crafters in its dwarf share, which the target gives each main as a twin).
+// Every cohort the model builds (synthetic, fresh, the lines drawn for a
+// save's first-profession mains) and the capacity bands read this one table,
+// so the new seeder's mix replaces it here and nowhere else. Warsmith has no
+// main (weight 0): it is only a crafter twin.
 const CLASS_WEIGHTS = Object.freeze({
     // nukers: Spellhowler, Sorcerer, Spellsinger, Necromancer
     40: 5.5, 12: 4.5, 27: 4.5, 13: 3.5,

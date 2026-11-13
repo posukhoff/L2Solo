@@ -1,7 +1,7 @@
 'use strict';
 
 const Boot = require('./boot');
-const DesignIncome = require('./design-income');
+const Load = require('./load');
 const Worth = require('./rules/worth');
 
 const { wornKit } = Worth;
@@ -195,7 +195,7 @@ const HAND_SLOTS = Object.freeze([7, 14]);
 // null: no band for the level, an item without a template, a piece above the
 // band's grade (the cold profile applies no grade penalty, so the hour of
 // such a kit is not stated) or no spot weighed.
-// The game data must be the snapshot's: the loader (design-income.js
+// The game data must be the snapshot's: the loader (load.js
 // loadSnapshot) gives a run only the snapshot whose stamp equals the live one.
 function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     const header = snapshot?.header || {};
@@ -226,7 +226,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
             const best = Table.best(line, band.level, true, 'income');
             if (best && String(best.spotId) !== String(band.best)) throw new Error(`kit hours: line ${line} band ${at} (level ${band.level}) has best spot ${band.best} in the snapshot and ${best.spotId} in the live game; extract the snapshot again (scripts/economy-model/inputs.js)`);
             const bot = best ? referenceBot(owners, line, band.level, []) : null;
-            bots.set(key, best ? { best, bot, deathHours: Valuation.deathHours(bot, { expPerHour: best.exp || 0, walkBackHours: DesignIncome.walkBackHours(best.spotId, bot) }) } : null);
+            bots.set(key, best ? { best, bot, deathHours: Valuation.deathHours(bot, { expPerHour: best.exp || 0, walkBackHours: Load.walkBackHours(best.spotId, bot) }) } : null);
         }
         return bots.get(key);
     };

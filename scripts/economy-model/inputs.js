@@ -11,9 +11,7 @@
 // shots (SpotValueTable.value with shots off) and firing Blessed
 // Spiritshots (with shots 2), each line's race (class
 // templates), the design's per-kill yields (rules/dropRule at the
-// design's rates of the preset), a servitor's item upkeep (the cold fight's
-// summon choice, the skill data, SummonControl's life rule) and the arrow of
-// each bow grade (ArrowStock).
+// design's rates of the preset) and the arrow of each bow grade (ArrowStock).
 //
 //   node scripts/economy-model/inputs.js [--preset x1,x10,x50] [--out <dir>] [--spots <save.sqlite>]
 //
@@ -38,6 +36,7 @@ const Boot = require('./boot');
 const Capacity = require('./capacity');
 const Cohort = require('./cohort');
 const DesignIncome = require('./design-income');
+const Load = require('./load');
 const { DESIGN_RATES } = require('./rules/dropRule');
 const KitHours = require('./kit-hours');
 const common = require('../hunt-tables/common');
@@ -72,9 +71,6 @@ const HOUR_FIELDS = Object.freeze(['spotId', 'kills', 'deaths', 'exp', 'adena', 
 // Items the generated hunt sources lack or leave without a drop row: shots,
 // ore, shot and arrow recipes, potions, scrolls, arrows, the D crystal.
 const OTHER_GAP_IDS = Object.freeze([1785, 3031, 1804, 1805, 3953, 1060, 736, 17, 1666, 1458]);
-// The hunt time a servitor's casts are counted over: some summon ranks wait 6
-// hours to be cast again, so their casts are averaged over a day of hunting.
-const UPKEEP_WINDOW_S = 24 * 3600;
 const NOTES = Object.freeze([
     'best (SpotValueTable.best) and top[0] (rankedIncome) are two owners and differ on some line-levels: read best for the income of the hour, top for the candidates a bot ranks.',
     'Per-kill item yields (yields) are taken at the spot\'s spawn mix; the hour\'s income (best, top) uses the kill mix the spot table measured for the line.',
@@ -84,7 +80,6 @@ const NOTES = Object.freeze([
     'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off).',
     'An hour row\'s blessed holds the same spot\'s hour for the same line and level firing Blessed Spiritshots (SpotValueTable.value with shots 2); only a line the spot table measures firing them there (a spiritshot class) has it, and the row itself is the hour firing its plain shot.',
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
-    'upkeep[line][level] lists the items a line\'s servitor costs a player per hunt hour (the game spares bots): [{ id, perHour, what: { skill, level, name } }], the summons its reference bot\'s cold fight casts, at the busy share of the level\'s best row; a line or level without such a cost has no entry.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
     'fallbacks names what the snapshot filled in: noMarketToC the spots with no no-grade market near their centre (tradeTowns.none holds the C town), walkBackZero the spots with no walk back (walkBack 0).',
     'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
@@ -128,7 +123,7 @@ function hourRowWithForms(row, line, level, Table) {
 // rewardSpot of SpotValueTable):
 // spot-reward-npcs.json's spawns and adena range, with the hunt tables' town.
 function rewardSpots() {
-    const table = readJson('data/Bots/hunt/spots.json'), townAt = table.spotFields.indexOf('town');
+    const table = Load.spotCards(), townAt = table.spotFields.indexOf('town');
     const towns = new Map(table.spots.map(row => [String(row[0]), row[townAt]]));
     return new Map(readJson('data/Bots/spot-reward-npcs.json').rows.map(([id, entries, adenaMin, adenaMax]) => [String(id),
         { id, npcEntries: entries.map(([selfId, count]) => ({ selfId, count })), rewards: { adenaMin, adenaMax }, town: towns.get(String(id)) ?? null }]));
@@ -199,7 +194,6 @@ function gameOwners() {
         BotGear: invoke('GameServer/Bot/AI/BotGear'),
         HuntCycle: invoke('GameServer/Bot/AI/HuntCycle'),
         Profile: invoke('GameServer/Bot/Population/ColdCombatProfile'),
-        Roles: invoke('GameServer/Bot/AI/BotRoles'),
         StoreLimits: require('../../src/GameServer/PrivateStoreLimits'),
         Inventory: require('../../src/GameServer/Inventory/InventoryLimits'),
         Valuation: invoke('GameServer/Bot/Economy/EconomicValuation'),
@@ -217,55 +211,6 @@ function bagRow(line, owners) {
     const classId = Table.roleClass(line, 40), template = Data.classTemplates.find(row => Number(row.classId) === Number(classId));
     const race = Number(template?.template?.race), expand = Profile.skillsFor({ level: 40, stats: { classId } }, classId, 40).find(skill => Number(skill.selfId) === EXPAND_INVENTORY)?.level || 0;
     return { race, slots: Inventory.capacity(race, expand), maxLoad: Math.round(Formulas.calcMaxLoad(Number(template?.base?.con))) };
-}
-
-// The items a line's servitor costs a player over a hunt hour (C4 skill data;
-// the game spares bots: C4SkillEffects.consumeSkillItems, SummonControl.startLifetime
-// and the cold resolver charge them nothing). The summons are the ones its
-// reference bot's cold fight casts (HuntCycle.referenceState, the cold
-// combat profile): ColdCombatProfile.summonSkills, and a Necromancer's corpse
-// summons, in the cold's order (the cold resolver's castable summon: the first
-// whose reuse is over and whose MP the bot has, here at full MP); cubics are
-// never cast by a bot. Each cast pays its rank's itemCount of itemId and,
-// over the servitor's life, itemConsumeSteps payments of itemCountOT of
-// itemIdOT (SummonControl's item schedule). The life is the game's own rule
-// (SummonControl's life): each second out it loses
-// timeLostActive ms while fighting, timeLostIdle ms otherwise (1000 when
-// unset; active as idle when unset), so at the hunt row's busy share it lasts
-// totalLifeTime / (busy × active + (1 − busy) × idle) seconds. This is the
-// upkeep of a servitor kept for its whole life and cast again the moment its
-// life ends (or once a reuse ends); a servitor's death in a fight is not
-// counted (our reading). Over UPKEEP_WINDOW_S of hunting, a cast whose life
-// runs past the window counts by the part inside it, so with one summon
-// perHour = 3600 × (itemCount + steps × itemCountOT) / life.
-// [{ id, perHour, what: { skill, level, name } }]; [] without a servitor that
-// costs items or without a hunt row (busyShare unknown).
-function upkeepRow(owners, line, level, busyShare) {
-    if (!(busyShare >= 0)) return [];
-    const { Table, HuntCycle, Profile, Roles, Data, Index } = owners;
-    const classId = Table.roleClass(line, level), profile = Profile.profileFor(HuntCycle.referenceState(classId, level, { line: Number(line) }), 0);
-    const casts = [...Profile.summonSkills(profile), ...(Roles.isNecromancer(classId) ? Profile.corpseSummonSkills(profile) : [])]
-        .filter(skill => Number(skill.mp || 0) <= Number(profile.maxMp || 0))
-        .map(skill => {
-            const row = Profile.summonDetails(skill), idle = Number(row.timeLostIdle) || 1000, active = Number(row.timeLostActive) || idle;
-            const life = Number(row.totalLifeTime) > 0 ? Number(row.totalLifeTime) / (busyShare * active + (1 - busyShare) * idle) : Infinity;
-            const what = { skill: row.skillId, level: row.skillLevel, name: Index.find(Data.skills, row.skillId)?.template?.name || null };
-            return { life, reuse: Math.max(0, Number(skill.reuse || 0)) / 1000, what, pays: [[row.itemId, row.itemCount], [row.itemIdOT, row.itemConsumeSteps * row.itemCountOT]] };
-        });
-    if (!casts.length || casts.some(cast => cast.life === Infinity)) return [];
-    const readyAt = casts.map(() => 0), paid = new Map();
-    for (let at = 0; at < UPKEEP_WINDOW_S;) {
-        const pick = casts.findIndex((_, i) => readyAt[i] <= at);
-        if (pick < 0) { at = Math.min(...readyAt); continue; }
-        const cast = casts[pick], share = Math.min(1, (UPKEEP_WINDOW_S - at) / cast.life);
-        readyAt[pick] = at + cast.reuse;
-        for (const [id, count] of cast.pays) if (id > 0 && count > 0) {
-            const key = `${id}:${cast.what.skill}`, held = paid.get(key);
-            paid.set(key, { id, units: (held?.units || 0) + share * count, what: cast.what });
-        }
-        at += cast.life;
-    }
-    return [...paid.values()].map(({ id, units, what }) => ({ id, perHour: units * 3600 / UPKEEP_WINDOW_S, what }));
 }
 
 // The level bands of the gear ladder: five levels, cut at each grade's first
@@ -314,9 +259,9 @@ function luxuryOptions(owners) {
 }
 
 // The hours of a death's walk back from each spot (WalkBack over the hunt
-// tables' spot centers, design-income.walkBackHours): spotId -> hours.
+// tables' spot centers, Load.walkBackHours): spotId -> hours.
 function walkBack(spots) {
-    return Object.fromEntries([...spots.keys()].map(id => [id, DesignIncome.walkBackHours(id, {})]));
+    return Object.fromEntries([...spots.keys()].map(id => [id, Load.walkBackHours(id, {})]));
 }
 
 // The game's trade town of a lot (MarketTownPolicy.targetTownForItems) as
@@ -330,7 +275,7 @@ function walkBack(spots) {
 // above. Karma's town is left out (no main of the model has karma).
 function tradeTowns(itemIds) {
     const Policy = invoke('GameServer/Bot/Economy/MarketTownPolicy'), Counters = invoke('GameServer/Bot/Economy/MarketCounters');
-    const table = readJson('data/Bots/hunt/spots.json'), centerAt = table.spotFields.indexOf('center');
+    const table = Load.spotCards(), centerAt = table.spotFields.indexOf('center');
     const grade = {}, none = {}, d = [], noMarket = [];
     for (const id of itemIds) { const at = Counters.gradeOf(id); if (at !== 'none') grade[id] = at; }
     for (const row of table.spots) {
@@ -367,11 +312,6 @@ function staticInputs(owners, spots) {
     const stores = Object.entries(Stores).filter(([, store]) => store && Array.isArray(store.items))
         .map(([name, store]) => ({ name, title: store.title, town: store.town, storeType: store.storeType,
             items: store.items.map(({ selfId, priceRate, count }) => ({ selfId, priceRate, count })) }));
-    const sources = readJson('data/Bots/hunt/sources.json'), luxuryAt = sources.itemFields.findIndex(field => field.startsWith('luxury'));
-    const luxury = {};
-    for (const row of sources.items) if (row[luxuryAt]?.length) {
-        luxury[row[0]] = { npcId: row[luxuryAt][0], crystals: row[luxuryAt][1].map(([selfId, amount]) => ({ selfId, amount })) };
-    }
     const world = Capacity.gameWorld(), twins = {};
     for (let level = TWIN_LEVELS[0]; level <= TWIN_LEVELS[1]; level++) twins[level] = twinRow(world.twin(level), level, owners);
     // Reward groups by reward id and each spot's NPCs: the drop rule's inputs.
@@ -383,7 +323,7 @@ function staticInputs(owners, spots) {
         for (const entry of entries) if (entry.reward) rewards[entry.reward.selfId] ||= { rewards: entry.reward.rewards || [], spoils: entry.reward.spoils || [] };
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
-    return { recipes, stores, luxury, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
+    return { recipes, stores, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
         races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), walkBack: walkBack(spots) };
 }
 
@@ -562,7 +502,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     if (!x1Offers) { Boot.usePreset('x1'); x1Offers = npcOffers(owners); }
     Boot.usePreset(preset);
     const spots = rewardSpots(), fixed = base || staticInputs(owners, spots);
-    const hours = {}, kits = {}, pairs = new Map(), bags = {}, ladders = {}, spotLevels = {}, upkeep = {};
+    const hours = {}, kits = {}, pairs = new Map(), bags = {}, ladders = {}, spotLevels = {};
     const scrolls = scrollSpots(fixed, spots, owners), more = { ...owners, spots };
     const gearTable = readJson('data/Bots/hunt/gear.json'), bands = ladderBands(owners).filter(([from, to]) => to >= levels[0] && from <= levels[1]);
     for (const line of lines || Table.roles()) {
@@ -580,8 +520,6 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
             kits[line][level] = KitHours.lineKit(owners, line, level);
             hours[line][level] = { classId, shotId: Capacity.referenceShot(classId, level, line),
                 best: best && hourRowWithForms(best, line, level, Table), top: top.map(row => hourRowWithForms(row, line, level, Table)) };
-            const due = upkeepRow(owners, line, level, best?.busyShare);
-            if (due.length) (upkeep[line] ||= {})[level] = due;
             const skill = Table.roleSpoilLevel(line, level);
             for (const row of [best, ...top]) if (row) {
                 const key = `${row.spotId}@${level}`, held = pairs.get(key);
@@ -613,7 +551,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const add = id => { if (Number(id) > 0) ids.add(Number(id)); };
     for (const row of fixed.recipes) { add(row.recipeItemId); add(row.productId); row.materials.forEach(m => add(m.selfId)); }
     for (const store of fixed.stores) store.items.forEach(item => add(item.selfId));
-    for (const [id, row] of Object.entries(fixed.luxury)) { add(id); row.crystals.forEach(crystal => add(crystal.selfId)); }
+    for (const [id, row] of Object.entries(fixed.luxuryOptions)) { add(id); row.crystals.forEach(crystal => add(crystal.selfId)); }
     for (const reward of Object.values(fixed.rewards)) for (const group of [...reward.rewards, ...reward.spoils]) (group.items || []).forEach(item => add(item.selfId));
     for (const byLevel of Object.values(kits)) for (const kit of Object.values(byLevel)) kit.forEach(row => add(row.selfId));
     for (const rows of Object.values(ladders)) for (const row of rows) for (const ids of Object.values(row.rungs)) ids.forEach(add);
@@ -621,7 +559,6 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     Object.keys(offers).forEach(add); Object.keys(x1Offers).forEach(add);
     Object.values(Enchant.CRYSTAL_IDS).forEach(add);
     Object.values(fixed.arrowIds).forEach(add);
-    for (const byLevel of Object.values(upkeep)) for (const rows of Object.values(byLevel)) rows.forEach(row => add(row.id));
     const items = {};
     for (const id of [...ids].sort((a, b) => a - b)) {
         const item = Index.find(Data.items, id);
@@ -650,7 +587,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const fallbacks = { noMarketToC: noMarket, walkBackZero: Object.keys(kept.walkBack).filter(id => !(kept.walkBack[id] > 0)) };
     return {
         header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES },
-        hours, spotLevels, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}), bags, upkeep, gearLadder: { bands, slots, lines: gearLadders }, tradeTowns: trade,
+        hours, spotLevels, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}), bags, gearLadder: { bands, slots, lines: gearLadders }, tradeTowns: trade,
         fallbacks, sources: rawSources(owners, ids)
     };
 }
@@ -687,6 +624,7 @@ function build(argv, reads) {
     // NPC prices at x1 ride in every snapshot: the design's NPC prices at every preset.
     const x1Offers = npcOffers(owners), base = staticInputs(owners, rewardSpots());
     fs.mkdirSync(out, { recursive: true });
+    let first = null;
     for (const preset of presets) {
         const began = Date.now();
         const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null) });
@@ -696,12 +634,12 @@ function build(argv, reads) {
         snapshot.header = { ...snapshot.header, fingerprint, spotTable, sources, sourceFiles, revision };
         const file = path.join(out, `inputs-${preset}-${revision}-${fingerprint}.json`), text = `${JSON.stringify(snapshot)}\n`;
         fs.writeFileSync(file, text);
-        const gaps = sourceGaps(snapshot), lineCount = Object.keys(snapshot.hours).length;
+        const lineCount = Object.keys(snapshot.hours).length;
         const empty = Object.values(snapshot.hours).reduce((sum, byLevel) => sum + Object.values(byLevel).filter(hour => !hour.best).length, 0);
         console.log(`[${preset}] ${file} (${(text.length / 1e6).toFixed(1)} MB, ${((Date.now() - began) / 1000).toFixed(1)} s); fingerprint ${fingerprint}, spot table ${spotTable}, revision ${revision}`);
         console.log(`  lines ${lineCount} x levels ${snapshot.header.levels.join('-')} (${empty} without a spot row); spot-level yields ${Object.keys(snapshot.yields).length}; `
             + `items ${Object.keys(snapshot.items).length}; recipes ${snapshot.recipes.length} (${snapshot.header.quests.withRecipe} of ${snapshot.header.quests.scrolls} quest scrolls with a row); `
-            + `NPC-offered items ${Object.keys(snapshot.npcOffers.preset).length}; static stores ${snapshot.stores.length}; Luxury items ${Object.keys(snapshot.luxury).length}; `
+            + `NPC-offered items ${Object.keys(snapshot.npcOffers.preset).length}; static stores ${snapshot.stores.length}; Luxury items ${Object.keys(snapshot.luxuryOptions).length}; `
             + `spots ${Object.keys(snapshot.compositions).length}; reward rows ${Object.keys(snapshot.rewards).length}; twin levels ${Object.keys(snapshot.twins).length}`);
         console.log(`  fallbacks: no no-grade market (the C town) ${snapshot.fallbacks.noMarketToC.length} spots [${snapshot.fallbacks.noMarketToC.join(' ')}], `
             + `walk back 0 ${snapshot.fallbacks.walkBackZero.length} spots [${snapshot.fallbacks.walkBackZero.join(' ')}]`);
@@ -709,10 +647,12 @@ function build(argv, reads) {
             const cells = Object.values(snapshot.spotHours.rows).flatMap(byLevel => Object.values(byLevel).flatMap(Object.values));
             console.log(`  spot hours from ${snapshot.spotHours.source}: ${cells.filter(Boolean).length} rows, ${cells.filter(row => !row).length} spot-levels where the line fights nothing`);
         }
-        if (preset !== presets[0]) continue;
-        console.log(`  raw sources for ${Object.keys(snapshot.sources).length} items, ${gaps.lacking} of them without a drop or spoil row in the hunt sources table:`);
-        for (const line of gaps.named) console.log(`    ${line}`);
+        if (preset === presets[0]) first = snapshot;
     }
+    // Read after the last stamp: sources.json is no input of a snapshot.
+    const gaps = sourceGaps(first);
+    console.log(`raw sources for ${Object.keys(first.sources).length} items, ${gaps.lacking} of them without a drop or spoil row in the hunt sources table:`);
+    for (const line of gaps.named) console.log(`  ${line}`);
     console.log('notes:');
     for (const note of NOTES) console.log(`  ${note}`);
     console.log(`done in ${((Date.now() - startedAt) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);

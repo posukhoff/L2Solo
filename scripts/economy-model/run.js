@@ -27,7 +27,7 @@ const Cohort = require('./cohort');
 const Engine = require('./engine');
 const Today = require('./today');
 const Design = require('./design');
-const DesignIncome = require('./design-income');
+const Load = require('./load');
 const KitHours = require('./kit-hours');
 const Mains = require('./mains');
 const Worth = require('./rules/worth');
@@ -135,7 +135,7 @@ function designOf(argv, snapshot) {
     if (!view.yieldsDesign) throw new Error('the snapshot has no design yields: write it again with inputs.js');
     // The hunting share is a share of time, fitted at the ledger's own preset (the late run's x50):
     // a snapshot of another preset is not divided into that run's exp.
-    const fitPreset = Boot.option(argv, 'fit-preset', 'x50'), fitSnapshot = snapshot.header.preset === fitPreset ? snapshot : DesignIncome.loadSnapshot(DesignIncome.SNAPSHOT_DIR, fitPreset).snapshot;
+    const fitPreset = Boot.option(argv, 'fit-preset', 'x50'), fitSnapshot = snapshot.header.preset === fitPreset ? snapshot : Load.loadSnapshot(Load.SNAPSHOT_DIR, fitPreset).snapshot;
     const fitView = fitSnapshot === snapshot ? view : Engine.viewOf(fitSnapshot);
     // The game tables and the kit hours read no fitted share; the fit reads
     // the kit hours: a main's exp an hour is its row's times its worn kit's
@@ -374,7 +374,7 @@ function printMarket(design, hours) {
 
 function main(argv) {
     const preset = Boot.option(argv, 'preset', 'x50'), hours = Number(Boot.option(argv, 'hours', 100)), seed = Number(Boot.option(argv, 'seed', 1));
-    const { snapshot, file } = DesignIncome.loadSnapshot(DesignIncome.SNAPSHOT_DIR, preset, Boot.option(argv, 'snapshot', null));
+    const { snapshot, file } = Load.loadSnapshot(Load.SNAPSHOT_DIR, preset, Boot.option(argv, 'snapshot', null));
     const designMode = Boot.option(argv, 'mode', 'plain') === 'design';
     const picked = designMode ? designOf(argv, snapshot) : null;
     const cohort = picked ? picked.cohort : cohortOf(argv, snapshot);

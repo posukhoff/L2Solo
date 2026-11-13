@@ -112,6 +112,7 @@ assert.equal(snapshot.twins[10].createItem, 1, 'twins below 20 are read too');
 assert.equal(snapshot.races['55'], 4, 'a Bounty Hunter is a dwarf');
 assert.equal(snapshot.crystalIds.D, 1458);
 const DesignIncome = require('../scripts/economy-model/design-income');
+const Load = require('../scripts/economy-model/load');
 const { DESIGN_RATES } = require('../scripts/economy-model/rules/dropRule');
 const designKey = keys[0], designRow = snapshot.yields[designKey];
 assert.deepEqual(snapshot.yieldsDesign[designKey], DesignIncome.designYields(snapshot, designRow.spotId, designRow.level, designRow.spoilSkill, DESIGN_RATES.x50, DesignIncome.gameRules()),
@@ -124,11 +125,12 @@ assert.ok(snapshot.yieldsDesign[designKey].drop[57] < snapshot.yields[designKey]
 const Inventory = require('../src/GameServer/Inventory/InventoryLimits');
 const Formulas = invoke('GameServer/Formulas');
 assert.deepEqual(snapshot.bags[line], { race: 4, slots: Inventory.capacity(4, 0), maxLoad: Math.round(Formulas.calcMaxLoad(45)) }, 'a dwarf\'s 100 slots and the CON 45 load');
-assert.equal(snapshot.walkBack[hour.best.spotId], DesignIncome.walkBackHours(hour.best.spotId, {}));
+assert.equal(snapshot.walkBack[hour.best.spotId], Load.walkBackHours(hour.best.spotId, {}));
 assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a walk back');
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
 assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
 assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', crystals: [{ selfId: 1459, amount: 573 }, { selfId: 1458, amount: 2865 }] }, 'Flamberge for 573 C and 2865 D crystals together');
+assert.ok(!('luxury' in snapshot) && !('upkeep' in snapshot), 'one Luxury catalogue (luxuryOptions) and no servitor upkeep in the snapshot');
 
 // The gear ladder: a Scavenger's (the Bounty Hunter at 30) band 30-34 holds
 // the gear table's D weapon rungs and the no-grade ones below, none above D,
@@ -159,34 +161,6 @@ assert.equal(snapshot.tradeTowns.none[String(island[0])], 'Talking Island', `${i
 const markets = new Set(Object.values(snapshot.tradeTowns.none));
 assert.ok([...markets].every(town => villages.includes(town)) && markets.size >= 4, [...markets].join(', '));
 
-// A servitor costs a player crystals (the game spares bots): the Warlock's
-// line at 40 casts the first summon its cold fight lists, each cast paying the
-// rank's itemCount and, over the servitor's life, itemConsumeSteps payments of
-// itemCountOT; the life loses timeLostActive ms each second it fights and
-// timeLostIdle ms otherwise, at the busy share of the level's best row.
-const summoner = Inputs.extract({ preset: 'x1', lines: ['14', '2'], levels: [40, 40] });
-const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
-const warlock = Profile.profileFor(HuntCycle.referenceState(Table.roleClass('14', 40), 40, { line: 14 }), 0);
-const cast = Profile.summonSkills(warlock)[0], skillRows = require('../data/Skills/Active/active.json');
-const summonRow = skillRows.find(row => row.selfId === cast.selfId), rank = summonRow.levels.find(row => row.level === cast.level);
-assert.equal(summonRow.template.name, 'Summon Kai the Cat', 'a Warlock at 40 casts Kai the Cat');
-const due = summoner.upkeep['14'][40], busy = summoner.hours['14'][40].best.busyShare;
-assert.equal(summonRow.summon.itemIdOT, rank.itemId, 'the cast and the upkeep take one crystal');
-assert.deepEqual(due.map(row => [row.id, row.what.skill, row.what.level, row.what.name]), [[rank.itemId, cast.selfId, cast.level, 'Summon Kai the Cat']]);
-assert.equal(rank.itemId, 1459, 'C crystals');
-const life = summonRow.summon.totalLifeTime / (busy * summonRow.summon.timeLostActive + (1 - busy) * summonRow.summon.timeLostIdle);
-close(due[0].perHour, 3600 * (rank.itemCount + summonRow.summon.itemConsumeSteps * rank.itemCountOT) / life, 'crystals per hunt hour from the skill data');
-// Rank 1: 1 at the cast and 4 steps of 1 over a 1,200,000 ms life lost at 500 ms a second idle, 1000 fighting.
-close(due[0].perHour, 3600 * 5 * (500 + 500 * busy) / 1200000, `5 crystals a life at busy share ${busy}`);
-assert.equal(summoner.upkeep['2'], undefined, 'a fighter line keeps no servitor');
-assert.equal(snapshot.upkeep[line], undefined, 'nor does a Bounty Hunter');
-// Below 20 the line's Mage has no summon; from 20 its Wizard casts Mew the
-// Cat, then Kat the Cat, and each of their first ranks waits 6 hours to be
-// cast again: one cast of each per 6 hours (1 and 3 D crystals).
-const early = Inputs.extract({ preset: 'x1', lines: ['14'], levels: [19, 20] });
-assert.ok(early.hours['14'][19].best, 'the line hunts at 19');
-assert.equal(early.upkeep['14'][19], undefined, 'no summon below 20');
-assert.deepEqual(early.upkeep['14'][20].map(row => [row.id, row.what.name, row.perHour]), [[1458, 'Summon Mew the Cat', 1 / 6], [1458, 'Summon Kat the Cat', 3 / 6]]);
 // The arrow of each bow grade, as the game's arrow stock names it.
 const ArrowStock = invoke('GameServer/Inventory/ArrowStock');
 assert.deepEqual(snapshot.arrowIds, { ...ArrowStock.BY_RANK });
@@ -199,7 +173,6 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
 // safety and inputs.js itself. An edit to one refuses the old snapshot, with
 // the command that builds one, in every mode that reads a snapshot.
 {
-    const DesignIncome = require('../scripts/economy-model/design-income');
     const loaded = Boot.loadedFiles();
     for (const file of ['src/GameServer/Bot/MerchantStoreConfigs.js', 'src/GameServer/Bot/Economy/CraftEligibility.js', 'src/GameServer/PrivateStoreLimits.js',
         'src/GameServer/Inventory/InventoryLimits.js', 'src/GameServer/Bot/Economy/MarketTownPolicy.js', 'src/GameServer/Bot/Economy/MarketCounters.js',
@@ -224,9 +197,15 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
         const built = childProcess.spawnSync(process.execPath, ['scripts/economy-model/inputs.js', '--preset', 'x1', '--out', path.join(scratch, 'built')], { cwd: Boot.root, encoding: 'utf8', maxBuffer: 1 << 28 });
         assert.equal(built.status, 0, built.stderr);
         const header = JSON.parse(fs.readFileSync(path.join(scratch, 'built', fs.readdirSync(path.join(scratch, 'built')).find(name => name.startsWith('inputs-x1-'))), 'utf8')).header;
-        for (const file of ['config/default.ini', 'data/ExtractableItems/extractable_items.csv', 'data/Bots/hunt/gear.json', 'data/Bots/hunt/sources.json', 'scripts/economy-model/inputs.js'])
+        for (const file of ['config/default.ini', 'data/ExtractableItems/extractable_items.csv', 'data/Bots/hunt/gear.json', 'scripts/economy-model/inputs.js'])
             assert.ok(header.sourceFiles.includes(file), `the stamp holds ${file}`);
         assert.ok(Boot.stampMatches(header), 'a fresh header matches the live data');
+        // The source gaps read data/Bots/hunt/sources.json, an input of no snapshot: no preset's stamp of one run holds it, whatever the order.
+        const two = childProcess.spawnSync(process.execPath, ['scripts/economy-model/inputs.js', '--preset', 'x10,x50', '--out', path.join(scratch, 'two')], { cwd: Boot.root, encoding: 'utf8', maxBuffer: 1 << 28 });
+        assert.equal(two.status, 0, two.stderr);
+        const stamps = fs.readdirSync(path.join(scratch, 'two')).map(name => JSON.parse(fs.readFileSync(path.join(scratch, 'two', name), 'utf8')).header.sourceFiles);
+        assert.equal(stamps.length, 2);
+        for (const files of stamps) assert.ok(!files.includes('data/Bots/hunt/sources.json'), 'no stamp of the run holds the source gaps\' file');
         // Another fingerprint, or no list of source files: refused with the build command.
         const odd = (name, change) => {
             const file = path.join(dir, name);
@@ -235,20 +214,20 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
         };
         const buildX50 = /build one: node scripts\/economy-model\/inputs\.js --preset x50/;
         odd('inputs-x50-c.json', { fingerprint: 'another' });
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), buildX50, 'a header with another fingerprint: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50'), buildX50, 'a header with another fingerprint: refused');
         fs.rmSync(path.join(dir, 'inputs-x50-c.json'));
         odd('inputs-x50-d.json', { sourceFiles: undefined });
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), buildX50, 'a header with no sourceFiles: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50'), buildX50, 'a header with no sourceFiles: refused');
         fs.rmSync(path.join(dir, 'inputs-x50-d.json'));
         // The stale one is the newest file and first by name.
         const stale = write('inputs-x50-a.json', new Date(2026, 0, 2));
         fs.appendFileSync(fares, '\n// a fare edited\n');
         const live = write('inputs-x50-b.json', new Date(2026, 0, 1));
-        assert.equal(DesignIncome.loadSnapshot(dir, 'x50').file, live, 'the snapshot whose stamp is the live one, not the newest file');
+        assert.equal(Load.loadSnapshot(dir, 'x50').file, live, 'the snapshot whose stamp is the live one, not the newest file');
         fs.rmSync(live);
         const build = /build one: node scripts\/economy-model\/inputs\.js --preset x50/;
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), build, 'no snapshot of the live data: refused');
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50', stale), build, 'a stale snapshot named on the command line: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50'), build, 'no snapshot of the live data: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50', stale), build, 'a stale snapshot named on the command line: refused');
         const baseline = path.join(scratch, 'baseline.json');
         fs.writeFileSync(baseline, '{}');
         const node = args => childProcess.spawnSync(process.execPath, args, { cwd: Boot.root, encoding: 'utf8' });
@@ -278,15 +257,15 @@ console.log(`  fallbacks: no no-grade market ${unmarketed.length} spots, walk ba
 // snapshot names exactly those spots, and the no-market one gets the C town.
 const noMarketCentre = cards.spots[0][centreAt], sharing = cards.spots.filter(row => row[centreAt][0] === noMarketCentre[0] && row[centreAt][1] === noMarketCentre[1]).map(row => String(row[0]));
 const zeroId = Object.keys(snapshot.walkBack).find(id => snapshot.walkBack[id] > 0 && !sharing.includes(id));
-const nearestMarket = Policy.nearestNoGradeMarket, walkBackHours = DesignIncome.walkBackHours;
+const nearestMarket = Policy.nearestNoGradeMarket, walkBackHours = Load.walkBackHours;
 let taken;
 try {
     Policy.nearestNoGradeMarket = spot => (spot.locX === noMarketCentre[0] && spot.locY === noMarketCentre[1] ? null : nearestMarket(spot));
-    DesignIncome.walkBackHours = (id, ...rest) => (id === zeroId ? 0 : walkBackHours(id, ...rest));
+    Load.walkBackHours = (id, ...rest) => (id === zeroId ? 0 : walkBackHours(id, ...rest));
     taken = Inputs.extract({ preset: 'x50', lines: [line, '2', caster], levels: [level, level] });
 } finally {
     Policy.nearestNoGradeMarket = nearestMarket;
-    DesignIncome.walkBackHours = walkBackHours;
+    Load.walkBackHours = walkBackHours;
 }
 assert.deepEqual(taken.fallbacks.noMarketToC, sharing, 'the spots whose centre has no no-grade market are named');
 for (const id of sharing) assert.equal(taken.tradeTowns.none[id], taken.tradeTowns.higher, `spot ${id} gets the C town`);
