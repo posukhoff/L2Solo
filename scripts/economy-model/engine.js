@@ -518,9 +518,11 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         const answer = arrivalRule(main, { event, now, pending: held && held.at, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
             hour: row || null, shotsPerHour: row?.shots || 0, huntShare: rate.huntShare });
         const at = answer !== null && typeof answer === 'object' ? answer.at : answer, kind = answer?.read ? 'situation' : 'arrived_town';
-        const next = Number.isFinite(at) && at > now ? { at, kind } : null;
+        // An answer is null (no arrival) or a finite hour: anything else is a defect of the rule, never a quiet drop.
+        if (at !== null && !Number.isFinite(at)) throw new Error(`arrival rule answered ${typeof answer === 'object' ? JSON.stringify(answer) : String(answer)} for main ${main.id} at ${now} h (${event}): neither null nor a finite hour`);
+        const next = at !== null && at > now ? { at, kind } : null;
         // An answer at or before now is dropped: the main waits for its next other event.
-        if (Number.isFinite(at) && at <= now) ledger.counters.arrivalNotAhead++;
+        if (at !== null && at <= now) ledger.counters.arrivalNotAhead++;
         pending.set(main.index, next);
         if (next !== null && !(held && held.at === at && held.kind === kind)) queue.push({ at, kind, who: main.index });
     };

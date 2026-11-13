@@ -224,6 +224,10 @@ assert.equal(JSON.stringify(main), frozen);
 const late = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: (main, state) => state.now });
 assert.equal(late.counters.arrivalNotAhead, 2, 'the start and the level-up at 2 h each answered now');
 assert.equal(late.counters.visits, 0, 'a dropped answer sends nobody');
+for (const bad of [undefined, NaN, Infinity, { at: undefined, read: true }]) {
+    assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: () => bad }),
+        new RegExp(`arrival rule answered ${typeof bad === 'object' ? '\\{' : String(bad)}.* for main 1 at 0 h \\(start\\)`), `an answer of ${JSON.stringify(bad) ?? 'undefined'} throws naming the main`);
+}
 const idle = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates: { default: { huntShare: 0, visitsPerBotHour: 0 } }, hours: 3, seed: 7, nextArrival: () => null });
 assert.equal(idle.counters.unlevelableMains, 1, 'the hunting main with no hunting share never levels; the station is not a hunting main');
 assert.equal(run(3, 40).counters.unlevelableMains, 0, 'a main that levels is not counted');
