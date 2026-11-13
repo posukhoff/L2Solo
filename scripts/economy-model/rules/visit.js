@@ -56,7 +56,8 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // fires: held ones are kept, never sold), reserve: { id, amount, cap, own } |
 // null, pieces: { selfId: { selfId, slot, grade, weapon, cap (null: nothing
 // caps it, no want is posted), capBy, caps, routes, own (units its own twin
-// holds), visitsLeft (its expected visits before it stops using the piece) } },
+// holds), visitsLeft (its expected visits before it stops using the piece),
+// pathRoute (the route path chose for it) } },
 // order: path's money queue, fares: { town: fare },
 // waitVisits (an own-twin wait still unmet at the visit after this
 // many fails, and its route is stalled for the piece: ours), ladder: { mode: 'looks' | 'paced', visitsLeft (its expected visits
@@ -66,12 +67,13 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // books it reads).
 // Returns { main, wallet, claims (a sale carries its adena, paid at the
 // meeting), stops, flows, stalled: [{ selfId, route }], obtained: [{ selfId, grade, route }], waits:
-// [{ wait, end }], gearChanged }.
+// [{ wait, end }], gearChanged, pathStale (a route path chose is gone:
+// path reads the main's aim again at its next arrival) }.
 function visit(main, view) {
     const claims = [], stops = [], obtained = [], waits = [], stalled = [];
     const flows = { npcSales: 0, npcBuys: 0, fares: 0, warehouseFees: 0 };
     const bag = { ...main.bag }, shots = { ...main.shots }, kit = { ...main.kit }, wants = { ...main.wants }, incoming = { ...main.incoming };
-    let money = main.money, weapon = main.weapon, gearChanged = false, wallet = view.twin ? view.twin.wallet : 0;
+    let money = main.money, weapon = main.weapon, gearChanged = false, pathStale = false, wallet = view.twin ? view.twin.wallet : 0;
     let wts = [...main.ads.wts], wtb = [...main.ads.wtb];
     // Claimed units per book entry (first come: the books are read once).
     const taken = new Map();
@@ -345,6 +347,15 @@ function visit(main, view) {
         const piece = { ...base, slot: row.slot };
         let want = wants[piece.selfId];
         const ownRoute = (piece.routes || []).find(option => option.route !== 'buy');
+        // A Luxury route path chose whose crystals left (no longer among the
+        // piece's routes) ends at this visit whatever its want: a line of the
+        // piece under its cap is still bought, no ladder step or route is
+        // taken, and path, read again at the main's next arrival on the book
+        // where it then stands, weighs the piece again (the want and its WTB
+        // end there when path no longer aims at it).
+        const vanished = piece.pathRoute === 'exchange' && !(piece.routes || []).some(option => option.route === 'exchange');
+        if (vanished) pathStale = true;
+        let ended = vanished;
         // A parked want opens again when its cap rose above the cap it was
         // parked at, or when its money first reaches the piece's route.
         if (want?.state === 'parked') {
@@ -357,7 +368,8 @@ function visit(main, view) {
         }
         if (want?.state === 'twin' && onShelf(piece)) { fromShelf(piece); continue; }
         // An own-twin wait seen unmet at its third visit fails: the route is
-        // stalled for the piece (source_stalled re-reads path).
+        // stalled for the piece (source_stalled re-reads path); a line of the
+        // piece under its cap is still bought at this visit.
         if (want?.state === 'twin') {
             const seen = (want.seen || 0) + 1;
             if (seen <= view.waitVisits) {
@@ -367,7 +379,8 @@ function visit(main, view) {
             waits.push({ wait: want.state, end: 'failed' });
             stalled.push({ selfId: piece.selfId, route: want.route });
             delete wants[piece.selfId];
-            continue;
+            want = undefined;
+            ended = true;
         }
         // Nothing caps a piece no route prices and no worth states: no want
         // is posted (a wait it holds still ends above).
@@ -382,6 +395,7 @@ function visit(main, view) {
             equip(piece.selfId, piece.slot);
             continue;
         }
+        if (ended) continue;
         const park = () => {
             wants[piece.selfId] = { state: 'parked', tries: want?.tries || 0, parkedCap: piece.cap, short: !!ownRoute && money < ownRoute.adena };
             waits.push({ wait: 'parkedWant', end: 'opened' });
@@ -436,7 +450,7 @@ function visit(main, view) {
         if (wants[piece.selfId]?.state === 'twin') waits.push({ wait: 'route', end: 'done' });
     }
 
-    return { main: { ...main, money, bag, shots, kit, weapon, wants, incoming, ads: { wts, wtb } }, wallet, claims, stops, flows, stalled, obtained, waits, gearChanged };
+    return { main: { ...main, money, bag, shots, kit, weapon, wants, incoming, ads: { wts, wtb } }, wallet, claims, stops, flows, stalled, obtained, waits, gearChanged, pathStale };
 }
 
 module.exports = { visit };

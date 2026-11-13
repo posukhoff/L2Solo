@@ -11,8 +11,9 @@ const { slotsConflict } = require('./worth');
 // + hours x own hour wins. Our choice: C4's manufacture-to-order stores and
 // waiting for a drop are left out. Read by path and visit at their situations; no
 // wake of its own. Pure: every price, hour and route arrives as plain data
-// in the view. Also whether a Luxury route's crystals stand (visit and the
-// KIT HOUR measure) and the kit a main could pay now (the measure).
+// in the view. Also whether a Luxury route's crystals stand (its own
+// exchange route, visit and the KIT HOUR measure) and the kit a main could
+// pay now (the measure).
 
 // How the hours of a route are charged (the design: "hours x own hour").
 // 'opportunity' (ours): hours x (own hour - the hour of the spot it would
@@ -30,8 +31,13 @@ function charge(hours, spotHour, view) {
 // made: inputs at the twin's replacement cost, plus the scroll when it lacks
 // the recipe), hours (the craft's MP hours per piece) } | null (its own twin
 // cannot craft it), exchange: { town, fare, options: [{ grade,
-// amount, price }] } | null (Luxury: the crystals of one option at their
-// known price), stalled: [route] (routes that failed twice for this piece) }.
+// amount, price (the most it pays a crystal: the dearest unit of the
+// cheapest it needs when the route is weighed; null: it takes none from a
+// line), own (its own twin's crystals of the grade), lines (the lines
+// and ads of the crystal it deals on, cheapest first) }] } | null (Luxury: a
+// route only while its crystals stand now: crystalsStanding), stalled:
+// [route] (routes that failed twice for this piece, or a Luxury route path
+// chose whose crystals left) }.
 // Returns { route, cost, adena, hours, where, routes (every priced route,
 // cheapest first), routeCost (the cheapest route that is not a player's line: the
 // cap's own route) } or null when nothing supplies the piece.
@@ -44,8 +50,9 @@ function acquire(piece, view) {
     // The own twin: no money changes hands inside the account; the wait for the craft costs the piece's use.
     if (view.twin) add('twin', 0, view.twin.hours, view.twin.cost + charge(view.twin.hours, view.ownHour, view), null, { recipeId: view.twin.recipeId });
     for (const option of view.exchange?.options || []) {
-        if (option.price === null || option.price === undefined) continue;
-        const adena = option.amount * option.price + (view.exchange.fare || 0);
+        const stand = crystalsStanding({ amount: option.amount, perCrystal: option.price }, option.own, option.lines || []);
+        if (stand.have < option.amount) continue;
+        const adena = stand.adena + (view.exchange.fare || 0);
         add('exchange', adena, 0, adena, view.exchange.town, { grade: option.grade, amount: option.amount, perCrystal: option.price });
     }
     if (!routes.length) return null;
@@ -55,12 +62,22 @@ function acquire(piece, view) {
 }
 
 // A Luxury route's crystals that stand: its own twin's (up to the amount)
-// and the lines at or under its price per crystal; left: the units a line
-// still holds. { own, have, adena }: the route stands when have >= its
-// amount; adena: what its crystals cost past its own twin's (the fare apart).
+// and the lines (cheapest first) at or under the most it pays a crystal
+// (none when no price is stated); left: the units a line still holds.
+// { own, have, adena, top }: the route stands when have >= its amount;
+// adena: what its crystals past its own twin's cost, the cheapest units
+// taken up to the amount (the fare apart); top: the price of the dearest
+// unit taken (null: none taken).
 function crystalsStanding(route, ownCrystals, lines, left = entry => entry.qty) {
     const own = Math.min(route.amount, ownCrystals || 0);
-    return { own, have: own + lines.filter(entry => entry.price <= route.perCrystal).reduce((sum, entry) => sum + left(entry), 0), adena: (route.amount - own) * route.perCrystal };
+    let have = own, adena = 0, top = null;
+    for (const entry of lines) {
+        if (!(entry.price <= route.perCrystal)) continue;
+        const units = left(entry), taken = Math.min(units, route.amount - have);
+        if (taken > 0) { adena += taken * entry.price; top = entry.price; }
+        have += units;
+    }
+    return { own, have, adena, top };
 }
 
 // The kit a main could wear by paying now: of its candidates ({ slot,

@@ -41,7 +41,7 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 {
     const view = { cap: 5000, ownHour: 1000, hourCost: 'opportunity', useHour: 100, lines: [{ price: 6000, kind: 'line', where: 'Giran' }],
         npc: [{ town: 'Giran', price: 1500, fare: 0 }], twin: { recipeId: 7, cost: 1000, hours: 2 },
-        exchange: { town: 'Giran', fare: 0, options: [{ grade: 'd', amount: 10, price: 160 }] } };
+        exchange: { town: 'Giran', fare: 0, options: [{ grade: 'd', amount: 10, price: 160, own: 0, lines: [{ id: 'd', price: 160, qty: 10 }] }] } };
     const opportunity = acquire({ selfId: 1 }, view);
     assert.equal(opportunity.route, 'twin', 'the inputs 1000 and two hours of its use: 1200');
     assert.equal(opportunity.cost, 1200);
@@ -524,6 +524,36 @@ const viewOf = (patch = {}) => ({
     assert.equal(visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }), { ...view, ownCrystals: {} }).main.kit[7], 0, 'no crystals anywhere: no exchange');
 }
 
+// A Luxury route path chose whose crystals left ends at that visit without
+// barring the route: a line of the piece at 4500 under its 90k cap is
+// bought there, nothing is stalled, and path reads the aim again at the
+// main's next arrival; with no line, no ladder step is taken.
+{
+    const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [], pathRoute: 'exchange' };
+    const line = [{ owner: 5, id: 'L5', price: 4500, qty: 1, kind: 'line' }];
+    const out = visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }),
+        viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], book: { sell: { 100: line }, buy: {}, bids: {} } }));
+    assert.deepEqual([out.main.kit[7], out.stalled, out.pathStale], [100, [], true], 'the line bought where its Luxury route left, the route not stalled');
+    // With no line its WTB stands where it was: no ladder step.
+    const held = visit(mainOf({ money: 4000 }), viewOf()).main;
+    const still = visit(held, viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }] }));
+    assert.deepEqual(still.main.ads.wtb, held.ads.wtb, 'no ladder step where its Luxury route left');
+}
+
+// Two Luxury routes weighed on the same 300 D crystals at 100 share them at
+// one visit: the first takes them, and the second is not paid with the
+// crystals at 1000 behind them, above the most its route was weighed to pay
+// a crystal (it is weighed again at the next arrival).
+{
+    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', grade: 'd', amount: 300, perCrystal: 100 };
+    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
+        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
+    const crystals = [{ owner: 5, id: 'C5', price: 100, qty: 300, kind: 'line' }, { owner: 6, id: 'C6', price: 1000, qty: 300, kind: 'line' }];
+    const out = visit(mainOf({ money: 1e6, kit: { 7: 0, 10: 0 }, wants: { 100: { state: 'route', tries: 0 }, 101: { state: 'route', tries: 0 } } }),
+        viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }, { kind: 'piece', selfId: 101, slot: 10 }], book: { sell: { 1458: crystals }, buy: {}, bids: {} } }));
+    assert.deepEqual([out.main.kit[7], out.main.kit[10], out.main.money], [100, 0, 1e6 - 30000], 'one exchange taken, none at crystals dearer than its route was weighed at');
+}
+
 // visit: a wait ends at its third visit unmet even when nothing caps the
 // piece any more (its last route stalled, no worth stated).
 {
@@ -575,6 +605,10 @@ const viewOf = (patch = {}) => ({
     let main = first.main, out;
     for (let look = 0; look < 3; look++) { out = visit(main, viewOf({ pieces, waitVisits: 2 })); main = out.main; }
     assert.deepEqual(out.stalled, [{ selfId: 100, route: 'twin' }], 'unmet at its third visit');
+    // Unmet at its third visit with a line of the piece at 1000 under its cap: the line is bought there.
+    const lined = visit(mainOf({ wants: { 100: { state: 'twin', route: 'twin', seen: 2 } } }),
+        viewOf({ pieces, waitVisits: 2, book: { sell: { 100: [{ owner: 5, id: 'L5', price: 1000, qty: 1, kind: 'line' }] }, buy: {}, bids: {} } }));
+    assert.deepEqual([lined.main.kit[7], lined.stalled], [100, [{ selfId: 100, route: 'twin' }]], 'the twin\'s wait fails and the line is bought at that visit');
 }
 
 // visit: a piece it will use for fewer than two more visits takes its route

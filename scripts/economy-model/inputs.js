@@ -295,9 +295,10 @@ function gearLadder(line, owners, gearTable, bands) {
     return out;
 }
 
-// Luxury (C4 multisell 7097, 7098 where the NPC is spawned): each item's C
-// and D crystal amounts (one row lists both; C4 takes either) and the town
-// the NPC stands in. item -> { npcId, town, c, d }.
+// Luxury (C4 multisell 7097, 7098 where the NPC is spawned): each item's D
+// crystal amount (the catalogue row lists C and D crystals; the game's bots
+// pay the D ones only) and the town the NPC stands in. item -> { npcId,
+// town, d }.
 function luxuryOptions(owners) {
     const { Data, Exchange, Towns, Enchant } = owners, out = {};
     for (const zone of Data.npcSpawns || []) for (const spawn of zone.spawns || [zone]) {
@@ -306,7 +307,7 @@ function luxuryOptions(owners) {
         const town = Towns.getClosestTown(loc.locX, loc.locY, loc.locZ)?.name || null;
         for (const row of Exchange.fetchForNpc(npcId)) {
             const amount = id => Number(row.required.find(part => Number(part.selfId) === id)?.amount) || null;
-            out[row.result.selfId] ||= { npcId, town, c: amount(Enchant.CRYSTAL_IDS.C), d: amount(Enchant.CRYSTAL_IDS.D) };
+            out[row.result.selfId] ||= { npcId, town, d: amount(Enchant.CRYSTAL_IDS.D) };
         }
     }
     return out;
