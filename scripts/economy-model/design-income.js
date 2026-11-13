@@ -20,32 +20,15 @@
 // no deep blue): today at x1 and x50 against the rule, which keeps the x1
 // share at any rate.
 
-const fs = require('fs');
 const path = require('path');
 const Boot = require('./boot');
+const Load = require('./load');
 const Weights = require('./weights');
 const { fmt } = require('./capacity');
 const { dropRule, npcKind, DESIGN_RATES } = require('./rules/dropRule');
 
-// Where inputs.js writes the snapshots by default.
-const SNAPSHOT_DIR = path.join(Boot.root, 'tmp', 'economy-model');
 const BANDS = Object.freeze([[20, 29], [30, 39], [40, 51], [52, 60], [61, 75]]);
 const ADENA = 57, SPOIL_SKILL = 254;
-
-// The snapshot of a preset whose stamp equals the live game data's
-// (Boot.stampMatches): the file named, else the first such in dir by name.
-// None: the run refuses, with the command that builds one.
-function loadSnapshot(dir, preset, file = null) {
-    const build = `node scripts/economy-model/inputs.js --preset ${preset}`;
-    const files = file ? [path.resolve(file)] : (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
-        .filter(name => name.startsWith(`inputs-${preset}-`) && name.endsWith('.json')).sort().map(name => path.join(dir, name));
-    for (const candidate of files) {
-        const snapshot = JSON.parse(fs.readFileSync(candidate, 'utf8'));
-        if (Boot.stampMatches(snapshot.header)) return { file: candidate, snapshot };
-    }
-    throw new Error(file ? `${file} is not a snapshot of the live game data (its stamp differs); build one: ${build}`
-        : `no inputs-${preset}-*.json in ${dir} is a snapshot of the live game data (${files.length} with another stamp); build one: ${build}`);
-}
 
 // The game's deep-blue penalty and spoil landing, the drop rule's arguments.
 // Needs Boot.boot().
@@ -60,21 +43,6 @@ function gameRules() {
             return landed.get(key);
         }
     };
-}
-
-// The hours a death's walk back from a spot takes: the server's own
-// WalkBack.hours (the landing town's run to the spot) over the hunt tables'
-// spot centers (data/Bots/hunt/spots.json, built with geodata). Offline there
-// is no live spot catalogue, so WalkBack's default answers 0. 0 for a spot
-// without a center.
-let walkSpots = null;
-function walkBackHours(spotId, state = {}) {
-    if (!walkSpots) {
-        const table = JSON.parse(fs.readFileSync(path.join(Boot.root, 'data', 'Bots', 'hunt', 'spots.json'), 'utf8'));
-        const at = table.spotFields.indexOf('center');
-        walkSpots = table.spots.filter(row => row[at]).map(row => ({ id: row[0], center: { locX: row[at][0], locY: row[at][1], locZ: row[at][2] } }));
-    }
-    return require('../../src/GameServer/Bot/Economy/WalkBack').hours(spotId, state, walkSpots);
 }
 
 // Expected items per kill at a spot under the design rule: { drop, spoil }
@@ -181,14 +149,14 @@ function bandHour(snapshot, band, rates, game) {
 }
 
 function main(argv) {
-    const dir = path.resolve(Boot.option(argv, 'dir', SNAPSHOT_DIR));
+    const dir = path.resolve(Boot.option(argv, 'dir', Load.SNAPSHOT_DIR));
     const presets = Boot.presetsOption(argv), startedAt = Date.now();
     Boot.boot('x1');
     const game = gameRules(), recipes = [];
     console.log('Hunting hour per bot, class-weighted, at each line\'s best spot of today\'s preset; loot at the NPC buy price (x1).');
     console.log('table = the spot table\'s hour; today and design = per-kill yields at the spot\'s spawn mix x the hour\'s kills.');
     for (const preset of presets) {
-        const { file, snapshot } = loadSnapshot(dir, preset), rates = DESIGN_RATES[preset];
+        const { file, snapshot } = Load.loadSnapshot(dir, preset), rates = DESIGN_RATES[preset];
         process.stderr.write(`[${preset}] ${file}\n`);
         const today = snapshot.header.rates;
         console.log(`\n[${preset}] design rates adena ${rates.adena} drop ${rates.drop} spoil ${rates.spoil}; today adena ${today.adena} drop ${today.drop} spoil ${today.spoil}`);
@@ -220,4 +188,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { designYields, gameRules, loadSnapshot, SNAPSHOT_DIR, walkBackHours };
+module.exports = { designYields, gameRules };

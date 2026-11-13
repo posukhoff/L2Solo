@@ -36,6 +36,7 @@ const Boot = require('./boot');
 const Capacity = require('./capacity');
 const Cohort = require('./cohort');
 const DesignIncome = require('./design-income');
+const Load = require('./load');
 const { DESIGN_RATES } = require('./rules/dropRule');
 const KitHours = require('./kit-hours');
 const common = require('../hunt-tables/common');
@@ -122,7 +123,7 @@ function hourRowWithForms(row, line, level, Table) {
 // rewardSpot of SpotValueTable):
 // spot-reward-npcs.json's spawns and adena range, with the hunt tables' town.
 function rewardSpots() {
-    const table = readJson('data/Bots/hunt/spots.json'), townAt = table.spotFields.indexOf('town');
+    const table = Load.spotCards(), townAt = table.spotFields.indexOf('town');
     const towns = new Map(table.spots.map(row => [String(row[0]), row[townAt]]));
     return new Map(readJson('data/Bots/spot-reward-npcs.json').rows.map(([id, entries, adenaMin, adenaMax]) => [String(id),
         { id, npcEntries: entries.map(([selfId, count]) => ({ selfId, count })), rewards: { adenaMin, adenaMax }, town: towns.get(String(id)) ?? null }]));
@@ -258,9 +259,9 @@ function luxuryOptions(owners) {
 }
 
 // The hours of a death's walk back from each spot (WalkBack over the hunt
-// tables' spot centers, design-income.walkBackHours): spotId -> hours.
+// tables' spot centers, Load.walkBackHours): spotId -> hours.
 function walkBack(spots) {
-    return Object.fromEntries([...spots.keys()].map(id => [id, DesignIncome.walkBackHours(id, {})]));
+    return Object.fromEntries([...spots.keys()].map(id => [id, Load.walkBackHours(id, {})]));
 }
 
 // The game's trade town of a lot (MarketTownPolicy.targetTownForItems) as
@@ -274,7 +275,7 @@ function walkBack(spots) {
 // above. Karma's town is left out (no main of the model has karma).
 function tradeTowns(itemIds) {
     const Policy = invoke('GameServer/Bot/Economy/MarketTownPolicy'), Counters = invoke('GameServer/Bot/Economy/MarketCounters');
-    const table = readJson('data/Bots/hunt/spots.json'), centerAt = table.spotFields.indexOf('center');
+    const table = Load.spotCards(), centerAt = table.spotFields.indexOf('center');
     const grade = {}, none = {}, d = [], noMarket = [];
     for (const id of itemIds) { const at = Counters.gradeOf(id); if (at !== 'none') grade[id] = at; }
     for (const row of table.spots) {

@@ -112,6 +112,7 @@ assert.equal(snapshot.twins[10].createItem, 1, 'twins below 20 are read too');
 assert.equal(snapshot.races['55'], 4, 'a Bounty Hunter is a dwarf');
 assert.equal(snapshot.crystalIds.D, 1458);
 const DesignIncome = require('../scripts/economy-model/design-income');
+const Load = require('../scripts/economy-model/load');
 const { DESIGN_RATES } = require('../scripts/economy-model/rules/dropRule');
 const designKey = keys[0], designRow = snapshot.yields[designKey];
 assert.deepEqual(snapshot.yieldsDesign[designKey], DesignIncome.designYields(snapshot, designRow.spotId, designRow.level, designRow.spoilSkill, DESIGN_RATES.x50, DesignIncome.gameRules()),
@@ -124,7 +125,17 @@ assert.ok(snapshot.yieldsDesign[designKey].drop[57] < snapshot.yields[designKey]
 const Inventory = require('../src/GameServer/Inventory/InventoryLimits');
 const Formulas = invoke('GameServer/Formulas');
 assert.deepEqual(snapshot.bags[line], { race: 4, slots: Inventory.capacity(4, 0), maxLoad: Math.round(Formulas.calcMaxLoad(45)) }, 'a dwarf\'s 100 slots and the CON 45 load');
-assert.equal(snapshot.walkBack[hour.best.spotId], DesignIncome.walkBackHours(hour.best.spotId, {}));
+assert.equal(snapshot.walkBack[hour.best.spotId], Load.walkBackHours(hour.best.spotId, {}));
+// The spot cards (data/Bots/hunt/spots.json) are parsed once per process: a whole extract after the first read finds them cached.
+{
+    const read = fs.readFileSync, cardReads = [];
+    fs.readFileSync = function (file, ...rest) { if (String(file).endsWith(path.join('hunt', 'spots.json'))) cardReads.push(file); return read.call(this, file, ...rest); };
+    try {
+        assert.equal(Load.spotCards(), Load.spotCards());
+        Inputs.extract({ preset: 'x1', lines: [line], levels: [level, level] });
+    } finally { fs.readFileSync = read; }
+    assert.deepEqual(cardReads, [], 'the spot cards are not read again');
+}
 assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a walk back');
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
 assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
@@ -172,7 +183,6 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
 // safety and inputs.js itself. An edit to one refuses the old snapshot, with
 // the command that builds one, in every mode that reads a snapshot.
 {
-    const DesignIncome = require('../scripts/economy-model/design-income');
     const loaded = Boot.loadedFiles();
     for (const file of ['src/GameServer/Bot/MerchantStoreConfigs.js', 'src/GameServer/Bot/Economy/CraftEligibility.js', 'src/GameServer/PrivateStoreLimits.js',
         'src/GameServer/Inventory/InventoryLimits.js', 'src/GameServer/Bot/Economy/MarketTownPolicy.js', 'src/GameServer/Bot/Economy/MarketCounters.js',
@@ -208,20 +218,20 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
         };
         const buildX50 = /build one: node scripts\/economy-model\/inputs\.js --preset x50/;
         odd('inputs-x50-c.json', { fingerprint: 'another' });
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), buildX50, 'a header with another fingerprint: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50'), buildX50, 'a header with another fingerprint: refused');
         fs.rmSync(path.join(dir, 'inputs-x50-c.json'));
         odd('inputs-x50-d.json', { sourceFiles: undefined });
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), buildX50, 'a header with no sourceFiles: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50'), buildX50, 'a header with no sourceFiles: refused');
         fs.rmSync(path.join(dir, 'inputs-x50-d.json'));
         // The stale one is the newest file and first by name.
         const stale = write('inputs-x50-a.json', new Date(2026, 0, 2));
         fs.appendFileSync(fares, '\n// a fare edited\n');
         const live = write('inputs-x50-b.json', new Date(2026, 0, 1));
-        assert.equal(DesignIncome.loadSnapshot(dir, 'x50').file, live, 'the snapshot whose stamp is the live one, not the newest file');
+        assert.equal(Load.loadSnapshot(dir, 'x50').file, live, 'the snapshot whose stamp is the live one, not the newest file');
         fs.rmSync(live);
         const build = /build one: node scripts\/economy-model\/inputs\.js --preset x50/;
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50'), build, 'no snapshot of the live data: refused');
-        assert.throws(() => DesignIncome.loadSnapshot(dir, 'x50', stale), build, 'a stale snapshot named on the command line: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50'), build, 'no snapshot of the live data: refused');
+        assert.throws(() => Load.loadSnapshot(dir, 'x50', stale), build, 'a stale snapshot named on the command line: refused');
         const baseline = path.join(scratch, 'baseline.json');
         fs.writeFileSync(baseline, '{}');
         const node = args => childProcess.spawnSync(process.execPath, args, { cwd: Boot.root, encoding: 'utf8' });
@@ -251,15 +261,15 @@ console.log(`  fallbacks: no no-grade market ${unmarketed.length} spots, walk ba
 // snapshot names exactly those spots, and the no-market one gets the C town.
 const noMarketCentre = cards.spots[0][centreAt], sharing = cards.spots.filter(row => row[centreAt][0] === noMarketCentre[0] && row[centreAt][1] === noMarketCentre[1]).map(row => String(row[0]));
 const zeroId = Object.keys(snapshot.walkBack).find(id => snapshot.walkBack[id] > 0 && !sharing.includes(id));
-const nearestMarket = Policy.nearestNoGradeMarket, walkBackHours = DesignIncome.walkBackHours;
+const nearestMarket = Policy.nearestNoGradeMarket, walkBackHours = Load.walkBackHours;
 let taken;
 try {
     Policy.nearestNoGradeMarket = spot => (spot.locX === noMarketCentre[0] && spot.locY === noMarketCentre[1] ? null : nearestMarket(spot));
-    DesignIncome.walkBackHours = (id, ...rest) => (id === zeroId ? 0 : walkBackHours(id, ...rest));
+    Load.walkBackHours = (id, ...rest) => (id === zeroId ? 0 : walkBackHours(id, ...rest));
     taken = Inputs.extract({ preset: 'x50', lines: [line, '2', caster], levels: [level, level] });
 } finally {
     Policy.nearestNoGradeMarket = nearestMarket;
-    DesignIncome.walkBackHours = walkBackHours;
+    Load.walkBackHours = walkBackHours;
 }
 assert.deepEqual(taken.fallbacks.noMarketToC, sharing, 'the spots whose centre has no no-grade market are named');
 for (const id of sharing) assert.equal(taken.tradeTowns.none[id], taken.tradeTowns.higher, `spot ${id} gets the C town`);
