@@ -514,9 +514,13 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             pendingLevel.set(main.index, null);
             return;
         }
-        // One exp over the next level's start, so the level is reached however the hour's exp rounds;
-        // counted from the hour it hunts again (a visit's onward stops keep it in town).
-        const need = expAt(view, main.level + 1) - main.exp + 1, at = Math.max(now, main.since) + Math.max(0, need) / (exp * share);
+        // The level is reached when the exp reaches the next level's start (as levelOf reads it), counted
+        // from the hour its exp stands at (its last credited hunt, or the hour it hunts again after a
+        // visit's onward stops): a situation reads the main as it stands, not hunted to now.
+        const at = main.since + Math.max(0, expAt(view, main.level + 1) - main.exp) / (exp * share);
+        // A level not reached before it leaves is not reached on its way: the arrival's visit schedules it again.
+        const trip = pending.get(main.index);
+        if (trip && trip.departs !== null && at > trip.departs) { pendingLevel.set(main.index, null); return; }
         pendingLevel.set(main.index, at);
         if (at !== held) queue.push({ at, kind: 'level_up', who: main.index });
     };
@@ -542,6 +546,8 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         if (at !== null && at <= from) ledger.counters.arrivalNotAhead++;
         pending.set(main.index, next);
         if (next !== null && !(held && held.at === at && held.kind === kind)) queue.push({ at, kind, who: main.index });
+        // A departure set or moved after the level was scheduled: the level counts hunting hours only.
+        if ((next?.departs ?? null) !== (held?.departs ?? null)) scheduleLevel(main, now);
     };
     // Hunting from the main's last situation to now, committed: to the hour it
     // left its spot when it is on its way (departs), and none while it is in

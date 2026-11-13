@@ -274,28 +274,28 @@ const levelReads = (share, shots, hours, atHour = null) => {
     Engine.simulate({ view, accounts: [accounts[1]], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
     return read;
 };
-// At share 2 (a kit making twice the row's kills) it is read at 5.5 hours, never at the row's 11.
+// At share 2 (a kit making twice the row's kills) it is read at 5 hours, never at the row's 10.
 {
     const read = levelReads(2, [], 8), first = read.find(([, level]) => level === 26);
-    assert.ok(first && Math.abs(first[0] - 5.5) < 1e-9, `the level read at 5.5 hours: ${JSON.stringify(read)}`);
+    assert.ok(first && Math.abs(first[0] - 5) < 1e-9, `the level read at 5 hours: ${JSON.stringify(read)}`);
 }
 // A fighter under its reference kit (share 0.5, its kit hour stating its
-// soulshot and no Blessed Spiritshots) reaches the level at 22 hours and is
+// soulshot and no Blessed Spiritshots) reaches the level at 20 hours and is
 // read there once: never at the reference kit's hour through a shot it cannot fire.
 {
     const read = levelReads(0.5, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }], 30);
     assert.equal(read.length, 1, `one level gained, one read: ${JSON.stringify(read)}`);
-    assert.ok(read[0][1] === 26 && Math.abs(read[0][0] - 22) < 1e-9, `the level read at 22 hours: ${JSON.stringify(read)}`);
+    assert.ok(read[0][1] === 26 && Math.abs(read[0][0] - 20) < 1e-9, `the level read at 20 hours: ${JSON.stringify(read)}`);
 }
 // The same fighter gets the armour in a deal at hour 4 (2 exp in, share 1
-// from then): the 9 exp left take 9 hours, so the level is read at 13
-// hours, once, not at the 22 scheduled under the old kit.
+// from then): the 8 exp left take 8 hours, so the level is read at 12
+// hours, once, not at the 20 scheduled under the old kit.
 {
     const read = levelReads(0.5, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }], 20, (context, at) => {
         if (at === 4) context.commit(0, at, main => ({ ...main, kit: { ...main.kit, 10: ARMOR_WORN } }), 'recipe_wanted');
     });
     assert.equal(read.length, 1, `one level gained, one read: ${JSON.stringify(read)}`);
-    assert.ok(read[0][1] === 26 && Math.abs(read[0][0] - 13) < 1e-9, `the level read at 13 hours: ${JSON.stringify(read)}`);
+    assert.ok(read[0][1] === 26 && Math.abs(read[0][0] - 12) < 1e-9, `the level read at 12 hours: ${JSON.stringify(read)}`);
 }
 // A weaker kit's goal arrival follows its kill share: the main without the
 // armour aims at it (a path piece it can buy for 20000) and, firing its
@@ -495,9 +495,9 @@ const levelReads = (share, shots, hours, atHour = null) => {
 // at h8.5, the walk and a gatekeeper hop there and one back after it sets
 // out, the 60 shots it left with unfired. A line of its shot raised at h8,
 // while it is on its way, raises no offer event and leaves the visit's hour
-// and town as they were. A level-up on the way (its exp reached at h7.2,
-// the level read at h8.2) does not turn it back: the trip it left for is
-// not asked again, and it buys in TownD as planned.
+// and town as they were. A level reached on its spot at h7.2, before it sets
+// out, is read there once and none on the way: the trip it left for is not
+// asked again, and it buys in TownD as planned.
 {
     const Mains = require('../scripts/economy-model/mains');
     const s0 = levels.map(level => [`s0@${level}`, yields]);
@@ -544,12 +544,15 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const posted = runWith({ postAt: 8 });
     assert.equal(posted.offers, 0, 'a main on its way to a seller is not woken by the line');
     assert.deepEqual([posted.visit.at, posted.visit.towns], [plain.visit.at, plain.visit.towns], 'a line raised on its way: the visit\'s hour and town unchanged');
-    // Level 26 starts at 26e9 exp: at 1 exp an hour it is reached at h7.2, read one exp over it at h8.2.
+    // Level 26 starts at 26e9 exp: at 1 exp an hour it is reached and read at h7.2, on its spot.
     const leveled = runWith({ exp: 26e9 - 7.2 });
-    assert.ok(leveled.levelUps.some(at => at > 7.8 && at < leveled.planned), `a level-up on the way: ${JSON.stringify(leveled)}`);
-    assert.ok(!leveled.asked.some(at => at > 7.8 && at < leveled.planned), `the trip it left for is not asked again on its way: ${JSON.stringify(leveled.asked)}`);
-    assert.deepEqual([leveled.visit.at, leveled.visit.towns, leveled.visit.held > 0, leveled.visit.bought > 0], [plain.visit.at, ['TownD'], true, true],
-        `a level-up on the way: it still arrives in TownD as planned and buys: ${JSON.stringify(leveled.visit)}`);
+    assert.deepEqual(leveled.levelUps.filter(at => at < leveled.planned).map(at => Math.round(at * 100) / 100), [7.2], `level 26 read once on its spot, none on the way: ${JSON.stringify(leveled)}`);
+    // It sets out the walk and two hops before its arrival (the level read moves that hour by a float's rounding).
+    const left = leveled.planned - 0.5 - 2 * config.hopHours;
+    assert.ok(!leveled.asked.some(at => at > left + 1e-9 && at < leveled.planned), `the trip it left for is not asked again on its way: ${JSON.stringify(leveled.asked)}`);
+    near(leveled.visit.at, plain.visit.at, 'a level-up before it sets out: it arrives as planned');
+    assert.deepEqual([leveled.visit.towns, leveled.visit.held > 0, leveled.visit.bought > 0], [['TownD'], true, true],
+        `a level-up before it sets out: it still arrives in TownD as planned and buys: ${JSON.stringify(leveled.visit)}`);
 }
 
 // A D shooter out of shots with no seller standing anywhere stays out (no
