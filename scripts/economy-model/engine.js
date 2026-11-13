@@ -523,7 +523,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         const { main: next, delta } = plane ? huntDesign({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main), plane.firing(main), plane.kills(main))
             : hunt({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main));
         Ledger.recordHunt(ledger, next, delta);
-        if (plane) plane.hunt(next, delta, now);
+        if (plane) plane.hunt(next, delta);
         return next;
     };
 
@@ -581,10 +581,10 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         }
     }
     for (let i = 0; i < mains.length; i++) if (!mains[i].station) mains[i] = huntTo(mains[i], hours);
-    if (!plane) return Ledger.build(ledger, { mains, hours, events, inputs, view });
+    if (!plane) return Ledger.build(ledger, { mains, hours, events, inputs });
     const report = plane.finish(hours, mains);
-    return { ...Ledger.build(ledger, { mains, hours, events, inputs, view, held: report.money }), design: report.design };
+    return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: report.money }), design: report.design };
 }
 
-module.exports = { viewOf, hunt, huntDesign, visit, errands, sellerOf, mainOf, simulate, levelOf, bandOf, wholeCount, heap, spotRowOf, huntExp, hourOf, shotOf,
+module.exports = { viewOf, hunt, huntDesign, visit, errands, sellerOf, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
     killMixCorrection, designAdenaFactor, designYieldRows, formOf, rowIn, isGear, isWeapon, expAt, SHOT_LINE_HOURS };

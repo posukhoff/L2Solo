@@ -169,4 +169,4 @@ function fresh({ count, seed = 1 }, snapshot) {
     return { accounts, source: `fresh ${count} accounts at the seeder's levels, class weights`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 
-module.exports = { fromSave, savedBots, synthetic, fresh, seederLevel, lineOf, linesByClass, STATION_ACCOUNT_PREFIX, MERCHANT_ACTIVITY };
+module.exports = { fromSave, savedBots, synthetic, fresh, lineOf, linesByClass, STATION_ACCOUNT_PREFIX, MERCHANT_ACTIVITY };

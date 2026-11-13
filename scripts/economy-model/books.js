@@ -6,7 +6,7 @@
 // instance holds the mains' WTS and WTB ads under one name (global until
 // the regional chat). Read by the
 // rules as plain data ({ town: { sell: { item: [entry] }, buy, bids } }, an
-// entry { owner, id, price, qty }); written only by the engine's commit of an
+// entry { owner, id, price, qty }); written only by the design plane's commit of an
 // account's decision, which replaces all the account's entries at once.
 // Claims are first come: the event that reads a line first takes it.
 
