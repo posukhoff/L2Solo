@@ -726,12 +726,6 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     const scrollReached = (id, from, now, where = null) => { const grade = shotScrollGrade(id); if (grade) firstAt(stats.gates.scroll, grade, now, where ? { from, where } : { from }); };
     // Crafter mains already in a grade at the start opened its first gate at hour 0.
     for (const account of accounts) if (account.twin) for (const [grade, from] of grades) if (account.level >= from) firstAt(stats.gates.crafter, grade, 0);
-    const hoursToGrade = main => {
-        const next = grades.find(([, from]) => from > main.level), row = Engine.spotRowOf(view, main), share = rateOf(main.band).huntShare;
-        const exp = row ? Engine.huntExp(main, row, 1) : 0;
-        if (!next || !(exp > 0) || !(share > 0)) return 0;
-        return Math.max(0, Engine.expAt(view, Math.min(next[1], view.maxLevel)) - main.exp) / (exp * share);
-    };
     const markMp = (twin, now) => { stats.mp.available += twin.regen * Math.max(0, now - twin.mpFrom); return { ...twin, mpFrom: now }; };
 
     // The rules' view of an account's twin at a wake.
@@ -740,7 +734,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         const account = accounts[index], twin = seatAt ? { ...account.twin, town: seatAt } : account.twin, main = mains[index];
         return { now, self: index, place: seatAt ? { town: null, twinTown: seatAt } : { town: account.lastTown, twinTown: twin.town }, books: books.towns, memory: account.memory, persona: account.persona,
             config, twin, game, npcSell: game.npcByTown[twin.town] || {}, crystalRoute: game.routeByTown[twin.town] || {}, crystalReach: game.reachByTown[twin.town] || {},
-            applied, hoursToGrade: hoursToGrade(main), fares: view.fares, rankRecipes, ads: side.adsBook(seatAt),
+            applied, hoursToGrade: side.hoursToGrade(main), fares: view.fares, rankRecipes, ads: side.adsBook(seatAt),
             own: config.ownUseFirst ? side.ownNeeds(index) : null };
     };
 
@@ -1078,7 +1072,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         const twin = accounts[index].twin;
         return twin ? Workshop.ownCraft({ twin, game, npcSell: game.npcByTown[twin.town] || {}, crystalReach: game.reachByTown[twin.town] || {}, memory: accounts[index].memory, books: books.towns, self: index }, selfId) : null;
     };
-    side = Mains.mainsSide({ snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, shotGrade, hoursToGrade,
+    side = Mains.mainsSide({ snapshot, game, config, view, mains, accounts, books, stats, put, wakeAt, seed, rateOf, gradeOfLevel, grades, shotGrade,
         depositFee: DEPOSIT_FEE, kitHours, rearrive, commit, commitVisit, claimOnTwin, wait, ownCraft, tradeTownsOf });
 
     // At the start: the share of mains, per grade of the shot their spot row

@@ -274,6 +274,32 @@ const shareKit = (share, shots) => ({ ...kitHoursOf(() => 500, () => shots, (lin
     const first = read.find(([, level]) => level === 26);
     assert.ok(first && Math.abs(first[0] - 5.5) < 1e-9, `the level read at 5.5 hours: ${JSON.stringify(read)}`);
 }
+// A weaker kit's goal arrival follows its kill share: the main without the
+// armour aims at it (a path piece it can buy for 20000) and, firing its
+// soulshot, earns toward it at its worn kit's kills, so at share 0.5
+// goal_affordable comes after twice the hunting hours it comes after at
+// share 1 (both less the walk to town), and its next grade after twice the hours.
+{
+    const Mains = require('../scripts/economy-model/mains');
+    const arrivalAt = share => {
+        const world = keptKit(snapshot), view = Engine.viewOf(world, { npcPrices: 'x1' }), mainsSide = Mains.mainsSide;
+        let side = null, ctx = null;
+        Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
+        try {
+            Engine.simulate({ view, accounts: [{ ...accounts[1], money: 0, shots: { [SSD]: 1e6 } }], bands, rates, hours: 0, seed: 1, nextArrival: arrivals,
+                design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }]) }) });
+        } finally { Mains.mainsSide = mainsSide; }
+        const main = ctx.mains[0];
+        ctx.accounts[0] = { ...ctx.accounts[0], market: { ...ctx.accounts[0].market, path: { pieces: [{ selfId: ARMOR_WORN, slot: 10, route: 'npc', cost: 20000 }] }, wants: {} } };
+        const at = side.nextArrival(main, { event: 'start', now: main.since, huntShare: 1, roll: 0.5 });
+        return { hunting: at - main.since - 2 * world.walkBack.s1, reason: ctx.accounts[0].market.tripReason, toGrade: side.hoursToGrade(main), fired: side.firingOf(main)?.id ?? null };
+    };
+    const half = arrivalAt(0.5), whole = arrivalAt(1);
+    assert.deepEqual([half.reason, whole.reason], ['goal_affordable', 'goal_affordable'], 'the goal is the arrival');
+    assert.ok(whole.hunting > 0 && whole.toGrade > 0 && half.fired === SSD, `hours stated, firing its shot: ${JSON.stringify([half, whole])}`);
+    near(half.hunting, 2 * whole.hunting, 'half the kills: twice the hunting hours to the goal');
+    near(half.toGrade, 2 * whole.toGrade, 'half the kills: twice the hours to its next grade');
+}
 // (3) A fighter fires its soulshot at its row: one hunting hour credits the
 // row (1000 adena, 1 exp) and fires its 50 shots.
 {
