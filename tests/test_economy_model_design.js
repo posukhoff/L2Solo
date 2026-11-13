@@ -359,7 +359,7 @@ const runHeld = (world, kitHours, account, hours) => {
     const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
-    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'], hubKnown: false };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'] };
     const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], shots: { [SSD]: 300 } }], bands, rates, hours: 24, seed: 5, nextArrival: arrivals,
         design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
     const m = out.design.market;
@@ -733,13 +733,10 @@ assert.equal(armed.delta.shotsUsed, 50);
 // Towns A and B, 100 a fare each way. The second main hunts a spot whose
 // respawn town is A and drops 500 of a material an hour (5 at the NPC); the
 // Bounty Hunter's twin, seated in B, holds a buy line of 1000 of it at 60
-// (its workshop's answer stands in for the market here). tripTown
-// 'by_gain': a main that knows B's book (its own twin sits in B: twinSeat
-// 'hub' seats a twin in a hub though its main resupplies in A) goes there
-// and sells on the line; at a bid of 5 (the NPC's price) it never does.
-// hubKnown: a main that never saw B's book bets on its own first price for
-// the material (25) when that beats the trip; without hubKnown it never
-// learns of B. Money and goods close throughout.
+// (its workshop's answer stands in for the market here). A main stands in
+// A: a buy line in B at 60 (twinSeat 'hub' seats a twin in a hub though its
+// main resupplies in A) does not send it there; it sells its stock to the
+// NPC in A, at a bid of 60 as at a bid of 5. Money and goods close throughout.
 {
     const Workshop = require('../scripts/economy-model/rules/workshop');
     const MAT = 1900;
@@ -755,7 +752,7 @@ assert.equal(armed.delta.shotsUsed, 50);
             npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'A', price: 300 }], [SWORD]: [{ town: 'A', price: 4000 }] } } };
         // A line that starts at its known price and barely steps (1000 looks to its cap).
         const view = Engine.viewOf(world, { npcPrices: 'x1' });
-        const config = { ...Design.DESIGN, tripTown: 'by_gain', hubTowns: ['B'], crafterPersona: { looksToFloor: 1000, buyerStart: 1 }, ...patch };
+        const config = { ...Design.DESIGN, hubTowns: ['B'], crafterPersona: { looksToFloor: 1000, buyerStart: 1 }, ...patch };
         const real = Workshop.workshop;
         Workshop.workshop = seen => {
             const out = real(seen);
@@ -772,17 +769,13 @@ assert.equal(armed.delta.shotsUsed, 50);
             return { design: out.design, first: game.firstPrice[MAT] };
         } finally { Workshop.workshop = real; }
     };
-    const pair = { twinSeat: 'hub', hubKnown: false, crafterShare: 0.5 };
-    const sold = runHub({ bid: 60, config: pair }).design;
-    assert.equal(sold.crafters.byTown.B, 2, 'both twins sit in the hub');
-    assert.ok(sold.market.trips.hub_trip >= 1 && sold.market.visits.hub.hub_trip >= 1, JSON.stringify(sold.market.trips));
-    assert.ok(sold.market.stock.hubLines > 0, JSON.stringify(sold.market.stock));
-    const junk = runHub({ bid: 5, config: pair }).design;
-    assert.deepEqual([junk.market.trips.hub_trip, junk.market.visits.hub, junk.market.stock.hubLines], [undefined, {}, 0], 'a bid at the NPC price: no hub visit');
-    const bet = runHub({ bid: 60, config: { hubKnown: true, crafterShare: 0 } });
-    assert.equal(bet.first, 25, 'its own first price of the material');
-    assert.ok(bet.design.market.visits.hub.hub_trip >= 1, `a bet on 25 a unit: ${JSON.stringify(bet.design.market.visits)}`);
-    assert.deepEqual(runHub({ bid: 60, config: { hubKnown: false, crafterShare: 0 } }).design.market.visits.hub, {}, 'it never learns of B');
+    const pair = { twinSeat: 'hub', crafterShare: 0.5 };
+    for (const bid of [60, 5]) {
+        const out = runHub({ bid, config: pair }).design;
+        assert.equal(out.crafters.byTown.B, 2, 'both twins sit in the hub');
+        assert.deepEqual([out.market.visits.hub, out.market.stock.hubLines], [{}, 0], `a buy line in B at ${bid}: its main never goes there`);
+        assert.ok(out.market.stock.npc > 0, `the stock goes to the NPC in A: ${JSON.stringify(out.market.stock)}`);
+    }
 }
 
 // A party member's exp an hour is the game's share of the party's kills

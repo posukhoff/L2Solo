@@ -6,12 +6,8 @@
 // come; a want with no line becomes a WTB, or its route names another town.
 // Gear: a standing WTB it can reach, else its own WTS (an ad met by a
 // meeting), which at its floor goes to the NPC or a crystallizer's bid.
-// Stock: a crafter's buy line (any amount) or a WTB, else the NPC; with
-// stockSale 'accumulate' (ours) a thing whose known price in another town
-// is above the NPC's goes to the account warehouse instead of the NPC (up
-// to the units that price's line takes) and is sold at a visit where a line
-// takes it, and a kept thing goes to the
-// NPC at its third visit without a known price above the NPC. Then the
+// Stock: a crafter's buy line (any amount) or a WTB, else the NPC, where
+// the main stands. Then the
 // money queue: the refill reserve and path's pieces in path order, each
 // from a line at or under its cap, else its WTB, which after two looks at
 // its cap takes the cap's own route or is parked; its own twin's craft and a
@@ -33,9 +29,6 @@ const { hash, mulberry } = require('../../hunt-tables/common');
 
 const isGear = item => /^(Weapon|Armor)/.test(item?.kind || '');
 const isShot = item => item?.kind === 'Other.Shot';
-// A kept thing goes to the NPC at this visit without a known price above the
-// NPC's (the design's lots: "after three looks").
-const KEEP_LOOKS = 3;
 
 // The best crystallizer bid per crystal of a grade it reaches (its own
 // twin's included).
@@ -54,10 +47,6 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // npcSell: { item: price } in town, known: { item: price }, firstPrice,
 // deposit: { item: count }, depositFee, twin: { wallet, escrow, inputs (the
 // adena its workshop's next batches take), workshopMoney } | null, keepRule,
-// stockSale: 'where_it_stands' | 'accumulate', stash: { item: count } (the
-// stock its account warehouse keeps for sale), stashLooks: { item: visits
-// it was kept without a known price above the NPC }, knownBids: { item:
-// { price, qty }: the dearest buy line it knows in another town },
 // ahead: [{ selfId, slot }] (its next grade's kit, one a slot), surplus:
 // { item: count } (its twin's warehouse stock the workshop no longer uses),
 // firing (the shot it fires), fires (the ids of the shots its worn weapon
@@ -71,10 +60,10 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // left in its grade) }, buyerNoSeller: 'ladder' | 'standing', ownCrystals:
 // { crystalId: units its own twin holds } }; a piece may
 // carry noSeller (no line, ad, NPC, exchange or own twin supplies it in the
-// towns its account knows).
+// books it reads).
 // Returns { main, wallet, claims (a sale carries its adena, paid at the
 // meeting), stops, flows, stalled: [{ selfId, route }], obtained: [{ selfId, grade, route }], waits:
-// [{ wait, end }], gearChanged, stash, stashLooks (the kept stock after the visit) }.
+// [{ wait, end }], gearChanged }.
 function visit(main, view) {
     const claims = [], stops = [], obtained = [], waits = [], stalled = [];
     const flows = { npcSales: 0, npcBuys: 0, fares: 0, warehouseFees: 0 };
@@ -154,16 +143,10 @@ function visit(main, view) {
     }
 
     // Stock to the dearest buy line or WTB at or above the NPC's price; the
-    // rest to the NPC, or with accumulate to the account warehouse while a
-    // town it knows bids above the NPC, up to the units that bid takes (the
-    // deposit fee per stack for units it brings; what the warehouse kept
-    // stays there until its third visit without such a price). The
-    // warehouse's stock is on offer at every visit.
+    // rest to the NPC.
     // A shot its worn weapon fires stays in the bag whatever kind it buys this
     // visit (firing); only the shots it cannot fire go to the NPC.
     const fires = new Set(view.fires || []), fireable = id => id === view.firing || fires.has(id);
-    const accumulate = view.stockSale === 'accumulate', stash = {}, stashLooks = {};
-    if (accumulate) for (const [key, count] of Object.entries(view.stash || {})) if (count > 0) add(bag, Number(key), count);
     for (const key of Object.keys(bag)) {
         const id = Number(key), item = view.items[id], count = bag[id] || 0;
         if (isGear(item) || !(count > 0)) continue;
@@ -178,19 +161,6 @@ function visit(main, view) {
             rest -= units;
         }
         let gone = count - rest;
-        if (accumulate && rest > 0) {
-            // Kept only up to the units the known bid takes (what the
-            // warehouse holds first); the units beyond it go to the NPC here.
-            const bid = view.knownBids?.[id], above = (bid?.price || 0) > (item?.npcBuy || 0), looks = above ? 0 : (view.stashLooks?.[id] || 0) + 1;
-            const room = above ? Math.min(rest, bid.qty) : rest, kept = Math.min(room, view.stash?.[id] || 0), brought = above ? room - kept : 0;
-            let keep = above || looks < KEEP_LOOKS ? kept : 0;
-            if (brought > 0 && money >= view.depositFee) {
-                money -= view.depositFee; flows.warehouseFees -= view.depositFee;
-                stops.push({ kind: 'warehouse', target: 'stash', items: [{ selfId: id, count: brought }] });
-                keep += brought;
-            }
-            if (keep > 0) { stash[id] = keep; stashLooks[id] = looks; rest -= keep; gone += keep; }
-        }
         // An item no NPC buys stays in the bag, unsold.
         if (rest > 0 && toNpc(id, rest)) gone += rest;
         add(bag, id, -gone);
@@ -475,8 +445,7 @@ function visit(main, view) {
         if (wants[piece.selfId]?.state === 'twin') waits.push({ wait: 'route', end: 'done' });
     }
 
-    return { main: { ...main, money, bag, shots, kit, weapon, wants, incoming, shotWait, ads: { wts, wtb } }, wallet, claims, stops, flows, stalled, obtained, waits, gearChanged,
-        stash: accumulate ? stash : view.stash || {}, stashLooks: accumulate ? stashLooks : view.stashLooks || {} };
+    return { main: { ...main, money, bag, shots, kit, weapon, wants, incoming, shotWait, ads: { wts, wtb } }, wallet, claims, stops, flows, stalled, obtained, waits, gearChanged };
 }
 
 module.exports = { visit };

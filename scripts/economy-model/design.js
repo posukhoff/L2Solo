@@ -154,7 +154,7 @@ const DESIGN = Object.freeze({
     // markets (Gludio, Dion: weighed by the account's own rule), C and above
     // in Giran; or a list of towns in order (the
     // model before: ['Giran'], the design's notes naming Giran the hub).
-    // Trip weighs them (hubKnown) and a twin sits in one with twinSeat 'hub'.
+    // A twin sits in one with twinSeat 'hub'.
     hubTowns: 'by_grade',
     // A scroll the account's own workshop decided to add counts in its main's
     // occupation at the workshop's cap for it, and occupation is re-chosen
@@ -243,36 +243,10 @@ const DESIGN = Object.freeze({
     // the gain per hunting hour times the hours it expects to stay there
     // beats the move's fare and extra walk hours at its own hour.
     occupationAtTown: true,
-    // Which town a trip goes to. 'nearest' (the model before): the respawn
-    // town of its spot. 'by_gain' (ours; C4: junk to the nearest NPC, stock
-    // worth more than the NPC pays sold in stacks in the hub): the nearest or
-    // a town it knows a book of (one its main visited, as it saw it then; its
-    // twin's town; a hub with hubKnown), by what its stock sells for there above the nearest
-    // town's best price plus what its wants cost less there, minus the fare
-    // there and back and hopHours each way at its own hour; the gain of such
-    // a trip turning positive is a situation of its own (hub_trip).
-    tripTown: 'by_gain',
-    // Which towns trip weighs besides those it knows a book of. false (the
-    // model before): none. true (ours, in the spirit of the design's
-    // knowledge rule: the game is known to all as a wiki, prices are not):
-    // every town of hubTowns, even one whose book the account never saw; such
-    // a hub's expected price of a thing is the main's own first price for it
-    // (its last deal, else the first price), a bet its visit's book replaces.
-    // Junk (best price known or expected the NPC's) never pays for a trip.
-    hubKnown: true,
     // Unsaid: ours. The hours of one gatekeeper hop between two towns (the
     // walk to the gatekeeper and through the town: teleports are instant and
     // the snapshot holds no walk inside a town).
     hopHours: 0.1,
-    // Where stock is sold. 'where_it_stands' (the first version: a line or
-    // WTB in the town it visits, else the NPC). 'accumulate' (ours, the
-    // design's deferred lots brought forward): a thing whose known price
-    // somewhere (a book it knows of another town) is above the NPC's and that
-    // the town it visits does not buy goes to the account warehouse (the
-    // deposit fee per stack) and is sold at a visit where a line takes it; a
-    // thing kept through three visits without a known price above the NPC
-    // goes to the NPC.
-    stockSale: 'accumulate',
     // A buyer twin. The design defers a second twin (it comes back with the
     // seller twins); true is ours, pending the maintainer: a crafter account
     // opens a second seated character, of a race other than the dwarf (its
@@ -315,12 +289,8 @@ const READINGS = Object.freeze({
     // text: the data as it is.
     luxuryCrystallizes: Object.freeze({ text: true, ours: false }),
     occupationAtTown: Object.freeze({ text: false, ours: true }),
-    // text: the model before (the design names trip's question, not how the town is chosen).
-    tripTown: Object.freeze({ text: 'nearest', ours: 'by_gain' }),
-    hubKnown: Object.freeze({ text: false, ours: true }),
     // text: the model before (the design does not say how long a refill lasts).
     refill: Object.freeze({ text: 'last_outing', ours: 'outing' }),
-    stockSale: Object.freeze({ text: 'where_it_stands', ours: 'accumulate' }),
     buyerTwin: Object.freeze({ text: false, ours: true }),
     deathArrival: Object.freeze({ text: false, ours: true }),
     pathAim: Object.freeze({ text: 'best_priced', ours: 'affordable' }),
@@ -601,7 +571,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         gates: { crafter: {}, scroll: {}, recipe: {}, crystal: {}, own: {}, sold: {}, reach10: {}, reach50: {} },
         pieces: {}, entries: {}, materials: { own: 0, bought: 0, npc: 0 }, crystals: { bids: 0, own: 0, npcRoute: 0, used: 0 },
         recipes: {}, margins: {}, marginHour: {}, waits: Object.fromEntries(WAITS.map(kind => [kind, wait()])), counters: { wakes: 0, reseats: 0, failedCrafts: 0,
-            gearCapped: 0, shelfFull: 0, shotsOwn: 0, shotsLine: 0, shotsNpc: 0, deposits: 0, stintsKept: 0, stintsUnfilled: 0, twinToTwin: 0, twinToNpc: 0, unseatedWakes: 0, firstSeats: 0, buyerTwins: 0, bookRowsDropped: 0, booksForgotten: 0 },
+            gearCapped: 0, shelfFull: 0, shotsOwn: 0, shotsLine: 0, shotsNpc: 0, deposits: 0, stintsKept: 0, stintsUnfilled: 0, twinToTwin: 0, twinToNpc: 0, unseatedWakes: 0, firstSeats: 0, buyerTwins: 0 },
         stopped: new Set(), botToBot: 0, botToBotHour: 0,
         // The market of mains: pieces obtained by route and grade, trips by
         // their situation, meetings, the cap-against-floor count over
@@ -612,7 +582,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         visits: { byBand: {}, hub: {}, botHours: {} },
         // Stock sold to lines in the nearest town and in a hub, and to the
         // NPC (adena); units its mains put in the warehouse to sell later.
-        stock: { nearLines: 0, hubLines: 0, npc: 0, stashed: 0 }, paths: 0, capFloor: {}, worthBounded: 0,
+        stock: { nearLines: 0, hubLines: 0, npc: 0 }, paths: 0, capFloor: {}, worthBounded: 0,
         occupation: { grade_changed: 0, spot_left: 0, recipe_wanted: 0, arrived_town: 0, forScroll: 0, forBid: 0, returned: 0, refusedBack: 0, scrollSpot: 0, rowMissing: 0 }, events: { offerPosted: 0, bidPosted: 0 }, velocity: [],
         // Path pieces no route priced (source_stalled); per sampling point
         // (a grade's middle level crossed, a grade left at its last level)
@@ -684,10 +654,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
                 needs: {}, surplus: {}, inputMoney: 0 };
             twin.town = config.twinSeat === 'main_town' ? (crafts ? spotTown : null) : config.twinSeat === 'hub' ? (crafts ? firstHub(spotTown, main.index, twin) : null) : starter;
         }
-        // townBooks: what its main saw of each town's book at its last visit
-        // there; bookRefusals: per such town, the visits in a row its trip there was refused;
-        // asleep: towns forgotten after refusals, out of trip's view until something new is learned.
-        accounts.push({ index: main.index, crafter, persona: personaOf(config, personaShares, seed, main, crafter), memory: [], townBooks: {}, bookRefusals: {}, asleep: [], stash: {}, stashLooks: {}, twin, counter: 0, lastTown: null, wake: null,
+        accounts.push({ index: main.index, crafter, persona: personaOf(config, personaShares, seed, main, crafter), memory: [], twin, counter: 0, lastTown: null, wake: null,
             shotless: false, level: main.level, market: { ...Mains.marketStart(), spotHeld: !!main.spot } });
     }
     // Items held at the start (the goods ledger's opening stock).
@@ -1223,12 +1190,6 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
 
     // The design's numbers at the end of a run.
     function report(hours, endMains) {
-        // Stock kept in account warehouses at the end: units and their value at the NPC.
-        const stashEnd = () => {
-            let units = 0, npc = 0;
-            for (const account of accounts) for (const [id, count] of Object.entries(account.stash || {})) { units += count; npc += count * (view.items[id]?.npcBuy || 0); }
-            return { units, npc: Math.round(npc) };
-        };
         // Shots left on twin shelves at the end, per grade (units).
         const shotsOnShelves = () => {
             const out = {};
@@ -1247,7 +1208,6 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             if (main.weapon && !Object.values(main.kit).includes(main.weapon)) add(main.weapon, 1);
         }
         for (const account of accounts) if (account.twin) for (const [id, count] of Object.entries(account.twin.stock)) add(id, count);
-        for (const account of accounts) for (const [id, count] of Object.entries(account.stash || {})) add(id, count);
         const totals = {}, failing = [];
         for (const id of new Set([...Object.keys(opening), ...Object.keys(closing), ...Object.keys(stats.goods)])) {
             const g = stats.goods[id] || {};
@@ -1291,7 +1251,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             config,
             biases: BIASES,
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
-                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, stashEnd: stashEnd(), shotsOnShelves: shotsOnShelves() }, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null,
+                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves() }, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null,
                 capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
                 velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),
