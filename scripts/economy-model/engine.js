@@ -480,7 +480,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     let arrivalRule = nextArrival;
     const plane = design ? design.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf,
         rearrive: (index, now, event) => reschedule(mains[index], now, event),
-        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; reschedule(main, now, event); return main; } }) : null;
+        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; scheduleLevel(main, now); reschedule(main, now, event); return main; } }) : null;
     if (plane) arrivalRule = plane.nextArrival;
     const randomFor = main => mulberry(hash(`${seed}:${main.id}:${main.counter}`));
     let events = 0;
@@ -490,15 +490,21 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // its worn kit's kills over the reference kit's; a kind of shot that is
     // no option at its row counts no kills, so a fighter is not scheduled at
     // the reference kit's hour through Blessed Spiritshots it cannot fire),
-    // so the situation never comes after the level is reached; one that
-    // comes before it is scheduled again from the exp then held.
+    // so the situation does not come after the level is reached; one that
+    // comes before it is scheduled again from the exp then held. A committed
+    // visit or deal may change the kit or the row, so the level is scheduled
+    // again after each from the exp then held; the one pending level time per
+    // main is the one read, an earlier one still queued is skipped.
+    const pendingLevel = new Map();
     const scheduleLevel = (main, now) => {
         const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, kills = plane && row ? plane.kills(main) : null;
         const exp = !row ? 0 : kills ? Math.max(...['shots', 'bare', 'blessed'].map(form => huntExp(main, rowIn(row, form), kills[form] ?? 0))) : huntExp(main, row, 1);
-        if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) return;
+        const held = pendingLevel.get(main.index) ?? null;
+        if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) { pendingLevel.set(main.index, null); return; }
         // One exp over the next level's start, so the level is reached however the hour's exp rounds.
-        const need = expAt(view, main.level + 1) - main.exp + 1;
-        queue.push({ at: now + Math.max(0, need) / (exp * share), kind: 'level_up', who: main.index });
+        const need = expAt(view, main.level + 1) - main.exp + 1, at = now + Math.max(0, need) / (exp * share);
+        pendingLevel.set(main.index, at);
+        if (at !== held) queue.push({ at, kind: 'level_up', who: main.index });
     };
     // The one pending arrival (or situation to read) per main, replaced by the rule's answer after each committed event.
     const pending = new Map();
@@ -549,6 +555,10 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             // A situation is read on the main as it stands (no hunt committed), as a situation raised outside its events is.
             if (event.kind === 'situation') { reschedule(mains[event.who], event.at, 'situation'); continue; }
         }
+        if (event.kind === 'level_up') {
+            if (pendingLevel.get(event.who) !== event.at) continue; // replaced by a later schedule
+            pendingLevel.set(event.who, null);
+        }
         let main = huntTo(mains[event.who], event.at);
         if (event.kind === 'level_up') {
             const band = bandOf(bands, main.level), spot = ownRow(view, main.line, main.level, main.spot) ? main.spot : null;
@@ -565,6 +575,8 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             Ledger.recordVisit(ledger, after, delta);
             main = { ...after, lastVisit: event.at };
             mains[event.who] = main;
+            // Only the design's visit changes the hour's exp (its kit's kills); today's hunt reads no kit and the visit keeps the row.
+            if (plane) scheduleLevel(main, event.at);
             reschedule(main, event.at, 'visit');
         }
     }

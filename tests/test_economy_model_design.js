@@ -262,13 +262,15 @@ const shareKit = (share, shots) => ({ ...kitHoursOf(() => 500, () => shots, (lin
 }
 // The level situation is read by the hour the hunt reaches the level, and
 // only then: 11 exp to the next level at the row's 1 exp an hour (firing
-// none) times the kit's kill share. The reads: [[hour, level]] over a run.
-const levelReads = (share, shots, hours) => {
+// none) times the kit's kill share. The reads: [[hour, level]] over a run;
+// atHour(context, hour), if given, acts on the run at each report hour.
+const levelReads = (share, shots, hours, atHour = null) => {
     const flat = { ...row('s1', 1000, 0), shotless: undefined };
     const world = { ...keptKit(snapshot), exp: levels.map(level => (level <= 25 ? level * 1e9 : 25e9 + (level - 25) * 10)),
         hours: { 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: flat, top: [] }])) } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, shots) }), read = [];
-    const design = { ...real, start: context => { const hooks = real.start(context); return { ...hooks, levelUp: (main, now) => { read.push([now, main.level]); return hooks.levelUp(main, now); } }; } };
+    const design = { ...real, start: context => { const hooks = real.start(context); return { ...hooks, levelUp: (main, now) => { read.push([now, main.level]); return hooks.levelUp(main, now); },
+        hour: now => { if (atHour) atHour(context, now); return hooks.hour(now); } }; } };
     Engine.simulate({ view, accounts: [accounts[1]], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
     return read;
 };
@@ -284,6 +286,16 @@ const levelReads = (share, shots, hours) => {
     const read = levelReads(0.5, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }], 30);
     assert.equal(read.length, 1, `one level gained, one read: ${JSON.stringify(read)}`);
     assert.ok(read[0][1] === 26 && Math.abs(read[0][0] - 22) < 1e-9, `the level read at 22 hours: ${JSON.stringify(read)}`);
+}
+// The same fighter gets the armour in a deal at hour 4 (2 exp in, share 1
+// from then): the 9 exp left take 9 hours, so the level is read at 13
+// hours, once, not at the 22 scheduled under the old kit.
+{
+    const read = levelReads(0.5, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }], 20, (context, at) => {
+        if (at === 4) context.commit(0, at, main => ({ ...main, kit: { ...main.kit, 10: ARMOR_WORN } }), 'recipe_wanted');
+    });
+    assert.equal(read.length, 1, `one level gained, one read: ${JSON.stringify(read)}`);
+    assert.ok(read[0][1] === 26 && Math.abs(read[0][0] - 13) < 1e-9, `the level read at 13 hours: ${JSON.stringify(read)}`);
 }
 // A weaker kit's goal arrival follows its kill share: the main without the
 // armour aims at it (a path piece it can buy for 20000) and, firing its
