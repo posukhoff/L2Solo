@@ -711,7 +711,7 @@ function mainsSide(ctx) {
         // Did it see a line of its shot at or under the shot's worth (the gate count)?
         const lineSeen = reserve ? { grade: ctx.shotGrade(reserve.id), seen: (book.sell[reserve.id] || []).some(entry => entry.price <= shotCap.cap) || (twin?.stock[reserve.id] || 0) > 0 } : marketOf(index).lineSeen;
         setMarket(index, { lineSeen, ads: out.main.ads, wants, incoming: out.main.incoming, shotId: reserve?.id ?? null,
-            shotNeed: reserve?.amount || 0, stalled, pathDirty: out.gearChanged || out.stalled.length > 0, goalFresh: false, tripReason: null });
+            shotNeed: reserve?.amount || 0, stalled, pathDirty: out.gearChanged || out.stalled.length > 0 || out.pathStale, goalFresh: false, tripReason: null });
         for (const row of out.obtained) stats.obtained(row.grade, row.route);
         for (const wait of out.waits) {
             const kind = stats.waits[wait.wait] || (stats.waits[wait.wait] = ctx.wait());

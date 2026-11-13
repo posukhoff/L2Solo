@@ -1200,10 +1200,10 @@ assert.equal(armed.delta.shotsUsed, 50);
             bands: [['all', 1]], rates, hours: 1, seed: 1, design: plane({ snapshot: world, game, start: 'late', grades }) });
     } finally { Mains.mainsSide = mainsSide; }
     const placeLines = lines => Books.place(ctx.books, 98, 'TownA', lines.map(([item, qty, price = 100], at) => ({ side: 'sell', item, price, qty, id: `l${at}` })), []);
-    const visitWith = lines => {
+    const visitWith = (lines, patch = {}) => {
         ctx.accounts[0] = { ...ctx.accounts[0], market: Mains.marketStart(), memory: [], twin: null };
         placeLines(lines);
-        const visited = side.visitMain({ ...ctx.mains[0], level: 41, money: 1e7, kit: {}, weapon: 0 }, 2, { outingHours: 1 });
+        const visited = side.visitMain({ ...ctx.mains[0], level: 41, money: 1e7, kit: {}, weapon: 0, ...patch }, 2, { outingHours: 1 });
         const market = ctx.accounts[0].market;
         return { weapon: visited.main.weapon, aim: market.path.pieces.map(piece => [piece.selfId, piece.route]), wtb: market.ads.wtb.map(ad => ad.item), wants: Object.keys(market.wants).map(Number) };
     };
@@ -1225,6 +1225,24 @@ assert.equal(armed.delta.shotsUsed, 50);
     visitAt([], 1e7, 3);
     visitAt([], 1e7, 4);
     assert.deepEqual({ weapon: main.weapon, wtb: ctx.accounts[0].market.ads.wtb.map(ad => ad.item) }, { weapon: SWORD, wtb: [] }, 'its crystals left: the D sword bought, no WTB for the C sword');
+    // Gone at one visit and back at the next: the route is not barred, path
+    // weighs the piece again on the book where the main then stands and it
+    // aims at the C sword at Luxury again, its WTB climbing toward the route.
+    ctx.accounts[0] = { ...ctx.accounts[0], market: Mains.marketStart(), memory: [], twin: null };
+    main = { ...ctx.mains[0], level: 41, kit: {}, weapon: 0 };
+    visitAt([[game.crystalIds.D, 2865]], 2e5, 5);
+    visitAt([], 1e7, 6);
+    visitAt([[game.crystalIds.D, 2865]], 1e7, 7);
+    assert.deepEqual({ weapon: main.weapon, aim: ctx.accounts[0].market.path.pieces.map(piece => [piece.selfId, piece.route]), wtb: ctx.accounts[0].market.ads.wtb.map(ad => ad.item) },
+        { weapon: 0, aim: [[CSWORD, 'exchange']], wtb: [CSWORD] }, 'its crystals back at the next arrival: it aims at the C sword at Luxury again');
+    // A finite use: 500 hunting hours left in its grade. Over them the C
+    // sword is worth less than 2865 crystals at 1000, so it buys the D
+    // sword, and more than 2865 at 100, so it aims at the C sword. Over
+    // about 4e9 hours the dear crystals are worth it too.
+    const useFor500 = { exp: 45e9 - 500 };
+    assert.deepEqual(visitWith([[game.crystalIds.D, 2865, 1000]], useFor500), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'dear crystals price the Luxury route above the piece\'s worth');
+    assert.deepEqual(visitWith([[game.crystalIds.D, 2865, 100]], useFor500).aim, [[CSWORD, 'exchange']], 'cheap crystals: the route is worth it');
+    assert.deepEqual(visitWith([[game.crystalIds.D, 2865, 1000]]).aim, [[CSWORD, 'exchange']], 'dear crystals over 4e9 hours of use');
 }
 
 console.log('PASS economy model design mode');
