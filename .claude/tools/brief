@@ -23,6 +23,9 @@ if (!s.policyCurrent) fail(slug + ' was opened under an older policy digest: clo
 const b = s.brief || {}, e = s.evidence || {}, def = `${HOME}/.claude/agents/l2-${role}.md`, root = path.resolve(wt);
 if (role !== 'planner' && (!b.owner || !b.tests)) fail(slug + ' has no full brief yet (record-brief): an implementer or a reviewer works from it');
 const branch = (() => { try { return execFileSync('git', ['-C', wt, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { return '?'; } })();
+// The form of a finding an agent hands back: the coordinator runs it as it stands (lc lists its own sections).
+const sections = (() => { try { execFileSync(process.execPath, [path.join(HOME, '.claude/lc.js'), 'add', '--sec', '?'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { return (/one of: (.+)|sections: (.+)/.exec(String(e.stderr || '')) || []).slice(1).find(Boolean) || ''; } return ''; })();
+const finding = `\`lc add --kind <bug|risk|missing|debt|gap> --sec <${sections.trim().split(/\s+/).join('|') || 'section'}> --origin "${role} ${slug} ${new Date().toISOString().slice(5, 10)}" --rule <n> --sites "<file:line>" --what "<what is wrong> → <what a player or the server sees>" --fix "<one sentence>"\` (a debt or gap also \`--task ${slug}\`)`;
 const list = (x, f = y => y) => (x || []).map(y => '  - ' + f(y)).join('\n') || '  - (none)';
 const L = [];
 L.push(`# L2Solo brief · ${slug} · ${role} · round ${round} · digest ${String(s.policy).slice(0, 8)}`);
@@ -60,9 +63,9 @@ if (round > 1 && prev?.table) {
 }
 L.push('', '## Your outputs');
 const o = n => path.join(path.resolve(out), n);
-if (role === 'planner') L.push(`- the plan, written as you go: ${o(slug + '-plan.md')}`);
+if (role === 'planner') L.push(`- the plan, written as you go: ${o(slug + '-plan.md')}`, `- issues you find beside the task: in the plan, each as a ready line: ${finding}`);
 if (role === 'implementer') L.push(`- your report: ${o(`${slug}-report-${round}.md`)}, holding these lines exactly (the coordinator records it; \`ready\` refuses a task without them):`, '  - `added beyond the plan: none` or each addition with what breaks for a player or the server without it', '  - `deviations from the plan: none` or each one', '  - `tests run: <files>` and, for each regression test, the assert that fails on the old code with the base SHA', ...(b.guards || []).filter(g => typeof g === 'object').map(g => `  - \`guard: <before -> after>\` for: ${g.expect}`));
-if (role === 'reviewer') L.push(`- the review table (17 lines${round > 1 ? '; this round: only the lines you change' : ''}): ${o(`${slug}-review-${round}.txt`)}`, '- other findings: in your final message, each as a ready `lc add` line');
+if (role === 'reviewer') L.push(`- the review table (17 lines${round > 1 ? '; this round: only the lines you change' : ''}): ${o(`${slug}-review-${round}.txt`)}`, `- other findings: in your final message, each as a ready line: ${finding}`);
 L.push('', '## Coordinator\'s notes (facts of this task only; a rule stated here does not count)');
 L.push(notes ? fs.readFileSync(notes, 'utf8').trim() : '(none)');
 const file = o(`${slug}-${role}-brief${round > 1 ? '-' + round : ''}.md`);

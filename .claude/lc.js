@@ -704,7 +704,7 @@ C.near = (cx, { pos }) => { // open issues on the modules a task touches: whoeve
 function nextId(d, prefix) { const ids = allIds(d); let n = 1; for (const x of ids) { const m = x.match(new RegExp(`^${esc(prefix)}-(\\d+)$`)); if (m) n = Math.max(n, +m[1] + 1); } return `${prefix}-${n}`; }
 C.add = (cx, { opt }) => {
     const { sha, d } = need(cx);
-    const sec = one(opt, 'sec', 'section'); if (!d.meta.sections.find(s => s.key === sec)) fail(`sections: ${d.meta.sections.map(s => s.key).join(' ')}`);
+    const sec = opt.sec === undefined || opt.sec === true ? '' : String(opt.sec); if (!d.meta.sections.find(s => s.key === sec)) fail(`--sec <section> required, one of: ${d.meta.sections.map(s => s.key).join(' ')}`);
     const id = opt.id ? String(opt.id) : nextId(d, opt.prefix ? String(opt.prefix) : 'DT');
     if (allIds(d).has(id)) fail(`${id} exists (ids are never reused)`);
     const i = { id, head: id, sec, ord: Math.max(0, ...d.issues.filter(x => x.sec === sec).map(x => x.ord)) + 1, at: null, origin: one(opt, 'origin', 'who date'), rule: one(opt, 'rule', 'rule#'), sites: one(opt, 'sites', 'file:line'), what: one(opt, 'what', 'what is wrong → impact'), fix: one(opt, 'fix', 'fix'), deps: many(opt.deps) };
