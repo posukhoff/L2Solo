@@ -93,16 +93,28 @@ function slotsConflict(slot, other) {
 // (priceOf(id): adena a shot; null for a shot it knows no price of: a main
 // cannot plan to fire what it cannot price, so that kind is no option; a price
 // of 0 is a shot that is free). Ties keep firing none, then the first kind. Returns { id (0: none),
-// units (shots an hour), net (the hour less the shots' cost), worth (the
+// units (shots an hour), net (the hour less the shots' and the arrows' cost: a
+// bow's options state the arrows they spend, { id, units }, null where its
+// attacks are not stated, which makes the option no option), worth (the
 // most a shot of the chosen kind may cost and stay chosen, the other options
 // at their prices; 0 firing none) }, null for a kit with no hour.
 function firing(hour, priceOf) {
     if (!hour) return null;
-    const options = hour.none === null || hour.none === undefined ? [] : [{ id: 0, units: 0, gross: hour.none, net: hour.none }];
+    // The adena an hour of an option's arrows at the price the main knows
+    // (undefined: a kit without a bow, 0; null: a bow's attacks not stated;
+    // NaN: an arrow it cannot price: the option is no option).
+    const arrowCost = arrows => {
+        if (arrows === undefined) return 0;
+        if (arrows === null) return NaN;
+        const known = priceOf(arrows.id), price = known === null || known === undefined ? NaN : Number(known);
+        return arrows.units * price;
+    };
+    const options = [], noneCost = arrowCost(hour.noneArrows);
+    if (hour.none !== null && hour.none !== undefined && Number.isFinite(noneCost)) options.push({ id: 0, units: 0, gross: hour.none - noneCost, net: hour.none - noneCost });
     for (const shot of hour.shots) {
-        const known = priceOf(shot.id), price = known === null || known === undefined ? NaN : Number(known);
-        if (!Number.isFinite(price)) continue;
-        options.push({ id: shot.id, units: shot.units, gross: shot.gross, net: shot.gross - shot.units * price });
+        const known = priceOf(shot.id), price = known === null || known === undefined ? NaN : Number(known), cost = arrowCost(shot.arrows);
+        if (!Number.isFinite(price) || !Number.isFinite(cost)) continue;
+        options.push({ id: shot.id, units: shot.units, gross: shot.gross - cost, net: shot.gross - cost - shot.units * price });
     }
     if (!options.length) return null;
     let best = options[0];

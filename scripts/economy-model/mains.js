@@ -117,12 +117,19 @@ function mainsSide(ctx) {
         if (table) { shared.delete(key); stats.kitTables.shared++; } else {
             const pieces = bandPieces(main.line, band), read = Worth.swapRows(ctx.kitHours.swaps(main.line, main.level, wornOf(main), pieces.list)), count = read.rows.length;
             table = { key, worn: read.worn, none: new Float64Array(count).fill(NaN), ids: new Int32Array(count * SHOT_KINDS), gross: new Float64Array(count * SHOT_KINDS),
-                units: new Float64Array(count * SHOT_KINDS), gears: new Float64Array(count).fill(NaN), at: pieces.at };
+                units: new Float64Array(count * SHOT_KINDS), arrowUnits: new Float64Array(count * SHOT_KINDS),
+                arrowIds: new Int32Array(count), noneArrowUnits: new Float64Array(count), gears: new Float64Array(count).fill(NaN), at: pieces.at };
             read.rows.forEach((row, at) => {
                 if (!row) return;
                 if (row.hour.none !== null) table.none[at] = row.hour.none;
                 table.gears[at] = row.gear;
-                row.hour.shots.slice(0, SHOT_KINDS).forEach((shot, kind) => { const cell = at * SHOT_KINDS + kind; table.ids[cell] = shot.id; table.gross[cell] = shot.gross; table.units[cell] = shot.units; });
+                // every option of a kit spends the same arrow (kit-hours): one id a row, the units an option
+                const arrowed = row.hour.noneArrows ?? row.hour.shots.find(shot => shot.arrows)?.arrows;
+                if (arrowed) table.arrowIds[at] = arrowed.id;
+                if (row.hour.noneArrows !== undefined) table.noneArrowUnits[at] = row.hour.noneArrows?.units ?? NaN;
+                row.hour.shots.slice(0, SHOT_KINDS).forEach((shot, kind) => { const cell = at * SHOT_KINDS + kind; table.ids[cell] = shot.id; table.gross[cell] = shot.gross; table.units[cell] = shot.units;
+                    if (shot.arrows !== undefined) table.arrowUnits[cell] = shot.arrows?.units ?? NaN;
+                });
             });
             stats.kitTables.read++;
         }
@@ -139,9 +146,17 @@ function mainsSide(ctx) {
         const shots = [];
         for (let kind = 0; kind < SHOT_KINDS; kind++) {
             const cell = at * SHOT_KINDS + kind;
-            if (table.ids[cell]) shots.push({ id: table.ids[cell], gross: table.gross[cell], units: table.units[cell] });
+            if (!table.ids[cell]) continue;
+            const shot = { id: table.ids[cell], gross: table.gross[cell], units: table.units[cell] };
+            // NaN units: a bow whose attacks are not stated (null); no arrow id on the row: no bow
+            if (Number.isNaN(table.arrowUnits[cell])) shot.arrows = null;
+            else if (table.arrowIds[at]) shot.arrows = { id: table.arrowIds[at], units: table.arrowUnits[cell] };
+            shots.push(shot);
         }
-        return { hour: { none: Number.isNaN(table.none[at]) ? null : table.none[at], shots }, gear: table.gears[at] };
+        const hour = { none: Number.isNaN(table.none[at]) ? null : table.none[at], shots };
+        if (Number.isNaN(table.noneArrowUnits[at])) hour.noneArrows = null;
+        else if (table.arrowIds[at]) hour.noneArrows = { id: table.arrowIds[at], units: table.noneArrowUnits[at] };
+        return { hour, gear: table.gears[at] };
     };
     // The hour of the kit a main wears (kit-hours): its kit table's when one
     // is held for its line, band and kit, else read alone (one profile pass,
