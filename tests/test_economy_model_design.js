@@ -1133,9 +1133,17 @@ assert.equal(armed.delta.shotsUsed, 50);
     } finally { Mains.mainsSide = mainsSide; }
     // The main as it crosses 39 in TownA wearing the no-grade sword (300) with 1e9 adena hunted since its visit.
     const main = { ...ctx.mains[0], level: 39, money: 1e9, kit: { 7: NG }, weapon: NG };
-    const read = ({ leftWith, crystals = 0 }) => {
+    // A visit to TownA with 25000 adena pays nothing there (the gloves at
+    // TownB cost 31000 with the hop) and leaves with 25020 (its junk sold);
+    // the armour then posted at 25000 is payable with that money, the gloves
+    // still not, though 1e9 adena was hunted since.
+    const visited = side.visitMain({ ...ctx.mains[0], level: 39, money: 25000, kit: { 7: NG }, weapon: NG }, 2, { outingHours: 1 });
+    assert.equal(visited.main.money, 25020);
+    Books.place(ctx.books, 98, 'TownA', [{ side: 'sell', item: ARM, price: 25000, qty: 1, id: 'arm' }], []);
+    near(side.kitRatio({ ...visited.main, money: 1e9 }, 39).attainable, 300 / 400, 'the money it left its visit with pays the armour alone');
+    const read = ({ leftWith, crystals = 0, twin = null }) => {
         // Its last deal of a D crystal was at 50: the price it knows.
-        ctx.accounts[0] = { ...ctx.accounts[0], lastTown: 'TownA', leftWith, memory: Knowledge.remember([], { item: crystal, price }), kitTable: null, twin: null };
+        ctx.accounts[0] = { ...ctx.accounts[0], lastTown: 'TownA', leftWith, memory: Knowledge.remember([], { item: crystal, price }), kitTable: null, twin };
         Books.place(ctx.books, 98, 'TownA', [{ side: 'sell', item: ARM, price: 40000, qty: 1 }, { side: 'sell', item: crystal, price, qty: crystals }], []);
         return side.kitRatio(main, 39).attainable;
     };
@@ -1144,6 +1152,20 @@ assert.equal(armed.delta.shotsUsed, 50);
     near(read({ leftWith: 40000 + 10 * price }), 300 / 400, 'no D crystal on a line: the helmet\'s Luxury route does not stand');
     near(read({ leftWith: 40000 + 10 * price, crystals: 10 }), 300 / 450, 'its 10 crystals stand: the helmet too');
     near(read({ leftWith: 40000 + 10 * price + 62000, crystals: 10 }), 300 / 530, 'the gloves in TownB, the boots not: one hop');
+    near(read({ leftWith: 40000, twin: { stock: { [crystal]: 10 } } }), 300 / 450, 'its own twin\'s 10 crystals: the helmet costs no adena');
+}
+
+// Acquire.payableKit: a piece whose slot conflicts with one taken is not
+// bought (a full armour over the leggings: the full armour's cost alone is
+// spent, the helmet still paid), and two Luxury pieces share the crystals
+// that stand (its own twin's 5 and 10 on a line: one piece of 10).
+{
+    const { payableKit } = require('../scripts/economy-model/rules/acquire');
+    const piece = (slot, gain, cost) => ({ slot, selfId: 100 + slot, gain, routes: [{ cost, hop: false }] });
+    assert.deepEqual(payableKit({ 7: 1 }, [piece(15, 100, 1000), piece(11, 30, 500), piece(6, 10, 1000)], 2000), { 7: 1, 15: 115, 6: 106 });
+    const crystals = { 1458: { own: 5, lines: [{ id: 'd1', price: 40, qty: 10 }] } };
+    const luxury = (slot, gain) => ({ slot, selfId: 100 + slot, gain, routes: [{ exchange: { amount: 10, perCrystal: 50 }, crystal: 1458, fare: 0, hop: false }] });
+    assert.deepEqual(payableKit({ 7: 1 }, [luxury(6, 50), luxury(9, 40), luxury(12, 30)], 1e6, crystals), { 7: 1, 6: 106 });
 }
 
 console.log('PASS economy model design mode');

@@ -56,26 +56,49 @@ function acquire(piece, view) {
 
 // A Luxury route's crystals that stand: its own twin's (up to the amount)
 // and the lines at or under its price per crystal; left: the units a line
-// still holds. { own, have }: the route stands when have >= its amount.
+// still holds. { own, have, adena }: the route stands when have >= its
+// amount; adena: what its crystals cost past its own twin's (the fare apart).
 function crystalsStanding(route, ownCrystals, lines, left = entry => entry.qty) {
     const own = Math.min(route.amount, ownCrystals || 0);
-    return { own, have: own + lines.filter(entry => entry.price <= route.perCrystal).reduce((sum, entry) => sum + left(entry), 0) };
+    return { own, have: own + lines.filter(entry => entry.price <= route.perCrystal).reduce((sum, entry) => sum + left(entry), 0), adena: (route.amount - own) * route.perCrystal };
 }
 
 // The kit a main could wear by paying now: of its candidates ({ slot,
-// selfId, gain, routes: [{ cost, hop }] }, the routes that stand now, hop:
-// in another town) the highest gain first, each taken by its cheapest
-// route within the money left, one piece a slot, at most one route in
-// another town (a visit hops once); the money a piece taken off would bring
-// is not counted. Returns the kit (slot -> selfId).
-function payableKit(worn, candidates, money) {
+// selfId, gain, routes }, hop: a route in another town) the highest gain
+// first, each taken by its cheapest route within the money left, never a
+// piece whose slot conflicts with one taken (Worth.slotsConflict), at most
+// one route in another town (a visit hops once); the money a piece taken
+// off would bring is not counted. A route is { cost, hop }, or a Luxury
+// route { exchange: acquire's exchange route, crystal, fare, hop } that
+// stands while its crystals do (crystalsStanding) over crystals (crystal ->
+// { own: its own twin's units, lines: the lines in reach, cheapest first }),
+// each taken piece's crystals taken off them: its own twin's first, then the
+// cheapest lines at or under its price. Returns the kit (slot -> selfId).
+function payableKit(worn, candidates, money, crystals = {}) {
     let kit = worn, left = money, hopped = false;
-    const taken = new Set();
+    const taken = new Set(), ownTaken = {}, lineTaken = new Map();
+    const unitsLeft = entry => entry.qty - (lineTaken.get(entry.id) || 0);
+    const stand = row => crystalsStanding(row.exchange, (crystals[row.crystal]?.own || 0) - (ownTaken[row.crystal] || 0), crystals[row.crystal]?.lines || [], unitsLeft);
+    const costOf = row => {
+        if (!row.exchange) return row.cost;
+        const { have, adena } = stand(row);
+        return have >= row.exchange.amount ? adena + row.fare : Infinity;
+    };
     for (const { slot, selfId, routes } of [...candidates].sort((a, b) => b.gain - a.gain)) {
-        if (taken.has(slot)) continue;
-        const route = routes.filter(row => row.cost <= left && !(row.hop && hopped)).sort((a, b) => a.cost - b.cost)[0];
+        if ([...taken].some(other => slotsConflict(slot, other))) continue;
+        const route = routes.map(row => ({ row, cost: costOf(row) })).filter(({ row, cost }) => cost <= left && !(row.hop && hopped)).sort((a, b) => a.cost - b.cost)[0];
         if (!route) continue;
-        left -= route.cost; hopped ||= route.hop; taken.add(slot);
+        left -= route.cost; hopped ||= route.row.hop; taken.add(slot);
+        if (route.row.exchange) {
+            const { exchange, crystal } = route.row, { own } = stand(route.row);
+            ownTaken[crystal] = (ownTaken[crystal] || 0) + own;
+            let need = exchange.amount - own;
+            for (const entry of crystals[crystal]?.lines || []) {
+                if (need <= 0 || entry.price > exchange.perCrystal) break;
+                const units = Math.min(need, unitsLeft(entry));
+                if (units > 0) { lineTaken.set(entry.id, (lineTaken.get(entry.id) || 0) + units); need -= units; }
+            }
+        }
         kit = Object.fromEntries([...Object.entries(kit).filter(([other]) => !slotsConflict(slot, other)), [slot, selfId]]);
     }
     return kit;

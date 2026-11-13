@@ -16,7 +16,7 @@ const Bounds = require('./rules/bounds');
 const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
 const { path, refillHours } = require('./rules/path');
-const { acquire, crystalsStanding, payableKit } = require('./rules/acquire');
+const { acquire, payableKit } = require('./rules/acquire');
 const { trip, goalOf, deathAt, shotTown, shotsLow } = require('./rules/trip');
 const { visit } = require('./rules/visit');
 const { occupation, stayHours } = require('./rules/occupation');
@@ -66,11 +66,15 @@ function mainsSide(ctx) {
     // main knows (Worth.firing). ratio null: no hour stated for either kit,
     // or a reference hour not above 0. unarmed: no weapon in hand.
     // attainable: the worn kit's hour over the hour of the kit it could wear
-    // by paying now (attainableKit); 1 when it can pay nothing better.
+    // by paying now (attainableKit); 1 when it can pay nothing better. Its
+    // kit hour reads are counted apart (stats.measureReads), so the decision
+    // path's own count stays as it is.
     const kitRatio = (main, level) => {
         const priceOf = pricesOf(main), netOf = kit => Worth.firing(ctx.kitHours.hour(main.line, level, kit), priceOf)?.net ?? null;
         const worn = wornOf(main), own = netOf(worn), reference = netOf(slotsOf(kitAt(main, level)));
+        const counts = ctx.kitHours.stats, before = counts ? { swaps: counts.swaps, fast: counts.fast, fresh: counts.fresh } : null;
         const kit = own === null ? null : attainableKit(main, level, worn, priceOf), best = kit === null ? null : kit === worn ? own : netOf(kit);
+        if (counts) stats.measureReads = { swaps: stats.measureReads.swaps + counts.swaps - before.swaps, fast: stats.measureReads.fast + counts.fast - before.fast, fresh: stats.measureReads.fresh + counts.fresh - before.fresh };
         return { ratio: own === null || reference === null || !(reference > 0) ? null : own / reference, unarmed: !main.weapon,
             attainable: best === null || !(Math.max(own, best) > 0) ? null : own / Math.max(own, best) };
     };
@@ -78,8 +82,9 @@ function mainsSide(ctx) {
     // measure; no decision of a main reads it): the money it left that visit
     // with, the band pieces of the level whose swap over the worn kit nets
     // more, each by its cheapest route standing now from that town (a line
-    // or ad in reach, the NPC, a Luxury route whose crystals stand; not its
-    // own twin's craft, which is not paid now), picked by Acquire.payableKit.
+    // or ad in reach, the NPC, a Luxury route while its crystals stand, its
+    // own twin's first; not its own twin's craft, which is not paid now),
+    // picked by Acquire.payableKit.
     // The gains are read from the kit table the main holds, or the one shared
     // for its line, band and worn kit, else read alone (nothing kept).
     const attainableKit = (main, level, worn, priceOf) => {
@@ -95,20 +100,18 @@ function mainsSide(ctx) {
         const town = account.lastTown || townOf(main);
         if (!town || !gains.length) return worn;
         const book = reachBook(index, town, [...new Set([...gains.map(row => row.selfId), ...Object.values(game.crystalIds)])], []), twin = account.twin;
+        const crystals = Object.fromEntries(Object.values(game.crystalIds).map(id => [id, { own: twin?.stock[id] || 0, lines: book.sell[id] || [] }]));
         const candidates = gains.map(row => {
             const lines = (book.sell[row.selfId] || []).map(entry => ({ price: entry.price, kind: entry.kind, where: entry.kind === 'ad' ? 'ad' : entry.town }));
-            const got = acquire(row, { cap: Infinity, ownHour: 0, hourCost: config.hourCost, useHour: null, lines, ...reachRoutes(account.memory, town, book, row.selfId),
-                twin: null, stalled: account.market.stalled[row.selfId] || [] });
-            const routes = [];
-            for (const route of got?.routes || []) {
+            const reach = reachRoutes(account.memory, town, book, row.selfId);
+            const got = acquire(row, { cap: Infinity, ownHour: 0, hourCost: config.hourCost, useHour: null, lines, ...reach, twin: null, stalled: account.market.stalled[row.selfId] || [] });
+            const routes = (got?.routes || []).map(route => {
                 const hop = route.route !== 'buy' && route.where !== town;
-                if (route.route !== 'exchange') { routes.push({ cost: route.cost, hop }); continue; }
-                const crystal = game.crystalIds[route.grade.toUpperCase()], { own, have } = crystalsStanding(route, twin?.stock[crystal], book.sell[crystal] || []);
-                if (have >= route.amount) routes.push({ cost: route.cost - own * route.perCrystal, hop });
-            }
+                return route.route === 'exchange' ? { exchange: route, crystal: game.crystalIds[route.grade.toUpperCase()], fare: reach.exchange.fare || 0, hop } : { cost: route.cost, hop };
+            });
             return { ...row, routes };
         });
-        return payableKit(worn, candidates, account.leftWith);
+        return payableKit(worn, candidates, account.leftWith, crystals);
     };
     // The piece a main wears in a slot (its weapon for either hand), 0 for none.
     const wornIn = (main, slot) => (groupOf(slot) === 'weapon' ? main.weapon || 0 : main.kit[slot] || 0);

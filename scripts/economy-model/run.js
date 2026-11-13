@@ -332,9 +332,10 @@ function printMarket(design, hours) {
         const ratio = value => (value === null ? '-' : value.toFixed(2));
         console.log(`  ${point.padEnd(11)} lv${row.level}: sampled ${row.sampled}, >=0.9 ${row.atLeast90} (${pct(row.atLeast90, row.sampled - row.none)}), median ${ratio(row.median)}, p10 ${ratio(row.p10)}, no ratio ${row.none}, unarmed ${row.unarmed}; over the kit it could pay now: median ${ratio(row.attainable.median)}, >=0.95 ${row.attainable.atLeast95} of ${row.attainable.sampled} (${pct(row.attainable.atLeast95, row.attainable.sampled)})`);
     }
-    const kh = m.kitHours || {}, kt = m.kitTables;
+    const kh = m.kitHours || {}, kt = m.kitTables, mr = m.measureReads;
     console.log(`KIT TABLES taken ${kt.taken} (a main's line, band or worn kit changed): read ${kt.read}, shared from another main's ${kt.shared} (${pct(kt.shared, kt.taken)}), let go past the bound ${kt.evicted}, worn hours ${kt.wornEvicted}; `
-        + `kit hours: swaps ${kh.swaps}, of them by the formula over the worn kit ${kh.fast}, whole profile passes ${kh.fresh}, cell builds ${kh.builds}`);
+        + `kit hours: swaps ${kh.swaps - mr.swaps}, of them by the formula over the worn kit ${kh.fast - mr.fast}, whole profile passes ${kh.fresh - mr.fresh}, cell builds ${kh.builds}; `
+        + `read apart by KIT HOUR over the kit it could pay now: swaps ${mr.swaps}, of them by the formula ${mr.fast}, whole profile passes ${mr.fresh}`);
     console.log(`PATH pieces no route prices ${m.unpriced || 0}`);
     console.log('CAP>=FLOOR per grade: static (the best buyer among the lines entering the grade, path kit pieces; floors npc | npc + D crystals at the NPC gear route) under gear_gain / hunt_cycle; dynamic over pieces offered (a WTB in reach whose cap reaches the WTS floor):');
     for (const [grade, row] of Object.entries(m.capFloorStatic)) {

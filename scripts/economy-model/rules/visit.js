@@ -292,9 +292,9 @@ function visit(main, view) {
         if (route.route === 'exchange') {
             const crystal = view.crystalIds[route.grade?.toUpperCase()], fare = route.where === view.town ? 0 : view.fares[route.where];
             // Its own twin's crystals come through the account warehouse first, the rest from lines here.
-            const { own, have } = crystalsStanding(route, view.ownCrystals?.[crystal], view.book.sell?.[crystal] || [], left);
+            const { own, have, adena } = crystalsStanding(route, view.ownCrystals?.[crystal], view.book.sell?.[crystal] || [], left);
             if (!crystal || fare === null || fare === undefined || (fare > 0 && hopped) || have < route.amount) return 'unavailable';
-            if (money < (route.amount - own) * route.perCrystal + fare) return 'money';
+            if (money < adena + fare) return 'money';
             if (own > 0) claims.push({ kind: 'own_stock', item: crystal, units: own });
             if (route.amount > own) buyLine(crystal, route.perCrystal, route.amount - own);
             money -= fare; flows.fares -= fare;
