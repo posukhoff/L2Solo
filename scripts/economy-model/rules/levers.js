@@ -11,7 +11,7 @@
 // deleted then.
 
 const { trip, shotTown } = require('./trip');
-const { huntDesign } = require('../engine');
+const { hunt } = require('../engine');
 
 // The shot situations today's code names outside the frame: trip's stock_low:shots and shots_out.
 const SITUATIONS = Object.freeze({
@@ -26,8 +26,8 @@ const LEVERS = Object.freeze({
     'H.SHOTS.M3': shotTown,
     // Else the seller town of every trade town's line at or under worth with a payable fare: shotTown's line read.
     'H.SHOTS.M0': shotTown,
-    // No trip: it hunts its spot's bare hour once its shots run out (huntDesign's huntBare).
-    'H.SHOTS.S': huntDesign
+    // No trip: it hunts its spot's bare hour once its shots run out (hunt's huntBare).
+    'H.SHOTS.S': hunt
 });
 
 module.exports = { SITUATIONS, LEVERS };

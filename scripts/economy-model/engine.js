@@ -214,35 +214,6 @@ function wholeCount(mean, random) {
 
 const emptyFlows = () => ({ huntCold: 0, npcSales: 0, fixedBuyers: 0, npcBuys: 0, fixedSellers: 0, fares: 0 });
 
-// Hunting for huntHours at the main's spot: adena, exp, items into the bag,
-// shots fired from the stock of the hour's shot (a main without shots keeps
-// hunting; the shots it missed are counted).
-function hunt(main, view, huntHours, random) {
-    const hour = hourOf(view, main), best = spotRowOf(view, main), flows = emptyFlows();
-    const delta = { flows, exp: 0, drops: [], shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0 };
-    if (!best || !(huntHours > 0)) { delta.noSpot = best ? 0 : 1; return { main, delta }; }
-    const kills = best.kills * huntHours;
-    delta.huntHours = huntHours;
-    // Spoil loot the row has but the snapshot has no spoil yields to carry: lost, so counted.
-    if (best.spoilLoot > 0 && !Object.keys(view.yields[`${best.spotId}@${main.level}`]?.spoil || {}).length) delta.spoilUnyielded = kills;
-    delta.ownSpot = best === ownRow(view, main.line, main.level, main.spot);
-    flows.huntCold = Math.round(best.adena * huntHours);
-    delta.exp = huntExp(main, best, huntHours);
-    const bag = { ...main.bag };
-    for (const [id, perKill] of yieldRows(view, main.line, main.level, best, 'shots')) {
-        const count = wholeCount(perKill * kills, random);
-        if (!count) continue;
-        bag[id] = (bag[id] || 0) + count;
-        delta.drops.push([id, count]);
-    }
-    const shotId = shotOf(view, main, hour), wanted = Math.round(best.shots * huntHours), held = main.shots[shotId] || 0;
-    delta.shotsWanted = wanted;
-    delta.shotsUsed = Math.min(held, wanted);
-    const shots = delta.shotsUsed ? { ...main.shots, [shotId]: held - delta.shotsUsed } : main.shots;
-    const exp = main.exp + delta.exp;
-    return { main: { ...main, exp, level: levelOf(view, exp, main.level), money: main.money + flows.huntCold, bag, shots }, delta };
-}
-
 // The hunt's adena per kill over today's at a spot row's spawn mix (1 where
 // today's yields carry no adena; exactly 1 where the hunt reads today's).
 function adenaFactor(view, row, level) {
@@ -250,20 +221,22 @@ function adenaFactor(view, row, level) {
     return today > 0 ? hunted / today : 1;
 }
 
-// Hunting in the design mode: the design's adena and items (rules/dropRule at
-// the preset's design rates) at the kills and kill mix of the spot row's
-// hour of the kind it fires (formOf: its plain shot the row, Blessed
-// Spiritshots the row's blessed hour); the shots the main fires (firing:
-// { id, perHour }, the design plane's answer, perHour that hour's shots at
-// its weapon's count; null fires none) last shots held / shots per hour,
-// and past them, or firing none, it hunts at the same spot's hour without
-// shots (fewer kills, less exp and loot) until it restocks. The row is the
-// reference kit's hour: the main hunts its worn kit's, the row's adena, exp
-// and loot times the worn kit's kills over the reference kit's in the form
-// hunted (kills: { bare, shots, blessed }, the design plane's killsOf; null
-// reads 1), and firing's perHour is already its worn kit's. delta as hunt's,
-// with shotId and huntBare.
-// The shot a design hunt fires and the hunting hours its held stock lasts
+// Hunting for huntHours at the main's spot: adena, exp and items into the
+// bag (huntYields: today's or the design's rates) at the kills and kill mix
+// of the spot row's hour of the kind it fires (formOf: its plain shot the
+// row, Blessed Spiritshots the row's blessed hour); the shots the main fires
+// (firing: { id, perHour }, the run's hunter's answer, perHour that hour's
+// shots at its weapon's count: shotsPerHour; null fires none) last shots
+// held / shots per hour, and past them, or firing none, it hunts at the same
+// spot's hour without shots (fewer kills, less exp and loot) until it
+// restocks; the shots it missed are counted. The row is the reference kit's
+// hour: the main hunts its worn kit's, the row's adena, exp and loot times
+// the worn kit's kills over the reference kit's in the form hunted (kills:
+// { bare, shots, blessed }, the hunter's; null reads 1), and firing's
+// perHour is already its worn kit's. Spoil loot a hunted hour has but the
+// hunt's yields carry no spoil for is lost, so its kills are counted
+// (spoilUnyielded).
+// The shot a hunt fires and the hunting hours its held stock lasts
 // (held over the shots an hour; then it hunts bare), and the form of its
 // row it fires in (formOf).
 function firedOf(view, main, firing) {
@@ -275,7 +248,13 @@ function firedOf(view, main, firing) {
 // kit's kills in that form (kills: per form over the reference kit's; none: 1).
 const formExp = (main, best, form, hours, kills) => huntExp(main, rowIn(best, form), hours * (kills?.[form] ?? 1));
 
-function huntDesign(main, view, huntHours, random, firing = null, kills = null) {
+// The shots a form of a spot row fires an hour: the row's count in that form
+// (rowIn) times the worn weapon's count per action over the reference's
+// (scale) and the worn kit's shots over the reference kit's (factor: the
+// form's { kills, shots }; none: 1).
+const shotsPerHour = (row, form, scale = 1, factor = null) => (rowIn(row, form)?.shots || 0) * scale * (factor?.shots ?? 1);
+
+function hunt(main, view, huntHours, random, firing = null, kills = null) {
     const best = spotRowOf(view, main), flows = emptyFlows();
     const delta = { flows, exp: 0, drops: [], shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0, shotId: 0, huntBare: 0 };
     if (!best || !(huntHours > 0)) { delta.noSpot = best ? 0 : 1; return { main, delta }; }
@@ -289,6 +268,7 @@ function huntDesign(main, view, huntHours, random, firing = null, kills = null) 
         if (!(hours > 0)) continue;
         const row = rowIn(best, at), worn = hours * (kills?.[at] ?? 1);
         flows.huntCold += row.adena * adenaRatio * worn;
+        if (row.spoilLoot > 0 && !Object.keys(view.huntYields?.[`${best.spotId}@${main.level}`]?.spoil || {}).length) delta.spoilUnyielded += row.kills * worn;
         delta.exp += formExp(main, best, at, hours, kills);
         for (const [id, perKill] of yieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * worn);
     }
@@ -486,7 +466,7 @@ function heap() {
 // way back to the spot); levelUp,
 // event, hour, finish, nextArrival: the design's trip, which replaces the
 // nextArrival given; firing(main): the shot a main fires as it hunts,
-// huntDesign's). rearrive(index, now, event) asks the arrival rule again
+// hunt's). rearrive(index, now, event) asks the arrival rule again
 // for a main after a situation raised outside its own events (a line in
 // reach, a bid for what it sells); commit(index, now, change) hunts a main to
 // now, replaces it by change(main) (a deal met with it while it hunts) and
@@ -510,7 +490,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // last credited hunt, or the hour it hunts again after a visit's onward
     // stops): a situation reads the main as it stands, not hunted to now. The
     // design mode's hunt credits the form it fires while its held shots last,
-    // then the bare form (firedOf, formExp: as huntDesign credits), so the
+    // then the bare form (firedOf, formExp: as hunt credits), so the
     // crossing is read on those two pieces; the plain and today hunts credit
     // one exp an hour. A committed visit or deal may change the kit, the shots
     // or the row, so the level is scheduled again after each from the exp then
@@ -578,9 +558,9 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         const share = rateOf(main.band).huntShare, end = departs !== null && departs < now ? departs : now;
         const spotHours = Math.max(0, end - main.since), wayHours = end < now ? now - Math.max(end, main.since) : 0;
         const moved = { ...main, counter: main.counter + 1, since: Math.max(now, main.since) };
-        const { main: next, delta } = plane ? huntDesign(moved, view, spotHours * share, randomFor(main), plane.firing(main), plane.kills(main))
-            : hunt(moved, view, spotHours * share, randomFor(main));
-        Ledger.recordHunt(ledger, next, delta);
+        const hour = hourOf(view, main), row = spotRowOf(view, main), today = row && hour?.shotId ? { id: shotOf(view, main, hour), perHour: row.shots } : null;
+        const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), plane ? plane.firing(main) : today, plane ? plane.kills(main) : null);
+            Ledger.recordHunt(ledger, next, delta);
         if (plane) plane.hunt(next, { ...delta, spotHours, wayHours });
         return next;
     };
@@ -651,5 +631,5 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: report.money }), design: report.design };
 }
 
-module.exports = { viewOf, hunt, huntDesign, visit, errands, sellerOf, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
+module.exports = { viewOf, hunt, shotsPerHour, visit, errands, sellerOf, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
     killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, SHOT_LINE_HOURS };

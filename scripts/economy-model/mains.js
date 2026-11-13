@@ -260,7 +260,7 @@ function mainsSide(ctx) {
             if (scale !== null) scaled.push({ shot, scale });
         }
         const fired = Worth.firing(hour && { ...hour, shots: scaled.map(entry => entry.shot) }, pricesOf(main)), form = fired?.id ? Engine.formOf(view, fired.id) : 'bare', hunted = row && fired?.id ? Engine.rowIn(row, form) : null;
-        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: hunted.shots * scaled.find(entry => entry.shot.id === fired.id).scale * (factors[form]?.shots ?? 1), worth: fired.worth } : null;
+        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: Engine.shotsPerHour(row, form, scaled.find(entry => entry.shot.id === fired.id).scale, factors[form]), worth: fired.worth } : null;
         const options = new Set(['bare', ...scaled.map(entry => Engine.formOf(view, entry.shot.id))]);
         const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(at => [at, options.has(at) ? factors[at]?.kills ?? 1 : null]));
         firings.set(main.index, { hour, memory, row, weapon: main.weapon, answer, factors, kills, form: answer ? form : 'bare' });

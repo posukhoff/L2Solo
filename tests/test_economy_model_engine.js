@@ -118,15 +118,11 @@ assert.equal(trio.delta.exp, 6950, 'three equal members: 1.39 x a solo bot\'s ex
 assert.equal(trio.delta.flows.huntCold, solo.delta.flows.huntCold, 'adena stays a solo bot\'s');
 assert.deepEqual(trio.main.bag, solo.main.bag, 'drops stay a solo bot\'s');
 assert.equal(partied({ levels: [1, 50], self: 0 }).delta.exp, 0, 'under the squared-level cut: no exp');
-// The design mode's hunt gives a party member the same share.
-const designed = party => Engine.huntDesign({ ...Engine.mainOf(accounts[0], 0, view, bands), party }, view, 100, () => 0.5).delta.exp;
-assert.equal(designed(null), 5000);
-assert.equal(designed({ levels: [1, 1, 1], self: 0 }), 6950, 'three equal members: 1.39 x a solo bot\'s exp');
-// The design hunt is the worn kit's: a kit making half the row's kills
+// The hunt is the worn kit's: a kit making half the row's kills
 // gains half its exp, adena and drops an hour.
 {
-    const main = Engine.mainOf(accounts[0], 0, view, bands), full = Engine.huntDesign(main, view, 100, () => 0.5);
-    const half = Engine.huntDesign(main, view, 100, () => 0.5, null, { bare: 0.5, shots: 0.5, blessed: 0.5 });
+    const main = Engine.mainOf(accounts[0], 0, view, bands), full = Engine.hunt(main, view, 100, () => 0.5);
+    const half = Engine.hunt(main, view, 100, () => 0.5, null, { bare: 0.5, shots: 0.5, blessed: 0.5 });
     assert.equal(half.delta.exp, 2500, 'half the row\'s exp');
     assert.ok(Math.abs(half.delta.flows.huntCold - full.delta.flows.huntCold / 2) <= 1, `half the row's adena: ${half.delta.flows.huntCold} of ${full.delta.flows.huntCold}`);
     assert.ok(Math.abs((half.main.bag[200] || 0) - (full.main.bag[200] || 0) / 2) <= 1, `half the row's drops: ${half.main.bag[200]} of ${full.main.bag[200]}`);
@@ -136,7 +132,7 @@ assert.equal(designed({ levels: [1, 1, 1], self: 0 }), 6950, 'three equal member
 // shots; with the D weapon it restocks D shots.
 const plain = { ...Engine.mainOf(accounts[0], 0, view, bands), shots: { 1835: 1000 } };
 assert.equal(plain.weapon, 100);
-assert.equal(Engine.hunt(plain, view, 1, () => 0.5).main.shots[1835], 980, 'no-grade shots fired');
+assert.equal(Engine.hunt(plain, view, 1, () => 0.5, { id: Engine.shotOf(view, plain, snapshot.hours[9][1]), perHour: 20 }).main.shots[1835], 980, 'no-grade shots fired');
 const armed = { ...plain, weapon: 101, shots: {} };
 assert.deepEqual(Engine.errands(armed, view, snapshot.hours[9][1], { outingHours: 0.5 }).find(errand => errand.kind === 'shots'),
     { kind: 'shots', id: 1463, amount: 20 }, 'D shots, one hour of use');

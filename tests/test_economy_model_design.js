@@ -224,7 +224,7 @@ const runHeld = (world, kitHours, account, hours, ratesOf = rates) => {
     const huntOne = (plainPrice, blessedPrice, blessed = blessedHour) => {
         const world = casterWorld({ plainPrice, blessedPrice, blessed, yields: { town: 'TownA', drop: { 57: 100 }, spoil: {} } });
         const { hooks, main, view } = runHeld(world, kitHours, { ...accounts[1], money: 0 }, 0), firing = hooks.firing(main), price = { [SPSD]: plainPrice, [BSPSD]: blessedPrice };
-        const decided = Worth.firing(hour, id => price[id]), hunted = Engine.huntDesign({ ...main, shots: { [SPSD]: 1000, [BSPSD]: 1000 } }, view, 1, () => 0.5, firing).delta;
+        const decided = Worth.firing(hour, id => price[id]), hunted = Engine.hunt({ ...main, shots: { [SPSD]: 1000, [BSPSD]: 1000 } }, view, 1, () => 0.5, firing).delta;
         return { decided, firing, hunted, net: hunted.flows.huntCold - hunted.shotsUsed * (price[hunted.shotId] || 0) };
     };
     // (1) Blessed at 2 against Spiritshot at 5: 1500 - 140 x 2 = 1220 over 1000 - 50 x 5 = 750.
@@ -267,7 +267,7 @@ const shareKit = (share, shots) => ({ ...kitHoursOf(() => 500, () => shots, (lin
     const kitHours = shareKit(0.5, [{ id: SPSD, kind: 'spiritshot', gross: 1000, units: 50 }, { id: BSPSD, kind: 'blessedSpiritshot', gross: 1500, units: 140 }]);
     const { hooks, main, view } = runHeld(world, kitHours, { ...accounts[1], money: 0 }, 0), firing = hooks.firing(main);
     assert.equal(main.kit[10], 0, 'the main wears no armour');
-    const hunted = Engine.huntDesign({ ...main, shots: { [SPSD]: 1000 } }, view, 1, () => 0.5, firing, hooks.kills(main)).delta;
+    const hunted = Engine.hunt({ ...main, shots: { [SPSD]: 1000 } }, view, 1, () => 0.5, firing, hooks.kills(main)).delta;
     assert.deepEqual([firing.id, hunted.flows.huntCold, hunted.exp, hunted.shotsUsed], [SPSD, 500, 0.5, 25], 'half the row\'s kills: half its adena, exp and shots');
 }
 // The level situation is read by the hour the hunt reaches the level, and
@@ -341,7 +341,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
 // row (1000 adena, 1 exp) and fires its 50 shots.
 {
     const { hooks, main, view } = runHeld(snapshot, stubKitHours(snapshot), accounts[1], 0), firing = hooks.firing(main);
-    const hunted = Engine.huntDesign({ ...main, shots: { [SSD]: 1000 } }, view, 1, () => 0.5, firing).delta;
+    const hunted = Engine.hunt({ ...main, shots: { [SSD]: 1000 } }, view, 1, () => 0.5, firing).delta;
     assert.deepEqual([firing.id, hunted.flows.huntCold, hunted.exp, hunted.shotsUsed], [SSD, 1000, 1, 50], 'the row\'s hour and count');
 }
 
@@ -790,11 +790,11 @@ const levelReads = (share, shots, hours, atHour = null) => {
 // A main without shots, or firing none, hunts at the same spot's hour without shots.
 const view = Engine.viewOf(snapshot, { npcPrices: 'x1' });
 const buyer = Engine.mainOf(accounts[1], 1, view, bands), firing = { id: SSD, perHour: 50 };
-const bare = Engine.huntDesign(buyer, view, 2, () => 0.5, firing);
+const bare = Engine.hunt(buyer, view, 2, () => 0.5, firing);
 assert.equal(bare.delta.flows.huntCold, 1000, 'two hours at the shotless 500 adena');
 assert.equal(bare.delta.huntBare, 2);
-assert.equal(Engine.huntDesign({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5, null).delta.flows.huntCold, 1000, 'firing none: its shots stay in the bag');
-const armed = Engine.huntDesign({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5, firing);
+assert.equal(Engine.hunt({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5, null).delta.flows.huntCold, 1000, 'firing none: its shots stay in the bag');
+const armed = Engine.hunt({ ...buyer, shots: { [SSD]: 50 } }, view, 2, () => 0.5, firing);
 assert.equal(armed.delta.flows.huntCold, 1500, 'one hour with its 50 shots at 1000, one without at 500');
 assert.equal(armed.delta.shotsUsed, 50);
 
