@@ -27,7 +27,6 @@ const Workshop = require('./rules/workshop');
 const { ownLines } = require('./rules/ownLines');
 const { hash, mulberry } = require('../hunt-tables/common');
 const Weights = require('./weights');
-const Worth = require('./rules/worth');
 const Mains = require('./mains');
 const StoreLimits = require('../../src/GameServer/PrivateStoreLimits');
 
@@ -96,21 +95,6 @@ const DESIGN = Object.freeze({
     personas: Object.freeze({ patient_crafter: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 }), speculator: Object.freeze({ looksToFloor: 5, buyerStart: 0.7 }),
         pragmatic_earner: Object.freeze({ looksToFloor: 3, buyerStart: 0.8 }), steady_achiever: Object.freeze({ looksToFloor: 3, buyerStart: 0.8 }),
         other: Object.freeze({ looksToFloor: 2, buyerStart: 0.9 }) }),
-    // A piece's worth to a buyer (its cap): its gain an hour over the kit
-    // the main wears, over the hours it is worn, plus its resale.
-    // 'gear_gain' (the design's text): today's gear gain of the piece over the
-    // worn kit carried over, times the own hour. 'hunt_cycle' (ours, pending the
-    // maintainer): the hunt hour of the worn kit with the piece minus the
-    // worn kit's, in adena, each at the best spot for its kit (kit-hours.js).
-    worth: 'hunt_cycle',
-    // The hours a piece's worth counts over. 'grade_stage' (the design's
-    // text): its gain over the hunting hours to the end of the grade stage.
-    // 'use_plus_resale' (ours): its gain over the hours the main wears it (to
-    // its grade's end, and on through each next grade whose ladder for the
-    // slot holds no rung an NPC or Luxury sells it), plus the least it sells
-    // for then (the NPC's buy price or the best crystallizer bid it knows), so
-    // a piece bought late in its grade is still worth its resale.
-    worthHorizon: 'use_plus_resale',
     // Which rung path aims at in a slot. Its candidates are the class's gear
     // ladder (the hunt tables' per-slot rungs without dominated pieces) of
     // the main's grade and below whose hunt hour beats the piece it wears.
@@ -273,8 +257,6 @@ const READINGS = Object.freeze({
     firstPriceCraft: Object.freeze({ text: 'inputs', ours: 'inputs_plus_mp' }),
     sellerLook: Object.freeze({ text: 'every_look', ours: 'unsold_look' }),
     askFloorAtCost: Object.freeze({ text: false, ours: true }),
-    worth: Object.freeze({ text: 'gear_gain', ours: 'hunt_cycle' }),
-    worthHorizon: Object.freeze({ text: 'grade_stage', ours: 'use_plus_resale' }),
     hourCost: Object.freeze({ text: 'literal', ours: 'opportunity' }),
     productPrice: Object.freeze({ text: 'bid_first', ours: 'bid_or_own' }),
     twinSeat: Object.freeze({ text: 'starter_then_pays', ours: Object.freeze(['hub', 'main_town']) }),
@@ -461,57 +443,6 @@ function gini(values) {
     return n && sum ? sorted.reduce((acc, value, i) => acc + (2 * (i + 1) - n - 1) * value, 0) / (n * sum) : 0;
 }
 
-// Does second-hand gear have a buyer whose cap reaches the seller's floor?
-// Per grade, over the gear ladder's rungs of the grade, the best buyer among
-// the lines (a line's reference bot entering the grade in the kit of the
-// level before: its own hour at its best spot at the design's yields, the
-// NPC's prices, the net hour of that kit with the rung put on over the
-// kit's, read through kitHours, each firing what nets most at the shots'
-// first prices (what a main knows before any deal: Worth.firing), over its
-// hunting hours to the next grade) against
-// the floor, under both worth formulas: the NPC's buy price alone, and for D
-// also the D crystals a crystallizer gets at the cheapest NPC gear route per
-// crystal (the most a crystallizer bids: an upper bound of the floor).
-// bounded: the share of line-rung rows whose hunt-cycle gain is held at the
-// bound.
-function staticCapFloor(snapshot, view, game, grades, config, kitHours) {
-    const npcMin = {}, out = {};
-    for (const prices of Object.values(game.npcByTown)) for (const [id, price] of Object.entries(prices)) npcMin[id] = Math.min(npcMin[id] ?? Infinity, price);
-    const dRoute = Math.min(...Object.values(game.routeByTown).map(routes => routes.d?.perCrystal ?? Infinity));
-    const firstPrice = id => game.firstPrice[id] ?? null;
-    for (const [at, [grade, from]] of grades.entries()) {
-        const best = {}, rows = { all: 0, bounded: 0 };
-        for (const line of Object.keys(Weights.CLASS_WEIGHTS)) {
-            const ladder = (snapshot.gearLadder?.lines?.[line] || []).find(band => from >= band.from && from <= band.to), hour = view.hours[line]?.[from]?.best;
-            if (!ladder || !hour || !(hour.exp > 0)) continue;
-            const ownHour = hour.adena * Engine.designAdenaFactor(view, hour, from)
-                + Engine.designYieldRows(view, line, from, hour, 'shots').reduce((sum, [id, perKill]) => sum + perKill * hour.kills * (view.items[id]?.npcBuy || 0), 0);
-            const next = at + 1 < grades.length ? grades[at + 1][1] : view.maxLevel;
-            const horizon = Math.max(0, Engine.expAt(view, Math.min(next, view.maxLevel)) - Engine.expAt(view, from)) / hour.exp;
-            const entry = Object.fromEntries((view.kits[line]?.[Math.max(1, from - 1)] || []).map(piece => [piece.slot, piece.selfId]));
-            const pieces = Object.entries(ladder.rungs).flatMap(([group, ids]) => ids.filter(id => String(view.items[id]?.grade || 'NONE').toLowerCase() === grade)
-                .map(selfId => ({ selfId, slot: group === 'weapon' ? snapshot.gearLadder.slots?.[selfId] || 7 : Number(group) })));
-            const read = Worth.swapRows(kitHours.swaps(line, from, entry, pieces)), worn = Worth.netRow(read.worn, firstPrice);
-            pieces.forEach(({ selfId: id }, index) => {
-                rows.all++;
-                const rung = Worth.netRow(read.rows[index] ?? null, firstPrice);
-                for (const formula of ['gear_gain', 'hunt_cycle']) {
-                    const worth = Worth.rungWorth({ formula, rung, worn, useHours: horizon, ownHour, gainBound: config.huntCycleGainBound });
-                    if (formula === 'hunt_cycle' && worth.bounded) rows.bounded++;
-                    const cap = Bounds.cap({ worth: worth.adena ?? 0, npcSell: npcMin[id] ?? null }).cap;
-                    const held = (best[id] ||= {});
-                    held[formula] = Math.max(held[formula] ?? 0, cap);
-                }
-            });
-        }
-        const ids = Object.keys(best), share = (formula, floorOf) => (ids.length ? ids.filter(id => best[id][formula] >= floorOf(id)).length / ids.length : null);
-        const npcFloor = id => view.items[id]?.npcBuy || 0, dFloor = id => Math.max(npcFloor(id), grade === 'd' && Number.isFinite(dRoute) ? (view.items[id]?.crystals || 0) * dRoute : 0);
-        out[grade] = { pieces: ids.length, bounded: rows.all ? rows.bounded / rows.all : 0,
-            gear_gain: { npc: share('gear_gain', npcFloor), withD: share('gear_gain', dFloor) }, hunt_cycle: { npc: share('hunt_cycle', npcFloor), withD: share('hunt_cycle', dFloor) } };
-    }
-    return out;
-}
-
 // The waits the design counts (liveness): each opened wait ends done,
 // withdrawn by its owner, failed, or at its one deadline, or is open at the end.
 const WAITS = ['sellLine', 'buyLine', 'bid', 'batch', 'shotless', 'wts', 'wtb', 'route', 'twin', 'parkedWant'];
@@ -586,7 +517,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         // Stock its mains sold (adena) to lines in the town nearest their
         // spot, to lines in another town (where a shot trip took them), and
         // to the NPC.
-        stock: { nearLines: 0, hubLines: 0, npc: 0 }, paths: 0, capFloor: {}, worthBounded: 0,
+        stock: { nearLines: 0, hubLines: 0, npc: 0 }, paths: 0, worthBounded: 0,
         // Shot trips that bought no shot, and shot recipes forgotten per grade.
         shotReport: { bareTrips: 0, forgets: {} },
         occupation: { grade_changed: 0, spot_left: 0, recipe_wanted: 0, arrived_town: 0, forScroll: 0, forBid: 0, returned: 0, refusedBack: 0, scrollSpot: 0, rowMissing: 0 }, events: { offerPosted: 0, bidPosted: 0 }, velocity: [],
@@ -699,7 +630,6 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     // Account money (main + twin wallet), for its Gini.
     const wealth = list => list.filter(main => !main.station).map(main => main.money + (accounts[main.index].twin ? accounts[main.index].twin.wallet : 0));
     const giniStart = gini(wealth(mains));
-    const capFloorStatic = staticCapFloor(snapshot, view, game, grades, config, kitHours);
 
     const wakeAt = (index, now, reason) => {
         const account = accounts[index];
@@ -1270,7 +1200,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             biases: BIASES,
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
                 trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves(), shotsOffLines: shotsOffLines() }, shotReport: stats.shotReport, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null, measureReads: stats.measureReads, huntFactors: { ...stats.huntFactors },
-                capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
+                worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
                 velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),
                 bountyHunterPairs: twins.filter(account => mains[account.index].line === BOUNTY_HUNTER).length,
@@ -1304,4 +1234,4 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     }
 }
 
-module.exports = { DESIGN, READINGS, DEPOSIT_FEE, STARTER_VILLAGE, BIASES, gameOf, firstPrices, plane, twinStats, staticCapFloor };
+module.exports = { DESIGN, READINGS, DEPOSIT_FEE, STARTER_VILLAGE, BIASES, gameOf, firstPrices, plane, twinStats };

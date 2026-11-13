@@ -8,8 +8,6 @@
 //   the attack gain (P.Atk, M.Atk for a caster) plus the defence gain (the
 //   better of P.Def and M.Def against a threat that may cast, P.Def alone
 //   against one that only hits) times the hours a death costs.
-// - huntCycleWorth: the hunt cycle's income per hour at the held spot with
-//   the piece minus without it (HuntCycle.reader).
 // - rungWorth: a ladder rung's worth to a buyer over the kit it wears.
 // - firing: the shots a main fires with a kit at the prices it knows, and
 //   the kit's net hour then.
@@ -43,27 +41,17 @@ function gearWorth({ usable = true, before, after, caster, threatMask, deathHour
     return worth(gain.attack + gain.defence * positive(deathHours), horizonHours, ownHour);
 }
 
-// incomeWith, incomeWithout: net adena per hour at the held spot; ownHour
-// defaults to the income without the piece.
-function huntCycleWorth({ incomeWith, incomeWithout, horizonHours, ownHour = incomeWithout }) {
-    const hour = positive(ownHour);
-    const perHour = hour > 0 ? Math.max(0, Number(incomeWith) - Number(incomeWithout)) / hour : 0;
-    return worth(perHour, horizonHours, hour);
-}
-
-// The worth of a gear rung to a buyer, in adena, by formula: 'hunt_cycle'
-// (ours): the hunt hour of the kit the main wears with the rung put on minus
-// the worn kit's (rung.hour, worn.hour: adena an hour, each at the best spot
-// for its kit), never a share of an hour; 'gear_gain' (the design's text):
-// today's gear gain of the rung over the worn kit (rung.gear, worn.gear:
-// attack plus defence x death hours, swapRows) times the own hour. The gain an hour is held to
+// The worth of a gear rung to a buyer, in adena (ours): the hunt cycle's
+// hour of the kit the main wears with the rung put on minus the worn kit's
+// (rung.hour, worn.hour: adena an hour, each at the best spot for its kit),
+// never a share of an hour. The gain an hour is held to
 // gainBound times the own hour (ours: a piece at most doubles the hour) and
 // bounded says so (a main with no own hour has no gain an hour). useHours: the hunting hours it is worn; resale: what it
 // returns after them. rung or worn null (no row) gives null: a worth nobody
 // can state. Returns { adena, perHour (adena an hour), bounded }.
-function rungWorth({ formula, rung, worn, useHours, ownHour, gainBound, resale = 0 }) {
+function rungWorth({ rung, worn, useHours, ownHour, gainBound, resale = 0 }) {
     if (!rung || !worn) return { adena: null, perHour: 0, bounded: false };
-    const own = positive(ownHour), gain = formula === 'gear_gain' ? positive(rung.gear - worn.gear) * own : positive(rung.hour - worn.hour);
+    const own = positive(ownHour), gain = positive(rung.hour - worn.hour);
     const bounded = gain > gainBound * own, perHour = bounded ? gainBound * own : gain;
     return { adena: perHour * positive(useHours) + positive(resale), perHour, bounded };
 }
@@ -186,16 +174,13 @@ function swapRows(read) {
 }
 
 // The hours a piece's gain counts over and what it returns beyond them.
-// 'grade_stage' (the design's text): the hunting hours to the end of the
-// grade stage, nothing returned. 'use_plus_resale' (ours): the hunting hours
-// the main wears it (useHours: to the end of its grade, and on to the end of
+// The hunting hours the main wears it (useHours: to the end of its grade, and on to the end of
 // the next grade when that grade's piece of the slot has no priced route for
 // the main: it keeps wearing it, never further), plus the least it sells for then (the floor: the NPC's
 // buy price or the best crystallizer bid it knows), so a piece bought late in
 // its grade is still worth its resale.
-function horizon({ reading, gradeHours, useHours, resale }) {
-    if (reading === 'grade_stage') return { hours: positive(gradeHours), resale: 0 };
+function horizon({ gradeHours, useHours, resale }) {
     return { hours: positive(useHours ?? gradeHours), resale: positive(resale) };
 }
 
-module.exports = { gearWorth, huntCycleWorth, rungWorth, horizon, ladderGroup, slotsConflict, wornKit, kitKey, swapRows, firing, netRow, huntFactors };
+module.exports = { gearWorth, rungWorth, horizon, ladderGroup, slotsConflict, wornKit, kitKey, swapRows, firing, netRow, huntFactors };

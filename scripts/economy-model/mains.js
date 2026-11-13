@@ -24,7 +24,6 @@ const Workshop = require('./rules/workshop');
 const { hash, mulberry } = require('../hunt-tables/common');
 
 const ADS = 'ads';
-const FORMULAS = Object.freeze(['gear_gain', 'hunt_cycle']);
 // The kit tables the plane keeps for every main to read (mainsSide): about
 // 14 KB each, so at most some 70 MB; a fresh cohort's first hours share four
 // tables in five.
@@ -381,8 +380,8 @@ function mainsSide(ctx) {
         if (gradePriced(main, groupOf(slot), town, grades[next][0])) return hoursTo(main, grades[next][1]);
         return hoursTo(main, next + 1 < grades.length ? grades[next + 1][1] : view.maxLevel);
     };
-    // The hours a piece's gain counts over and its resale (worthHorizon).
-    const horizonFor = (main, selfId, slot, book, town) => Worth.horizon({ reading: config.worthHorizon, gradeHours: horizonOf(main),
+    // The hours a piece's gain counts over and its resale.
+    const horizonFor = (main, selfId, slot, book, town) => Worth.horizon({ gradeHours: horizonOf(main),
         useHours: useHoursOf(main, slot, town), resale: resaleOf(selfId, book) });
     // What a main deals on: the lines and bids of the town it stands in and
     // the ads (others' only), and its own twin's bids wherever the twin sits
@@ -437,7 +436,7 @@ function mainsSide(ctx) {
         // firing what nets most at the prices the main knows): what a wait for it costs.
         const priceOf = pricesOf(main), rows = { rung: Worth.netRow(rowIn(table, piece.slot, selfId), priceOf), worn: Worth.netRow(table?.worn ?? null, priceOf) };
         const horizon = horizonFor(main, selfId, piece.slot, book, town);
-        const used = Worth.rungWorth({ formula: config.worth, ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
+        const used = Worth.rungWorth({ ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
         // No hour stated for either kit: its use cannot be stated (counted).
         if (used.adena === null) stats.routes.noWorth++;
         const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], ...reachRoutes(account, town, book, selfId),
@@ -454,20 +453,12 @@ function mainsSide(ctx) {
         return { ...capped, useHours: horizon.hours, perHour: used.perHour, resale: horizon.resale, need: Number.isFinite(need) ? need : null,
             acquired: lines.length ? acquire(piece, { ...own, cap: capped.cap ?? 0, lines }) : routes };
     };
-    // A piece's cap: min(worth, own route, the NPC here); both formulas' caps
-    // for the cap-against-floor count. A piece whose worth is not stated is
+    // A piece's cap: min(worth, own route, the NPC here). A piece whose worth is not stated is
     // capped by its routes alone; with no route either it has no cap (null).
     const capOf = (rows, horizon, routeCost, npcSell, hour) => {
-        const caps = {};
-        let chosen = null;
-        for (const formula of FORMULAS) {
-            const worth = Worth.rungWorth({ formula, ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound, resale: horizon.resale });
-            const capped = Bounds.cap({ worth: worth.adena ?? Number.MAX_SAFE_INTEGER, routeCost, npcSell });
-            const cap = capped.cap >= Number.MAX_SAFE_INTEGER ? null : capped.cap;
-            caps[formula] = cap;
-            if (formula === config.worth) chosen = { cap, capBy: capped.by, bounded: worth.bounded, worth: worth.adena ?? null };
-        }
-        return { ...chosen, caps };
+        const worth = Worth.rungWorth({ ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound, resale: horizon.resale });
+        const capped = Bounds.cap({ worth: worth.adena ?? Number.MAX_SAFE_INTEGER, routeCost, npcSell });
+        return { cap: capped.cap >= Number.MAX_SAFE_INTEGER ? null : capped.cap, capBy: capped.by, bounded: worth.bounded, worth: worth.adena ?? null };
     };
 
     // The hunting hours of its next outing (the kit's refill, config.refill)
@@ -545,7 +536,6 @@ function mainsSide(ctx) {
         const known = new Set([...before.wts, ...before.wtb].map(ad => ad.id));
         for (const ad of market.ads.wts) {
             if (known.has(ad.id)) continue;
-            capFloorSeen(ad);
             offerPosted(ad.item, null, ad.price, index, now);
         }
         for (const ad of market.ads.wtb) {
@@ -557,14 +547,6 @@ function mainsSide(ctx) {
                 ctx.rearrive(entry.owner, now, 'bid_posted');
             }
         }
-    }
-    // A piece offered: is there a buyer in reach (an open WTB) whose cap,
-    // under each worth formula, reaches the seller's floor?
-    function capFloorSeen(ad) {
-        const grade = ad.grade || gradeOfItem(view.items[ad.item]), row = stats.capFloor[grade] ||= { offered: 0, gear_gain: 0, hunt_cycle: 0 };
-        row.offered++;
-        const bids = Books.rowsOf(ads, ADS, 'buy', ad.item);
-        for (const formula of FORMULAS) if (bids.some(entry => entry.caps && entry.caps[formula] >= ad.floor)) row[formula]++;
     }
     // A line of an item entered reach (a twin's line in town, or an ad when
     // town is null): offer_posted for the mains that want it, at the gain
@@ -703,7 +685,7 @@ function mainsSide(ctx) {
             const noSeller = !book.sell[row.selfId]?.length && book.seen[row.selfId] === undefined
                 && !routes.some(option => option.route === 'npc' || option.route === 'exchange' || option.route === 'twin');
             pieces[row.selfId] = { selfId: row.selfId, slot: row.slot, grade: gradeOfItem(view.items[row.selfId]), weapon: Engine.isWeapon(view.items[row.selfId]),
-                cap: priced.cap, capBy: priced.capBy, caps: priced.caps, routes, own: twin?.stock[row.selfId] || 0,
+                cap: priced.cap, capBy: priced.capBy, routes, own: twin?.stock[row.selfId] || 0,
                 visitsLeft: priced.useHours / share * visitRate, noSeller, pathRoute: market.path.pieces.find(piece => piece.selfId === row.selfId)?.route ?? null };
         }
         const memory = account.memory, known = {};
@@ -955,4 +937,4 @@ function marketStart() {
         stalled: {}, deal: null, tripReason: null, indexed: [], spotHeld: false, visits: 0, lastSpot: null, movedAt: null, needs: {} };
 }
 
-module.exports = { mainsSide, marketStart, wornKit, FORMULAS };
+module.exports = { mainsSide, marketStart, wornKit };

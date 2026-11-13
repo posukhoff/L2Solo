@@ -1,8 +1,7 @@
 'use strict';
 // The economy design's worth of a gear piece on inline kit numbers: today's
-// gear gain carried over and the hunt cycle's income difference, in hours of
-// the bot's own hour and in adena, and the buyer's cap it sets against the
-// seller's floor.
+// gear gain carried over, in hours of the bot's own hour and in adena, and the
+// buyer's cap it sets against the seller's floor.
 const assert = require('node:assert/strict');
 const Worth = require('../scripts/economy-model/rules/worth');
 const Bounds = require('../scripts/economy-model/rules/bounds');
@@ -19,7 +18,6 @@ const weapon = Worth.gearWorth(view);
 near(weapon.perHour, 0.5, 'P.Atk 200 -> 300 adds half the hour');
 near(weapon.hours, 50, 'over 100 hours to the end of the stage');
 near(weapon.adena, 1.5e6, 'at 30k an hour');
-assert.ok(Worth.huntCycleWorth({ incomeWith: 36000, incomeWithout: 30000, horizonHours: 100 }).adena > 0, 'the hunt cycle agrees it is worth something');
 // A caster reads M.Atk; armour its defence times the hours a death costs, P.Def alone against a threat that only hits.
 near(Worth.gearWorth({ ...view, caster: true }).perHour, 0, 'a P.Atk weapon adds nothing to a caster');
 const armour = { ...kit, pDef: 400, mDef: 250 };
@@ -27,12 +25,8 @@ near(Worth.gearWorth({ ...view, after: armour }).perHour, 0.25 * 2, 'the better 
 near(Worth.gearWorth({ ...view, after: { ...kit, mDef: 250 }, threatMask: 1 }).perHour, 0, 'M.Def is worth nothing against hits alone');
 near(Worth.gearWorth({ ...view, after: { ...kit, pDef: 310, mDef: 250 } }).perHour, 0.2 * 2, 'a jewel whose M.Def gain beats its P.Def gain: the M.Def gain against a threat that may cast');
 
-// Worth in adena scales with the own hour (the gear gain is in hours); the
-// hunt cycle's is the income difference itself.
+// Worth in adena scales with the own hour (the gear gain is in hours).
 near(Worth.gearWorth({ ...view, ownHour: 1.5e6 }).adena, 50 * weapon.adena, 'a 50x own hour, a 50x worth');
-near(Worth.huntCycleWorth({ incomeWith: 36000, incomeWithout: 30000, horizonHours: 100 }).adena, 6000 * 100, 'income difference times the hours');
-near(Worth.huntCycleWorth({ incomeWith: 36000, incomeWithout: 30000, horizonHours: 100 }).perHour, 0.2, 'a fifth of the hour without the piece');
-near(Worth.huntCycleWorth({ incomeWith: 25000, incomeWithout: 30000, horizonHours: 100 }).adena, 0, 'a piece that costs income is worth nothing');
 
 // A piece the class cannot use is worth nothing, whatever its numbers.
 assert.deepEqual(Worth.gearWorth({ ...view, usable: false }), { perHour: 0, hours: 0, adena: 0 });
