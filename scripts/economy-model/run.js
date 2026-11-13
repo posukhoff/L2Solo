@@ -96,12 +96,12 @@ function printFooter() {
     for (const line of LEFT_OUT) console.log(`  - ${line}`);
 }
 
-// The view and rates of the run's mode.
+// The view, rates and plane of the run's mode.
 function modeOf(argv, snapshot, cohort) {
     const mode = Boot.option(argv, 'mode', 'plain');
     if (mode === 'plain') {
         const view = Engine.viewOf(snapshot);
-        return { view, hunter: Today.hunter(view),
+        return { view, plane: Today.plane({ view, hunter: Today.hunter(view), arrival: Today.nextArrival }),
             rates: { default: { huntShare: Number(Boot.option(argv, 'hunt-share', 1)), visitsPerBotHour: Number(Boot.option(argv, 'visits', 2)) } } };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
@@ -110,7 +110,7 @@ function modeOf(argv, snapshot, cohort) {
     const booted = Date.now(), { view, rates, basis, hunter } = Today.setup(snapshot, JSON.parse(fs.readFileSync(fitFile, 'utf8')), cohort.accounts);
     console.log(`TODAY ${JSON.stringify(Today.TODAY)}; fitted on ${fitFile}; kit hours booted in ${((Date.now() - booted) / 1000).toFixed(1)} s`);
     printFit(basis);
-    return { view, rates, hunter };
+    return { view, rates, plane: Today.plane({ view, hunter, arrival: Today.nextArrival }) };
 }
 
 function printFit(basis) {
@@ -162,7 +162,7 @@ function designOf(argv, snapshot) {
     console.log(`DESIGN config (fields unsaid in the design are ours; restockLine and crystalStock are high-sensitivity): ${JSON.stringify(config)}`);
     console.log(`DESIGN readings: ${Object.entries(Design.READINGS).map(([field, r]) => `${field} ${JSON.stringify(config[field])} (${config[field] === r.text ? 'the design\'s text' : [].concat(r.ours).includes(config[field]) ? 'ours' : 'other'})`).join(' | ')}; mpStartValue ${config.mpStartValue}`);
     const personaShares = Object.fromEntries(PersonaTypes.TYPE_IDS.map(id => [id, PersonaTypes.TYPES[id].share]));
-    return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, design: Design.plane({ snapshot, game, config, start, grades, personaShares, kitHours }) };
+    return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, plane: Design.plane({ snapshot, game, config, start, grades, personaShares, kitHours }) };
 }
 
 // The design mode's hunting share per band: 1. The hour at the spot is the
@@ -401,14 +401,14 @@ function main(argv) {
     const designMode = Boot.option(argv, 'mode', 'plain') === 'design';
     const picked = designMode ? designOf(argv, snapshot) : null;
     const cohort = picked ? picked.cohort : cohortOf(argv, snapshot);
-    const { view, rates, hunter = null } = picked || modeOf(argv, snapshot, cohort);
+    const { view, rates, plane } = picked || modeOf(argv, snapshot, cohort);
     const fallbacks = snapshot.fallbacks;
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)}); fallbacks: `
         + `no no-grade market (the C town) ${fallbacks.noMarketToC.length} spots`);
     console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}`);
     const began = Date.now();
-    const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: picked ? null : Today.nextArrival, hunter,
-        onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates }, design: picked ? picked.design : null });
+    const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, plane,
+        onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates } });
     printRun(out, { rates, fresh: !!picked?.fresh });
     console.log(`MONEY per start band, mean per bot start -> end: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.meanStart)} -> ${k(row.money.meanEnd)}`).join(' | ')}`);
     if (out.design) console.log(`MONEY per start band, net per bot-hour: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.deltaPerBotHour)}`).join(' | ')}`);

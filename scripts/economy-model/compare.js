@@ -210,7 +210,7 @@ function requireSpots(snapshot, baseline, accounts) {
 // The model over a baseline's start population and hours, at today's mechanisms and the given rates.
 function modelOf(baseline, snapshot, { view, rates, hunter }, seed, cohort = Cohort.fromSave(baseline.inputs.start.db, snapshot)) {
     const model = Engine.simulate({ view, accounts: cohort.accounts, bands: Run.STAGE_BANDS, rates, hours: baseline.window.hours, seed,
-        nextArrival: Today.nextArrival, hunter, inputs: { cohort: cohort.source, seed, rates } });
+        plane: Today.plane({ view, hunter, arrival: Today.nextArrival }), inputs: { cohort: cohort.source, seed, rates } });
     return { model, cohort };
 }
 

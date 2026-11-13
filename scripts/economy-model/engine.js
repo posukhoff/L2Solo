@@ -15,14 +15,13 @@
 //   level_up      the exp of the next level is reached (from exp per hour);
 //                 the kit plan and shot grade follow the new level, and a
 //                 main whose spot has no hour at it moves to its line's best.
-//   arrived_town  the main is in town: sells its bag, restocks shots (an
-//                 outing of the hunting hours since its last visit), buys
-//                 the kit pieces its plan names. When it comes is the run's
-//                 nextArrival(main, view) alone: asked at the start and after
+//   arrived_town  the main is in town: the run's plane runs the visit (today's:
+//                 sells its bag, restocks shots, buys the kit pieces its plan
+//                 names). When it comes is the plane's nextArrival(main, view)
+//                 alone: asked at the start and after
 //                 each committed event that changes the main (a visit, a
 //                 level-up), its answer is the one pending arrival (replaced,
-//                 or dropped by null). Today's mode gives a fitted periodic
-//                 rule, the design mode the situations that send a bot to town.
+//                 or dropped by null): the situations that send a bot to town.
 //                 A bot is in one state at a time: an answer { at, away }
 //                 leaves the spot at at - away (the hunt stops there and the
 //                 way to town is not hunted), and an arrival it has
@@ -33,13 +32,14 @@
 //                 without going to town (its answer { at, read: true }, held
 //                 in the same pending slot): the rule is asked again then.
 //   report        every simulated hour: counters only, never a decision.
-// Every mode hunts one way: a main fires the shots its hunter names (firing)
+// Every mode hunts one way: a main fires the shots its plane names (firing)
 // while it holds them, then hunts the hour without shots, at the worn kit's
-// kill factor (kills), at the spot its occupation or save chose. In the design
-// mode (simulate's design: design.js) the run also holds the account plane:
-// crafter twins seated in towns, woken by account_wake (a line filled, an
-// order, its main's arrival) and batch_done (a craft batch's MP deadline); the
-// design's trip is the arrival rule and its visits are the design's.
+// kill factor (kills), at the spot its occupation or save chose. The run's
+// plane (today.js plane() for today's and the plain mode, design.js plane()
+// for the design mode) owns what differs between the modes: its sinks, the
+// visit, the arrival rule, what a main fires, its own events (the design's
+// account plane: crafter twins woken by account_wake and batch_done) and the
+// money it holds apart from the mains.
 //
 // hunt and visit are pure: they take a main and the view and return the new
 // main with the flows it caused; the engine commits both. Rolls are seeded per
@@ -51,10 +51,6 @@ const Ledger = require('./ledger');
 const ADENA = 57;
 // Counts drawn whole below this mean, rounded by a draw above it.
 const WHOLE_DRAW_MEAN = 5;
-// Today's shot restock (EconomyContext.kitReader, ShotStock.restockPlan):
-// below one hunting hour of use a bot buys up to an outing's use, never
-// under one hour.
-const SHOT_LINE_HOURS = 1;
 
 // The Blessed Spiritshots' place in the snapshot's shot families (soulshot,
 // spiritshot, blessed spiritshot).
@@ -305,96 +301,6 @@ function sellerOf(view, id, town) {
     return best;
 }
 
-// The main's errands in town, in its wallet's order: the shot restock (of
-// the shot it fires at its shots an hour, context.firing: the run's hunter's
-// answer; none firing none), then the kit plan's pieces it does not wear, by slot.
-function errands(main, view, context) {
-    const out = [], firing = context.firing;
-    if (firing) {
-        const held = main.shots[firing.id] || 0;
-        const target = Math.ceil(firing.perHour * Math.max(SHOT_LINE_HOURS, context.outingHours || 0));
-        if (held < firing.perHour * SHOT_LINE_HOURS && target > held) out.push({ kind: 'shots', id: firing.id, amount: target - held });
-    }
-    for (const piece of view.kits[main.line]?.[main.level] || []) {
-        if (main.kit[piece.slot] !== piece.selfId) out.push({ kind: 'piece', id: piece.selfId, slot: piece.slot, amount: 1 });
-    }
-    return out;
-}
-
-// A visit: the main arrives in its spot's town, sells its bag (to a fixed
-// buyer of the town when one buys the item, else to the NPC), sells shots of
-// a grade it no longer fires to the NPC, then runs its errands where it
-// stands; an errand nobody sells here takes it by gatekeeper to the nearest
-// town that sells it (one such hop per visit), where it runs what it can.
-function visit(main, view, context = {}) {
-    const hour = hourOf(view, main), row = spotRowOf(view, main), flows = emptyFlows();
-    const town = row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null;
-    const delta = { flows, towns: [], gearToNpc: 0, gearBought: 0, shotsBoughtFixed: 0, shotsBoughtNpc: 0, shotsSoldNpc: 0,
-        unsold: 0, missingPieces: 0, missingShots: 0, noTown: 0 };
-    if (!town) { delta.noTown = 1; return { main, delta }; }
-    delta.towns.push(town);
-    let money = main.money;
-    const sellToNpc = (id, count) => {
-        const value = Math.round(count * (view.items[id]?.npcBuy || 0));
-        if (!(value > 0)) return false;
-        flows.npcSales += value;
-        money += value;
-        if (isGear(view.items[id])) delta.gearToNpc += count;
-        return true;
-    };
-    const buyers = view.market.buy[town] || {};
-    for (const [key, count] of Object.entries(main.bag)) {
-        const id = Number(key), price = buyers[id];
-        if (price > 0) { const value = Math.round(price * count); flows.fixedBuyers += value; money += value; } else if (!sellToNpc(id, count)) delta.unsold += count;
-    }
-    const shots = {}, firing = shotOf(view, main, hour);
-    for (const [key, count] of Object.entries(main.shots)) {
-        if (Number(key) === firing || !count) { if (count) shots[key] = count; continue; }
-        if (sellToNpc(Number(key), count)) delta.shotsSoldNpc += count; else delta.unsold += count;
-    }
-    const kit = { ...main.kit };
-    let weapon = main.weapon;
-    const buy = (errand, seller) => {
-        if (errand.kind === 'shots') {
-            const count = Math.min(errand.amount, Math.floor(money / seller.price));
-            if (count <= 0) return false;
-            const cost = count * seller.price;
-            money -= cost;
-            shots[errand.id] = (shots[errand.id] || 0) + count;
-            if (seller.channel === 'fixed_wts') { flows.fixedSellers -= cost; delta.shotsBoughtFixed += count; } else { flows.npcBuys -= cost; delta.shotsBoughtNpc += count; }
-            return count === errand.amount;
-        }
-        if (money < seller.price) return false;
-        money -= seller.price;
-        flows[seller.channel === 'fixed_wts' ? 'fixedSellers' : 'npcBuys'] -= seller.price;
-        delta.gearBought++;
-        const worn = kit[errand.slot];
-        kit[errand.slot] = errand.id;
-        if (isWeapon(view.items[errand.id])) weapon = errand.id;
-        if (worn) sellToNpc(worn, 1);
-        return true;
-    };
-    let open = [];
-    for (const errand of errands(main, view, context)) {
-        const seller = sellerOf(view, errand.id, town);
-        if (!(seller?.fare === 0 && buy(errand, seller))) open.push(errand);
-    }
-    // One onward hop: to the nearest seller of the first errand still open.
-    const first = open.map(errand => ({ errand, seller: sellerOf(view, errand.id, town) })).find(row => row.seller && row.seller.fare > 0);
-    if (first && money >= first.seller.fare + first.seller.price) {
-        money -= first.seller.fare;
-        flows.fares -= first.seller.fare;
-        const there = first.seller.town;
-        delta.towns.push(there);
-        open = open.filter(errand => {
-            const seller = sellerOf(view, errand.id, there);
-            return !(seller?.fare === 0 && buy(errand, seller));
-        });
-    }
-    for (const errand of open) delta[errand.kind === 'shots' ? 'missingShots' : 'missingPieces']++;
-    return { main: { ...main, money, bag: {}, shots, kit, weapon }, delta };
-}
-
 // The engine's opening state of an account record (cohort.js).
 function mainOf(account, index, view, bands) {
     const kit = {}, held = new Set(account.held || []), level = Math.min(account.level, view.maxLevel);
@@ -445,48 +351,44 @@ function heap() {
 }
 
 // A run: accounts (cohort.js), the view, the stage bands [[name, fromLevel]],
-// per band { huntShare, ... } and nextArrival(main, view): the time of the
-// main's next arrival in town ({ at, away }: away, the hours of the way
-// lumped before the visit, not hunted), or { at, read: true } for a
-// situation to read at that hour without going (null: neither), asked on the main as it is
-// after the committed event. view is the plain data a trip rule may read:
-//   event     'start' | 'visit' | 'level_up' | 'situation'
-//   now       the time of the event, hours
-//   pending   the hour of the arrival or situation already scheduled (null after a visit or at the start)
-//   rate      the main's band's rates
-//   roll      a seeded number in [0, 1)
-//   hour      the main's spot row: exp, adena, kills, shots, dropLoot, spoilLoot, loot, potions per hunting hour (null without one)
-//   shotsPerHour  the row's shots per hunting hour; the main's own bag and shots are on main
-//   huntShare the band's share of wall time spent hunting
-// The snapshot has no bag capacity or carry weight (items carry a weight, the
-// class carry limit is not read), so a rule on "the bag is full" has no number yet.
-// design: null (today's and the plain mode) or the design mode's plane
-// (design.js plane()): its start({ view, mains, ledger, push, seed, rateOf,
-// rearrive, commit }) returns the hooks the run calls (hunt, given the
-// delta with its spotHours and wayHours; visit, whose afterHours are the
-// hours after the arrival before it hunts again (its onward stops and its
-// way back to the spot); levelUp,
-// event, hour, finish, nextArrival: the design's trip, which replaces the
-// nextArrival given; firing(main): the shot a main fires as it hunts,
-// hunt's). rearrive(index, now, event) asks the arrival rule again
+// per band { huntShare, ... } and the run's plane (today.js plane() or
+// design.js plane()): { sinks, start(context) }. sinks: the plane's own
+// ledger sinks. start({ view, mains, ledger, push, seed, rateOf, rearrive,
+// commit }) returns the hooks the run calls:
+//   nextArrival(main, view)  the time of the main's next arrival in town ({ at, away }: away, the hours of the way
+//             lumped before the visit, not hunted), or { at, read: true } for a
+//             situation to read at that hour without going (null: neither), asked on the main as it is
+//             after the committed event. view is the plain data a trip rule may read:
+//     event     'start' | 'visit' | 'level_up' | 'situation'
+//     now       the time of the event, hours
+//     pending   the hour of the arrival or situation already scheduled (null after a visit or at the start)
+//     rate      the main's band's rates
+//     roll      a seeded number in [0, 1)
+//     hour      the main's spot row: exp, adena, kills, shots, dropLoot, spoilLoot, loot, potions per hunting hour (null without one)
+//     shotsPerHour  the row's shots per hunting hour; the main's own bag and shots are on main
+//     huntShare the band's share of wall time spent hunting
+//   firing(main), kills(main)  the shot a main fires as it hunts and its worn kit's kills (hunt's)
+//   hunt(main, delta)  told each committed hunt, the delta with its spotHours and wayHours
+//   visit(main, now, { outingHours })  { main, delta, afterHours }: afterHours, the hours after
+//             the arrival before it hunts again (its onward stops and its way back to the spot)
+//   levelUp(main, now)  the main after a level read
+//   event(event)  an event the plane pushed (any kind but the run's own); it throws on a kind it does not own
+//   hour(at)  the money the plane holds apart from the mains at a report hour
+//   finish(hours, mains)  { money: { start, end } the plane holds (none: no such money), ...fields the output adds }
+// push(event) queues a plane's event. rearrive(index, now, event) asks the arrival rule again
 // for a main after a situation raised outside its own events (a line in
 // reach, a bid for what it sells); commit(index, now, change) hunts a main to
 // now, replaces it by change(main) (a deal met with it while it hunts) and
 // asks again. Returns the model ledger.
-function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, onProgress = null, inputs = {}, design = null, hunter = null }) {
-    if (typeof nextArrival !== 'function' && !design) throw new Error('simulate needs nextArrival(main, view)');
-    if (!hunter && !design) throw new Error('simulate needs a hunter (Today.hunter) or a design');
+function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProgress = null, inputs = {} }) {
+    if (!plane) throw new Error('simulate needs a plane (today.js plane() or design.js plane())');
     const rateOf = band => rates[band] || rates.default;
     const mains = accounts.map((account, index) => mainOf(account, index, view, bands));
-    const ledger = Ledger.create({ bands, mains, view, extraSinks: design ? design.sinks : [] });
+    const ledger = Ledger.create({ bands, mains, view, extraSinks: plane.sinks });
     const queue = heap();
-    let arrivalRule = nextArrival;
-    const plane = design ? design.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf,
+    const hooks = plane.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf,
         rearrive: (index, now, event) => reschedule(mains[index], now, event),
-        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; scheduleLevel(main, now); reschedule(main, now, event); return main; } }) : null;
-    if (plane) arrivalRule = plane.nextArrival;
-    // What a main fires and its worn kit's kills: the design's plane, else the run's hunter (Today.hunter).
-    const hunting = plane || hunter;
+        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; scheduleLevel(main, now); reschedule(main, now, event); return main; } });
     const randomFor = main => mulberry(hash(`${seed}:${main.id}:${main.counter}`));
     let events = 0;
 
@@ -507,7 +409,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         if (row && share > 0 && main.level < view.maxLevel) {
             // A need within float rounding of the level's exp is reached: the read is due at once.
             const gap = expAt(view, main.level + 1) - main.exp, need = gap <= LEVEL_ROUNDING * expAt(view, main.level + 1) ? 0 : gap;
-            const kills = hunting.kills(main), { lasts, form } = firedOf(view, main, hunting.firing(main));
+            const kills = hooks.kills(main), { lasts, form } = firedOf(view, main, hooks.firing(main));
             const fired = lasts > 0 ? formExp(main, row, form, lasts, kills) : 0;
             const hours = need <= fired ? need / formExp(main, row, form, 1, kills) : lasts + (need - fired) / formExp(main, row, 'bare', 1, kills);
             at = main.since + hours / share;
@@ -536,7 +438,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         // Asked from the hour it hunts again (a visit's onward stops keep it in town).
         const from = Math.max(now, main.since);
         const row = spotRowOf(view, main), rate = rateOf(main.band);
-        const answer = arrivalRule(main, { event, now: from, pending: held && held.at, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
+        const answer = hooks.nextArrival(main, { event, now: from, pending: held && held.at, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
             hour: row || null, shotsPerHour: row?.shots || 0, huntShare: rate.huntShare });
         const at = answer !== null && typeof answer === 'object' ? answer.at : answer, kind = answer?.read ? 'situation' : 'arrived_town';
         // An answer is null (no arrival) or a finite hour: anything else is a defect of the rule, never a quiet drop.
@@ -557,9 +459,9 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         const share = rateOf(main.band).huntShare, end = departs !== null && departs < now ? departs : now;
         const spotHours = Math.max(0, end - main.since), wayHours = end < now ? now - Math.max(end, main.since) : 0;
         const moved = { ...main, counter: main.counter + 1, since: Math.max(now, main.since) };
-        const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), hunting.firing(main), hunting.kills(main));
+        const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), hooks.firing(main), hooks.kills(main));
         Ledger.recordHunt(ledger, next, delta);
-        if (plane) plane.hunt(next, { ...delta, spotHours, wayHours });
+        hooks.hunt(next, { ...delta, spotHours, wayHours });
         return next;
     };
 
@@ -576,12 +478,13 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         if (event.at > hours) break;
         events++;
         if (event.kind === 'report') {
-            Ledger.recordHour(ledger, mains, event.at, plane ? plane.hour(event.at) : 0);
+            Ledger.recordHour(ledger, mains, event.at, hooks.hour(event.at));
             if (onProgress && event.at % 10 === 0) onProgress({ hour: event.at, hours, events, seconds: (Date.now() - startedAt) / 1000 });
             continue;
         }
-        if (event.kind === 'account_wake' || event.kind === 'batch_done') {
-            plane.event(event);
+        // Any kind but the run's own is the plane's.
+        if (event.kind !== 'arrived_town' && event.kind !== 'situation' && event.kind !== 'level_up') {
+            hooks.event(event);
             continue;
         }
         let departs = null;
@@ -597,7 +500,6 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             if (pendingLevel.get(event.who) !== event.at) continue; // replaced by a later schedule
             pendingLevel.set(event.who, null);
         }
-        if (event.kind !== 'level_up' && event.kind !== 'arrived_town') throw new Error(`an event of an unknown kind: ${event.kind}`);
         let main = event.kind === 'arrived_town' ? huntTo(mains[event.who], event.at, departs) : huntTo(mains[event.who], event.at);
         if (event.kind === 'level_up') {
             // The read takes a level its hunted exp reaches within float rounding (LEVEL_ROUNDING), no more.
@@ -605,7 +507,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             const band = bandOf(bands, level), spot = ownRow(view, main.line, level, main.spot) ? main.spot : null;
             if (main.spot && !spot) ledger.counters.leftOwnSpot++;
             main = { ...main, level, band, spot };
-            if (plane) main = plane.levelUp(main, event.at);
+            main = hooks.levelUp(main, event.at);
             scheduleLevel(main, event.at);
             mains[event.who] = main;
             reschedule(main, event.at, 'level_up');
@@ -613,7 +515,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             // The restock covers an outing as long as the one just ended: its hours at the spot, from
             // the end of its last visit to the hour it left (lastVisit: the hour that visit ended).
             const outingHours = ((departs ?? event.at) - main.lastVisit) * rateOf(main.band).huntShare;
-            const { main: after, delta, afterHours = 0 } = plane ? plane.visit(main, event.at, { outingHours }) : visit(main, view, { outingHours, firing: hunter.firing(main) });
+            const { main: after, delta, afterHours = 0 } = hooks.visit(main, event.at, { outingHours });
             Ledger.recordVisit(ledger, after, delta);
             // Its onward stops and its way back are not hunted: it hunts again from their end.
             main = { ...after, lastVisit: event.at + afterHours, since: event.at + afterHours };
@@ -624,10 +526,9 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         }
     }
     for (let i = 0; i < mains.length; i++) if (!mains[i].station) mains[i] = huntTo(mains[i], hours);
-    if (!plane) return Ledger.build(ledger, { mains, hours, events, inputs });
-    const report = plane.finish(hours, mains);
-    return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: report.money }), design: report.design };
+    const { money, ...added } = hooks.finish(hours, mains);
+    return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: money }), ...added };
 }
 
-module.exports = { viewOf, hunt, shotsPerHour, visit, errands, sellerOf, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
-    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, SHOT_LINE_HOURS };
+module.exports = { viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
+    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt };

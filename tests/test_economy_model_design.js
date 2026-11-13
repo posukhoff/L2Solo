@@ -130,11 +130,10 @@ const swordLadder = line => ladderOf(line, [[1, 30, { weapon: { rungs: [SWORD], 
 snapshot.gearLadder = { slots: {}, lines: { 55: swordLadder('55'), 9: swordLadder('9') } };
 // The design plane with the fixture's kit hours unless given.
 const plane = options => Design.plane({ kitHours: stubKitHours(options.snapshot), ...options });
-const arrivals = (main, { event, now, pending, roll }) => (event === 'level_up' ? pending : now + (event === 'start' ? roll : 1));
 const run = (seed, hours = 8, world = snapshot) => {
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const game = Design.gameOf(world, view);
-    return Engine.simulate({ view, accounts, bands, rates, hours, seed, nextArrival: arrivals, design: plane({ snapshot: world, game, start: 'late', grades }) });
+    return Engine.simulate({ view, accounts, bands, rates, hours, seed, plane: plane({ snapshot: world, game, start: 'late', grades }) });
 };
 const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-6 * Math.max(1, Math.abs(expected)), `${message}: ${actual} against ${expected}`);
 
@@ -195,7 +194,7 @@ const runHeld = (world, kitHours, account, hours, ratesOf = rates) => {
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours });
     let hooks = null, held = null;
     const design = { ...real, start: context => { held = context; hooks = real.start(context); return hooks; } };
-    const out = Engine.simulate({ view, accounts: [account], bands, rates: ratesOf, hours, seed: 1, nextArrival: arrivals, design });
+    const out = Engine.simulate({ view, accounts: [account], bands, rates: ratesOf, hours, seed: 1, plane: design });
     return { out, hooks, main: held.mains[0], view };
 };
 {
@@ -283,7 +282,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, shots) }), read = [];
     const design = { ...real, start: context => { const hooks = real.start(context); return { ...hooks, levelUp: (main, now) => { read.push([now, main.level]); return hooks.levelUp(main, now); },
         hour: now => { if (atHour) atHour(context, now); return hooks.hour(now); } }; } };
-    Engine.simulate({ view, accounts: [{ ...accounts[1], exp: 25e6 }], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
+    Engine.simulate({ view, accounts: [{ ...accounts[1], exp: 25e6 }], bands, rates, hours, seed: 1, plane: design });
     return read;
 };
 // At share 2 (a kit making twice the row's kills) it is read at 5 hours, never at the row's 10.
@@ -321,8 +320,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
         let side = null, ctx = null;
         Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
         try {
-            Engine.simulate({ view, accounts: [{ ...accounts[1], money: 0, shots: { [SSD]: 1e6 } }], bands, rates, hours: 0, seed: 1, nextArrival: arrivals,
-                design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }]) }) });
+            Engine.simulate({ view, accounts: [{ ...accounts[1], money: 0, shots: { [SSD]: 1e6 } }], bands, rates, hours: 0, seed: 1,
+                plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }]) }) });
         } finally { Mains.mainsSide = mainsSide; }
         const main = ctx.mains[0];
         ctx.accounts[0] = { ...ctx.accounts[0], market: { ...ctx.accounts[0].market, path: { pieces: [{ selfId: ARMOR_WORN, slot: 10, route: 'npc', cost: 20000 }], order: [] }, wants: {} } };
@@ -355,8 +354,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
         bags: { ...snapshot.bags, 55: { ...snapshot.bags[55], slots: 3, maxLoad: 3000 } }, items: { ...snapshot.items, [BONE]: { ...snapshot.items[BONE], weight: 1000 } } };
     const runWith = config => {
         const view = Engine.viewOf(shooting, { npcPrices: 'x1' });
-        return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-            design: plane({ snapshot: shooting, game: Design.gameOf(shooting, view, config), config, start: 'late', grades }) });
+        return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5,
+            plane: plane({ snapshot: shooting, game: Design.gameOf(shooting, view, config), config, start: 'late', grades }) });
     };
     const own = runWith(Design.DESIGN);
     assert.ok(own.design.crafts.own.batches > 0 && own.design.shots.supply.own > 0 && own.design.gates.own.d >= 0, JSON.stringify(own.design.crafts));
@@ -428,8 +427,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
             // Ore and the sword (its D crystals) in the village too: the twin crafts and lists its shots where it sits.
             npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'Dwarven Village', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'Dwarven Village', price: 4000 }] } } };
         const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'starter_then_pays' };
-        return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-            design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
+        return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5,
+            plane: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
     };
     const near = seated('TownA');
     assert.deepEqual([near.crafters.byTown['Dwarven Village'], near.counters.reseats], [1, 0], 'no WTB of its product where its main arrived: it stays');
@@ -461,8 +460,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'] };
-    const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], shots: { [SSD]: 300 } }], bands, rates, hours: 24, seed: 5, nextArrival: arrivals,
-        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+    const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], shots: { [SSD]: 300 } }], bands, rates, hours: 24, seed: 5,
+        plane: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
     const m = out.design.market;
     assert.equal(out.design.crafters.byTown.TownD, 1, 'the twin sits in the D market');
     assert.ok((m.visits.hub.stock_low || 0) + (m.visits.hub['stock_low:shots'] || 0) + (m.visits.hub.shots_out || 0) >= 1, JSON.stringify(m.visits.hub));
@@ -485,8 +484,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), hub = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'] };
     const runWith = (shots, config = hub) => {
-        const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], shots: { [SSD]: shots } }], bands, rates, hours: 24, seed: 5, nextArrival: arrivals,
-            design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+        const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], shots: { [SSD]: shots } }], bands, rates, hours: 24, seed: 5,
+            plane: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
         assert.equal(out.money.closureGap, 0);
         assert.equal(out.design.goods.failing, 0);
         return { m: out.design.market, bought: out.design.counters.shotsLine };
@@ -552,7 +551,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
             return hooks;
         };
         try {
-            const out = Engine.simulate({ view: atView, accounts: [{ ...accounts[0], exp: 25e6 }, { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, design });
+            const out = Engine.simulate({ view: atView, accounts: [{ ...accounts[0], exp: 25e6 }, { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, plane: design });
             assert.equal(out.money.closureGap, 0);
             assert.equal(out.design.goods.failing, 0);
             return { ...seen, offers: out.design.market.events.offerPosted };
@@ -601,7 +600,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD', 'TownE'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownE'] };
     const out = Engine.simulate({ view, accounts, bands, rates, hours: 24, seed: 5,
-        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+        plane: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
     const m = out.design.market;
     assert.equal(out.design.crafters.byTown.TownE, 1, 'the twin sits in TownE');
     // The wake sets no deal: the main reads its situation again, now shots_out with a seller standing.
@@ -650,7 +649,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
         };
         Books.create = () => { const board = create(); made.push(board); return board; };
         try {
-            const out = Engine.simulate({ view, accounts, bands, rates, hours: 24, seed: 5, design });
+            const out = Engine.simulate({ view, accounts, bands, rates, hours: 24, seed: 5, plane: design });
             assert.equal(out.money.closureGap, 0);
             assert.equal(out.design.goods.failing, 0);
         } finally { Books.create = create; }
@@ -673,7 +672,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownA'] };
     const out = Engine.simulate({ view, accounts, bands, rates, hours: 24, seed: 5,
-        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+        plane: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
     const m = out.design.market;
     assert.equal(out.design.crafters.byTown.TownA, 1, 'the twin sits in TownA');
     assert.ok(m.events.offerPosted >= 1 && (m.trips.shots_out || 0) + (m.trips['stock_low:shots'] || 0) >= 1, JSON.stringify([m.events, m.trips]));
@@ -696,8 +695,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD', 'TownE'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub' };
     const pair = [accounts[1], { ...accounts[1], id: 3, level: 26, exp: 26e9 }, accounts[0]];
-    const out = Engine.simulate({ view, accounts: pair, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
+    const out = Engine.simulate({ view, accounts: pair, bands, rates, hours: 8, seed: 5,
+        plane: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).design;
     assert.deepEqual([out.crafters.byTown.TownE, out.crafters.byTown.TownD, out.counters.reseats], [1, undefined, 1], 'both hubs pay, the second nets more: the twin sits in the second');
 }
 
@@ -757,8 +756,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const dying = { ...snapshot, hours: { 55: hoursOf(55, 0), 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: { ...row('s1', 1000, 50), deaths: 0.5 }, top: [] }])) } };
     const runDying = deathArrival => {
         const view = Engine.viewOf(dying, { npcPrices: 'x1' }), config = { ...Design.DESIGN, deathArrival };
-        return Engine.simulate({ view, accounts, bands, rates, hours: 10, seed: 5, nextArrival: arrivals,
-            design: plane({ snapshot: dying, game: Design.gameOf(dying, view, config), config, start: 'late', grades }) });
+        return Engine.simulate({ view, accounts, bands, rates, hours: 10, seed: 5,
+            plane: plane({ snapshot: dying, game: Design.gameOf(dying, view, config), config, start: 'late', grades }) });
     };
     const died = runDying(true);
     assert.ok(died.design.market.trips.death >= 1, JSON.stringify(died.design.market.trips));
@@ -776,8 +775,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
     let side = null, ctx = null;
     Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
     try {
-        Engine.simulate({ view: farView, accounts: [accounts[1]], bands, rates, hours: 0, seed: 1, nextArrival: arrivals,
-            design: plane({ snapshot: far, game: Design.gameOf(far, farView, config), config, start: 'late', grades }) });
+        Engine.simulate({ view: farView, accounts: [accounts[1]], bands, rates, hours: 0, seed: 1,
+            plane: plane({ snapshot: far, game: Design.gameOf(far, farView, config), config, start: 'late', grades }) });
     } finally { Mains.mainsSide = mainsSide; }
     const fallen = ctx.mains[0], roll = 0.05;
     const diedAt = deathAt({ since: fallen.since, huntShare: 1, deathsPerHour: 0.5, roll });
@@ -834,7 +833,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const marketBands = [['first', 1], ['second', 23], ['seller', 30]];
     const runMarket = (seed, config = Design.DESIGN, cohort = buyers, hours = 8) => {
         const view = Engine.viewOf(market, { npcPrices: 'x1' });
-        return Engine.simulate({ view, accounts: cohort, bands: marketBands, rates, hours, seed, design: plane({ snapshot: market, game: Design.gameOf(market, view, config), config, start: 'late', grades }) });
+        return Engine.simulate({ view, accounts: cohort, bands: marketBands, rates, hours, seed, plane: plane({ snapshot: market, game: Design.gameOf(market, view, config), config, start: 'late', grades }) });
     };
     const done = runMarket(3), waits = done.design.liveness.waits;
     assert.equal(waits.wtb.opened, 2, 'each buyer posts a WTB for the sword (no line offers one) and none for its shots');
@@ -892,7 +891,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const one = Engine.simulate({ view, accounts: [{ id: 31, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 4000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 12, seed: 2, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+        bands: [['all', 1]], rates, hours: 12, seed: 2, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
     assert.deepEqual([one.design.goods.totals.fromNpc, one.design.market.obtained.d.npc], [1, 1], 'one piece bought');
     assert.equal(Math.round(one.flows.perBotHour.npcBuys * 12), -2900, 'the piece worth more per adena');
 }
@@ -936,7 +935,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         shotScale: base.shotScale
     }), bow = bowOf(false), bowNoneUnstated = bowOf(true);
     const run = kitHours => Engine.simulate({ view, accounts: [{ id: 31, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 4000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 12, seed: 2, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours }) });
+        bands: [['all', 1]], rates, hours: 12, seed: 2, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours }) });
     assert.equal(Math.round(run(base).flows.perBotHour.npcBuys * 12), -2900, 'without arrows the better piece');
     const net = run(bow);
     assert.deepEqual([net.design.goods.totals.fromNpc, Math.round(net.flows.perBotHour.npcBuys * 12)], [1, -3000], 'net of arrows the other piece');
@@ -970,7 +969,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const ran = Engine.simulate({ view, accounts: [{ id: 41, station: false, classId: 9, line: '9', level: 19, exp: 19.5e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD } }],
-        bands: [['all', 1]], rates, hours: 9, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+        bands: [['all', 1]], rates, hours: 9, seed: 1, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
     const moves = ran.design.market.occupation;
     assert.deepEqual([moves.grade_changed, moves.spot_left, moves.rowMissing], [1, 1, 0], JSON.stringify(moves));
 }
@@ -987,8 +986,8 @@ assert.equal(armed.delta.shotsUsed, 50);
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: village, price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: village, price: 4000 }] } } };
     const config = { ...Design.DESIGN, twinSeat: 'starter_then_pays', crafterShare: 1 };
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
-    const apart = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
-        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
+    const apart = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5,
+        plane: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
     assert.deepEqual(apart.crafters.byTown, { [village]: 2 }, 'both twins in the village');
     assert.ok(apart.firsts.shot.d > 0, 'the Bounty Hunter\'s twin crafted shots there');
     assert.equal(apart.shots.supply.lines, 0, 'no main bought on a line of a town it did not stand in');
@@ -1015,7 +1014,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const grown = Engine.simulate({ view, accounts: [{ id: 51, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
+        bands: [['all', 1]], rates, hours: 8, seed: 1, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
     // One visit or none before 40: no ladder, the NPC route at once, which its 1000 adena cannot pay.
     const waits = Object.values(grown.liveness.waits), outgrown = waits.reduce((sum, w) => sum + (w.outgrown || 0), 0);
     assert.ok(outgrown >= 1 && waits.every(w => w.failed >= (w.outgrown || 0)), JSON.stringify(grown.liveness.waits));
@@ -1028,12 +1027,12 @@ assert.equal(armed.delta.shotsUsed, 50);
     const ratio = 200 / 1200;
     assert.deepEqual(grown.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: ratio, p10: ratio, none: 0, unarmed: 1, attainable: { sampled: 1, atLeast95: 1, median: 1 } });
     const armed = Engine.simulate({ view, accounts: [{ id: 52, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: {} }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
+        bands: [['all', 1]], rates, hours: 8, seed: 1, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design;
     assert.deepEqual(armed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 1, median: 1, p10: 1, none: 0, unarmed: 0, attainable: { sampled: 1, atLeast95: 1, median: 1 } });
     // A kit hour source given to the plane is the one read: a stub stating 300 for a bare-handed kit and 900 for an armed one.
     const stub = kitHoursOf((line, level, kit) => (line === '9' && level === 39 ? (kit[7] ? 900 : 300) : null));
     const stubbed = Engine.simulate({ view, accounts: [{ id: 53, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money: 1000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: stub }) }).design;
+        bands: [['all', 1]], rates, hours: 8, seed: 1, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: stub }) }).design;
     assert.deepEqual(stubbed.market.kitHour['d end'], { level: 39, sampled: 1, atLeast90: 0, median: 300 / 900, p10: 300 / 900, none: 0, unarmed: 1, attainable: { sampled: 1, atLeast95: 1, median: 1 } });
 }
 
@@ -1059,7 +1058,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const aim = pathAim => Engine.simulate({ view, accounts: [{ id: 61, station: false, classId: 9, line: '9', level: 21, exp: 21e9, money: 10000, spot: null, shots: {}, held: [], worn: {} }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, nextArrival: arrivals, design: plane({ snapshot: world, game: Design.gameOf(world, view), config: { ...Design.DESIGN, pathAim }, start: 'late', grades }) }).design;
+        bands: [['all', 1]], rates, hours: 8, seed: 1, plane: plane({ snapshot: world, game: Design.gameOf(world, view), config: { ...Design.DESIGN, pathAim }, start: 'late', grades }) }).design;
     const own = aim('affordable'), best = aim('best_priced');
     assert.deepEqual(own.market.obtained.d, { npc: 1 }, 'the rung it can pay, from the NPC');
     assert.equal(best.market.obtained.d, undefined, 'the best priced rung: nothing it can pay');
@@ -1094,7 +1093,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const bought = (cSold, opts) => {
         const at = world(cSold, opts), view = Engine.viewOf(at, { npcPrices: 'x1' });
         return Engine.simulate({ view, accounts: [{ id: 71, station: false, classId: 9, line: '9', level: 38, exp: 38e9, money: 100000, spot: null, shots: {}, held: [], worn: {} }],
-            bands: [['all', 1]], rates, hours: 12, seed: 1, nextArrival: arrivals, design: plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) }).design.market.obtained.d;
+            bands: [['all', 1]], rates, hours: 12, seed: 1, plane: plane({ snapshot: at, game: Design.gameOf(at, view), start: 'late', grades }) }).design.market.obtained.d;
     };
     assert.equal(bought(true), undefined, 'the C sword sold: worth 3000 under the NPC\'s 4000');
     assert.deepEqual(bought(false), { npc: 1 }, 'the C sword unpriced: its cap reaches the NPC\'s price');
@@ -1131,7 +1130,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const run3 = held => {
         const kitHours = kitHoursOf((line, level, kit) => 1000 + (kit[7] === SWORD && kit[10] === ARMOR ? 500 : 0));
         const out = Engine.simulate({ view, accounts: [{ id: 81, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 100000, spot: null, shots: {}, held, worn: {} }],
-            bands: [['all', 1]], rates, hours: 10, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours }) }).design;
+            bands: [['all', 1]], rates, hours: 10, seed: 1, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours }) }).design;
         return { out, kitHours };
     };
     const armoured = run3([ARMOR]), bare = run3([]);
@@ -1176,7 +1175,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         };
         try {
             const game = Design.gameOf(world, view, config);
-            const out = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals, design: plane({ snapshot: world, game, config, start: 'late', grades }) });
+            const out = Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, plane: plane({ snapshot: world, game, config, start: 'late', grades }) });
             assert.equal(out.money.closureGap, 0);
             assert.equal(out.design.goods.failing, 0, JSON.stringify(out.design.goods.worst));
             return { design: out.design, first: game.firstPrice[MAT] };
@@ -1214,8 +1213,8 @@ assert.equal(armed.delta.shotsUsed, 50);
         Workshop.workshop = view => { if (view.self === 0) seen.push(view.hoursToGrade); return real(view); };
         try {
             const view = Engine.viewOf(world, { npcPrices: 'x1' });
-            Engine.simulate({ view, accounts: accounts.map(account => (account.id === 1 ? { ...account, party } : account)), bands, rates, hours: 2, seed: 5, nextArrival: arrivals,
-                design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
+            Engine.simulate({ view, accounts: accounts.map(account => (account.id === 1 ? { ...account, party } : account)), bands, rates, hours: 2, seed: 5,
+                plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) });
         } finally { Workshop.workshop = real; }
         return seen[0];
     };
@@ -1249,7 +1248,7 @@ assert.equal(armed.delta.shotsUsed, 50);
             return hooks;
         };
         return Engine.simulate({ view, accounts: [{ id: 51, station: false, classId: 9, line: '9', level, exp: level * 1e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD }, party }],
-            bands: [['all', 1]], rates, hours: 3, seed: 1, nextArrival: arrivals, design }).flows.totals.huntCold;
+            bands: [['all', 1]], rates, hours: 3, seed: 1, plane: design }).flows.totals.huntCold;
     };
     // The hours to the end of B's levels (26): 4 for a solo main, 2.9 for a member of three; a move over 0.64 more hours (640) pays for 4 only.
     const toEnd = { A: [1, 30], B: [1, 26] };
@@ -1287,7 +1286,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
     const leave = money => Engine.simulate({ view, accounts: [{ id: 71, station: false, classId: 9, line: '9', level: 39, exp: 39e9, money, spot: null, shots: {}, held: [NG], worn: { 7: NG } }],
-        bands: [['all', 1]], rates, hours: 8, seed: 1, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design.market.kitHour['d end'];
+        bands: [['all', 1]], rates, hours: 8, seed: 1, plane: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades }) }).design.market.kitHour['d end'];
     const rich = leave(336000), poor = leave(1000);
     near(rich.median, 300 / 1300, 'the reference ratio');
     near(rich.attainable.median, 300 / 400, 'the attainable kit holds the armour alone');
@@ -1328,7 +1327,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
     try {
         Engine.simulate({ view, accounts: [{ id: 81, station: false, classId: 9, line: '9', level: 30, exp: 30e9, money: 0, spot: null, shots: {}, held: [NG], worn: { 7: NG } }],
-            bands: [['all', 1]], rates, hours: 1, seed: 1, design: plane({ snapshot: world, game, start: 'late', grades }) });
+            bands: [['all', 1]], rates, hours: 1, seed: 1, plane: plane({ snapshot: world, game, start: 'late', grades }) });
     } finally { Mains.mainsSide = mainsSide; }
     // The main as it crosses 39 in TownA wearing the no-grade sword (300) with 1e9 adena hunted since its visit.
     const main = { ...ctx.mains[0], level: 39, money: 1e9, kit: { 7: NG }, weapon: NG };
@@ -1401,7 +1400,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
     try {
         Engine.simulate({ view, accounts: [{ id: 82, station: false, classId: 9, line: '9', level: 41, exp: 41e9, money: 0, spot: null, shots: {}, held: [], worn: {} }],
-            bands: [['all', 1]], rates, hours: 1, seed: 1, design: plane({ snapshot: world, game, start: 'late', grades }) });
+            bands: [['all', 1]], rates, hours: 1, seed: 1, plane: plane({ snapshot: world, game, start: 'late', grades }) });
     } finally { Mains.mainsSide = mainsSide; }
     const placeLines = lines => Books.place(ctx.books, 98, 'TownA', lines.map(([item, qty, price = 100], at) => ({ side: 'sell', item, price, qty, id: `l${at}` })), []);
     const visitWith = (lines, patch = {}) => {

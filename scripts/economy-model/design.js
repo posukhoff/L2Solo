@@ -1067,6 +1067,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         },
         event(event) {
             const index = event.who, account = accounts[index];
+            if (event.kind !== 'batch_done' && event.kind !== 'account_wake') throw new Error(`an event of an unknown kind: ${event.kind}`);
             if (event.kind === 'batch_done') return batchDone(index, event.at);
             if (!account.wake || account.wake.at !== event.at) return;
             const reasons = account.wake.reasons;
