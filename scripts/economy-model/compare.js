@@ -187,6 +187,17 @@ function printCorrection(view, accounts) {
 }
 
 // The model over a baseline's start population and hours, at today's mechanisms and the given rates.
+// The save a today-mode comparison starts from must be the save the snapshot's
+// spot rows were read from: without them every main hunts its line's best spot
+// and the hunt adena comes out 20-37 % over the real run's. Throws, naming how
+// to build the snapshot; returns the save's path.
+function requireSpots(snapshot, baseline) {
+    const save = baseline.inputs.start.db, from = snapshot.spotHours?.source || null;
+    if (from === save) return save;
+    throw new Error(`the snapshot has ${from ? `spot rows of another save (${from})` : 'no spot rows'}, the baseline starts from ${save}: `
+        + `build it with node scripts/economy-model/inputs.js --preset <preset> --spots ${save} and pass it as --snapshot`);
+}
+
 function modelOf(baseline, snapshot, view, rates, seed) {
     const cohort = Cohort.fromSave(baseline.inputs.start.db, snapshot);
     const model = Engine.simulate({ view, accounts: cohort.accounts, bands: Run.STAGE_BANDS, rates, hours: baseline.window.hours, seed,
@@ -202,9 +213,7 @@ function main(argv) {
     const preset = Boot.option(argv, 'preset', 'x50');
     const { snapshot, file } = Run.loadSnapshot(preset, Boot.option(argv, 'snapshot', null));
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}); baseline ${baselineFile} (code ${baseline.inputs?.end?.sha || '?'}, ${(baseline.window.hours * 60).toFixed(1)} min, ${baseline.population.bots} bots)`);
-    const spotsFrom = snapshot.spotHours?.source || null;
-    console.log(spotsFrom === baseline.inputs.start.db ? `SPOTS the mains start at their bots' spots in ${spotsFrom}`
-        : `SPOTS ${spotsFrom ? `from another save (${spotsFrom})` : 'none in the snapshot'}: every main hunts its line's best spot (inputs.js --spots ${baseline.inputs.start.db})`);
+    console.log(`SPOTS the mains start at their bots' spots in ${requireSpots(snapshot, baseline)}`);
     console.log(`TODAY ${JSON.stringify(Today.TODAY)}`);
     const view = Engine.viewOf(snapshot, { market: Today.marketOf(snapshot), npcPrices: Today.TODAY.npcPrices });
     const fitCohort = Cohort.fromSave(read(fitFile).inputs.start.db, snapshot);
@@ -234,4 +243,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { judged, sharedRows, todayRows, realDrops, realHotDrops, modelDrops, RELATIVE, MIN_UNITS, DROP_CLASSES };
+module.exports = { requireSpots, judged, sharedRows, todayRows, realDrops, realHotDrops, modelDrops, RELATIVE, MIN_UNITS, DROP_CLASSES };

@@ -7,7 +7,7 @@
 const assert = require('node:assert/strict');
 const Today = require('../scripts/economy-model/today');
 const Engine = require('../scripts/economy-model/engine');
-const { judged, sharedRows, todayRows } = require('../scripts/economy-model/compare');
+const { judged, sharedRows, todayRows, requireSpots } = require('../scripts/economy-model/compare');
 
 // The fixed buyer pays the line's rate of the reference price times the adena
 // rate, at most 0.9 of the cheapest repeatable supply.
@@ -154,3 +154,10 @@ assert.equal(verdict(100, 130, 110), 'PASS', 'within the tolerance of the upper 
 assert.equal(verdict(100, 140, 110), 'FAIL', 'beyond it');
 
 console.log('economy model today mode: ok');
+
+// A comparison needs the snapshot's rows for the baseline's own save: a snapshot
+// with none, or with another save's, is refused with the way to build one.
+const start = { inputs: { start: { db: '/saves/a/database.sqlite' } } };
+assert.throws(() => requireSpots({ header: {} }, start), /no spot rows.*inputs\.js --preset <preset> --spots \/saves\/a\/database\.sqlite/);
+assert.throws(() => requireSpots({ spotHours: { source: '/saves/b/database.sqlite', rows: {} } }, start), /another save \(\/saves\/b/);
+assert.equal(requireSpots({ spotHours: { source: '/saves/a/database.sqlite', rows: {} } }, start), '/saves/a/database.sqlite');
