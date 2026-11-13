@@ -495,12 +495,17 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // visit or deal may change the kit or the row, so the level is scheduled
     // again after each from the exp then held; the one pending level time per
     // main is the one read, an earlier one still queued is skipped.
-    const pendingLevel = new Map();
+    const pendingLevel = new Map(), unlevelable = new Set();
     const scheduleLevel = (main, now) => {
         const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, kills = plane && row ? plane.kills(main) : null;
         const exp = !row ? 0 : kills ? Math.max(...['shots', 'bare', 'blessed'].map(form => huntExp(main, rowIn(row, form), kills[form] ?? 0))) : huntExp(main, row, 1);
         const held = pendingLevel.get(main.index) ?? null;
-        if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) { pendingLevel.set(main.index, null); return; }
+        if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) {
+            // Below the max level, a main with no exp at its row or no hunting share never levels: counted once per main.
+            if (main.level < view.maxLevel && !unlevelable.has(main.index)) { unlevelable.add(main.index); ledger.counters.unlevelableMains++; }
+            pendingLevel.set(main.index, null);
+            return;
+        }
         // One exp over the next level's start, so the level is reached however the hour's exp rounds.
         const need = expAt(view, main.level + 1) - main.exp + 1, at = now + Math.max(0, need) / (exp * share);
         pendingLevel.set(main.index, at);
@@ -514,6 +519,8 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             hour: row || null, shotsPerHour: row?.shots || 0, huntShare: rate.huntShare });
         const at = answer !== null && typeof answer === 'object' ? answer.at : answer, kind = answer?.read ? 'situation' : 'arrived_town';
         const next = Number.isFinite(at) && at > now ? { at, kind } : null;
+        // An answer at or before now is dropped: the main waits for its next other event.
+        if (Number.isFinite(at) && at <= now) ledger.counters.arrivalNotAhead++;
         pending.set(main.index, next);
         if (next !== null && !(held && held.at === at && held.kind === kind)) queue.push({ at, kind, who: main.index });
     };
@@ -559,6 +566,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             if (pendingLevel.get(event.who) !== event.at) continue; // replaced by a later schedule
             pendingLevel.set(event.who, null);
         }
+        if (event.kind !== 'level_up' && event.kind !== 'arrived_town') throw new Error(`an event of an unknown kind: ${event.kind}`);
         let main = huntTo(mains[event.who], event.at);
         if (event.kind === 'level_up') {
             const band = bandOf(bands, main.level), spot = ownRow(view, main.line, main.level, main.spot) ? main.spot : null;

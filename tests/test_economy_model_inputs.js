@@ -263,4 +263,14 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
     }
 }
 
+// The snapshot names every fallback it took: the spots with no no-grade
+// market near their centre (they get the C town) and the spots whose walk
+// back is 0.
+const Policy = invoke('GameServer/Bot/Economy/MarketTownPolicy'), centreAt = cards.spotFields.indexOf('center');
+const unmarketed = cards.spots.filter(row => !Policy.nearestNoGradeMarket({ locX: row[centreAt][0], locY: row[centreAt][1] })).map(row => String(row[0]));
+assert.deepEqual(snapshot.fallbacks.noMarketToC, unmarketed, 'every spot with no no-grade market is named');
+for (const id of unmarketed) assert.equal(snapshot.tradeTowns.none[id], snapshot.tradeTowns.higher, `spot ${id} falls back to the C town`);
+assert.deepEqual(snapshot.fallbacks.walkBackZero, Object.keys(snapshot.walkBack).filter(id => !(snapshot.walkBack[id] > 0)), 'every spot with walk back 0 is named');
+console.log(`  fallbacks: no no-grade market ${unmarketed.length} spots, walk back 0 ${snapshot.fallbacks.walkBackZero.length} spots`);
+
 console.log('PASS economy model inputs snapshot');
