@@ -23,6 +23,11 @@
 //                 level-up), its answer is the one pending arrival (replaced,
 //                 or dropped by null). Today's mode gives a fitted periodic
 //                 rule, the design mode the situations that send a bot to town.
+//                 A bot is in one state at a time: an answer { at, away }
+//                 leaves the spot at at - away (the hunt stops there and the
+//                 way to town and back is not hunted), and an arrival it has
+//                 left for is held: no later event asks the rule again for
+//                 it. A visit's onward stops keep it in town their hours.
 //   situation     a situation the arrival rule names to be read at its hour
 //                 without going to town (its answer { at, read: true }, held
 //                 in the same pending slot): the rule is asked again then.
@@ -448,8 +453,9 @@ function heap() {
 
 // A run: accounts (cohort.js), the view, the stage bands [[name, fromLevel]],
 // per band { huntShare, ... } and nextArrival(main, view): the time of the
-// main's next arrival in town, or { at, read: true } for a situation to read
-// at that hour without going (null: neither), asked on the main as it is
+// main's next arrival in town ({ at, away }: away, the hours of the way
+// lumped before the visit, not hunted), or { at, read: true } for a
+// situation to read at that hour without going (null: neither), asked on the main as it is
 // after the committed event. view is the plain data a trip rule may read:
 //   event     'start' | 'visit' | 'level_up' | 'situation'
 //   now       the time of the event, hours
@@ -463,7 +469,9 @@ function heap() {
 // class carry limit is not read), so a rule on "the bag is full" has no number yet.
 // design: null (today's and the plain mode) or the design mode's plane
 // (design.js plane()): its start({ view, mains, ledger, push, seed, rateOf,
-// rearrive, commit }) returns the hooks the run calls (hunt, visit, levelUp,
+// rearrive, commit }) returns the hooks the run calls (hunt, given the
+// delta with its spotHours and wayHours; visit, whose afterHours are the
+// hours its onward stops keep the main in town; levelUp,
 // event, hour, finish, nextArrival: the design's trip, which replaces the
 // nextArrival given; firing(main): the shot a main fires as it hunts,
 // huntDesign's). rearrive(index, now, event) asks the arrival rule again
@@ -506,33 +514,46 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             pendingLevel.set(main.index, null);
             return;
         }
-        // One exp over the next level's start, so the level is reached however the hour's exp rounds.
-        const need = expAt(view, main.level + 1) - main.exp + 1, at = now + Math.max(0, need) / (exp * share);
+        // One exp over the next level's start, so the level is reached however the hour's exp rounds;
+        // counted from the hour it hunts again (a visit's onward stops keep it in town).
+        const need = expAt(view, main.level + 1) - main.exp + 1, at = Math.max(now, main.since) + Math.max(0, need) / (exp * share);
         pendingLevel.set(main.index, at);
         if (at !== held) queue.push({ at, kind: 'level_up', who: main.index });
     };
-    // The one pending arrival (or situation to read) per main, replaced by the rule's answer after each committed event.
+    // The one pending arrival (or situation to read) per main, replaced by the
+    // rule's answer after each committed event; departs: the hour it leaves its
+    // spot for it (null: it hunts to the arrival). An arrival it has left for
+    // is held: the rule is not asked again on its way.
     const pending = new Map();
     const reschedule = (main, now, event) => {
-        const row = spotRowOf(view, main), rate = rateOf(main.band), held = pending.get(main.index) ?? null;
-        const answer = arrivalRule(main, { event, now, pending: held && held.at, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
+        const held = pending.get(main.index) ?? null;
+        if (held && held.departs !== null && held.departs <= now) return;
+        // Asked from the hour it hunts again (a visit's onward stops keep it in town).
+        const from = Math.max(now, main.since);
+        const row = spotRowOf(view, main), rate = rateOf(main.band);
+        const answer = arrivalRule(main, { event, now: from, pending: held && held.at, rate, roll: mulberry(hash(`${seed}:${main.id}:arrival:${main.counter}`))(),
             hour: row || null, shotsPerHour: row?.shots || 0, huntShare: rate.huntShare });
         const at = answer !== null && typeof answer === 'object' ? answer.at : answer, kind = answer?.read ? 'situation' : 'arrived_town';
         // An answer is null (no arrival) or a finite hour: anything else is a defect of the rule, never a quiet drop.
         if (at !== null && !Number.isFinite(at)) throw new Error(`arrival rule answered ${typeof answer === 'object' ? JSON.stringify(answer) : String(answer)} for main ${main.id} at ${now} h (${event}): neither null nor a finite hour`);
-        const next = at !== null && at > now ? { at, kind } : null;
-        // An answer at or before now is dropped: the main waits for its next other event.
-        if (at !== null && at <= now) ledger.counters.arrivalNotAhead++;
+        const away = kind === 'arrived_town' && answer?.away > 0 ? answer.away : 0;
+        const next = at !== null && at > from ? { at, kind, departs: away > 0 ? at - away : null } : null;
+        // An answer at or before the hour it was asked from is dropped: the main waits for its next other event.
+        if (at !== null && at <= from) ledger.counters.arrivalNotAhead++;
         pending.set(main.index, next);
         if (next !== null && !(held && held.at === at && held.kind === kind)) queue.push({ at, kind, who: main.index });
     };
-    // Hunting from the main's last situation to now, committed.
-    const huntTo = (main, now) => {
-        const share = rateOf(main.band).huntShare;
-        const { main: next, delta } = plane ? huntDesign({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main), plane.firing(main), plane.kills(main))
-            : hunt({ ...main, counter: main.counter + 1, since: now }, view, (now - main.since) * share, randomFor(main));
+    // Hunting from the main's last situation to now, committed: to the hour it
+    // left its spot when it is on its way (departs), and none while it is in
+    // town for a visit's onward stops (since after now).
+    const huntTo = (main, now, departs = pending.get(main.index)?.departs ?? null) => {
+        const share = rateOf(main.band).huntShare, end = departs !== null && departs < now ? departs : now;
+        const spotHours = Math.max(0, end - main.since), wayHours = end < now ? now - Math.max(end, main.since) : 0;
+        const moved = { ...main, counter: main.counter + 1, since: Math.max(now, main.since) };
+        const { main: next, delta } = plane ? huntDesign(moved, view, spotHours * share, randomFor(main), plane.firing(main), plane.kills(main))
+            : hunt(moved, view, spotHours * share, randomFor(main));
         Ledger.recordHunt(ledger, next, delta);
-        if (plane) plane.hunt(next, delta);
+        if (plane) plane.hunt(next, { ...delta, spotHours, wayHours });
         return next;
     };
 
@@ -557,10 +578,12 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             plane.event(event);
             continue;
         }
+        let departs = null;
         if (event.kind === 'arrived_town' || event.kind === 'situation') {
             const held = pending.get(event.who);
             if (!held || held.at !== event.at || held.kind !== event.kind) continue; // replaced by a later answer
             pending.set(event.who, null);
+            departs = held.departs;
             // A situation is read on the main as it stands (no hunt committed), as a situation raised outside its events is.
             if (event.kind === 'situation') { reschedule(mains[event.who], event.at, 'situation'); continue; }
         }
@@ -569,7 +592,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             pendingLevel.set(event.who, null);
         }
         if (event.kind !== 'level_up' && event.kind !== 'arrived_town') throw new Error(`an event of an unknown kind: ${event.kind}`);
-        let main = huntTo(mains[event.who], event.at);
+        let main = event.kind === 'arrived_town' ? huntTo(mains[event.who], event.at, departs) : huntTo(mains[event.who], event.at);
         if (event.kind === 'level_up') {
             const band = bandOf(bands, main.level), spot = ownRow(view, main.line, main.level, main.spot) ? main.spot : null;
             if (main.spot && !spot) ledger.counters.leftOwnSpot++;
@@ -579,11 +602,13 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             mains[event.who] = main;
             reschedule(main, event.at, 'level_up');
         } else {
-            // The restock covers an outing as long as the one just ended.
-            const outingHours = (event.at - main.lastVisit) * rateOf(main.band).huntShare;
-            const { main: after, delta } = plane ? plane.visit(main, event.at, { outingHours }) : visit(main, view, { outingHours });
+            // The restock covers an outing as long as the one just ended: its hours at the spot, from
+            // the end of its last visit to the hour it left (lastVisit: the hour that visit ended).
+            const outingHours = ((departs ?? event.at) - main.lastVisit) * rateOf(main.band).huntShare;
+            const { main: after, delta, afterHours = 0 } = plane ? plane.visit(main, event.at, { outingHours }) : visit(main, view, { outingHours });
             Ledger.recordVisit(ledger, after, delta);
-            main = { ...after, lastVisit: event.at };
+            // Its onward stops keep it in town their hours: it hunts again from their end.
+            main = { ...after, lastVisit: event.at + afterHours, since: event.at + afterHours };
             mains[event.who] = main;
             // Only the design's visit changes the hour's exp (its kit's kills); today's hunt reads no kit and the visit keeps the row.
             if (plane) scheduleLevel(main, event.at);

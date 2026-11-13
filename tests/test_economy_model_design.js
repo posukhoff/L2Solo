@@ -315,7 +315,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
         const main = ctx.mains[0];
         ctx.accounts[0] = { ...ctx.accounts[0], market: { ...ctx.accounts[0].market, path: { pieces: [{ selfId: ARMOR_WORN, slot: 10, route: 'npc', cost: 20000 }] }, wants: {} } };
         const at = side.nextArrival(main, { event: 'start', now: main.since, huntShare: 1, roll: 0.5 });
-        return { hunting: at - main.since - 2 * world.walkBack.s1, reason: ctx.accounts[0].market.tripReason, toGrade: side.hoursToGrade(main), fired: side.firingOf(main)?.id ?? null };
+        return { hunting: at.at - main.since - 2 * world.walkBack.s1, reason: ctx.accounts[0].market.tripReason, toGrade: side.hoursToGrade(main), fired: side.firingOf(main)?.id ?? null };
     };
     const half = arrivalAt(0.5), whole = arrivalAt(1);
     assert.deepEqual([half.reason, whole.reason], ['goal_affordable', 'goal_affordable'], 'the goal is the arrival');
@@ -510,7 +510,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
             hooks.nextArrival = (main, ev) => {
                 const answer = next(main, ev);
                 if (main.index === 1 && ev.event === 'level_up') seen.levelUps.push(ev.now);
-                if (main.index === 1 && seen.planned === null && typeof answer === 'number') seen.planned = answer;
+                if (main.index === 1 && seen.planned === null && answer && !answer.read) seen.planned = answer.at;
                 return answer;
             };
             hooks.visit = (main, now, options) => {

@@ -288,9 +288,9 @@ const BOUNTY_HUNTER = String(Weights.BOUNTY_HUNTER);
 // (human) without Expand Trade (PrivateStoreLimits; C4: 4).
 const BUYER_SLOTS = StoreLimits.tradeLimit(0, 0, 3);
 // What the model gets wrong, printed with every design run: it is solo,
-// with a closed cohort, no travel time, no crowding and global ads.
+// with a closed cohort, no walk inside a town, no crowding and global ads.
 const BIASES = Object.freeze([
-    'shot coverage reads high: trips cost no time, the ads are global (no regional chat), no party shares shots',
+    'shot coverage reads high: the ads are global (no regional chat), no party shares shots',
     'the share of crafter accounts needed reads high (conservative): no clan dwarf crafts at cost for its members',
     'first crystal and crafted piece read late for B and above (no clan pools materials to one dwarf) and early through free trips',
     'pieces per hour against grade entries read high: solo yields, no party split, no crowding at a spot',
@@ -301,7 +301,6 @@ const BIASES = Object.freeze([
     'markets go quiet early: a closed cohort with no entry or retirement, no enchant breaking',
     'looks come faster without travel: a price settles or oscillates earlier than it would',
     'a main hunts the spot its occupation chose alone: a spot is never full',
-    'a trip to a town other than the nearest pays its fares, but its hop hours only delay the arrival: the hunting share does not fall (hub trips read cheap)',
     'left out as in today mode: potions, enchanting, augments, henna, quests, clans, the player, sessions, hot bodies near a player'
 ]);
 
@@ -514,6 +513,9 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         // Visits by their trip's situation per current band, those in a town
         // other than the nearest by situation, and wall hours per current band.
         visits: { byBand: {}, hub: {}, botHours: {} },
+        // Wall hours per current band by the main's state: at its spot, on its
+        // way to town and back, in town for a visit's onward stops.
+        time: {},
         // Stock its mains sold (adena) to lines in the town nearest their
         // spot, to lines in another town (where a shot trip took them), and
         // to the NPC.
@@ -1019,6 +1021,8 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
 
     return {
         hunt(main, delta) {
+            const time = stats.time[main.band] ||= { spot: 0, way: 0, town: 0 };
+            time.spot += delta.spotHours; time.way += delta.wayHours;
             const kind = accounts[main.index].twin ? 'pair' : 'other';
             for (const [id, count] of delta.drops) { goods('drop', id, count); if (isRecipe(id)) recipeRow(id).dropped += count; stats.loot[kind].dropped += count * (view.items[id]?.npcBuy || 0); }
             if (!delta.shotId) return;
@@ -1198,6 +1202,8 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         return {
             config,
             biases: BIASES,
+            // Hunting hours: the hours at its spot times the band's hunting share.
+            time: Object.fromEntries(Object.entries(stats.time).map(([band, t]) => [band, { ...t, hunting: t.spot * rateOf(band).huntShare }])),
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
                 trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves(), shotsOffLines: shotsOffLines() }, shotReport: stats.shotReport, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null, measureReads: stats.measureReads, huntFactors: { ...stats.huntFactors },
                 worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,

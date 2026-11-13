@@ -185,6 +185,11 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
     console.log(`CRAFTERS ${c.crafterAccounts} of ${c.accounts} accounts (${pct(c.crafterAccounts, c.accounts)}): Bounty Hunter pairs ${c.bountyHunterPairs}, other pairs ${c.otherPairs}; `
         + `twins by band ${Object.entries(c.byBand).map(([b, n]) => `${b} ${n}`).join(' | ')}; by class ${Object.entries(c.byClass).map(([b, n]) => `${b} ${n}`).join(' | ')}`);
     console.log(`  twins by town: ${Object.entries(c.byTown).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${n}`).join(' | ')}`);
+    console.log(`TIME per current band, bot-hours (at the spot, on the way to town and back, in town for onward stops at ${design.config.hopHours} h a hop; hunting = spot x the band's share; way share of all three):`);
+    const time = Object.entries(design.time), sum = field => time.reduce((total, [, t]) => total + t[field], 0);
+    for (const [band, t] of [...time, ['all', { spot: sum('spot'), way: sum('way'), town: sum('town'), hunting: sum('hunting') }]]) {
+        console.log(`  ${band.padEnd(8)} spot ${fmt(t.spot)} way ${fmt(t.way)} town ${fmt(t.town)} hunting ${fmt(t.hunting)} way share ${pct(t.way, t.spot + t.way + t.town)}`);
+    }
     console.log('SHOTS per grade (fired / wanted over the run, by current band; top towns by shots wanted):');
     for (const [grade, row] of Object.entries(design.shots.byGrade)) {
         console.log(`  ${grade.padEnd(5)} wanted ${k(row.wanted)} fired ${k(row.fired)} coverage ${pct(row.fired, row.wanted)}; `
@@ -368,7 +373,7 @@ function printMarket(design, hours) {
         const mean = values.reduce((a, b) => a + b, 0) / values.length;
         return `${grade} ${values.length} h, mean ${fmt(mean)}, spread ${(100 * (Math.max(...values) - Math.min(...values)) / mean).toFixed(1)} %, ${lastDeals[grade]} deals`;
     }).join(' | ') || `- (${Object.entries(lastDeals).map(([grade, n]) => `${grade} ${n} deals`).join(' | ') || 'no deals'})`}`);
-    console.log('WHAT THE MODEL GETS WRONG (solo, closed cohort, no travel time, no crowding, global ads):');
+    console.log('WHAT THE MODEL GETS WRONG (solo, closed cohort, no walk inside a town, no crowding, global ads):');
     for (const line of design.biases) console.log(`  - ${line}`);
 }
 

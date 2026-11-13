@@ -212,6 +212,50 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     assert.equal(Engine.spotRowOf(at, { ...base, occupied: 's9' }).spotId, 's1', 'a spot with no hour at its level is not hunted');
 }
 
+// A bot is in one state at a time: an arrival answered { at, away } leaves
+// the spot at at - away, and the way is not hunted (adena, exp, shots
+// wanted); an arrival it has left for is not decided again by a later
+// event; a visit's onward stops keep it in town their hours. A plane that
+// fires 20 shots an hour and visits as the plain mode does (its hunt
+// credits no adena on this snapshot: the adena is read from the plain mode).
+{
+    const planeOf = (rule, { afterHours = 0, onHour = null } = {}) => {
+        const seen = { hunts: [], visits: [], asked: [] };
+        const design = { sinks: [], start: context => ({
+            hunt: (main, delta, now) => seen.hunts.push({ now, exp: delta.exp, wanted: delta.shotsWanted, spot: delta.spotHours, way: delta.wayHours }),
+            visit: (main, now, options) => { seen.visits.push(now); return { ...Engine.visit(main, Engine.viewOf(snapshot), options), afterHours }; },
+            nextArrival: (main, ev) => { seen.asked.push([ev.event, ev.now]); return rule(main, ev); },
+            firing: () => ({ id: 1463, perHour: 20 }), kills: () => null, levelUp: main => main, event() {},
+            hour: now => { if (onHour) onHour(context, now); return 0; },
+            finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
+        return { design, seen };
+    };
+    const total = (seen, field) => seen.hunts.reduce((sum, row) => sum + row[field], 0);
+    const once = answer => (main, ev) => (ev.event === 'visit' ? null : answer);
+
+    const trip = planeOf(once({ at: 10, away: 2 }));
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, design: trip.design });
+    assert.deepEqual(trip.seen.visits, [10]);
+    const plainTrip = Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, nextArrival: once({ at: 10, away: 2 }) });
+    assert.ok(Math.abs(plainTrip.flows.totals.huntCold - 800) <= 3, `8 hours of hunt adena, not 10: ${plainTrip.flows.totals.huntCold}`);
+    assert.ok(Math.abs(total(trip.seen, 'exp') - 400) <= 1, `8 hours of exp: ${total(trip.seen, 'exp')}`);
+    assert.ok(Math.abs(total(trip.seen, 'wanted') - 160) <= 2, `8 hours of shots wanted: ${total(trip.seen, 'wanted')}`);
+    assert.ok(Math.abs(total(trip.seen, 'way') - 2) < 1e-9, 'the 2 hours away are the way\'s');
+
+    // A line raised at 9 h (after it left at 8 h) asks nothing: the arrival at 10 h holds.
+    const held = planeOf((main, ev) => (ev.event === 'visit' ? null : ev.now >= 9 ? { at: 9.5, away: 0.1 } : { at: 10, away: 2 }),
+        { onHour: (context, now) => { if (now === 9) context.rearrive(0, now, 'offer_posted'); } });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, design: held.design });
+    assert.deepEqual(held.seen.visits, [10], 'the departed arrival is kept');
+    assert.ok(!held.seen.asked.some(([event]) => event === 'offer_posted'), 'not decided again on its way');
+
+    // One onward stop (0.2 h): it hunts again 0.2 h after the arrival at 2 h.
+    const onward = planeOf(once(2), { afterHours: 0.2 });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 4, seed: 7, design: onward.design });
+    assert.ok(Math.abs(total(onward.seen, 'exp') - 190) <= 1, `3.8 hours of exp over 4 h: ${total(onward.seen, 'exp')}`);
+    assert.deepEqual(onward.seen.asked.find(([event]) => event === 'visit'), ['visit', 2.2], 'asked again from the hour it hunts again');
+}
+
 // The hunt rule is pure: the main it is given is left as it was.
 const main = Engine.mainOf(accounts[0], 0, Engine.viewOf(snapshot), bands);
 const frozen = JSON.stringify(main);
