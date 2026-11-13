@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 'use strict';
-// brief <slug> <worktree> <planner|implementer|reviewer> --out <dir> [--round <n>] [--notes <file>]
+// brief <slug> <worktree> <planner|implementer|reviewer> --out <dir> [--round <n>] [--notes <file>] [--continue <hand-over file>]
 // Prints an agent's brief from the task record and writes it to <dir>/<slug>-<role>-brief[-<n>].md. The coordinator
 // does not retell rules: the role's rules live in its definition (.claude/agents/l2-<role>.md), the task's facts in the
 // record (workflow.js), and what only the coordinator knows goes into --notes as facts of this task. A rule written in a
 // brief by hand is how "the nearest cause and the minimal fix" reached a night of agents (2026-11-12).
+// --continue: the launch continues an agent the context hook stopped; the brief sends the new agent to that hand-over
+// first, so it reads the ranges it names and not the task from the start (a continuation re-read 60 to 80k, 2026-11-13).
+// Budget: an agent's context holds about 70 calls (.claude/hooks/agent-context.js); the brief counts what the files it
+// names take if read whole and says WIDE past 60k, to the agent and on stderr to the coordinator.
 // The last line it prints is the launch prompt; the Agent launch hook refuses a role launch without the brief file.
 const fs = require('node:fs'), path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -12,10 +16,11 @@ const a = process.argv.slice(2), opt = k => { const i = a.indexOf(k); return i <
 const pos = a.filter((x, i) => !x.startsWith('--') && !(i && a[i - 1].startsWith('--')));
 const fail = m => { console.error('brief: ' + m); process.exit(1); };
 const HOME = '/Users/iposukhoff/L2Solo', W = process.env.L2SOLO_WORKFLOW_JS || path.join(HOME, '.claude/workflow.js');
-const [slug, wt, role] = pos, out = opt('--out'), round = +(opt('--round') || 1), notes = opt('--notes');
-if (!slug || !wt || !['planner', 'implementer', 'reviewer'].includes(role) || !out) fail('usage: brief <slug> <worktree> <planner|implementer|reviewer> --out <dir> [--round <n>] [--notes <file>]');
+const [slug, wt, role] = pos, out = opt('--out'), round = +(opt('--round') || 1), notes = opt('--notes'), cont = opt('--continue');
+if (!slug || !wt || !['planner', 'implementer', 'reviewer'].includes(role) || !out) fail('usage: brief <slug> <worktree> <planner|implementer|reviewer> --out <dir> [--round <n>] [--notes <file>] [--continue <hand-over file>]');
 if (!fs.existsSync(wt)) fail('no worktree ' + wt);
 if (notes && !fs.existsSync(notes)) fail('no notes file ' + notes);
+if (cont && !fs.existsSync(cont)) fail('no hand-over file ' + cont);
 const wf = (...args) => execFileSync(process.execPath, [W, ...args, '--root', wt], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 let s; try { s = JSON.parse(wf('status', slug)); } catch (e) { fail('no task record ' + slug + ' (workflow.js start first): ' + String(e.stderr || e.message).split('\n')[0]); }
 if (s.closed) fail(slug + ' is closed');
@@ -47,6 +52,7 @@ if (b.tests) L.push(`- tests: ${b.tests.join(', ')}`, `- regression tests: ${(b.
 if (b.smallFixes?.length) L.push('- small fixes (each its own commit, id in the subject):', list(b.smallFixes, x => `${x.id}: ${x.file}`));
 if (b.map) L.push(`- map entries the task changes: ${b.map.join('; ')}`);
 L.push('', '## Your inputs');
+if (cont) L.push(`- you continue an agent that stopped at its context limit. Read its hand-over first: ${path.resolve(cont)}. What it marks established with a handle is established: re-check only what you build on. Read the ranges it names, not the whole files, and start at its next steps.`);
 if (role === 'planner') L.push(`- the tree to read: ${root}`, `- first: \`node ${HOME}/.claude/lc.js near <the step or issue id in the notes>\``);
 if (role === 'implementer') L.push(`- edit only in ${root} on branch ${branch}`, round > 1 ? `- this is fix round ${round - 1}: the review table lines to fix are below` : '- the plan: the file the notes name, or the brief above when no planner ran');
 if (role === 'reviewer') {
@@ -66,9 +72,24 @@ const o = n => path.join(path.resolve(out), n);
 if (role === 'planner') L.push(`- the plan, written as you go: ${o(slug + '-plan.md')}`, `- issues you find beside the task: in the plan, each as a ready line: ${finding}`);
 if (role === 'implementer') L.push(`- your report: ${o(`${slug}-report-${round}.md`)}, holding these lines exactly (the coordinator records it; \`ready\` refuses a task without them):`, '  - `added beyond the plan: none` or each addition with what breaks for a player or the server without it', '  - `deviations from the plan: none` or each one', '  - `tests run: <files>` and, for each regression test, the assert that fails on the old code with the base SHA', ...(b.guards || []).filter(g => typeof g === 'object').map(g => `  - \`guard: <before -> after>\` for: ${g.expect}`));
 if (role === 'reviewer') L.push(`- the review table (17 lines${round > 1 ? '; this round: only the lines you change' : ''}): ${o(`${slug}-review-${round}.txt`)}`, `- other findings: in your final message, each as a ready line: ${finding}`);
+const noteText = notes ? fs.readFileSync(notes, 'utf8').trim() : '';
+// Budget. Read whole by rule: the texts this brief names (plan, notes, hand-over, reports) and a reviewer's diff, at 3.5
+// bytes a token. Code is read by range (the definitions say so), so the scope's size is shown and not counted.
+const START = 31, LIMIT = 200, CALL = 2.4, WIDE = 40, named = new Map();
+const name = p => { for (const f of path.isAbsolute(p) ? [p] : [path.join(root, p), path.join(root, 'tests', p)]) try { if (fs.statSync(f).isFile()) { named.set(f, Math.round(fs.statSync(f).size / 3500)); return; } } catch { /* a pattern, a directory or a file not made yet */ } };
+// A scope line may hold several paths or words around one; a test is named without its directory.
+for (const p of [...(b.scope || []), ...(b.tests || []), ...(b.regressions || []), ...(b.smallFixes || []).map(x => x.file), notes, cont, noteText, cont ? fs.readFileSync(cont, 'utf8') : ''].join(' ').match(/[\w./@+-]+\.\w+/g) || []) name(p);
+const isText = f => /\.(md|txt)$/i.test(f), sum = fn => [...named].filter(([f]) => fn(f)).reduce((x, [, n]) => x + n, 0), top = fn => [...named].filter(([f, n]) => fn(f) && n > 2).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([f, n]) => `${path.basename(f)} ${n}k`).join(', ');
+let diff = 0; if (role === 'reviewer') try { diff = Math.round(execFileSync('git', ['-C', wt, 'diff', `${s.base}..HEAD`], { encoding: 'utf8', maxBuffer: 1 << 28 }).length / 3500); } catch { /* no diff yet */ }
+const reading = sum(isText) + diff, code = sum(f => !isText(f)), calls = Math.max(0, Math.round((LIMIT - START - reading) / CALL));
+L.push('', '## Budget');
+L.push(`- your context holds about ${Math.round((LIMIT - START) / CALL)} calls: you start near ${START}k tokens, a call adds about ${CALL}k, and at ${LIMIT}k a hook asks you to finish or hand over`);
+L.push(`- read whole: about ${reading}k${diff ? ` (the diff ${diff}k)` : ''}${top(isText) ? ` (${top(isText)})` : ''}; that leaves about ${calls} calls for the work`);
+if (code) L.push(`- the code files named hold about ${code}k (${top(f => !isText(f)) || 'small files'}): search, then read the range`);
+if (reading > WIDE) { L.push('- WIDE: if the task cannot fit, do its first part in full, put it on file and say what is left, rather than start every part.'); console.error(`brief: WIDE: this launch reads about ${reading}k whole before any work (about ${calls} of 70 calls left): split it (a review by commit, an implementation by plan step, a plan by question) or shorten what the notes send the agent to`); }
 L.push('', '## Coordinator\'s notes (facts of this task only; a rule stated here does not count)');
-L.push(notes ? fs.readFileSync(notes, 'utf8').trim() : '(none)');
-const file = o(`${slug}-${role}-brief${round > 1 ? '-' + round : ''}.md`);
+L.push(noteText || '(none)');
+const file = o(`${slug}-${role}-brief${round > 1 ? '-' + round : ''}${cont ? '-c' + require('node:crypto').createHash('md5').update(path.resolve(cont)).digest('hex').slice(0, 6) : ''}.md`);
 fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, L.join('\n') + '\n');
 console.log(L.join('\n'));
 console.log(`\nlaunch prompt: Read ${def} in full and act as that agent; it outranks this brief. Your task brief: ${file}`);

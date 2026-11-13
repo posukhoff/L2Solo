@@ -24,9 +24,9 @@ process.stdin.on('data', c => raw += c).on('end', () => {
             const prompt = String(t.prompt || '');
             if (t.subagent_type !== `l2-${role}` && !prompt.includes(def)) return `a ${role} is launched as type l2-${role}. If this session does not list that type (it started before the definitions existed; a restart loads them), begin the prompt with: "Read ${def} in full and act as that agent; it outranks this brief."`;
             if (/no task record:\s*\S/i.test(t.description || '')) return '';
-            const file = (/(\/\S+-(?:planner|implementer|reviewer)-brief(?:-\d+)?\.md)/.exec(prompt) || [])[1];
+            const file = (/(\/\S+-(?:planner|implementer|reviewer)-brief(?:-[\w-]+)?\.md)/.exec(prompt) || [])[1];
             let made = false; try { made = require('node:fs').readFileSync(file, 'utf8').startsWith('# L2Solo brief · '); } catch (_) { /* no such file */ }
-            if (!made) return `a ${role}'s brief is printed from the task record: run /Users/iposukhoff/L2Solo/.claude/tools/brief <slug> <worktree> ${role} --out <your scratch dir> [--round n] [--notes <file with this task's facts>] and launch with the prompt it prints (for a role agent with no task record, put "no task record: <why>" in the description)`;
+            if (!made) return `a ${role}'s brief is printed from the task record: run /Users/iposukhoff/L2Solo/.claude/tools/brief <slug> <worktree> ${role} --out <your scratch dir> [--round n] [--notes <file with this task's facts>] [--continue <a stopped agent's hand-over file>] and launch with the prompt it prints (for a role agent with no task record, put "no task record: <why>" in the description)`;
             return prompt.length > 1500 ? `the launch prompt is ${prompt.length} characters: the brief file carries the task, and what only you know goes into brief --notes as facts (1500 characters at most here, so that rules are not retold)` : '';
         })();
     if (why) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `Agent launch refused: ${why}` } }));

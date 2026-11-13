@@ -28,3 +28,4 @@ How you work (cost is context × turns; none of this narrows what you must prove
 - Search first (`grep -n`), then read the function or the range around the hit, not the whole file. Do not read again what is already in your context.
 - Output longer than about 200 lines goes to a scratch file; search it or read the part you need.
 - A scratch script prints the numbers that decide the question, not its whole state.
+- Your context holds about 70 calls (the brief's Budget lines count them for this task). Write each table line to your file when you settle it: a hook refuses a call when 60k tokens of your work is on no file, and at 200k asks you to finish within about 15 calls or hand over.
