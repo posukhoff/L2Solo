@@ -808,9 +808,13 @@ assert.equal(armed.delta.shotsUsed, 50);
     const factor = PartyRewardMath.sharesForLevels([25, 25, 25], 3e9)[0].exp / 1e9;
     const three = { levels: [25, 25, 25], self: 0 }, cut = { levels: [25, 80, 80], self: 0 };
     const rowOf = (spotId, adena) => ({ spotId, kills: 10, exp: 5e8, adena, shots: 50, dropLoot: 0, spoilLoot: 0, loot: 0, potions: 0, busyShare: 1, deaths: 0, shotless: null });
-    // The hours to the next grade the workshop's rules see for the first account's main.
+    // Each main starts out of shots and TownA's NPC sells them: its shot trip
+    // at the start is its first return to town.
+    const npcOffers = { ...snapshot.npcOffers, x1: { ...snapshot.npcOffers.x1, [SSD]: [{ town: 'TownA', price: 5 }] } };
+    // The hours to the next grade the workshop's rules see for the first
+    // account's main, at its twin's first wake (its main's first arrival).
     const gradeHoursOf = party => {
-        const world = { ...snapshot, hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: { ...rowOf('s1', 1000), exp: 1e8 }, top: [] }])) } };
+        const world = { ...snapshot, npcOffers, hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: { ...rowOf('s1', 1000), exp: 1e8 }, top: [] }])) } };
         const real = Workshop.workshop, seen = [];
         Workshop.workshop = view => { if (view.self === 0) seen.push(view.hoursToGrade); return real(view); };
         try {
@@ -832,7 +836,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     // Hunt adena over 3 hours says where it hunted: 3000 all at A, more after a move.
     const config = { ...Design.DESIGN, outingHours: 100 };
     const huntAdena = (party, ranges, level, walk) => {
-        const world = { ...snapshot,
+        const world = { ...snapshot, npcOffers,
             hours: { 9: Object.fromEntries(levels.map(at => [at, { classId: 9, shotId: SSD, best: rowOf('A', 1000), top: [rowOf('B', 1200), rowOf('A', 1000)] }])) },
             spotLevels: { 9: ranges }, kits: { 9: Object.fromEntries(levels.map(at => [at, [{ selfId: SWORD, slot: 7 }]])) },
             yields: Object.fromEntries(levels.flatMap(at => ['A', 'B'].map(id => [`${id}@${at}`, { town: 'TownA', drop: {}, spoil: {} }]))), walkBack: { A: 0, B: walk } };
