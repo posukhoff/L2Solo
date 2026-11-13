@@ -50,10 +50,14 @@ assert.deepEqual(market.sell, { TownA: { 1463: 500 } });
 const view = Engine.viewOf(snapshot, { market });
 const account = { id: 1, classId: 7, line: '9', level: 25, exp: 24000, money: 0, shots: {}, held: [], worn: {} };
 const main = { ...Engine.mainOf(account, 0, view, [['20-29', 20], ['30-39', 30]]), bag: { 200: 10, 300: 1 } };
-const { main: after, delta } = Engine.visit(main, view, { outingHours: 0.5 });
+const { main: after, delta } = Engine.visit(main, view, { outingHours: 0.5, firing: Today.hunter(view).firing(main) });
 assert.equal(delta.flows.fixedBuyers, 40000, '10 x 4000 at the fixed buyer');
 assert.equal(delta.flows.npcSales, 50, 'the recipe nobody buys here goes to the NPC');
 assert.equal(delta.shotsBoughtFixed, 20, 'one hour of shots at the static line');
+// The restock is the hunter's shots an hour times the outing: a worn kit
+// firing half the row's shots over a 3-hour outing buys 3 x 10.
+const halfShots = Today.hunter(view, () => ({ shots: { kills: 1, shots: 0.5 } }));
+assert.equal(Engine.visit({ ...main, bag: {}, money: 100000 }, view, { outingHours: 3, firing: halfShots.firing(main) }).delta.shotsBoughtFixed, 30, 'the hunter\'s 10 an hour x 3 hours');
 assert.equal(delta.flows.fixedSellers, -20 * 500);
 assert.equal(after.money, 40000 + 50 - 10000);
 assert.deepEqual(after.bag, {});
@@ -80,6 +84,15 @@ assert.equal(Today.fit(baseline, trio, view, bands).basis['20-29'].huntShare, 60
 const kitFit = Today.fit(baseline, accounts, view, bands, () => 0.5).basis['20-29'];
 assert.deepEqual([kitFit.huntShare, kitFit.kitFactor], [1.2, 0.5], 'twice the plain share, the band\'s kit factor 0.5');
 assert.equal(basis['20-29'].kitFactor, undefined, 'the plain fit states no kit factor');
+// Today's setup fits the share over each main's exp at its worn kit, the
+// factor its hunt reads: a worn kit making half the reference kit's kills
+// hunted twice the time for the band's exp, and its hunter reads that half.
+const shares = kills => ({ killShare: kills, shotShare: 1 });
+const kitHours = { hour: (line, level, kit) => { const share = shares(Object.keys(kit).length ? 0.5 : 1); return { noneShare: share, shots: [{ kind: 'soulshot', id: 1463, ...share }] }; },
+    shotScale: () => 1 };
+const set = Today.setup(snapshot, baseline, accounts, kitHours), band = Object.keys(set.basis)[0];
+assert.deepEqual([set.basis[band].huntShare, set.basis[band].kitFactor], [1.2, 0.5], 'real 600 over the row\'s 1000 x the worn kit\'s 0.5');
+assert.equal(set.hunter.kills(main).shots, 0.5, 'its hunt reads the same factor');
 
 // Today's arrivals: periodic at the band's fitted rate, the first at the
 // seeded share of the interval, none at a rate of 0.

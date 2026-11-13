@@ -43,7 +43,7 @@ const TODAY_ROWS = Object.freeze([
     { path: 'flows.perBotHour.fixedBuyers', why: 'real bots start with 2.0B of stock the fixed buyers take and carry stock to buyer towns; the model starts with empty bags' },
     { path: 'flows.perBotHour.npcSales', why: 'real bots keep part of their materials; the model sells the whole bag' },
     { path: 'flows.perBotHour.npcBuys', why: 'bands 40-75 buy D gear at the NPC for today\'s gear improvement; the model buys kit pieces only' },
-    { path: 'flows.perBotHour.fixedSellers', why: 'today\'s funding rules hold shot buying back; the model restocks the shots of the hunting hours since the last visit' },
+    { path: 'flows.perBotHour.fixedSellers', why: 'today\'s funding rules hold shot buying back; the model restocks the shots of its hunting rate x the outing' },
     { path: 'flows.fixedBuyerShareOfFaucets', why: 'follows the fixed buyers' },
     { path: 'money.growthPerHour', why: 'follows the four flows above' },
     { path: 'gear.toNpcUnits', why: 'today\'s improvement and kit churn; the model sells dropped gear and the pieces it replaces' }
@@ -208,9 +208,9 @@ function requireSpots(snapshot, baseline, accounts) {
 }
 
 // The model over a baseline's start population and hours, at today's mechanisms and the given rates.
-function modelOf(baseline, snapshot, view, rates, seed, cohort = Cohort.fromSave(baseline.inputs.start.db, snapshot)) {
+function modelOf(baseline, snapshot, { view, rates, hunter }, seed, cohort = Cohort.fromSave(baseline.inputs.start.db, snapshot)) {
     const model = Engine.simulate({ view, accounts: cohort.accounts, bands: Run.STAGE_BANDS, rates, hours: baseline.window.hours, seed,
-        nextArrival: Today.nextArrival, inputs: { cohort: cohort.source, seed, rates } });
+        nextArrival: Today.nextArrival, hunter, inputs: { cohort: cohort.source, seed, rates } });
     return { model, cohort };
 }
 
@@ -225,14 +225,14 @@ function main(argv) {
     const startCohort = Cohort.fromSave(baseline.inputs.start.db, snapshot);
     console.log(`SPOTS the mains start at their bots' spots in ${requireSpots(snapshot, baseline, startCohort.accounts)}`);
     console.log(`TODAY ${JSON.stringify(Today.TODAY)}`);
-    const view = Engine.viewOf(snapshot, { market: Today.marketOf(snapshot), npcPrices: Today.TODAY.npcPrices });
     const fitCohort = Cohort.fromSave(read(fitFile).inputs.start.db, snapshot);
-    const { rates, basis } = Today.fit(read(fitFile), fitCohort.accounts, view, Run.STAGE_BANDS);
+    const booted = Date.now(), mode = Today.setup(snapshot, read(fitFile), fitCohort.accounts), { view, rates, basis } = mode;
+    console.log(`TODAY kit hours booted in ${((Date.now() - booted) / 1000).toFixed(1)} s`);
     console.log(`FITTED on ${fitFile}: arrivals every 1 / ${rates.default.visitsPerBotHour.toFixed(3)} hours per hunting main (the ledger's arrivals, a lower bound; one value for every band)`);
     Run.printFit(basis);
     printCorrection(view, fitCohort.accounts);
     const began = Date.now();
-    const { model, cohort } = modelOf(baseline, snapshot, view, rates, seed, startCohort);
+    const { model, cohort } = modelOf(baseline, snapshot, mode, seed, startCohort);
     console.log(`COHORT ${cohort.source}: lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}; run ${((Date.now() - began) / 1000).toFixed(1)} s`);
     console.log(`HUNTING HOURS at the mains' own spots ${model.huntHours.ownSpot}, at their line's best ${model.huntHours.bestSpot}`);
     const shared = sharedRows(baseline, model, snapshot.items), today = todayRows(baseline, model);
@@ -242,7 +242,7 @@ function main(argv) {
     const results = { baseline: baselineFile, shared, today, model };
     for (const other of String(Boot.option(argv, 'others', '')).split(',').filter(Boolean)) {
         const real = read(other);
-        const { model: theirs } = modelOf(real, snapshot, view, rates, seed);
+        const { model: theirs } = modelOf(real, snapshot, mode, seed);
         printShared(sharedRows(real, theirs, snapshot.items), `OTHER CODE ERA, NOT A VALIDATION: ${other} (code ${real.inputs?.end?.sha || 'older'}, ${(real.window.hours * 60).toFixed(1)} min; same fit)`);
     }
     for (const line of footerOf(baseline, preset)) console.log(line);

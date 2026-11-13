@@ -29,8 +29,6 @@ const Today = require('./today');
 const Design = require('./design');
 const Load = require('./load');
 const KitHours = require('./kit-hours');
-const Mains = require('./mains');
-const Worth = require('./rules/worth');
 const PersonaTypes = require('../../src/GameServer/Bot/AI/BotPersonaTypes');
 const { levelForGrade } = require('../../src/GameServer/Bot/AI/GearGradeRule');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
@@ -102,17 +100,17 @@ function printFooter() {
 function modeOf(argv, snapshot, cohort) {
     const mode = Boot.option(argv, 'mode', 'plain');
     if (mode === 'plain') {
-        return { view: Engine.viewOf(snapshot),
+        const view = Engine.viewOf(snapshot);
+        return { view, hunter: Today.hunter(view),
             rates: { default: { huntShare: Number(Boot.option(argv, 'hunt-share', 1)), visitsPerBotHour: Number(Boot.option(argv, 'visits', 2)) } } };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
     const fitFile = Boot.option(argv, 'fit', Boot.option(argv, 'cohort', null));
     if (!fitFile) throw new Error('today mode needs --fit <economy ledger JSON> (or --cohort)');
-    const view = Engine.viewOf(snapshot, { market: Today.marketOf(snapshot), npcPrices: Today.TODAY.npcPrices });
-    const { rates, basis } = Today.fit(JSON.parse(fs.readFileSync(fitFile, 'utf8')), cohort.accounts, view, STAGE_BANDS);
-    console.log(`TODAY ${JSON.stringify(Today.TODAY)}; fitted on ${fitFile}`);
+    const booted = Date.now(), { view, rates, basis, hunter } = Today.setup(snapshot, JSON.parse(fs.readFileSync(fitFile, 'utf8')), cohort.accounts);
+    console.log(`TODAY ${JSON.stringify(Today.TODAY)}; fitted on ${fitFile}; kit hours booted in ${((Date.now() - booted) / 1000).toFixed(1)} s`);
     printFit(basis);
-    return { view, rates };
+    return { view, rates, hunter };
 }
 
 function printFit(basis) {
@@ -131,7 +129,7 @@ function designOf(argv, snapshot) {
     if (!fitFile) throw new Error('design mode needs --fit <economy ledger JSON> (or --cohort): its start save and its fitted rates');
     const baseline = JSON.parse(fs.readFileSync(fitFile, 'utf8')), late = Cohort.fromSave(baseline.inputs.start.db, snapshot);
     const cohort = start === 'late' ? late : Cohort.fresh({ count: Number(Boot.option(argv, 'accounts', 1700)), seed }, snapshot);
-    const view = Engine.viewOf(snapshot, { npcPrices: 'x1' });
+    const view = Engine.viewOf(snapshot, { npcPrices: 'x1', yields: 'design' });
     if (!view.yieldsDesign) throw new Error('the snapshot has no design yields: write it again with inputs.js');
     // The calibration (Today.fit) is read at the ledger's own preset (the late run's x50):
     // a snapshot of another preset is not divided into that run's exp. Design applies no
@@ -150,9 +148,7 @@ function designOf(argv, snapshot) {
     const booted = Date.now(), kitHours = KitHours.gameKitHours({ snapshot, anchor: game.firstPrice });
     kitHours.warm();
     console.log(`DESIGN kit hours: the game's hunt cycle booted and every band's body built in ${((Date.now() - booted) / 1000).toFixed(1)} s`);
-    const slotsOf = pieces => Object.fromEntries(pieces.map(piece => [piece.slot, piece.selfId]));
-    const factorOf = main => Worth.huntFactors(kitHours.hour(main.line, main.level, Mains.wornKit(snapshot, main)),
-        kitHours.hour(main.line, main.level, slotsOf(view.kits[main.line]?.[main.level] || []))).shots?.kills ?? 1;
+    const factorsOf = KitHours.kitFactors({ snapshot, view, kitHours }), factorOf = main => factorsOf(main).shots?.kills ?? 1;
     const { rates: fitted, basis } = Today.fit(baseline, fitSnapshot === snapshot ? late.accounts : Cohort.fromSave(baseline.inputs.start.db, fitSnapshot).accounts, fitView, STAGE_BANDS, factorOf);
     console.log(`DESIGN start ${start}; calibrated on ${fitFile} at ${fitPreset}`);
     printFit(basis);
@@ -405,13 +401,13 @@ function main(argv) {
     const designMode = Boot.option(argv, 'mode', 'plain') === 'design';
     const picked = designMode ? designOf(argv, snapshot) : null;
     const cohort = picked ? picked.cohort : cohortOf(argv, snapshot);
-    const { view, rates } = picked || modeOf(argv, snapshot, cohort);
+    const { view, rates, hunter = null } = picked || modeOf(argv, snapshot, cohort);
     const fallbacks = snapshot.fallbacks;
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)}); fallbacks: `
         + `no no-grade market (the C town) ${fallbacks.noMarketToC.length} spots`);
     console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}`);
     const began = Date.now();
-    const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: picked ? null : Today.nextArrival,
+    const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: picked ? null : Today.nextArrival, hunter,
         onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates }, design: picked ? picked.design : null });
     printRun(out, { rates, fresh: !!picked?.fresh });
     console.log(`MONEY per start band, mean per bot start -> end: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.meanStart)} -> ${k(row.money.meanEnd)}`).join(' | ')}`);

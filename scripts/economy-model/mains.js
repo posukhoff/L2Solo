@@ -260,7 +260,7 @@ function mainsSide(ctx) {
             if (scale !== null) scaled.push({ shot, scale });
         }
         const fired = Worth.firing(hour && { ...hour, shots: scaled.map(entry => entry.shot) }, pricesOf(main)), form = fired?.id ? Engine.formOf(view, fired.id) : 'bare', hunted = row && fired?.id ? Engine.rowIn(row, form) : null;
-        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: hunted.shots * scaled.find(entry => entry.shot.id === fired.id).scale * (factors[form]?.shots ?? 1), worth: fired.worth } : null;
+        const answer = hunted?.shots > 0 ? { id: fired.id, perHour: Engine.shotsPerHour(row, form, scaled.find(entry => entry.shot.id === fired.id).scale, factors[form]), worth: fired.worth } : null;
         const options = new Set(['bare', ...scaled.map(entry => Engine.formOf(view, entry.shot.id))]);
         const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(at => [at, options.has(at) ? factors[at]?.kills ?? 1 : null]));
         firings.set(main.index, { hour, memory, row, weapon: main.weapon, answer, factors, kills, form: answer ? form : 'bare' });
@@ -332,9 +332,9 @@ function mainsSide(ctx) {
         const key = `${main.line}@${main.level}@${row.spotId}@${form}`;
         if (rowMemo.has(key)) return rowMemo.get(key);
         const hour = Engine.rowIn(row, form);
-        const items = Engine.designYieldRows(view, main.line, main.level, hour, form).map(([id, perKill]) => ({ id, rate: perKill * hour.kills,
+        const items = Engine.yieldRows(view, main.line, main.level, hour, form).map(([id, perKill]) => ({ id, rate: perKill * hour.kills,
             weight: view.items[id]?.weight || 0, stack: !Engine.isGear(view.items[id]) }));
-        const adena = hour.adena * Engine.designAdenaFactor(view, row, main.level);
+        const adena = hour.adena * Engine.adenaFactor(view, row, main.level);
         const out = { items, adena, npc: adena + items.reduce((sum, item) => sum + item.rate * (view.items[item.id]?.npcBuy || 0), 0) };
         rowMemo.set(key, out);
         return out;

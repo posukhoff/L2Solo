@@ -9,6 +9,7 @@
 // its weapon's grade, and comes to town when the run's arrival rule says.
 const assert = require('node:assert/strict');
 const Engine = require('../scripts/economy-model/engine');
+const Today = require('../scripts/economy-model/today');
 
 // Loot 30 an hour: the per-kill yields below at the NPC's price (10 kills x (0.5 x 5 + 0.01 x 50)).
 const hour = (adena, exp, shots, loot = 30) => ({ classId: 9, shotId: 1463,
@@ -41,7 +42,9 @@ const accounts = [
     { id: 1, station: false, classId: 9, line: '9', level: 1, exp: 0, money: 10000, shots: {}, held: [100], worn: { 7: 100 } },
     { id: 2, station: true, classId: 57, line: null, level: 40, exp: 0, money: 777, shots: {}, held: [], worn: {} }
 ];
-const run = (seed, hours = 3) => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours, seed, nextArrival: hourly });
+// A plain run: every main hunts its row's own kit and fires the hour's shot (Today.hunter).
+const plainRun = ({ view, ...options }) => Engine.simulate({ view, hunter: Today.hunter(view), ...options });
+const run = (seed, hours = 3) => plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours, seed, nextArrival: hourly });
 
 // The design mode leaves the plain and today's ledger as they were: this
 // fixture's 40-hour ledger hashes to the value recorded before the design
@@ -118,15 +121,11 @@ assert.equal(trio.delta.exp, 6950, 'three equal members: 1.39 x a solo bot\'s ex
 assert.equal(trio.delta.flows.huntCold, solo.delta.flows.huntCold, 'adena stays a solo bot\'s');
 assert.deepEqual(trio.main.bag, solo.main.bag, 'drops stay a solo bot\'s');
 assert.equal(partied({ levels: [1, 50], self: 0 }).delta.exp, 0, 'under the squared-level cut: no exp');
-// The design mode's hunt gives a party member the same share.
-const designed = party => Engine.huntDesign({ ...Engine.mainOf(accounts[0], 0, view, bands), party }, view, 100, () => 0.5).delta.exp;
-assert.equal(designed(null), 5000);
-assert.equal(designed({ levels: [1, 1, 1], self: 0 }), 6950, 'three equal members: 1.39 x a solo bot\'s exp');
-// The design hunt is the worn kit's: a kit making half the row's kills
+// The hunt is the worn kit's: a kit making half the row's kills
 // gains half its exp, adena and drops an hour.
 {
-    const main = Engine.mainOf(accounts[0], 0, view, bands), full = Engine.huntDesign(main, view, 100, () => 0.5);
-    const half = Engine.huntDesign(main, view, 100, () => 0.5, null, { bare: 0.5, shots: 0.5, blessed: 0.5 });
+    const main = Engine.mainOf(accounts[0], 0, view, bands), full = Engine.hunt(main, view, 100, () => 0.5);
+    const half = Engine.hunt(main, view, 100, () => 0.5, null, { bare: 0.5, shots: 0.5, blessed: 0.5 });
     assert.equal(half.delta.exp, 2500, 'half the row\'s exp');
     assert.ok(Math.abs(half.delta.flows.huntCold - full.delta.flows.huntCold / 2) <= 1, `half the row's adena: ${half.delta.flows.huntCold} of ${full.delta.flows.huntCold}`);
     assert.ok(Math.abs((half.main.bag[200] || 0) - (full.main.bag[200] || 0) / 2) <= 1, `half the row's drops: ${half.main.bag[200]} of ${full.main.bag[200]}`);
@@ -136,9 +135,9 @@ assert.equal(designed({ levels: [1, 1, 1], self: 0 }), 6950, 'three equal member
 // shots; with the D weapon it restocks D shots.
 const plain = { ...Engine.mainOf(accounts[0], 0, view, bands), shots: { 1835: 1000 } };
 assert.equal(plain.weapon, 100);
-assert.equal(Engine.hunt(plain, view, 1, () => 0.5).main.shots[1835], 980, 'no-grade shots fired');
+assert.equal(Engine.hunt(plain, view, 1, () => 0.5, Today.hunter(view).firing(plain)).main.shots[1835], 980, 'no-grade shots fired');
 const armed = { ...plain, weapon: 101, shots: {} };
-assert.deepEqual(Engine.errands(armed, view, snapshot.hours[9][1], { outingHours: 0.5 }).find(errand => errand.kind === 'shots'),
+assert.deepEqual(Engine.errands(armed, view, { outingHours: 0.5, firing: Today.hunter(view).firing(armed) }).find(errand => errand.kind === 'shots'),
     { kind: 'shots', id: 1463, amount: 20 }, 'D shots, one hour of use');
 
 // A spot's spoils (written at the highest Spoil level of any line there)
@@ -160,7 +159,7 @@ assert.equal(bagOf({ spoilLoot: 50, loot: 80 })[200], 500, 'the drops follow the
 const own = { spotId: 's2', kills: 10, exp: 50, adena: 1000, shots: 20, dropLoot: 0, spoilLoot: 0, loot: 0, potions: 0, busyShare: 1, deaths: 0 };
 const placed = { ...snapshot, spotHours: { rows: { 9: { 1: { s2: own }, 2: { s2: null } } } },
     yields: { ...snapshot.yields, 's2@1': { town: 'TownA', drop: { 57: 100 }, spoil: {} } } };
-const atOwn = Engine.simulate({ view: Engine.viewOf(placed), accounts: [{ ...accounts[0], spot: 's2' }], bands, rates, hours: 3, seed: 7, nextArrival: () => null });
+const atOwn = plainRun({ view: Engine.viewOf(placed), accounts: [{ ...accounts[0], spot: 's2' }], bands, rates, hours: 3, seed: 7, nextArrival: () => null });
 assert.equal(atOwn.counters.startAtOwnSpot, 1);
 assert.equal(atOwn.counters.leftOwnSpot, 1, 'level 2 has no hour at s2');
 // Level 2 at 100 exp: 2 h at s2 (1000 an hour), the rest at the best spot (100 an hour).
@@ -174,7 +173,7 @@ assert.deepEqual(atOwn.huntHours, { ownSpot: 2, bestSpot: 1 });
 const asked = [];
 const at = times => (main, state) => { asked.push({ ...state, bag: Object.keys(main.bag).length, level: main.level }); return times.find(time => time > state.now) ?? null; };
 const silent = { default: { huntShare: 1, visitsPerBotHour: 0 } }, busy = { default: { huntShare: 1, visitsPerBotHour: 100 } };
-const ruled = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates: silent, hours: 3, seed: 7, nextArrival: at([0.5, 2.5]) });
+const ruled = plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates: silent, hours: 3, seed: 7, nextArrival: at([0.5, 2.5]) });
 assert.equal(ruled.counters.visits - ruled.counters.onwardHops, 2, 'arrivals at 0.5 h and 2.5 h at a visit rate of 0');
 assert.deepEqual(asked.map(state => [state.now, state.event]), [[0, 'start'], [0.5, 'visit'], [2, 'level_up'], [2.5, 'visit']]);
 assert.equal(asked[2].pending, 2.5, 'the level-up is asked with the arrival pending');
@@ -186,20 +185,39 @@ assert.equal(asked[1].shotsPerHour, snapshot.hours[9][1].best.shots);
 // A level-up asks again and its answer replaces the pending arrival: the main
 // levels at 2 h; the start answered 1.5, the level-up moves it to 2.9.
 const levelAsked = [];
-const replaced = Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 3, seed: 7,
+const replaced = plainRun({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 3, seed: 7,
     nextArrival: (main, state) => { levelAsked.push([state.event, state.now, state.pending]); return state.event === 'start' ? 1.5 : state.event === 'level_up' ? 2.9 : null; } });
 assert.deepEqual(levelAsked.map(row => row[0]), ['start', 'visit', 'level_up', 'visit'], 'asked after the visit at 1.5 h, the level-up and the visit at 2.9 h');
 assert.equal(replaced.counters.visits - replaced.counters.onwardHops, 2, 'arrivals at 1.5 h and 2.9 h');
-assert.equal(Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates: busy, hours: 3, seed: 7, nextArrival: () => null }).counters.visits, 0,
+assert.equal(plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates: busy, hours: 3, seed: 7, nextArrival: () => null }).counters.visits, 0,
     'a visit rate of 100 an hour sends nobody when the rule says never');
-assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3 }), /nextArrival/);
+assert.throws(() => plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3 }), /nextArrival/);
+assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, nextArrival: () => null }), /simulate needs a hunter/);
 
 // A spot row with spoil loot where the snapshot holds no spoil yields loses
 // that loot: the kills are counted, not dropped silently.
 const lossy = { ...snapshot, spotHours: { rows: { 9: { 1: { s2: { ...own, spoilLoot: 40 } } } } }, yields: { ...snapshot.yields, 's2@1': { town: 'TownA', drop: { 57: 100 }, spoil: {} } } };
-const lost = Engine.simulate({ view: Engine.viewOf(lossy), accounts: [{ ...accounts[0], spot: 's2' }], bands, rates, hours: 1, seed: 7, nextArrival: () => null });
+const lost = plainRun({ view: Engine.viewOf(lossy), accounts: [{ ...accounts[0], spot: 's2' }], bands, rates, hours: 1, seed: 7, nextArrival: () => null });
 assert.equal(lost.counters.spoilUnyielded, 10, 'ten kills with spoil loot and no spoil yields');
 assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
+
+// A main out of its hour's shot hunts the row's hour without shots (fewer
+// kills, less exp and adena) and counts the shots it wanted; a worn kit
+// making half the reference kit's kills and firing half its shots earns half
+// the adena and fires half the shots.
+{
+    const row = { ...hour(100, 50, 20).best, shotless: { kills: 5, exp: 25, adena: 50 } }, line = { ...hour(100, 50, 20), best: row };
+    const dry = { ...snapshot, hours: { 9: { 1: line, 2: line, 3: line, 4: line } } }, at = Engine.viewOf(dry);
+    const out = Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 2, seed: 7, nextArrival: () => null, hunter: Today.hunter(at) });
+    assert.ok(Math.abs(out.flows.totals.huntCold - 100) <= 1, `the shotless hour's adena, 2 x 50: ${out.flows.totals.huntCold}`);
+    assert.equal(out.progress.stageBands.low.expPerBotHour, 25, 'the shotless hour\'s exp');
+    assert.deepEqual([out.shots.used, out.shots.wanted], [0, 40], 'none fired, 2 hours of 20 wanted');
+    const stocked = [{ ...accounts[0], shots: { 1835: 1000 } }];
+    const worn = factors => Engine.simulate({ view: at, accounts: stocked, bands, rates: silent, hours: 2, seed: 7, nextArrival: () => null, hunter: Today.hunter(at, () => factors) });
+    const full = worn(null), half = worn({ shots: { kills: 0.5, shots: 0.5 } });
+    assert.deepEqual([full.flows.totals.huntCold, full.shots.used], [200, 40], 'the row\'s kit: its adena and shots');
+    assert.deepEqual([half.flows.totals.huntCold, half.shots.used], [100, 20], 'half the kills and shots: half the adena and shots');
+}
 
 // A spot its occupation chose (the design mode's, one of its line's top
 // spots at its level) is where the main hunts; without one, its own spot or
@@ -237,7 +255,7 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     const trip = planeOf(once({ at: 10, away: 2 }));
     Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, design: trip.design });
     assert.deepEqual(trip.seen.visits, [10]);
-    const plainTrip = Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, nextArrival: once({ at: 10, away: 2 }) });
+    const plainTrip = plainRun({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, nextArrival: once({ at: 10, away: 2 }) });
     assert.ok(Math.abs(plainTrip.flows.totals.huntCold - 800) <= 3, `8 hours of hunt adena, not 10: ${plainTrip.flows.totals.huntCold}`);
     assert.ok(Math.abs(total(trip.seen, 'exp') - 400) <= 1, `8 hours of exp: ${total(trip.seen, 'exp')}`);
     assert.ok(Math.abs(total(trip.seen, 'wanted') - 160) <= 2, `8 hours of shots wanted: ${total(trip.seen, 'wanted')}`);
@@ -319,14 +337,14 @@ assert.equal(JSON.stringify(main), frozen);
 // No failure passes unseen: an arrival answer at or before now is dropped and
 // counted, a main below the max level that can never level is counted once,
 // an event of an unknown kind throws naming its kind.
-const late = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: (main, state) => state.now });
+const late = plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: (main, state) => state.now });
 assert.equal(late.counters.arrivalNotAhead, 2, 'the start and the level-up at 2 h each answered now');
 assert.equal(late.counters.visits, 0, 'a dropped answer sends nobody');
 for (const bad of [undefined, NaN, Infinity, { at: undefined, read: true }]) {
-    assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: () => bad }),
+    assert.throws(() => plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: () => bad }),
         new RegExp(`arrival rule answered ${typeof bad === 'object' ? '\\{' : String(bad)}.* for main 1 at 0 h \\(start\\)`), `an answer of ${JSON.stringify(bad) ?? 'undefined'} throws naming the main`);
 }
-const idle = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates: { default: { huntShare: 0, visitsPerBotHour: 0 } }, hours: 3, seed: 7, nextArrival: () => null });
+const idle = plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates: { default: { huntShare: 0, visitsPerBotHour: 0 } }, hours: 3, seed: 7, nextArrival: () => null });
 assert.equal(idle.counters.unlevelableMains, 1, 'the hunting main with no hunting share never levels; the station is not a hunting main');
 assert.equal(run(3, 40).counters.unlevelableMains, 0, 'a main that levels is not counted');
 const bogus = { sinks: [], start: ({ push }) => { push({ at: 0.5, kind: 'bogus', who: 0 }); return { nextArrival: () => null, kills: () => null, firing: () => null, hunt() {}, hour: () => 0 }; } };

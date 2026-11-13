@@ -17,6 +17,8 @@
 // Crafting is not imitated: today's crafts are a few per cent of the shots
 // fired and no flow of the ledger depends on them.
 const Engine = require('./engine');
+const KitHours = require('./kit-hours');
+const { STAGE_BANDS } = require('../economy/ledger-rules');
 
 // MerchantStoreConfigs store types.
 const SELL = 1, BUY = 3;
@@ -41,6 +43,37 @@ function nextArrival(main, { event, now, pending, rate, roll }) {
     if (!(visits > 0)) return null;
     if (event === 'level_up') return pending;
     return now + (event === 'start' ? roll : 1) / visits;
+}
+
+// The run's hunter in today's and the plain mode (the design mode's is its
+// plane): what a main fires as it hunts and its worn kit's kills, the two
+// answers the engine's one hunt reads. firing(main): the hour's shot at the
+// grade of the weapon in hand (shotOf) at the shots its spot row's hour of
+// that kind fires (shotsPerHour: times the worn weapon's count per action,
+// scaleOf(main, row, form), and the worn kit's shots, factorsOf(main)[form]);
+// null where the hour fires no shot or that count is 0. kills(main): per form
+// the worn kit's kills over the reference kit's (factorsOf(main)[form].kills;
+// 1 unstated). factorsOf null: every main hunts the row's own kit (the plain
+// mode). Held per main until its kit, weapon, level or spot row changes (the
+// inputs of both answers).
+function hunter(view, factorsOf = null, scaleOf = null) {
+    const held = new Map();
+    const answerOf = main => {
+        const row = Engine.spotRowOf(view, main), last = held.get(main.index);
+        if (last && last.kit === main.kit && last.weapon === main.weapon && last.level === main.level && last.row === row) return last;
+        const factors = factorsOf ? factorsOf(main) : null, hour = Engine.hourOf(view, main);
+        let firing = null;
+        if (row && hour?.shotId) {
+            const id = Engine.shotOf(view, main, hour), form = Engine.formOf(view, id);
+            const perHour = Engine.shotsPerHour(row, form, scaleOf ? scaleOf(main, row, form) : 1, factors?.[form]);
+            firing = perHour > 0 ? { id, perHour } : null;
+        }
+        const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(form => [form, factors?.[form]?.kills ?? 1]));
+        const answer = { kit: main.kit, weapon: main.weapon, level: main.level, row, firing, kills };
+        held.set(main.index, answer);
+        return answer;
+    };
+    return { firing: main => answerOf(main).firing, kills: main => answerOf(main).kills };
 }
 
 // A configured line's price (StaticMerchantPricing.configuredPrice): the
@@ -101,11 +134,11 @@ function marketOf(snapshot, config = TODAY) {
 // populate takes its nearest populated band's numbers. Printed beside the
 // fit, never fitted to: the share at the best spots, the end snapshot's
 // hunting and grouped fractions, and the members at their own spot.
-// factorOf(main): the main's exp an hour over its row's (the design mode's
-// worn kit over the reference kit, the factor its hunt reads), so the share
-// is a share of time and the kit is counted once; kitFactor in the basis is
-// the band's mean exp with it over the mean without. Without it every main
-// hunts its row (today mode: its hunt reads no kit either).
+// factorOf(main): the main's worn kit's exp factor over the reference kit (the
+// factor its hunt, restock and this fit all read). The fitted share is real exp
+// per wall bot-hour over the row's exp x that factor: the time at the spot x an
+// unexplained residual, not a share of time alone.
+// Without factorOf every main is fitted on its bare row.
 function fit(baseline, accounts, view, bands, factorOf = null) {
     const mains = accounts.map((account, index) => Engine.mainOf(account, index, view, bands)).filter(main => !main.station);
     const visitsPerBotHour = Number(baseline.visits?.perHour || 0) / Math.max(1, mains.length);
@@ -138,4 +171,23 @@ function fit(baseline, accounts, view, bands, factorOf = null) {
     return { rates, basis, visitsPerBotHour };
 }
 
-module.exports = { TODAY, configuredPrice, fixedBuyerPrice, marketOf, fit, nextArrival, SELL, BUY };
+// Today's mode on a real run's ledger (fitLedger) and its start cohort
+// (fitAccounts): the view at today's fixed stores and NPC prices, the kit
+// hours (the game's hunt cycle, booted here; kitHours: given readers instead),
+// the fit with each main's worn kit counted once (its shots form's kill
+// factor, as its hunt reads it) and the hunter the run reads (the worn kit's
+// factors, the worn weapon's shots per action). The kit hours price a shot at
+// its cheapest fixed sell line, the line a today bot restocks it at (ours: the
+// game has no single shot price); a shot no fixed line sells is no option.
+// Returns { view, rates, basis, hunter }.
+function setup(snapshot, fitLedger, fitAccounts, kitHours = null) {
+    const market = marketOf(snapshot), view = Engine.viewOf(snapshot, { market, npcPrices: TODAY.npcPrices }), anchor = {};
+    for (const lines of Object.values(market.sell)) for (const [id, price] of Object.entries(lines)) anchor[id] = Math.min(anchor[id] ?? Infinity, price);
+    const readers = kitHours || KitHours.gameKitHours({ snapshot, anchor });
+    const factorsOf = KitHours.kitFactors({ snapshot, view, kitHours: readers });
+    const { rates, basis } = fit(fitLedger, fitAccounts, view, STAGE_BANDS, main => factorsOf(main).shots?.kills ?? 1);
+    const scaleOf = (main, row, form) => readers.shotScale(main.line, main.level, row.spotId, main.weapon, form === 'blessed');
+    return { view, rates, basis, hunter: hunter(view, factorsOf, scaleOf) };
+}
+
+module.exports = { TODAY, configuredPrice, fixedBuyerPrice, marketOf, fit, nextArrival, hunter, setup, SELL, BUY };

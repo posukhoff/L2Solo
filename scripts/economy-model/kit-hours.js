@@ -3,6 +3,7 @@
 const Boot = require('./boot');
 const Load = require('./load');
 const Worth = require('./rules/worth');
+const Mains = require('./mains');
 
 const { wornKit } = Worth;
 
@@ -410,4 +411,14 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     return { hour: noBoard(hour), swaps: noBoard(swaps), shotScale: noBoard(shotScale), warm: noBoard(warm), stats };
 }
 
-module.exports = { gameKitHours, wornKit, lineKit, referenceShot, referenceBot, referenceNumbers, TOP_SPOTS };
+// A main's worn kit's hunt over its level's reference kit's, per form
+// (Worth.huntFactors: { bare, shots, blessed } of { kills, shots }), read
+// through kit hours (kitHours: gameKitHours's readers): the factors the hunt,
+// the restock and the fit of either mode read.
+function kitFactors({ snapshot, view, kitHours }) {
+    const slotsOf = pieces => Object.fromEntries(pieces.map(piece => [piece.slot, piece.selfId]));
+    return main => Worth.huntFactors(kitHours.hour(main.line, main.level, Mains.wornKit(snapshot, main)),
+        kitHours.hour(main.line, main.level, slotsOf(view.kits[main.line]?.[main.level] || [])));
+}
+
+module.exports = { gameKitHours, kitFactors, wornKit, lineKit, referenceShot, referenceBot, referenceNumbers, TOP_SPOTS };
