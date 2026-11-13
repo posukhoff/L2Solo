@@ -4,10 +4,6 @@
 // hour the piece adds over the hours it is worn, plus what it returns after
 // them. Pure over plain numbers; the buyer's cap (bounds.cap) reads it.
 //
-// - gearWorth: today's gear gain (WishProviders.gearGainReader) carried over:
-//   the attack gain (P.Atk, M.Atk for a caster) plus the defence gain (the
-//   better of P.Def and M.Def against a threat that may cast, P.Def alone
-//   against one that only hits) times the hours a death costs.
 // - rungWorth: a ladder rung's worth to a buyer over the kit it wears.
 // - firing: the shots a main fires with a kit at the prices it knows, and
 //   the kit's net hour then.
@@ -15,30 +11,6 @@
 function positive(value) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : 0;
-}
-
-function worth(perHour, horizonHours, ownHour) {
-    const hours = perHour * positive(horizonHours);
-    return { perHour, hours, adena: hours * positive(ownHour) };
-}
-
-// The attack and defence shares a piece adds: before and after are the kit's
-// numbers { pAtk, mAtk, pDef, mDef } without and with it.
-function gearGain({ before, after, caster = false, threatMask = 3 }) {
-    const attack = caster ? 'mAtk' : 'pAtk';
-    const attackGain = Math.max(0, Number(after[attack]) / Math.max(1, Number(before[attack])) - 1);
-    const physical = Math.max(0, 1 - Number(before.pDef) / Math.max(1, Number(after.pDef)));
-    const magic = Math.max(0, 1 - Number(before.mDef) / Math.max(1, Number(after.mDef)));
-    return { attack: attackGain, defence: threatMask === 1 ? physical : Math.max(physical, magic) };
-}
-
-// usable: the class may wear the piece and, for a weapon, its role prefers
-// it to the weapon it holds (the caller asks the equipment rules); a piece it
-// cannot use is worth nothing.
-function gearWorth({ usable = true, before, after, caster, threatMask, deathHours, horizonHours, ownHour }) {
-    if (!usable) return worth(0, horizonHours, ownHour);
-    const gain = gearGain({ before, after, caster, threatMask });
-    return worth(gain.attack + gain.defence * positive(deathHours), horizonHours, ownHour);
 }
 
 // The worth of a gear rung to a buyer, in adena (ours): the hunt cycle's
@@ -153,23 +125,19 @@ function kitKey(kit) {
 }
 
 // A kit row's net row for rungWorth at the prices a main knows (firing):
-// { hour: the net hour, gear }, null where the hour is not stated.
+// { hour: the net hour }, null where the hour is not stated.
 function netRow(row, priceOf) {
     const fired = row ? firing(row.hour, priceOf) : null;
-    return fired ? { hour: fired.net, gear: row.gear } : null;
+    return fired ? { hour: fired.net } : null;
 }
 
-// The rows of a kit's swaps (a kit hour source's swaps: the worn kit's hour
-// and numbers, the body's caster mark and death hours, and per piece the
-// hour and numbers of the kit with it): worn { hour, gear: 0 } and per piece
-// { hour, gear }, hour the kit's hour (kit-hours, priced by netRow), gear its
-// gear gain over the worn kit (gearWorth over one hour of a unit hour,
-// against a threat that may cast). null where an hour is not stated: a worth
-// nobody can state.
+// The rows of a kit's swaps (a kit hour source's swaps: the worn kit's hour,
+// and per piece the hour of the kit with it): worn { hour } and per piece
+// { hour }, the kit's hour (kit-hours, priced by netRow). null where an hour
+// is not stated: a worth nobody can state.
 function swapRows(read) {
-    const worn = read && read.hour !== null ? { hour: read.hour, gear: 0 } : null;
-    const rows = (read?.swaps || []).map(swap => (swap.hour === null || !worn ? null : { hour: swap.hour,
-        gear: gearWorth({ before: read.numbers, after: swap.numbers, caster: read.caster, threatMask: 3, deathHours: read.deathHours, horizonHours: 1, ownHour: 1 }).perHour }));
+    const worn = read && read.hour !== null ? { hour: read.hour } : null;
+    const rows = (read?.swaps || []).map(swap => (swap.hour === null || !worn ? null : { hour: swap.hour }));
     return { worn, rows };
 }
 
@@ -183,4 +151,4 @@ function horizon({ gradeHours, useHours, resale }) {
     return { hours: positive(useHours ?? gradeHours), resale: positive(resale) };
 }
 
-module.exports = { gearWorth, rungWorth, horizon, ladderGroup, slotsConflict, wornKit, kitKey, swapRows, firing, netRow, huntFactors };
+module.exports = { rungWorth, horizon, ladderGroup, slotsConflict, wornKit, kitKey, swapRows, firing, netRow, huntFactors };

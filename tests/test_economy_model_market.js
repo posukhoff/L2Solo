@@ -383,13 +383,13 @@ const viewOf = (patch = {}) => ({
 // times the hours worn, plus its resale; held to gainBound times the own
 // hour and counted.
 {
-    const rung = { hour: 1500, gear: 0.3 }, worn = { hour: 1000, gear: 0.1 };
+    const rung = { hour: 1500 }, worn = { hour: 1000 };
     assert.deepEqual(Worth.rungWorth({ rung, worn, useHours: 10, ownHour: 800, gainBound: 1 }), { adena: 5000, perHour: 500, bounded: false }, '500 an hour x 10 h');
-    const thin = Worth.rungWorth({ rung: { hour: 1000, gear: 0 }, worn: { hour: -20000, gear: 0 }, useHours: 10, ownHour: 500, gainBound: 1, resale: 70 });
+    const thin = Worth.rungWorth({ rung: { hour: 1000 }, worn: { hour: -20000 }, useHours: 10, ownHour: 500, gainBound: 1, resale: 70 });
     assert.deepEqual([thin.adena, thin.bounded], [5070, true], 'a dying worn kit: the gain held to one own hour an hour, counted');
     // A weak worn kit still earns at an easier spot: 400 an hour, not a share of 10.
-    assert.equal(Worth.rungWorth({ rung: { hour: 410, gear: 0 }, worn: { hour: 10, gear: 0 }, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 4000);
-    assert.equal(Worth.rungWorth({ rung: { hour: 900, gear: 0 }, worn, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 0, 'a rung that lowers the hour');
+    assert.equal(Worth.rungWorth({ rung: { hour: 410 }, worn: { hour: 10 }, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 4000);
+    assert.equal(Worth.rungWorth({ rung: { hour: 900 }, worn, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 0, 'a rung that lowers the hour');
     assert.deepEqual(Worth.rungWorth({ rung, worn, useHours: 10, ownHour: 0, gainBound: 1, resale: 70 }), { adena: 70, perHour: 0, bounded: true }, 'no own hour: no gain an hour, the resale');
     assert.equal(Worth.rungWorth({ rung: null, worn, useHours: 10, ownHour: 500, gainBound: 1 }).adena, null, 'no row, no worth');
 }
@@ -398,7 +398,7 @@ const viewOf = (patch = {}) => ({
 // buy price) whose hunt-hour gain is 10k an hour. Its cap never falls under
 // its resale while the main can use it, and reaches the NPC at 50 h of use.
 {
-    const rung = { hour: 30000, gear: 0 }, worn = { hour: 20000, gear: 0 }, npc = 1000000, resale = 500000;
+    const rung = { hour: 30000 }, worn = { hour: 20000 }, npc = 1000000, resale = 500000;
     const capAt = hours => {
         const h = Worth.horizon({ gradeHours: hours, useHours: null, resale });
         return Bounds.cap({ worth: Worth.rungWorth({ rung, worn, useHours: h.hours, ownHour: 20000, gainBound: 1, resale: h.resale }).adena, npcSell: npc }).cap;
