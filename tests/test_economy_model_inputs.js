@@ -129,6 +129,7 @@ assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a w
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
 assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
 assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', crystals: [{ selfId: 1459, amount: 573 }, { selfId: 1458, amount: 2865 }] }, 'Flamberge for 573 C and 2865 D crystals together');
+assert.ok(!('luxury' in snapshot) && !('upkeep' in snapshot), 'one Luxury catalogue (luxuryOptions) and no servitor upkeep in the snapshot');
 
 // The gear ladder: a Scavenger's (the Bounty Hunter at 30) band 30-34 holds
 // the gear table's D weapon rungs and the no-grade ones below, none above D,
@@ -159,34 +160,6 @@ assert.equal(snapshot.tradeTowns.none[String(island[0])], 'Talking Island', `${i
 const markets = new Set(Object.values(snapshot.tradeTowns.none));
 assert.ok([...markets].every(town => villages.includes(town)) && markets.size >= 4, [...markets].join(', '));
 
-// A servitor costs a player crystals (the game spares bots): the Warlock's
-// line at 40 casts the first summon its cold fight lists, each cast paying the
-// rank's itemCount and, over the servitor's life, itemConsumeSteps payments of
-// itemCountOT; the life loses timeLostActive ms each second it fights and
-// timeLostIdle ms otherwise, at the busy share of the level's best row.
-const summoner = Inputs.extract({ preset: 'x1', lines: ['14', '2'], levels: [40, 40] });
-const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
-const warlock = Profile.profileFor(HuntCycle.referenceState(Table.roleClass('14', 40), 40, { line: 14 }), 0);
-const cast = Profile.summonSkills(warlock)[0], skillRows = require('../data/Skills/Active/active.json');
-const summonRow = skillRows.find(row => row.selfId === cast.selfId), rank = summonRow.levels.find(row => row.level === cast.level);
-assert.equal(summonRow.template.name, 'Summon Kai the Cat', 'a Warlock at 40 casts Kai the Cat');
-const due = summoner.upkeep['14'][40], busy = summoner.hours['14'][40].best.busyShare;
-assert.equal(summonRow.summon.itemIdOT, rank.itemId, 'the cast and the upkeep take one crystal');
-assert.deepEqual(due.map(row => [row.id, row.what.skill, row.what.level, row.what.name]), [[rank.itemId, cast.selfId, cast.level, 'Summon Kai the Cat']]);
-assert.equal(rank.itemId, 1459, 'C crystals');
-const life = summonRow.summon.totalLifeTime / (busy * summonRow.summon.timeLostActive + (1 - busy) * summonRow.summon.timeLostIdle);
-close(due[0].perHour, 3600 * (rank.itemCount + summonRow.summon.itemConsumeSteps * rank.itemCountOT) / life, 'crystals per hunt hour from the skill data');
-// Rank 1: 1 at the cast and 4 steps of 1 over a 1,200,000 ms life lost at 500 ms a second idle, 1000 fighting.
-close(due[0].perHour, 3600 * 5 * (500 + 500 * busy) / 1200000, `5 crystals a life at busy share ${busy}`);
-assert.equal(summoner.upkeep['2'], undefined, 'a fighter line keeps no servitor');
-assert.equal(snapshot.upkeep[line], undefined, 'nor does a Bounty Hunter');
-// Below 20 the line's Mage has no summon; from 20 its Wizard casts Mew the
-// Cat, then Kat the Cat, and each of their first ranks waits 6 hours to be
-// cast again: one cast of each per 6 hours (1 and 3 D crystals).
-const early = Inputs.extract({ preset: 'x1', lines: ['14'], levels: [19, 20] });
-assert.ok(early.hours['14'][19].best, 'the line hunts at 19');
-assert.equal(early.upkeep['14'][19], undefined, 'no summon below 20');
-assert.deepEqual(early.upkeep['14'][20].map(row => [row.id, row.what.name, row.perHour]), [[1458, 'Summon Mew the Cat', 1 / 6], [1458, 'Summon Kat the Cat', 3 / 6]]);
 // The arrow of each bow grade, as the game's arrow stock names it.
 const ArrowStock = invoke('GameServer/Inventory/ArrowStock');
 assert.deepEqual(snapshot.arrowIds, { ...ArrowStock.BY_RANK });
@@ -224,7 +197,7 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
         const built = childProcess.spawnSync(process.execPath, ['scripts/economy-model/inputs.js', '--preset', 'x1', '--out', path.join(scratch, 'built')], { cwd: Boot.root, encoding: 'utf8', maxBuffer: 1 << 28 });
         assert.equal(built.status, 0, built.stderr);
         const header = JSON.parse(fs.readFileSync(path.join(scratch, 'built', fs.readdirSync(path.join(scratch, 'built')).find(name => name.startsWith('inputs-x1-'))), 'utf8')).header;
-        for (const file of ['config/default.ini', 'data/ExtractableItems/extractable_items.csv', 'data/Bots/hunt/gear.json', 'data/Bots/hunt/sources.json', 'scripts/economy-model/inputs.js'])
+        for (const file of ['config/default.ini', 'data/ExtractableItems/extractable_items.csv', 'data/Bots/hunt/gear.json', 'scripts/economy-model/inputs.js'])
             assert.ok(header.sourceFiles.includes(file), `the stamp holds ${file}`);
         assert.ok(Boot.stampMatches(header), 'a fresh header matches the live data');
         // Another fingerprint, or no list of source files: refused with the build command.
