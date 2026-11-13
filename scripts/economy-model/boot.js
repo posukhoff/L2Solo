@@ -33,7 +33,7 @@ function usePreset(preset) {
 // (TableFingerprint 'hunt'): the spot table's reader, the hunt reader, the
 // reward expectation, the walk back, the shot and item pricing, the death
 // valuation and the caster mark, the servitor's life rule and the skill model
-// its upkeep is read through, the arrow of each bow grade. A change to one
+// its upkeep is read through, the arrow of each bow grade, the party exp split. A change to one
 // changes an hour, a mark, an upkeep or an id of the snapshot.
 const EXTRA_FILES = Object.freeze([
     'src/GameServer/Bot/AI/SpotValueTable.js',
@@ -46,7 +46,8 @@ const EXTRA_FILES = Object.freeze([
     'src/GameServer/Npc/SummonControl.js',
     'src/GameServer/Model/Skill.js',
     'src/GameServer/Inventory/ArrowStock.js',
-    'src/GameServer/Actor/BowResources.js'
+    'src/GameServer/Actor/BowResources.js',
+    'src/GameServer/Actor/PartyRewardMath.js'
 ]);
 
 function extraFilesHash() {

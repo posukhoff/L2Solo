@@ -34,6 +34,7 @@
 // main with the flows it caused; the engine commits both. Rolls are seeded per
 // (run seed, account id, the account's situation counter).
 const { hash, mulberry } = require('../hunt-tables/common');
+const PartyRewardMath = require('../../src/GameServer/Actor/PartyRewardMath');
 const Ledger = require('./ledger');
 
 const ADENA = 57;
@@ -99,6 +100,18 @@ function spotRowOf(view, main) {
     const hour = main.occupied ? hourOf(view, main) : null, chosen = row => String(row.spotId) === main.occupied;
     const occupied = hour ? hour.top?.find(chosen) || hour.others?.find(chosen) || null : null;
     return occupied || ownRow(view, main.line, main.level, main.spot) || hourOf(view, main)?.best || null;
+}
+
+// The exp a main gains hunting a spot row for hours: the row's, or in a party
+// the game's own share (PartyRewardMath, as BackgroundPartyResolver gives it)
+// of what the party kills: one member's row exp for each of its members, the
+// bonus and the squared-level split applied. Adena and drops stay a solo
+// bot's per kill (the party's adena is divided among its members).
+function huntExp(main, row, hours) {
+    const exp = row.exp * hours, party = main.party;
+    if (!party) return exp;
+    const levels = party.levels.map((level, at) => (at === party.self ? main.level : level));
+    return PartyRewardMath.sharesForLevels(levels, exp * levels.length).find(share => share.index === party.self)?.exp || 0;
 }
 
 // The shot a main fires: the hour's kind of shot at the grade of the weapon
@@ -185,7 +198,7 @@ function hunt(main, view, huntHours, random) {
     if (best.spoilLoot > 0 && !Object.keys(view.yields[`${best.spotId}@${main.level}`]?.spoil || {}).length) delta.spoilUnyielded = kills;
     delta.ownSpot = best === ownRow(view, main.line, main.level, main.spot);
     flows.huntCold = Math.round(best.adena * huntHours);
-    delta.exp = best.exp * huntHours;
+    delta.exp = huntExp(main, best, huntHours);
     const bag = { ...main.bag };
     for (const [id, perKill] of yieldRows(view, main.line, main.level, best)) {
         const count = wholeCount(perKill * kills, random);
@@ -378,7 +391,7 @@ function mainOf(account, index, view, bands) {
     const weapon = planned || Object.values(account.worn || {}).find(selfId => isWeapon(view.items[selfId])) || 0;
     const station = !!account.station || !view.hours[account.line];
     const spot = ownRow(view, account.line, level, account.spot) ? account.spot : null;
-    return { index, id: account.id, station, line: account.line, level, exp: account.exp, money: account.money, weapon, spot,
+    return { index, id: account.id, station, line: account.line, level, exp: account.exp, money: account.money, weapon, spot, party: account.party || null,
         bag: {}, shots: { ...(account.shots || {}) }, kit, band: station ? Ledger.STATION : bandOf(bands, level), since: 0, lastVisit: 0, counter: 0 };
 }
 
@@ -460,7 +473,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // the situation never comes after the level is reached; one that comes
     // before it is scheduled again from the exp then held.
     const scheduleLevel = (main, now) => {
-        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, exp = plane ? Math.max(row?.exp || 0, row?.blessed?.exp || 0) : row?.exp;
+        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, exp = plane ? Math.max(row?.exp || 0, row?.blessed?.exp || 0) : row && huntExp(main, row, 1);
         if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) return;
         // One exp over the next level's start, so the level is reached however the hour's exp rounds.
         const need = expAt(view, main.level + 1) - main.exp + 1;
@@ -536,5 +549,5 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     return { ...Ledger.build(ledger, { mains, hours, events, inputs, view, held: report.money }), design: report.design };
 }
 
-module.exports = { viewOf, hunt, huntDesign, visit, errands, sellerOf, mainOf, simulate, levelOf, bandOf, wholeCount, heap, spotRowOf, hourOf, shotOf,
+module.exports = { viewOf, hunt, huntDesign, visit, errands, sellerOf, mainOf, simulate, levelOf, bandOf, wholeCount, heap, spotRowOf, huntExp, hourOf, shotOf,
     killMixCorrection, designAdenaFactor, designYieldRows, formOf, rowIn, isGear, isWeapon, expAt, SHOT_LINE_HOURS };

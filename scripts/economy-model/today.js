@@ -109,7 +109,7 @@ function fit(baseline, accounts, view, bands) {
     for (const [band] of bands) {
         const real = baseline.progress?.stageBands?.[band];
         const members = mains.filter(main => main.band === band);
-        const meanExp = mean(members.map(main => Engine.spotRowOf(view, main)?.exp || 0));
+        const meanExp = mean(members.map(main => { const row = Engine.spotRowOf(view, main); return row ? Engine.huntExp(main, row, 1) : 0; }));
         const bestExp = mean(members.map(main => view.hours[main.line]?.[main.level]?.best?.exp || 0));
         if (!real || !members.length || !(meanExp > 0)) continue;
         const activity = real.activityAtEnd || {}, of = count => (real.bots ? (count || 0) / real.bots : null);

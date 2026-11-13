@@ -146,6 +146,29 @@ assert.equal(LedgerRules.stageBandOf({ accountName: `${Cohort.STATION_ACCOUNT_PR
 assert.notEqual(LedgerRules.stageBandOf({ accountName: `${Cohort.STATION_ACCOUNT_PREFIX.slice(0, -1)}`, level: 30 }), 'station', 'and no shorter prefix');
 assert.equal(LedgerRules.population([{ activity: Cohort.MERCHANT_ACTIVITY }]).merchants, 1, 'the ledger counts the cohort\'s merchant activity as a merchant');
 
+// The cohort carries the active background party a bot is in, from the save:
+// its members' start levels and the bot's place among them; a dissolved party
+// and a party of one member the save holds as a bot carry none.
+const { DatabaseSync } = require('node:sqlite');
+const os = require('node:os'), fs = require('node:fs'), path = require('node:path');
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'party-save-')), file = path.join(folder, 'database.sqlite');
+const save = new DatabaseSync(file);
+save.exec(`CREATE TABLE characters (id INTEGER PRIMARY KEY, classId INTEGER);
+    CREATE TABLE bot_life_state (characterId INTEGER PRIMARY KEY, accountName TEXT, level INTEGER, exp INTEGER, activity TEXT, spotId TEXT);
+    CREATE TABLE items (characterId INTEGER, selfId INTEGER, amount INTEGER, equipped INTEGER, slot INTEGER);
+    CREATE TABLE bot_background_parties (partyId TEXT, memberIdsJson TEXT, status TEXT);`);
+for (const [id, level] of [[1, 20], [2, 24], [3, 30], [4, 30], [5, 41]]) {
+    save.prepare('INSERT INTO characters VALUES (?, 7)').run(id);
+    save.prepare('INSERT INTO bot_life_state VALUES (?, ?, ?, 0, ?, NULL)').run(id, `bot_${id}`, level, 'hunting');
+}
+save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('a', '[1,2,99]', 'active');
+save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('b', '[3,4]', 'dissolved');
+save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('c', '[5,98]', 'active');
+save.close();
+const cohort = Cohort.fromSave(file, { hours: { 9: { 20: { classId: 7 } } }, items: {} });
+fs.rmSync(folder, { recursive: true });
+assert.deepEqual(cohort.accounts.map(account => account.party), [{ levels: [20, 24], self: 0 }, { levels: [20, 24], self: 1 }, null, null, null]);
+
 const verdict = (baseline, model, baselineHigh) => judged({ baseline, model, baselineHigh }, 'relative').verdict;
 assert.equal(verdict(-100, -88), 'PASS', 'a negative flow within the tolerance passes');
 assert.equal(verdict(-100, -130), 'FAIL', 'a negative flow too far fails');

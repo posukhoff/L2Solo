@@ -57,7 +57,9 @@ function lineOf(classId, id, snapshot, byClass) {
 }
 
 // A save's bots, read-only: { characterId, accountName, level, exp, activity,
-// spotId, classId, station } without the merchants; with items, every item row.
+// spotId, classId, station, partyIds } without the merchants (partyIds: the
+// member ids of the active background party the bot is in, else null); with
+// items, every item row.
 function savedBots(file, { items = false } = {}) {
     if (!fs.existsSync(file)) throw new Error(`missing start save ${file}`);
     const db = new DatabaseSync(file, { readOnly: true });
@@ -66,10 +68,23 @@ function savedBots(file, { items = false } = {}) {
             FROM bot_life_state b JOIN characters c ON c.id = b.characterId ORDER BY b.characterId`).all()
             .filter(bot => bot.activity !== MERCHANT_ACTIVITY)
             .map(bot => ({ ...bot, station: String(bot.accountName || '').startsWith(STATION_ACCOUNT_PREFIX) }));
+        const parties = new Map();
+        for (const row of db.prepare(`SELECT memberIdsJson FROM bot_background_parties WHERE status = 'active'`).all()) {
+            const ids = JSON.parse(row.memberIdsJson || '[]').map(Number);
+            for (const id of ids) parties.set(id, ids);
+        }
+        for (const bot of bots) bot.partyIds = parties.get(bot.characterId) || null;
         return { bots, items: items ? db.prepare('SELECT characterId, selfId, amount, equipped, slot FROM items').all() : [] };
     } finally {
         db.close();
     }
+}
+
+// The party a bot starts in, from the save: the start levels of its members
+// the save holds as bots and the bot's own place among them; null alone.
+function partyOf(bot, levelOf) {
+    const ids = (bot.partyIds || []).filter(id => levelOf.has(id));
+    return ids.length > 1 ? { levels: ids.map(id => levelOf.get(id)), self: ids.indexOf(bot.characterId) } : null;
 }
 
 function fromSave(file, snapshot) {
@@ -82,6 +97,7 @@ function fromSave(file, snapshot) {
     const byClass = linesByClass(snapshot), shotIds = new Set(Object.entries(snapshot.items)
         .filter(([, item]) => item.kind === 'Other.Shot').map(([id]) => Number(id)));
     const accounts = [], counts = { exact: 0, drawn: 0, noLine: 0, stations: 0 };
+    const levelOf = new Map(bots.map(bot => [bot.characterId, Number(bot.level)]));
     for (const bot of bots) {
         const station = bot.station;
         const picked = station ? null : lineOf(Number(bot.classId), bot.characterId, snapshot, byClass);
@@ -97,7 +113,7 @@ function fromSave(file, snapshot) {
             if (Number(row.equipped) === 1 && row.slot !== null) worn[Number(row.slot)] = selfId;
         }
         accounts.push({ id: bot.characterId, station: station || !picked, classId: Number(bot.classId), line: picked?.line ?? null,
-            level: Number(bot.level), exp: Number(bot.exp), money, spot: bot.spotId ? String(bot.spotId) : null, shots, held: [...new Set(own.map(row => Number(row.selfId)))], worn });
+            level: Number(bot.level), exp: Number(bot.exp), money, spot: bot.spotId ? String(bot.spotId) : null, party: partyOf(bot, levelOf), shots, held: [...new Set(own.map(row => Number(row.selfId)))], worn });
     }
     return { accounts, source: file, lines: counts };
 }

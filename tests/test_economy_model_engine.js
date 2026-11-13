@@ -104,6 +104,18 @@ assert.equal(lootOf(30), 500, '0.5 per kill x 10 kills x 100 h');
 assert.equal(lootOf(60), 1000);
 assert.equal(lootOf(0), undefined, 'an hour without loot drops nothing');
 
+// A party member hunts by the game's party rule: its exp is its share of what
+// the party kills (one member's row exp for each member, the 3-member bonus
+// 1.39, the split by squared level), its adena and drops a solo bot's per kill;
+// a member far under the party's level gets no exp.
+const partied = party => Engine.hunt({ ...Engine.mainOf(accounts[0], 0, view, bands), party }, view, 100, () => 0.5);
+const solo = partied(null), trio = partied({ levels: [1, 1, 1], self: 0 });
+assert.equal(solo.delta.exp, 5000);
+assert.equal(trio.delta.exp, 6950, 'three equal members: 1.39 x a solo bot\'s exp');
+assert.equal(trio.delta.flows.huntCold, solo.delta.flows.huntCold, 'adena stays a solo bot\'s');
+assert.deepEqual(trio.main.bag, solo.main.bag, 'drops stay a solo bot\'s');
+assert.equal(partied({ levels: [1, 50], self: 0 }).delta.exp, 0, 'under the squared-level cut: no exp');
+
 // A main with a no-grade weapon fires no-grade shots where the hour names D
 // shots; with the D weapon it restocks D shots.
 const plain = { ...Engine.mainOf(accounts[0], 0, view, bands), shots: { 1835: 1000 } };
