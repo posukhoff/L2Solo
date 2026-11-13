@@ -304,14 +304,15 @@ function sellerOf(view, id, town) {
     return best;
 }
 
-// The main's errands in town, in its wallet's order: the shot restock, then
-// the kit plan's pieces it does not wear, by slot.
-function errands(main, view, hour, context) {
-    const out = [], row = spotRowOf(view, main);
-    if (row && hour?.shotId) {
-        const shotId = shotOf(view, main, hour), perHour = row.shots, held = main.shots[shotId] || 0;
-        const target = Math.ceil(perHour * Math.max(SHOT_LINE_HOURS, context.outingHours || 0));
-        if (held < perHour * SHOT_LINE_HOURS && target > held) out.push({ kind: 'shots', id: shotId, amount: target - held });
+// The main's errands in town, in its wallet's order: the shot restock (of
+// the shot it fires at its shots an hour, context.firing: the run's hunter's
+// answer; none firing none), then the kit plan's pieces it does not wear, by slot.
+function errands(main, view, context) {
+    const out = [], firing = context.firing;
+    if (firing) {
+        const held = main.shots[firing.id] || 0;
+        const target = Math.ceil(firing.perHour * Math.max(SHOT_LINE_HOURS, context.outingHours || 0));
+        if (held < firing.perHour * SHOT_LINE_HOURS && target > held) out.push({ kind: 'shots', id: firing.id, amount: target - held });
     }
     for (const piece of view.kits[main.line]?.[main.level] || []) {
         if (main.kit[piece.slot] !== piece.selfId) out.push({ kind: 'piece', id: piece.selfId, slot: piece.slot, amount: 1 });
@@ -373,7 +374,7 @@ function visit(main, view, context = {}) {
         return true;
     };
     let open = [];
-    for (const errand of errands(main, view, hour, context)) {
+    for (const errand of errands(main, view, context)) {
         const seller = sellerOf(view, errand.id, town);
         if (!(seller?.fare === 0 && buy(errand, seller))) open.push(errand);
     }
@@ -471,7 +472,7 @@ function heap() {
 // reach, a bid for what it sells); commit(index, now, change) hunts a main to
 // now, replaces it by change(main) (a deal met with it while it hunts) and
 // asks again. Returns the model ledger.
-function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, onProgress = null, inputs = {}, design = null }) {
+function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, onProgress = null, inputs = {}, design = null, hunter = null }) {
     if (typeof nextArrival !== 'function' && !design) throw new Error('simulate needs nextArrival(main, view)');
     const rateOf = band => rates[band] || rates.default;
     const mains = accounts.map((account, index) => mainOf(account, index, view, bands));
@@ -482,6 +483,8 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         rearrive: (index, now, event) => reschedule(mains[index], now, event),
         commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; scheduleLevel(main, now); reschedule(main, now, event); return main; } }) : null;
     if (plane) arrivalRule = plane.nextArrival;
+    // What a main fires and its worn kit's kills: the design's plane, else the run's hunter (Today.hunter).
+    const hunting = plane || hunter;
     const randomFor = main => mulberry(hash(`${seed}:${main.id}:${main.counter}`));
     let events = 0;
 
@@ -503,15 +506,10 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         if (row && share > 0 && main.level < view.maxLevel) {
             // A need within float rounding of the level's exp is reached: the read is due at once.
             const gap = expAt(view, main.level + 1) - main.exp, need = gap <= LEVEL_ROUNDING * expAt(view, main.level + 1) ? 0 : gap;
-            if (!plane) {
-                const exp = huntExp(main, row, 1);
-                if (exp > 0) at = main.since + need / (exp * share);
-            } else {
-                const kills = plane.kills(main), { lasts, form } = firedOf(view, main, plane.firing(main));
-                const fired = lasts > 0 ? formExp(main, row, form, lasts, kills) : 0;
-                const hours = need <= fired ? need / formExp(main, row, form, 1, kills) : lasts + (need - fired) / formExp(main, row, 'bare', 1, kills);
-                at = main.since + hours / share;
-            }
+            const kills = hunting.kills(main), { lasts, form } = firedOf(view, main, hunting.firing(main));
+            const fired = lasts > 0 ? formExp(main, row, form, lasts, kills) : 0;
+            const hours = need <= fired ? need / formExp(main, row, form, 1, kills) : lasts + (need - fired) / formExp(main, row, 'bare', 1, kills);
+            at = main.since + hours / share;
         }
         if (!Number.isFinite(at)) {
             // Below the max level, a main whose hunt credits it no exp to the level (no row, no exp at its
@@ -558,8 +556,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
         const share = rateOf(main.band).huntShare, end = departs !== null && departs < now ? departs : now;
         const spotHours = Math.max(0, end - main.since), wayHours = end < now ? now - Math.max(end, main.since) : 0;
         const moved = { ...main, counter: main.counter + 1, since: Math.max(now, main.since) };
-        const hour = hourOf(view, main), row = spotRowOf(view, main), today = row && hour?.shotId ? { id: shotOf(view, main, hour), perHour: row.shots } : null;
-        const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), plane ? plane.firing(main) : today, plane ? plane.kills(main) : null);
+        const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), hunting.firing(main), hunting.kills(main));
             Ledger.recordHunt(ledger, next, delta);
         if (plane) plane.hunt(next, { ...delta, spotHours, wayHours });
         return next;
@@ -615,13 +612,13 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             // The restock covers an outing as long as the one just ended: its hours at the spot, from
             // the end of its last visit to the hour it left (lastVisit: the hour that visit ended).
             const outingHours = ((departs ?? event.at) - main.lastVisit) * rateOf(main.band).huntShare;
-            const { main: after, delta, afterHours = 0 } = plane ? plane.visit(main, event.at, { outingHours }) : visit(main, view, { outingHours });
+            const { main: after, delta, afterHours = 0 } = plane ? plane.visit(main, event.at, { outingHours }) : visit(main, view, { outingHours, firing: hunter.firing(main) });
             Ledger.recordVisit(ledger, after, delta);
             // Its onward stops and its way back are not hunted: it hunts again from their end.
             main = { ...after, lastVisit: event.at + afterHours, since: event.at + afterHours };
             mains[event.who] = main;
-            // Only the design's visit changes the hour's exp (its kit's kills); today's hunt reads no kit and the visit keeps the row.
-            if (plane) scheduleLevel(main, event.at);
+            // A visit changes the kit and the shots held, so the hour's exp and how long its shots last.
+            scheduleLevel(main, event.at);
             reschedule(main, event.at, 'visit');
         }
     }
