@@ -33,11 +33,12 @@
 //                 without going to town (its answer { at, read: true }, held
 //                 in the same pending slot): the rule is asked again then.
 //   report        every simulated hour: counters only, never a decision.
-// In the design mode (simulate's design: design.js) the run also holds the
-// account plane: crafter twins seated in towns, woken by account_wake (a line
-// filled, an order, its main's arrival) and batch_done (a craft batch's MP
-// deadline); mains hunt at the design's yields and, without shots of their
-// grade, at the hour without shots, at the spot their occupation chose; the
+// Every mode hunts one way: a main fires the shots its hunter names (firing)
+// while it holds them, then hunts the hour without shots, at the worn kit's
+// kill factor (kills), at the spot its occupation or save chose. In the design
+// mode (simulate's design: design.js) the run also holds the account plane:
+// crafter twins seated in towns, woken by account_wake (a line filled, an
+// order, its main's arrival) and batch_done (a craft batch's MP deadline); the
 // design's trip is the arrival rule and its visits are the design's.
 //
 // hunt and visit are pure: they take a main and the view and return the new
@@ -494,10 +495,9 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // (as levelOf reads it), counted from the hour its exp stands at (its
     // last credited hunt, or the hour it hunts again after a visit's onward
     // stops): a situation reads the main as it stands, not hunted to now. The
-    // design mode's hunt credits the form it fires while its held shots last,
-    // then the bare form (firedOf, formExp: as hunt credits), so the
-    // crossing is read on those two pieces; the plain and today hunts credit
-    // one exp an hour. A committed visit or deal may change the kit, the shots
+    // hunt credits the form it fires while its held shots last, then the bare
+    // form (firedOf, formExp: as hunt credits), so the crossing is read on
+    // those two pieces. A committed visit or deal may change the kit, the shots
     // or the row, so the level is scheduled again after each from the exp then
     // held; the one pending level time per main is the one read, an earlier
     // one still queued is skipped.

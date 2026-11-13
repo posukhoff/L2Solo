@@ -134,11 +134,11 @@ function marketOf(snapshot, config = TODAY) {
 // populate takes its nearest populated band's numbers. Printed beside the
 // fit, never fitted to: the share at the best spots, the end snapshot's
 // hunting and grouped fractions, and the members at their own spot.
-// factorOf(main): the main's exp an hour over its row's (the design mode's
-// worn kit over the reference kit, the factor its hunt reads), so the share
-// is a share of time and the kit is counted once; kitFactor in the basis is
-// the band's mean exp with it over the mean without. Without it every main
-// hunts its row (today mode: its hunt reads no kit either).
+// factorOf(main): the main's worn kit's exp factor over the reference kit (the
+// factor its hunt, restock and this fit all read). The fitted share is real exp
+// per wall bot-hour over the row's exp x that factor: the time at the spot x an
+// unexplained residual (.63-1.04 by band, DT-527), not a share of time alone.
+// Without factorOf every main is fitted on its bare row.
 function fit(baseline, accounts, view, bands, factorOf = null) {
     const mains = accounts.map((account, index) => Engine.mainOf(account, index, view, bands)).filter(main => !main.station);
     const visitsPerBotHour = Number(baseline.visits?.perHour || 0) / Math.max(1, mains.length);

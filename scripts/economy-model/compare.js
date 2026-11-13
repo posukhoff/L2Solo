@@ -43,7 +43,7 @@ const TODAY_ROWS = Object.freeze([
     { path: 'flows.perBotHour.fixedBuyers', why: 'real bots start with 2.0B of stock the fixed buyers take and carry stock to buyer towns; the model starts with empty bags' },
     { path: 'flows.perBotHour.npcSales', why: 'real bots keep part of their materials; the model sells the whole bag' },
     { path: 'flows.perBotHour.npcBuys', why: 'bands 40-75 buy D gear at the NPC for today\'s gear improvement; the model buys kit pieces only' },
-    { path: 'flows.perBotHour.fixedSellers', why: 'today\'s funding rules hold shot buying back; the model restocks the shots of the hunting hours since the last visit' },
+    { path: 'flows.perBotHour.fixedSellers', why: 'today\'s funding rules hold shot buying back; the model restocks the shots of its hunting rate x the outing' },
     { path: 'flows.fixedBuyerShareOfFaucets', why: 'follows the fixed buyers' },
     { path: 'money.growthPerHour', why: 'follows the four flows above' },
     { path: 'gear.toNpcUnits', why: 'today\'s improvement and kit churn; the model sells dropped gear and the pieces it replaces' }
