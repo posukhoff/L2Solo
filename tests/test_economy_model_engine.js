@@ -115,6 +115,10 @@ assert.equal(trio.delta.exp, 6950, 'three equal members: 1.39 x a solo bot\'s ex
 assert.equal(trio.delta.flows.huntCold, solo.delta.flows.huntCold, 'adena stays a solo bot\'s');
 assert.deepEqual(trio.main.bag, solo.main.bag, 'drops stay a solo bot\'s');
 assert.equal(partied({ levels: [1, 50], self: 0 }).delta.exp, 0, 'under the squared-level cut: no exp');
+// The design mode's hunt gives a party member the same share.
+const designed = party => Engine.huntDesign({ ...Engine.mainOf(accounts[0], 0, view, bands), party }, view, 100, () => 0.5).delta.exp;
+assert.equal(designed(null), 5000);
+assert.equal(designed({ levels: [1, 1, 1], self: 0 }), 6950, 'three equal members: 1.39 x a solo bot\'s exp');
 
 // A main with a no-grade weapon fires no-grade shots where the hour names D
 // shots; with the D weapon it restocks D shots.

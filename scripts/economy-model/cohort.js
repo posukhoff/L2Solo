@@ -57,10 +57,14 @@ function lineOf(classId, id, snapshot, byClass) {
 }
 
 // A save's bots, read-only: { characterId, accountName, level, exp, activity,
-// spotId (the spot the bot stands at, else the one its travel or its stay
-// names, else null), classId, station, partyIds } without the merchants (partyIds: the
+// spotId, classId, station, partyIds } without the merchants (partyIds: the
 // member ids of the active background party the bot is in, else null); with
-// items, every item row.
+// items, every item row. spotId: the spot the bot stands at; else its travel's
+// spot, where the game lands a traveller on arrival (BackgroundResolver); else
+// its stay's spot, which is our reading: the stay is the game's tally of the
+// bot's last solo hunt, and a spot-less resting or shopping bot is sent by the
+// game's route choice (BotRoute.huntSpot) when it next leaves, an answer the
+// save does not hold; we send it back to the spot it last hunted. Else null.
 function savedBots(file, { items = false } = {}) {
     if (!fs.existsSync(file)) throw new Error(`missing start save ${file}`);
     const db = new DatabaseSync(file, { readOnly: true });
@@ -83,7 +87,9 @@ function savedBots(file, { items = false } = {}) {
 }
 
 // The party a bot starts in, from the save: the start levels of its members
-// the save holds as bots and the bot's own place among them; null alone.
+// the save holds as bots and the bot's own place among them; null alone. The
+// model holds it for the whole run (our reading: the game's members leave on
+// party_left and party_outleveled).
 function partyOf(bot, levelOf) {
     const ids = (bot.partyIds || []).filter(id => levelOf.has(id));
     return ids.length > 1 ? { levels: ids.map(id => levelOf.get(id)), self: ids.indexOf(bot.characterId) } : null;

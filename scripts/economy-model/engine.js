@@ -5,10 +5,11 @@
 // server module, no World, no database, no clock.
 //
 // Between two situations a main hunts analytically at its spot: the spot a
-// cohort account stood at while the snapshot has that spot's hour for its line
-// and level (spotHours), else its line's best spot for its level. It earns
-// the hour times the hunting hours (wall hours times its stage band's hunting
-// share). Items with a mean count under 5 are drawn whole (Poisson), larger
+// cohort account starts at (Cohort.savedBots: its own, else its travel's, else
+// its stay's) while the snapshot has that spot's hour for its line and level
+// (spotHours), else its line's best spot for its level. It earns the hour
+// (a party member's exp: its party share, huntExp) times the hunting hours
+// (wall hours times its stage band's hunting share). Items with a mean count under 5 are drawn whole (Poisson), larger
 // counts round by a draw on the fraction, so rare recipes and gear arrive as
 // pieces. Situations:
 //   level_up      the exp of the next level is reached (from exp per hour);
@@ -102,11 +103,19 @@ function spotRowOf(view, main) {
     return occupied || ownRow(view, main.line, main.level, main.spot) || hourOf(view, main)?.best || null;
 }
 
-// The exp a main gains hunting a spot row for hours: the row's, or in a party
-// the game's own share (PartyRewardMath, as BackgroundPartyResolver gives it)
-// of what the party kills: one member's row exp for each of its members, the
-// bonus and the squared-level split applied. Adena and drops stay a solo
-// bot's per kill (the party's adena is divided among its members).
+// The exp a main gains hunting a spot row for hours, in both modes: the row's,
+// or in a party its share by the game's party reward rule. The game composes
+// that reward in BackgroundPartyResolver.distributeRewards: a party of n kills
+// n solo bots' kills, their exp is split by PartyRewardMath.sharesForLevels
+// (the C4 bonus for n members, then the squared-level split), the adena is the
+// total divided by n and each kill's drops go to one member. Here: the main's
+// row exp times n through the same split; adena and drops stay a solo bot's
+// per kill, which is what that division gives each member on average.
+// Our reading: the party and the other members' levels are the save's and are
+// held for the whole run (the game leaves a party on party_left and
+// party_outleveled). A member under the squared-level cut therefore gets no
+// exp for the run (the share the game gives it while it is a member), where
+// the game would have it leave and hunt solo; the late save has none.
 function huntExp(main, row, hours) {
     const exp = row.exp * hours, party = main.party;
     if (!party) return exp;
@@ -257,7 +266,7 @@ function huntDesign(main, view, huntHours, random, firing = null) {
         if (!(hours > 0)) continue;
         const row = rowIn(best, at);
         flows.huntCold += row.adena * adenaFactor * hours;
-        delta.exp += row.exp * hours;
+        delta.exp += huntExp(main, row, hours);
         for (const [id, perKill] of designYieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * hours);
     }
     flows.huntCold = Math.round(flows.huntCold);
@@ -473,7 +482,8 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
     // the situation never comes after the level is reached; one that comes
     // before it is scheduled again from the exp then held.
     const scheduleLevel = (main, now) => {
-        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, exp = plane ? Math.max(row?.exp || 0, row?.blessed?.exp || 0) : row && huntExp(main, row, 1);
+        const row = spotRowOf(view, main), share = rateOf(main.band).huntShare;
+        const fastest = plane && row?.blessed && row.blessed.exp > row.exp ? rowIn(row, 'blessed') : row, exp = fastest && huntExp(main, fastest, 1);
         if (main.level >= view.maxLevel || !(exp > 0) || !(share > 0)) return;
         // One exp over the next level's start, so the level is reached however the hour's exp rounds.
         const need = expAt(view, main.level + 1) - main.exp + 1;

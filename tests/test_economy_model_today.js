@@ -71,6 +71,11 @@ assert.equal(basis['20-29'].activityGrouped, 0.5);
 assert.equal(rates['20-29'].visitsPerBotHour, 5, '10 visits an hour over 2 hunting mains');
 assert.deepEqual(rates['30-39'], { huntShare: 0.6, visitsPerBotHour: 5, fittedOn: '20-29' });
 
+// A band whose mains are one party of three equal members fits its share
+// over a member's exp at the row: the C4 3-member bonus 1.39, split evenly.
+const trio = [1, 2, 3].map((id, self) => ({ ...account, id, party: { levels: [25, 25, 25], self } }));
+assert.equal(Today.fit(baseline, trio, view, bands).basis['20-29'].huntShare, 600 / 1390, 'real exp over 1.39 x the row\'s exp');
+
 // Today's arrivals: periodic at the band's fitted rate, the first at the
 // seeded share of the interval, none at a rate of 0.
 assert.equal(Today.TODAY.arrivals, 'fitted periodic');
