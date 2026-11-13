@@ -36,7 +36,7 @@ const tripsOf = (spots, towns, { to = 0.01, back = 0.01, hop = 0.1 } = {}) => {
 };
 const snapshot = {
     header: { levels: [1, 30], rates: { adena: 1 } },
-    exp: [...levels.map(level => level * 1e9), 1e12],
+    exp: levels.map(level => level * 1e9),
     hours: { 55: hoursOf(55, 0), 9: hoursOf(9, 50) },
     kits: { 55: Object.fromEntries(levels.map(level => [level, [{ selfId: SWORD, slot: 7 }]])), 9: Object.fromEntries(levels.map(level => [level, [{ selfId: SWORD, slot: 7 }]])) },
     yields: Object.fromEntries(levels.map(level => [`s1@${level}`, yields])),
@@ -278,7 +278,7 @@ const shareKit = (share, shots) => ({ ...kitHoursOf(() => 500, () => shots, (lin
 // far above the rounding a level read allows (1e-9 of the level's exp).
 const levelReads = (share, shots, hours, atHour = null) => {
     const flat = { ...row('s1', 1000, 0), shotless: undefined };
-    const world = { ...keptKit(snapshot), exp: [...levels.map(level => (level <= 25 ? level * 1e6 : 25e6 + (level - 25) * 10)), 1e12],
+    const world = { ...keptKit(snapshot), exp: levels.map(level => (level <= 25 ? level * 1e6 : 25e6 + (level - 25) * 10)),
         hours: { 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: flat, top: [] }])) } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, shots) }), read = [];
     const design = { ...real, start: context => { const hooks = real.start(context); return { ...hooks, levelUp: (main, now) => { read.push([now, main.level]); return hooks.levelUp(main, now); },
@@ -519,7 +519,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const s0 = levels.map(level => [`s0@${level}`, yields]);
     // 1e6 exp a level (not the snapshot's 1e9): the 7.2 exp to level 26 below is then far above the
     // rounding a level read allows (1e-9 of the level's exp).
-    const world = { ...snapshot, exp: [...levels.map(level => level * 1e6), 1e12], ...tripsOf(['s0', 's1'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : town === 'TownD' ? 0.4 : 0.25), hop: 0.15 }), fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+    const world = { ...snapshot, exp: levels.map(level => level * 1e6), ...tripsOf(['s0', 's1'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : town === 'TownD' ? 0.4 : 0.25), hop: 0.15 }), fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
         hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: row('s0', 1000, 0), top: [] }])) },
         yields: { ...snapshot.yields, ...Object.fromEntries(s0) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s0) },
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
@@ -813,7 +813,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const market = {
         ...snapshot,
         header: { levels: [1, 45], rates: { adena: 1 } },
-        exp: [...levels45.map(level => level * 1e9), 1e12],
+        exp: levels45.map(level => level * 1e9),
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: SSD, best: { ...plain('s1', 50), adena: 75 }, top: [] }])),
             46: Object.fromEntries(levels45.map(level => [level, { classId: 46, shotId: 0, best: plain('s2', 0, 1000), top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: SWORD, slot: 7 }]])), 46: Object.fromEntries(levels45.map(level => [level, [{ selfId: OLD, slot: 7 }]])) },
@@ -1003,7 +1003,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const CSWORD = 2005, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
     const hourRow = { spotId: 's1', kills: 10, exp: 4e8, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const world = {
-        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: [...levels45.map(level => level * 1e9), 1e12],
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: level < 40 ? SWORD : CSWORD, slot: 7 }]])) },
         items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 40000, npcBuy: 20000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
@@ -1047,7 +1047,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     // 1020 an hour, 19 hunting hours to C: its outings add about 18k to its 10000 before then.
     const hourRow = { spotId: 's1', kills: 10, exp: 1e9, adena: 1000, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const world = {
-        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: [...levels45.map(level => level * 1e9), 1e12],
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: SWORD, slot: 7 }]])) },
         items: { ...snapshot.items, [DEAR]: { kind: 'Weapon.Sword', grade: 'D', ref: 40000, npcBuy: 20000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
@@ -1078,7 +1078,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const world = (cSold, { top = 45, swordPrice = 4000, luxury = false } = {}) => {
         const levels45 = levelsTo(top);
         const out = {
-            ...snapshot, header: { levels: [1, top], rates: { adena: 1 } }, exp: [...levels45.map(level => level * 1e9), 1e12],
+            ...snapshot, header: { levels: [1, top], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
             hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
             kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: level < 40 ? SWORD : CSWORD, slot: 7 }]])) },
             items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 400000, npcBuy: 200000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
@@ -1274,7 +1274,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const NG = 2010, DEAR = 2011, ARM = 2012, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
     const hourRow = { spotId: 's1', kills: 10, exp: 4e8, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const world = {
-        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: [...levels45.map(level => level * 1e9), 1e12],
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: DEAR, slot: 7 }, { selfId: ARM, slot: 10 }]])) },
         items: { ...snapshot.items, [NG]: { kind: 'Weapon.Sword', grade: 'NONE', ref: 100, npcBuy: 50, crystals: 0 }, [DEAR]: { kind: 'Weapon.Sword', grade: 'D', ref: 900000, npcBuy: 450000, crystals: 0 },
@@ -1308,7 +1308,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const hourRow = { spotId: 's1', kills: 10, exp: 1, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const armour = (kind, ref) => ({ kind, grade: 'D', ref, npcBuy: ref / 2, crystals: 0 });
     const world = {
-        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: [...levels45.map(level => level * 1e9), 1e12],
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
         fares: { TownA: { TownA: 0, TownB: 1000 }, TownB: { TownA: 1000, TownB: 0 } },
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: NG, slot: 7 }]])) },
@@ -1384,7 +1384,7 @@ assert.equal(armed.delta.shotsUsed, 50);
     const CSWORD = 2005, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
     const hourRow = { spotId: 's1', kills: 10, exp: 1, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
     const world = {
-        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: [...levels45.map(level => level * 1e9), 1e12],
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
         hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: CSWORD, slot: 7 }]])) },
         items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 400000, npcBuy: 200000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
