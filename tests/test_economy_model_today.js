@@ -70,7 +70,6 @@ assert.equal(basis['20-29'].activityHunting, 0.5, 'printed beside the fit, not f
 assert.equal(basis['20-29'].activityGrouped, 0.5);
 assert.equal(rates['20-29'].visitsPerBotHour, 5, '10 visits an hour over 2 hunting mains');
 assert.deepEqual(rates['30-39'], { huntShare: 0.6, visitsPerBotHour: 5, fittedOn: '20-29' });
-
 // A band whose mains are one party of three equal members fits its share
 // over a member's exp at the row: the C4 3-member bonus 1.39, split evenly.
 const trio = [1, 2, 3].map((id, self) => ({ ...account, id, party: { levels: [25, 25, 25], self } }));
@@ -185,11 +184,17 @@ assert.equal(verdict(-100, 88), 'FAIL', 'the wrong sign fails');
 assert.equal(verdict(100, 130, 110), 'PASS', 'within the tolerance of the upper end of a range');
 assert.equal(verdict(100, 140, 110), 'FAIL', 'beyond it');
 
-console.log('economy model today mode: ok');
-
 // A comparison needs the snapshot's rows for the baseline's own save: a snapshot
 // with none, or with another save's, is refused with the way to build one.
 const start = { inputs: { start: { db: '/saves/a/database.sqlite' } } };
-assert.throws(() => requireSpots({ header: {} }, start), /no spot rows.*inputs\.js --preset <preset> --spots \/saves\/a\/database\.sqlite/);
-assert.throws(() => requireSpots({ spotHours: { source: '/saves/b/database.sqlite', rows: {} } }, start), /another save \(\/saves\/b/);
-assert.equal(requireSpots({ spotHours: { source: '/saves/a/database.sqlite', rows: {} } }, start), '/saves/a/database.sqlite');
+assert.throws(() => requireSpots({ header: {} }, start, []), /no spot rows.*inputs\.js --preset <preset> --spots \/saves\/a\/database\.sqlite/);
+assert.throws(() => requireSpots({ spotHours: { source: '/saves/b/database.sqlite', rows: {} } }, start, []), /another save \(\/saves\/b/);
+// A snapshot of that save built before the save named a main's spot (no entry
+// for it) is refused too; an entry of null (its line fights nothing there), a
+// station's spot and a level above the snapshot's are not asked for.
+const named = { header: { levels: [1, 30] }, spotHours: { source: '/saves/a/database.sqlite', rows: { 9: { 25: { s1: null } } } } };
+const holding = spot => ({ station: false, line: '9', level: 25, spot });
+assert.equal(requireSpots(named, start, [holding('s1'), holding(null), { ...holding('s2'), station: true }, { ...holding('s2'), level: 31 }]), '/saves/a/database.sqlite');
+assert.throws(() => requireSpots(named, start, [holding('s1'), holding('s2')]), /lack 1 spots the save names.*--spots \/saves\/a\/database\.sqlite/);
+
+console.log('economy model today mode: ok');

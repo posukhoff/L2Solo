@@ -186,20 +186,27 @@ function printCorrection(view, accounts) {
         .filter(([, values]) => values.length).map(([kind, values]) => `${kind} ${at(values, 0.1).toFixed(2)} / ${at(values, 0.5).toFixed(2)} / ${at(values, 0.9).toFixed(2)} (${values.length} mains)`).join('; ')}`);
 }
 
-// The model over a baseline's start population and hours, at today's mechanisms and the given rates.
 // The save a today-mode comparison starts from must be the save the snapshot's
-// spot rows were read from: without them every main hunts its line's best spot
-// and the hunt adena comes out 20-37 % over the real run's. Throws, naming how
-// to build the snapshot; returns the save's path.
-function requireSpots(snapshot, baseline) {
-    const save = baseline.inputs.start.db, from = snapshot.spotHours?.source || null;
-    if (from === save) return save;
-    throw new Error(`the snapshot has ${from ? `spot rows of another save (${from})` : 'no spot rows'}, the baseline starts from ${save}: `
-        + `build it with node scripts/economy-model/inputs.js --preset <preset> --spots ${save} and pass it as --snapshot`);
+// spot rows were read from, and the rows must hold every spot that save names
+// for a main (a snapshot built before the model read a bot's travel and stay
+// spots has none for them): without them those mains hunt their line's best
+// spot and the hunt adena comes out 20-37 % over the real run's. Throws,
+// naming how to build the snapshot; returns the save's path. accounts: the
+// cohort read from that save.
+function requireSpots(snapshot, baseline, accounts) {
+    const save = baseline.inputs.start.db, from = snapshot.spotHours?.source || null, rows = snapshot.spotHours?.rows || {};
+    const build = `build it with node scripts/economy-model/inputs.js --preset <preset> --spots ${save} and pass it as --snapshot`;
+    if (from !== save) throw new Error(`the snapshot has ${from ? `spot rows of another save (${from})` : 'no spot rows'}, the baseline starts from ${save}: ${build}`);
+    // The snapshot reads no spot above its top level.
+    const top = snapshot.header?.levels?.[1] ?? Infinity;
+    const missing = accounts.filter(account => !account.station && account.spot && account.level <= top
+        && rows[account.line]?.[account.level]?.[account.spot] === undefined).length;
+    if (missing) throw new Error(`the snapshot's spot rows lack ${missing} spots the save names for its mains: ${build}`);
+    return save;
 }
 
-function modelOf(baseline, snapshot, view, rates, seed) {
-    const cohort = Cohort.fromSave(baseline.inputs.start.db, snapshot);
+// The model over a baseline's start population and hours, at today's mechanisms and the given rates.
+function modelOf(baseline, snapshot, view, rates, seed, cohort = Cohort.fromSave(baseline.inputs.start.db, snapshot)) {
     const model = Engine.simulate({ view, accounts: cohort.accounts, bands: Run.STAGE_BANDS, rates, hours: baseline.window.hours, seed,
         nextArrival: Today.nextArrival, inputs: { cohort: cohort.source, seed, rates } });
     return { model, cohort };
@@ -213,7 +220,8 @@ function main(argv) {
     const preset = Boot.option(argv, 'preset', 'x50');
     const { snapshot, file } = Run.loadSnapshot(preset, Boot.option(argv, 'snapshot', null));
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}); baseline ${baselineFile} (code ${baseline.inputs?.end?.sha || '?'}, ${(baseline.window.hours * 60).toFixed(1)} min, ${baseline.population.bots} bots)`);
-    console.log(`SPOTS the mains start at their bots' spots in ${requireSpots(snapshot, baseline)}`);
+    const startCohort = Cohort.fromSave(baseline.inputs.start.db, snapshot);
+    console.log(`SPOTS the mains start at their bots' spots in ${requireSpots(snapshot, baseline, startCohort.accounts)}`);
     console.log(`TODAY ${JSON.stringify(Today.TODAY)}`);
     const view = Engine.viewOf(snapshot, { market: Today.marketOf(snapshot), npcPrices: Today.TODAY.npcPrices });
     const fitCohort = Cohort.fromSave(read(fitFile).inputs.start.db, snapshot);
@@ -222,7 +230,7 @@ function main(argv) {
     Run.printFit(basis);
     printCorrection(view, fitCohort.accounts);
     const began = Date.now();
-    const { model, cohort } = modelOf(baseline, snapshot, view, rates, seed);
+    const { model, cohort } = modelOf(baseline, snapshot, view, rates, seed, startCohort);
     console.log(`COHORT ${cohort.source}: lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}; run ${((Date.now() - began) / 1000).toFixed(1)} s`);
     console.log(`HUNTING HOURS at the mains' own spots ${model.huntHours.ownSpot}, at their line's best ${model.huntHours.bestSpot}`);
     const shared = sharedRows(baseline, model, snapshot.items), today = todayRows(baseline, model);
