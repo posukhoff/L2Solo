@@ -30,7 +30,9 @@ near(fifty[2255] / Object.values(fifty).reduce((sum, count) => sum + count, 0), 
     'the recipe keeps its share of the group');
 // A chance over 100 % becomes extra rolls: 40 % x 15 = 6 rolls a kill.
 near(fifty[1872], 6 * 0.4 * 2, '6 rolls, each picks the material 40 % of the time, 2 on average');
-near(dropRule({ group: adena, rates: x50 })[57], 25 * dropRule({ group: adena, rates: x1 })[57], 'adena at the adena rate 25');
+near(dropRule({ group: adena, rates: x50 })[57], 50 * dropRule({ group: adena, rates: x1 })[57], 'adena at the adena rate 50');
+assert.deepStrictEqual([DESIGN_RATES.x10.adena, DESIGN_RATES.x50.adena], [10, 50], 'adena follows the exp rate');
+assert.deepStrictEqual([DESIGN_RATES.x10.drop, DESIGN_RATES.x10.spoil, DESIGN_RATES.x10.raid, DESIGN_RATES.x10.epic, DESIGN_RATES.x50.drop, DESIGN_RATES.x50.spoil, DESIGN_RATES.x50.raid, DESIGN_RATES.x50.epic], [4, 4, 3, 1, 15, 10, 5, 1], 'other rates unchanged');
 near(dropRule({ group: adena, rates: x1 })[57], 0.7 * 232.5, 'adena at x1: chance times the mean amount');
 const spoiled = dropRule({ group: spoil, kind: 'spoil', rates: x50 }), spoiledOne = dropRule({ group: spoil, kind: 'spoil', rates: x1 });
 for (const id of [1804, 1926]) near(spoiled[id], 10 * spoiledOne[id], `spoil row ${id} at the spoil rate 10`);
@@ -38,7 +40,7 @@ near(spoiledOne[1926], 0.037 * 1.5, 'each spoil row on its own chance');
 // The deep-blue penalty divides the rolls; adena under it is divided by the drop rate too, as in Lisvus.
 const blue = { active: true, chanceMultiplier: 0.1, minimumChance: 0.0001 };
 near(dropRule({ group: materials, rates: x50, penalty: blue })[2255], 0.1 * fifty[2255], 'deep blue drops at a tenth');
-near(dropRule({ group: adena, rates: x50, penalty: blue })[57], 0.7 * 25 * 0.1 / 15 * 232.5, 'deep blue adena');
+near(dropRule({ group: adena, rates: x50, penalty: blue })[57], 0.7 * 50 * 0.1 / 15 * 232.5, 'deep blue adena');
 // A group listed above 100 % rolls more than once a kill at x1 too (Tirak's 149 %).
 const listed = { overall: 149.3, items: [{ selfId: 955, chance: 60, min: 1, max: 1 }, { selfId: 2026, chance: 40, min: 1, max: 1 }] };
 near(dropRule({ group: listed, rates: x1, of: 'raid' })[955], 1.493 * 0.6, '1.49 rolls a kill at x1');
