@@ -567,6 +567,21 @@ const viewOf = (patch = {}) => ({
     assert.deepEqual([out.main.kit[7], out.main.kit[10]], [100, 0], 'one exchange taken');
 }
 
+// Three Luxury exchange pieces at one visit, each needing 300 D crystals, the
+// twin holding 450 and the lines the rest: 450 are claimed from the twin in
+// all (never the same 450 twice) and all three pieces are worn.
+{
+    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', grade: 'd', amount: 300, perCrystal: 100 };
+    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
+        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
+        102: { selfId: 102, slot: 11, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
+    const lines = [{ owner: 5, id: 'C5', price: 100, qty: 450, kind: 'line' }];
+    const out = visit(mainOf({ money: 1e6, kit: { 7: 0, 10: 0, 11: 0 }, wants: { 100: { state: 'route', tries: 0 }, 101: { state: 'route', tries: 0 }, 102: { state: 'route', tries: 0 } } }),
+        viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }, { kind: 'piece', selfId: 101, slot: 10 }, { kind: 'piece', selfId: 102, slot: 11 }], ownCrystals: { 1458: 450 }, book: { sell: { 1458: lines }, buy: {}, bids: {} } }));
+    assert.equal(out.claims.filter(row => row.kind === 'own_stock').reduce((sum, row) => sum + row.units, 0), 450, 'the twin holds 450 crystals: 450 claimed in all');
+    assert.deepEqual([out.main.kit[7], out.main.kit[10], out.main.kit[11]], [100, 101, 102], 'all three pieces worn');
+}
+
 // visit: a wait ends at its third visit unmet even when nothing caps the
 // piece any more (its last route stalled, no worth stated).
 {

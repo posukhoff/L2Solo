@@ -272,7 +272,8 @@ function visit(main, view) {
     };
 
     let hopped = false;
-    // Own crystals claimed by an exchange of this visit are not there for the next one.
+    // Own stock of the twin (a shelf piece, the crystals of an exchange) claimed
+    // by this visit, by item: what it takes is not there for the next claim.
     const ownTaken = {};
     // A piece by the cap's own route; false when the money or the route is not there now.
     const byRoute = (piece, route) => {
@@ -318,10 +319,9 @@ function visit(main, view) {
     const tried = new Map();
     // A piece from its own twin's shelf comes through the account warehouse:
     // a unit taken for one slot of a pair is no longer there for the other.
-    const shelfTaken = {};
-    const onShelf = piece => (piece.own || 0) - (shelfTaken[piece.selfId] || 0) > 0;
+    const onShelf = piece => (piece.own || 0) - (ownTaken[piece.selfId] || 0) > 0;
     const fromShelf = piece => {
-        shelfTaken[piece.selfId] = (shelfTaken[piece.selfId] || 0) + 1;
+        ownTaken[piece.selfId] = (ownTaken[piece.selfId] || 0) + 1;
         claims.push({ kind: 'own_stock', item: piece.selfId, units: 1 });
         obtained.push({ selfId: piece.selfId, grade: piece.grade, route: 'twin' });
         equip(piece.selfId, piece.slot);
