@@ -2,7 +2,7 @@
 
 // One economy model run over a game-data snapshot (inputs.js) and a cohort.
 //
-//   node scripts/economy-model/run.js [--preset x50] [--snapshot <file>] [--hours 100] [--seed 1]
+//   node scripts/economy-model/run.js [--preset x50] [--snapshot <file>: else the one of the live game data] [--hours 100] [--seed 1]
 //       [--cohort <economy ledger JSON>: its start save's accounts | --accounts 1700 --levels 20-39]
 //       [--mode plain|today|design] [--fit <economy ledger JSON>] [--hunt-share 1] [--visits 2] [--json <out file>]
 //       [--start late|fresh] [--design '{"field": value}'] [--fit-preset x50: the preset of the --fit run] (design mode;
@@ -22,12 +22,12 @@
 // the money stock, the bands over the hours, town visits and the run's
 // counters; progress goes to stderr every 10 simulated hours.
 const fs = require('node:fs');
-const path = require('node:path');
 const Boot = require('./boot');
 const Cohort = require('./cohort');
 const Engine = require('./engine');
 const Today = require('./today');
 const Design = require('./design');
+const DesignIncome = require('./design-income');
 const KitHours = require('./kit-hours');
 const Mains = require('./mains');
 const Worth = require('./rules/worth');
@@ -48,22 +48,6 @@ const LEFT_OUT = Object.freeze([
     'the bag a main holds at the start (it starts empty) and what today\'s bots keep instead of selling',
     'today\'s gear improvement (crystallizing, enchanting: the gear bots buy at the NPC for it) and the funding limits of today\'s purchases (PurchaseFunding)'
 ]);
-
-function snapshotFile(preset, file) {
-    if (file) return path.resolve(file);
-    const folder = path.join(Boot.root, 'tmp', 'economy-model');
-    const found = fs.existsSync(folder) ? fs.readdirSync(folder).filter(name => name.startsWith(`inputs-${preset}-`) && name.endsWith('.json'))
-        .map(name => path.join(folder, name)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs) : [];
-    if (!found.length) throw new Error(`no snapshot for ${preset} in ${folder}: run node scripts/economy-model/inputs.js --preset ${preset}`);
-    return found[0];
-}
-
-function loadSnapshot(preset, file) {
-    const where = snapshotFile(preset, file);
-    const snapshot = JSON.parse(fs.readFileSync(where, 'utf8'));
-    if (!snapshot.fares) throw new Error(`${where} has no gatekeeper fares: write it again with inputs.js`);
-    return { snapshot, file: where };
-}
 
 function cohortOf(argv, snapshot) {
     const baseline = Boot.option(argv, 'cohort', null);
@@ -151,7 +135,7 @@ function designOf(argv, snapshot) {
     if (!view.yieldsDesign) throw new Error('the snapshot has no design yields: write it again with inputs.js');
     // The hunting share is a share of time, fitted at the ledger's own preset (the late run's x50):
     // a snapshot of another preset is not divided into that run's exp.
-    const fitPreset = Boot.option(argv, 'fit-preset', 'x50'), fitSnapshot = snapshot.header.preset === fitPreset ? snapshot : loadSnapshot(fitPreset, null).snapshot;
+    const fitPreset = Boot.option(argv, 'fit-preset', 'x50'), fitSnapshot = snapshot.header.preset === fitPreset ? snapshot : DesignIncome.loadSnapshot(DesignIncome.SNAPSHOT_DIR, fitPreset).snapshot;
     const fitView = fitSnapshot === snapshot ? view : Engine.viewOf(fitSnapshot);
     // The game tables and the kit hours read no fitted share; the fit reads
     // the kit hours: a main's exp an hour is its row's times its worn kit's
@@ -396,7 +380,7 @@ function printMarket(design, hours) {
 
 function main(argv) {
     const preset = Boot.option(argv, 'preset', 'x50'), hours = Number(Boot.option(argv, 'hours', 100)), seed = Number(Boot.option(argv, 'seed', 1));
-    const { snapshot, file } = loadSnapshot(preset, Boot.option(argv, 'snapshot', null));
+    const { snapshot, file } = DesignIncome.loadSnapshot(DesignIncome.SNAPSHOT_DIR, preset, Boot.option(argv, 'snapshot', null));
     const designMode = Boot.option(argv, 'mode', 'plain') === 'design';
     const picked = designMode ? designOf(argv, snapshot) : null;
     const cohort = picked ? picked.cohort : cohortOf(argv, snapshot);
@@ -418,4 +402,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { loadSnapshot, cohortOf, designOf, huntShares, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, STAGE_BANDS };
+module.exports = { cohortOf, designOf, huntShares, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, STAGE_BANDS };
