@@ -59,7 +59,7 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 // stock and its use alone: trip names it to be read at its hour, and there a
 // seller sends it.
 {
-    const here = { ownHeld: false, npcHere: true, money: 0, towns: [], hopHours: 0 };
+    const here = { ownHeld: false, npcAsk: 10, money: 1000, towns: [], hopHours: 0 };
     const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Giran', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
         shots: { held: 600, perHour: 300 }, shotTowns: here, bag: { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 10, weight: 10, stack: true, held: false }] },
         goal: { need: 5000, have: 1000, perHour: 1000, fresh: false } };
@@ -91,25 +91,26 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 // while low or out, it reads its sellers and goes to one that stands.
 {
     const towns = [{ town: 'Gludio', fare: 2000, ask: null, cap: 20 }, { town: 'Dion', fare: 1500, ask: null, cap: 20 }, { town: 'Giran', fare: 3000, ask: 15, cap: 20 }];
-    const heine = { here: 'Heine', ownHeld: false, npcHere: false, money: 100000, towns };
+    const heine = { here: 'Heine', ownHeld: false, npcAsk: null, money: 100000, towns };
     assert.equal(shotTown(heine), 'Giran', 'the cheap line stands only in the farther town: it goes there');
     assert.equal(shotTown({ ...heine, towns: towns.map(row => ({ ...row, ask: 15 })) }), 'Dion', 'lines in all three: the least fare');
     assert.equal(shotTown({ ...heine, towns: towns.map(row => ({ ...row, ask: row.town === 'Giran' ? 25 : null })) }), null, 'a line over its worth is no seller');
     assert.equal(shotTown({ ...heine, money: 5000 }), null, 'a fare there and back it cannot pay is no seller');
     assert.equal(shotTown({ ...heine, here: 'Giran', towns: [...towns.slice(0, 2), { town: 'Giran', fare: 0, ask: 15, cap: 20 }] }), 'Giran', 'standing in the town of the line: it stays');
-    assert.equal(shotTown({ ...heine, npcHere: true }), 'Heine', 'the NPC here sells it at its worth: no fare');
+    assert.equal(shotTown({ ...heine, npcAsk: 10 }), 'Heine', 'the NPC here sells it at its worth: no fare');
     assert.equal(shotTown({ ...heine, ownHeld: true, towns: [] }), 'Heine', 'its own twin holds it: where it stands');
     assert.equal(shotTown({ ...heine, towns: [] }), null, 'no town reached: no seller');
     const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Heine', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
-        shots: { held: 600, perHour: 300 }, bag: null, goal: null, shotTowns: { ownHeld: false, npcHere: false, money: 100000, towns, hopHours: 0.1 } };
+        shots: { held: 600, perHour: 300 }, bag: null, goal: null, shotTowns: { ownHeld: false, npcAsk: null, money: 100000, towns, hopHours: 0.1 } };
     const lowAt = 10 + (600 - 50) / 300 / 0.5, low = trip({}, { ...base, now: lowAt });
     assert.deepEqual([low.reason, low.town], ['stock_low:shots', 'Giran'], 'a main low on shots goes to the only town holding a line at its worth');
-    assert.ok(Math.abs(low.at - (lowAt + 0.02 + 0.1)) < 1e-9, `the hop hours added: ${low.at}`);
+    assert.ok(Math.abs(low.at - (lowAt + 0.02 + 2 * 0.1)) < 1e-9, `a hop there and one back added: ${low.at}`);
+    assert.ok(Math.abs(low.away - (0.02 + 2 * 0.1)) < 1e-9, `away from its spot the walk and both hops: ${low.away}`);
     assert.equal(trip({}, { ...base, shots: { held: 0, perHour: 300 } }).town, 'Giran', 'shots_out too');
     const bag = { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 100, weight: 10, stack: true, held: false }] };
     const full = trip({}, { ...base, bag });
     assert.deepEqual([full.reason, full.town], ['bag_full', 'Heine'], 'any other reason keeps its town');
-    assert.equal(trip({}, { ...base, now: lowAt, shotTowns: { ...base.shotTowns, npcHere: true } }).town, 'Heine');
+    assert.equal(trip({}, { ...base, now: lowAt, shotTowns: { ...base.shotTowns, npcAsk: 10 } }).town, 'Heine');
     const bare = { ...base, shotTowns: { ...base.shotTowns, towns: towns.map(row => ({ ...row, ask: null })) } };
     const ahead = trip({}, bare);
     assert.deepEqual([ahead.reason, ahead.read], ['stock_low:shots', true], 'no line anywhere now: its stock_low is still read at its hour');
@@ -150,7 +151,7 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     const nextOuting = (refill, lastOuting) => {
         const held = Math.ceil(300 * refillHours({ refill, outingHours: 2, minHours: 1, lastOuting }));
         const out = trip({}, { now: 0, since: 0, huntShare: 1, tripHours: 0, town: 'Gludio', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 0,
-            shots: { held, perHour: 300 }, shotTowns: { ownHeld: false, npcHere: true, money: 0, towns: [], hopHours: 0 }, bag: null, goal: null });
+            shots: { held, perHour: 300 }, shotTowns: { ownHeld: false, npcAsk: 10, money: 0, towns: [], hopHours: 0 }, bag: null, goal: null });
         assert.deepEqual([out.reason, out.read], ['stock_low:shots', true]);
         return out.at;
     };

@@ -17,7 +17,7 @@ const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
 const { path, refillHours } = require('./rules/path');
 const { acquire, crystalsStanding, payableKit } = require('./rules/acquire');
-const { trip, goalOf, deathAt, shotTown, shotsLow } = require('./rules/trip');
+const { trip, goalOf, deathAt, shotTown, shotsLow, shotsShort } = require('./rules/trip');
 const { visit } = require('./rules/visit');
 const { occupation, stayHours } = require('./rules/occupation');
 const Workshop = require('./rules/workshop');
@@ -652,8 +652,9 @@ function mainsSide(ctx) {
         // there and back (from the nearest), paid as it leaves; with no seller
         // standing, and for any other trip, the nearest.
         const cause = account.market.tripReason || 'start';
-        const sellers = cause === 'stock_low:shots' || cause === 'shots_out' ? shotTowns(main, nearest, firingOf(main)) : null;
-        const town = (sellers && shotTown({ here: nearest, ...sellers })) || nearest;
+        const fired = firingOf(main), sellers = cause === 'stock_low:shots' || cause === 'shots_out' ? shotTowns(main, nearest, fired) : null;
+        const need = sellers ? shotsShort({ held: main.shots[fired.id] || 0, perHour: fired.perHour }, { since: main.since, now, huntShare: rateOf(main.band).huntShare, stockLowHours: config.stockLowMinutes / 60 }) : 0;
+        const town = (sellers && shotTown({ here: nearest, ...sellers, need })) || nearest;
         if (town !== nearest) { const hop = fareOf(nearest, town); main = { ...main, money: main.money - 2 * hop }; flows.fares -= 2 * hop; }
         delta.towns.push(town);
         put(index, { lastTown: town });
@@ -736,6 +737,10 @@ function mainsSide(ctx) {
         for (const [field, adena] of Object.entries(out.flows)) flows[field] = (flows[field] || 0) + adena;
         delta.gearBought += out.obtained.filter(row => row.route === 'npc').length;
         for (const stop of out.stops) if (stop.kind === 'gatekeeper') delta.towns.push(stop.target);
+        // Each onward stop keeps it in town a gatekeeper hop there and one back.
+        const afterHours = (delta.towns.length - 1) * 2 * config.hopHours;
+        const time = stats.time[main.band] ||= { spot: 0, way: 0, town: 0 };
+        time.town += afterHours;
         placeAds(index, now, before);
         indexWants(index);
         if (reserve && reserve.amount > 0 && !(out.main.shots[reserve.id] > 0)) delta.missingShots++;
@@ -745,7 +750,7 @@ function mainsSide(ctx) {
         const left = config.occupationAtTown ? occupy(after, 'arrived_town', outingHours) : after;
         // The money it leaves town with: what the KIT HOUR measure spends until its next visit.
         put(index, { leftWith: left.money });
-        return { main: left, delta };
+        return { main: left, delta, afterHours };
     }
 
     // Its main's shortfall the account's workshop serves first (ownUseFirst):
@@ -777,14 +782,19 @@ function mainsSide(ctx) {
             const line = Books.rowsOf(books, town, 'sell', fired.id).find(entry => entry.owner !== index && entry.qty > 0);
             towns.push({ town, fare, ask: line ? line.price : null, cap: Bounds.cap({ worth: fired.worth, npcSell: game.npcByTown[town]?.[fired.id] ?? null }).cap });
         }
-        return { ownHeld: (accounts[index].twin?.stock[fired.id] || 0) > 0, npcHere: game.npcByTown[nearest]?.[fired.id] <= fired.worth, money: main.money, towns, hopHours: config.hopHours };
+        const npc = game.npcByTown[nearest]?.[fired.id] ?? null;
+        return { ownHeld: (accounts[index].twin?.stock[fired.id] || 0) > 0, npcAsk: npc !== null && npc <= fired.worth ? npc : null, money: main.money, towns, hopHours: config.hopHours };
     }
 
     // trip: when the main comes to town, and which town, from its state
-    // after each committed event; with deathArrival a death drawn earlier
-    // than trip's arrival is the arrival (in the respawn town of its spot).
-    // Returns the arrival's hour, or { at, read: true } when trip names a
-    // shot situation to read at that hour (the engine asks again then).
+    // after each committed event; with deathArrival a death drawn before
+    // the main leaves its spot on trip's arrival is the arrival (in the
+    // respawn town of its spot): it dies at its hunting hour and is away the
+    // walk back (the spot table's row holds the respawn wait of its deaths,
+    // not the walk back: EconomicValuation.deathHours adds it per death).
+    // Returns { at, away } (the arrival's hour, the hours away from its spot
+    // before it), or { at, read: true } when trip names a shot situation to
+    // read at that hour (the engine asks again then).
     function nextArrival(main, ev) {
         const index = main.index, row = Engine.spotRowOf(view, main);
         if (!row) return null;
@@ -817,13 +827,14 @@ function mainsSide(ctx) {
             event: ev.event, deal, ownHour: own, shotTowns: shotTowns(main, nearest, fired) });
         if (config.deathArrival) {
             const died = deathAt({ since: main.since, huntShare: ev.huntShare, deathsPerHour: row.deaths || 0, roll: ev.roll });
-            if (died !== null && died > ev.now && (answer.at === null || died < answer.at)) answer = { at: died, reason: 'death', town: nearest };
+            const back = snapshot.walkBack?.[row.spotId] || 0;
+            if (died !== null && died > ev.now && (answer.at === null || died < answer.at - answer.away)) answer = { at: died + back, away: back, reason: 'death', town: nearest };
         }
         if (deal) setMarket(index, { deal: null });
         // tripReason: the reason of the pending arrival (none while a shot situation is only to be read).
         const reason = answer.read ? null : answer.reason;
         if (reason !== market.tripReason) setMarket(index, { tripReason: reason });
-        return answer.read ? { at: answer.at, read: true } : answer.at;
+        return answer.read ? { at: answer.at, read: true } : answer.at === null ? null : { at: answer.at, away: answer.away };
     }
 
     // occupation at grade_changed and when its spot leaves its levels (the

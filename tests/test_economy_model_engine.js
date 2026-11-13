@@ -45,11 +45,12 @@ const run = (seed, hours = 3) => Engine.simulate({ view: Engine.viewOf(snapshot)
 
 // The design mode leaves the plain and today's ledger as they were: this
 // fixture's 40-hour ledger hashes to the value recorded before the design
-// mode existed.
+// mode existed, moved once since: a level is read when the exp reaches the
+// level's exp, as levelOf counts it, no longer one exp later.
 const crypto = require('node:crypto');
 // The failure counters added since are left out of the hash: every other number is as before.
 const pinned = out => { const { arrivalNotAhead, unlevelableMains, ...counters } = out.counters; return { ...out, counters }; };
-assert.equal(crypto.createHash('sha256').update(JSON.stringify(pinned(run(3, 40)))).digest('hex'), 'f967b88774812b242c2a36942f85a741ede11bf1005c5e8e65c8889751d6ab99',
+assert.equal(crypto.createHash('sha256').update(JSON.stringify(pinned(run(3, 40)))).digest('hex'), '235d189ec6043f27bdde6516124894160c9d1da098497ae6537ffc9e3947ccfd',
     'the ledger without the design mode is unchanged');
 
 // The same seed gives the same ledger; another seed rolls other drops.
@@ -162,8 +163,8 @@ const placed = { ...snapshot, spotHours: { rows: { 9: { 1: { s2: own }, 2: { s2:
 const atOwn = Engine.simulate({ view: Engine.viewOf(placed), accounts: [{ ...accounts[0], spot: 's2' }], bands, rates, hours: 3, seed: 7, nextArrival: () => null });
 assert.equal(atOwn.counters.startAtOwnSpot, 1);
 assert.equal(atOwn.counters.leftOwnSpot, 1, 'level 2 has no hour at s2');
-// Level 2 at 101 exp: 2.02 h at s2 (1000 an hour), the rest at the best spot (100 an hour).
-assert.ok(Math.abs(atOwn.flows.totals.huntCold - (2.02 * 1000 + 0.98 * 100)) <= 3, `hunt adena ${atOwn.flows.totals.huntCold}`);
+// Level 2 at 100 exp: 2 h at s2 (1000 an hour), the rest at the best spot (100 an hour).
+assert.ok(Math.abs(atOwn.flows.totals.huntCold - (2 * 1000 + 1 * 100)) <= 3, `hunt adena ${atOwn.flows.totals.huntCold}`);
 assert.deepEqual(atOwn.huntHours, { ownSpot: 2, bestSpot: 1 });
 
 // The time of an arrival is nextArrival's alone: the band's visit rate does
@@ -175,7 +176,7 @@ const at = times => (main, state) => { asked.push({ ...state, bag: Object.keys(m
 const silent = { default: { huntShare: 1, visitsPerBotHour: 0 } }, busy = { default: { huntShare: 1, visitsPerBotHour: 100 } };
 const ruled = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates: silent, hours: 3, seed: 7, nextArrival: at([0.5, 2.5]) });
 assert.equal(ruled.counters.visits - ruled.counters.onwardHops, 2, 'arrivals at 0.5 h and 2.5 h at a visit rate of 0');
-assert.deepEqual(asked.map(state => [state.now, state.event]), [[0, 'start'], [0.5, 'visit'], [2.02, 'level_up'], [2.5, 'visit']]);
+assert.deepEqual(asked.map(state => [state.now, state.event]), [[0, 'start'], [0.5, 'visit'], [2, 'level_up'], [2.5, 'visit']]);
 assert.equal(asked[2].pending, 2.5, 'the level-up is asked with the arrival pending');
 assert.equal(asked[2].level, 2);
 assert.ok(asked.filter(state => state.event === 'visit').every(state => state.bag === 0), 'asked after the visit committed: the bag is sold');
@@ -210,6 +211,103 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     assert.equal(Engine.spotRowOf(at, { ...base, occupied: 's3' }).spotId, 's3');
     assert.equal(Engine.spotRowOf(at, base).spotId, 's1', 'no occupation: the line\'s best');
     assert.equal(Engine.spotRowOf(at, { ...base, occupied: 's9' }).spotId, 's1', 'a spot with no hour at its level is not hunted');
+}
+
+// A bot is in one state at a time: an arrival answered { at, away } leaves
+// the spot at at - away, and the way is not hunted (adena, exp, shots
+// wanted); an arrival it has left for is not decided again by a later
+// event; a visit's onward stops keep it in town their hours. A plane that
+// fires 20 shots an hour and visits as the plain mode does (its hunt
+// credits no adena on this snapshot: the adena is read from the plain mode).
+{
+    const planeOf = (rule, { afterHours = 0, onHour = null } = {}) => {
+        const seen = { hunts: [], visits: [], asked: [], levels: [] };
+        const design = { sinks: [], start: context => ({
+            hunt: (main, delta, now) => seen.hunts.push({ now, exp: delta.exp, wanted: delta.shotsWanted, spot: delta.spotHours, way: delta.wayHours }),
+            visit: (main, now, options) => { seen.visits.push(now); return { ...Engine.visit(main, Engine.viewOf(snapshot), options), afterHours }; },
+            nextArrival: (main, ev) => { seen.asked.push([ev.event, ev.now]); return rule(main, ev); },
+            firing: () => ({ id: 1463, perHour: 20 }), kills: () => null, levelUp: (main, now) => { seen.levels.push([Math.round(now * 100) / 100, main.level]); return main; }, event() {},
+            hour: now => { if (onHour) onHour(context, now); return 0; },
+            finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
+        return { design, seen };
+    };
+    const total = (seen, field) => seen.hunts.reduce((sum, row) => sum + row[field], 0);
+    const once = answer => (main, ev) => (ev.event === 'visit' ? null : answer);
+
+    const trip = planeOf(once({ at: 10, away: 2 }));
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, design: trip.design });
+    assert.deepEqual(trip.seen.visits, [10]);
+    const plainTrip = Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, nextArrival: once({ at: 10, away: 2 }) });
+    assert.ok(Math.abs(plainTrip.flows.totals.huntCold - 800) <= 3, `8 hours of hunt adena, not 10: ${plainTrip.flows.totals.huntCold}`);
+    assert.ok(Math.abs(total(trip.seen, 'exp') - 400) <= 1, `8 hours of exp: ${total(trip.seen, 'exp')}`);
+    assert.ok(Math.abs(total(trip.seen, 'wanted') - 160) <= 2, `8 hours of shots wanted: ${total(trip.seen, 'wanted')}`);
+    assert.ok(Math.abs(total(trip.seen, 'way') - 2) < 1e-9, 'the 2 hours away are the way\'s');
+
+    // A line raised at 9 h (after it left at 8 h) asks nothing: the arrival at 10 h holds.
+    const held = planeOf((main, ev) => (ev.event === 'visit' ? null : ev.now >= 9 ? { at: 9.5, away: 0.1 } : { at: 10, away: 2 }),
+        { onHour: (context, now) => { if (now === 9) context.rearrive(0, now, 'offer_posted'); } });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, design: held.design });
+    assert.deepEqual(held.seen.visits, [10], 'the departed arrival is kept');
+    assert.ok(!held.seen.asked.some(([event]) => event === 'offer_posted'), 'not decided again on its way');
+
+    // One onward stop (0.2 h): it hunts again 0.2 h after the arrival at 2.5 h.
+    const onward = planeOf(once(2.5), { afterHours: 0.2 });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 4, seed: 7, design: onward.design });
+    assert.ok(Math.abs(total(onward.seen, 'exp') - 190) <= 1, `3.8 hours of exp over 4 h: ${total(onward.seen, 'exp')}`);
+    assert.deepEqual(onward.seen.asked.find(([event]) => event === 'visit'), ['visit', 2.7], 'asked again from the hour it hunts again');
+
+    // Level 3 (300 exp) would come at 6 h, inside the way from 5 h to 7 h: at
+    // 5 h it has 250 exp, so it reaches level 3 50 exp after its arrival
+    // (8 h), read once then; no level-up is read on its way.
+    const level = planeOf(once({ at: 7, away: 2 }));
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 9, seed: 7, design: level.design });
+    assert.deepEqual(level.seen.levels, [[2, 2], [8, 3]], 'level 2 at 2 h, level 3 once after the arrival, none on the way');
+
+    // A departure set after the level was scheduled: level 2 was due at 2 h,
+    // the situation read at 0.5 h sends it away from 1 h to 3 h, so it has 50
+    // exp when it leaves and reaches level 2 50 exp after its arrival (4 h).
+    const late = planeOf((main, ev) => (ev.event === 'start' ? { at: 0.5, read: true } : ev.event === 'situation' ? { at: 3, away: 2 } : null));
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 5, seed: 7, design: late.design });
+    assert.deepEqual(late.seen.levels, [[4, 2]], 'the level moves after the arrival when the departure comes after it was scheduled');
+
+    // A level due on the spot before the departure is read there: the
+    // situation read at 1.9 h sends it away at 2.1 h, level 2 comes at 2 h.
+    const before = planeOf((main, ev) => (ev.event === 'start' ? { at: 1.9, read: true } : ev.event === 'visit' ? null : { at: 3, away: 0.9 }));
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 5, seed: 7, design: before.design });
+    assert.deepEqual(before.seen.levels, [[2, 2]], 'a level reached on the spot before it leaves is read once, on the spot');
+}
+
+// A level crossed at a large exp is read once although the float credit to
+// its hour falls short: the main hunts to 4 ulps under level 2 (1e9 exp) by
+// its visit at 0.5 h, whose onward stops keep it in town to 100.5 h, so the
+// crossing's hour rounds to 100.5 and the hunt to it credits nothing. The
+// plane stops the run after 100 reads, so a read that does not reach the
+// level fails here instead of hanging.
+{
+    const T = 1e9, rate = 2 * (T - 4 * 2 ** -23), row = hour(100, rate, 20);
+    const big = { ...snapshot, exp: [0, T, 4 * T, 9 * T], hours: { 9: { 1: row, 2: row, 3: row, 4: row } } }, at = Engine.viewOf(big), levels = [];
+    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => ({ ...Engine.visit(main, at, options), afterHours: 100 }),
+        nextArrival: (main, ev) => (ev.event === 'start' ? 0.5 : null), firing: () => null, kills: () => null, event() {}, hour: () => 0,
+        levelUp: (main, now) => { levels.push([now, main.level]); if (levels.length > 100) throw new Error(`100 level reads, level ${main.level} at ${now} h`); return main; },
+        finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
+    Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 101, seed: 7, design });
+    assert.deepEqual(levels, [[100.5, 2]], 'level 2 read once, at the hour it hunts again');
+}
+
+// The level is read when the exp the hunt credits reaches it: the main fires
+// its 40 shots (20 an hour) at 50 exp an hour, then hunts bare at 25; its row
+// has a blessed hour of 100 exp it does not fire. Level 2 (100 exp) comes at
+// 2 h, level 3 (300 exp) 8 bare hours later; no read comes before its level,
+// and a read gains only the level it hunted.
+{
+    const row = { ...hour(100, 50, 20).best, shotless: { exp: 25 }, blessed: { exp: 100 } }, line = { ...hour(100, 50, 20), best: row };
+    const fired = { ...snapshot, hours: { 9: { 1: line, 2: line, 3: line, 4: line } } }, at = Engine.viewOf(fired), levels = [];
+    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => Engine.visit(main, at, options), nextArrival: () => null,
+        firing: () => ({ id: 1463, perHour: 20 }), kills: () => ({ shots: 1, bare: 1, blessed: 1 }), event() {}, hour: () => 0,
+        levelUp: (main, now) => { levels.push([Math.round(now * 1e6) / 1e6, main.level, Math.round(main.exp * 1e6) / 1e6]); return main; },
+        finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
+    Engine.simulate({ view: at, accounts: [{ ...accounts[0], shots: { 1463: 40 } }], bands, rates: silent, hours: 11, seed: 7, design });
+    assert.deepEqual(levels, [[2, 2, 100], [10, 3, 300]], 'each level read once, at the hour its hunted exp reaches it, with that exp');
 }
 
 // The hunt rule is pure: the main it is given is left as it was.
