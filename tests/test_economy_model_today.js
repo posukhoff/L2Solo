@@ -84,6 +84,15 @@ assert.equal(Today.fit(baseline, trio, view, bands).basis['20-29'].huntShare, 60
 const kitFit = Today.fit(baseline, accounts, view, bands, () => 0.5).basis['20-29'];
 assert.deepEqual([kitFit.huntShare, kitFit.kitFactor], [1.2, 0.5], 'twice the plain share, the band\'s kit factor 0.5');
 assert.equal(basis['20-29'].kitFactor, undefined, 'the plain fit states no kit factor');
+// Today's setup fits the share over each main's exp at its worn kit, the
+// factor its hunt reads: a worn kit making half the reference kit's kills
+// hunted twice the time for the band's exp, and its hunter reads that half.
+const shares = kills => ({ killShare: kills, shotShare: 1 });
+const kitHours = { hour: (line, level, kit) => { const share = shares(Object.keys(kit).length ? 0.5 : 1); return { noneShare: share, shots: [{ kind: 'soulshot', id: 1463, ...share }] }; },
+    shotScale: () => 1 };
+const set = Today.setup(snapshot, baseline, accounts, kitHours), band = Object.keys(set.basis)[0];
+assert.deepEqual([set.basis[band].huntShare, set.basis[band].kitFactor], [1.2, 0.5], 'real 600 over the row\'s 1000 x the worn kit\'s 0.5');
+assert.equal(set.hunter.kills(main).shots, 0.5, 'its hunt reads the same factor');
 
 // Today's arrivals: periodic at the band's fitted rate, the first at the
 // seeded share of the interval, none at a rate of 0.

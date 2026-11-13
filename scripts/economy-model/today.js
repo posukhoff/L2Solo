@@ -17,6 +17,8 @@
 // Crafting is not imitated: today's crafts are a few per cent of the shots
 // fired and no flow of the ledger depends on them.
 const Engine = require('./engine');
+const KitHours = require('./kit-hours');
+const { STAGE_BANDS } = require('../economy/ledger-rules');
 
 // MerchantStoreConfigs store types.
 const SELL = 1, BUY = 3;
@@ -169,4 +171,23 @@ function fit(baseline, accounts, view, bands, factorOf = null) {
     return { rates, basis, visitsPerBotHour };
 }
 
-module.exports = { TODAY, configuredPrice, fixedBuyerPrice, marketOf, fit, nextArrival, hunter, SELL, BUY };
+// Today's mode on a real run's ledger (fitLedger) and its start cohort
+// (fitAccounts): the view at today's fixed stores and NPC prices, the kit
+// hours (the game's hunt cycle, booted here; kitHours: given readers instead),
+// the fit with each main's worn kit counted once (its shots form's kill
+// factor, as its hunt reads it) and the hunter the run reads (the worn kit's
+// factors, the worn weapon's shots per action). The kit hours price a shot at
+// its cheapest fixed sell line, the line a today bot restocks it at (ours: the
+// game has no single shot price); a shot no fixed line sells is no option.
+// Returns { view, rates, basis, hunter }.
+function setup(snapshot, fitLedger, fitAccounts, kitHours = null) {
+    const market = marketOf(snapshot), view = Engine.viewOf(snapshot, { market, npcPrices: TODAY.npcPrices }), anchor = {};
+    for (const lines of Object.values(market.sell)) for (const [id, price] of Object.entries(lines)) anchor[id] = Math.min(anchor[id] ?? Infinity, price);
+    const readers = kitHours || KitHours.gameKitHours({ snapshot, anchor });
+    const factorsOf = KitHours.kitFactors({ snapshot, view, kitHours: readers });
+    const { rates, basis } = fit(fitLedger, fitAccounts, view, STAGE_BANDS, main => factorsOf(main).shots?.kills ?? 1);
+    const scaleOf = (main, row, form) => readers.shotScale(main.line, main.level, row.spotId, main.weapon, form === 'blessed');
+    return { view, rates, basis, hunter: hunter(view, factorsOf, scaleOf) };
+}
+
+module.exports = { TODAY, configuredPrice, fixedBuyerPrice, marketOf, fit, nextArrival, hunter, setup, SELL, BUY };
