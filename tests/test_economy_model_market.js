@@ -527,13 +527,17 @@ const viewOf = (patch = {}) => ({
 // A Luxury route path chose whose crystals left ends at that visit without
 // barring the route: a line of the piece at 4500 under its 90k cap is
 // bought there, nothing is stalled, and path reads the aim again at the
-// main's next arrival.
+// main's next arrival; with no line, no ladder step is taken.
 {
     const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [], pathRoute: 'exchange' };
     const line = [{ owner: 5, id: 'L5', price: 4500, qty: 1, kind: 'line' }];
     const out = visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }),
         viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], book: { sell: { 100: line }, buy: {}, bids: {} } }));
     assert.deepEqual([out.main.kit[7], out.stalled, out.pathStale], [100, [], true], 'the line bought where its Luxury route left, the route not stalled');
+    // With no line its WTB stands where it was: no ladder step.
+    const held = visit(mainOf({ money: 4000 }), viewOf()).main;
+    const still = visit(held, viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }] }));
+    assert.deepEqual(still.main.ads.wtb, held.ads.wtb, 'no ladder step where its Luxury route left');
 }
 
 // Two Luxury routes weighed on the same 300 D crystals at 100 share them at
