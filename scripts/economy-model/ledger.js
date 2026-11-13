@@ -57,11 +57,6 @@ function addFlows(ledger, index, flows) {
     }
 }
 
-// Flows of an account's twin (its NPC purchases, fares, warehouse fees), under its main's start band.
-function recordFlows(ledger, index, flows) {
-    addFlows(ledger, index, flows);
-}
-
 function recordHunt(ledger, main, delta) {
     addFlows(ledger, main.index, delta.flows);
     ledger.shots.used += delta.shotsUsed;
@@ -174,7 +169,7 @@ function build(ledger, { mains, hours, events, inputs, held = { start: 0, end: 0
         },
         trade: { channels: Object.fromEntries(Object.entries(CHANNEL_OF).filter(([kind]) => totals[kind]).map(([kind, channel]) => [channel, { adena: Math.abs(totals[kind]) }])) },
         progress: { bandsBasis: 'startLevel', stageBands },
-        shots: { ...ledger.shots, crafted: 0, usedShareOfWanted: round(ratio(ledger.shots.used, ledger.shots.wanted), 4) },
+        shots: { ...ledger.shots, usedShareOfWanted: round(ratio(ledger.shots.used, ledger.shots.wanted), 4) },
         gear: { ...ledger.gear },
         recipes: { dropped: { ...ledger.recipes }, droppedTotal: recipesTotal },
         drops: { byItem: { ...ledger.drops } },
@@ -186,4 +181,4 @@ function build(ledger, { mains, hours, events, inputs, held = { start: 0, end: 0
     };
 }
 
-module.exports = { SCHEMA, STATION, FAUCETS, SINKS, create, recordFlows, recordHunt, recordVisit, recordHour, build };
+module.exports = { SCHEMA, STATION, create, addFlows, recordHunt, recordVisit, recordHour, build };

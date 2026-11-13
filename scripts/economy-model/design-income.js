@@ -24,21 +24,13 @@ const fs = require('fs');
 const path = require('path');
 const Boot = require('./boot');
 const Weights = require('./weights');
+const { fmt } = require('./capacity');
 const { dropRule, npcKind, DESIGN_RATES } = require('./rules/dropRule');
 
 // Where inputs.js writes the snapshots by default.
 const SNAPSHOT_DIR = path.join(Boot.root, 'tmp', 'economy-model');
 const BANDS = Object.freeze([[20, 29], [30, 39], [40, 51], [52, 60], [61, 75]]);
 const ADENA = 57, SPOIL_SKILL = 254;
-
-function fmt(value) {
-    if (value === null || value === undefined || !Number.isFinite(value)) return '-';
-    const abs = Math.abs(value);
-    if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
-    if (abs >= 1e4) return `${(value / 1e3).toFixed(1)}k`;
-    if (abs >= 100) return `${Math.round(value)}`;
-    return `${+value.toFixed(abs >= 10 ? 1 : abs >= 1 ? 2 : 3)}`;
-}
 
 // The snapshot of a preset whose stamp equals the live game data's
 // (Boot.stampMatches): the file named, else the first such in dir by name.
@@ -228,4 +220,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { designHour, designYields, gameRules, loadSnapshot, SNAPSHOT_DIR, walkBackHours, fmt, BANDS };
+module.exports = { designYields, gameRules, loadSnapshot, SNAPSHOT_DIR, walkBackHours };

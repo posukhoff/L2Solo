@@ -7,7 +7,7 @@
 const assert = require('node:assert/strict');
 const Today = require('../scripts/economy-model/today');
 const Engine = require('../scripts/economy-model/engine');
-const { judged, sharedRows, todayRows, requireSpots } = require('../scripts/economy-model/compare');
+const { judged, sharedRows, todayRows, requireSpots, footerOf } = require('../scripts/economy-model/compare');
 
 // The fixed buyer pays the line's rate of the reference price times the adena
 // rate, at most 0.9 of the cheapest repeatable supply.
@@ -204,3 +204,7 @@ assert.equal(requireSpots(named, start, [holding('s1'), holding(null), { ...hold
 assert.throws(() => requireSpots(named, start, [holding('s1'), holding('s2')]), /lack 1 spots the save names.*--spots \/saves\/a\/database\.sqlite/);
 
 console.log('economy model today mode: ok');
+
+// The footer names the run the compare ran against, not one fixed baseline's minutes and preset.
+const footer = footerOf({ window: { hours: 0.5 } }, 'x10').join('\n');
+assert.ok(footer.includes('30-minute x10 run') && !footer.includes('25-minute'), 'the footer prints the baseline\'s minutes and preset');

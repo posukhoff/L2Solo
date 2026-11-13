@@ -48,13 +48,14 @@ const TODAY_ROWS = Object.freeze([
     { path: 'money.growthPerHour', why: 'follows the four flows above' },
     { path: 'gear.toNpcUnits', why: 'today\'s improvement and kit churn; the model sells dropped gear and the pieces it replaces' }
 ]);
-const FOOTER = Object.freeze([
-    'WHAT THE SHARED TABLE SAYS: adena, drops and shots per unit of exp at the bots\' real spots, over one 25-minute x50 run.',
-    'The hunting share is fitted on this same run\'s exp (in-sample) and is 1.5-3.5x the end snapshot\'s hunting fraction, so it says',
+// What the shared table says and does not say, for the baseline the compare ran against.
+const footerOf = (baseline, preset) => [
+    `WHAT THE SHARED TABLE SAYS: adena, drops and shots per unit of exp at the bots' real spots, over one ${+(baseline.window.hours * 60).toFixed(1)}-minute ${preset} run.`,
+    'The hunting share is fitted on this same run\'s exp (in-sample), so it says',
     'nothing about the time bots hunt, and the level-ups follow from the fitted exp. It says nothing about visits (arrivals are fitted),',
-    'longer horizons, today\'s flows, x1 or x10 (no real run there), or what only the design mode adds (the price step, the workshop,',
+    `longer horizons, today's flows, other presets than ${preset} (no real run there), or what only the design mode adds (the price step, the workshop,`,
     'the caps, the worth of goods: no baseline).'
-]);
+];
 
 const pick = (json, at) => at.split('.').reduce((value, name) => value?.[name], json);
 
@@ -244,7 +245,7 @@ function main(argv) {
         const { model: theirs } = modelOf(real, snapshot, view, rates, seed);
         printShared(sharedRows(real, theirs, snapshot.items), `OTHER CODE ERA, NOT A VALIDATION: ${other} (code ${real.inputs?.end?.sha || 'older'}, ${(real.window.hours * 60).toFixed(1)} min; same fit)`);
     }
-    for (const line of FOOTER) console.log(line);
+    for (const line of footerOf(baseline, preset)) console.log(line);
     Run.printFooter();
     const json = Boot.option(argv, 'json', null);
     if (json) fs.writeFileSync(json, `${JSON.stringify(results, null, 1)}\n`);
@@ -252,4 +253,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { requireSpots, judged, sharedRows, todayRows, realDrops, realHotDrops, modelDrops, RELATIVE, MIN_UNITS, DROP_CLASSES };
+module.exports = { footerOf, requireSpots, judged, sharedRows, todayRows, realDrops, realHotDrops, modelDrops, RELATIVE, MIN_UNITS, DROP_CLASSES };

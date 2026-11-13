@@ -195,7 +195,7 @@ function gameWorld() {
 }
 
 function fmt(value) {
-    if (value === null || value === undefined) return '-';
+    if (value === null || value === undefined || !Number.isFinite(value)) return '-';
     const abs = Math.abs(value);
     if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
     if (abs >= 1e4) return `${(value / 1e3).toFixed(1)}k`;
@@ -272,4 +272,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { referenceShot, bandDemand, bandCosts, crystalRoutes, parseBands, gameWorld, DEFAULT_BANDS, DEFAULT_HUNT_SHARE };
+module.exports = { referenceShot, bandDemand, bandCosts, crystalRoutes, gameWorld, fmt };

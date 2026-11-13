@@ -717,4 +717,4 @@ function build(argv, reads) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { extract, spotHours, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, BLESSED_FIELDS, SCHEMA, SPOT_LEVELS_AHEAD };
+module.exports = { extract, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, BLESSED_FIELDS, SCHEMA };

@@ -739,7 +739,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     };
 
     // A twin's money moves: its account's flows go to its main's start band.
-    const flow = (index, kind, adena) => { if (adena) Ledger.recordFlows(ledger, index, { [kind]: adena }); };
+    const flow = (index, kind, adena) => { if (adena) Ledger.addFlows(ledger, index, { [kind]: adena }); };
 
     // One wake of an account: the workshop decides, the engine commits.
     function wake(index, now, reason, applied = null) {
