@@ -735,6 +735,15 @@ function mainsSide(ctx) {
         return { money: main.money, stock, wants, near: { bids: nearBook?.buy || {}, asks: nearAsks }, towns };
     }
 
+    // The towns a shot restock goes to (trip's shotTown): the trade towns of
+    // the shot's grade and above the gatekeeper reaches, and whether the NPC
+    // where it stands sells the shot at or under its worth.
+    function shotTowns(index, nearest, fired) {
+        if (!fired?.id) return null;
+        const towns = ctx.tradeTownsOf(index, [fired.id], true).map(town => ({ town, fare: fareOf(nearest, town) })).filter(row => row.fare !== null);
+        return { towns, npcHere: game.npcByTown[nearest]?.[fired.id] <= fired.worth, hopHours: config.hopHours };
+    }
+
     // trip: when the main comes to town, and which town, from its state
     // after each committed event; with deathArrival a death drawn earlier
     // than trip's arrival is the arrival (in the respawn town of its spot).
@@ -765,7 +774,7 @@ function mainsSide(ctx) {
             shots: fired ? { held: main.shots[fired.id] || 0, perHour: fired.perHour, waiting: market.shotWait !== null } : null,
             bag: bagRow ? { slots: bagRow.slots, maxLoad: bagRow.maxLoad, used, weight, items: at.items.map(item => ({ ...item, held: (main.bag[item.id] || 0) > 0 })) } : null,
             goal: goalOf({ pieces: market.path?.pieces, kit: main.kit, wants: market.wants, reserve: reserveAdena, money: main.money, bagValue, perHour: at.npc, fresh: market.goalFresh }),
-            event: ev.event, deal, ownHour: own, tripTown: config.tripTown, ...towns });
+            event: ev.event, deal, ownHour: own, tripTown: config.tripTown, shotTowns: shotTowns(index, nearest, fired), ...towns });
         if (config.deathArrival) {
             const died = deathAt({ since: main.since, huntShare: ev.huntShare, deathsPerHour: row.deaths || 0, roll: ev.roll });
             if (died !== null && died > ev.now && (answer.at === null || died < answer.at)) answer = { ...answer, at: died, reason: 'death', town: nearest, refused: [] };

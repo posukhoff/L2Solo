@@ -242,6 +242,7 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
     console.log(`CRYSTALS made: from pieces bought on bids ${cr.bids}, from own pieces ${cr.own}, through NPC gear ${cr.npcRoute}; used in crafts ${cr.used}`);
     console.log(`CRYSTALS per grade (made from bids / own pieces / NPC gear; used in crafts; sold to mains on twin lines): ${Object.entries(cr.byGrade || {}).map(([g, r]) => `${g} ${r.bids} / ${r.own} / ${r.npcRoute}; used ${r.used}; sold ${r.sold}`).join(' | ') || '-'}`);
     console.log(`SHOTS per grade (wanted; crafted; drawn by own mains; sold on twin lines): ${Object.entries(design.shotGrades || {}).map(([g, r]) => `${g} ${k(design.shots.byGrade[g]?.wanted || 0)}; ${k(r.crafted)}; ${k(r.own)}; ${k(r.sold)}`).join(' | ') || '-'}`);
+    console.log(`SHOTS on twin shelves at the end (units per grade): ${Object.entries(design.market.stock.shotsOnShelves || {}).map(([g, n]) => `${g} ${k(n)}`).join(' | ') || '-'}`);
     console.log('MARGIN per MP on each grade\'s shots (median of the hourly medians in each 10-hour window, batches started):');
     for (let from = 0; from < design.hourly.length; from += 10) {
         const window = design.hourly.slice(from, from + 10), byGrade = {};

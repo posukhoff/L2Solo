@@ -352,6 +352,24 @@ const runHeld = (world, kitHours, account, hours) => {
     assert.deepEqual([dear.crafters.byTown.TownD, dear.counters.reseats], [undefined, 0], 'a fare above the gain: it stays');
 }
 
+// A D shooter respawning in TownA restocks in the D market, where its twin's
+// line stands: its shot situations take it to TownD (the shot's trade town,
+// 500 a fare), not to the town it stands in; its shots come from the line.
+{
+    const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+        npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'], hubKnown: false };
+    const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], shots: { [SSD]: 300 } }], bands, rates, hours: 24, seed: 5, nextArrival: arrivals,
+        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+    const m = out.design.market;
+    assert.equal(out.design.crafters.byTown.TownD, 1, 'the twin sits in the D market');
+    assert.ok((m.visits.hub.stock_low || 0) + (m.visits.hub['stock_low:shots'] || 0) + (m.visits.hub.shots_out || 0) >= 1, JSON.stringify(m.visits.hub));
+    assert.ok(out.design.counters.shotsLine > 0, JSON.stringify([m.trips, m.visits.hub, m.stock, out.design.firsts, out.design.shots.supply, out.design.counters]));
+    assert.equal(out.money.closureGap, 0);
+    assert.equal(out.design.goods.failing, 0);
+}
+
 // Two hubs of the D market both pay: the twin sits in the one whose gain net
 // of its fare is the greater. Two shotless mains post the same WTBs for the
 // shots, one in each hub; the second hub's fare is the lower, and the twin

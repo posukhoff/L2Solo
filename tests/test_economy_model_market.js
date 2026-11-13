@@ -14,7 +14,7 @@
 const assert = require('node:assert/strict');
 const { path } = require('../scripts/economy-model/rules/path');
 const { acquire } = require('../scripts/economy-model/rules/acquire');
-const { trip, goalOf } = require('../scripts/economy-model/rules/trip');
+const { trip, goalOf, shotTown } = require('../scripts/economy-model/rules/trip');
 const { visit } = require('../scripts/economy-model/rules/visit');
 const { occupation, stayHours } = require('../scripts/economy-model/rules/occupation');
 const { refillHours } = require('../scripts/economy-model/rules/path');
@@ -74,6 +74,28 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.equal(offer.reason, 'offer_posted', 'a line in reach worth more than the walk sends it now');
     assert.equal(trip({}, { ...base, shots: { held: 0, perHour: 300, waiting: true }, goal: null, bag: null, event: 'offer_posted', deal: { gain: 10 } }).at, null,
         'a gain under the trip\'s 0.02 h x 1000 waits for its next visit');
+}
+
+// A shot restock goes to a trade town of the shot's grade (and above) the
+// gatekeeper reaches, the nearest by fare, and stays where the main stands
+// when that is one of them or when the NPC there sells the shot at its worth.
+{
+    const heine = { here: 'Heine', npcHere: false, towns: [{ town: 'Gludio', fare: 2000 }, { town: 'Dion', fare: 1500 }, { town: 'Giran', fare: 3000 }] };
+    assert.equal(shotTown(heine), 'Dion', 'the trade town with the least fare');
+    assert.equal(shotTown({ ...heine, here: 'Dion' }), 'Dion', 'standing in one: it stays');
+    assert.equal(shotTown({ ...heine, here: 'Giran', towns: [...heine.towns.slice(0, 2), { town: 'Giran', fare: 0 }] }), 'Giran', 'a D shooter standing in Giran stays in Giran');
+    assert.equal(shotTown({ ...heine, npcHere: true }), 'Heine', 'the NPC here sells it at its worth: no fare');
+    assert.equal(shotTown({ ...heine, towns: [] }), 'Heine', 'no town reached: where it stands');
+    const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Heine', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
+        shots: { held: 600, perHour: 300, waiting: false }, bag: null, goal: null, shotTowns: { npcHere: false, towns: heine.towns, hopHours: 0.1 } };
+    const low = trip({}, base);
+    assert.deepEqual([low.reason, low.town], ['stock_low:shots', 'Dion'], 'a shot situation goes to the shot\'s trade town');
+    assert.ok(Math.abs(low.at - (10 + (600 - 50) / 300 / 0.5 + 0.02 + 0.1)) < 1e-9, `the hop hours added: ${low.at}`);
+    assert.equal(trip({}, { ...base, shots: { held: 0, perHour: 300, waiting: false } }).town, 'Dion', 'shots_out too');
+    const bag = { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 100, weight: 10, stack: true, held: false }] };
+    const full = trip({}, { ...base, bag });
+    assert.deepEqual([full.reason, full.town], ['bag_full', 'Heine'], 'any other reason keeps its town');
+    assert.equal(trip({}, { ...base, shotTowns: { ...base.shotTowns, npcHere: true } }).town, 'Heine');
 }
 
 // trip's town (tripTown 'by_gain'): a town it knows a book of when what its
@@ -155,6 +177,9 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200, 1463, 71], spotId: 's1' }), ['Giran']);
     assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200, 1463], spotId: 's1' }), ['Gludio', 'Dion'], 'both D markets, no split by the bot\'s id');
     assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200], spotId: 's1' }), ['Gludin']);
+    assert.deepEqual(Knowledge.tradeTowns(trade, { items: [1463], spotId: 's1', andAbove: true }), ['Gludio', 'Dion', 'Giran'], 'a D lot also reaches the town of the grades above');
+    assert.deepEqual(Knowledge.tradeTowns(trade, { items: [71], spotId: 's1', andAbove: true }), ['Giran']);
+    assert.deepEqual(Knowledge.tradeTowns(trade, { items: [200], spotId: 's1', andAbove: true }), ['Gludin'], 'a no-grade lot has no grade above');
     assert.deepEqual(Knowledge.tradeTowns(undefined, { items: [200], spotId: 's1' }), [], 'no trade data: no hub');
 }
 

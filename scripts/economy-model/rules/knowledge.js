@@ -146,12 +146,14 @@ function afterVisit({ books, refusals, refused, visited, asleep = [] }) {
 // (trade.d: the account picks among them by its own rule), else a no-grade
 // lot to the market nearest its spot (trade.none[spotId]). trade: the
 // snapshot's tradeTowns ({ grade: { item: grade } }); items: item ids (none:
-// a no-grade lot). Returns the candidate towns, [] without trade data.
-function tradeTowns(trade, { items, spotId }) {
+// a no-grade lot). andAbove: a buyer of the lot's grade also reaches the
+// towns of every higher grade (a D lot: the D markets and trade.higher).
+// Returns the candidate towns, [] without trade data.
+function tradeTowns(trade, { items, spotId, andAbove = false }) {
     if (!trade) return [];
     const grades = items.map(id => trade.grade[id] || 'none');
     if (grades.some(grade => grade !== 'none' && grade !== 'd')) return [trade.higher];
-    if (grades.includes('d')) return [...trade.d];
+    if (grades.includes('d')) return andAbove ? [...trade.d, trade.higher] : [...trade.d];
     return trade.none[spotId] ? [trade.none[spotId]] : [];
 }
 

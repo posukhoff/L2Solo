@@ -570,7 +570,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
     const gradeOfLevel = level => grades.reduce((name, [grade, from]) => (level >= from ? grade : name), 'none');
     // The game's trade towns of a lot of items for an account's main
     // (Knowledge.tradeTowns): its main's spot for a no-grade lot's market.
-    const tradeTownsOf = (index, items) => Knowledge.tradeTowns(snapshot.tradeTowns, { items, spotId: String(Engine.spotRowOf(view, mains[index])?.spotId ?? '') });
+    const tradeTownsOf = (index, items, andAbove = false) => Knowledge.tradeTowns(snapshot.tradeTowns, { items, andAbove, spotId: String(Engine.spotRowOf(view, mains[index])?.spotId ?? '') });
     // twinSeat 'hub': the hubs a twin may sit in. hubTowns 'by_grade': the
     // trade towns of what it sells (its sell lines, its recipes' products;
     // nothing yet: a no-grade lot), else the town given; a list: the hubs.
@@ -1229,6 +1229,14 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             for (const account of accounts) for (const [id, count] of Object.entries(account.stash || {})) { units += count; npc += count * (view.items[id]?.npcBuy || 0); }
             return { units, npc: Math.round(npc) };
         };
+        // Shots left on twin shelves at the end, per grade (units).
+        const shotsOnShelves = () => {
+            const out = {};
+            for (const account of accounts) if (account.twin) for (const [id, count] of Object.entries(account.twin.stock)) {
+                if (count > 0 && view.items[id]?.kind === 'Other.Shot') { const grade = shotGrade(id); out[grade] = (out[grade] || 0) + count; }
+            }
+            return out;
+        };
         const closing = {};
         const add = (id, count) => { if (Number(id) > 0 && count > 0) closing[id] = (closing[id] || 0) + count; };
         for (const main of endMains) {
@@ -1283,7 +1291,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             config,
             biases: BIASES,
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
-                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, stashEnd: stashEnd() }, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null,
+                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, stashEnd: stashEnd(), shotsOnShelves: shotsOnShelves() }, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null,
                 capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
                 velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),

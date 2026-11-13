@@ -119,6 +119,18 @@ function townOf(view, towns, hunting) {
     return best ? { town: best.town, hours: best.hours, refused } : { town: view.town, hours: 0, refused };
 }
 
+// The town a main restocks shots in: the town it stands in when its NPC
+// sells the shot at or under its worth there (npcHere) or when it is one of
+// the shot's trade towns; else the trade town with the least fare. A shot's
+// grade is traded in the game's trade towns of its grade and above
+// (MarketTownPolicy), so a buyer goes where the sellers of it stand, not
+// where it remembers a price. towns: [{ town, fare (one way) }] (a town with
+// no fare is not in the list). Returns the town's name; here without towns.
+function shotTown({ here, npcHere, towns }) {
+    if (npcHere || !towns.length || towns.some(row => row.town === here)) return here;
+    return towns.reduce((best, row) => (row.fare < best.fare ? row : best)).town;
+}
+
 // main: unused beyond the view (the engine reads it into the view). view:
 // { now, since (the time the main's state is taken at), huntShare, tripHours,
 // town (the nearest), stockLowHours, loadShare, shots: { held, perHour,
@@ -127,7 +139,8 @@ function townOf(view, towns, hunting) {
 // { slots, used, weight, maxLoad, items: [{ rate (per hunting hour), weight,
 // stack, held }] }, goal (goalOf) | null, event, deal: { gain } | null,
 // ownHour, tripTown: 'nearest' | 'by_gain', and with by_gain money, stock,
-// wants, near and towns (townTerms) }.
+// wants, near and towns (townTerms), shotTowns: { npcHere, towns, hopHours }
+// | null (the shot's trade towns: the town of a shot situation, shotTown) }.
 // Returns { at, reason, town, refused } (at: the wall hour it arrives in
 // town, null without a situation; refused: the towns it knows whose trip
 // had no gain then), and parked: the shot situation it holds back (counted).
@@ -156,7 +169,12 @@ function trip(main, view) {
     if ((view.event === 'offer_posted' || view.event === 'bid_posted') && view.deal && view.deal.gain > walk * view.ownHour) triggers.push({ at: view.now, reason: view.event });
     if (!triggers.length) return { at: null, reason: null, town: view.town, parked, refused: [] };
     const first = triggers.reduce((best, row) => (row.at < best.at ? row : best));
-    const at = Math.max(view.now, first.at), there = townOf(view, towns, Math.max(0, (at - view.since) * view.huntShare));
+    const at = Math.max(view.now, first.at);
+    let there = townOf(view, towns, Math.max(0, (at - view.since) * view.huntShare));
+    if (first.reason === 'stock_low:shots' || first.reason === 'shots_out') {
+        const shot = view.shotTowns && shotTown({ here: view.town, ...view.shotTowns });
+        if (shot) there = { town: shot, hours: shot === view.town ? 0 : view.shotTowns.hopHours, refused: [] };
+    }
     return { at: at + walk + there.hours, reason: first.reason, town: there.town, parked, refused: there.refused };
 }
 
@@ -170,4 +188,4 @@ function deathAt({ since, huntShare, deathsPerHour, roll }) {
     return since + -Math.log(1 - roll) / deathsPerHour / huntShare;
 }
 
-module.exports = { trip, goalOf, deathAt };
+module.exports = { trip, goalOf, deathAt, shotTown };
