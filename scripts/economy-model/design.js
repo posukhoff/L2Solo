@@ -511,7 +511,7 @@ function staticCapFloor(snapshot, view, game, grades, config, kitHours) {
 
 // The waits the design counts (liveness): each opened wait ends done,
 // withdrawn by its owner, failed, or at its one deadline, or is open at the end.
-const WAITS = ['sellLine', 'buyLine', 'bid', 'batch', 'shotless', 'wts', 'wtb', 'route', 'twin', 'parkedWant', 'parkedShots'];
+const WAITS = ['sellLine', 'buyLine', 'bid', 'batch', 'shotless', 'wts', 'wtb', 'route', 'twin', 'parkedWant'];
 // outgrown: of the failed, those its owner's main left the piece's grade without.
 const wait = () => ({ opened: 0, done: 0, withdrawn: 0, failed: 0, deadline: 0, outgrown: 0 });
 
@@ -1230,8 +1230,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             buyLine: twins.reduce((sum, account) => sum + account.twin.lines.filter(line => line.side === 'buy').length, 0),
             bid: twins.reduce((sum, account) => sum + account.twin.bids.length, 0), batch: twins.filter(account => account.twin.batch).length,
             shotless: accounts.filter(account => account.shotless).length,
-            wts: accounts.reduce((sum, account) => sum + account.market.ads.wts.length, 0), wtb: accounts.reduce((sum, account) => sum + account.market.ads.wtb.length, 0),
-            parkedShots: accounts.filter(account => account.market.shotWait === 'parked').length };
+            wts: accounts.reduce((sum, account) => sum + account.market.ads.wts.length, 0), wtb: accounts.reduce((sum, account) => sum + account.market.ads.wtb.length, 0) };
         // Wants open at the end, by state (route, twin, parked) and the piece's grade.
         const parkedAtEnd = {};
         for (const kind of ['route', 'twin', 'parkedWant']) openWaits[kind] = 0;

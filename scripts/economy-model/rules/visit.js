@@ -8,7 +8,9 @@
 // meeting), which at its floor goes to the NPC or a crystallizer's bid.
 // Stock: a crafter's buy line (any amount) or a WTB, else the NPC, where
 // the main stands. Then the
-// money queue: the refill reserve and path's pieces in path order, each
+// money queue: the refill reserve (its own twin's stock, a line at or under
+// the shot's cap, the NPC; no WTB: a main goes for shots only where a seller
+// stands) and path's pieces in path order, each
 // from a line at or under its cap, else its WTB, which after two looks at
 // its cap takes the cap's own route or is parked; its own twin's craft and a
 // piece used for fewer than two more visits take the route at once. A
@@ -39,7 +41,7 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // tries, seen, parkedCap and short (a parked want's cap
 // and whether its money fell short of the route when it was parked) } },
 // incoming: { selfId: route } (pieces that reached its bag by a route already
-// counted), shotWait }. view: { now, town, adId, persona, roll, items,
+// counted) }. view: { now, town, adId, persona, roll, items,
 // crystalIds, book: { sell: { item: [entry] } cheapest first, buy: { item:
 // [entry] } dearest first, bids: { grade: [entry] } } (entry { owner, id,
 // price, qty, kind: 'line' | 'ad', own }: lines of the town it stands in
@@ -50,7 +52,7 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // ahead: [{ selfId, slot }] (its next grade's kit, one a slot), surplus:
 // { item: count } (its twin's warehouse stock the workshop no longer uses),
 // firing (the shot it fires), fires (the ids of the shots its worn weapon
-// fires: held ones are kept, never sold), reserve: { id, amount, cap, capBy, own } |
+// fires: held ones are kept, never sold), reserve: { id, amount, cap, own } |
 // null, pieces: { selfId: { selfId, slot, grade, weapon, cap (null: nothing
 // caps it, no want is posted), capBy, caps, routes, own (units its own twin
 // holds), visitsLeft (its expected visits before it stops using the piece) } },
@@ -68,7 +70,7 @@ function visit(main, view) {
     const claims = [], stops = [], obtained = [], waits = [], stalled = [];
     const flows = { npcSales: 0, npcBuys: 0, fares: 0, warehouseFees: 0 };
     const bag = { ...main.bag }, shots = { ...main.shots }, kit = { ...main.kit }, wants = { ...main.wants }, incoming = { ...main.incoming };
-    let money = main.money, weapon = main.weapon, shotWait = main.shotWait ?? null, gearChanged = false, wallet = view.twin ? view.twin.wallet : 0;
+    let money = main.money, weapon = main.weapon, gearChanged = false, wallet = view.twin ? view.twin.wallet : 0;
     let wts = [...main.ads.wts], wtb = [...main.ads.wtb];
     // Claimed units per book entry (first come: the books are read once).
     const taken = new Map();
@@ -333,17 +335,6 @@ function visit(main, view) {
                 const units = Math.min(need, Math.floor(money / npc));
                 if (units > 0) { money -= units * npc; flows.npcBuys -= units * npc; add(shots, reserve.id, units); need -= units; stops.push({ kind: 'npc_buy', target: view.town, items: [{ selfId: reserve.id, count: units }] }); }
             }
-            const bought = need < reserve.amount, ad = wtb.find(line => line.item === reserve.id);
-            if (bought) {
-                if (ad) { wtb = wtb.filter(line => line !== ad); waits.push({ wait: 'wtb', end: 'withdrawn' }); }
-                if (shotWait === 'parked') waits.push({ wait: 'parkedShots', end: 'done' });
-                shotWait = null;
-            } else if (!(reserve.cap >= 1)) shotWait = 'unwanted';
-            else if (shotWait !== 'parked') {
-                const result = stepWtb(reserve.id, { cap: reserve.cap, capBy: reserve.capBy, floor: 0, known: view.known[reserve.id] ?? null, first: view.firstPrice[reserve.id] ?? reserve.cap, qty: need, item: reserve.id });
-                shotWait = result === 'open' ? 'wtb' : 'parked';
-                if (shotWait === 'parked') waits.push({ wait: 'parkedShots', end: 'opened' });
-            }
             continue;
         }
         const base = view.pieces[row.selfId];
@@ -445,7 +436,7 @@ function visit(main, view) {
         if (wants[piece.selfId]?.state === 'twin') waits.push({ wait: 'route', end: 'done' });
     }
 
-    return { main: { ...main, money, bag, shots, kit, weapon, wants, incoming, shotWait, ads: { wts, wtb } }, wallet, claims, stops, flows, stalled, obtained, waits, gearChanged };
+    return { main: { ...main, money, bag, shots, kit, weapon, wants, incoming, ads: { wts, wtb } }, wallet, claims, stops, flows, stalled, obtained, waits, gearChanged };
 }
 
 module.exports = { visit };

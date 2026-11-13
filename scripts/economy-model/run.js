@@ -316,9 +316,9 @@ function printMarket(design, hours) {
     }
     const w = design.liveness.waits;
     console.log(`WTBS posted ${w.wtb.opened} filled ${w.wtb.done} failed ${w.wtb.failed} (unfunded at the meeting ${m.unfunded.wtb}, outgrown ${w.wtb.outgrown}) withdrawn ${w.wtb.withdrawn} open ${w.wtb.open}; `
-        + `parked at the cap: pieces ${w.parkedWant.opened}, shots ${w.parkedShots.opened}; sales to twin lines unfunded ${m.unfunded.line}, to bids ${m.unfunded.bid}`);
+        + `pieces parked at the cap ${w.parkedWant.opened}; sales to twin lines unfunded ${m.unfunded.line}, to bids ${m.unfunded.bid}`);
     console.log(`ROUTES priced ${m.routes.priced}, the cap's own route at 0 adena ${m.routes.zero} (${pct(m.routes.zero, m.routes.priced)}), a piece with no worth row ${m.routes.noWorth} (${pct(m.routes.noWorth, m.routes.priced)})`);
-    const tripsTotal = Object.entries(m.trips).filter(([reason]) => reason !== 'shotsParked').reduce((sum, [, n]) => sum + n, 0);
+    const tripsTotal = Object.values(m.trips).reduce((sum, n) => sum + n, 0);
     console.log(`TRIPS by situation (${tripsTotal}, ${(tripsTotal / hours).toFixed(0)}/h): ${Object.entries(m.trips).sort((a, b) => b[1] - a[1]).map(([reason, n]) => `${reason} ${n}`).join(' | ')}`);
     console.log(`MEETINGS ${m.meetings}; offers raised ${m.events.offerPosted}, bids raised ${m.events.bidPosted}; twin-to-twin units ${m.twinToTwin}, twin units to the NPC at the floor ${m.twinToNpc}; paths ${m.paths}; spot changes ${Object.entries(m.occupation).map(([why, n]) => `${why} ${n}`).join(' | ')}`);
     const occ = m.occupation, moves = ['grade_changed', 'spot_left', 'recipe_wanted', 'arrived_town'].reduce((sum, why) => sum + (occ[why] || 0), 0);

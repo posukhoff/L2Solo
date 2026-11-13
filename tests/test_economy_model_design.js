@@ -48,6 +48,7 @@ const snapshot = {
     sources: { [BONE]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] }, [SCROLL]: { drop: [{ npcId: 1, yield: 1 }], spoil: [] } },
     shotFamilies: { grades: ['NONE', 'D', 'C', 'B', 'A', 'S'], ids: [[1835, SSD, 1464, 1465, 1466, 1467]] },
     fares: { TownA: { TownA: 0 } },
+    tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownA'], higher: 'TownA' },
     // The Bounty Hunter's bag holds two stacks: its sword and the expected first drop fill it.
     bags: { 55: { race: 4, slots: 2, maxLoad: 100000 }, 9: { race: 1, slots: 80, maxLoad: 100000 } },
     walkBack: { s1: 0.01 }
@@ -309,9 +310,10 @@ const runHeld = (world, kitHours, account, hours) => {
 // twinSeat 'starter_then_pays' (the design's text): the twin starts in its
 // main's starter village and re-seats at its main's arrival in another town
 // only when its best store there beats its best store here by more than the
-// fare. Its main resupplies in TownA. The other main, shotless, posts a WTB
-// for Soulshot D in the town of its spot: in TownA the twin moves there; in
-// a third town it stays; at a fare above the gain it stays.
+// fare. Its main resupplies in TownA. The other main, shotless, hunts from
+// TownA and posts no WTB for Soulshot D (a main goes for shots only where a
+// seller stands): no buy ad of its product stands in any town, its store is
+// the same in TownA as in the village, and it stays.
 {
     const fares = { TownA: { TownA: 0, 'Dwarven Village': 500, TownC: 500 }, 'Dwarven Village': { TownA: 500, 'Dwarven Village': 0, TownC: 500 }, TownC: { TownA: 500, 'Dwarven Village': 500, TownC: 0 } };
     const seated = (buyerTown, fare = 100) => {
@@ -325,19 +327,14 @@ const runHeld = (world, kitHours, account, hours) => {
         return Engine.simulate({ view, accounts, bands, rates, hours: 8, seed: 5, nextArrival: arrivals,
             design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'fresh', grades }) }).design;
     };
-    const near = seated('TownA'), far = seated('TownC');
-    assert.ok(near.liveness.waits.wtb.opened > 0 && far.liveness.waits.wtb.opened > 0, 'the shotless main posted its WTB');
-    assert.deepEqual([near.crafters.byTown.TownA, near.counters.reseats], [1, 1], 'a WTB of its product where its main arrived: it moves');
-    assert.deepEqual([far.crafters.byTown['Dwarven Village'], far.counters.reseats], [1, 0], 'a WTB in a third town: it stays');
-    const dear = seated('TownA', 1e9);
-    assert.deepEqual([dear.crafters.byTown['Dwarven Village'], dear.counters.reseats], [1, 0], 'a fare above the gain: it stays');
+    const near = seated('TownA');
+    assert.deepEqual([near.crafters.byTown['Dwarven Village'], near.counters.reseats], [1, 0], 'no WTB of its product where its main arrived: it stays');
 }
 
 // twinSeat 'hub' with hubTowns 'by_grade' (the game's trade towns): a twin
 // that sells nothing yet sits in the market nearest its main's spot (a
 // no-grade lot: TownA); once it holds the Soulshot D recipe its hub is the D
-// market, where the other main, shotless, posts its WTB for the shots: it
-// moves there at its main's next arrival, paying the fare, only when its
+// market: it moves there at its main's next arrival, paying the fare, only when its
 // store there beats its store here by more than the fare.
 {
     const s2 = levels.map(level => [`s2@${level}`, { ...yields, town: 'TownD' }]);
@@ -370,9 +367,29 @@ const runHeld = (world, kitHours, account, hours) => {
     assert.equal(out.design.goods.failing, 0);
 }
 
+// A D shooter out of shots with no seller standing anywhere stays out (no
+// trip); when a twin's line of its shots is posted in TownE, a D trade town
+// that is neither the town of its spot (TownA) nor the D town of the least
+// fare (TownD), the posted line wakes it, it goes to TownE and buys there.
+{
+    const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 300, TownE: 500 }, TownD: { TownA: 300, TownD: 0, TownE: 300 }, TownE: { TownA: 500, TownD: 300, TownE: 0 } },
+        npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownE', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownE', price: 4000 }] } },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD', 'TownE'], higher: 'TownC' } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownE'] };
+    const out = Engine.simulate({ view, accounts, bands, rates, hours: 24, seed: 5,
+        design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) });
+    const m = out.design.market;
+    assert.equal(out.design.crafters.byTown.TownE, 1, 'the twin sits in TownE');
+    // The wake sets no deal: the main reads its situation again, now shots_out with a seller standing.
+    assert.ok(m.events.offerPosted >= 1 && m.visits.hub.shots_out >= 1, JSON.stringify([m.events, m.visits.hub]));
+    assert.ok(out.design.counters.shotsLine > 0, 'it bought its shots from the line');
+    assert.equal(out.money.closureGap, 0);
+    assert.equal(out.design.goods.failing, 0);
+}
+
 // Two hubs of the D market both pay: the twin sits in the one whose gain net
-// of its fare is the greater. Two shotless mains post the same WTBs for the
-// shots, one in each hub; the second hub's fare is the lower, and the twin
+// of its fare is the greater. Two mains hunt from the two hubs, one from
+// each; the second hub's fare is the lower, and the twin
 // moves there at once, not to the first.
 {
     const yieldsAt = town => ({ ...yields, town }), spots = { s2: 'TownD', s3: 'TownE' };
@@ -438,9 +455,10 @@ assert.equal(armed.delta.shotsUsed, 50);
 // The market of mains: two buyers want the D sword their path names and no
 // line offers one, so each posts a WTB at its first visit; a hunter that
 // drops swords sells to the standing WTB at or above its floor, the first
-// claimer (the dearer, then the earlier account) first, met at once. Neither
-// buyer finds shots anywhere: its shot situation parks, so it does not come
-// to town again and again. Money and items close.
+// claimer (the dearer, then the earlier account) first, met at once. The
+// buyers' first visit is their shots_out: the NPC of their town sells their
+// no-grade shots at 1 under their worth (75 an hour over 50 shots), so their
+// money stays under the NPC's 4000 for the sword. Money and items close.
 {
     const OLD = 2002;
     const levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
@@ -450,12 +468,12 @@ assert.equal(armed.delta.shotsUsed, 50);
         ...snapshot,
         header: { levels: [1, 45], rates: { adena: 1 } },
         exp: levels45.map(level => level * 1e9),
-        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: SSD, best: plain('s1', 50), top: [] }])),
+        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: SSD, best: { ...plain('s1', 50), adena: 75 }, top: [] }])),
             46: Object.fromEntries(levels45.map(level => [level, { classId: 46, shotId: 0, best: plain('s2', 0, 1000), top: [] }])) },
         kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: SWORD, slot: 7 }]])), 46: Object.fromEntries(levels45.map(level => [level, [{ selfId: OLD, slot: 7 }]])) },
         yields: Object.fromEntries(levels45.flatMap(level => [[`s1@${level}`, { town: 'TownA', drop: { 57: 100 }, spoil: {} }], [`s2@${level}`, { town: 'TownA', drop: { 57: 100, [SWORD]: 0.05 }, spoil: {} }]])),
         items: { ...snapshot.items, [OLD]: { kind: 'Weapon.Sword', grade: 'NONE', ref: 20, npcBuy: 10, crystals: 0 }, 1835: { kind: 'Other.Shot', grade: 'NONE', ref: 10, npcBuy: 5, crystals: 0 } },
-        npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }], 1835: [{ town: 'TownB', price: 10 }] } },
+        npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }], 1835: [{ town: 'TownA', price: 1 }] } },
         recipes: [], races: { 9: 1, 46: 3 },
         bags: { 9: { race: 1, slots: 80, maxLoad: 1e6 }, 46: { race: 3, slots: 2, maxLoad: 1e6 } },
         gearLadder: ladderOf('9', [[1, 45, { weapon: { rungs: [SWORD], hour: { [SWORD]: 2000, [OLD]: 1000, 0: 500 } } }]]),
@@ -463,8 +481,8 @@ assert.equal(armed.delta.shotsUsed, 50);
     };
     market.yieldsDesign = market.yields;
     const buyers = [
-        { id: 11, station: false, classId: 9, line: '9', level: 22, exp: 22e9, money: 3900, spot: null, shots: {}, held: [], worn: { 7: OLD } },
-        { id: 12, station: false, classId: 9, line: '9', level: 24, exp: 24e9, money: 3900, spot: null, shots: {}, held: [], worn: { 7: OLD } },
+        { id: 11, station: false, classId: 9, line: '9', level: 22, exp: 22e9, money: 3800, spot: null, shots: {}, held: [], worn: { 7: OLD } },
+        { id: 12, station: false, classId: 9, line: '9', level: 24, exp: 24e9, money: 3800, spot: null, shots: {}, held: [], worn: { 7: OLD } },
         { id: 13, station: false, classId: 46, line: '46', level: 35, exp: 35e9, money: 1000, spot: null, shots: {}, held: [OLD], worn: { 7: OLD } }
     ];
     const marketBands = [['first', 1], ['second', 23], ['seller', 30]];
@@ -473,16 +491,16 @@ assert.equal(armed.delta.shotsUsed, 50);
         return Engine.simulate({ view, accounts: cohort, bands: marketBands, rates, hours, seed, design: plane({ snapshot: market, game: Design.gameOf(market, view, config), config, start: 'late', grades }) });
     };
     const done = runMarket(3), waits = done.design.liveness.waits;
-    assert.equal(waits.wtb.opened, 4, 'each buyer posts a WTB for the sword and one for its shots: no line offers either');
+    assert.equal(waits.wtb.opened, 2, 'each buyer posts a WTB for the sword (no line offers one) and none for its shots');
+    assert.ok(done.design.market.trips.shots_out >= 2 && done.design.counters.shotsNpc > 0, 'its shots come from the NPC where it stands');
     assert.ok(done.design.market.meetings >= 1, 'the hunter sold to a standing WTB, met at once');
     const bands = done.progress.stageBands, paid = band => bands[band].money.meanStart - bands[band].money.meanEnd;
-    assert.equal(paid('first') - paid('second'), 3600, 'the first claimer (the earlier account at the same price) paid its WTB, 0.9 x the NPC\'s 4000; the second is still waiting');
+    // The bands differ by the sword's 3600 and their shots (under 100: the sword's D shots have no seller).
+    assert.ok(paid('second') <= 0 && Math.abs(paid('first') - paid('second') - 3600) < 100, `the first claimer (the earlier account at the same price) paid its WTB, 0.9 x the NPC's 4000; the second paid no sword: ${paid('first')}, ${paid('second')}`);
     assert.equal(done.design.market.obtained.d.buy, done.design.market.meetings, 'each sword met a WTB and was worn');
     assert.equal(done.money.closureGap, 0);
     assert.equal(done.design.goods.failing, 0, JSON.stringify(done.design.goods.worst));
     assert.deepEqual(runMarket(3), done, 'a run is a function of its seed');
-    // No shots anywhere: after its first visit each buyer's shot situation is parked.
-    assert.ok(done.design.market.trips.shotsParked >= 2);
     assert.ok(done.counters.visits <= 12, `three mains in 8 hours come to town ${done.counters.visits} times`);
     // Every wait opened ended (done, withdrawn, failed, at its deadline) or is open at the end.
     for (const result of [done, out]) for (const [kind, w] of Object.entries(result.design.liveness.waits)) {
