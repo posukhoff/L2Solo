@@ -272,6 +272,9 @@ function visit(main, view) {
     };
 
     let hopped = false;
+    // Own stock of the twin (a shelf piece, the crystals of an exchange) claimed
+    // by this visit, by item: what it takes is not there for the next claim.
+    const ownTaken = {};
     // A piece by the cap's own route; false when the money or the route is not there now.
     const byRoute = (piece, route) => {
         if (route.route === 'npc') {
@@ -294,10 +297,10 @@ function visit(main, view) {
         if (route.route === 'exchange') {
             const crystal = view.crystalIds[route.grade?.toUpperCase()], fare = route.where === view.town ? 0 : view.fares[route.where];
             // Its own twin's crystals come through the account warehouse first, the rest from lines here.
-            const { own, have, adena } = crystalsStanding(route, view.ownCrystals?.[crystal], view.book.sell?.[crystal] || [], left);
+            const { own, have, adena } = crystalsStanding(route, (view.ownCrystals?.[crystal] || 0) - (ownTaken[crystal] || 0), view.book.sell?.[crystal] || [], left);
             if (!crystal || fare === null || fare === undefined || (fare > 0 && hopped) || have < route.amount) return 'unavailable';
             if (money < adena + fare) return 'money';
-            if (own > 0) claims.push({ kind: 'own_stock', item: crystal, units: own });
+            if (own > 0) { claims.push({ kind: 'own_stock', item: crystal, units: own }); ownTaken[crystal] = (ownTaken[crystal] || 0) + own; }
             if (route.amount > own) buyLine(crystal, route.perCrystal, route.amount - own);
             money -= fare; flows.fares -= fare;
             if (fare > 0) { hopped = true; stops.push({ kind: 'gatekeeper', target: route.where, items: [] }); }
@@ -316,10 +319,9 @@ function visit(main, view) {
     const tried = new Map();
     // A piece from its own twin's shelf comes through the account warehouse:
     // a unit taken for one slot of a pair is no longer there for the other.
-    const shelfTaken = {};
-    const onShelf = piece => (piece.own || 0) - (shelfTaken[piece.selfId] || 0) > 0;
+    const onShelf = piece => (piece.own || 0) - (ownTaken[piece.selfId] || 0) > 0;
     const fromShelf = piece => {
-        shelfTaken[piece.selfId] = (shelfTaken[piece.selfId] || 0) + 1;
+        ownTaken[piece.selfId] = (ownTaken[piece.selfId] || 0) + 1;
         claims.push({ kind: 'own_stock', item: piece.selfId, units: 1 });
         obtained.push({ selfId: piece.selfId, grade: piece.grade, route: 'twin' });
         equip(piece.selfId, piece.slot);
