@@ -20,13 +20,15 @@
 // independent (Lisvus L2Attackable.calculateRewardItem).
 
 // The design's rates per kind and preset (popular servers' rates, our choice
-// of the numbers); NPC prices stay x1 at every preset. raid and epic rate the
+// of the numbers); adena follows the exp rate (x10: 10, x50: 50) so a level
+// brings the money it brings at x1, as established servers run it (our choice,
+// maintainer decision 126); NPC prices stay x1 at every preset. raid and epic rate the
 // item drops of a raid boss and of an epic boss (adena stays at the adena
 // rate, spoil at the spoil rate); the caller tells an NPC's kind (npcKind).
 const DESIGN_RATES = Object.freeze({
     x1: Object.freeze({ adena: 1, drop: 1, spoil: 1, raid: 1, epic: 1 }),
-    x10: Object.freeze({ adena: 5, drop: 4, spoil: 4, raid: 3, epic: 1 }),
-    x50: Object.freeze({ adena: 25, drop: 15, spoil: 10, raid: 5, epic: 1 })
+    x10: Object.freeze({ adena: 10, drop: 4, spoil: 4, raid: 3, epic: 1 }),
+    x50: Object.freeze({ adena: 50, drop: 15, spoil: 10, raid: 5, epic: 1 })
 });
 
 // The epic bosses of C4 (Lisvus L2GrandBossInstance spawns: Queen Ant, Core,
