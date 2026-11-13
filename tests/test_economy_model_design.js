@@ -1168,4 +1168,47 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.deepEqual(payableKit({ 7: 1 }, [luxury(6, 50), luxury(9, 40), luxury(12, 30)], 1e6, crystals), { 7: 1, 6: 106 });
 }
 
+// A Luxury piece is a route only while the D crystals it takes stand now
+// (the game's bots pay D only): an unarmed main of 41 in TownA with 10M,
+// whose C sword (adds 4500 an hour) Luxury gives for 573 C or 2865 D
+// crystals and whose D sword (adds 50) the NPC sells for 4000, posts no WTB
+// and climbs no ladder toward the C sword while no D crystal stands on a
+// line there, even with 573 C crystals on one: it buys the D sword. With
+// 2865 D crystals on a line at 100 it aims at the C sword at Luxury.
+{
+    const Mains = require('../scripts/economy-model/mains');
+    const CSWORD = 2005, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 1, adena: 600, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = {
+        ...snapshot, header: { levels: [1, 45], rates: { adena: 1 } }, exp: levels45.map(level => level * 1e9),
+        hours: { 9: Object.fromEntries(levels45.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels45.map(level => [level, [{ selfId: CSWORD, slot: 7 }]])) },
+        items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 400000, npcBuy: 200000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
+        yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        luxuryOptions: { [CSWORD]: { town: 'TownA', c: 573, d: 2865 } },
+        twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
+        gearLadder: ladderOf('9', [[40, 45, { weapon: { rungs: [CSWORD, SWORD], hour: { [CSWORD]: 5000, [SWORD]: 550, 0: 500 } } }]])
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), game = Design.gameOf(world, view);
+    const mainsSide = Mains.mainsSide;
+    let side = null, ctx = null;
+    Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
+    try {
+        Engine.simulate({ view, accounts: [{ id: 82, station: false, classId: 9, line: '9', level: 41, exp: 41e9, money: 0, spot: null, shots: {}, held: [], worn: {} }],
+            bands: [['all', 1]], rates, hours: 1, seed: 1, design: plane({ snapshot: world, game, start: 'late', grades }) });
+    } finally { Mains.mainsSide = mainsSide; }
+    const visitWith = lines => {
+        ctx.accounts[0] = { ...ctx.accounts[0], market: Mains.marketStart(), memory: [], twin: null };
+        Books.place(ctx.books, 98, 'TownA', lines.map(([item, qty], at) => ({ side: 'sell', item, price: 100, qty, id: `l${at}` })), []);
+        const visited = side.visitMain({ ...ctx.mains[0], level: 41, money: 1e7, kit: {}, weapon: 0 }, 2, { outingHours: 1 });
+        const market = ctx.accounts[0].market;
+        return { weapon: visited.main.weapon, aim: market.path.pieces.map(piece => [piece.selfId, piece.route]), wtb: market.ads.wtb.map(ad => ad.item), wants: Object.keys(market.wants).map(Number) };
+    };
+    assert.deepEqual(visitWith([]), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'no D crystal stands: no want of the C sword, the D sword bought');
+    assert.deepEqual(visitWith([[game.crystalIds.C, 573]]), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'C crystals do not pay a bot\'s Luxury');
+    assert.deepEqual(visitWith([[game.crystalIds.D, 2865]]).aim, [[CSWORD, 'exchange']], 'its 2865 D crystals stand: it aims at the C sword at Luxury');
+}
+
 console.log('PASS economy model design mode');

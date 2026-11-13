@@ -103,7 +103,7 @@ function mainsSide(ctx) {
         const crystals = Object.fromEntries(Object.values(game.crystalIds).map(id => [id, { own: twin?.stock[id] || 0, lines: book.sell[id] || [] }]));
         const candidates = gains.map(row => {
             const lines = (book.sell[row.selfId] || []).map(entry => ({ price: entry.price, kind: entry.kind, where: entry.kind === 'ad' ? 'ad' : entry.town }));
-            const reach = reachRoutes(account.memory, town, book, row.selfId);
+            const reach = reachRoutes(account, town, book, row.selfId);
             const got = acquire(row, { cap: Infinity, ownHour: 0, hourCost: config.hourCost, useHour: null, lines, ...reach, twin: null, stalled: account.market.stalled[row.selfId] || [] });
             const routes = (got?.routes || []).map(route => {
                 const hop = route.route !== 'buy' && route.where !== town;
@@ -376,18 +376,19 @@ function mainsSide(ctx) {
         return book;
     };
 
-    // A price to a main: its last deal, else the cheapest line or ad it deals
-    // on, else the cheapest line it knows in its twin's town, else the first price.
-    const priceToMain = (memory, book, id) => Knowledge.known(memory, id) ?? book.sell[id]?.[0]?.price ?? book.seen[id] ?? game.firstPrice[id] ?? null;
     // The NPC sellers of a piece a main reaches from the town it stands in
-    // and its Luxury route (the crystals at the prices it knows): acquire's
-    // npc and exchange.
-    const reachRoutes = (memory, town, book, selfId) => {
+    // and its Luxury route: acquire's npc and exchange. The game's bots pay
+    // Luxury in D crystals only (the catalogue, as Lisvus and our data list
+    // it, asks C and D in one row: the bots' rule is followed), the crystals
+    // its own twin holds and those on the lines and ads it deals on at or
+    // under the price it knows (its last deal, else the cheapest of those
+    // lines): the route stands only while they do.
+    const reachRoutes = (account, town, book, selfId) => {
         const npc = (view.offers.get(selfId) || []).filter(row => row.channel === 'npc_buy').map(row => ({ town: row.town, price: row.price, fare: fareOf(town, row.town) }))
             .filter(row => row.fare !== null);
-        const lux = snapshot.luxuryOptions?.[selfId];
-        const exchange = lux && fareOf(town, lux.town) !== null ? { town: lux.town, fare: fareOf(town, lux.town),
-            options: [['c', lux.c], ['d', lux.d]].filter(([, amount]) => amount > 0).map(([g, amount]) => ({ grade: g, amount, price: priceToMain(memory, book, game.crystalIds[g.toUpperCase()]) })) } : null;
+        const lux = snapshot.luxuryOptions?.[selfId], crystal = game.crystalIds.D, lines = book.sell[crystal] || [];
+        const exchange = lux?.d > 0 && fareOf(town, lux.town) !== null ? { town: lux.town, fare: fareOf(town, lux.town),
+            options: [{ grade: 'd', amount: lux.d, price: Knowledge.known(account.memory, crystal) ?? lines[0]?.price ?? null, own: account.twin?.stock[crystal] || 0, lines }] } : null;
         return { npc, exchange };
     };
     // The routes of one piece (acquire) and its cap, for a main standing in
@@ -401,7 +402,7 @@ function mainsSide(ctx) {
         const used = Worth.rungWorth({ formula: config.worth, ...rows, useHours: horizon.hours, ownHour: hour, gainBound: config.huntCycleGainBound });
         // No hour stated for either kit: its use cannot be stated (counted).
         if (used.adena === null) stats.routes.noWorth++;
-        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], ...reachRoutes(memory, town, book, selfId),
+        const own = { cap: Infinity, ownHour: hour, hourCost: config.hourCost, useHour: used.adena === null ? null : used.perHour, lines: [], ...reachRoutes(account, town, book, selfId),
             twin: account.twin ? ctx.ownCraft(index, selfId) : null, stalled: account.market.stalled[selfId] || [] };
         const routes = acquire(piece, own);
         stats.routes.priced++;
@@ -455,7 +456,8 @@ function mainsSide(ctx) {
     // main stands in.
     function pathOf(index, main, town) {
         const table = kitTableOf(main), kit = aimsOf(main, table), grade = gradeOfLevel(main.level), candidates = kit.flatMap(aim => aim.candidates);
-        const book = reachBook(index, town, [...new Set(candidates.map(piece => piece.selfId))], [grade]);
+        // The D crystal too: a Luxury route stands on the lines of it here.
+        const book = reachBook(index, town, [...new Set([...candidates.map(piece => piece.selfId), game.crystalIds.D])], [grade]);
         const routes = {}, worth = {}, weapons = {}, needs = {}, perHour = {}, useHours = {}, resale = {};
         for (const piece of candidates) {
             if (piece.selfId in routes) continue;

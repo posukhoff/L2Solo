@@ -41,7 +41,7 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 {
     const view = { cap: 5000, ownHour: 1000, hourCost: 'opportunity', useHour: 100, lines: [{ price: 6000, kind: 'line', where: 'Giran' }],
         npc: [{ town: 'Giran', price: 1500, fare: 0 }], twin: { recipeId: 7, cost: 1000, hours: 2 },
-        exchange: { town: 'Giran', fare: 0, options: [{ grade: 'd', amount: 10, price: 160 }] } };
+        exchange: { town: 'Giran', fare: 0, options: [{ grade: 'd', amount: 10, price: 160, own: 0, lines: [{ id: 'd', price: 160, qty: 10 }] }] } };
     const opportunity = acquire({ selfId: 1 }, view);
     assert.equal(opportunity.route, 'twin', 'the inputs 1000 and two hours of its use: 1200');
     assert.equal(opportunity.cost, 1200);
