@@ -711,6 +711,41 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.equal(Math.round(one.flows.perBotHour.npcBuys * 12), -2900, 'the piece worth more per adena');
 }
 
+// The kit table a main reads carries the arrows of each option: the same
+// path world with the kit hour source stating 15 arrows an hour for the kit
+// wearing the better piece (38 an hour over the other's 28), the arrow
+// priced 1 by the NPC. Net of arrows the piece nets 23, below the other's
+// 28 (and above the 20 the main earns without either), so the main buys the
+// other piece (3000, not 2900); gross of arrows it buys the better one.
+{
+    const LOW = 2003, HIGH = 2004, JUNK = 1869, ARROW = 1341, levels30 = Array.from({ length: 30 }, (_, i) => i + 1);
+    const hourRow = { spotId: 's1', kills: 10, exp: 1e7, adena: 0, shots: 0, dropLoot: 20, spoilLoot: 0, loot: 20, potions: 0, busyShare: 1, deaths: 0, shotless: null };
+    const world = {
+        ...snapshot,
+        hours: { 9: Object.fromEntries(levels30.map(level => [level, { classId: 9, shotId: 0, best: hourRow, top: [] }])) },
+        kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: LOW, slot: 6 }, { selfId: HIGH, slot: 10 }]])) },
+        items: { ...snapshot.items, [LOW]: { kind: 'Armor.Body', grade: 'D', ref: 3000, npcBuy: 1500, crystals: 0 }, [HIGH]: { kind: 'Armor.Legs', grade: 'D', ref: 3000, npcBuy: 1500, crystals: 0 },
+            [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 }, [ARROW]: { kind: 'Other.Material', grade: 'D', ref: 1, npcBuy: 0, crystals: 0, weight: 1 } },
+        yields: Object.fromEntries(levels30.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
+        bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
+        recipes: [], npcOffers: { preset: {}, x1: { [LOW]: [{ town: 'TownA', price: 3000 }], [HIGH]: [{ town: 'TownA', price: 2900 }], [ARROW]: [{ town: 'TownA', price: 1 }] } },
+        gearLadder: ladderOf('9', [[1, 30, { 6: { rungs: [LOW], hour: { [LOW]: 28, 0: 20 } }, 10: { rungs: [HIGH], hour: { [HIGH]: 38, 0: 20 } } }]])
+    };
+    world.yieldsDesign = world.yields;
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), base = stubKitHours(world);
+    const arrowed = (hour, kit) => hour && { ...hour, noneArrows: { id: ARROW, units: kit[10] === HIGH ? 15 : 0 } };
+    const bow = {
+        hour: (line, level, kit) => arrowed(base.hour(line, level, kit), kit),
+        swaps: (line, level, kit, pieces) => { const read = base.swaps(line, level, kit, pieces); return { ...read, hour: arrowed(read.hour, kit), swaps: read.swaps.map((swap, at) => ({ ...swap, hour: arrowed(swap.hour, { ...kit, [pieces[at].slot]: pieces[at].selfId }) })) }; },
+        shotScale: base.shotScale
+    };
+    const run = kitHours => Engine.simulate({ view, accounts: [{ id: 31, station: false, classId: 9, line: '9', level: 25, exp: 25e9, money: 4000, spot: null, shots: {}, held: [], worn: {} }],
+        bands: [['all', 1]], rates, hours: 12, seed: 2, design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours }) });
+    assert.equal(Math.round(run(base).flows.perBotHour.npcBuys * 12), -2900, 'without arrows the better piece');
+    const net = run(bow);
+    assert.deepEqual([net.design.goods.totals.fromNpc, Math.round(net.flows.perBotHour.npcBuys * 12)], [1, -3000], 'net of arrows the other piece');
+}
+
 // spot_left: a main holds the spot it chose until its level leaves the spot
 // table's range for its line there, even when the spot drops out of its top
 // spots: it takes A at grade_changed (20), keeps it through 23-26 where B
