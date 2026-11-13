@@ -334,12 +334,6 @@ function printMarket(design, hours) {
     const hf = m.huntFactors;
     console.log(`HUNT FACTORS (the worn kit's kills over the reference kit's that a main's hunt reads) read ${hf.read}, not stated for the form fired (read as 1) ${hf.unstated} (${pct(hf.unstated, hf.read)})`);
     console.log(`PATH pieces no route prices ${m.unpriced || 0}`);
-    console.log('CAP>=FLOOR per grade: static (the best buyer among the lines entering the grade, path kit pieces; floors npc | npc + D crystals at the NPC gear route) under gear_gain / hunt_cycle; dynamic over pieces offered (a WTB in reach whose cap reaches the WTS floor):');
-    for (const [grade, row] of Object.entries(m.capFloorStatic)) {
-        const dyn = m.capFloor[grade];
-        console.log(`  ${grade.padEnd(5)} ${row.pieces} pieces: gear_gain ${pct(row.gear_gain.npc, 1)} | ${pct(row.gear_gain.withD, 1)}; hunt_cycle ${pct(row.hunt_cycle.npc, 1)} | ${pct(row.hunt_cycle.withD, 1)}; `
-            + `hunt-cycle rows at the bound ${pct(row.bounded, 1)}; offered ${dyn ? `${dyn.offered}: gear_gain ${pct(dyn.gear_gain, dyn.offered)}, hunt_cycle ${pct(dyn.hunt_cycle, dyn.offered)}` : '0'}`);
-    }
     console.log(`WORTH caps held at the hunt cycle's bound: ${m.worthBounded}`);
     const windows = [];
     for (let from = 0; from < m.velocity.length; from += 10) {

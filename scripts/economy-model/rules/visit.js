@@ -54,7 +54,7 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // firing (the shot it fires), fires (the ids of the shots its worn weapon
 // fires: held ones are kept, never sold), reserve: { id, amount, cap, own } |
 // null, pieces: { selfId: { selfId, slot, grade, weapon, cap (null: nothing
-// caps it, no want is posted), capBy, caps, routes, own (units its own twin
+// caps it, no want is posted), capBy, routes, own (units its own twin
 // holds), visitsLeft (its expected visits before it stops using the piece),
 // pathRoute (the route path chose for it) } },
 // order: path's money queue, fares: { town: fare },
@@ -254,7 +254,7 @@ function visit(main, view) {
         if (!held) waits.push({ wait: 'wtb', end: 'opened' });
         if (priced.noMarket) { waits.push({ wait: 'wtb', end: 'failed' }); return 'parked'; }
         if (priced.close) { waits.push({ wait: 'wtb', end: 'failed' }); return priced.close; }
-        wtb.push({ ...priced, id: held ? held.id : `${view.adId}:wtb:${item}`, side: 'buy', item, qty: bounds.qty, cap: bounds.cap, capBy: bounds.capBy, caps: bounds.caps || null, town: view.town });
+        wtb.push({ ...priced, id: held ? held.id : `${view.adId}:wtb:${item}`, side: 'buy', item, qty: bounds.qty, cap: bounds.cap, capBy: bounds.capBy, town: view.town });
         return 'open';
     };
     // The cheapest line or ad at or under the cap it can pay.
@@ -423,13 +423,13 @@ function visit(main, view) {
             if (!wtb.some(line => line.item === piece.selfId && line.standing)) {
                 wtb = wtb.filter(line => line.item !== piece.selfId);
                 const priced = step({ side: 'buy', item: piece.selfId, start: piece.cap }, 0, { cap: piece.cap, capBy: piece.capBy, floor: 0, item: piece.selfId }, 'wtb');
-                wtb.push({ ...priced, id: `${view.adId}:wtb:${piece.selfId}`, side: 'buy', item: piece.selfId, qty: 1, cap: piece.cap, capBy: piece.capBy, caps: piece.caps || null, town: view.town, standing: true });
+                wtb.push({ ...priced, id: `${view.adId}:wtb:${piece.selfId}`, side: 'buy', item: piece.selfId, qty: 1, cap: piece.cap, capBy: piece.capBy, town: view.town, standing: true });
                 if (!want) waits.push({ wait: 'wtb', end: 'opened' });
             }
             wants[piece.selfId] = { state: 'wtb', tries: want?.tries || 0 }; continue;
         }
         if (want?.state !== 'route' && !atOnce && !(view.buyerNoSeller === 'standing' && piece.noSeller)) {
-            const result = stepWtb(piece.selfId, { cap: piece.cap, capBy: piece.capBy, caps: piece.caps, floor: 0, known: view.known[piece.selfId] ?? null,
+            const result = stepWtb(piece.selfId, { cap: piece.cap, capBy: piece.capBy, floor: 0, known: view.known[piece.selfId] ?? null,
                 first: view.firstPrice[piece.selfId] ?? piece.cap, qty: 1, item: piece.selfId });
             if (result === 'open') { wants[piece.selfId] = { state: 'wtb', tries: want?.tries || 0 }; continue; }
             if (result === 'parked') { park(); continue; }

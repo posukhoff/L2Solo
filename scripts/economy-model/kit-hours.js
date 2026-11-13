@@ -9,12 +9,10 @@ const { wornKit } = Worth;
 // The seam of a kit's hunt hour:
 // - hour(line, level, kit) -> hour | null: the hunt hour of the line's main
 //   at that level wearing that kit; null when it cannot be stated.
-// - swaps(line, level, kit, pieces) -> { hour, numbers, caster, deathHours,
-//   swaps: [{ hour, numbers }] }: the worn kit's hour and numbers (the hunt
-//   cycle's reference numbers), the body's caster mark and death hours, and
-//   per piece ({ slot, selfId }) the hour and numbers of the kit with the
-//   piece put on in its slot (taking off what it cannot be worn with); hour
-//   and numbers null where a kit cannot be stated.
+// - swaps(line, level, kit, pieces) -> { hour, swaps: [{ hour }] }: the
+//   worn kit's hour and per piece ({ slot, selfId }) the hour of the kit with
+//   the piece put on in its slot (taking off what it cannot be worn with);
+//   hour null where a kit cannot be stated.
 // - shotScale(line, level, spotId, weapon, blessed) -> the shots the weapon
 //   fires at a spot row of the line at that level over the row's own count,
 //   the row's plain shots or its Blessed Spiritshots (blessed); null
@@ -214,8 +212,8 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     // A shot the anchor has no price for (no route makes it) is no option for
     // the spot choice: null. A price of 0 is a free shot.
     const anchorOf = id => (anchor[id] === null || anchor[id] === undefined || !Number.isFinite(Number(anchor[id])) ? null : Math.max(0, Number(anchor[id])));
-    // (line, band index) -> its bare reference bot, best spot, caster mark
-    // (the band's, as the snapshot states it) and death hours (the exp a death
+    // (line, band index) -> its bare reference bot, best spot and
+    // death hours (the exp a death
     // loses and the walk back: no kit reads), null without a best spot.
     const bots = new Map();
     // (line, band index, option, shot fired, regeneration terms) -> its cells, null without one.
@@ -228,8 +226,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
             const best = Table.best(line, band.level, true, 'income');
             if (best && String(best.spotId) !== String(band.best)) throw new Error(`kit hours: line ${line} band ${at} (level ${band.level}) has best spot ${band.best} in the snapshot and ${best.spotId} in the live game; extract the snapshot again (scripts/economy-model/inputs.js)`);
             const bot = best ? referenceBot(owners, line, band.level, []) : null;
-            bots.set(key, best ? { best, bot, caster: band.caster === true,
-                deathHours: Valuation.deathHours(bot, { expPerHour: best.exp || 0, walkBackHours: DesignIncome.walkBackHours(best.spotId, bot) }) } : null);
+            bots.set(key, best ? { best, bot, deathHours: Valuation.deathHours(bot, { expPerHour: best.exp || 0, walkBackHours: DesignIncome.walkBackHours(best.spotId, bot) }) } : null);
         }
         return bots.get(key);
     };
@@ -335,13 +332,13 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     };
     // A worn list's hour and numbers by a whole profile pass, with the body
     // wearing it and its regeneration terms (hour null: not stated).
-    const NONE = Object.freeze({ hour: null, numbers: null });
+    const NONE = Object.freeze({ hour: null });
     const pass = (line, at, band, held, worn) => {
         stats.fresh++;
         if (!held || !stated(worn, band)) return NONE;
         const state = stateOf(held, worn), profile = Profile.profileFor(state, 0, { store: false }), regen = regenOf(state, profile);
         const numbers = referenceNumbers(profile), hour = hourOf(cellsOf(line, at, band, held, worn, regen, () => state), numbers, band.scale);
-        return hour ? { hour, numbers, state, regen } : NONE;
+        return hour ? { hour, state, regen } : NONE;
     };
     const hour = (line, level, kit) => {
         const found = bandOf(line, level);
@@ -355,15 +352,15 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     // with, or any piece over a kit not stated, takes its own whole pass.
     const swaps = (line, level, kit, pieces) => {
         const found = bandOf(line, level), held = found && botOf(line, found.at, found.band);
-        const out = { hour: null, numbers: null, caster: held?.caster ?? false, deathHours: held?.deathHours ?? 0, swaps: pieces.map(() => NONE) };
+        const out = { hour: null, swaps: pieces.map(() => NONE) };
         if (!held) return out;
         const { at, band } = found, worn = wornKit(kit), base = pass(line, at, band, held, worn);
         let candidates = null;
-        out.hour = base.hour; out.numbers = base.numbers;
+        out.hour = base.hour;
         out.swaps = pieces.map(({ slot, selfId }) => {
             stats.swaps++;
             const next = wornKit(Object.fromEntries([...worn.filter(([s]) => !Worth.slotsConflict(slot, s)), [slot, selfId]]));
-            if (next.length === worn.length && next.every(([s, id], i) => s === worn[i][0] && id === worn[i][1])) return base.hour === null ? NONE : { hour: base.hour, numbers: base.numbers };
+            if (next.length === worn.length && next.every(([s, id], i) => s === worn[i][0] && id === worn[i][1])) return base.hour === null ? NONE : { hour: base.hour };
             if (base.hour === null || !stated(next, band)) return pass(line, at, band, held, next);
             const kept = new Set(next.map(([s, id]) => `${s}:${id}`)), added = next.filter(([s, id]) => !worn.some(([ws, wid]) => ws === s && wid === id));
             const off = new Set(worn.filter(([s, id]) => !kept.has(`${s}:${id}`)).map(([s]) => s));
@@ -372,7 +369,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
             if (!after.equipment) stats.fast++;
             const terms = after.equipment ? regenOf(stateOf(held, next), after) : base.regen;
             const numbers = referenceNumbers(after), hour = hourOf(cellsOf(line, at, band, held, next, terms, () => stateOf(held, next)), numbers, band.scale);
-            return hour ? { hour, numbers } : NONE;
+            return hour ? { hour } : NONE;
         });
         return out;
     };

@@ -320,7 +320,7 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
     near(cheap.net, blessed.gross - blessed.units * 81, 'the blessed net');
     near(cheap.worth, (blessed.gross - Math.max(hour.none, spirit.gross - spirit.units * 29.5)) / blessed.units, 'its worth against the plain kind');
     assert.ok(at(29.5, cheap.worth - 1).id === BSPSC && at(29.5, cheap.worth + 1).id === SPSC, 'at its worth the choice turns');
-    assert.equal(Worth.netRow({ hour, gear: 0 }, id => (id === SPSC ? 29.5 : 2 * cheap.worth)).hour, dear.net, 'a kit row nets the same answer');
+    assert.equal(Worth.netRow({ hour }, id => (id === SPSC ? 29.5 : 2 * cheap.worth)).hour, dear.net, 'a kit row nets the same answer');
     // The hunt's count of each kind is the hour's: at the kind's cell the
     // row's shots times the weapon's scale (the blessed row's own reference
     // count for Blessed Spiritshots) are the units the hour states.
@@ -381,12 +381,12 @@ assert.equal(read.swaps[5].hour, read.hour, 'the piece worn: the worn kit\'s hou
 
 // (10) A robe wearer at 39 (the Knowledge robes of its kit) loses its hour
 // to a heavy breastplate: its robe passives end with the robe, though the
-// plate's P.Def alone suggests a gain (its gear gain times the worn hour).
+// plate's P.Def alone would suggest a gain.
 {
     const robes = kitOf(mage, 39), read = kitHours.swaps(mage, 39, robes, [{ slot: 10, selfId: 58 }]), rows = Worth.swapRows(read), priceOf = id => anchor[id];
     const worn = Worth.netRow(rows.worn, priceOf), plate = Worth.netRow(rows.rows[0], priceOf);
-    const gain = plate.hour - worn.hour, byStats = plate.gear * worn.hour;
-    assert.ok(gain < 0 && byStats > 0, `the plate on robes: ${gain} an hour, its P.Def alone ${byStats}`);
+    const gain = plate.hour - worn.hour;
+    assert.ok(gain < 0, `the plate on robes: ${gain} an hour`);
 }
 
 // (11) A piece above the band's grade: no hour stated, alone or put on.

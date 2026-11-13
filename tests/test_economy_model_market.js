@@ -172,7 +172,7 @@ const viewOf = (patch = {}) => ({
     now: 1, town: 'Giran', adId: 'a1', persona: { looksToFloor: 3, buyerStart: 0.8 }, roll: 7, items,
     book: { sell: {}, buy: {}, bids: {} }, npcSell: {}, known: {}, firstPrice: { 100: 4000, 300: 10 }, deposit: {}, depositFee: 30, twin: null, firing: 300,
     reserve: null, fares: {}, waitVisits: 2,
-    pieces: { 100: { selfId: 100, slot: 7, grade: 'd', weapon: true, cap: 5000, capBy: 'npc', caps: null, routes: [{ route: 'npc', adena: 5000, cost: 5000, where: 'Giran' }] } },
+    pieces: { 100: { selfId: 100, slot: 7, grade: 'd', weapon: true, cap: 5000, capBy: 'npc', routes: [{ route: 'npc', adena: 5000, cost: 5000, where: 'Giran' }] } },
     order: [{ kind: 'piece', selfId: 100, slot: 7 }, { kind: 'reserve' }],
     ...patch
 });
@@ -217,7 +217,7 @@ const viewOf = (patch = {}) => ({
 }
 {
     // A paired item (two rings) is wanted twice: one piece a slot, worn in both with the money for two.
-    const ring = { selfId: 102, slot: 4, grade: 'd', weapon: false, cap: 900, capBy: 'npc', caps: null, routes: [{ route: 'npc', adena: 800, cost: 800, where: 'Giran' }] };
+    const ring = { selfId: 102, slot: 4, grade: 'd', weapon: false, cap: 900, capBy: 'npc', routes: [{ route: 'npc', adena: 800, cost: 800, where: 'Giran' }] };
     const pair = { pieces: { 102: ring }, order: [{ kind: 'piece', selfId: 102, slot: 4 }, { kind: 'piece', selfId: 102, slot: 5 }], firstPrice: { 102: 800 } };
     const rich = visit(mainOf({ money: 5000, kit: { 4: 0, 5: 0 } }), viewOf(pair));
     assert.deepEqual([rich.main.kit[4], rich.main.kit[5], rich.main.money], [102, 102, 3400], 'two rings worn for two prices');
@@ -381,36 +381,30 @@ const viewOf = (patch = {}) => ({
 // A rung's worth from the gear ladder: the hunt hour with it minus the hour
 // with the worn piece, in adena an hour (never a share of the worn hour),
 // times the hours worn, plus its resale; held to gainBound times the own
-// hour and counted; gear_gain (the design's text): the gear shares' gain
-// times the own hour.
+// hour and counted.
 {
-    const rung = { hour: 1500, gear: 0.3 }, worn = { hour: 1000, gear: 0.1 };
-    assert.deepEqual(Worth.rungWorth({ formula: 'hunt_cycle', rung, worn, useHours: 10, ownHour: 800, gainBound: 1 }), { adena: 5000, perHour: 500, bounded: false }, '500 an hour x 10 h');
-    assert.equal(Worth.rungWorth({ formula: 'gear_gain', rung, worn, useHours: 10, ownHour: 800, gainBound: 1 }).adena, 0.2 * 800 * 10, '0.2 x 800 x 10');
-    const thin = Worth.rungWorth({ formula: 'hunt_cycle', rung: { hour: 1000, gear: 0 }, worn: { hour: -20000, gear: 0 }, useHours: 10, ownHour: 500, gainBound: 1, resale: 70 });
+    const rung = { hour: 1500 }, worn = { hour: 1000 };
+    assert.deepEqual(Worth.rungWorth({ rung, worn, useHours: 10, ownHour: 800, gainBound: 1 }), { adena: 5000, perHour: 500, bounded: false }, '500 an hour x 10 h');
+    const thin = Worth.rungWorth({ rung: { hour: 1000 }, worn: { hour: -20000 }, useHours: 10, ownHour: 500, gainBound: 1, resale: 70 });
     assert.deepEqual([thin.adena, thin.bounded], [5070, true], 'a dying worn kit: the gain held to one own hour an hour, counted');
     // A weak worn kit still earns at an easier spot: 400 an hour, not a share of 10.
-    assert.equal(Worth.rungWorth({ formula: 'hunt_cycle', rung: { hour: 410, gear: 0 }, worn: { hour: 10, gear: 0 }, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 4000);
-    assert.equal(Worth.rungWorth({ formula: 'hunt_cycle', rung: { hour: 900, gear: 0 }, worn, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 0, 'a rung that lowers the hour');
-    assert.deepEqual(Worth.rungWorth({ formula: 'hunt_cycle', rung, worn, useHours: 10, ownHour: 0, gainBound: 1, resale: 70 }), { adena: 70, perHour: 0, bounded: true }, 'no own hour: no gain an hour, the resale');
-    assert.equal(Worth.rungWorth({ formula: 'hunt_cycle', rung: null, worn, useHours: 10, ownHour: 500, gainBound: 1 }).adena, null, 'no row, no worth');
+    assert.equal(Worth.rungWorth({ rung: { hour: 410 }, worn: { hour: 10 }, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 4000);
+    assert.equal(Worth.rungWorth({ rung: { hour: 900 }, worn, useHours: 10, ownHour: 500, gainBound: 1 }).adena, 0, 'a rung that lowers the hour');
+    assert.deepEqual(Worth.rungWorth({ rung, worn, useHours: 10, ownHour: 0, gainBound: 1, resale: 70 }), { adena: 70, perHour: 0, bounded: true }, 'no own hour: no gain an hour, the resale');
+    assert.equal(Worth.rungWorth({ rung: null, worn, useHours: 10, ownHour: 500, gainBound: 1 }).adena, null, 'no row, no worth');
 }
 
-// worthHorizon: an NPC-sold weapon (NPC 1000k, resale 500k at the NPC's
-// buy price) whose hunt-hour gain is 10k an hour. Under the design's text
-// its cap falls with the hours left in the grade (to 100k at 10 h, 0 at the
-// end); under use_plus_resale it never falls under its resale while the
-// main can use it, and reaches the NPC at 50 h of use.
+// The worth horizon: an NPC-sold weapon (NPC 1000k, resale 500k at the NPC's
+// buy price) whose hunt-hour gain is 10k an hour. Its cap never falls under
+// its resale while the main can use it, and reaches the NPC at 50 h of use.
 {
-    const rung = { hour: 30000, gear: 0 }, worn = { hour: 20000, gear: 0 }, npc = 1000000, resale = 500000;
-    const capAt = (reading, hours) => {
-        const h = Worth.horizon({ reading, gradeHours: hours, useHours: null, resale });
-        return Bounds.cap({ worth: Worth.rungWorth({ formula: 'hunt_cycle', rung, worn, useHours: h.hours, ownHour: 20000, gainBound: 1, resale: h.resale }).adena, npcSell: npc }).cap;
+    const rung = { hour: 30000 }, worn = { hour: 20000 }, npc = 1000000, resale = 500000;
+    const capAt = hours => {
+        const h = Worth.horizon({ gradeHours: hours, useHours: null, resale });
+        return Bounds.cap({ worth: Worth.rungWorth({ rung, worn, useHours: h.hours, ownHour: 20000, gainBound: 1, resale: h.resale }).adena, npcSell: npc }).cap;
     };
-    assert.deepEqual([100, 10, 0].map(hours => capAt('grade_stage', hours)), [npc, 100000, 0], 'the design\'s text: the cap falls to nothing');
-    assert.deepEqual([100, 50, 10, 0].map(hours => capAt('use_plus_resale', hours)), [npc, npc, 600000, 500000], 'never under the resale');
-    assert.equal(Worth.horizon({ reading: 'use_plus_resale', gradeHours: 8, useHours: 30, resale }).hours, 30, 'worn on past its grade\'s end');
-    assert.equal(Worth.horizon({ reading: 'grade_stage', gradeHours: 8, useHours: 30, resale }).hours, 8);
+    assert.deepEqual([100, 50, 10, 0].map(capAt), [npc, npc, 600000, 500000], 'never under the resale');
+    assert.equal(Worth.horizon({ gradeHours: 8, useHours: 30, resale }).hours, 30, 'worn on past its grade\'s end');
 }
 
 // path over the gear ladder: a slot's candidates (best first) are its
@@ -491,8 +485,8 @@ const viewOf = (patch = {}) => ({
 // Luxury or own twin) gets one WTB at its cap that stands unstepped while the
 // queue moves on to the next piece. 'ladder' (the design's text) starts its WTB low.
 {
-    const cWeapon = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 2400000, capBy: 'worth', caps: null, routes: [], noSeller: true };
-    const armour = { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 6000, capBy: 'npc', caps: null, routes: [{ route: 'npc', adena: 5000, cost: 5000, where: 'Giran' }] };
+    const cWeapon = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 2400000, capBy: 'worth', routes: [], noSeller: true };
+    const armour = { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 6000, capBy: 'npc', routes: [{ route: 'npc', adena: 5000, cost: 5000, where: 'Giran' }] };
     const order = [{ kind: 'reserve' }, { kind: 'piece', selfId: 100, slot: 7 }, { kind: 'piece', selfId: 101, slot: 10 }];
     const standingView = viewOf({ pieces: { 100: cWeapon, 101: armour }, order, buyerNoSeller: 'standing', book: { sell: { 101: [{ owner: 5, id: 'L5', price: 4500, qty: 1, kind: 'line' }] }, buy: {}, bids: {} } });
     let out = visit(mainOf(), standingView);
@@ -507,7 +501,7 @@ const viewOf = (patch = {}) => ({
 // its own twin's route first (no money) and the NPC at 450k next, the main
 // keeps 450k and the rest goes to the twin's wallet.
 {
-    const axe = { selfId: 100, slot: 7, grade: 'd', weapon: true, cap: 500000, capBy: 'route', caps: null,
+    const axe = { selfId: 100, slot: 7, grade: 'd', weapon: true, cap: 500000, capBy: 'route',
         routes: [{ route: 'twin', adena: 0, cost: 300000 }, { route: 'npc', adena: 450000, cost: 450000, where: 'Giran' }] };
     const out = visit(mainOf({ money: 600000, kit: { 7: 5 }, weapon: 5 }), viewOf({ pieces: { 100: axe }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], twin: { wallet: 0, escrow: 0, inputs: 0, workshopMoney: 'with_reserve' } }));
     assert.deepEqual([out.main.money, out.wallet], [450000, 150000 - 30], 'the piece\'s 450k stays with the main (the deposit fee from the wallet)');
@@ -517,7 +511,7 @@ const viewOf = (patch = {}) => ({
 // crystal of the row: 60 C and 300 D the twin holds, none on a line here,
 // take the exchange; with the D ones only it takes nothing.
 {
-    const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null,
+    const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route',
         routes: [{ route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1459, amount: 60, perCrystal: 300 }, { selfId: 1458, amount: 300, perCrystal: 100 }] }] };
     const view = viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], ownCrystals: { 1459: 60, 1458: 300 } });
     const out = visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }), view);
@@ -532,7 +526,7 @@ const viewOf = (patch = {}) => ({
 // bought there, nothing is stalled, and path reads the aim again at the
 // main's next arrival; with no line, no ladder step is taken.
 {
-    const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [], pathRoute: 'exchange' };
+    const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', routes: [], pathRoute: 'exchange' };
     const line = [{ owner: 5, id: 'L5', price: 4500, qty: 1, kind: 'line' }];
     const out = visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }),
         viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], book: { sell: { 100: line }, buy: {}, bids: {} } }));
@@ -549,8 +543,8 @@ const viewOf = (patch = {}) => ({
 // a crystal (it is weighed again at the next arrival).
 {
     const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1458, amount: 300, perCrystal: 100 }] };
-    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
-        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
+    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', routes: [exchange] },
+        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', routes: [exchange] } };
     const crystals = [{ owner: 5, id: 'C5', price: 100, qty: 300, kind: 'line' }, { owner: 6, id: 'C6', price: 1000, qty: 300, kind: 'line' }];
     const out = visit(mainOf({ money: 1e6, kit: { 7: 0, 10: 0 }, wants: { 100: { state: 'route', tries: 0 }, 101: { state: 'route', tries: 0 } } }),
         viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }, { kind: 'piece', selfId: 101, slot: 10 }], book: { sell: { 1458: crystals }, buy: {}, bids: {} } }));
@@ -562,8 +556,8 @@ const viewOf = (patch = {}) => ({
 // (the twin's stock never goes below 0).
 {
     const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1458, amount: 300, perCrystal: 100 }] };
-    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
-        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
+    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', routes: [exchange] },
+        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', routes: [exchange] } };
     const out = visit(mainOf({ money: 1e6, kit: { 7: 0, 10: 0 }, wants: { 100: { state: 'route', tries: 0 }, 101: { state: 'route', tries: 0 } } }),
         viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }, { kind: 'piece', selfId: 101, slot: 10 }], ownCrystals: { 1458: 300 } }));
     assert.equal(out.claims.filter(row => row.kind === 'own_stock').reduce((sum, row) => sum + row.units, 0), 300, 'the twin holds 300 crystals: no more are claimed from it');
@@ -575,9 +569,9 @@ const viewOf = (patch = {}) => ({
 // all (never the same 450 twice) and all three pieces are worn.
 {
     const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1458, amount: 300, perCrystal: 100 }] };
-    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
-        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
-        102: { selfId: 102, slot: 11, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
+    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', routes: [exchange] },
+        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', routes: [exchange] },
+        102: { selfId: 102, slot: 11, grade: 'c', weapon: false, cap: 90000, capBy: 'route', routes: [exchange] } };
     const lines = [{ owner: 5, id: 'C5', price: 100, qty: 450, kind: 'line' }];
     const out = visit(mainOf({ money: 1e6, kit: { 7: 0, 10: 0, 11: 0 }, wants: { 100: { state: 'route', tries: 0 }, 101: { state: 'route', tries: 0 }, 102: { state: 'route', tries: 0 } } }),
         viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }, { kind: 'piece', selfId: 101, slot: 10 }, { kind: 'piece', selfId: 102, slot: 11 }], ownCrystals: { 1458: 450 }, book: { sell: { 1458: lines }, buy: {}, bids: {} } }));
@@ -599,7 +593,7 @@ const viewOf = (patch = {}) => ({
 // and leaves the weapon at its route; an unarmed main whose weapon comes
 // first in the queue still refills after it.
 {
-    const weaponRoute = { 100: { selfId: 100, slot: 7, grade: 'd', weapon: true, cap: 1060000, capBy: 'npc', caps: null, routes: [{ route: 'npc', adena: 1060000, cost: 1060000, where: 'Giran' }] } };
+    const weaponRoute = { 100: { selfId: 100, slot: 7, grade: 'd', weapon: true, cap: 1060000, capBy: 'npc', routes: [{ route: 'npc', adena: 1060000, cost: 1060000, where: 'Giran' }] } };
     const reserve = { id: 300, amount: 3000, cap: 8, capBy: 'npc', own: 0 };
     const kit = [{ slot: 7, group: 'weapon', worn: 5, held: false, candidates: [{ selfId: 100, slot: 7 }] }];
     const armedView = { kit, weapons: { 100: true }, routes: { 100: { route: 'npc', cost: 1060000 } }, worth: { 100: 2000000 }, reserve: 24000 };
@@ -728,7 +722,7 @@ const viewOf = (patch = {}) => ({
 {
     // A slot's piece takes off what it cannot be worn with, into the bag: a
     // full armour (15) the chest and legs, a chest or legs piece the full armour.
-    const armour = slot => ({ selfId: slot * 10, slot, grade: 'd', weapon: false, cap: 900, capBy: 'npc', caps: null, routes: [] });
+    const armour = slot => ({ selfId: slot * 10, slot, grade: 'd', weapon: false, cap: 900, capBy: 'npc', routes: [] });
     const pieces = { 150: armour(15), 100: viewOf().pieces[100], 101: armour(10), 111: armour(11) };
     const wear = (kit, bag, slot, id) => visit(mainOf({ kit: { 7: 0, ...kit }, bag }), viewOf({ pieces, order: [{ kind: 'piece', selfId: id, slot }] })).main;
     const full = wear({ 10: 101, 11: 111 }, { 150: 1 }, 15, 150);

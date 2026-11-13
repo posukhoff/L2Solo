@@ -86,7 +86,7 @@ const NOTES = Object.freeze([
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
     'upkeep[line][level] lists the items a line\'s servitor costs a player per hunt hour (the game spares bots): [{ id, perHour, what: { skill, level, name } }], the summons its reference bot\'s cold fight casts, at the busy share of the level\'s best row; a line or level without such a cost has no entry.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
-    'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot, caster (BotImprovementPolicy.isCaster of the line\'s body there) and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
+    'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
 ]);
 
 function readJson(relative) {
@@ -202,7 +202,6 @@ function gameOwners() {
         StoreLimits: require('../../src/GameServer/PrivateStoreLimits'),
         Inventory: require('../../src/GameServer/Inventory/InventoryLimits'),
         Valuation: invoke('GameServer/Bot/Economy/EconomicValuation'),
-        Caster: invoke('GameServer/Bot/Economy/BotImprovementPolicy'),
         Grades: require('../../src/GameServer/Bot/AI/GearGradeRule'),
         Exchange: require('../../src/GameServer/World/Generics/NpcExchangeShopLists'),
         Towns: require('../../src/GameServer/World/TownRespawn')
@@ -280,12 +279,10 @@ function ladderBands(owners) {
 // class's per-slot ladder without dominated pieces, best first): the rungs a
 // main of the band may buy (its grade and below), the band's middle level
 // and grade, the line's best spot there (its money scales the band's kit
-// hours to the design's, extract) and whether the line's body there weighs
-// a piece's attack by M.Atk (BotImprovementPolicy.isCaster, today's gear
-// gain's caster).
-// [{ from, to, level, grade, best, caster, rungs: { group: [selfId] } }].
+// hours to the design's, extract).
+// [{ from, to, level, grade, best, rungs: { group: [selfId] } }].
 function gearLadder(line, owners, gearTable, bands) {
-    const { Table, Grades, Caster } = owners, out = [];
+    const { Table, Grades } = owners, out = [];
     const rankOf = new Map(gearTable.items.map(row => [Number(row[0]), Grades.rankOf(row[4])]));
     for (const [from, to] of bands) {
         const level = Math.floor((from + to) / 2), grade = Grades.gradeForLevel(level), rank = Grades.rankOf(grade);
@@ -293,7 +290,7 @@ function gearLadder(line, owners, gearTable, bands) {
         if (!best || !gearClass) continue;
         const rungs = {};
         for (const [group, ladder] of Object.entries(gearClass.slots)) rungs[group] = ladder.map(([selfId]) => Number(selfId)).filter(selfId => rankOf.get(selfId) <= rank);
-        out.push({ from, to, level, grade, best: String(best.spotId), caster: Caster.isCaster(KitHours.referenceBot(owners, line, level, [])), rungs });
+        out.push({ from, to, level, grade, best: String(best.spotId), rungs });
     }
     return out;
 }

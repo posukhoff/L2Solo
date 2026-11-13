@@ -29,8 +29,8 @@ function place(books, owner, town, lines, bids) {
     const placed = [], book = books.towns[town] ||= { sell: {}, buy: {}, bids: {} };
     const add = (side, key, line) => {
         if (!(line.qty > 0)) return;
-        // An ad keeps the town it was posted in, a WTB its caps, a WTS its floor.
-        const entry = { owner, id: line.id, price: line.price, qty: line.qty, town: line.town || town, caps: line.caps || null, floor: line.floor ?? null }, rows = book[side][key] ||= [];
+        // An ad keeps the town it was posted in, a WTS its floor.
+        const entry = { owner, id: line.id, price: line.price, qty: line.qty, town: line.town || town, floor: line.floor ?? null }, rows = book[side][key] ||= [];
         rows.push(entry);
         rows.sort(side === 'sell' ? (a, b) => a.price - b.price || a.owner - b.owner : (a, b) => b.price - a.price || a.owner - b.owner);
         placed.push({ town, side, key, entry });
