@@ -40,9 +40,9 @@ const MIN_UNITS = 30;
 const DROP_CLASSES = Object.freeze(['material', 'weapon', 'armor', 'jewel']);
 // Today's flows: the ledger path and why the model differs.
 const TODAY_ROWS = Object.freeze([
-    { path: 'flows.perBotHour.fixedBuyers', why: 'real bots start with 2.0B of stock the fixed buyers take and carry stock to buyer towns; the model starts with empty bags' },
+    { path: 'flows.perBotHour.fixedBuyers', why: 'real bots start with stock the fixed buyers take and carry stock to buyer towns; the model starts with empty bags' },
     { path: 'flows.perBotHour.npcSales', why: 'real bots keep part of their materials; the model sells the whole bag' },
-    { path: 'flows.perBotHour.npcBuys', why: 'bands 40-75 buy D gear at the NPC for today\'s gear improvement; the model buys kit pieces only' },
+    { path: 'flows.perBotHour.npcBuys', why: 'real bots buy gear at the NPC for today\'s gear improvement; the model buys kit pieces only' },
     { path: 'flows.perBotHour.fixedSellers', why: 'today\'s funding rules hold shot buying back; the model restocks the shots of its hunting rate x the outing' },
     { path: 'flows.fixedBuyerShareOfFaucets', why: 'follows the fixed buyers' },
     { path: 'money.growthPerHour', why: 'follows the four flows above' },
