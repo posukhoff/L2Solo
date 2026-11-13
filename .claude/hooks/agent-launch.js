@@ -12,7 +12,7 @@ let raw = '';
 process.stdin.on('data', c => raw += c).on('end', () => {
     let t; try { t = JSON.parse(raw).tool_input || {}; } catch (_) { return; }
     if (t.subagent_type === 'fork') return;
-    const miss = ['model', 'effort'].filter(k => !t[k]);
+    const miss = /^l2-/.test(t.subagent_type || '') ? [] : ['model', 'effort'].filter(k => !t[k]); // a typed role launch takes both from its definition
     const second = /second attempt|attempt 2\b/i.test(`${t.description || ''} ${String(t.prompt || '').slice(0, 400)}`);
     const why = miss.length ? `name ${miss.join(' and ')} on this launch as the role's definition gives them (/Users/iposukhoff/L2Solo/.claude/agents/l2-<role>.md frontmatter; its description says when to pass another); for an agent with no role: opus high for reading and judging, sonnet medium for work a plan fixes`
         : /fable/i.test(t.model) && !(second && t.effort === 'medium') ? 'fable only as a second attempt at medium effort: say "second attempt" in the description and what the first one failed on'
