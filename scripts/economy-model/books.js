@@ -16,9 +16,9 @@ function create() {
 
 function remove(books, owner) {
     for (const { town, side, key, entry } of books.placed.get(owner) || []) {
-        const rows = books.towns[town][side][key], at = rows.indexOf(entry);
-        if (at >= 0) rows.splice(at, 1);
-        if (!rows.length) delete books.towns[town][side][key];
+        const rows = books.towns[town][side][key].filter(row => row !== entry);
+        if (rows.length) books.towns[town][side][key] = rows;
+        else delete books.towns[town][side][key];
     }
     books.placed.delete(owner);
 }
@@ -30,9 +30,9 @@ function place(books, owner, town, lines, bids) {
     const add = (side, key, line) => {
         if (!(line.qty > 0)) return;
         // An ad keeps the town it was posted in, a WTS its floor.
-        const entry = { owner, id: line.id, price: line.price, qty: line.qty, town: line.town || town, floor: line.floor ?? null }, rows = book[side][key] ||= [];
-        rows.push(entry);
-        rows.sort(side === 'sell' ? (a, b) => a.price - b.price || a.owner - b.owner : (a, b) => b.price - a.price || a.owner - b.owner);
+        const entry = { owner, id: line.id, price: line.price, qty: line.qty, town: line.town || town, floor: line.floor ?? null };
+        book[side][key] = [...(book[side][key] || []), entry]
+            .sort(side === 'sell' ? (a, b) => a.price - b.price || a.owner - b.owner : (a, b) => b.price - a.price || a.owner - b.owner);
         placed.push({ town, side, key, entry });
     };
     for (const line of lines) add(line.side, line.item, line);

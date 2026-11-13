@@ -379,7 +379,9 @@ function main(argv) {
     const picked = designMode ? designOf(argv, snapshot) : null;
     const cohort = picked ? picked.cohort : cohortOf(argv, snapshot);
     const { view, rates } = picked || modeOf(argv, snapshot, cohort);
-    console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)})`);
+    const fallbacks = snapshot.fallbacks;
+    console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)}); fallbacks: `
+        + `no no-grade market (the C town) ${fallbacks.noMarketToC.length} spots, walk back 0 ${fallbacks.walkBackZero.length} spots`);
     console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}`);
     const began = Date.now();
     const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: picked ? null : Today.nextArrival,

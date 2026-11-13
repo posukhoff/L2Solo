@@ -263,4 +263,35 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
     }
 }
 
+// The snapshot names every fallback it took: the spots with no no-grade
+// market near their centre (they get the C town) and the spots whose walk
+// back is 0.
+const Policy = invoke('GameServer/Bot/Economy/MarketTownPolicy'), centreAt = cards.spotFields.indexOf('center');
+const unmarketed = cards.spots.filter(row => !Policy.nearestNoGradeMarket({ locX: row[centreAt][0], locY: row[centreAt][1] })).map(row => String(row[0]));
+assert.deepEqual(snapshot.fallbacks.noMarketToC, unmarketed, 'every spot with no no-grade market is named');
+for (const id of unmarketed) assert.equal(snapshot.tradeTowns.none[id], snapshot.tradeTowns.higher, `spot ${id} falls back to the C town`);
+assert.deepEqual(snapshot.fallbacks.walkBackZero, Object.keys(snapshot.walkBack).filter(id => !(snapshot.walkBack[id] > 0)), 'every spot with walk back 0 is named');
+console.log(`  fallbacks: no no-grade market ${unmarketed.length} spots, walk back 0 ${snapshot.fallbacks.walkBackZero.length} spots`);
+
+// The real cards take neither fallback today, so each is taken here: the
+// first card's centre has no market, and one other spot has walk back 0. The
+// snapshot names exactly those spots, and the no-market one gets the C town.
+const noMarketCentre = cards.spots[0][centreAt], sharing = cards.spots.filter(row => row[centreAt][0] === noMarketCentre[0] && row[centreAt][1] === noMarketCentre[1]).map(row => String(row[0]));
+const zeroId = Object.keys(snapshot.walkBack).find(id => snapshot.walkBack[id] > 0 && !sharing.includes(id));
+const nearestMarket = Policy.nearestNoGradeMarket, walkBackHours = DesignIncome.walkBackHours;
+let taken;
+try {
+    Policy.nearestNoGradeMarket = spot => (spot.locX === noMarketCentre[0] && spot.locY === noMarketCentre[1] ? null : nearestMarket(spot));
+    DesignIncome.walkBackHours = (id, ...rest) => (id === zeroId ? 0 : walkBackHours(id, ...rest));
+    taken = Inputs.extract({ preset: 'x50', lines: [line, '2', caster], levels: [level, level] });
+} finally {
+    Policy.nearestNoGradeMarket = nearestMarket;
+    DesignIncome.walkBackHours = walkBackHours;
+}
+assert.deepEqual(taken.fallbacks.noMarketToC, sharing, 'the spots whose centre has no no-grade market are named');
+for (const id of sharing) assert.equal(taken.tradeTowns.none[id], taken.tradeTowns.higher, `spot ${id} gets the C town`);
+assert.deepEqual(taken.fallbacks.walkBackZero, [zeroId], 'the one spot with walk back 0 is named');
+assert.equal(taken.walkBack[zeroId], 0);
+console.log(`  fallbacks taken: no market ${sharing.join(' ')}, walk back 0 ${zeroId}`);
+
 console.log('PASS economy model inputs snapshot');

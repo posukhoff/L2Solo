@@ -47,7 +47,9 @@ const run = (seed, hours = 3) => Engine.simulate({ view: Engine.viewOf(snapshot)
 // fixture's 40-hour ledger hashes to the value recorded before the design
 // mode existed.
 const crypto = require('node:crypto');
-assert.equal(crypto.createHash('sha256').update(JSON.stringify(run(3, 40))).digest('hex'), 'f967b88774812b242c2a36942f85a741ede11bf1005c5e8e65c8889751d6ab99',
+// The failure counters added since are left out of the hash: every other number is as before.
+const pinned = out => { const { arrivalNotAhead, unlevelableMains, ...counters } = out.counters; return { ...out, counters }; };
+assert.equal(crypto.createHash('sha256').update(JSON.stringify(pinned(run(3, 40)))).digest('hex'), 'f967b88774812b242c2a36942f85a741ede11bf1005c5e8e65c8889751d6ab99',
     'the ledger without the design mode is unchanged');
 
 // The same seed gives the same ledger; another seed rolls other drops.
@@ -215,5 +217,21 @@ const main = Engine.mainOf(accounts[0], 0, Engine.viewOf(snapshot), bands);
 const frozen = JSON.stringify(main);
 Engine.hunt(main, Engine.viewOf(snapshot), 2, () => 0.5);
 assert.equal(JSON.stringify(main), frozen);
+
+// No failure passes unseen: an arrival answer at or before now is dropped and
+// counted, a main below the max level that can never level is counted once,
+// an event of an unknown kind throws naming its kind.
+const late = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: (main, state) => state.now });
+assert.equal(late.counters.arrivalNotAhead, 2, 'the start and the level-up at 2 h each answered now');
+assert.equal(late.counters.visits, 0, 'a dropped answer sends nobody');
+for (const bad of [undefined, NaN, Infinity, { at: undefined, read: true }]) {
+    assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, nextArrival: () => bad }),
+        new RegExp(`arrival rule answered ${typeof bad === 'object' ? '\\{' : String(bad)}.* for main 1 at 0 h \\(start\\)`), `an answer of ${JSON.stringify(bad) ?? 'undefined'} throws naming the main`);
+}
+const idle = Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates: { default: { huntShare: 0, visitsPerBotHour: 0 } }, hours: 3, seed: 7, nextArrival: () => null });
+assert.equal(idle.counters.unlevelableMains, 1, 'the hunting main with no hunting share never levels; the station is not a hunting main');
+assert.equal(run(3, 40).counters.unlevelableMains, 0, 'a main that levels is not counted');
+const bogus = { sinks: [], start: ({ push }) => { push({ at: 0.5, kind: 'bogus', who: 0 }); return { nextArrival: () => null, kills: () => null, firing: () => null, hunt() {}, hour: () => 0 }; } };
+assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, design: bogus }), /unknown kind: bogus/);
 
 console.log('economy model engine: ok');

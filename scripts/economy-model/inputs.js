@@ -86,6 +86,7 @@ const NOTES = Object.freeze([
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
     'upkeep[line][level] lists the items a line\'s servitor costs a player per hunt hour (the game spares bots): [{ id, perHour, what: { skill, level, name } }], the summons its reference bot\'s cold fight casts, at the busy share of the level\'s best row; a line or level without such a cost has no entry.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
+    'fallbacks names what the snapshot filled in: noMarketToC the spots with no no-grade market near their centre (tradeTowns.none holds the C town), walkBackZero the spots with no walk back (walkBack 0).',
     'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
 ]);
 
@@ -330,18 +331,20 @@ function walkBack(spots) {
 function tradeTowns(itemIds) {
     const Policy = invoke('GameServer/Bot/Economy/MarketTownPolicy'), Counters = invoke('GameServer/Bot/Economy/MarketCounters');
     const table = readJson('data/Bots/hunt/spots.json'), centerAt = table.spotFields.indexOf('center');
-    const grade = {}, none = {}, d = [];
+    const grade = {}, none = {}, d = [], noMarket = [];
     for (const id of itemIds) { const at = Counters.gradeOf(id); if (at !== 'none') grade[id] = at; }
     for (const row of table.spots) {
         const center = row[centerAt];
         if (!center) throw new Error(`spot card ${row[0]} has no centre: its no-grade market is unknown`);
-        none[String(row[0])] = Policy.nearestNoGradeMarket({ locX: center[0], locY: center[1] })?.name || Policy.targetTownForItems({ stats: {} }, [{ rank: 'c' }]);
+        const market = Policy.nearestNoGradeMarket({ locX: center[0], locY: center[1] })?.name;
+        if (!market) noMarket.push(String(row[0]));
+        none[String(row[0])] = market || Policy.targetTownForItems({ stats: {} }, [{ rank: 'c' }]);
     }
     for (let bucket = 0; bucket < 100; bucket++) {
         const town = Policy.targetTownForItems({ characterId: bucket, stats: {} }, [{ rank: 'd' }]);
         if (!d.includes(town)) d.push(town);
     }
-    return { grade, none, d, higher: Policy.targetTownForItems({ stats: {} }, [{ rank: 'c' }]) };
+    return { grade, none, d, higher: Policy.targetTownForItems({ stats: {} }, [{ rank: 'c' }]), noMarket };
 }
 
 // item -> [{ town, price }] of every NPC offer at the current rate.
@@ -643,11 +646,12 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const slots = {};
     for (const row of gearTable.items) if (items[row[0]]) slots[row[0]] = Number(row[3]);
     const { quests, ...kept } = fixed;
-    const trade = tradeTowns(Object.keys(items).map(Number));
+    const { noMarket, ...trade } = tradeTowns(Object.keys(items).map(Number));
+    const fallbacks = { noMarketToC: noMarket, walkBackZero: Object.keys(kept.walkBack).filter(id => !(kept.walkBack[id] > 0)) };
     return {
         header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES },
         hours, spotLevels, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}), bags, upkeep, gearLadder: { bands, slots, lines: gearLadders }, tradeTowns: trade,
-        sources: rawSources(owners, ids)
+        fallbacks, sources: rawSources(owners, ids)
     };
 }
 
@@ -699,6 +703,8 @@ function build(argv, reads) {
             + `items ${Object.keys(snapshot.items).length}; recipes ${snapshot.recipes.length} (${snapshot.header.quests.withRecipe} of ${snapshot.header.quests.scrolls} quest scrolls with a row); `
             + `NPC-offered items ${Object.keys(snapshot.npcOffers.preset).length}; static stores ${snapshot.stores.length}; Luxury items ${Object.keys(snapshot.luxury).length}; `
             + `spots ${Object.keys(snapshot.compositions).length}; reward rows ${Object.keys(snapshot.rewards).length}; twin levels ${Object.keys(snapshot.twins).length}`);
+        console.log(`  fallbacks: no no-grade market (the C town) ${snapshot.fallbacks.noMarketToC.length} spots [${snapshot.fallbacks.noMarketToC.join(' ')}], `
+            + `walk back 0 ${snapshot.fallbacks.walkBackZero.length} spots [${snapshot.fallbacks.walkBackZero.join(' ')}]`);
         if (snapshot.spotHours) {
             const cells = Object.values(snapshot.spotHours.rows).flatMap(byLevel => Object.values(byLevel).flatMap(Object.values));
             console.log(`  spot hours from ${snapshot.spotHours.source}: ${cells.filter(Boolean).length} rows, ${cells.filter(row => !row).length} spot-levels where the line fights nothing`);
