@@ -1,6 +1,6 @@
 # Economy model: what a bot decides
 
-This file states the rules of the model's decision layer: what a hunter ("main") and a crafter ("twin") decide in design mode. The snapshot (inputs.js), kit hours, the event engine, the ledger and its closures and today mode are not rebuilt from it. No decision code without a row here.
+This file states the rules of the model's decision layer: what a hunter ("main") and a crafter ("twin") decide in design mode. The snapshot (inputs.js), kit hours, the event engine, the ledger and its closures and today mode are not rebuilt from it. No new decision code without a row here.
 
 How the rows read:
 - Every normative row is a line of a table that starts with its id in backticks. spec-rows.js reads these lines; a person reads plain tables.
@@ -8,7 +8,7 @@ How the rows read:
 - status is one of: `planned`, `built`, `old`.
   - planned: no code follows the row yet as written; for a situation or a lever, rules/levers.js holds no id for it (today's code may do a part of it outside the registry).
   - built: the code follows the row as written; a situation or a lever has its id in rules/levers.js; the test cell names the case that pins it (`<test file>: <case>`).
-  - old: a lever today's code does before the decision layer exists, not in the row's form; rules/levers.js points at the function that does it until the lever is rebuilt to its row or deleted.
+  - old: a lever today's code does before the decision layer exists, not in the row's form; rules/levers.js points at the function that does it until the lever is rebuilt to its row or deleted. For a situation: today's code names it outside the frame; rules/levers.js points at that function until the slice that builds its levers rebuilds it.
 - tests/test_economy_model_spec.js holds the situation and lever rows marked built or old equal to the ids of rules/levers.js.
 - A C4 source marked "not verified" is from memory and is checked on l2hub C4 or the Lisvus datapack before its row is built.
 
@@ -38,25 +38,24 @@ How the rows read:
 | `KNOW.SEEN` | Seen: the sellers and buyers standing in a town (who, item, price, units) | the bot stands in that town (hot: runs through the market; cold: the visit's time) | replaced whole at its next visit to that town; one row ends when a whisper to that seller gets "sold" or no answer | planned | — |
 | `KNOW.HEARD` | Heard: trade chat (WTS and WTB shouts) | a shout made in the bot's region while the bot is in that region | as a seen row | planned | — |
 | `KNOW.TWIN` | Own twin: its stock, seat, lines | always (same player) | never | planned | — |
-
-Not known: any line in a town it has not visited and has not heard. The live books of all towns are not read.
+| `KNOW.UNSEEN` | Not known: any line in a town it has not visited and has not heard. The live books of all towns are not read. | never gained without a visit or a shout heard | as a seen row, at the visit or the shout | planned | — |
 
 ## 3. Hunter
 ### 3.1 Shots low (held < the reserve of the next outing) and shots out (held 0)
 | id | actor | fact | levers | status |
 |---|---|---|---|---|
-| `H.SIT.SHOTS_LOW` | hunter | held shots under the reserve of the next outing | F1, F2, M1, M2, M3, S in that order. Not a lever: paying above worth (worth is the break-even price). | planned |
-| `H.SIT.SHOTS_OUT` | hunter | held shots become 0 (running out is one situation) | F1, F2, M1, M2, M3, M4, S in that order. Not a lever: paying above worth (worth is the break-even price). | planned |
+| `H.SIT.SHOTS_LOW` | hunter | held shots under the reserve of the next outing | F1, F2, M1, M2, M3, S in that order (the target order: M0, old, stands after M1 and M3 until it is deleted). Not a lever: paying above worth (worth is the break-even price). | old |
+| `H.SIT.SHOTS_OUT` | hunter | held shots become 0 (running out is one situation) | F1, F2, M1, M2, M3, M4, S in that order (the target order: M0, old, stands after M1 and M3 until it is deleted). Not a lever: paying above worth (worth is the break-even price). | old |
 
 | id | situation | kind | lever | condition | waking event | C4 source | status | test | counter |
 |---|---|---|---|---|---|---|---|---|---|
 | `H.SHOTS.F1` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | free | Shout WTB at its worth in the region it stands in (from the field too) | nothing known at or under worth | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | WTB in trade chat | planned | — | lever report |
 | `H.SHOTS.F2` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | free | Whisper a known seller (seen or heard), ask ≤ worth; the seller holds the units for this buyer | a known row at or under worth; purse covers units + way | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | not verified: whisper "keep 5k shots, coming" | planned | — | lever report |
-| `H.SHOTS.M1` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to own twin | twin holds the shot; way payable or walkable | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | same player's alt | old | — | none per lever yet |
-| `H.SHOTS.M2` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to the seller that holds its units (F2 answered, or a crafter answered F1) | a held deal | an answer to its whisper or its shout | yes | planned | — | lever report |
+| `H.SHOTS.M1` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to own twin | twin holds the shot; way payable or walkable | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | ours: the twin is the model's stand-in for a player's second character | old | — | none per lever yet |
+| `H.SHOTS.M2` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to the seller that holds its units (F2 answered, or a crafter answered F1) | a held deal | an answer to its whisper or its shout | not verified: a seller holds units for its buyer | planned | — | lever report |
 | `H.SHOTS.M3` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to the NPC that sells it at or under worth | prior knowledge | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | not verified: grocer sells no-grade shots | old | — | none per lever yet |
-| `H.SHOTS.M4` | H.SIT.SHOTS_OUT | move | Go and look once: the trade town of the grade it has never seen, else the one seen longest ago; if nothing there, F1 is shouted there and it returns to its spot | at the moment it runs out (held becomes 0), nothing known, no deal; one look, not a loop | held becomes 0 | runs to Giran and looks | planned | — | lever report |
-| `H.SHOTS.S` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | stay | Hunt without shots at its spot; hours counted. A bot back from an empty town hunts without shots until an answer to its shout or a town visit of another cause; no "look again after N" | no move lever taken | no move lever taken | yes | old | — | hours in S (lever report) |
+| `H.SHOTS.M4` | H.SIT.SHOTS_OUT | move | Go and look once: the trade town of the grade it has never seen, else the one seen longest ago; if nothing there, F1 is shouted there and it returns to its spot | at the moment it runs out (held becomes 0), nothing known, no deal; one look, not a loop | held becomes 0 | not verified: runs to Giran and looks | planned | — | lever report |
+| `H.SHOTS.S` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | stay | Hunt without shots at its spot; hours counted. A bot back from an empty town hunts without shots until an answer to its shout or a town visit of another cause; no "look again after N" | no move lever taken | no move lever taken | not verified: hunts on without shots | old | — | hours in S (lever report) |
 | `H.SHOTS.M0` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to the cheapest seller town read from every trade town's book; deleted when F2 and M2 are built | after M1 and M3: a line of the shot at or under worth in the town it stands in or a trade town of the shot's grade and above, whose gatekeeper fare there and back the purse pays; the town it stands in, else the one with the least fare | the situation's hour, or any later event while low or out | none: it reads towns the bot has not seen (against the KNOW rows) | old | — | none per lever yet |
 
 | id | rule | status | test |
