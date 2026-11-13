@@ -17,6 +17,7 @@
 
 const Boot = require('./boot');
 const Weights = require('./weights');
+const KitHours = require('./kit-hours');
 
 const DEFAULT_BANDS = '20-29:1123,30-39:573,40-51:0,52-60:0,61-75:0';
 const DEFAULT_HUNT_SHARE = 0.2;
@@ -138,14 +139,6 @@ function bandCosts(demand, prices) {
     return { oreAdena, crystalAdena, perShot };
 }
 
-// The shot a line's reference bot (the author's kit) fires at a level: the
-// shot plan of the kit's weapon for the class. One rule for every reader of the
-// reference kit's shot. Needs Boot.boot().
-function referenceShot(classId, level, line) {
-    const state = invoke('GameServer/Bot/AI/HuntCycle').referenceState(classId, level, { line: Number(line) });
-    return invoke('GameServer/Inventory/ShotStock').planForRows(state.inventory, classId)?.selfId || null;
-}
-
 // The game-data reads of bandDemand and bandCosts, after Boot.boot().
 function gameWorld() {
     const Data = invoke('GameServer/DataCache');
@@ -169,7 +162,7 @@ function gameWorld() {
             const row = Table.best(line, level, true, 'income');
             if (!row) return null;
             const classId = Table.roleClass(line, level);
-            return { shotId: referenceShot(classId, level, line), shots: row.shots };
+            return { shotId: KitHours.referenceShot(classId, level, line), shots: row.shots };
         },
         recipe: id => Recipes.resolveByProductId(id),
         // A twin's seated MP per hour, Create Item level and the highest
@@ -272,4 +265,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { referenceShot, bandDemand, bandCosts, crystalRoutes, gameWorld, fmt };
+module.exports = { bandDemand, bandCosts, crystalRoutes, gameWorld, fmt };

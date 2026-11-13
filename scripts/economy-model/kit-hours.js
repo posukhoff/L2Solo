@@ -75,6 +75,15 @@ function lineKit(owners, line, level) {
         .map(row => ({ selfId: Number(row.selfId), slot: Number(row.slot) }));
 }
 
+// The shot a line's reference bot (the author's kit) fires at a level: the
+// class's own kind at the kit's weapon grade (ShotStock.planForState,
+// blessed false). The one rule for the reference kit's shot; firesOf reads the
+// same plan of any body. Needs Boot.boot().
+function referenceShot(classId, level, line) {
+    const state = invoke('GameServer/Bot/AI/HuntCycle').referenceState(classId, level, { line: Number(line) });
+    return invoke('GameServer/Inventory/ShotStock').planForState(state, { blessed: false })?.selfId || null;
+}
+
 // A line's reference bot at a level wearing pieces ([{ selfId, slot }]).
 function referenceBot(owners, line, level, pieces) {
     const { Table, HuntCycle, Data } = owners;
@@ -395,4 +404,4 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     return { hour, swaps, shotScale, warm, stats };
 }
 
-module.exports = { gameKitHours, wornKit, lineKit, referenceBot, referenceNumbers, TOP_SPOTS };
+module.exports = { gameKitHours, wornKit, lineKit, referenceShot, referenceBot, referenceNumbers, TOP_SPOTS };
