@@ -117,7 +117,7 @@ assert.ok(snapshot.yieldsDesign[designKey].drop[57] < snapshot.yields[designKey]
 
 // The market's additions, each the owner's own number: a line's bag slots
 // and max load, the walk back from a spot, each top spot's hour without
-// shots and the D crystals a bot pays Luxury.
+// shots and the C and D crystals a Luxury row takes.
 const Inventory = require('../src/GameServer/Inventory/InventoryLimits');
 const Formulas = invoke('GameServer/Formulas');
 assert.deepEqual(snapshot.bags[line], { race: 4, slots: Inventory.capacity(4, 0), maxLoad: Math.round(Formulas.calcMaxLoad(45)) }, 'a dwarf\'s 100 slots and the CON 45 load');
@@ -125,7 +125,7 @@ assert.equal(snapshot.walkBack[hour.best.spotId], DesignIncome.walkBackHours(hou
 assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a walk back');
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
 assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
-assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', d: 2865 }, 'Flamberge for 2865 D crystals (the bots pay D only)');
+assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', crystals: [{ selfId: 1459, amount: 573 }, { selfId: 1458, amount: 2865 }] }, 'Flamberge for 573 C and 2865 D crystals together');
 
 // The gear ladder: a Scavenger's (the Bounty Hunter at 30) band 30-34 holds
 // the gear table's D weapon rungs and the no-grade ones below, none above D,

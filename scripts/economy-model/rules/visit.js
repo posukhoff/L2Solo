@@ -26,7 +26,7 @@
 const { priceStep, PRICE_STEP } = require('./priceStep');
 const Bounds = require('./bounds');
 const Worth = require('./worth');
-const { crystalsStanding } = require('./acquire');
+const { exchangeStanding } = require('./acquire');
 const { pool } = require('./workshop');
 const { hash, mulberry } = require('../../hunt-tables/common');
 
@@ -42,8 +42,7 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // tries, seen, parkedCap and short (a parked want's cap
 // and whether its money fell short of the route when it was parked) } },
 // incoming: { selfId: route } (pieces that reached its bag by a route already
-// counted) }. view: { now, town, adId, persona, roll, items,
-// crystalIds, book: { sell: { item: [entry] } cheapest first, buy: { item:
+// counted) }. view: { now, town, adId, persona, roll, items, book: { sell: { item: [entry] } cheapest first, buy: { item:
 // [entry] } dearest first, bids: { grade: [entry] } } (entry { owner, id,
 // price, qty, kind: 'line' | 'ad', own }: lines of the town it stands in
 // and the ads),
@@ -295,17 +294,18 @@ function visit(main, view) {
             return true;
         }
         if (route.route === 'exchange') {
-            const crystal = view.crystalIds[route.grade?.toUpperCase()], fare = route.where === view.town ? 0 : view.fares[route.where];
-            // Its own twin's crystals come through the account warehouse first, the rest from lines here.
-            const { own, have, adena } = crystalsStanding(route, (view.ownCrystals?.[crystal] || 0) - (ownTaken[crystal] || 0), view.book.sell?.[crystal] || [], left);
-            if (!crystal || fare === null || fare === undefined || (fare > 0 && hopped) || have < route.amount) return 'unavailable';
-            if (money < adena + fare) return 'money';
-            if (own > 0) { claims.push({ kind: 'own_stock', item: crystal, units: own }); ownTaken[crystal] = (ownTaken[crystal] || 0) + own; }
-            if (route.amount > own) buyLine(crystal, route.perCrystal, route.amount - own);
+            const fare = route.where === view.town ? 0 : view.fares[route.where];
+            // Its own twin's crystals come through the account warehouse first, the rest from lines here; every crystal of the row or none.
+            const stand = exchangeStanding(route.crystals, part => (view.ownCrystals?.[part.selfId] || 0) - (ownTaken[part.selfId] || 0), part => view.book.sell?.[part.selfId] || [], left);
+            if (fare === null || fare === undefined || (fare > 0 && hopped) || !stand.stands) return 'unavailable';
+            if (money < stand.adena + fare) return 'money';
+            for (const { part, own } of stand.counts) {
+                if (own > 0) { claims.push({ kind: 'own_stock', item: part.selfId, units: own }); ownTaken[part.selfId] = (ownTaken[part.selfId] || 0) + own; }
+                if (part.amount > own) buyLine(part.selfId, part.perCrystal, part.amount - own);
+            }
             money -= fare; flows.fares -= fare;
             if (fare > 0) { hopped = true; stops.push({ kind: 'gatekeeper', target: route.where, items: [] }); }
-            stops.push({ kind: 'exchange', target: route.where, items: [{ selfId: crystal, count: route.amount }, { selfId: piece.selfId, count: 1 }] });
-            claims.push({ kind: 'exchange', item: piece.selfId, crystal, units: route.amount });
+            stops.push({ kind: 'exchange', target: route.where, items: route.crystals.map(part => ({ selfId: part.selfId, count: part.amount })), piece: piece.selfId });
             obtained.push({ selfId: piece.selfId, grade: piece.grade, route: 'exchange' });
             equip(piece.selfId, piece.slot);
             return true;

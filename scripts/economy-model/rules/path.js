@@ -16,8 +16,8 @@
 // candidates: [{ selfId, slot }] (the gear ladder's rungs of its grade and
 // below whose hunt hour beats the worn piece's, best first; slot: where the
 // rung is worn) }] (one a slot group, the weapon's first), weapons: {
-// selfId: true } (the kit's weapons), routes: { selfId: { route, cost,
-// crystals } | null }, worth: { selfId: adena | null }, reserve (adena of
+// selfId: true } (the kit's weapons), routes: { selfId: { route, cost }
+// | null }, worth: { selfId: adena | null }, reserve (adena of
 // the next outing's shots at known prices), ahead: [{ selfId, slot }] (the
 // next grade's kit), aim (pathAim 'affordable'): { money (adena the main
 // holds), earn (adena it nets a hunting hour now: its own hour less the shots
@@ -25,7 +25,7 @@
 // the worn one }, useHours: { selfId: hunting hours it would be worn },
 // resale: { selfId: the least it sells for } } | null (pathAim 'best_priced':
 // the first priced piece) }.
-// Returns { pieces: [{ selfId, slot, route, cost, worth, crystals }] in
+// Returns { pieces: [{ selfId, slot, route, cost, worth }] in
 // path order (a slot whose candidates no route prices names its best one
 // with route null, after the priced ones), reserve, order: [{ kind:
 // 'piece', selfId, slot } | { kind: 'reserve' }] (the money queue), ahead:
@@ -72,12 +72,12 @@ function path(main, view) {
         if (answer.unpriced) {
             const best = aim.candidates[0];
             unpriced.push(best.selfId);
-            pieces.push({ selfId: best.selfId, slot: best.slot, route: null, cost: null, worth: view.worth[best.selfId] ?? null, crystals: null });
+            pieces.push({ selfId: best.selfId, slot: best.slot, route: null, cost: null, worth: view.worth[best.selfId] ?? null });
         }
         if (!chosen) continue;
         const route = view.routes[chosen.selfId];
         left -= route.cost;
-        pieces.push({ selfId: chosen.selfId, slot: chosen.slot, route: route.route, cost: route.cost, worth: view.worth[chosen.selfId] ?? null, crystals: route.crystals ?? null });
+        pieces.push({ selfId: chosen.selfId, slot: chosen.slot, route: route.route, cost: route.cost, worth: view.worth[chosen.selfId] ?? null });
     }
     // Worth per adena of the route's cost, dearest first; a piece with no worth
     // stated (no row) after those with one; a free route first; a piece no

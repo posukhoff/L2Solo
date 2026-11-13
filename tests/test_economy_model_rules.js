@@ -160,24 +160,29 @@ assert.deepEqual(Bounds.firstPrice({}), { price: null, route: null }, 'no supply
     assert.ok(today.drop > 0 && today.spoil > 0 && today.adena > 0);
 }
 
-// acquire's Luxury route stands only while its crystals do, by the count the
-// visit reads (crystalsStanding): Flamberge for 2865 D crystals with 1.7M
-// and no D crystal on a line or at its own twin is no route; 2865 on lines
-// at or under the 100 it pays at most (a line above it not counted), or its
-// own twin's 1000 and 1865 on a line, are one, priced at the cheapest lines
-// past its own twin's crystals (plus a fare of 500).
+// acquire's Luxury route stands only while every crystal its row takes
+// does (C4: C and D together), by the count the visit reads
+// (exchangeStanding): Flamberge for 573 C and 2865 D crystals is no route
+// with the D ones on lines and no C, or the C ones and no D, nor with a line
+// above the 100 it pays at most; with both on lines it is one, priced at
+// the cheapest lines past its own twin's crystals (plus a fare of 500).
 {
-    const { acquire, crystalsStanding } = require('../scripts/economy-model/rules/acquire');
-    const FLAMBERGE = 71;
+    const { acquire, crystalsStanding, exchangeStanding } = require('../scripts/economy-model/rules/acquire');
+    const FLAMBERGE = 71, C = 1459, D = 1458;
     const routeOf = (own, lines) => acquire({ selfId: FLAMBERGE }, { cap: 1.7e6, ownHour: 0, hourCost: 'opportunity', useHour: null, lines: [], npc: [], twin: null,
-        exchange: { town: 'Giran', fare: 500, options: [{ grade: 'd', amount: 2865, price: 100, own, lines }] } });
-    assert.equal(routeOf(0, []), null, 'no D crystal stands: no exchange route');
-    assert.equal(routeOf(0, [{ id: 'a', price: 100, qty: 2000 }, { id: 'b', price: 120, qty: 865 }]), null, 'a line above the price it pays does not stand');
-    const lined = routeOf(0, [{ id: 'a', price: 90, qty: 2000 }, { id: 'b', price: 100, qty: 865 }]);
-    assert.deepEqual([lined.route, lined.adena, lined.amount, lined.perCrystal], ['exchange', 2000 * 90 + 865 * 100 + 500, 2865, 100], '2865 D crystals stand on lines, each at its line\'s price');
-    const shared = routeOf(1000, [{ id: 'a', price: 100, qty: 1865 }]);
-    assert.equal(shared.adena, 1865 * 100 + 500, 'its own twin\'s crystals cost no adena');
-    assert.equal(shared.adena, crystalsStanding(shared, 1000, [{ id: 'a', price: 100, qty: 1865 }]).adena + 500, 'the visit\'s count over the route gives its price');
+        exchange: { town: 'Giran', fare: 500, crystals: [{ selfId: C, amount: 573, perCrystal: 100, own: own[C] || 0, lines: lines[C] || [] },
+            { selfId: D, amount: 2865, perCrystal: 100, own: own[D] || 0, lines: lines[D] || [] }] } });
+    const dLines = [{ id: 'a', price: 90, qty: 2000 }, { id: 'b', price: 100, qty: 865 }], cLines = [{ id: 'c', price: 80, qty: 573 }];
+    assert.equal(routeOf({}, { [D]: dLines }), null, '2865 D crystals stand and no C one: no exchange route');
+    assert.equal(routeOf({}, { [C]: cLines }), null, '573 C crystals stand and no D one: no exchange route');
+    assert.equal(routeOf({}, { [C]: cLines, [D]: [{ id: 'a', price: 100, qty: 2000 }, { id: 'b', price: 120, qty: 865 }] }), null, 'a line above the price it pays does not stand');
+    const lined = routeOf({}, { [C]: cLines, [D]: dLines });
+    assert.deepEqual([lined.route, lined.adena, lined.crystals], ['exchange', 573 * 80 + 2000 * 90 + 865 * 100 + 500, [{ selfId: C, amount: 573, perCrystal: 100 }, { selfId: D, amount: 2865, perCrystal: 100 }]],
+        'both crystals stand on lines: one route paying both, each unit at its line\'s price');
+    const shared = routeOf({ [C]: 573 }, { [D]: [{ id: 'a', price: 100, qty: 2865 }] });
+    assert.equal(shared.adena, 2865 * 100 + 500, 'its own twin\'s C crystals cost no adena');
+    assert.equal(shared.adena, exchangeStanding(shared.crystals, part => (part.selfId === C ? 573 : 0), part => (part.selfId === D ? [{ id: 'a', price: 100, qty: 2865 }] : [])).adena + 500,
+        'the visit\'s count over the route gives its price');
     // The most it pays a crystal, read when the route is weighed: the dearest
     // of the cheapest 2865 on its lines, a dearer line left out.
     const needed = crystalsStanding({ amount: 2865, perCrystal: Infinity }, 0, [{ id: 'a', price: 99, qty: 1 }, { id: 'b', price: 100, qty: 2865 }, { id: 'c', price: 500, qty: 10 }]);

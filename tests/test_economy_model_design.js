@@ -301,7 +301,7 @@ const runHeld = (world, kitHours, account, hours) => {
 // the data say (true) or gives no crystals (false, ours until a second C4
 // source confirms the counts).
 {
-    const world = { ...snapshot, luxuryOptions: { [SWORD]: { town: 'TownA', d: 300 } } }, view = Engine.viewOf(world, { npcPrices: 'x1' });
+    const world = { ...snapshot, luxuryOptions: { [SWORD]: { town: 'TownA', crystals: [{ selfId: CRYSTAL, amount: 300 }] } } }, view = Engine.viewOf(world, { npcPrices: 'x1' });
     assert.equal(Design.gameOf(world, view, { ...Design.DESIGN, luxuryCrystallizes: true }).items[SWORD].crystals, 200);
     const off = Design.gameOf(world, view, { ...Design.DESIGN, luxuryCrystallizes: false });
     assert.equal(off.items[SWORD].crystals, 0);
@@ -901,7 +901,7 @@ assert.equal(armed.delta.shotsUsed, 50);
             twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
             gearLadder: ladderOf('9', [[20, 39, { weapon: { rungs: [SWORD], hour: { [SWORD]: 550, 0: 500 } } }], [40, top, { weapon: { rungs: [CSWORD, SWORD], hour: { [CSWORD]: 600, [SWORD]: 550, 0: 500 } } }]])
         };
-        if (luxury) out.luxuryOptions = { [CSWORD]: { town: 'TownA', d: 2865 } };
+        if (luxury) out.luxuryOptions = { [CSWORD]: { town: 'TownA', crystals: [{ selfId: 1459, amount: 573 }, { selfId: CRYSTAL, amount: 2865 }] } };
         out.yieldsDesign = out.yields;
         return out;
     };
@@ -1117,7 +1117,7 @@ assert.equal(armed.delta.shotsUsed, 50);
             [GLOVES]: armour('Armor.Gloves', 30000), [BOOTS]: armour('Armor.Feet', 30000), [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
         yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
         recipes: [], npcOffers: { preset: {}, x1: { [GLOVES]: [{ town: 'TownB', price: 30000 }], [BOOTS]: [{ town: 'TownB', price: 30000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
-        luxuryOptions: { [HELM]: { town: 'TownA', d: 10 } },
+        luxuryOptions: { [HELM]: { town: 'TownA', crystals: [{ selfId: CRYSTAL, amount: 10 }] } },
         twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
         gearLadder: ladderOf('9', [[1, 39, { weapon: { rungs: [NG], hour: { [NG]: 300, 0: 200 } }, 10: { rungs: [ARM], hour: { [ARM]: 100, 0: 0 } }, 6: { rungs: [HELM], hour: { [HELM]: 50, 0: 0 } },
             9: { rungs: [GLOVES], hour: { [GLOVES]: 80, 0: 0 } }, 12: { rungs: [BOOTS], hour: { [BOOTS]: 60, 0: 0 } } }]])
@@ -1158,23 +1158,28 @@ assert.equal(armed.delta.shotsUsed, 50);
 // Acquire.payableKit: a piece whose slot conflicts with one taken is not
 // bought (a full armour over the leggings: the full armour's cost alone is
 // spent, the helmet still paid), and two Luxury pieces share the crystals
-// that stand (its own twin's 5 and 10 on a line: one piece of 10).
+// that stand (its own twin's 5 and 10 on a line: one piece of 10). Pieces
+// taking C 10 and D 10 each, over its own twin's 10 C and 20 D on lines: the
+// first is taken, the second not though its D crystals still stand.
 {
     const { payableKit } = require('../scripts/economy-model/rules/acquire');
     const piece = (slot, gain, cost) => ({ slot, selfId: 100 + slot, gain, routes: [{ cost, hop: false }] });
     assert.deepEqual(payableKit({ 7: 1 }, [piece(15, 100, 1000), piece(11, 30, 500), piece(6, 10, 1000)], 2000), { 7: 1, 15: 115, 6: 106 });
     const crystals = { 1458: { own: 5, lines: [{ id: 'd1', price: 40, qty: 10 }] } };
-    const luxury = (slot, gain) => ({ slot, selfId: 100 + slot, gain, routes: [{ exchange: { amount: 10, perCrystal: 50 }, crystal: 1458, fare: 0, hop: false }] });
+    const luxury = (slot, gain, parts = [{ selfId: 1458, amount: 10, perCrystal: 50 }]) => ({ slot, selfId: 100 + slot, gain, routes: [{ exchange: { crystals: parts }, fare: 0, hop: false }] });
     assert.deepEqual(payableKit({ 7: 1 }, [luxury(6, 50), luxury(9, 40), luxury(12, 30)], 1e6, crystals), { 7: 1, 6: 106 });
+    const both = [{ selfId: 1459, amount: 10, perCrystal: 50 }, { selfId: 1458, amount: 10, perCrystal: 50 }];
+    const cAndD = { 1459: { own: 10, lines: [] }, 1458: { own: 0, lines: [{ id: 'd1', price: 40, qty: 20 }] } };
+    assert.deepEqual(payableKit({ 7: 1 }, [luxury(6, 50, both), luxury(9, 40, both)], 1e6, cAndD), { 7: 1, 6: 106 }, 'the C crystals are shared between pieces: the second piece finds none');
 }
 
-// A Luxury piece is a route only while the D crystals it takes stand now
-// (the game's bots pay D only): an unarmed main of 41 in TownA with 10M,
-// whose C sword (adds 4500 an hour) Luxury gives for 573 C or 2865 D
-// crystals and whose D sword (adds 50) the NPC sells for 4000, posts no WTB
-// and climbs no ladder toward the C sword while no D crystal stands on a
-// line there, even with 573 C crystals on one: it buys the D sword. With
-// 2865 D crystals on a line at 100 it aims at the C sword at Luxury.
+// A Luxury piece is a route only while every crystal it takes stands now
+// (C4: C and D together): an unarmed main of 41 in TownA with 10M, whose C
+// sword (adds 4500 an hour) Luxury gives for 573 C and 2865 D crystals and
+// whose D sword (adds 50) the NPC sells for 4000, posts no WTB and climbs no
+// ladder toward the C sword while either crystal is missing from the lines
+// there: it buys the D sword. With 573 C and 2865 D crystals on lines at 100
+// it aims at the C sword at Luxury.
 {
     const Mains = require('../scripts/economy-model/mains');
     const CSWORD = 2005, JUNK = 1869, levels45 = Array.from({ length: 45 }, (_, i) => i + 1);
@@ -1186,7 +1191,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         items: { ...snapshot.items, [CSWORD]: { kind: 'Weapon.Sword', grade: 'C', ref: 400000, npcBuy: 200000, crystals: 0 }, [JUNK]: { kind: 'Other.Material', grade: 'NONE', ref: 2, npcBuy: 1, crystals: 0, weight: 10 } },
         yields: Object.fromEntries(levels45.map(level => [`s1@${level}`, { town: 'TownA', drop: { [JUNK]: 2 }, spoil: {} }])),
         recipes: [], npcOffers: { preset: {}, x1: { [SWORD]: [{ town: 'TownA', price: 4000 }] } }, bags: { 9: { race: 1, slots: 80, maxLoad: 300 } },
-        luxuryOptions: { [CSWORD]: { town: 'TownA', d: 2865 } },
+        luxuryOptions: { [CSWORD]: { town: 'TownA', crystals: [{ selfId: 1459, amount: 573 }, { selfId: CRYSTAL, amount: 2865 }] } },
         twins: Object.fromEntries(levels45.map(level => [level, twin(level)])),
         gearLadder: ladderOf('9', [[40, 45, { weapon: { rungs: [CSWORD, SWORD], hour: { [CSWORD]: 5000, [SWORD]: 550, 0: 500 } } }]])
     };
@@ -1207,20 +1212,23 @@ assert.equal(armed.delta.shotsUsed, 50);
         const market = ctx.accounts[0].market;
         return { weapon: visited.main.weapon, aim: market.path.pieces.map(piece => [piece.selfId, piece.route]), wtb: market.ads.wtb.map(ad => ad.item), wants: Object.keys(market.wants).map(Number) };
     };
-    assert.deepEqual(visitWith([]), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'no D crystal stands: no want of the C sword, the D sword bought');
-    assert.deepEqual(visitWith([[game.crystalIds.C, 573]]), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'C crystals do not pay a bot\'s Luxury');
-    assert.deepEqual(visitWith([[game.crystalIds.D, 2865]]).aim, [[CSWORD, 'exchange']], 'its 2865 D crystals stand: it aims at the C sword at Luxury');
-    // From two sellers at two prices, as a player buys them: one crystal at
-    // 99 beside 2865 at 100 stands, priced the cheapest it takes.
-    assert.deepEqual(visitWith([[game.crystalIds.D, 1, 99], [game.crystalIds.D, 2865, 100]]).aim, [[CSWORD, 'exchange']], 'D crystals at two prices stand');
-    assert.equal(ctx.accounts[0].market.path.pieces[0].cost, 99 + 2864 * 100, 'the route costs the cheapest 2865 crystals');
+    const C = game.crystalIds.C, D = game.crystalIds.D;
+    assert.deepEqual(visitWith([]), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'no crystal stands: no want of the C sword, the D sword bought');
+    assert.deepEqual(visitWith([[D, 2865]]), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'D crystals alone do not pay Luxury: the D sword bought');
+    assert.deepEqual(visitWith([[C, 573]]), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'C crystals alone do not pay Luxury: the D sword bought');
+    assert.deepEqual(visitWith([[C, 573], [D, 2865]]).aim, [[CSWORD, 'exchange']], 'its 573 C and 2865 D crystals stand: it aims at the C sword at Luxury');
+    // From several sellers at several prices, as a player buys them: one
+    // crystal of each at 99 beside the rest at 100 stands, priced the
+    // cheapest it takes of each.
+    assert.deepEqual(visitWith([[C, 1, 99], [C, 573, 100], [D, 1, 99], [D, 2865, 100]]).aim, [[CSWORD, 'exchange']], 'C and D crystals at two prices stand');
+    assert.equal(ctx.accounts[0].market.path.pieces[0].cost, 99 + 572 * 100 + 99 + 2864 * 100, 'the route costs the cheapest 573 C and the cheapest 2865 D crystals');
     // Its crystals stand at its first visit, where 200k falls short of them,
     // and are gone at the next: the Luxury route ends there and path is read
     // again, so it buys the D sword and holds no WTB for the C sword.
     ctx.accounts[0] = { ...ctx.accounts[0], market: Mains.marketStart(), memory: [], twin: null };
     let main = { ...ctx.mains[0], level: 41, kit: {}, weapon: 0 };
     const visitAt = (lines, money, now) => { placeLines(lines); main = side.visitMain({ ...main, money }, now, { outingHours: 1 }).main; };
-    visitAt([[game.crystalIds.D, 2865]], 2e5, 2);
+    visitAt([[C, 573], [D, 2865]], 2e5, 2);
     assert.deepEqual(ctx.accounts[0].market.path.pieces.map(piece => [piece.selfId, piece.route]), [[CSWORD, 'exchange']], 'it aims at the C sword while its crystals stand');
     visitAt([], 1e7, 3);
     visitAt([], 1e7, 4);
@@ -1230,19 +1238,19 @@ assert.equal(armed.delta.shotsUsed, 50);
     // aims at the C sword at Luxury again, its WTB climbing toward the route.
     ctx.accounts[0] = { ...ctx.accounts[0], market: Mains.marketStart(), memory: [], twin: null };
     main = { ...ctx.mains[0], level: 41, kit: {}, weapon: 0 };
-    visitAt([[game.crystalIds.D, 2865]], 2e5, 5);
+    visitAt([[C, 573], [D, 2865]], 2e5, 5);
     visitAt([], 1e7, 6);
-    visitAt([[game.crystalIds.D, 2865]], 1e7, 7);
+    visitAt([[C, 573], [D, 2865]], 1e7, 7);
     assert.deepEqual({ weapon: main.weapon, aim: ctx.accounts[0].market.path.pieces.map(piece => [piece.selfId, piece.route]), wtb: ctx.accounts[0].market.ads.wtb.map(ad => ad.item) },
         { weapon: 0, aim: [[CSWORD, 'exchange']], wtb: [CSWORD] }, 'its crystals back at the next arrival: it aims at the C sword at Luxury again');
     // A finite use: 500 hunting hours left in its grade. Over them the C
-    // sword is worth less than 2865 crystals at 1000, so it buys the D
-    // sword, and more than 2865 at 100, so it aims at the C sword. Over
-    // about 4e9 hours the dear crystals are worth it too.
+    // sword is worth less than 573 C and 2865 D crystals at 1000, so it buys
+    // the D sword, and more than them at 100, so it aims at the C sword.
+    // Over about 4e9 hours the dear crystals are worth it too.
     const useFor500 = { exp: 45e9 - 500 };
-    assert.deepEqual(visitWith([[game.crystalIds.D, 2865, 1000]], useFor500), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'dear crystals price the Luxury route above the piece\'s worth');
-    assert.deepEqual(visitWith([[game.crystalIds.D, 2865, 100]], useFor500).aim, [[CSWORD, 'exchange']], 'cheap crystals: the route is worth it');
-    assert.deepEqual(visitWith([[game.crystalIds.D, 2865, 1000]]).aim, [[CSWORD, 'exchange']], 'dear crystals over 4e9 hours of use');
+    assert.deepEqual(visitWith([[C, 573, 1000], [D, 2865, 1000]], useFor500), { weapon: SWORD, aim: [[SWORD, 'npc']], wtb: [], wants: [] }, 'dear crystals price the Luxury route above the piece\'s worth');
+    assert.deepEqual(visitWith([[C, 573, 100], [D, 2865, 100]], useFor500).aim, [[CSWORD, 'exchange']], 'cheap crystals: the route is worth it');
+    assert.deepEqual(visitWith([[C, 573, 1000], [D, 2865, 1000]]).aim, [[CSWORD, 'exchange']], 'dear crystals over 4e9 hours of use');
 }
 
 console.log('PASS economy model design mode');

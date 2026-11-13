@@ -231,10 +231,10 @@ const DESIGN = Object.freeze({
     // drawn by its own main) since its last batch of it.
     shelfStock: 'by_sales',
     shelfStockFactor: 1,
-    // Luxury (Lisvus multisell) sells C gear: its catalogue row lists C and
-    // D crystals, the game's bots pay the D ones only (a Flamberge: 2865 D),
-    // and the data crystallizes that gear to C crystals (a Flamberge: 916 C),
-    // a source of C crystals out of D ones.
+    // Luxury (Lisvus multisell) sells C gear: its row takes C and D crystals
+    // together (a Flamberge: 573 C and 2865 D), and the data crystallizes
+    // that gear to 916 C, 343 C more than it took: a bounded source of C
+    // crystals out of D ones (0.12 C per D).
     // true: the data as it is. false (ours until a second C4 source confirms
     // the counts): gear Luxury sells does not crystallize.
     luxuryCrystallizes: false,
@@ -1014,7 +1014,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
                 if (stop.kind === 'npc_sell') { goods('toNpc', id, count); if (isRecipe(id)) recipeRow(id).toNpc += count; }
                 if (stop.kind === 'npc_buy') { goods('fromNpc', id, count); if (view.items[id]?.kind === 'Other.Shot') stats.counters.shotsNpc += count; }
             }
-            if (stop.kind === 'exchange') { goods('exchangeIn', stop.items[0].selfId, stop.items[0].count); goods('fromNpc', stop.items[1].selfId, 1); }
+            if (stop.kind === 'exchange') { for (const { selfId: id, count } of stop.items) goods('exchangeIn', id, count); goods('fromNpc', stop.piece, 1); }
         }
     }
 

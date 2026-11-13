@@ -41,7 +41,7 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 {
     const view = { cap: 5000, ownHour: 1000, hourCost: 'opportunity', useHour: 100, lines: [{ price: 6000, kind: 'line', where: 'Giran' }],
         npc: [{ town: 'Giran', price: 1500, fare: 0 }], twin: { recipeId: 7, cost: 1000, hours: 2 },
-        exchange: { town: 'Giran', fare: 0, options: [{ grade: 'd', amount: 10, price: 160, own: 0, lines: [{ id: 'd', price: 160, qty: 10 }] }] } };
+        exchange: { town: 'Giran', fare: 0, crystals: [{ selfId: 1458, amount: 10, perCrystal: 160, own: 0, lines: [{ id: 'd', price: 160, qty: 10 }] }] } };
     const opportunity = acquire({ selfId: 1 }, view);
     assert.equal(opportunity.route, 'twin', 'the inputs 1000 and two hours of its use: 1200');
     assert.equal(opportunity.cost, 1200);
@@ -169,7 +169,7 @@ const items = {
 };
 const mainOf = (patch = {}) => ({ index: 0, money: 20000, bag: {}, shots: {}, kit: { 7: 0 }, weapon: 0, ads: { wts: [], wtb: [] }, wants: {}, incoming: {}, ...patch });
 const viewOf = (patch = {}) => ({
-    now: 1, town: 'Giran', adId: 'a1', persona: { looksToFloor: 3, buyerStart: 0.8 }, roll: 7, items, crystalIds: { D: 1458 },
+    now: 1, town: 'Giran', adId: 'a1', persona: { looksToFloor: 3, buyerStart: 0.8 }, roll: 7, items,
     book: { sell: {}, buy: {}, bids: {} }, npcSell: {}, known: {}, firstPrice: { 100: 4000, 300: 10 }, deposit: {}, depositFee: 30, twin: null, firing: 300,
     reserve: null, fares: {}, waitVisits: 2,
     pieces: { 100: { selfId: 100, slot: 7, grade: 'd', weapon: true, cap: 5000, capBy: 'npc', caps: null, routes: [{ route: 'npc', adena: 5000, cost: 5000, where: 'Giran' }] } },
@@ -421,7 +421,7 @@ const viewOf = (patch = {}) => ({
 {
     const kit = [{ slot: 7, group: 'weapon', worn: 1, held: false, candidates: [{ selfId: 10, slot: 14 }, { selfId: 11, slot: 7 }, { selfId: 12, slot: 7 }] },
         { slot: 10, group: '10', worn: 2, held: false, candidates: [{ selfId: 20, slot: 10 }] }];
-    const view = { kit, weapons: { 10: true, 11: true, 12: true }, routes: { 10: null, 11: { route: 'npc', cost: 400, crystals: null }, 12: { route: 'npc', cost: 100 }, 20: null },
+    const view = { kit, weapons: { 10: true, 11: true, 12: true }, routes: { 10: null, 11: { route: 'npc', cost: 400 }, 12: { route: 'npc', cost: 100 }, 20: null },
         worth: { 11: 800, 12: 300, 20: 900 }, reserve: 50 };
     const armedBelow = path({ weapon: 1 }, view);
     assert.deepEqual(armedBelow.pieces.map(piece => [piece.selfId, piece.slot, piece.route]), [[11, 7, 'npc'], [20, 10, null]], 'the best priced rung, the unpriced body named last');
@@ -513,15 +513,18 @@ const viewOf = (patch = {}) => ({
     assert.deepEqual([out.main.money, out.wallet], [450000, 150000 - 30], 'the piece\'s 450k stays with the main (the deposit fee from the wallet)');
 }
 
-// Luxury takes its own twin's crystals through the account warehouse: 300 D
-// crystals the twin holds, none on a line here, take the exchange.
+// Luxury takes its own twin's crystals through the account warehouse, every
+// crystal of the row: 60 C and 300 D the twin holds, none on a line here,
+// take the exchange; with the D ones only it takes nothing.
 {
     const piece = { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null,
-        routes: [{ route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', grade: 'd', amount: 300, perCrystal: 100 }] };
-    const view = viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], ownCrystals: { 1458: 300 } });
+        routes: [{ route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1459, amount: 60, perCrystal: 300 }, { selfId: 1458, amount: 300, perCrystal: 100 }] }] };
+    const view = viewOf({ pieces: { 100: piece }, order: [{ kind: 'piece', selfId: 100, slot: 7 }], ownCrystals: { 1459: 60, 1458: 300 } });
     const out = visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }), view);
-    assert.deepEqual([out.main.kit[7], out.claims.map(row => [row.kind, row.item, row.units]), out.main.money], [100, [['own_stock', 1458, 300], ['exchange', 100, 300]], 20000]);
-    assert.equal(visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }), { ...view, ownCrystals: {} }).main.kit[7], 0, 'no crystals anywhere: no exchange');
+    assert.deepEqual([out.main.kit[7], out.claims.map(row => [row.kind, row.item, row.units]), out.main.money], [100, [['own_stock', 1459, 60], ['own_stock', 1458, 300]], 20000]);
+    assert.deepEqual(out.stops.filter(stop => stop.kind === 'exchange').map(stop => [stop.items, stop.piece]), [[[{ selfId: 1459, count: 60 }, { selfId: 1458, count: 300 }], 100]], 'the exchange takes both crystals for the piece');
+    const dOnly = visit(mainOf({ wants: { 100: { state: 'route', tries: 0 } } }), { ...view, ownCrystals: { 1458: 300 } });
+    assert.deepEqual([dOnly.main.kit[7], dOnly.claims.filter(row => row.kind === 'own_stock')], [0, []], 'no C crystal: no exchange');
 }
 
 // A Luxury route path chose whose crystals left ends at that visit without
@@ -545,7 +548,7 @@ const viewOf = (patch = {}) => ({
 // crystals at 1000 behind them, above the most its route was weighed to pay
 // a crystal (it is weighed again at the next arrival).
 {
-    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', grade: 'd', amount: 300, perCrystal: 100 };
+    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1458, amount: 300, perCrystal: 100 }] };
     const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
         101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
     const crystals = [{ owner: 5, id: 'C5', price: 100, qty: 300, kind: 'line' }, { owner: 6, id: 'C6', price: 1000, qty: 300, kind: 'line' }];
@@ -558,7 +561,7 @@ const viewOf = (patch = {}) => ({
 // twin holds: the first takes them from the twin, the second finds none left
 // (the twin's stock never goes below 0).
 {
-    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', grade: 'd', amount: 300, perCrystal: 100 };
+    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1458, amount: 300, perCrystal: 100 }] };
     const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
         101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
     const out = visit(mainOf({ money: 1e6, kit: { 7: 0, 10: 0 }, wants: { 100: { state: 'route', tries: 0 }, 101: { state: 'route', tries: 0 } } }),
@@ -571,7 +574,7 @@ const viewOf = (patch = {}) => ({
 // twin holding 450 and the lines the rest: 450 are claimed from the twin in
 // all (never the same 450 twice) and all three pieces are worn.
 {
-    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', grade: 'd', amount: 300, perCrystal: 100 };
+    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', crystals: [{ selfId: 1458, amount: 300, perCrystal: 100 }] };
     const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
         101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
         102: { selfId: 102, slot: 11, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };

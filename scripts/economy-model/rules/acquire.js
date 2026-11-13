@@ -30,12 +30,12 @@ function charge(hours, spotHour, view) {
 // [{ price, kind: 'line' | 'ad', where }] in reach, npc: [{ town, price, fare }] the NPC sellers it reaches, twin: { recipeId, cost (adena per piece
 // made: inputs at the twin's replacement cost, plus the scroll when it lacks
 // the recipe), hours (the craft's MP hours per piece) } | null (its own twin
-// cannot craft it), exchange: { town, fare, options: [{ grade,
-// amount, price (the most it pays a crystal: the dearest unit of the
-// cheapest it needs when the route is weighed; null: it takes none from a
-// line), own (its own twin's crystals of the grade), lines (the lines
-// and ads of the crystal it deals on, cheapest first) }] } | null (Luxury: a
-// route only while its crystals stand now: crystalsStanding), stalled:
+// cannot craft it), exchange: { town, fare, crystals: [{ selfId, amount,
+// perCrystal (the most it pays a unit: the dearest of the cheapest it needs
+// when the route is weighed; null: it takes none from a line), own (its own
+// twin's units), lines (the lines and ads of the crystal it deals on,
+// cheapest first) }] } | null (Luxury: a route only while every crystal its
+// row takes stands now: exchangeStanding), stalled:
 // [route] (routes that failed twice for this piece, or a Luxury route path
 // chose whose crystals left) }.
 // Returns { route, cost, adena, hours, where, routes (every priced route,
@@ -49,11 +49,12 @@ function acquire(piece, view) {
     for (const row of view.npc || []) add('npc', row.price + (row.fare || 0), 0, row.price + (row.fare || 0), row.town);
     // The own twin: no money changes hands inside the account; the wait for the craft costs the piece's use.
     if (view.twin) add('twin', 0, view.twin.hours, view.twin.cost + charge(view.twin.hours, view.ownHour, view), null, { recipeId: view.twin.recipeId });
-    for (const option of view.exchange?.options || []) {
-        const stand = crystalsStanding({ amount: option.amount, perCrystal: option.price }, option.own, option.lines || []);
-        if (stand.have < option.amount) continue;
-        const adena = stand.adena + (view.exchange.fare || 0);
-        add('exchange', adena, 0, adena, view.exchange.town, { grade: option.grade, amount: option.amount, perCrystal: option.price });
+    if (view.exchange) {
+        const stand = exchangeStanding(view.exchange.crystals, part => part.own, part => part.lines || []);
+        if (stand.stands) {
+            const adena = stand.adena + (view.exchange.fare || 0);
+            add('exchange', adena, 0, adena, view.exchange.town, { crystals: view.exchange.crystals.map(({ selfId, amount, perCrystal }) => ({ selfId, amount, perCrystal })) });
+        }
     }
     if (!routes.length) return null;
     routes.sort((a, b) => a.cost - b.cost || a.route.localeCompare(b.route));
@@ -80,14 +81,25 @@ function crystalsStanding(route, ownCrystals, lines, left = entry => entry.qty) 
     return { own, have, adena, top };
 }
 
+// A Luxury route stands only while every crystal its row takes stands (C4:
+// C and D together); the one count acquire, payableKit and the visit read.
+// parts: [{ selfId, amount, perCrystal }]; ownOf(part), linesOf(part): its
+// own twin's units and the lines of that crystal; left as crystalsStanding.
+// { stands, adena (all parts' line units taken), counts: [{ part, own,
+// have, adena, top }] }.
+function exchangeStanding(parts, ownOf, linesOf, left) {
+    const counts = parts.map(part => ({ part, ...crystalsStanding(part, ownOf(part), linesOf(part), left) }));
+    return { stands: counts.every(row => row.have >= row.part.amount), adena: counts.reduce((sum, row) => sum + row.adena, 0), counts };
+}
+
 // The kit a main could wear by paying now: of its candidates ({ slot,
 // selfId, gain, routes }, hop: a route in another town) the highest gain
 // first, each taken by its cheapest route within the money left, never a
 // piece whose slot conflicts with one taken (Worth.slotsConflict), at most
 // one route in another town (a visit hops once); the money a piece taken
 // off would bring is not counted. A route is { cost, hop }, or a Luxury
-// route { exchange: acquire's exchange route, crystal, fare, hop } that
-// stands while its crystals do (crystalsStanding) over crystals (crystal ->
+// route { exchange: acquire's exchange route, fare, hop } that stands while
+// all its crystals do (exchangeStanding) over crystals (crystal ->
 // { own: its own twin's units, lines: the lines in reach, cheapest first }),
 // each taken piece's crystals taken off them: its own twin's first, then the
 // cheapest lines at or under its price. Returns the kit (slot -> selfId).
@@ -95,23 +107,22 @@ function payableKit(worn, candidates, money, crystals = {}) {
     let kit = worn, left = money, hopped = false;
     const taken = new Set(), ownTaken = {}, lineTaken = new Map();
     const unitsLeft = entry => entry.qty - (lineTaken.get(entry.id) || 0);
-    const stand = row => crystalsStanding(row.exchange, (crystals[row.crystal]?.own || 0) - (ownTaken[row.crystal] || 0), crystals[row.crystal]?.lines || [], unitsLeft);
+    const stand = row => exchangeStanding(row.exchange.crystals, part => (crystals[part.selfId]?.own || 0) - (ownTaken[part.selfId] || 0), part => crystals[part.selfId]?.lines || [], unitsLeft);
     const costOf = row => {
         if (!row.exchange) return row.cost;
-        const { have, adena } = stand(row);
-        return have >= row.exchange.amount ? adena + row.fare : Infinity;
+        const { stands, adena } = stand(row);
+        return stands ? adena + row.fare : Infinity;
     };
     for (const { slot, selfId, routes } of [...candidates].sort((a, b) => b.gain - a.gain)) {
         if ([...taken].some(other => slotsConflict(slot, other))) continue;
         const route = routes.map(row => ({ row, cost: costOf(row) })).filter(({ row, cost }) => cost <= left && !(row.hop && hopped)).sort((a, b) => a.cost - b.cost)[0];
         if (!route) continue;
         left -= route.cost; hopped ||= route.row.hop; taken.add(slot);
-        if (route.row.exchange) {
-            const { exchange, crystal } = route.row, { own } = stand(route.row);
-            ownTaken[crystal] = (ownTaken[crystal] || 0) + own;
-            let need = exchange.amount - own;
-            for (const entry of crystals[crystal]?.lines || []) {
-                if (need <= 0 || entry.price > exchange.perCrystal) break;
+        if (route.row.exchange) for (const { part, own } of stand(route.row).counts) {
+            ownTaken[part.selfId] = (ownTaken[part.selfId] || 0) + own;
+            let need = part.amount - own;
+            for (const entry of crystals[part.selfId]?.lines || []) {
+                if (need <= 0 || entry.price > part.perCrystal) break;
                 const units = Math.min(need, unitsLeft(entry));
                 if (units > 0) { lineTaken.set(entry.id, (lineTaken.get(entry.id) || 0) + units); need -= units; }
             }
@@ -121,4 +132,4 @@ function payableKit(worn, candidates, money, crystals = {}) {
     return kit;
 }
 
-module.exports = { acquire, charge, crystalsStanding, payableKit };
+module.exports = { acquire, charge, crystalsStanding, exchangeStanding, payableKit };
