@@ -191,11 +191,11 @@ const casterWorld = ({ plainPrice = 20, blessedPrice, blessed, yields: spotYield
     ...(spotYields ? { yields: Object.fromEntries(levels.map(level => [`s1@${level}`, spotYields])), yieldsDesign: Object.fromEntries(levels.map(level => [`s1@${level}`, spotYields])) } : {}) });
 // A run of one account over a world with kit hours, held at its end: the
 // plane's hooks, the run's context and the view.
-const runHeld = (world, kitHours, account, hours) => {
+const runHeld = (world, kitHours, account, hours, ratesOf = rates) => {
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), real = plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours });
     let hooks = null, held = null;
     const design = { ...real, start: context => { held = context; hooks = real.start(context); return hooks; } };
-    const out = Engine.simulate({ view, accounts: [account], bands, rates, hours, seed: 1, nextArrival: arrivals, design });
+    const out = Engine.simulate({ view, accounts: [account], bands, rates: ratesOf, hours, seed: 1, nextArrival: arrivals, design });
     return { out, hooks, main: held.mains[0], view };
 };
 {
@@ -701,18 +701,47 @@ const levelReads = (share, shots, hours, atHour = null) => {
     assert.deepEqual([out.crafters.byTown.TownE, out.crafters.byTown.TownD, out.counters.reseats], [1, undefined, 1], 'both hubs pay, the second nets more: the twin sits in the second');
 }
 
-// The design mode's hunting share per band: the fitted shares, a config's
-// huntShare row over them, --hunt-share over every band; default follows the
-// band it stood for.
+// The design mode's hunting share per band: 1 (the hour at the spot is the
+// hunt), a config's huntShare row over it, --hunt-share over every band;
+// default follows the band it stood for.
 {
     const { huntShares } = require('../scripts/economy-model/run');
     const low = { huntShare: 0.6, visitsPerBotHour: 2 }, fitted = { '20-29': low, '30-39': { huntShare: 0.5, visitsPerBotHour: 2 }, default: low };
-    assert.deepEqual(huntShares(fitted, null, null).huntShare, { '20-29': 0.6, '30-39': 0.5 }, 'the fitted shares');
-    assert.deepEqual(huntShares(fitted, { '30-39': 0.4 }, null).huntShare, { '20-29': 0.6, '30-39': 0.4 });
+    assert.deepEqual(huntShares(fitted, null, null).huntShare, { '20-29': 1, '30-39': 1 }, 'no fitted share: 1 in every band');
+    assert.equal(huntShares(fitted, null, null).rates.default.huntShare, 1);
+    assert.deepEqual(huntShares(fitted, { '30-39': 0.4 }, null).huntShare, { '20-29': 1, '30-39': 0.4 });
     const swept = huntShares(fitted, { '30-39': 0.4 }, '0.2');
     assert.deepEqual(swept.huntShare, { '20-29': 0.2, '30-39': 0.2 }, '--hunt-share for every band');
     assert.equal(swept.rates.default.huntShare, 0.2);
     assert.equal(swept.rates['30-39'].visitsPerBotHour, 2, 'the other rates as fitted');
+}
+
+// The residual of the fit per band: the fit's share over the fit run's end
+// hunting + grouped + resting; an unpopulated band takes its fittedOn band's;
+// a missing activity throws naming the band.
+{
+    const { residualOf } = require('../scripts/economy-model/run');
+    const basis = { '20-29': { huntShare: 0.664, activityHunting: 0.403, activityGrouped: 0.032, activityResting: 0.429 } };
+    const rates = { '20-29': { fittedOn: '20-29' }, '<20': { fittedOn: '20-29' }, default: { fittedOn: '20-29' } };
+    const residual = residualOf(basis, rates);
+    assert.ok(Math.abs(residual['20-29'].residual - 0.769) < 1e-3, `the residual ${residual['20-29'].residual}`);
+    assert.deepEqual([residual['<20'].residual, residual['<20'].from, Object.keys(residual)], [residual['20-29'].residual, '20-29', ['20-29', '<20']]);
+    assert.throws(() => residualOf({ '20-29': { ...basis['20-29'], activityResting: null } }, rates), /20-29/, 'a missing activity names the band');
+}
+
+// A design main hunts its row's hour over its hours at the spot (share 1):
+// time hunting equals time at the spot, and the hunt credits those hours (a row share halves it).
+{
+    const { huntShares } = require('../scripts/economy-model/run');
+    const world = casterWorld({ plainPrice: 2, blessedPrice: 1e6, blessed: { kills: 10, exp: 1, adena: 1000, dropLoot: 150, spoilLoot: 0, loot: 150, shots: 50 } });
+    const exp = share => {
+        const { out } = runHeld(world, kitHoursOf(() => 1000, () => []), { ...accounts[1], money: 1e6 }, 4, huntShares({ low: { huntShare: 9, visitsPerBotHour: 1 }, default: { huntShare: 9, visitsPerBotHour: 1 } }, share === null ? null : { low: share }, null).rates);
+        return { time: out.design.time.low, hunt: out.progress.stageBands.low.modelFlowsPerBotHour.huntCold };
+    };
+    const whole = exp(null), half = exp(0.5);
+    assert.equal(whole.time.hunting, whole.time.spot, 'time hunting equals time at the spot');
+    assert.equal(half.time.hunting, half.time.spot * 0.5, 'a row share still applies');
+    assert.ok(whole.time.spot > 0 && whole.hunt > 0 && half.hunt === whole.hunt / 2, `the hunt credits the spot hours at the share: ${whole.hunt} whole, ${half.hunt} half`);
 }
 
 // A death is an arrival (deathArrival): at its spot's deaths per hunting

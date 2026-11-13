@@ -243,8 +243,8 @@ const DESIGN = Object.freeze({
     // in the respawn town of its spot, where it visits as at any arrival.
     deathArrival: true,
     // Unsaid: ours. The share of wall time a main hunts, per stage band
-    // ({ band: share }); null: the shares fitted on today's world (run.js
-    // --fit), which the design world need not keep; --hunt-share sets every band.
+    // ({ band: share }); null: 1, the hour at the spot is the hunt (run.js; the
+    // --fit residual is printed, not applied); --hunt-share sets every band.
     huntShare: null
 });
 // The readings of the design's text and ours, by field (printed with the run).

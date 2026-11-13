@@ -15,8 +15,8 @@
 // their workshop and lines, and the mains' market (path, acquire, trip,
 // visit, occupation), NPC prices at x1 and the design's rates; --start late
 // is the --cohort ledger's start save, fresh the seeder's start levels
-// (--accounts, default 1700); the hunting share is fitted on --fit as in
-// today mode, and a main comes to town at its trip's situations.
+// (--accounts, default 1700); the hunting share is 1 (the hour at the spot is the hunt;
+// the --fit residual is printed, not applied), and a main comes to town at its trip's situations.
 //
 // Prints per stage band (by start level) the faucets and sinks per bot-hour,
 // the money stock, the bands over the hours, town visits and the run's
@@ -133,15 +133,16 @@ function designOf(argv, snapshot) {
     const cohort = start === 'late' ? late : Cohort.fresh({ count: Number(Boot.option(argv, 'accounts', 1700)), seed }, snapshot);
     const view = Engine.viewOf(snapshot, { npcPrices: 'x1' });
     if (!view.yieldsDesign) throw new Error('the snapshot has no design yields: write it again with inputs.js');
-    // The hunting share is a share of time, fitted at the ledger's own preset (the late run's x50):
-    // a snapshot of another preset is not divided into that run's exp.
+    // The calibration (Today.fit) is read at the ledger's own preset (the late run's x50):
+    // a snapshot of another preset is not divided into that run's exp. Design applies no
+    // fitted share (huntShares: 1); the fit feeds the printed residual only.
     const fitPreset = Boot.option(argv, 'fit-preset', 'x50'), fitSnapshot = snapshot.header.preset === fitPreset ? snapshot : Load.loadSnapshot(Load.SNAPSHOT_DIR, fitPreset).snapshot;
     const fitView = fitSnapshot === snapshot ? view : Engine.viewOf(fitSnapshot);
     // The game tables and the kit hours read no fitted share; the fit reads
     // the kit hours: a main's exp an hour is its row's times its worn kit's
     // kills over the reference kit's, the factor its hunt reads (the shots
-    // form: the fit's mains fire their row's shot), so the share is a share
-    // of time and the kit counts once.
+    // form: the fit's mains fire their row's shot), so the fit's share
+    // is time at the spot x the residual and the kit counts once.
     const overrides = JSON.parse(Boot.option(argv, 'design', '{}'));
     const began = Date.now(), game = Design.gameOf(snapshot, view, { ...Design.DESIGN, ...overrides });
     console.log(`DESIGN game tables in ${((Date.now() - began) / 1000).toFixed(1)} s: ${Object.keys(game.firstPrice).length} first prices; `
@@ -153,8 +154,12 @@ function designOf(argv, snapshot) {
     const factorOf = main => Worth.huntFactors(kitHours.hour(main.line, main.level, Mains.wornKit(snapshot, main)),
         kitHours.hour(main.line, main.level, slotsOf(view.kits[main.line]?.[main.level] || []))).shots?.kills ?? 1;
     const { rates: fitted, basis } = Today.fit(baseline, fitSnapshot === snapshot ? late.accounts : Cohort.fromSave(baseline.inputs.start.db, fitSnapshot).accounts, fitView, STAGE_BANDS, factorOf);
-    console.log(`DESIGN start ${start}; rates fitted on ${fitFile} at ${fitPreset}`);
+    console.log(`DESIGN start ${start}; calibrated on ${fitFile} at ${fitPreset}`);
     printFit(basis);
+    const residual = residualOf(basis, fitted);
+    console.log('RESIDUAL per band (real exp / (row exp x worn-kit factor x time at the spot); time at the spot = the --fit run\'s end hunting+grouped+resting; printed, NOT applied): '
+        + Object.entries(residual).map(([band, r]) => `${band} ${r.residual.toFixed(3)} (field ${r.field.toFixed(3)}${r.from === band ? '' : `, from ${r.from}`})`).join(' | '));
+    console.log(`RESIDUAL row ${JSON.stringify(Object.fromEntries(Object.entries(residual).map(([band, r]) => [band, r.residual])))}`);
     const grades = ['d', 'c', 'b', 'a', 's'].map(grade => [grade, levelForGrade(grade)]);
     const shared = huntShares(fitted, overrides.huntShare, Boot.option(argv, 'hunt-share', null));
     const rates = shared.rates, config = Object.freeze({ ...Design.DESIGN, ...overrides, huntShare: shared.huntShare });
@@ -164,17 +169,33 @@ function designOf(argv, snapshot) {
     return { view, rates, cohort, fresh: start === 'fresh', real: baseline.visits || null, design: Design.plane({ snapshot, game, config, start, grades, personaShares, kitHours }) };
 }
 
-// The design mode's hunting share per band (the design world's share is
-// unknown): the share fitted on today's world, a config's huntShare row over
-// it, --hunt-share (cli) over every band. Returns { rates (the fitted rates
-// with those shares; default follows its band), huntShare { band: share } }.
+// The design mode's hunting share per band: 1. The hour at the spot is the
+// hunt (the row's hour already holds rest, idle and the respawn wait) and the
+// time state takes the way and the town off the spot hours, so no fitted share
+// is applied; a config's huntShare row over it, --hunt-share (cli) over every
+// band. Returns { rates (the fitted rates' other fields with those shares;
+// default follows its band), huntShare { band: share } }.
 function huntShares(fitted, rows, cli) {
     const defaultBand = Object.keys(fitted).find(band => band !== 'default' && fitted[band] === fitted.default);
     const huntShare = Object.fromEntries(Object.keys(fitted).filter(band => band !== 'default')
-        .map(band => [band, cli !== null && cli !== undefined ? Number(cli) : rows?.[band] ?? fitted[band].huntShare]));
+        .map(band => [band, cli !== null && cli !== undefined ? Number(cli) : rows?.[band] ?? 1]));
     const rates = Object.fromEntries(Object.entries(huntShare).map(([band, share]) => [band, { ...fitted[band], huntShare: share }]));
     rates.default = defaultBand ? rates[defaultBand] : fitted.default;
     return { rates, huntShare };
+}
+
+// The unexplained part of the fit, per band: real exp over (row exp x worn-kit
+// factor x time at the spot), the fit's share over the fit run's end hunting +
+// grouped + resting fractions. A band the fit run did not populate takes the
+// band it was fitted on. Pure; printed beside the design, never applied.
+function residualOf(basis, rates) {
+    return Object.fromEntries(Object.keys(rates).filter(band => band !== 'default').map(band => {
+        const from = basis[band] ? band : rates[band].fittedOn, row = basis[from];
+        const parts = [row?.activityHunting, row?.activityGrouped, row?.activityResting];
+        if (!row || parts.some(part => part === null || part === undefined)) throw new Error(`residual of band ${band}: the fit run has no hunting, grouped and resting fractions for ${from}`);
+        const field = parts[0] + parts[1] + parts[2];
+        return [band, { residual: row.huntShare / field, field, from }];
+    }));
 }
 
 const fmt = value => (value === null || value === undefined || !Number.isFinite(value) ? '-' : Math.abs(value) >= 1e4 ? k(value) : Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(2));
@@ -185,7 +206,7 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
     console.log(`CRAFTERS ${c.crafterAccounts} of ${c.accounts} accounts (${pct(c.crafterAccounts, c.accounts)}): Bounty Hunter pairs ${c.bountyHunterPairs}, other pairs ${c.otherPairs}; `
         + `twins by band ${Object.entries(c.byBand).map(([b, n]) => `${b} ${n}`).join(' | ')}; by class ${Object.entries(c.byClass).map(([b, n]) => `${b} ${n}`).join(' | ')}`);
     console.log(`  twins by town: ${Object.entries(c.byTown).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${n}`).join(' | ')}`);
-    console.log('TIME per current band, bot-hours (at the spot, on the way: the game\'s trip hours into town, on to each town visited and back to the spot; hunting = spot x the band\'s share; way share of both):');
+    console.log('TIME per current band, bot-hours (at the spot, on the way: the game\'s trip hours into town, on to each town visited and back to the spot; hunting = spot x the band\'s share (1 in design: the hour at the spot is the hunt); way share of both):');
     const time = Object.entries(design.time), sum = field => time.reduce((total, [, t]) => total + t[field], 0);
     for (const [band, t] of [...time, ['all', { spot: sum('spot'), way: sum('way'), hunting: sum('hunting') }]]) {
         console.log(`  ${band.padEnd(8)} spot ${fmt(t.spot)} way ${fmt(t.way)} hunting ${fmt(t.hunting)} way share ${pct(t.way, t.spot + t.way)}`);
@@ -404,4 +425,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { cohortOf, designOf, huntShares, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, STAGE_BANDS };
+module.exports = { cohortOf, designOf, huntShares, residualOf, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, STAGE_BANDS };
