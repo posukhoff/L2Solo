@@ -554,6 +554,19 @@ const viewOf = (patch = {}) => ({
     assert.deepEqual([out.main.kit[7], out.main.kit[10], out.main.money], [100, 0, 1e6 - 30000], 'one exchange taken, none at crystals dearer than its route was weighed at');
 }
 
+// Two Luxury exchange pieces at one visit weighed on the 300 D crystals the
+// twin holds: the first takes them from the twin, the second finds none left
+// (the twin's stock never goes below 0).
+{
+    const exchange = { route: 'exchange', adena: 30000, cost: 30000, where: 'Giran', grade: 'd', amount: 300, perCrystal: 100 };
+    const pieces = { 100: { selfId: 100, slot: 7, grade: 'c', weapon: true, cap: 90000, capBy: 'route', caps: null, routes: [exchange] },
+        101: { selfId: 101, slot: 10, grade: 'c', weapon: false, cap: 90000, capBy: 'route', caps: null, routes: [exchange] } };
+    const out = visit(mainOf({ money: 1e6, kit: { 7: 0, 10: 0 }, wants: { 100: { state: 'route', tries: 0 }, 101: { state: 'route', tries: 0 } } }),
+        viewOf({ pieces, order: [{ kind: 'piece', selfId: 100, slot: 7 }, { kind: 'piece', selfId: 101, slot: 10 }], ownCrystals: { 1458: 300 } }));
+    assert.equal(out.claims.filter(row => row.kind === 'own_stock').reduce((sum, row) => sum + row.units, 0), 300, 'the twin holds 300 crystals: no more are claimed from it');
+    assert.deepEqual([out.main.kit[7], out.main.kit[10]], [100, 0], 'one exchange taken');
+}
+
 // visit: a wait ends at its third visit unmet even when nothing caps the
 // piece any more (its last route stalled, no worth stated).
 {

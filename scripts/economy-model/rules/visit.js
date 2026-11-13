@@ -272,6 +272,8 @@ function visit(main, view) {
     };
 
     let hopped = false;
+    // Own crystals claimed by an exchange of this visit are not there for the next one.
+    const ownTaken = {};
     // A piece by the cap's own route; false when the money or the route is not there now.
     const byRoute = (piece, route) => {
         if (route.route === 'npc') {
@@ -294,10 +296,10 @@ function visit(main, view) {
         if (route.route === 'exchange') {
             const crystal = view.crystalIds[route.grade?.toUpperCase()], fare = route.where === view.town ? 0 : view.fares[route.where];
             // Its own twin's crystals come through the account warehouse first, the rest from lines here.
-            const { own, have, adena } = crystalsStanding(route, view.ownCrystals?.[crystal], view.book.sell?.[crystal] || [], left);
+            const { own, have, adena } = crystalsStanding(route, (view.ownCrystals?.[crystal] || 0) - (ownTaken[crystal] || 0), view.book.sell?.[crystal] || [], left);
             if (!crystal || fare === null || fare === undefined || (fare > 0 && hopped) || have < route.amount) return 'unavailable';
             if (money < adena + fare) return 'money';
-            if (own > 0) claims.push({ kind: 'own_stock', item: crystal, units: own });
+            if (own > 0) { claims.push({ kind: 'own_stock', item: crystal, units: own }); ownTaken[crystal] = (ownTaken[crystal] || 0) + own; }
             if (route.amount > own) buyLine(crystal, route.perCrystal, route.amount - own);
             money -= fare; flows.fares -= fare;
             if (fare > 0) { hopped = true; stops.push({ kind: 'gatekeeper', target: route.where, items: [] }); }
