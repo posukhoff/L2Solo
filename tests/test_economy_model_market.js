@@ -87,8 +87,8 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 // else, of the trade towns of the shot's grade (and above) holding a line at
 // or under its worth whose fare there and back it can pay, the one it stands
 // in, else the nearest by fare. With no seller standing at a shot situation
-// there is no trip: the next one is read at its hour, and a main low or out
-// goes when a line of its shot is posted.
+// there is no trip: the next one is read at its hour. Asked at any event
+// while low or out, it reads its sellers and goes to one that stands.
 {
     const towns = [{ town: 'Gludio', fare: 2000, ask: null, cap: 20 }, { town: 'Dion', fare: 1500, ask: null, cap: 20 }, { town: 'Giran', fare: 3000, ask: 15, cap: 20 }];
     const heine = { here: 'Heine', ownHeld: false, npcHere: false, money: 100000, towns };
@@ -116,11 +116,15 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     const unsold = trip({}, { ...bare, now: lowAt });
     assert.deepEqual([unsold.reason, unsold.read, unsold.at], ['shots_out', true, 14], 'no line at its stock_low: no trip, its shots_out read next');
     assert.equal(trip({}, { ...bare, now: 12, shots: { held: 0, perHour: 300 } }).at, null, 'out of shots, read again with still no line: none planned');
-    // Low (held under its mark of 50 since 10) with no seller at its last
-    // situation: a line of its shot posted now sends it at once.
+    // Low (held under its mark of 50 since 10), with no situation of its own
+    // until it runs out: asked at any event, it reads its sellers.
     const lowNow = { ...base, now: 10.1, shots: { held: 40, perHour: 300 } };
-    assert.equal(trip({}, lowNow).read, true, 'no situation of its own until it runs out');
-    assert.deepEqual([trip({}, { ...lowNow, event: 'offer_posted' }).reason, trip({}, { ...lowNow, event: 'offer_posted' }).town], ['stock_low:shots', 'Giran'], 'the posted line is read: it goes');
+    for (const event of ['level_up', 'visit', 'offer_posted']) {
+        const asked = trip({}, { ...lowNow, event });
+        assert.deepEqual([asked.reason, asked.town, asked.read], ['stock_low:shots', 'Giran', undefined], `low, asked at ${event}: the line in Giran is read and it goes`);
+    }
+    const lowBare = trip({}, { ...bare, now: 10.1, shots: { held: 40, perHour: 300 }, event: 'level_up' });
+    assert.deepEqual([lowBare.reason, lowBare.read], ['shots_out', true], 'low with no seller: its shots_out read next');
     assert.equal(trip({}, { ...base, event: 'offer_posted' }).read, true, 'with shots to spare a posted line sends it nowhere');
 }
 

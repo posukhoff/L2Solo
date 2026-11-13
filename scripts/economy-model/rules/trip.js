@@ -9,10 +9,11 @@
 // hour, else the deal is met at its next visit. The shot situations come
 // from its stock and its use alone (the hour it crosses its low mark, the
 // hour it runs out), whatever the board holds: trip names the next one as a
-// situation read at its hour, and only then are the sellers read
+// situation read at its hour. Whenever trip is asked while the main is low
+// or out (at such a situation or any other event) the sellers are read
 // (shotTown): a seller sends it, none leaves it hunting, low or out, until
-// its next situation (a line of its shot posted while it is low or out
-// raises offer_posted, and the sellers are read again then).
+// it is asked next (a line of its shot posted while it is low or out raises
+// offer_posted).
 // player_command and clan_call have no source in the model. The town: the
 // town the main stands in, except a shot trip, which goes to the town of
 // the seller (shotTown).
@@ -94,7 +95,7 @@ function shotsLow({ held, perHour }, { since, now, huntShare, stockLowHours }) {
 // bag: { slots, used, weight, maxLoad, items: [{ rate (per hunting hour),
 // weight, stack, held }] }, goal (goalOf) | null, event, deal: { gain } |
 // null, ownHour, shotTowns: { ownHeld, npcHere, money, towns, hopHours }
-// (shotTown's sellers, read only at a shot situation) }.
+// (shotTown's sellers, read only while it is low or out) }.
 // Returns { at, reason, town, read } (at: the wall hour it arrives in town,
 // null without a situation; read: at is instead the hour of its next shot
 // situation, read then without going).
@@ -107,9 +108,9 @@ function trip(main, view) {
         const low = shots.perHour * view.stockLowHours, situations = [];
         if (shots.held > low) situations.push({ at: wall((shots.held - low) / shots.perHour), reason: 'stock_low:shots' });
         situations.push({ at: wall(shots.held / shots.perHour), reason: 'shots_out' });
-        // A situation come by now, or a line of its shot posted while it is low.
+        // A situation come by now, or asked at any event while it is low or out.
         const due = situations.filter(row => row.at <= view.now);
-        if ((due.length || (view.event === 'offer_posted' && shotsLow(shots, view))) && view.shotTowns) {
+        if ((due.length || shotsLow(shots, view)) && view.shotTowns) {
             shotAt = shotTown({ here: view.town, ...view.shotTowns });
             if (shotAt) triggers.push({ at: view.now, reason: due.length ? due[due.length - 1].reason : 'stock_low:shots' });
         }

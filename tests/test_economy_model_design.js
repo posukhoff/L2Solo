@@ -398,6 +398,63 @@ const runHeld = (world, kitHours, account, hours) => {
         `low with no seller: the posted line wakes it and it buys before it runs out: ${JSON.stringify([low.m.events, low.m.visits.hub])}`);
 }
 
+// A main on its way to a seller of its shot keeps going. The world above
+// with a walk of 0.5 h there and back and a low mark of 1.2 hours of shots
+// (60): the shooter (300 at 50 an hour) runs low at h4.8, reads the twin's
+// line in TownD (posted at h4.55) and sets out (TownD at h5.4: walk and
+// hop). A line of its shot raised at h5, while its trip is pending, leaves
+// the visit's hour and town as they were. A level-up at h5.1 on the way (45
+// shots left, low, not out) does not turn it back: it reads its sellers
+// again, still goes, and buys in TownD before its shots run out at h6.
+{
+    const Mains = require('../scripts/economy-model/mains');
+    const world = { ...snapshot, walkBack: { s1: 0.25 }, fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+        npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
+        tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
+    const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'], stockLowMinutes: 72 };
+    // The shooter's (index 1) first visit, its level-ups and its first shot trip's planned arrival; postAt: the hour a line of its shot is raised in TownD.
+    const runWith = ({ exp = 25e9, postAt = null }) => {
+        const design = plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }), start = design.start, mainsSide = Mains.mainsSide;
+        const seen = { visit: null, levelUps: [], planned: null };
+        let side = null;
+        Mains.mainsSide = (...args) => (side = mainsSide(...args));
+        design.start = context => {
+            const hooks = start(context), next = hooks.nextArrival, visit = hooks.visit, hour = hooks.hour.bind(hooks);
+            hooks.nextArrival = (main, ev) => {
+                const answer = next(main, ev);
+                if (main.index === 1 && ev.event === 'level_up') seen.levelUps.push(ev.now);
+                if (main.index === 1 && seen.planned === null && typeof answer === 'number') seen.planned = answer;
+                return answer;
+            };
+            hooks.visit = (main, now, options) => {
+                const out = visit(main, now, options);
+                if (main.index === 1 && !seen.visit) seen.visit = { at: now, towns: out.delta.towns, held: main.shots[SSD] || 0, bought: (out.main.shots[SSD] || 0) - (main.shots[SSD] || 0) };
+                return out;
+            };
+            hooks.hour = now => { if (now === postAt) side.offerPosted(SSD, 'TownD', 1, 0, now); return hour(now); };
+            return hooks;
+        };
+        try {
+            const out = Engine.simulate({ view, accounts: [accounts[0], { ...accounts[1], exp, shots: { [SSD]: 300 } }], bands, rates, hours: 12, seed: 5, design });
+            assert.equal(out.money.closureGap, 0);
+            assert.equal(out.design.goods.failing, 0);
+            return { ...seen, offers: out.design.market.events.offerPosted };
+        } finally { Mains.mainsSide = mainsSide; }
+    };
+    const plain = runWith({});
+    near(plain.planned, 5.4, 'it sets out at its low mark for TownD');
+    assert.deepEqual([plain.visit.towns, plain.visit.bought > 0], [['TownD'], true], JSON.stringify(plain.visit));
+    near(plain.visit.at, 5.4, 'it arrives as planned');
+    const posted = runWith({ postAt: 5 });
+    assert.equal(posted.offers, 0, 'a main with a shot trip pending is not woken by the line');
+    assert.deepEqual([posted.visit.at, posted.visit.towns], [plain.visit.at, plain.visit.towns], 'a line raised on its way: the visit\'s hour and town unchanged');
+    // Level 26 starts at 26e9 exp: one exp over it at 1 exp an hour comes at h5.1.
+    const leveled = runWith({ exp: 26e9 - 4.1 });
+    assert.ok(leveled.levelUps.some(at => at > 4.8 && at < leveled.planned), `a level-up on the way: ${JSON.stringify(leveled)}`);
+    assert.deepEqual([leveled.visit.towns, leveled.visit.held > 0, leveled.visit.bought > 0], [['TownD'], true, true],
+        `a level-up on the way: it still arrives in TownD before it runs out and buys: ${JSON.stringify(leveled.visit)}`);
+}
+
 // A D shooter out of shots with no seller standing anywhere stays out (no
 // trip); when a twin's line of its shots is posted in TownE, a D trade town
 // that is neither the town of its spot (TownA) nor the D town of the least
