@@ -200,7 +200,7 @@ function fmt(value) {
     if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
     if (abs >= 1e4) return `${(value / 1e3).toFixed(1)}k`;
     if (abs >= 100) return `${Math.round(value)}`;
-    return `${+value.toFixed(abs >= 10 ? 1 : 2)}`;
+    return `${+value.toFixed(abs >= 10 ? 1 : abs >= 1 ? 2 : 3)}`;
 }
 
 function pair(full, shared, format = fmt) {
