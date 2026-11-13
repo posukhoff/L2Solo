@@ -26,6 +26,7 @@
 const { priceStep, PRICE_STEP } = require('./priceStep');
 const Bounds = require('./bounds');
 const Worth = require('./worth');
+const { crystalsStanding } = require('./acquire');
 const { pool } = require('./workshop');
 const { hash, mulberry } = require('../../hunt-tables/common');
 
@@ -291,10 +292,9 @@ function visit(main, view) {
         if (route.route === 'exchange') {
             const crystal = view.crystalIds[route.grade?.toUpperCase()], fare = route.where === view.town ? 0 : view.fares[route.where];
             // Its own twin's crystals come through the account warehouse first, the rest from lines here.
-            const lines = (view.book.sell?.[crystal] || []).filter(entry => entry.price <= route.perCrystal);
-            const own = Math.min(route.amount, view.ownCrystals?.[crystal] || 0), have = own + lines.reduce((sum, entry) => sum + left(entry), 0);
+            const { own, have, adena } = crystalsStanding(route, view.ownCrystals?.[crystal], view.book.sell?.[crystal] || [], left);
             if (!crystal || fare === null || fare === undefined || (fare > 0 && hopped) || have < route.amount) return 'unavailable';
-            if (money < (route.amount - own) * route.perCrystal + fare) return 'money';
+            if (money < adena + fare) return 'money';
             if (own > 0) claims.push({ kind: 'own_stock', item: crystal, units: own });
             if (route.amount > own) buyLine(crystal, route.perCrystal, route.amount - own);
             money -= fare; flows.fares -= fare;

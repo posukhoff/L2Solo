@@ -331,12 +331,14 @@ const median = values => {
 };
 // Per sampling point: mains sampled, those at 90 % of the reference kit's
 // hour or more, the median and 10th percentile ratio (nearest rank), mains
-// with no ratio and mains with no weapon in hand.
+// with no ratio and mains with no weapon in hand; attainable: the same for
+// the worn kit's hour over the kit it could wear by paying now (at 95 %).
 function kitHourSummary(points) {
-    return Object.fromEntries(Object.entries(points).map(([key, { level, ratios, none, unarmed }]) => {
+    return Object.fromEntries(Object.entries(points).map(([key, { level, ratios, none, unarmed, attainable }]) => {
         const sorted = [...ratios].sort((a, b) => a - b);
         return [key, { level, sampled: ratios.length + none, atLeast90: ratios.filter(ratio => ratio >= 0.9).length, median: median(ratios),
-            p10: sorted.length ? sorted[Math.max(0, Math.ceil(0.1 * sorted.length) - 1)] : null, none, unarmed }];
+            p10: sorted.length ? sorted[Math.max(0, Math.ceil(0.1 * sorted.length) - 1)] : null, none, unarmed,
+            attainable: { sampled: attainable.length, atLeast95: attainable.filter(ratio => ratio >= 0.95).length, median: median(attainable) } }];
     }));
 }
 
@@ -593,8 +595,9 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         // { level, ratios, none: no ratio, unarmed: no weapon in hand }; kit
         // tables (mains.kitTableOf) taken as a main's line, band or kit
         // changed, read through kitHours, shared from another main's and
-        // let go past the bound.
-        unpriced: 0, kitHour: {}, kitTables: { taken: 0, read: 0, shared: 0, evicted: 0, wornEvicted: 0 },
+        // let go past the bound; the kit hour reads of the KIT HOUR measure
+        // of the kit a main could pay now (mains.kitRatio), apart.
+        unpriced: 0, kitHour: {}, kitTables: { taken: 0, read: 0, shared: 0, evicted: 0, wornEvicted: 0 }, measureReads: { swaps: 0, fast: 0, fresh: 0 },
         // Routes acquire priced, and those whose cap's own route cost 0; sales
         // whose buyer could not pay at the meeting; failed waits outgrown, by grade.
         routes: { priced: 0, zero: 0, noWorth: 0 }, unfunded: { wtb: 0, line: 0, bid: 0 }, outgrown: {},
@@ -657,7 +660,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
                 needs: {}, surplus: {}, inputMoney: 0 };
             twin.town = config.twinSeat === 'main_town' ? (crafts ? spotTown : null) : config.twinSeat === 'hub' ? (crafts ? firstHub(spotTown, main.index, twin) : null) : starter;
         }
-        accounts.push({ index: main.index, crafter, persona: personaOf(config, personaShares, seed, main, crafter), memory: [], twin, counter: 0, lastTown: null, wake: null,
+        accounts.push({ index: main.index, crafter, persona: personaOf(config, personaShares, seed, main, crafter), memory: [], twin, counter: 0, lastTown: null, leftWith: main.money, wake: null,
             shotless: false, level: main.level, market: { ...Mains.marketStart(), spotHeld: !!main.spot } });
     }
     // Items held at the start (the goods ledger's opening stock).
@@ -1116,8 +1119,9 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             if (gradeChanged) stats.entries[to] = (stats.entries[to] || 0) + 1;
             // The worn kit's hour over the reference kit's at the grade's middle level and as it leaves the grade (its last level).
             const sample = (key, level) => {
-                const row = stats.kitHour[key] ||= { level, ratios: [], none: 0, unarmed: 0 }, { ratio, unarmed } = side.kitRatio(main, level);
+                const row = stats.kitHour[key] ||= { level, ratios: [], none: 0, unarmed: 0, attainable: [] }, { ratio, unarmed, attainable } = side.kitRatio(main, level);
                 if (ratio === null) row.none++; else row.ratios.push(ratio);
+                if (attainable !== null) row.attainable.push(attainable);
                 if (unarmed) row.unarmed++;
             };
             const at = grades.findIndex(([name]) => name === to), middle = at >= 0 && at + 1 < grades.length ? Math.floor((grades[at][1] + grades[at + 1][1]) / 2) : null;
@@ -1267,7 +1271,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             config,
             biases: BIASES,
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
-                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves(), shotsOffLines: shotsOffLines() }, shotReport: stats.shotReport, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null,
+                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves(), shotsOffLines: shotsOffLines() }, shotReport: stats.shotReport, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null, measureReads: stats.measureReads,
                 capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
                 velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),
