@@ -615,6 +615,7 @@ function mainsSide(ctx) {
             ladder: { mode: config.buyerLadder, visitsLeft }, buyerNoSeller: config.buyerNoSeller,
             ownCrystals: twin ? Object.fromEntries(Object.values(game.crystalIds).filter(id => twin.stock[id] > 0).map(id => [id, twin.stock[id]])) : {} });
         ctx.commitVisit(index, now, out, deposit);
+        if (reserve && (cause === 'stock_low:shots' || cause === 'shots_out') && !((out.main.shots[reserve.id] || 0) > (main.shots[reserve.id] || 0))) stats.shotReport.bareTrips++;
         // Stock sold to lines (in the nearest town or another one) and to the NPC.
         const sales = stats.stock;
         for (const stop of out.stops) for (const { selfId: id, count } of stop.items) {

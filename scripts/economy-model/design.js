@@ -583,6 +583,8 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
         // Stock sold to lines in the nearest town and in a hub, and to the
         // NPC (adena); units its mains put in the warehouse to sell later.
         stock: { nearLines: 0, hubLines: 0, npc: 0 }, paths: 0, capFloor: {}, worthBounded: 0,
+        // Shot trips that bought no shot, and shot recipes forgotten per grade.
+        shotReport: { bareTrips: 0, forgets: {} },
         occupation: { grade_changed: 0, spot_left: 0, recipe_wanted: 0, arrived_town: 0, forScroll: 0, forBid: 0, returned: 0, refusedBack: 0, scrollSpot: 0, rowMissing: 0 }, events: { offerPosted: 0, bidPosted: 0 }, velocity: [],
         // Path pieces no route priced (source_stalled); per sampling point
         // (a grade's middle level crossed, a grade left at its last level)
@@ -793,6 +795,10 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             if (isMaterial(view.items[claim.item])) stats.materials.bought += units;
         }
         const recipes = twin.recipes.filter(id => !decision.forget.includes(id));
+        for (const id of decision.forget) {
+            const product = game.recipes[id].productId;
+            if (view.items[product]?.kind === 'Other.Shot') stats.shotReport.forgets[shotGrade(product)] = (stats.shotReport.forgets[shotGrade(product)] || 0) + 1;
+        }
         for (const id of decision.learn) {
             const scroll = game.recipes[id].recipeItemId;
             if (view.items[game.recipes[id].productId]?.kind === 'Other.Shot') firstAt(stats.gates.recipe, shotGrade(game.recipes[id].productId), now, { from: twin.scrollFrom?.[scroll] || 'held at the start' });
@@ -1198,6 +1204,16 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             }
             return out;
         };
+        // Of those, the units on none of its twin's sell lines, per grade.
+        const shotsOffLines = () => {
+            const out = {};
+            for (const account of accounts) if (account.twin) for (const [id, count] of Object.entries(account.twin.stock)) {
+                if (!(count > 0) || view.items[id]?.kind !== 'Other.Shot') continue;
+                const listed = account.twin.lines.filter(line => line.side === 'sell' && line.item === Number(id)).reduce((sum, line) => sum + line.qty, 0);
+                if (count > listed) { const grade = shotGrade(id); out[grade] = (out[grade] || 0) + count - listed; }
+            }
+            return out;
+        };
         const closing = {};
         const add = (id, count) => { if (Number(id) > 0 && count > 0) closing[id] = (closing[id] || 0) + count; };
         for (const main of endMains) {
@@ -1250,7 +1266,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
             config,
             biases: BIASES,
             market: { obtained: stats.pieces_, openWants: parkedAtEnd, outgrown: stats.outgrown, routes: stats.routes, unfunded: stats.unfunded,
-                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves() }, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null,
+                trips: stats.trips, visits: stats.visits, stock: { ...stats.stock, shotsOnShelves: shotsOnShelves(), shotsOffLines: shotsOffLines() }, shotReport: stats.shotReport, meetings: stats.meetings, paths: stats.paths, unpriced: stats.unpriced, kitHour: kitHourSummary(stats.kitHour), kitTables: { ...stats.kitTables }, kitHours: kitHours.stats ? { ...kitHours.stats } : null,
                 capFloor: stats.capFloor, capFloorStatic, worthBounded: stats.worthBounded, occupation: { ...stats.occupation, forScrollMains: stats.scrollMains.size }, events: stats.events,
                 velocity: stats.velocity, gini: { start: giniStart, end: gini(wealth(endMains)) }, twinToTwin: stats.counters.twinToTwin, twinToNpc: stats.counters.twinToNpc },
             crafters: { accounts: hunting.length, crafterAccounts: twins.length, share: twins.length / Math.max(1, hunting.length),
