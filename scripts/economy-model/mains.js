@@ -332,9 +332,9 @@ function mainsSide(ctx) {
         const key = `${main.line}@${main.level}@${row.spotId}@${form}`;
         if (rowMemo.has(key)) return rowMemo.get(key);
         const hour = Engine.rowIn(row, form);
-        const items = Engine.designYieldRows(view, main.line, main.level, hour, form).map(([id, perKill]) => ({ id, rate: perKill * hour.kills,
+        const items = Engine.yieldRows(view, main.line, main.level, hour, form).map(([id, perKill]) => ({ id, rate: perKill * hour.kills,
             weight: view.items[id]?.weight || 0, stack: !Engine.isGear(view.items[id]) }));
-        const adena = hour.adena * Engine.designAdenaFactor(view, row, main.level);
+        const adena = hour.adena * Engine.adenaFactor(view, row, main.level);
         const out = { items, adena, npc: adena + items.reduce((sum, item) => sum + item.rate * (view.items[item.id]?.npcBuy || 0), 0) };
         rowMemo.set(key, out);
         return out;

@@ -131,7 +131,7 @@ function designOf(argv, snapshot) {
     if (!fitFile) throw new Error('design mode needs --fit <economy ledger JSON> (or --cohort): its start save and its fitted rates');
     const baseline = JSON.parse(fs.readFileSync(fitFile, 'utf8')), late = Cohort.fromSave(baseline.inputs.start.db, snapshot);
     const cohort = start === 'late' ? late : Cohort.fresh({ count: Number(Boot.option(argv, 'accounts', 1700)), seed }, snapshot);
-    const view = Engine.viewOf(snapshot, { npcPrices: 'x1' });
+    const view = Engine.viewOf(snapshot, { npcPrices: 'x1', yields: 'design' });
     if (!view.yieldsDesign) throw new Error('the snapshot has no design yields: write it again with inputs.js');
     // The calibration (Today.fit) is read at the ledger's own preset (the late run's x50):
     // a snapshot of another preset is not divided into that run's exp. Design applies no

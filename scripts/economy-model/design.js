@@ -379,9 +379,9 @@ function firstPrices(snapshot, view, { recipes, byProduct, crystalGrade, npcMin,
         for (const [key, hour] of Object.entries(byLevel)) {
             const row = hour.best, level = Number(key);
             if (!row || !(row.kills > 0)) continue;
-            const per = Engine.designYieldRows(view, line, level, row, 'shots').map(([id, perKill]) => [id, perKill * row.kills]);
+            const per = Engine.yieldRows(view, line, level, row, 'shots').map(([id, perKill]) => [id, perKill * row.kills]);
             const loot = per.reduce((sum, [id, count]) => sum + count * (view.items[id]?.npcBuy || 0), 0);
-            const income = row.adena * Engine.designAdenaFactor(view, row, level) + loot;
+            const income = row.adena * Engine.adenaFactor(view, row, level) + loot;
             for (const [id, count] of per) {
                 // band_hour: 1 / count hours each; hour_share: the item's share of the loot's value per unit.
                 const hours = dropAt === 'band_hour' ? 1 / count : loot > 0 ? (view.items[id]?.npcBuy || 0) / loot : 0;

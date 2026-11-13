@@ -381,8 +381,8 @@ const levelReads = (share, shots, hours, atHour = null) => {
 // income (adena and loot at the NPC); band_hour lays the whole hour on each.
 {
     const view = Engine.viewOf(snapshot, { npcPrices: 'x1' }), row = view.hours[9][25].best;
-    const drops = Engine.designYieldRows(view, '9', 25, row, 'shots').map(([id, perKill]) => [id, perKill * row.kills]);
-    const income = row.adena * Engine.designAdenaFactor(view, row, 25) + drops.reduce((sum, [id, count]) => sum + count * view.items[id].npcBuy, 0);
+    const drops = Engine.yieldRows(view, '9', 25, row, 'shots').map(([id, perKill]) => [id, perKill * row.kills]);
+    const income = row.adena * Engine.adenaFactor(view, row, 25) + drops.reduce((sum, [id, count]) => sum + count * view.items[id].npcBuy, 0);
     const priced = reading => Design.gameOf(snapshot, view, { ...Design.DESIGN, firstPriceDrop: reading }).firstPrice;
     const share = priced('hour_share');
     near(drops.reduce((sum, [id, count]) => sum + count * share[id], 0), income, 'the hour\'s drops at first prices');

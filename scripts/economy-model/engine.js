@@ -65,7 +65,9 @@ const isWeapon = item => /^Weapon/.test(item?.kind || '');
 // The snapshot read once into what the rules look up. options.market:
 // { buy: { town: { item: price } }, sell: { town: { item: price } } }, the
 // fixed stores a mode adds (none by default). options.npcPrices: 'preset' (the
-// game's NPC prices at the snapshot's rate) or 'x1'.
+// game's NPC prices at the snapshot's rate) or 'x1'. options.yields: 'design'
+// hunts the per-kill yields at the design's rates (yieldsDesign), else the
+// snapshot's (today's rates): huntYields, the one table a hunt reads.
 function viewOf(snapshot, options = {}) {
     const npcTable = snapshot.npcOffers[options.npcPrices || 'preset'];
     const market = { buy: options.market?.buy || {}, sell: options.market?.sell || {} };
@@ -82,6 +84,7 @@ function viewOf(snapshot, options = {}) {
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(),
         spotHours: snapshot.spotHours?.rows || null, yieldsDesign: snapshot.yieldsDesign || null, spotLevels: snapshot.spotLevels || null,
+        huntYields: (options.yields === 'design' ? snapshot.yieldsDesign : snapshot.yields) || null,
         blessedShots: new Set(snapshot.shotFamilies?.ids?.[BLESSED_FAMILY] || [])
     };
 }
@@ -180,12 +183,14 @@ function killMixCorrection(view, row, level) {
     return { drop: drop > 0 ? row.dropLoot / drop : 1, spoil: spoil > 0 ? row.spoilLoot / spoil : 1 };
 }
 
-// [[item, per kill]] of a spot row at a level, adena apart (the row's own
-// adena), at the kill-mix correction. One list per line, level and spot.
-function yieldRows(view, line, level, row) {
-    const key = `${line}@${level}@${row.spotId}`;
+// [[item, per kill]] of a spot row's hour in a form (row: rowIn's of that
+// form) at a level, at the hunt's yields (huntYields), adena apart (the row's
+// own adena), at that hour's kill-mix correction. One list per line, level,
+// spot and form.
+function yieldRows(view, line, level, row, form) {
+    const key = `${line}@${level}@${row.spotId}@${form}`;
     if (view.yieldRows.has(key)) return view.yieldRows.get(key);
-    const yields = view.yields[`${row.spotId}@${level}`], factor = killMixCorrection(view, row, level), rows = [];
+    const yields = view.huntYields?.[`${row.spotId}@${level}`], factor = killMixCorrection(view, row, level), rows = [];
     for (const kind of yields ? ['drop', 'spoil'] : []) {
         for (const [id, perKill] of Object.entries(yields[kind])) if (Number(id) !== ADENA) rows.push([Number(id), perKill * factor[kind]]);
     }
@@ -224,7 +229,7 @@ function hunt(main, view, huntHours, random) {
     flows.huntCold = Math.round(best.adena * huntHours);
     delta.exp = huntExp(main, best, huntHours);
     const bag = { ...main.bag };
-    for (const [id, perKill] of yieldRows(view, main.line, main.level, best)) {
+    for (const [id, perKill] of yieldRows(view, main.line, main.level, best, 'shots')) {
         const count = wholeCount(perKill * kills, random);
         if (!count) continue;
         bag[id] = (bag[id] || 0) + count;
@@ -238,24 +243,11 @@ function hunt(main, view, huntHours, random) {
     return { main: { ...main, exp, level: levelOf(view, exp, main.level), money: main.money + flows.huntCold, bag, shots }, delta };
 }
 
-// The design's adena per kill over today's at a spot row's spawn mix (1
-// where today's yields carry no adena).
-function designAdenaFactor(view, row, level) {
-    const key = `${row.spotId}@${level}`, today = view.yields[key]?.drop?.[ADENA] || 0, design = view.yieldsDesign?.[key]?.drop?.[ADENA] || 0;
-    return today > 0 ? design / today : 1;
-}
-
-// [[item, per kill]] at the design's yields for a spot row's hour in a form
-// (row: rowIn's of that form), at that hour's own kill-mix correction.
-function designYieldRows(view, line, level, row, form) {
-    const key = `design@${line}@${level}@${row.spotId}@${form}`;
-    if (view.yieldRows.has(key)) return view.yieldRows.get(key);
-    const yields = view.yieldsDesign?.[`${row.spotId}@${level}`], factor = killMixCorrection(view, row, level), rows = [];
-    for (const kind of yields ? ['drop', 'spoil'] : []) {
-        for (const [id, perKill] of Object.entries(yields[kind])) if (Number(id) !== ADENA) rows.push([Number(id), perKill * factor[kind]]);
-    }
-    view.yieldRows.set(key, rows);
-    return rows;
+// The hunt's adena per kill over today's at a spot row's spawn mix (1 where
+// today's yields carry no adena; exactly 1 where the hunt reads today's).
+function adenaFactor(view, row, level) {
+    const key = `${row.spotId}@${level}`, today = view.yields[key]?.drop?.[ADENA] || 0, hunted = view.huntYields?.[key]?.drop?.[ADENA] || 0;
+    return today > 0 ? hunted / today : 1;
 }
 
 // Hunting in the design mode: the design's adena and items (rules/dropRule at
@@ -291,14 +283,14 @@ function huntDesign(main, view, huntHours, random, firing = null, kills = null) 
     delta.ownSpot = best === ownRow(view, main.line, main.level, main.spot);
     const { shotId, held, perHour, lasts, form } = firedOf(view, main, firing);
     const shotHours = perHour > 0 ? Math.min(huntHours, lasts) : 0;
-    const adenaFactor = designAdenaFactor(view, best, main.level);
+    const adenaRatio = adenaFactor(view, best, main.level);
     const bag = { ...main.bag }, counts = new Map();
     for (const [at, hours] of [[form, shotHours], ['bare', huntHours - shotHours]]) {
         if (!(hours > 0)) continue;
         const row = rowIn(best, at), worn = hours * (kills?.[at] ?? 1);
-        flows.huntCold += row.adena * adenaFactor * worn;
+        flows.huntCold += row.adena * adenaRatio * worn;
         delta.exp += formExp(main, best, at, hours, kills);
-        for (const [id, perKill] of designYieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * worn);
+        for (const [id, perKill] of yieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * worn);
     }
     flows.huntCold = Math.round(flows.huntCold);
     for (const [id, mean] of counts) {
@@ -660,4 +652,4 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
 }
 
 module.exports = { viewOf, hunt, huntDesign, visit, errands, sellerOf, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
-    killMixCorrection, designAdenaFactor, designYieldRows, formOf, rowIn, isGear, isWeapon, expAt, SHOT_LINE_HOURS };
+    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, SHOT_LINE_HOURS };
