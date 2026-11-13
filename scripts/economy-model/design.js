@@ -228,10 +228,6 @@ const DESIGN = Object.freeze({
     // the gain per hunting hour times the hours it expects to stay there
     // beats the move's fare and extra walk hours at its own hour.
     occupationAtTown: true,
-    // Unsaid: ours. The hours of one gatekeeper hop between two towns (the
-    // walk to the gatekeeper and through the town: teleports are instant and
-    // the snapshot holds no walk inside a town).
-    hopHours: 0.1,
     // A buyer twin. The design defers a second twin (it comes back with the
     // seller twins); true is ours, pending the maintainer: a crafter account
     // opens a second seated character, of a race other than the dwarf (its
@@ -1021,7 +1017,7 @@ function startPlane({ snapshot, game, config, start, grades, personaShares, view
 
     return {
         hunt(main, delta) {
-            const time = stats.time[main.band] ||= { spot: 0, way: 0, town: 0 };
+            const time = stats.time[main.band] ||= { spot: 0, way: 0 };
             time.spot += delta.spotHours; time.way += delta.wayHours;
             const kind = accounts[main.index].twin ? 'pair' : 'other';
             for (const [id, count] of delta.drops) { goods('drop', id, count); if (isRecipe(id)) recipeRow(id).dropped += count; stats.loot[kind].dropped += count * (view.items[id]?.npcBuy || 0); }

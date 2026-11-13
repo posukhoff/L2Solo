@@ -25,6 +25,15 @@ const levels = Array.from({ length: 30 }, (_, i) => i + 1);
 const hoursOf = (classId, shots) => Object.fromEntries(levels.map(level => [level, { classId, shotId: SSD, best: row('s1', 1000, shots), top: [] }]));
 const twin = level => ({ classId: level < 40 ? 56 : 57, mp: 3000, createItem: level >= 20 ? 2 : 1, crystallize: level >= 20 ? 'd' : null, maxMp: 188, storeSlots: { sell: 4, buy: 5 } });
 const yields = { town: 'TownA', drop: { 57: 100, [BONE]: 0.5, [SCROLL]: 0.2 }, spoil: {} };
+// A test world's game trip hours (the snapshot's tripHours and townHours):
+// `to` from each spot into its town, `back` from every town to each spot (a
+// number, or a function of the spot and the town), `hop` between two towns
+// (none into itself, as the snapshot's).
+const tripsOf = (spots, towns, { to = 0.01, back = 0.01, hop = 0.1 } = {}) => {
+    const hours = (value, ...keys) => (typeof value === 'function' ? value(...keys) : value);
+    return { tripHours: { to: Object.fromEntries(spots.map(id => [id, hours(to, id)])), back: Object.fromEntries(spots.map(id => [id, Object.fromEntries(towns.map(town => [town, hours(back, id, town)]))])) },
+        townHours: Object.fromEntries(towns.map(from => [from, Object.fromEntries(towns.map(into => [into, from === into ? 0 : hop]))])) };
+};
 const snapshot = {
     header: { levels: [1, 30], rates: { adena: 1 } },
     exp: levels.map(level => level * 1e9),
@@ -52,7 +61,8 @@ const snapshot = {
     tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownA'], higher: 'TownA' },
     // The Bounty Hunter's bag holds two stacks: its sword and the expected first drop fill it.
     bags: { 55: { race: 4, slots: 2, maxLoad: 100000 }, 9: { race: 1, slots: 80, maxLoad: 100000 } },
-    walkBack: { s1: 0.01 }
+    // Every town a test world names (each world adds its own spots).
+    ...tripsOf(['s1'], ['TownA', 'TownB', 'TownC', 'TownD', 'TownE'])
 };
 const accounts = [
     { id: 1, station: false, classId: 55, line: '55', level: 25, exp: 25e9, money: 200000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD } },
@@ -303,7 +313,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
 // armour aims at it (a path piece it can buy for 20000) and, firing its
 // soulshot, earns toward it at its worn kit's kills, so at share 0.5
 // goal_affordable comes after twice the hunting hours it comes after at
-// share 1 (both less the walk to town), and its next grade after twice the hours.
+// share 1 (both less the trip into town), and its next grade after twice the hours.
 {
     const Mains = require('../scripts/economy-model/mains');
     const arrivalAt = share => {
@@ -315,11 +325,13 @@ const levelReads = (share, shots, hours, atHour = null) => {
                 design: plane({ snapshot: world, game: Design.gameOf(world, view), start: 'late', grades, kitHours: shareKit(share, [{ id: SSD, kind: 'soulshot', gross: 2000, units: 50 }]) }) });
         } finally { Mains.mainsSide = mainsSide; }
         const main = ctx.mains[0];
-        ctx.accounts[0] = { ...ctx.accounts[0], market: { ...ctx.accounts[0].market, path: { pieces: [{ selfId: ARMOR_WORN, slot: 10, route: 'npc', cost: 20000 }] }, wants: {} } };
+        ctx.accounts[0] = { ...ctx.accounts[0], market: { ...ctx.accounts[0].market, path: { pieces: [{ selfId: ARMOR_WORN, slot: 10, route: 'npc', cost: 20000 }], order: [] }, wants: {} } };
         const at = side.nextArrival(main, { event: 'start', now: main.since, huntShare: 1, roll: 0.5 });
-        return { hunting: at.at - main.since - 2 * world.walkBack.s1, reason: ctx.accounts[0].market.tripReason, toGrade: side.hoursToGrade(main), fired: side.firingOf(main)?.id ?? null };
+        const read = { hunting: at.at - main.since - world.tripHours.to.s1, reason: ctx.accounts[0].market.tripReason, toGrade: side.hoursToGrade(main), fired: side.firingOf(main)?.id ?? null };
+        return { ...read, after: side.visitMain(main, at.at, { outingHours: 0 }).afterHours };
     };
     const half = arrivalAt(0.5), whole = arrivalAt(1);
+    near(whole.after, keptKit(snapshot).tripHours.back.s1.TownA, 'it hunts again after its way back from TownA to its spot');
     assert.deepEqual([half.reason, whole.reason], ['goal_affordable', 'goal_affordable'], 'the goal is the arrival');
     assert.ok(whole.hunting > 0 && whole.toGrade > 0 && half.fired === SSD, `hours stated, firing its shot: ${JSON.stringify([half, whole])}`);
     near(half.hunting, 2 * whole.hunting, 'half the kills: twice the hunting hours to the goal');
@@ -412,7 +424,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
         const s2 = levels.map(level => [`s2@${level}`, { ...yields, town: buyerTown }]);
         const priced = Object.fromEntries(Object.entries(fares).map(([from, to]) => [from, Object.fromEntries(Object.entries(to).map(([town, price]) => [town, price && fare]))]));
         const world = { ...snapshot, fares: priced, hours: { ...snapshot.hours, 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: row('s2', 1000, 50), top: [] }])) },
-            yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, walkBack: { s1: 0.01, s2: 0.01 },
+            yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, ...tripsOf(['s1', 's2'], Object.keys(fares)),
             // Ore and the sword (its D crystals) in the village too: the twin crafts and lists its shots where it sits.
             npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'Dwarven Village', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'Dwarven Village', price: 4000 }] } } };
         const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'starter_then_pays' };
@@ -432,7 +444,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const s2 = levels.map(level => [`s2@${level}`, { ...yields, town: 'TownD' }]);
     const world = fare => ({ ...snapshot, fares: { TownA: { TownA: 0, TownD: fare }, TownD: { TownA: fare, TownD: 0 } },
         hours: { ...snapshot.hours, 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: row('s2', 1000, 50), top: [] }])) },
-        yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, walkBack: { s1: 0.01, s2: 0.01 },
+        yields: { ...snapshot.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s2) }, ...tripsOf(['s1', 's2'], ['TownA', 'TownD']),
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } });
     const out = run(5, 8, world(500)).design;
     assert.ok(out.gates.recipe?.d || Object.keys(out.gates.recipe || {}).length, 'the twin learned the shot recipe');
@@ -490,12 +502,14 @@ const levelReads = (share, shots, hours, atHour = null) => {
 }
 
 // A main on its way to a seller of its shot keeps going. The world above
-// with a walk of 0.5 h there and back for the shooter (s1) and a low mark of
-// 1.2 hours of shots (60); its twin's main hunts its own spot (s0) a short
-// walk from town, so the twin's line in TownD stands at h6.77. The shooter
-// (450 at 50 an hour) runs low at h7.8, reads the line and sets out: TownD
-// at h8.5, the walk and a gatekeeper hop there and one back after it sets
-// out, the 60 shots it left with unfired. A line of its shot raised at h8,
+// with a trip of 0.25 h from the shooter's spot (s1) into its town TownA, a
+// hop of 0.15 h from TownA on to TownD, a way back of 0.4 h from TownD (0.25
+// h from TownA) and a low mark of 1.2 hours of shots (60); its twin's main
+// hunts its own spot (s0) a short walk from town, so the twin's line in TownD
+// stands at h6.77. The shooter (450 at 50 an hour) runs low at h7.8, reads
+// the line and sets out: TownA at h8.05, its trip there after it sets out,
+// the 60 shots it left with unfired; it hunts again after the hop on to TownD
+// and the way back from there. A line of its shot raised at h8,
 // while it is on its way, raises no offer event and leaves the visit's hour
 // and town as they were. A level reached on its spot at h7.2, before it sets
 // out, is read there once and none on the way: the trip it left for is not
@@ -505,18 +519,19 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const s0 = levels.map(level => [`s0@${level}`, yields]);
     // 1e6 exp a level (not the snapshot's 1e9): the 7.2 exp to level 26 below is then far above the
     // rounding a level read allows (1e-9 of the level's exp).
-    const world = { ...snapshot, exp: levels.map(level => level * 1e6), walkBack: { s0: 0.01, s1: 0.25 }, fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
+    const world = { ...snapshot, exp: levels.map(level => level * 1e6), ...tripsOf(['s0', 's1'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : town === 'TownD' ? 0.4 : 0.25), hop: 0.15 }), fares: { TownA: { TownA: 0, TownD: 500 }, TownD: { TownA: 500, TownD: 0 } },
         hours: { ...snapshot.hours, 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: row('s0', 1000, 0), top: [] }])) },
         yields: { ...snapshot.yields, ...Object.fromEntries(s0) }, yieldsDesign: { ...snapshot.yieldsDesign, ...Object.fromEntries(s0) },
         npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'TownA', price: 300 }, { town: 'TownD', price: 300 }], [SWORD]: [{ town: 'TownA', price: 4000 }, { town: 'TownD', price: 4000 }] } },
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s0: 'TownA', s1: 'TownA' }, d: ['TownD'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub', hubTowns: ['TownD'], stockLowMinutes: 72 };
     // The shooter's (index 1) first visit, its level-ups, the hours its arrival rule is asked and its first shot trip's planned arrival; postAt: the hour a line of its shot is raised in TownD.
-    const runWith = ({ exp = 25e6, postAt = null }) => {
-        const design = plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }), start = design.start, mainsSide = Mains.mainsSide;
+    const runWith = ({ exp = 25e6, postAt = null, gone = false, at = world }) => {
+        const atView = at === world ? view : Engine.viewOf(at, { npcPrices: 'x1' });
+        const design = plane({ snapshot: at, game: Design.gameOf(at, atView, config), config, start: 'late', grades }), start = design.start, mainsSide = Mains.mainsSide;
         const seen = { visit: null, levelUps: [], asked: [], planned: null };
-        let side = null;
-        Mains.mainsSide = (...args) => (side = mainsSide(...args));
+        let side = null, ctx = null;
+        Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
         design.start = context => {
             const hooks = start(context), next = hooks.nextArrival, visit = hooks.visit, levelUp = hooks.levelUp.bind(hooks), hour = hooks.hour.bind(hooks);
             hooks.nextArrival = (main, ev) => {
@@ -527,32 +542,49 @@ const levelReads = (share, shots, hours, atHour = null) => {
             };
             hooks.levelUp = (main, now) => { if (main.index === 1) seen.levelUps.push(now); return levelUp(main, now); };
             hooks.visit = (main, now, options) => {
+                // gone: the twin's line in TownD is taken off before the shooter arrives.
+                if (gone && main.index === 1 && !seen.visit) Books.remove(ctx.books, 0);
                 const out = visit(main, now, options);
-                if (main.index === 1 && !seen.visit) seen.visit = { at: now, towns: out.delta.towns, held: main.shots[SSD] || 0, bought: (out.main.shots[SSD] || 0) - (main.shots[SSD] || 0) };
+                if (main.index === 1 && !seen.visit) seen.visit = { at: now, towns: out.delta.towns, held: main.shots[SSD] || 0, bought: (out.main.shots[SSD] || 0) - (main.shots[SSD] || 0), afterHours: out.afterHours, spot: out.main.occupied };
                 return out;
             };
             hooks.hour = now => { if (now === postAt) side.offerPosted(SSD, 'TownD', 1, 0, now); return hour(now); };
             return hooks;
         };
         try {
-            const out = Engine.simulate({ view, accounts: [{ ...accounts[0], exp: 25e6 }, { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, design });
+            const out = Engine.simulate({ view: atView, accounts: [{ ...accounts[0], exp: 25e6 }, { ...accounts[1], exp, shots: { [SSD]: 450 } }], bands, rates, hours: 12, seed: 5, design });
             assert.equal(out.money.closureGap, 0);
             assert.equal(out.design.goods.failing, 0);
             return { ...seen, offers: out.design.market.events.offerPosted };
         } finally { Mains.mainsSide = mainsSide; }
     };
     const plain = runWith({});
-    near(plain.planned, 7.8 + 0.5 + 2 * config.hopHours, 'it sets out at its low mark for TownD: the walk and two hops after');
+    near(plain.planned, 7.8 + 0.25, 'it sets out at its low mark for TownD: its trip into its own town TownA after');
     assert.deepEqual([plain.visit.towns, plain.visit.held, plain.visit.bought > 0], [['TownD'], 60, true], JSON.stringify(plain.visit));
     near(plain.visit.at, plain.planned, 'it arrives as planned');
+    near(plain.visit.afterHours, 0.15 + 0.4, 'it hunts again after the hop on from TownA to TownD and its way back from TownD');
     const posted = runWith({ postAt: 8 });
     assert.equal(posted.offers, 0, 'a main on its way to a seller is not woken by the line');
     assert.deepEqual([posted.visit.at, posted.visit.towns], [plain.visit.at, plain.visit.towns], 'a line raised on its way: the visit\'s hour and town unchanged');
+    // Its seller gone by its arrival, it buys in TownA: no hop on, only its way back from TownA.
+    const gone = runWith({ gone: true });
+    assert.deepEqual(gone.visit.towns, ['TownA'], `no seller in TownD at its arrival: ${JSON.stringify(gone.visit)}`);
+    near(gone.visit.afterHours, 0.25, 'a shot trip whose seller is gone costs no hop: it hunts again after its way back from TownA');
+    // At level 26 a richer s2 ranks above s1, 50 h back from TownA but 0.01 h
+    // from TownD, where its visit ends: the move is priced from TownD (no way
+    // longer than s1's), so it moves and hunts again after the hop and 0.01 h.
+    const s2 = levels.map(level => [`s2@${level}`, yields]);
+    const richer = { ...world, ...tripsOf(['s0', 's1', 's2'], ['TownA', 'TownD'], { to: id => (id === 's1' ? 0.25 : 0.01), back: (id, town) => (id === 's0' ? 0.01 : id === 's2' ? (town === 'TownD' ? 0.01 : 50) : town === 'TownD' ? 0.4 : 0.25), hop: 0.15 }),
+        hours: { ...world.hours, 9: Object.fromEntries(levels.map(level => [level, { ...world.hours[9][level], top: level >= 26 ? [row('s2', 5000, 50), row('s1', 1000, 50)] : [] }])) },
+        yields: { ...world.yields, ...Object.fromEntries(s2) }, yieldsDesign: { ...world.yieldsDesign, ...Object.fromEntries(s2) }, tradeTowns: { ...world.tradeTowns, none: { ...world.tradeTowns.none, s2: 'TownA' } } };
+    const moved = runWith({ exp: 26e6 - 7.2, at: richer });
+    assert.deepEqual([moved.visit.towns, moved.visit.spot], [['TownD'], 's2'], `the move priced from TownD, where its visit ends: ${JSON.stringify(moved.visit)}`);
+    near(moved.visit.afterHours, 0.15 + 0.01, 'it hunts again after the hop on to TownD and its way back from there to s2');
     // Level 26 starts at 26e6 exp: at 1 exp an hour it is reached and read at h7.2, on its spot.
     const leveled = runWith({ exp: 26e6 - 7.2 });
     assert.deepEqual(leveled.levelUps.filter(at => at < leveled.planned).map(at => Math.round(at * 100) / 100), [7.2], `level 26 read once on its spot, none on the way: ${JSON.stringify(leveled)}`);
-    // It sets out the walk and two hops before its arrival (the level read moves that hour by a float's rounding).
-    const left = leveled.planned - 0.5 - 2 * config.hopHours;
+    // It sets out its trip into town before its arrival (the level read moves that hour by a float's rounding).
+    const left = leveled.planned - 0.25;
     assert.ok(!leveled.asked.some(at => at > left + 1e-9 && at < leveled.planned), `the trip it left for is not asked again on its way: ${JSON.stringify(leveled.asked)}`);
     near(leveled.visit.at, plain.visit.at, 'a level-up before it sets out: it arrives as planned');
     assert.deepEqual([leveled.visit.towns, leveled.visit.held > 0, leveled.visit.bought > 0], [['TownD'], true, true],
@@ -660,7 +692,7 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const yieldRows = Object.fromEntries(levels.flatMap(level => Object.entries(spots).map(([spot, town]) => [`${spot}@${level}`, yieldsAt(town)])));
     const hoursNine = Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: level === 26 ? row('s3', 1000, 50) : row('s2', 1000, 50), top: [] }]));
     const world = { ...snapshot, fares: { TownA: { TownA: 0, TownD: 300, TownE: 100 }, TownD: { TownA: 300, TownD: 0, TownE: 100 }, TownE: { TownA: 100, TownD: 100, TownE: 0 } },
-        hours: { ...snapshot.hours, 9: hoursNine }, yields: { ...snapshot.yields, ...yieldRows }, yieldsDesign: { ...snapshot.yieldsDesign, ...yieldRows }, walkBack: { s1: 0.01, s2: 0.01, s3: 0.01 },
+        hours: { ...snapshot.hours, 9: hoursNine }, yields: { ...snapshot.yields, ...yieldRows }, yieldsDesign: { ...snapshot.yieldsDesign, ...yieldRows }, ...tripsOf(['s1', 's2', 's3'], ['TownA', 'TownD', 'TownE']),
         tradeTowns: { grade: { [SSD]: 'd', [CRYSTAL]: 'd' }, none: { s1: 'TownA' }, d: ['TownD', 'TownE'], higher: 'TownC' } };
     const view = Engine.viewOf(world, { npcPrices: 'x1' }), config = { ...Design.DESIGN, twinSeat: 'hub' };
     const pair = [accounts[1], { ...accounts[1], id: 3, level: 26, exp: 26e9 }, accounts[0]];
@@ -706,11 +738,12 @@ const levelReads = (share, shots, hours, atHour = null) => {
     assert.equal(died.design.goods.failing, 0);
     assert.equal(runDying(false).design.market.trips.death, undefined, 'without the switch no death sends it to town');
 
-    // The walk back from a death is not hunted: the death at 0.1 hunting
-    // hours (roll 0.05 at 0.5 deaths an hour) reaches its visit the spot's
-    // walk back (0.3 h) later, and those hours are away from the spot.
+    // A death is the arrival at the hour it dies: the death at 0.1 hunting
+    // hours (roll 0.05 at 0.5 deaths an hour) is the visit, with no trip into
+    // town before it, and the way back to the spot (0.3 h from its town)
+    // follows the visit, not hunted.
     const Mains = require('../scripts/economy-model/mains');
-    const far = { ...dying, walkBack: { s1: 0.3 } }, farView = Engine.viewOf(far, { npcPrices: 'x1' }), config = { ...Design.DESIGN, deathArrival: true }, mainsSide = Mains.mainsSide;
+    const far = { ...dying, ...tripsOf(['s1'], ['TownA'], { to: 0.2, back: 0.3 }) }, farView = Engine.viewOf(far, { npcPrices: 'x1' }), config = { ...Design.DESIGN, deathArrival: true }, mainsSide = Mains.mainsSide;
     let side = null, ctx = null;
     Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
     try {
@@ -720,8 +753,9 @@ const levelReads = (share, shots, hours, atHour = null) => {
     const fallen = ctx.mains[0], roll = 0.05;
     const diedAt = deathAt({ since: fallen.since, huntShare: 1, deathsPerHour: 0.5, roll });
     const back = side.nextArrival(fallen, { event: 'start', now: fallen.since, huntShare: 1, roll });
-    near(back.at - diedAt, 0.3, `its visit comes the walk back after the death: ${JSON.stringify(back)}`);
-    near(back.away, 0.3, 'the walk back is away from the spot, not hunted');
+    assert.deepEqual([back.at, back.away], [diedAt, 0], `its visit is at the hour it dies, no trip before it: ${JSON.stringify(back)}`);
+    const visited = side.visitMain(fallen, back.at, { outingHours: 0 });
+    near(visited.afterHours, 0.3, 'the way back follows the death\'s visit: it hunts again 0.3 h after it');
 }
 
 // A main without shots, or firing none, hunts at the same spot's hour without shots.
@@ -760,7 +794,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         recipes: [], races: { 9: 1, 46: 3 },
         bags: { 9: { race: 1, slots: 80, maxLoad: 1e6 }, 46: { race: 3, slots: 2, maxLoad: 1e6 } },
         gearLadder: ladderOf('9', [[1, 45, { weapon: { rungs: [SWORD], hour: { [SWORD]: 2000, [OLD]: 1000, 0: 500 } } }]]),
-        walkBack: { s1: 0.01, s2: 0.01 }
+        ...tripsOf(['s1', 's2'], ['TownA'])
     };
     market.yieldsDesign = market.yields;
     const buyers = [
@@ -902,7 +936,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         spotLevels: { 9: ranges },
         kits: { 9: Object.fromEntries(levels30.map(level => [level, [{ selfId: SWORD, slot: 7 }]])) },
         yields: Object.fromEntries(levels30.flatMap(level => ['A', 'B', 'C'].map(id => [`${id}@${level}`, { town: 'TownA', drop: { 57: 100 }, spoil: {} }]))),
-        walkBack: { A: 0.01, B: 0.01, C: 0.01 }
+        ...tripsOf(['A', 'B', 'C'], ['TownA'])
     };
     world.yieldsDesign = world.yields;
     const view = Engine.viewOf(world, { npcPrices: 'x1' });
@@ -1098,7 +1132,7 @@ assert.equal(armed.delta.shotsUsed, 50);
             items: { ...snapshot.items, [MAT]: { kind: 'Other.Material', grade: 'NONE', ref: 10, npcBuy: 5, crystals: 0, weight: 100 } },
             hours: { 55: Object.fromEntries(levels.map(level => [level, { classId: 55, shotId: SSD, best: rowAt('s2'), top: [] }])),
                 9: Object.fromEntries(levels.map(level => [level, { classId: 9, shotId: SSD, best: rowAt('s3'), top: [] }])) },
-            yields: Object.fromEntries([...s2, ...s3]), yieldsDesign: Object.fromEntries([...s2, ...s3]), walkBack: { s2: 0.01, s3: 0.01 },
+            yields: Object.fromEntries([...s2, ...s3]), yieldsDesign: Object.fromEntries([...s2, ...s3]), ...tripsOf(['s2', 's3'], ['A', 'B']),
             npcOffers: { preset: {}, x1: { [ORE]: [{ town: 'A', price: 300 }], [SWORD]: [{ town: 'A', price: 4000 }] } } };
         // A line that starts at its known price and barely steps (1000 looks to its cap).
         const view = Engine.viewOf(world, { npcPrices: 'x1' });
@@ -1162,30 +1196,42 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.ok(Math.abs(ratio / factor - 1) < 0.005, `hours to the grade: a member of three reads ${ratio} times faster, not ${factor}`);
     assert.equal(gradeHoursOf(cut), 0, 'a member under the cut gains no exp: its hours to the grade are not stated');
 
-    // Two spots in one town: the held A and a dearer B (200 an hour), a walk
-    // that costs 0.65 (0.33) hours of A's 1000 an hour. At its first return to
-    // town the main moves when the gain over the hours it stays beats that.
-    // Hunt adena over 3 hours says where it hunted: 2983 all at A (its first
-    // trip's walk of 1/60 hour is not hunted: 17 less), more after a move.
+    // Two spots in one town: the held A 0.01 hours from town each way and a
+    // dearer B (200 an hour) 0.65 (0.33) hours each way: its 0.64 (0.32)
+    // more hours cost 640 (320) of A's 1000 an hour. At its first return to
+    // town (it sets out at the start, arrives at 0.01) the main moves when
+    // the gain over the hours it stays beats that, and its way back to B is
+    // not hunted. Hunt adena over 3 hours says where it hunted: 2980 all at A
+    // (2.98 hours after its trip there and back); after a move, B's 1200 an
+    // hour less its trip and its way back to B: 2808 (2.34 hours) for a way
+    // of 0.65, 3192 (2.66 hours) for 0.33.
     const config = { ...Design.DESIGN, outingHours: 100 };
-    const huntAdena = (party, ranges, level, walk) => {
+    const huntAdena = (party, ranges, level, walk, visits = null) => {
         const world = { ...snapshot, npcOffers,
             hours: { 9: Object.fromEntries(levels.map(at => [at, { classId: 9, shotId: SSD, best: rowOf('A', 1000), top: [rowOf('B', 1200), rowOf('A', 1000)] }])) },
             spotLevels: { 9: ranges }, kits: { 9: Object.fromEntries(levels.map(at => [at, [{ selfId: SWORD, slot: 7 }]])) },
-            yields: Object.fromEntries(levels.flatMap(at => ['A', 'B'].map(id => [`${id}@${at}`, { town: 'TownA', drop: {}, spoil: {} }]))), walkBack: { A: 0, B: walk } };
+            yields: Object.fromEntries(levels.flatMap(at => ['A', 'B'].map(id => [`${id}@${at}`, { town: 'TownA', drop: {}, spoil: {} }]))), ...tripsOf(['A', 'B'], ['TownA'], { to: id => (id === 'B' ? walk : 0.01), back: id => (id === 'B' ? walk : 0.01) }) };
         world.yieldsDesign = world.yields;
-        const view = Engine.viewOf(world, { npcPrices: 'x1' });
+        const view = Engine.viewOf(world, { npcPrices: 'x1' }), design = plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }), start = design.start;
+        // visits: each visit's spot it hunts next and the hours before it hunts again.
+        if (visits) design.start = context => {
+            const hooks = start(context), visit = hooks.visit;
+            hooks.visit = (main, now, options) => { const out = visit(main, now, options); visits.push({ spot: out.main.occupied, afterHours: out.afterHours }); return out; };
+            return hooks;
+        };
         return Engine.simulate({ view, accounts: [{ id: 51, station: false, classId: 9, line: '9', level, exp: level * 1e9, money: 1000, spot: null, shots: {}, held: [SWORD], worn: { 7: SWORD }, party }],
-            bands: [['all', 1]], rates, hours: 3, seed: 1, nextArrival: arrivals, design: plane({ snapshot: world, game: Design.gameOf(world, view, config), config, start: 'late', grades }) }).flows.totals.huntCold;
+            bands: [['all', 1]], rates, hours: 3, seed: 1, nextArrival: arrivals, design }).flows.totals.huntCold;
     };
-    // The hours to the end of B's levels (26): 4 for a solo main, 2.9 for a member of three; a move over 0.65 hours of walk (650) pays for 4 only.
+    // The hours to the end of B's levels (26): 4 for a solo main, 2.9 for a member of three; a move over 0.64 more hours (640) pays for 4 only.
     const toEnd = { A: [1, 30], B: [1, 26] };
-    assert.equal(huntAdena(null, toEnd, 25, 0.65), 3580, 'a solo main moves to B');
-    assert.equal(huntAdena(three, toEnd, 25, 0.65), 2983, 'a member of three reaches its spot\'s last level sooner: the move does not pay');
-    // The hours to the end of its grade (30): 2 against 1.4; a walk of 330 pays for 2 only.
-    assert.equal(huntAdena(null, {}, 29, 0.33), 3580, 'a solo main moves to B');
-    assert.equal(huntAdena({ levels: [29, 29, 29], self: 0 }, {}, 29, 0.33), 2983, 'a member of three reaches the end of its grade sooner: the move does not pay');
-    assert.equal(huntAdena({ levels: [29, 80, 80], self: 0 }, {}, 29, 0.33), 2983, 'a member under the cut: its hours to the grade are not stated, the move pays for none');
+    const moved = [];
+    assert.equal(huntAdena(null, toEnd, 25, 0.65, moved), 2808, `a solo main moves to B: ${JSON.stringify(moved)}`);
+    assert.deepEqual(moved, [{ spot: 'B', afterHours: 0.65 }], 'the move to B costs its way back to B: it hunts again 0.65 h after the visit');
+    assert.equal(huntAdena(three, toEnd, 25, 0.65), 2980, 'a member of three reaches its spot\'s last level sooner: the move does not pay');
+    // The hours to the end of its grade (30): 2 against 1.4; 0.32 more hours (320) pay for 2 only.
+    assert.equal(huntAdena(null, {}, 29, 0.33), 3192, 'a solo main moves to B');
+    assert.equal(huntAdena({ levels: [29, 29, 29], self: 0 }, {}, 29, 0.33), 2980, 'a member of three reaches the end of its grade sooner: the move does not pay');
+    assert.equal(huntAdena({ levels: [29, 80, 80], self: 0 }, {}, 29, 0.33), 2980, 'a member under the cut: its hours to the grade are not stated, the move pays for none');
 }
 
 // KIT HOUR beside the reference ratio states the kit the main could wear by
@@ -1387,7 +1433,7 @@ assert.equal(armed.delta.shotsUsed, 50);
         bags: { ...snapshot.bags, 9: { race: 1, slots: 80, maxLoad: 3000 } } };
     world.items = { ...world.items, [BONE]: { ...world.items[BONE], weight: 1000 } };
     const { out } = runHeld(world, kitHoursOf(() => 1000, () => [{ id: SPSD, gross: 2000, units: 50 }]), { ...accounts[1], money: 10 }, 8);
-    const time = out.design.time.low, all = time.spot + time.way + time.town;
+    const time = out.design.time.low, all = time.spot + time.way;
     assert.ok(time.spot > 0.8 * all, `it hunts most of its hours: spot ${time.spot} of ${all}`);
     const fired = Object.values(out.design.shots.byGrade).reduce((sum, grade) => sum + grade.fired, 0);
     assert.ok(fired > 0, `it bought shots and fired them: ${fired}`);

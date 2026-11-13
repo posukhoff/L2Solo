@@ -185,11 +185,12 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
     console.log(`CRAFTERS ${c.crafterAccounts} of ${c.accounts} accounts (${pct(c.crafterAccounts, c.accounts)}): Bounty Hunter pairs ${c.bountyHunterPairs}, other pairs ${c.otherPairs}; `
         + `twins by band ${Object.entries(c.byBand).map(([b, n]) => `${b} ${n}`).join(' | ')}; by class ${Object.entries(c.byClass).map(([b, n]) => `${b} ${n}`).join(' | ')}`);
     console.log(`  twins by town: ${Object.entries(c.byTown).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${n}`).join(' | ')}`);
-    console.log(`TIME per current band, bot-hours (at the spot, on the way to town and back, in town for onward stops at ${design.config.hopHours} h a hop; hunting = spot x the band's share; way share of all three):`);
+    console.log('TIME per current band, bot-hours (at the spot, on the way: the game\'s trip hours into town, on to each town visited and back to the spot; hunting = spot x the band\'s share; way share of both):');
     const time = Object.entries(design.time), sum = field => time.reduce((total, [, t]) => total + t[field], 0);
-    for (const [band, t] of [...time, ['all', { spot: sum('spot'), way: sum('way'), town: sum('town'), hunting: sum('hunting') }]]) {
-        console.log(`  ${band.padEnd(8)} spot ${fmt(t.spot)} way ${fmt(t.way)} town ${fmt(t.town)} hunting ${fmt(t.hunting)} way share ${pct(t.way, t.spot + t.way + t.town)}`);
+    for (const [band, t] of [...time, ['all', { spot: sum('spot'), way: sum('way'), hunting: sum('hunting') }]]) {
+        console.log(`  ${band.padEnd(8)} spot ${fmt(t.spot)} way ${fmt(t.way)} hunting ${fmt(t.hunting)} way share ${pct(t.way, t.spot + t.way)}`);
     }
+    console.log('  in town 0 h (TIME.7): nothing beyond the trip hours (ours: the game has no stay of its own)');
     console.log('SHOTS per grade (fired / wanted over the run, by current band; top towns by shots wanted):');
     for (const [grade, row] of Object.entries(design.shots.byGrade)) {
         console.log(`  ${grade.padEnd(5)} wanted ${k(row.wanted)} fired ${k(row.fired)} coverage ${pct(row.fired, row.wanted)}; `
@@ -386,7 +387,7 @@ function main(argv) {
     const { view, rates } = picked || modeOf(argv, snapshot, cohort);
     const fallbacks = snapshot.fallbacks;
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)}); fallbacks: `
-        + `no no-grade market (the C town) ${fallbacks.noMarketToC.length} spots, walk back 0 ${fallbacks.walkBackZero.length} spots`);
+        + `no no-grade market (the C town) ${fallbacks.noMarketToC.length} spots`);
     console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}`);
     const began = Date.now();
     const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, nextArrival: picked ? null : Today.nextArrival,

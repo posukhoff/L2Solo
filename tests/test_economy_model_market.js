@@ -59,8 +59,8 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 // stock and its use alone: trip names it to be read at its hour, and there a
 // seller sends it.
 {
-    const here = { ownHeld: false, npcAsk: 10, money: 1000, towns: [], hopHours: 0 };
-    const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Giran', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
+    const here = { ownHeld: false, npcAsk: 10, money: 1000, towns: [] };
+    const base = { now: 10, since: 10, huntShare: 0.5, toHours: 0.02, backHours: 0.01, town: 'Giran', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
         shots: { held: 600, perHour: 300 }, shotTowns: here, bag: { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 10, weight: 10, stack: true, held: false }] },
         goal: { need: 5000, have: 1000, perHour: 1000, fresh: false } };
     const first = trip({}, base), lowAt = 10 + (600 - 50) / 300 / 0.5;
@@ -73,13 +73,13 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.equal(loaded.reason, 'bag_full', '1000 load an hour reaches 2/3 of 1000 in 0.67 hunting hours');
     const rich = trip({}, { ...base, goal: { ...base.goal, have: 5000, fresh: true } });
     assert.equal(rich.reason, 'goal_affordable', 'a new goal it can pay sends it now');
-    assert.equal(rich.at, 10.02);
+    assert.deepEqual([rich.at, rich.away], [10.02, 0.02], 'it leaves now and is away its trip into town (its way back is the visit\'s)');
     const out = trip({}, { ...base, shots: { held: 0, perHour: 300 }, goal: null, bag: null });
     assert.deepEqual([out.reason, out.at], ['shots_out', 10.02], 'out of shots with a seller where it stands: it goes now');
     const offer = trip({}, { ...base, goal: null, bag: null, event: 'offer_posted', deal: { gain: 500 } });
     assert.equal(offer.reason, 'offer_posted', 'a line in reach worth more than the walk sends it now');
-    assert.equal(trip({}, { ...base, shots: null, goal: null, bag: null, event: 'offer_posted', deal: { gain: 10 } }).at, null,
-        'a gain under the trip\'s 0.02 h x 1000 waits for its next visit');
+    const dealAt = gain => trip({}, { ...base, shots: null, goal: null, bag: null, event: 'offer_posted', deal: { gain } }).at;
+    assert.deepEqual([dealAt(25), dealAt(35)], [null, 10.02], 'a gain under the trip there and back (0.02 + 0.01 h) x 1000 waits for its next visit, one over it goes');
 }
 
 // A shot restock goes where a seller of the shot stands now: where the main
@@ -100,12 +100,12 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
     assert.equal(shotTown({ ...heine, npcAsk: 10 }), 'Heine', 'the NPC here sells it at its worth: no fare');
     assert.equal(shotTown({ ...heine, ownHeld: true, towns: [] }), 'Heine', 'its own twin holds it: where it stands');
     assert.equal(shotTown({ ...heine, towns: [] }), null, 'no town reached: no seller');
-    const base = { now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Heine', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
-        shots: { held: 600, perHour: 300 }, bag: null, goal: null, shotTowns: { ownHeld: false, npcAsk: null, money: 100000, towns, hopHours: 0.1 } };
+    const base = { now: 10, since: 10, huntShare: 0.5, toHours: 0.02, backHours: 0.01, town: 'Heine', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000,
+        shots: { held: 600, perHour: 300 }, bag: null, goal: null, shotTowns: { ownHeld: false, npcAsk: null, money: 100000, towns } };
     const lowAt = 10 + (600 - 50) / 300 / 0.5, low = trip({}, { ...base, now: lowAt });
     assert.deepEqual([low.reason, low.town], ['stock_low:shots', 'Giran'], 'a main low on shots goes to the only town holding a line at its worth');
-    assert.ok(Math.abs(low.at - (lowAt + 0.02 + 2 * 0.1)) < 1e-9, `a hop there and one back added: ${low.at}`);
-    assert.ok(Math.abs(low.away - (0.02 + 2 * 0.1)) < 1e-9, `away from its spot the walk and both hops: ${low.away}`);
+    assert.ok(Math.abs(low.at - (lowAt + 0.02)) < 1e-9, `it arrives in its own town after its trip there (the hop on to Giran is the visit's): ${low.at}`);
+    assert.equal(low.away, 0.02, 'away before the arrival: its trip into its own town only');
     assert.equal(trip({}, { ...base, shots: { held: 0, perHour: 300 } }).town, 'Giran', 'shots_out too');
     const bag = { slots: 80, used: 10, weight: 0, maxLoad: 1000, items: [{ rate: 100, weight: 10, stack: true, held: false }] };
     const full = trip({}, { ...base, bag });
@@ -150,8 +150,8 @@ const Bounds = require('../scripts/economy-model/rules/bounds');
 {
     const nextOuting = (refill, lastOuting) => {
         const held = Math.ceil(300 * refillHours({ refill, outingHours: 2, minHours: 1, lastOuting }));
-        const out = trip({}, { now: 0, since: 0, huntShare: 1, tripHours: 0, town: 'Gludio', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 0,
-            shots: { held, perHour: 300 }, shotTowns: { ownHeld: false, npcAsk: 10, money: 0, towns: [], hopHours: 0 }, bag: null, goal: null });
+        const out = trip({}, { now: 0, since: 0, huntShare: 1, toHours: 0, backHours: 0, town: 'Gludio', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 0,
+            shots: { held, perHour: 300 }, shotTowns: { ownHeld: false, npcAsk: 10, money: 0, towns: [] }, bag: null, goal: null });
         assert.deepEqual([out.reason, out.read], ['stock_low:shots', true]);
         return out.at;
     };
@@ -710,7 +710,7 @@ const viewOf = (patch = {}) => ({
 {
     const pieces = [{ selfId: 100, slot: 7, route: 'npc', cost: 5000 }];
     const goal = state => goalOf({ pieces, kit: { 7: 0 }, wants: state ? { 100: { state } } : {}, reserve: 0, money: 3000, bagValue: 0, perHour: 1000, fresh: false });
-    const view = goalNow => ({ now: 10, since: 10, huntShare: 0.5, tripHours: 0.02, town: 'Giran', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000, shots: null, bag: null, goal: goalNow });
+    const view = goalNow => ({ now: 10, since: 10, huntShare: 0.5, toHours: 0.02, backHours: 0.01, town: 'Giran', stockLowHours: 1 / 6, loadShare: 2 / 3, ownHour: 1000, shots: null, bag: null, goal: goalNow });
     const parked = trip({}, view(goal('parked')));
     assert.equal(parked.reason, 'goal_affordable');
     assert.ok(Math.abs(parked.at - (10 + 2 / 0.5 + 0.02)) < 1e-9, `2000 more at 1000 a hunting hour: ${parked.at}`);

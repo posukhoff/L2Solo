@@ -25,9 +25,10 @@
 //                 rule, the design mode the situations that send a bot to town.
 //                 A bot is in one state at a time: an answer { at, away }
 //                 leaves the spot at at - away (the hunt stops there and the
-//                 way to town and back is not hunted), and an arrival it has
+//                 way to town is not hunted), and an arrival it has
 //                 left for is held: no later event asks the rule again for
-//                 it. A visit's onward stops keep it in town their hours.
+//                 it. A visit's afterHours (its onward stops and its way back
+//                 to the spot) are not hunted either.
 //   situation     a situation the arrival rule names to be read at its hour
 //                 without going to town (its answer { at, read: true }, held
 //                 in the same pending slot): the rule is asked again then.
@@ -489,7 +490,8 @@ function heap() {
 // (design.js plane()): its start({ view, mains, ledger, push, seed, rateOf,
 // rearrive, commit }) returns the hooks the run calls (hunt, given the
 // delta with its spotHours and wayHours; visit, whose afterHours are the
-// hours its onward stops keep the main in town; levelUp,
+// hours after the arrival before it hunts again (its onward stops and its
+// way back to the spot); levelUp,
 // event, hour, finish, nextArrival: the design's trip, which replaces the
 // nextArrival given; firing(main): the shot a main fires as it hunts,
 // huntDesign's). rearrive(index, now, event) asks the arrival rule again
@@ -643,7 +645,7 @@ function simulate({ view, accounts, bands, rates, hours, nextArrival, seed = 1, 
             const outingHours = ((departs ?? event.at) - main.lastVisit) * rateOf(main.band).huntShare;
             const { main: after, delta, afterHours = 0 } = plane ? plane.visit(main, event.at, { outingHours }) : visit(main, view, { outingHours });
             Ledger.recordVisit(ledger, after, delta);
-            // Its onward stops keep it in town their hours: it hunts again from their end.
+            // Its onward stops and its way back are not hunted: it hunts again from their end.
             main = { ...after, lastVisit: event.at + afterHours, since: event.at + afterHours };
             mains[event.who] = main;
             // Only the design's visit changes the hour's exp (its kit's kills); today's hunt reads no kit and the visit keeps the row.
