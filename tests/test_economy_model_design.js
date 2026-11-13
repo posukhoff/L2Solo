@@ -698,6 +698,23 @@ const levelReads = (share, shots, hours, atHour = null) => {
     assert.equal(died.money.closureGap, 0);
     assert.equal(died.design.goods.failing, 0);
     assert.equal(runDying(false).design.market.trips.death, undefined, 'without the switch no death sends it to town');
+
+    // The walk back from a death is not hunted: the death at 0.1 hunting
+    // hours (roll 0.05 at 0.5 deaths an hour) reaches its visit the spot's
+    // walk back (0.3 h) later, and those hours are away from the spot.
+    const Mains = require('../scripts/economy-model/mains');
+    const far = { ...dying, walkBack: { s1: 0.3 } }, farView = Engine.viewOf(far, { npcPrices: 'x1' }), config = { ...Design.DESIGN, deathArrival: true }, mainsSide = Mains.mainsSide;
+    let side = null, ctx = null;
+    Mains.mainsSide = options => (ctx = options, side = mainsSide(options));
+    try {
+        Engine.simulate({ view: farView, accounts: [accounts[1]], bands, rates, hours: 0, seed: 1, nextArrival: arrivals,
+            design: plane({ snapshot: far, game: Design.gameOf(far, farView, config), config, start: 'late', grades }) });
+    } finally { Mains.mainsSide = mainsSide; }
+    const fallen = ctx.mains[0], roll = 0.05;
+    const diedAt = deathAt({ since: fallen.since, huntShare: 1, deathsPerHour: 0.5, roll });
+    const back = side.nextArrival(fallen, { event: 'start', now: fallen.since, huntShare: 1, roll });
+    near(back.at - diedAt, 0.3, `its visit comes the walk back after the death: ${JSON.stringify(back)}`);
+    near(back.away, 0.3, 'the walk back is away from the spot, not hunted');
 }
 
 // A main without shots, or firing none, hunts at the same spot's hour without shots.
