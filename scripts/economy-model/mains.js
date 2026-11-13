@@ -16,7 +16,7 @@ const Bounds = require('./rules/bounds');
 const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
 const { path, refillHours } = require('./rules/path');
-const { acquire, payableKit } = require('./rules/acquire');
+const { acquire, crystalsStanding, payableKit } = require('./rules/acquire');
 const { trip, goalOf, deathAt, shotTown, shotsLow } = require('./rules/trip');
 const { visit } = require('./rules/visit');
 const { occupation, stayHours } = require('./rules/occupation');
@@ -380,15 +380,17 @@ function mainsSide(ctx) {
     // and its Luxury route: acquire's npc and exchange. The game's bots pay
     // Luxury in D crystals only (the catalogue, as Lisvus and our data list
     // it, asks C and D in one row: the bots' rule is followed), the crystals
-    // its own twin holds and those on the lines and ads it deals on at or
-    // under the price it knows (its last deal, else the cheapest of those
-    // lines): the route stands only while they do.
+    // its own twin holds and the cheapest on the lines and ads it deals on,
+    // as a player buys them from several sellers: the most it pays a crystal
+    // is the dearest of those it needs now, and the route stands only while
+    // they do.
     const reachRoutes = (account, town, book, selfId) => {
         const npc = (view.offers.get(selfId) || []).filter(row => row.channel === 'npc_buy').map(row => ({ town: row.town, price: row.price, fare: fareOf(town, row.town) }))
             .filter(row => row.fare !== null);
-        const lux = snapshot.luxuryOptions?.[selfId], crystal = game.crystalIds.D, lines = book.sell[crystal] || [];
-        const exchange = lux?.d > 0 && fareOf(town, lux.town) !== null ? { town: lux.town, fare: fareOf(town, lux.town),
-            options: [{ grade: 'd', amount: lux.d, price: Knowledge.known(account.memory, crystal) ?? lines[0]?.price ?? null, own: account.twin?.stock[crystal] || 0, lines }] } : null;
+        const lux = snapshot.luxuryOptions?.[selfId], crystal = game.crystalIds.D, lines = book.sell[crystal] || [], own = account.twin?.stock[crystal] || 0;
+        const needed = lux?.d > 0 && fareOf(town, lux.town) !== null ? crystalsStanding({ amount: lux.d, perCrystal: Infinity }, own, lines) : null;
+        const exchange = needed ? { town: lux.town, fare: fareOf(town, lux.town),
+            options: [{ grade: 'd', amount: lux.d, price: needed.top, own, lines }] } : null;
         return { npc, exchange };
     };
     // The routes of one piece (acquire) and its cap, for a main standing in
@@ -667,7 +669,7 @@ function mainsSide(ctx) {
                 && !routes.some(option => option.route === 'npc' || option.route === 'exchange' || option.route === 'twin');
             pieces[row.selfId] = { selfId: row.selfId, slot: row.slot, grade: gradeOfItem(view.items[row.selfId]), weapon: Engine.isWeapon(view.items[row.selfId]),
                 cap: priced.cap, capBy: priced.capBy, caps: priced.caps, routes, own: twin?.stock[row.selfId] || 0,
-                visitsLeft: priced.useHours / share * visitRate, noSeller };
+                visitsLeft: priced.useHours / share * visitRate, noSeller, pathRoute: market.path.pieces.find(piece => piece.selfId === row.selfId)?.route ?? null };
         }
         const memory = account.memory, known = {};
         for (const deal of memory) known[deal.item] = deal.price;

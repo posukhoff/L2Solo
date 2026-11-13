@@ -31,11 +31,13 @@ function charge(hours, spotHour, view) {
 // made: inputs at the twin's replacement cost, plus the scroll when it lacks
 // the recipe), hours (the craft's MP hours per piece) } | null (its own twin
 // cannot craft it), exchange: { town, fare, options: [{ grade,
-// amount, price (the most it pays a crystal; null: no line prices one), own
-// (its own twin's crystals of the grade), lines (the lines and ads of the
-// crystal it deals on, cheapest first) }] } | null (Luxury: a route only
-// while its crystals stand now: crystalsStanding), stalled: [route] (routes
-// that failed twice for this piece) }.
+// amount, price (the most it pays a crystal: the dearest unit of the
+// cheapest it needs when the route is weighed; null: it takes none from a
+// line), own (its own twin's crystals of the grade), lines (the lines
+// and ads of the crystal it deals on, cheapest first) }] } | null (Luxury: a
+// route only while its crystals stand now: crystalsStanding), stalled:
+// [route] (routes that failed twice for this piece, or a Luxury route path
+// chose whose crystals left) }.
 // Returns { route, cost, adena, hours, where, routes (every priced route,
 // cheapest first), routeCost (the cheapest route that is not a player's line: the
 // cap's own route) } or null when nothing supplies the piece.
@@ -60,13 +62,22 @@ function acquire(piece, view) {
 }
 
 // A Luxury route's crystals that stand: its own twin's (up to the amount)
-// and the lines at or under its price per crystal (none when no price is
-// stated); left: the units a line still holds. { own, have, adena }: the
-// route stands when have >= its amount; adena: what its crystals cost past
-// its own twin's (the fare apart).
+// and the lines (cheapest first) at or under the most it pays a crystal
+// (none when no price is stated); left: the units a line still holds.
+// { own, have, adena, top }: the route stands when have >= its amount;
+// adena: what its crystals past its own twin's cost, the cheapest units
+// taken up to the amount (the fare apart); top: the price of the dearest
+// unit taken (null: none taken).
 function crystalsStanding(route, ownCrystals, lines, left = entry => entry.qty) {
     const own = Math.min(route.amount, ownCrystals || 0);
-    return { own, have: own + lines.filter(entry => entry.price <= route.perCrystal).reduce((sum, entry) => sum + left(entry), 0), adena: (route.amount - own) * route.perCrystal };
+    let have = own, adena = 0, top = null;
+    for (const entry of lines) {
+        if (!(entry.price <= route.perCrystal)) continue;
+        const units = left(entry), taken = Math.min(units, Math.max(0, route.amount - have));
+        if (taken > 0) { adena += taken * entry.price; top = entry.price; }
+        have += units;
+    }
+    return { own, have, adena, top };
 }
 
 // The kit a main could wear by paying now: of its candidates ({ slot,

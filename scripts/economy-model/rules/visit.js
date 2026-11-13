@@ -56,7 +56,8 @@ const bestBid = (book, grade) => (book.bids?.[grade] || []).filter(entry => entr
 // fires: held ones are kept, never sold), reserve: { id, amount, cap, own } |
 // null, pieces: { selfId: { selfId, slot, grade, weapon, cap (null: nothing
 // caps it, no want is posted), capBy, caps, routes, own (units its own twin
-// holds), visitsLeft (its expected visits before it stops using the piece) } },
+// holds), visitsLeft (its expected visits before it stops using the piece),
+// pathRoute (the route path chose for it) } },
 // order: path's money queue, fares: { town: fare },
 // waitVisits (an own-twin wait still unmet at the visit after this
 // many fails, and its route is stalled for the piece: ours), ladder: { mode: 'looks' | 'paced', visitsLeft (its expected visits
@@ -345,6 +346,14 @@ function visit(main, view) {
         const piece = { ...base, slot: row.slot };
         let want = wants[piece.selfId];
         const ownRoute = (piece.routes || []).find(option => option.route !== 'buy');
+        // A Luxury route path chose whose crystals left (no longer among the
+        // piece's routes) ends at this visit whatever its want: the route is
+        // stalled for the piece and path, read again at once (source_stalled),
+        // ends the want and its WTB with the piece it no longer aims at.
+        if (piece.pathRoute === 'exchange' && !(piece.routes || []).some(option => option.route === 'exchange')) {
+            stalled.push({ selfId: piece.selfId, route: 'exchange' });
+            continue;
+        }
         // A parked want opens again when its cap rose above the cap it was
         // parked at, or when its money first reaches the piece's route.
         if (want?.state === 'parked') {
