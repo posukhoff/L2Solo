@@ -3,8 +3,9 @@
 // The economy design's market of mains on inline fixtures: path spends the
 // refill reserve before its pieces and an unarmed main's weapon before the
 // reserve; acquire takes the cheapest of the routes, its hours charged at
-// what the main gives up; trip goes at the earliest of its situations and
-// holds a shot situation only while a seller of the shot stands; visit turns a
+// what the main gives up; trip goes at the earliest of its situations, takes
+// its shot situations from its stock and use alone and reads the sellers of
+// the shot only while it is low or out; visit turns a
 // want with no line into a WTB, gives one line to its first claimer, reads
 // every line it reaches and keeps every price between its floor and cap; a
 // WTB two looks at a worth cap is parked, at a route cap takes the route;

@@ -267,7 +267,7 @@ function printDesign(design, hours, { visits = null, real = null } = {}) {
 // Towns and visits: visits per bot-hour by their trip's situation, overall
 // and per current band; those in a town other than the nearest; visits per
 // town as shares beside the --fit ledger's; twins per town by kind; stock
-// sold to lines in the nearest town and in hubs against the NPC.
+// sold to lines in the nearest town and in another town against the NPC.
 const CAUSES = Object.freeze(['bag_full', 'stock_low:shots', 'shots_out', 'goal_affordable', 'offer_posted', 'bid_posted', 'death', 'start']);
 function printTowns(design, hours, visits, real) {
     const v = design.market.visits, botHours = Object.values(v.botHours).reduce((a, b) => a + b, 0);
@@ -290,7 +290,7 @@ function printTowns(design, hours, visits, real) {
     const c = design.crafters, kinds = [...new Set([...Object.keys(c.byTown), ...Object.keys(c.buyersByTown || {})])].sort((a, b) => (c.byTown[b] || 0) - (c.byTown[a] || 0));
     console.log(`TWINS per town at the end (crafter | buyer): ${kinds.map(town => `${town} ${c.byTown[town] || 0} | ${c.buyersByTown?.[town] || 0}`).join(', ') || '-'}`);
     const st = design.market.stock, sold = st.nearLines + st.hubLines + st.npc;
-    console.log(`STOCK sold to lines in the nearest town ${k(st.nearLines)} (${pct(st.nearLines, sold)}), in hubs ${k(st.hubLines)} (${pct(st.hubLines, sold)}), to the NPC ${k(st.npc)} (${pct(st.npc, sold)})`);
+    console.log(`STOCK sold to lines in the nearest town ${k(st.nearLines)} (${pct(st.nearLines, sold)}), in another town ${k(st.hubLines)} (${pct(st.hubLines, sold)}), to the NPC ${k(st.npc)} (${pct(st.npc, sold)})`);
 }
 
 // The market of mains: how kit pieces came, the wants left open, trips,

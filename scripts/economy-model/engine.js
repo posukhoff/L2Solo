@@ -444,8 +444,9 @@ function heap() {
 
 // A run: accounts (cohort.js), the view, the stage bands [[name, fromLevel]],
 // per band { huntShare, ... } and nextArrival(main, view): the time of the
-// main's next arrival in town (null: none), asked on the main as it is after
-// the committed event. view is the plain data a trip rule may read:
+// main's next arrival in town, or { at, read: true } for a situation to read
+// at that hour without going (null: neither), asked on the main as it is
+// after the committed event. view is the plain data a trip rule may read:
 //   event     'start' | 'visit' | 'level_up' | 'situation'
 //   now       the time of the event, hours
 //   pending   the hour of the arrival or situation already scheduled (null after a visit or at the start)
