@@ -17,7 +17,7 @@ const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
 const { path, refillHours } = require('./rules/path');
 const { acquire, crystalsStanding, payableKit } = require('./rules/acquire');
-const { trip, goalOf, deathAt, shotTown, shotsLow } = require('./rules/trip');
+const { trip, goalOf, deathAt, shotTown, shotsLow, shotsShort } = require('./rules/trip');
 const { visit } = require('./rules/visit');
 const { occupation, stayHours } = require('./rules/occupation');
 const Workshop = require('./rules/workshop');
@@ -652,8 +652,9 @@ function mainsSide(ctx) {
         // there and back (from the nearest), paid as it leaves; with no seller
         // standing, and for any other trip, the nearest.
         const cause = account.market.tripReason || 'start';
-        const sellers = cause === 'stock_low:shots' || cause === 'shots_out' ? shotTowns(main, nearest, firingOf(main)) : null;
-        const town = (sellers && shotTown({ here: nearest, ...sellers })) || nearest;
+        const fired = firingOf(main), sellers = cause === 'stock_low:shots' || cause === 'shots_out' ? shotTowns(main, nearest, fired) : null;
+        const need = sellers ? shotsShort({ held: main.shots[fired.id] || 0, perHour: fired.perHour }, { since: main.since, now, huntShare: rateOf(main.band).huntShare, stockLowHours: config.stockLowMinutes / 60 }) : 0;
+        const town = (sellers && shotTown({ here: nearest, ...sellers, need })) || nearest;
         if (town !== nearest) { const hop = fareOf(nearest, town); main = { ...main, money: main.money - 2 * hop }; flows.fares -= 2 * hop; }
         delta.towns.push(town);
         put(index, { lastTown: town });
@@ -781,7 +782,8 @@ function mainsSide(ctx) {
             const line = Books.rowsOf(books, town, 'sell', fired.id).find(entry => entry.owner !== index && entry.qty > 0);
             towns.push({ town, fare, ask: line ? line.price : null, cap: Bounds.cap({ worth: fired.worth, npcSell: game.npcByTown[town]?.[fired.id] ?? null }).cap });
         }
-        return { ownHeld: (accounts[index].twin?.stock[fired.id] || 0) > 0, npcHere: game.npcByTown[nearest]?.[fired.id] <= fired.worth, money: main.money, towns, hopHours: config.hopHours };
+        const npc = game.npcByTown[nearest]?.[fired.id] ?? null;
+        return { ownHeld: (accounts[index].twin?.stock[fired.id] || 0) > 0, npcAsk: npc !== null && npc <= fired.worth ? npc : null, money: main.money, towns, hopHours: config.hopHours };
     }
 
     // trip: when the main comes to town, and which town, from its state

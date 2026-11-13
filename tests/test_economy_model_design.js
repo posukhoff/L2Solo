@@ -1353,4 +1353,20 @@ assert.equal(armed.delta.shotsUsed, 50);
     assert.deepEqual(visitWith([[C, 573, 1000], [D, 2865, 1000]]).aim, [[CSWORD, 'exchange']], 'dear crystals over 4e9 hours of use');
 }
 
+// A main out of shots that cannot pay the shots over its low mark (50 an
+// hour for 10 minutes: 9 shots at the NPC's 2, 18 adena) is sent to no
+// seller: it hunts bare, and buys its shots at a visit it makes for its bag
+// (its bones fill 2/3 of its load). Sent at once, it would buy the 5 its 10
+// adena pay, be low again and walk back without end, never hunting.
+{
+    const world = { ...casterWorld({ plainPrice: 2, blessedPrice: 1e6, blessed: { kills: 10, exp: 1, adena: 1000, dropLoot: 150, spoilLoot: 0, loot: 150, shots: 50 } }),
+        bags: { ...snapshot.bags, 9: { race: 1, slots: 80, maxLoad: 3000 } } };
+    world.items = { ...world.items, [BONE]: { ...world.items[BONE], weight: 1000 } };
+    const { out } = runHeld(world, kitHoursOf(() => 1000, () => [{ id: SPSD, gross: 2000, units: 50 }]), { ...accounts[1], money: 10 }, 8);
+    const time = out.design.time.low, all = time.spot + time.way + time.town;
+    assert.ok(time.spot > 0.8 * all, `it hunts most of its hours: spot ${time.spot} of ${all}`);
+    const fired = Object.values(out.design.shots.byGrade).reduce((sum, grade) => sum + grade.fired, 0);
+    assert.ok(fired > 0, `it bought shots and fired them: ${fired}`);
+}
+
 console.log('PASS economy model design mode');
