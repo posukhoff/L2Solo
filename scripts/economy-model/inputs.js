@@ -624,6 +624,7 @@ function build(argv, reads) {
     // NPC prices at x1 ride in every snapshot: the design's NPC prices at every preset.
     const x1Offers = npcOffers(owners), base = staticInputs(owners, rewardSpots());
     fs.mkdirSync(out, { recursive: true });
+    let first = null;
     for (const preset of presets) {
         const began = Date.now();
         const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null) });
@@ -633,7 +634,7 @@ function build(argv, reads) {
         snapshot.header = { ...snapshot.header, fingerprint, spotTable, sources, sourceFiles, revision };
         const file = path.join(out, `inputs-${preset}-${revision}-${fingerprint}.json`), text = `${JSON.stringify(snapshot)}\n`;
         fs.writeFileSync(file, text);
-        const gaps = sourceGaps(snapshot), lineCount = Object.keys(snapshot.hours).length;
+        const lineCount = Object.keys(snapshot.hours).length;
         const empty = Object.values(snapshot.hours).reduce((sum, byLevel) => sum + Object.values(byLevel).filter(hour => !hour.best).length, 0);
         console.log(`[${preset}] ${file} (${(text.length / 1e6).toFixed(1)} MB, ${((Date.now() - began) / 1000).toFixed(1)} s); fingerprint ${fingerprint}, spot table ${spotTable}, revision ${revision}`);
         console.log(`  lines ${lineCount} x levels ${snapshot.header.levels.join('-')} (${empty} without a spot row); spot-level yields ${Object.keys(snapshot.yields).length}; `
@@ -646,10 +647,12 @@ function build(argv, reads) {
             const cells = Object.values(snapshot.spotHours.rows).flatMap(byLevel => Object.values(byLevel).flatMap(Object.values));
             console.log(`  spot hours from ${snapshot.spotHours.source}: ${cells.filter(Boolean).length} rows, ${cells.filter(row => !row).length} spot-levels where the line fights nothing`);
         }
-        if (preset !== presets[0]) continue;
-        console.log(`  raw sources for ${Object.keys(snapshot.sources).length} items, ${gaps.lacking} of them without a drop or spoil row in the hunt sources table:`);
-        for (const line of gaps.named) console.log(`    ${line}`);
+        if (preset === presets[0]) first = snapshot;
     }
+    // Read after the last stamp: sources.json is no input of a snapshot.
+    const gaps = sourceGaps(first);
+    console.log(`raw sources for ${Object.keys(first.sources).length} items, ${gaps.lacking} of them without a drop or spoil row in the hunt sources table:`);
+    for (const line of gaps.named) console.log(`  ${line}`);
     console.log('notes:');
     for (const note of NOTES) console.log(`  ${note}`);
     console.log(`done in ${((Date.now() - startedAt) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);

@@ -1,34 +1,13 @@
 'use strict';
 
-// A hunting hour's income under the design's drop rule and rates against
-// today's, from the economy model's snapshots: per level band, class-weighted,
-// at each line's best spot of today's preset, adena and loot at the NPC's buy
-// price (x1). And the rare drop question: recipe scrolls dropped and spoiled
-// per hunting hour today against the rule.
-//
-//   node scripts/economy-model/design-income.js [--dir <snapshots>] [--preset x1,x10,x50]
-//
-// The snapshots are inputs.js's (default tmp/economy-model in the tree). Today
-// is read twice: the spot table's hour (its measured kill mix) and the
-// snapshot's per-kill yields at the spot's spawn mix times the hour's kills.
-// The design is computed at that spawn mix and those kills, so "design/today"
-// compares like with like. The spots hold normal NPCs only (the snapshot's
-// compositions leave raid bosses, epics and their minions out, as the spot
-// value does), so every NPC here rolls at the normal rates.
-//
-// Last, recipes per other dropped item over every normal NPC (one kill each,
-// no deep blue): today at x1 and x50 against the rule, which keeps the x1
-// share at any rate.
+// The design's drop rule at a spot, the economy model's design yields: the
+// game's deep-blue penalty and spoil landing are the rule's arguments. The
+// spots hold normal NPCs only (the snapshot's compositions leave raid bosses,
+// epics and their minions out), so every NPC rolls at the normal rates.
 
-const path = require('path');
-const Boot = require('./boot');
-const Load = require('./load');
-const Weights = require('./weights');
-const { fmt } = require('./capacity');
-const { dropRule, npcKind, DESIGN_RATES } = require('./rules/dropRule');
+const { dropRule } = require('./rules/dropRule');
 
-const BANDS = Object.freeze([[20, 29], [30, 39], [40, 51], [52, 60], [61, 75]]);
-const ADENA = 57, SPOIL_SKILL = 254;
+const SPOIL_SKILL = 254;
 
 // The game's deep-blue penalty and spoil landing, the drop rule's arguments.
 // Needs Boot.boot().
@@ -66,126 +45,5 @@ function designYields(snapshot, spotId, level, spoilSkill, rates, game) {
     }
     return { drop, spoil };
 }
-
-// Adena, loot at the NPC's buy price and recipe scrolls of per-kill yields.
-function money(yields, items) {
-    const out = { adena: 0, loot: 0, recipesDrop: 0, recipesSpoil: 0 };
-    for (const kind of ['drop', 'spoil']) for (const [id, count] of Object.entries(yields[kind])) {
-        if (Number(id) === ADENA) { out.adena += count; continue; }
-        const item = items[id];
-        out.loot += count * (item?.npcBuy || 0);
-        if (item?.kind === 'Other.Recipe') out[kind === 'drop' ? 'recipesDrop' : 'recipesSpoil'] += count;
-    }
-    return out;
-}
-
-// Recipe scrolls per other item (adena left out) dropped and spoiled over
-// every normal NPC's reward, one kill each without deep blue: today
-// (GearAcquisitionPlanner.itemDropYield, the spot value's yield) at the
-// presets given and the rule at the design's x1 and x50. Switches the
-// preset; leaves x1.
-function recipeShares(presets) {
-    const Data = invoke('GameServer/DataCache'), Index = require('../../src/GameServer/Item/ItemTemplateIndex');
-    const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
-    const rewards = Data.npcRewards.filter(reward => { const npc = Index.find(Data.npcs, reward.selfId); return npc && npcKind(npc) === 'normal'; });
-    const recipe = id => Index.find(Data.items, id)?.template?.kind === 'Other.Recipe';
-    const share = yieldOf => {
-        const sum = { drop: [0, 0], spoil: [0, 0] };
-        for (const reward of rewards) for (const kind of ['drop', 'spoil']) {
-            for (const [id, count] of Object.entries(yieldOf(reward, kind))) if (Number(id) !== ADENA) sum[kind][recipe(Number(id)) ? 0 : 1] += count;
-        }
-        return { drop: sum.drop[0] / sum.drop[1], spoil: sum.spoil[0] / sum.spoil[1], normal: rewards.length };
-    };
-    const today = {}, rule = {};
-    for (const preset of presets) {
-        Boot.usePreset(preset);
-        today[preset] = share((reward, kind) => {
-            const out = {};
-            for (const group of reward[kind === 'spoil' ? 'spoils' : 'rewards'] || []) for (const item of group.items || []) out[item.selfId] ??= Planner.itemDropYield(reward, item.selfId, kind, {}).expectedYield;
-            return out;
-        });
-    }
-    Boot.usePreset('x1');
-    for (const preset of ['x1', 'x50']) rule[preset] = share((reward, kind) => {
-        const out = {};
-        for (const group of reward[kind === 'spoil' ? 'spoils' : 'rewards'] || []) {
-            for (const [id, count] of Object.entries(dropRule({ group, kind, rates: DESIGN_RATES[preset] }))) out[id] = (out[id] || 0) + count;
-        }
-        return out;
-    });
-    return { today, rule };
-}
-
-const scale = (row, factor) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value * factor]));
-
-// One line's hunting hour at a level: today's best spot at the snapshot's
-// preset; table (the spot table's adena and loot), today and design (per-kill
-// yields at the spawn mix times the hour's kills). null without a spot row.
-function designHour(snapshot, line, level, rates, game) {
-    const best = snapshot.hours[line]?.[level]?.best;
-    const today = best && snapshot.yields[`${best.spotId}@${level}`];
-    if (!today) return null;
-    const design = designYields(snapshot, best.spotId, level, today.spoilSkill, rates, game);
-    if (!design) return null;
-    return { spotId: best.spotId, kills: best.kills, exp: best.exp, table: { adena: best.adena, loot: best.loot },
-        today: scale(money(today, snapshot.items), best.kills), design: scale(money(design, snapshot.items), best.kills) };
-}
-
-// Class-weighted mean of a band's hours (levels evenly).
-function bandHour(snapshot, band, rates, game) {
-    const sum = { table: { adena: 0, loot: 0 }, today: {}, design: {} };
-    let weight = 0, missing = 0;
-    for (let level = band[0]; level <= band[1]; level++) {
-        for (const [line, share] of Object.entries(Weights.CLASS_WEIGHTS)) {
-            if (!(share > 0)) continue;
-            const hour = designHour(snapshot, line, level, rates, game);
-            if (!hour) { missing += share; continue; }
-            weight += share;
-            for (const part of ['table', 'today', 'design']) for (const [key, value] of Object.entries(hour[part])) sum[part][key] = (sum[part][key] || 0) + share * value;
-        }
-    }
-    for (const part of ['table', 'today', 'design']) sum[part] = scale(sum[part], weight > 0 ? 1 / weight : 0);
-    return { ...sum, missingShare: missing / (missing + weight || 1) };
-}
-
-function main(argv) {
-    const dir = path.resolve(Boot.option(argv, 'dir', Load.SNAPSHOT_DIR));
-    const presets = Boot.presetsOption(argv), startedAt = Date.now();
-    Boot.boot('x1');
-    const game = gameRules(), recipes = [];
-    console.log('Hunting hour per bot, class-weighted, at each line\'s best spot of today\'s preset; loot at the NPC buy price (x1).');
-    console.log('table = the spot table\'s hour; today and design = per-kill yields at the spot\'s spawn mix x the hour\'s kills.');
-    for (const preset of presets) {
-        const { file, snapshot } = Load.loadSnapshot(dir, preset), rates = DESIGN_RATES[preset];
-        process.stderr.write(`[${preset}] ${file}\n`);
-        const today = snapshot.header.rates;
-        console.log(`\n[${preset}] design rates adena ${rates.adena} drop ${rates.drop} spoil ${rates.spoil}; today adena ${today.adena} drop ${today.drop} spoil ${today.spoil}`);
-        console.log('band   table adena+loot | today adena  loot | design adena  loot | design/today adena loot total');
-        for (const band of BANDS) {
-            const hour = bandHour(snapshot, band, rates, game);
-            const ratio = (a, b) => b > 0 ? (a / b).toFixed(2) : '-';
-            const totalToday = hour.today.adena + hour.today.loot, totalDesign = hour.design.adena + hour.design.loot;
-            console.log(`${band.join('-').padEnd(6)} ${fmt(hour.table.adena)}+${fmt(hour.table.loot)} | ${fmt(hour.today.adena)} ${fmt(hour.today.loot)} | `
-                + `${fmt(hour.design.adena)} ${fmt(hour.design.loot)} | ${ratio(hour.design.adena, hour.today.adena)} ${ratio(hour.design.loot, hour.today.loot)} `
-                + `${ratio(totalDesign, totalToday)}${hour.missingShare > 0.001 ? ` (no spot row for ${(hour.missingShare * 100).toFixed(1)} % of the weight)` : ''}`);
-            recipes.push({ preset, band, today: hour.today, design: hour.design });
-        }
-    }
-    console.log('\nRecipe scrolls per hunting hour per bot (drop + spoil; spoil is the Bounty Hunters\' 8 % of the weight):');
-    console.log('band   preset  today drop spoil | rule drop spoil | rule/today drop');
-    for (const { preset, band, today, design } of recipes) {
-        console.log(`${band.join('-').padEnd(6)} ${preset.padEnd(7)} ${fmt(today.recipesDrop)} ${fmt(today.recipesSpoil)} | ${fmt(design.recipesDrop)} ${fmt(design.recipesSpoil)} | `
-            + `${today.recipesDrop > 0 ? (design.recipesDrop / today.recipesDrop).toFixed(2) : '-'}`);
-    }
-    const shares = recipeShares(['x1', 'x50']), per = value => `${(value * 1000).toFixed(2)}`;
-    const ratio = (a, b) => (a / b).toFixed(2);
-    console.log(`\nRecipes per 1000 other items over ${shares.today.x1.normal} normal NPCs (one kill each, no deep blue): `
-        + `drop today x1 ${per(shares.today.x1.drop)}, today x50 ${per(shares.today.x50.drop)} (${ratio(shares.today.x50.drop, shares.today.x1.drop)} of x1), `
-        + `rule ${per(shares.rule.x1.drop)} at x1 and ${per(shares.rule.x50.drop)} at x50 (rule/today at x50 ${ratio(shares.rule.x50.drop, shares.today.x50.drop)}); `
-        + `spoil today x1 ${per(shares.today.x1.spoil)}, x50 ${per(shares.today.x50.spoil)}, rule ${per(shares.rule.x1.spoil)} / ${per(shares.rule.x50.spoil)}.`);
-    process.stderr.write(`done in ${((Date.now() - startedAt) / 1000).toFixed(1)} s\n`);
-}
-
-if (require.main === module) main(process.argv.slice(2));
 
 module.exports = { designYields, gameRules };

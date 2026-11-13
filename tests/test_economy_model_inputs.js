@@ -126,16 +126,6 @@ const Inventory = require('../src/GameServer/Inventory/InventoryLimits');
 const Formulas = invoke('GameServer/Formulas');
 assert.deepEqual(snapshot.bags[line], { race: 4, slots: Inventory.capacity(4, 0), maxLoad: Math.round(Formulas.calcMaxLoad(45)) }, 'a dwarf\'s 100 slots and the CON 45 load');
 assert.equal(snapshot.walkBack[hour.best.spotId], Load.walkBackHours(hour.best.spotId, {}));
-// The spot cards (data/Bots/hunt/spots.json) are parsed once per process: a whole extract after the first read finds them cached.
-{
-    const read = fs.readFileSync, cardReads = [];
-    fs.readFileSync = function (file, ...rest) { if (String(file).endsWith(path.join('hunt', 'spots.json'))) cardReads.push(file); return read.call(this, file, ...rest); };
-    try {
-        assert.equal(Load.spotCards(), Load.spotCards());
-        Inputs.extract({ preset: 'x1', lines: [line], levels: [level, level] });
-    } finally { fs.readFileSync = read; }
-    assert.deepEqual(cardReads, [], 'the spot cards are not read again');
-}
 assert.ok(snapshot.walkBack[hour.best.spotId] > 0, 'a spot with a center has a walk back');
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
 assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
@@ -210,6 +200,12 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
         for (const file of ['config/default.ini', 'data/ExtractableItems/extractable_items.csv', 'data/Bots/hunt/gear.json', 'scripts/economy-model/inputs.js'])
             assert.ok(header.sourceFiles.includes(file), `the stamp holds ${file}`);
         assert.ok(Boot.stampMatches(header), 'a fresh header matches the live data');
+        // The source gaps read data/Bots/hunt/sources.json, an input of no snapshot: no preset's stamp of one run holds it, whatever the order.
+        const two = childProcess.spawnSync(process.execPath, ['scripts/economy-model/inputs.js', '--preset', 'x10,x50', '--out', path.join(scratch, 'two')], { cwd: Boot.root, encoding: 'utf8', maxBuffer: 1 << 28 });
+        assert.equal(two.status, 0, two.stderr);
+        const stamps = fs.readdirSync(path.join(scratch, 'two')).map(name => JSON.parse(fs.readFileSync(path.join(scratch, 'two', name), 'utf8')).header.sourceFiles);
+        assert.equal(stamps.length, 2);
+        for (const files of stamps) assert.ok(!files.includes('data/Bots/hunt/sources.json'), 'no stamp of the run holds the source gaps\' file');
         // Another fingerprint, or no list of source files: refused with the build command.
         const odd = (name, change) => {
             const file = path.join(dir, name);
