@@ -2,6 +2,8 @@
 
 const Boot = require('./boot');
 const Load = require('./load');
+// The hands' slots: one-handed 7, two-handed 14 (the engine's).
+const { HAND_SLOTS } = require('./engine');
 
 // The gear ladder group of a slot (the hunt tables' gear table keys): both
 // hands one, the earrings (1, 2) one, the rings (4, 5) one, any other slot
@@ -237,8 +239,6 @@ function kitOwners() {
 // linear in each term (a multiplier over the stat's base modifier plus an
 // add), so the ticks at two points state the kit's regeneration terms.
 const REGEN_POINTS = Object.freeze([20, 40]);
-// The hands' slots: one-handed 7, two-handed 14.
-const HAND_SLOTS = Object.freeze([7, 14]);
 
 // The kit hours by the game's own hunt cycle. A kit's hour: the line's
 // reference bot at the band's middle level wearing the kit, its numbers the

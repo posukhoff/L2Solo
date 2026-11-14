@@ -63,6 +63,9 @@ const WHOLE_DRAW_MEAN = 5;
 // spiritshot, blessed spiritshot).
 const BLESSED_FAMILY = 2;
 
+// The paperdoll's hand slots: a one-handed weapon's and a two-handed one's.
+const HAND_SLOTS = Object.freeze([7, 14]);
+
 const isGear = item => /^(Weapon|Armor)/.test(item?.kind || '');
 const isWeapon = item => /^Weapon/.test(item?.kind || '');
 
@@ -343,11 +346,18 @@ function sellerOf(view, id, town) {
     return best;
 }
 
-// The engine's opening state of an account record (cohort.js).
+// The engine's opening state of an account record (cohort.js): its line's
+// kit of the level, each piece it holds, and in each slot still empty the
+// piece it wears there; a worn hand piece (HAND_SLOTS: a one-handed weapon in
+// 7, a two-handed one in 14) takes its own slot while the kit holds none in
+// hand, so the weapon in hand sits where it is worn.
 function mainOf(account, index, view, bands) {
     const kit = {}, held = new Set(account.held || []), level = Math.min(account.level, view.maxLevel);
     for (const piece of view.kits[account.line]?.[level] || []) kit[piece.slot] = held.has(piece.selfId) ? piece.selfId : 0;
-    for (const [slot, selfId] of Object.entries(account.worn || {})) if (!kit[slot] && kit[slot] !== undefined) kit[slot] = selfId;
+    const handHeld = HAND_SLOTS.some(slot => kit[slot]);
+    for (const [slot, selfId] of Object.entries(account.worn || {})) {
+        if (!kit[slot] && (kit[slot] !== undefined || (!handHeld && HAND_SLOTS.includes(Number(slot))))) kit[slot] = selfId;
+    }
     // The weapon in hand: the plan's when held, else the one the account wears.
     const planned = Object.values(kit).find(selfId => selfId && isWeapon(view.items[selfId]));
     const weapon = planned || Object.values(account.worn || {}).find(selfId => isWeapon(view.items[selfId])) || 0;
@@ -640,5 +650,5 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: money }), ...added };
 }
 
-module.exports = { townOfRow, viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
+module.exports = { HAND_SLOTS, townOfRow, viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
     killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf, firedOf };
