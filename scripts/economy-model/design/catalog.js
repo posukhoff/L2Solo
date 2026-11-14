@@ -40,7 +40,7 @@ function situationOf(kind) {
 
 const heardAt = (kind, place) => HEARD[situationOf(kind).heard](place);
 
-// The decisions a heard chain wakes, each once, in catalog order of the facts.
+// The decisions a heard chain wakes, each once, in the order of the chain's facts.
 function woken(chain) {
     const out = [];
     for (const fact of chain) for (const decision of situationOf(fact.kind).wakes) if (!out.includes(decision)) out.push(decision);

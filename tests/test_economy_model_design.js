@@ -1,7 +1,7 @@
 'use strict';
 
 // The economy model design's decision layer on plain fixtures: a bot out of
-// shots goes to the town that sells them when it can pay, stays stuck when it
+// shots goes to the town that sells them when it can pay, stays when it
 // has nothing; in town it sells what it can spare to the NPC, buys up to its
 // outing's target with what it has and walks back. The formula variant goes
 // only when the trip prevents more loss than it costs. Facts raised on the
@@ -20,14 +20,15 @@ const out = [{ kind: 'out', who: 7, at: 3 }], bag = [{ kind: 'bag', who: 7, at: 
 // A level-1 bot out of its 200-shot target in the field, its spot's town selling the shots at 7.
 const field = (over = {}) => ({ place: 'hunt', town: null, spotTown: 'TownA', need: { id: SHOT, perHour: 100, target: 200, held: 0, short: 200 },
     surplus: [], npcBuy: { [DROP]: 5, [SHOT]: 2 }, wallet: 2000, roadMoney: 0, toHours: 0.1, backHours: 0.1,
-    offers: { town: 'TownA', price: 7 }, variant: 'table',
+    offers: { town: 'TownA', price: 7 }, fightsBare: true, variant: 'table',
     value: { hour: 0.8, bare: 0.2, withoutDrop: 0.7, bagHoursBare: 2, outHours: 2, M: 25000, moneyWeight: 0.5 }, ...over });
 const inTown = over => field({ place: 'town', town: 'TownA', ...over });
 const brief = actions => actions.map(({ kind, town, id, count, price, reason, row }) => ({ kind, town, id, count, price, reason, row }));
 
-// Table: out of shots with adena, to the town that sells them; with nothing, stuck.
+// Table: out of shots with adena, to the town that sells them; with nothing it stays, stuck only where it kills nothing bare.
 assert.deepEqual(brief(Supply.supplyChoice(out, field())), [{ kind: 'go', town: 'TownA', id: undefined, count: undefined, price: undefined, reason: undefined, row: 'F1' }]);
-assert.deepEqual(brief(Supply.supplyChoice(out, field({ wallet: 0 }))).map(a => [a.kind, a.reason, a.row]), [['stay', 'stuck', 'F2']]);
+assert.deepEqual(brief(Supply.supplyChoice(out, field({ wallet: 0 }))).map(a => [a.kind, a.reason, a.row]), [['stay', 'no_money', 'F2']]);
+assert.deepEqual(brief(Supply.supplyChoice(out, field({ wallet: 0, fightsBare: false }))).map(a => [a.kind, a.reason, a.row]), [['stay', 'no_bare_hour', 'F2']]);
 // Its bag full with shots held: to the nearest town (where no NPC sells its shots, the held spot's town).
 const bagFull = field({ need: { id: SHOT, perHour: 100, target: 200, held: 150, short: 50 }, surplus: [[DROP, 40]] });
 assert.deepEqual(brief(Supply.supplyChoice(bag, bagFull)).map(a => [a.kind, a.town, a.row]), [['go', 'TownA', 'F1']]);
@@ -61,8 +62,14 @@ assert.deepEqual(brief(Supply.supplyChoice(out, formula({ wallet: 70 }))).map(a 
 const dropOnly = field({ wallet: 0, surplus: [[DROP, 400]] });
 assert.deepEqual(brief(Supply.supplyChoice(out, { ...dropOnly, variant: 'formula' })).map(a => [a.kind, a.town]), [['go', 'TownA']]);
 assert.equal(Supply.shadow(out, dropOnly).differ, null);
-// Out of shots, nothing to pay with and a bare hour worth nothing: stuck, as in the table.
-assert.deepEqual(brief(Supply.supplyChoice(out, formula({ wallet: 0, value: { ...field().value, bare: 0 } }))).map(a => [a.kind, a.reason]), [['stay', 'stuck']]);
+// Out of shots with nothing to pay with, both variants stay for the same reason: stuck only where it kills nothing bare.
+for (const fightsBare of [true, false]) {
+    const broke = field({ wallet: 0, fightsBare, value: { ...field().value, bare: fightsBare ? 0.2 : 0 } });
+    const both = Supply.shadow(out, broke);
+    assert.equal(both.differ, null);
+    assert.deepEqual(brief(both.other).map(a => [a.kind, a.reason]), [['stay', fightsBare ? 'no_money' : 'no_bare_hour']]);
+    assert.equal(Supply.stuck(new Set(['out']), broke), !fightsBare);
+}
 // In town the formula takes the same levers in the same order.
 assert.deepEqual(brief(Supply.supplyChoice(town, { ...broke, variant: 'formula' })).map(a => [a.kind, a.count]), [['sell', 40], ['buy', 28], ['back', undefined]]);
 

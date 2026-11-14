@@ -13,8 +13,8 @@
 const FIELD = Object.freeze([
     // Out of its shots or its bag full, with adena or something to sell: to the nearest town that sells them.
     Object.freeze({ id: 'F1', when: Object.freeze(['outOrBag', 'walletOrSurplus']), then: 'goNearestSeller' }),
-    // Out of its shots with no adena and nothing to sell: it stays, stuck.
-    Object.freeze({ id: 'F2', when: Object.freeze(['out', 'noWalletNoSurplus']), then: 'stayStuck' })
+    // Out of its shots with no adena and nothing to sell: it stays (stuck where it kills nothing bare).
+    Object.freeze({ id: 'F2', when: Object.freeze(['out', 'noWalletNoSurplus']), then: 'stay' })
 ]);
 
 const TOWN = Object.freeze([
