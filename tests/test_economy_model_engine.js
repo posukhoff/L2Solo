@@ -42,8 +42,13 @@ const accounts = [
     { id: 1, station: false, classId: 9, line: '9', level: 1, exp: 0, money: 10000, shots: {}, held: [100], worn: { 7: 100 } },
     { id: 2, station: true, classId: 57, line: null, level: 40, exp: 0, money: 777, shots: {}, held: [], worn: {} }
 ];
-// A plain run: every main hunts its row's own kit and fires the hour's shot (Today.hunter).
-const plainRun = ({ view, ...options }) => Engine.simulate({ view, hunter: Today.hunter(view), ...options });
+// Today's plane with the test's arrival rule: every main hunts its row's own kit and fires the hour's shot
+// (Today.hunter) unless a hunter is given.
+const planeWith = (view, nextArrival, hunter = Today.hunter(view)) => {
+    const today = Today.plane({ view, hunter });
+    return { ...today, start: context => ({ ...today.start(context), nextArrival }) };
+};
+const plainRun = ({ view, nextArrival, ...options }) => Engine.simulate({ view, plane: planeWith(view, nextArrival), ...options });
 const run = (seed, hours = 3) => plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours, seed, nextArrival: hourly });
 
 // The design mode leaves the plain and today's ledger as they were: this
@@ -137,7 +142,7 @@ const plain = { ...Engine.mainOf(accounts[0], 0, view, bands), shots: { 1835: 10
 assert.equal(plain.weapon, 100);
 assert.equal(Engine.hunt(plain, view, 1, () => 0.5, Today.hunter(view).firing(plain)).main.shots[1835], 980, 'no-grade shots fired');
 const armed = { ...plain, weapon: 101, shots: {} };
-assert.deepEqual(Engine.errands(armed, view, { outingHours: 0.5, firing: Today.hunter(view).firing(armed) }).find(errand => errand.kind === 'shots'),
+assert.deepEqual(Today.errands(armed, view, { outingHours: 0.5, firing: Today.hunter(view).firing(armed) }).find(errand => errand.kind === 'shots'),
     { kind: 'shots', id: 1463, amount: 20 }, 'D shots, one hour of use');
 
 // A spot's spoils (written at the highest Spoil level of any line there)
@@ -191,8 +196,7 @@ assert.deepEqual(levelAsked.map(row => row[0]), ['start', 'visit', 'level_up', '
 assert.equal(replaced.counters.visits - replaced.counters.onwardHops, 2, 'arrivals at 1.5 h and 2.9 h');
 assert.equal(plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates: busy, hours: 3, seed: 7, nextArrival: () => null }).counters.visits, 0,
     'a visit rate of 100 an hour sends nobody when the rule says never');
-assert.throws(() => plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3 }), /nextArrival/);
-assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, nextArrival: () => null }), /simulate needs a hunter/);
+assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3 }), /simulate needs a plane/);
 
 // A spot row with spoil loot where the snapshot holds no spoil yields loses
 // that loot: the kills are counted, not dropped silently.
@@ -208,12 +212,12 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
 {
     const row = { ...hour(100, 50, 20).best, shotless: { kills: 5, exp: 25, adena: 50 } }, line = { ...hour(100, 50, 20), best: row };
     const dry = { ...snapshot, hours: { 9: { 1: line, 2: line, 3: line, 4: line } } }, at = Engine.viewOf(dry);
-    const out = Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 2, seed: 7, nextArrival: () => null, hunter: Today.hunter(at) });
+    const out = Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 2, seed: 7, plane: planeWith(at, () => null) });
     assert.ok(Math.abs(out.flows.totals.huntCold - 100) <= 1, `the shotless hour's adena, 2 x 50: ${out.flows.totals.huntCold}`);
     assert.equal(out.progress.stageBands.low.expPerBotHour, 25, 'the shotless hour\'s exp');
     assert.deepEqual([out.shots.used, out.shots.wanted], [0, 40], 'none fired, 2 hours of 20 wanted');
     const stocked = [{ ...accounts[0], shots: { 1835: 1000 } }];
-    const worn = factors => Engine.simulate({ view: at, accounts: stocked, bands, rates: silent, hours: 2, seed: 7, nextArrival: () => null, hunter: Today.hunter(at, () => factors) });
+    const worn = factors => Engine.simulate({ view: at, accounts: stocked, bands, rates: silent, hours: 2, seed: 7, plane: planeWith(at, () => null, Today.hunter(at, () => factors)) });
     const full = worn(null), half = worn({ shots: { kills: 0.5, shots: 0.5 } });
     assert.deepEqual([full.flows.totals.huntCold, full.shots.used], [200, 40], 'the row\'s kit: its adena and shots');
     assert.deepEqual([half.flows.totals.huntCold, half.shots.used], [100, 20], 'half the kills and shots: half the adena and shots');
@@ -242,7 +246,7 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
         const seen = { hunts: [], visits: [], asked: [], levels: [] };
         const design = { sinks: [], start: context => ({
             hunt: (main, delta, now) => seen.hunts.push({ now, exp: delta.exp, wanted: delta.shotsWanted, spot: delta.spotHours, way: delta.wayHours }),
-            visit: (main, now, options) => { seen.visits.push(now); return { ...Engine.visit(main, Engine.viewOf(snapshot), options), afterHours }; },
+            visit: (main, now, options) => { seen.visits.push(now); return { ...Today.visit(main, Engine.viewOf(snapshot), options), afterHours }; },
             nextArrival: (main, ev) => { seen.asked.push([ev.event, ev.now]); return rule(main, ev); },
             firing: () => ({ id: 1463, perHour: 20 }), kills: () => null, levelUp: (main, now) => { seen.levels.push([Math.round(now * 100) / 100, main.level]); return main; }, event() {},
             hour: now => { if (onHour) onHour(context, now); return 0; },
@@ -253,7 +257,7 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     const once = answer => (main, ev) => (ev.event === 'visit' ? null : answer);
 
     const trip = planeOf(once({ at: 10, away: 2 }));
-    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, design: trip.design });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, plane: trip.design });
     assert.deepEqual(trip.seen.visits, [10]);
     const plainTrip = plainRun({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, nextArrival: once({ at: 10, away: 2 }) });
     assert.ok(Math.abs(plainTrip.flows.totals.huntCold - 800) <= 3, `8 hours of hunt adena, not 10: ${plainTrip.flows.totals.huntCold}`);
@@ -264,13 +268,13 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     // A line raised at 9 h (after it left at 8 h) asks nothing: the arrival at 10 h holds.
     const held = planeOf((main, ev) => (ev.event === 'visit' ? null : ev.now >= 9 ? { at: 9.5, away: 0.1 } : { at: 10, away: 2 }),
         { onHour: (context, now) => { if (now === 9) context.rearrive(0, now, 'offer_posted'); } });
-    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, design: held.design });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 10, seed: 7, plane: held.design });
     assert.deepEqual(held.seen.visits, [10], 'the departed arrival is kept');
     assert.ok(!held.seen.asked.some(([event]) => event === 'offer_posted'), 'not decided again on its way');
 
     // One onward stop (0.2 h): it hunts again 0.2 h after the arrival at 2.5 h.
     const onward = planeOf(once(2.5), { afterHours: 0.2 });
-    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 4, seed: 7, design: onward.design });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 4, seed: 7, plane: onward.design });
     assert.ok(Math.abs(total(onward.seen, 'exp') - 190) <= 1, `3.8 hours of exp over 4 h: ${total(onward.seen, 'exp')}`);
     assert.deepEqual(onward.seen.asked.find(([event]) => event === 'visit'), ['visit', 2.7], 'asked again from the hour it hunts again');
 
@@ -278,20 +282,20 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     // 5 h it has 250 exp, so it reaches level 3 50 exp after its arrival
     // (8 h), read once then; no level-up is read on its way.
     const level = planeOf(once({ at: 7, away: 2 }));
-    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 9, seed: 7, design: level.design });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 9, seed: 7, plane: level.design });
     assert.deepEqual(level.seen.levels, [[2, 2], [8, 3]], 'level 2 at 2 h, level 3 once after the arrival, none on the way');
 
     // A departure set after the level was scheduled: level 2 was due at 2 h,
     // the situation read at 0.5 h sends it away from 1 h to 3 h, so it has 50
     // exp when it leaves and reaches level 2 50 exp after its arrival (4 h).
     const late = planeOf((main, ev) => (ev.event === 'start' ? { at: 0.5, read: true } : ev.event === 'situation' ? { at: 3, away: 2 } : null));
-    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 5, seed: 7, design: late.design });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 5, seed: 7, plane: late.design });
     assert.deepEqual(late.seen.levels, [[4, 2]], 'the level moves after the arrival when the departure comes after it was scheduled');
 
     // A level due on the spot before the departure is read there: the
     // situation read at 1.9 h sends it away at 2.1 h, level 2 comes at 2 h.
     const before = planeOf((main, ev) => (ev.event === 'start' ? { at: 1.9, read: true } : ev.event === 'visit' ? null : { at: 3, away: 0.9 }));
-    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 5, seed: 7, design: before.design });
+    Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates: silent, hours: 5, seed: 7, plane: before.design });
     assert.deepEqual(before.seen.levels, [[2, 2]], 'a level reached on the spot before it leaves is read once, on the spot');
 }
 
@@ -304,11 +308,11 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
 {
     const T = 1e9, rate = 2 * (T - 4 * 2 ** -23), row = hour(100, rate, 20);
     const big = { ...snapshot, exp: [0, T, 4 * T, 9 * T], hours: { 9: { 1: row, 2: row, 3: row, 4: row } } }, at = Engine.viewOf(big), levels = [];
-    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => ({ ...Engine.visit(main, at, options), afterHours: 100 }),
+    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => ({ ...Today.visit(main, at, options), afterHours: 100 }),
         nextArrival: (main, ev) => (ev.event === 'start' ? 0.5 : null), firing: () => null, kills: () => null, event() {}, hour: () => 0,
         levelUp: (main, now) => { levels.push([now, main.level]); if (levels.length > 100) throw new Error(`100 level reads, level ${main.level} at ${now} h`); return main; },
         finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
-    Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 101, seed: 7, design });
+    Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 101, seed: 7, plane: design });
     assert.deepEqual(levels, [[100.5, 2]], 'level 2 read once, at the hour it hunts again');
 }
 
@@ -320,11 +324,11 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
 {
     const row = { ...hour(100, 50, 20).best, shotless: { exp: 25 }, blessed: { exp: 100 } }, line = { ...hour(100, 50, 20), best: row };
     const fired = { ...snapshot, hours: { 9: { 1: line, 2: line, 3: line, 4: line } } }, at = Engine.viewOf(fired), levels = [];
-    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => Engine.visit(main, at, options), nextArrival: () => null,
+    const design = { sinks: [], start: () => ({ hunt() {}, visit: (main, now, options) => Today.visit(main, at, options), nextArrival: () => null,
         firing: () => ({ id: 1463, perHour: 20 }), kills: () => ({ shots: 1, bare: 1, blessed: 1 }), event() {}, hour: () => 0,
         levelUp: (main, now) => { levels.push([Math.round(now * 1e6) / 1e6, main.level, Math.round(main.exp * 1e6) / 1e6]); return main; },
         finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
-    Engine.simulate({ view: at, accounts: [{ ...accounts[0], shots: { 1463: 40 } }], bands, rates: silent, hours: 11, seed: 7, design });
+    Engine.simulate({ view: at, accounts: [{ ...accounts[0], shots: { 1463: 40 } }], bands, rates: silent, hours: 11, seed: 7, plane: design });
     assert.deepEqual(levels, [[2, 2, 100], [10, 3, 300]], 'each level read once, at the hour its hunted exp reaches it, with that exp');
 }
 
@@ -347,7 +351,7 @@ for (const bad of [undefined, NaN, Infinity, { at: undefined, read: true }]) {
 const idle = plainRun({ view: Engine.viewOf(snapshot), accounts, bands, rates: { default: { huntShare: 0, visitsPerBotHour: 0 } }, hours: 3, seed: 7, nextArrival: () => null });
 assert.equal(idle.counters.unlevelableMains, 1, 'the hunting main with no hunting share never levels; the station is not a hunting main');
 assert.equal(run(3, 40).counters.unlevelableMains, 0, 'a main that levels is not counted');
-const bogus = { sinks: [], start: ({ push }) => { push({ at: 0.5, kind: 'bogus', who: 0 }); return { nextArrival: () => null, kills: () => null, firing: () => null, hunt() {}, hour: () => 0 }; } };
-assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, design: bogus }), /unknown kind: bogus/);
+const today = planeWith(Engine.viewOf(snapshot), () => null), bogus = { ...today, start: context => { context.push({ at: 0.5, kind: 'bogus', who: 0 }); return today.start(context); } };
+assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, plane: bogus }), /unknown kind: bogus/);
 
 console.log('economy model engine: ok');
