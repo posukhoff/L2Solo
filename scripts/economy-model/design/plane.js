@@ -154,11 +154,11 @@ function plane({ view, kitHours, variant, accounts }) {
             ledger.counters.stuckNoBareHour = 0;
             const states = new Map();
             // The run report's tallies (each class by the level at the event's start): wall hours from a clock of
-            // the level each main holds since an hour; road hours (the walk out, to town and back); trips whose
-            // chain had an out fact or a short need and those that bought none of it; stuck episodes by reason
+            // the level each main holds since an hour; road hours (the walk out, to town and back); trips by the facts in
+            // their chain (an out fact: consumable; a bag fact and no out fact: bag; both) and the consumable ones that bought none of their need; stuck episodes by reason
             // and their hours; the other variant's answers that differ; each main's bare hunting hours until its
             // first purchase of shots.
-            const blank = () => ({ wallHours: 0, roadHours: 0, consumableTrips: 0, emptyTrips: 0, stuckEpisodes: {}, stuckHours: 0, stuckHoursByReason: {},
+            const blank = () => ({ wallHours: 0, roadHours: 0, consumableTrips: 0, bagTrips: 0, bothTrips: 0, emptyTrips: 0, stuckEpisodes: {}, stuckHours: 0, stuckHoursByReason: {},
                 stuckUnmeasuredEpisodes: 0, stuckUnmeasuredHours: 0 });
             const tally = { low: blank(), high: blank() };
             const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
@@ -247,7 +247,7 @@ function plane({ view, kitHours, variant, accounts }) {
                     const go = actions.find(action => action.kind === 'go');
                     if (go) {
                         const away = Engine.toHoursOf(view, row.spotId);
-                        const trip = { at: now, level: main.level, consumable: chain.some(fact => fact.kind === 'out') || need?.short > 0 };
+                        const trip = { at: now, level: main.level, out: chain.some(fact => fact.kind === 'out'), bag: chain.some(fact => fact.kind === 'bag') };
                         put(main, placed({ ...unstuck(state, now), trip }, 'road'));
                         return { at: now + away, away };
                     }
@@ -310,7 +310,9 @@ function plane({ view, kitHours, variant, accounts }) {
                     if (trip) {
                         const book = tally[classOf(trip.level)];
                         book.roadHours += now - trip.at;
-                        if (trip.consumable) {
+                        if (trip.bag && !trip.out) book.bagTrips++;
+                        if (trip.bag && trip.out) book.bothTrips++;
+                        if (trip.out) {
                             book.consumableTrips++;
                             if (!(chain.delta.shotsBoughtNpc > 0)) book.emptyTrips++;
                         }

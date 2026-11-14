@@ -302,14 +302,14 @@ for (const supply of ['table', 'formula']) {
 // one that bought none of the need it went for, and the shadow names the rows where the two variants answer differently.
 // levelWorld: line 9 at levels first..last (a level starts every 50 exp; the row gives 100 exp an hour with shots), its shots
 // sold at price, the road to town and back as given.
-const levelWorld = (first, last, price = 7, road = { to: 0.2, back: 0.3 }) => {
+const levelWorld = (first, last, price = 7, road = { to: 0.2, back: 0.3 }, slots = 80) => {
     const levels = Array.from({ length: last - first + 1 }, (_, at) => first + at), per = fill => Object.fromEntries(levels.map(level => [level, fill(level)]));
     return Engine.viewOf({ header: { levels: [1, last] }, exp: Array.from({ length: last }, (_, at) => at * 50), kits: { 9: per(() => []) },
         hours: { 9: per(() => ({ classId: 9, shotId: SHOT, best: near, top: [near, far] })) },
         yields: Object.fromEntries(levels.flatMap(level => [[`s1@${level}`, drops], [`s2@${level}`, drops]])),
         items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price }] } }, deathExp: Array(last).fill(15),
-        tripHours: { to: { s1: road.to, s2: road.to }, back: { s1: { TownA: road.back }, s2: { TownA: road.back } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+        tripHours: { to: { s1: road.to, s2: road.to }, back: { s1: { TownA: road.back }, s2: { TownA: road.back } } }, bags: { 9: { slots, maxLoad: 1e6 } } });
 };
 for (const supply of ['table', 'formula']) {
     // a trip that buys its shots is not empty: the born walk 0.3 h, the walk to town 0.2 h and the walk back 0.3 h are the road
@@ -331,6 +331,15 @@ for (const supply of ['table', 'formula']) {
     assert.ok(Math.abs(crossing.low.wallHours - 0.8) < 1e-3 && close(crossing.low.wallHours + crossing.high.wallHours, 3), `${supply}: low ${crossing.low.wallHours} h, high ${crossing.high.wallHours} h`);
     // its walk out is the only road at level 19; the trip it makes after its shots run out starts at level 20+ and is counted there
     assert.ok(close(crossing.low.roadHours, 0.3) && crossing.low.consumableTrips === 0 && crossing.high.consumableTrips === 1, `${supply}: the walk out at 19, the trip at 20+`);
+}
+// A trip is counted by the facts in its chain: a bot hunting bare (no shot to run out, so no out fact; its need is short) with a
+// bag of one slot goes to town for its bag (`bare`: a bag trip, not a consumable trip, and not an empty trip however little it buys); a bot whose shots end goes for its need.
+for (const supply of ['table', 'formula']) {
+    const bagOnly = run(freshBot(9), supply, 0.5, 0, bare).result.design.levels.low;
+    assert.deepEqual([bagOnly.consumableTrips, bagOnly.bothTrips, bagOnly.emptyTrips], [0, 0, 0], `${supply}: no out fact, so no consumable trip`);
+    assert.ok(bagOnly.bagTrips >= 1, `${supply}: the full bag sends it to town (${bagOnly.bagTrips} bag trips)`);
+    const needed = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 3, 0, levelWorld(1, 3)).result.design.levels.low;
+    assert.deepEqual([needed.consumableTrips, needed.bagTrips, needed.bothTrips], [1, 0, 0], `${supply}: the out fact is a consumable trip only`);
 }
 // Two variants on the same facts: where they agree the shadow lists nothing, where the table goes and the formula stays on a
 // road of 3 h each way the differ row names the table's row and both answers, whichever variant runs.
