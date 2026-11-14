@@ -41,7 +41,7 @@ const { DESIGN_RATES } = require('./rules/dropRule');
 const KitHours = require('./kit-hours');
 const common = require('../hunt-tables/common');
 
-const SCHEMA = 1;
+const SCHEMA = 2;
 const LEVELS = Object.freeze([1, common.MAX_LEVEL]);
 const { TOP_SPOTS } = KitHours;
 const TWIN_LEVELS = Object.freeze([1, common.MAX_LEVEL]);
@@ -317,7 +317,12 @@ function staticInputs(owners, spots) {
         for (const entry of entries) if (entry.reward) rewards[entry.reward.selfId] ||= { rewards: entry.reward.rewards || [], spoils: entry.reward.spoils || [] };
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
-    return { recipes, stores, exp: [...Data.experience], twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
+    // The exp a death takes at each level (index 0 is level 1), the game's rule (DeathExperience) with
+    // exp ample to lose. Ours: no Lucky protection (levels 1-4) in the export.
+    const DeathExperience = invoke('GameServer/Progression/DeathExperience');
+    const deathExp = [];
+    for (let level = LEVELS[0]; level <= LEVELS[1]; level++) deathExp.push(DeathExperience.calculateLoss({ level, exp: Number.MAX_SAFE_INTEGER }).expLost);
+    return { recipes, stores, exp: [...Data.experience], deathExp, twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
         races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), ...tripHours(spots) };
 }
 
