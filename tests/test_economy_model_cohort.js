@@ -18,7 +18,8 @@ for (let level = 1; level <= 60; level++) twins[level] = { classId: level < 40 ?
 const recipe = (recipeId, recipeItemId, level, type = 'dwarven', productId = 900 + recipeId) => ({ type, recipeId, recipeItemId, level, productId });
 const snapshot = {
     hours: { 9: { 1: { classId: 9 } } }, items: { 1463: { kind: 'Other.Shot' } }, twins,
-    recipes: [recipe(1, 701, 2), recipe(2, 702, 3), recipe(3, 703, 4), recipe(4, 704, 1, 'common'), recipe(5, 705, 1, 'dwarven', 1463)]
+    recipes: [recipe(1, 701, 2), recipe(2, 702, 3), recipe(3, 703, 4), recipe(4, 704, 1, 'common'), recipe(5, 705, 1, 'dwarven', 1463),
+        recipe(6, 706, 1), recipe(7, 706, 2), recipe(8, 707, 5), recipe(9, 707, 1)]
 };
 
 const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'seed-save-')), file = path.join(folder, 'database.sqlite');
@@ -42,7 +43,7 @@ const stored = (id, selfId, amount) => save.prepare('INSERT INTO warehouse_items
 // Main 1 (Create Item 3): 701 twice in the bag, a duplicate learns once; 703 is a level above; 704 is common;
 // 702 only in the warehouse is learned and its stored count drops; 701 also stored stays (the bag holds one).
 item(1, 701, 2); item(1, 703, 1); item(1, 704, 1); stored(1, 702, 2); stored(1, 701, 1); stored(1, 705, 1);
-item(2, 701, 1); item(3, 701, 1); item(4, 701, 1); item(5, 701, 1); item(6, 701, 1);
+item(2, 701, 1); item(2, 706, 1); item(1, 707, 1); item(3, 701, 1); item(4, 701, 1); item(5, 701, 1); item(6, 701, 1);
 save.close();
 const { accounts } = Cohort.fromSave(file, snapshot);
 fs.rmSync(folder, { recursive: true });
@@ -54,7 +55,7 @@ for (const id of [1, 2, 4, 6]) {
 assert.deepEqual(by(3).twins, [], 'commitment 0.61 of a progression main gets none');
 assert.deepEqual(by(5).twins, [], 'a station gets none');
 assert.deepEqual(by(1).twins[0].recipes, [1, 2, 5], 'the crafter knows the held dwarven scrolls up to its Create Item level, each once');
-assert.deepEqual(by(2).twins[0].recipes, [1], 'a scroll the account holds is learned');
+assert.deepEqual(by(2).twins[0].recipes, [1, 6], 'a scroll teaches only the first recipe row with its id (706: 6, not 7); a first row above the level (707) teaches nothing')
 assert.deepEqual(by(1).warehouse, { 701: 1, 702: 1 }, 'learning takes one stored scroll its bag does not hold (702 down by one, 705 gone), not 701');
 assert.deepEqual(by(5).warehouse, {}, 'a station keeps no warehouse');
 assert.deepEqual(by(3).persona, { primaryDrive: 'progression', commitment: 0.61 });

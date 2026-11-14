@@ -112,10 +112,11 @@ function partyOf(bot, levelOf) {
 // (holdings: { bag: { selfId: count }, warehouse: { selfId: count } }). A
 // persona that is a wealth type or has commitment >= HIGH_TRAIT gives a dwarf
 // crafter at the main's level (capped at the highest level the snapshot has a
-// twin for) that knows every dwarven recipe whose scroll the account holds and
-// whose level the crafter's Create Item reaches (the game's learning rule,
-// Backpack: a known recipe or one above the craft level is not learned; a
-// common recipe is skipped: the snapshot holds no Common Craft level), and a
+// twin for) that knows the recipe of each scroll the account holds: a scroll
+// teaches the first recipe row with its id (the game's C4RecipeItems), learned
+// when it is dwarven and its level is within the crafter's Create Item level
+// (Backpack: a recipe above the craft level is not learned; a common recipe is
+// skipped: the snapshot holds no Common Craft level); a
 // shop seller and a shop buyer. Learning consumes one scroll: the main's
 // warehouse loses one unit of each learned scroll its bag does not hold. The
 // town, the twins' adena and the shop twins' class are the next step's.
@@ -128,8 +129,10 @@ function seedAccount(account, persona, holdings, snapshot) {
     if (!qualifies) return base;
     const level = Math.min(account.level, Math.max(...Object.keys(snapshot.twins).map(Number)));
     const twin = snapshot.twins[level], held = scroll => (holdings.bag[scroll] || 0) + (holdings.warehouse[scroll] || 0) > 0;
-    const learned = new Map();
+    const learned = new Map(), seen = new Set();
     for (const row of snapshot.recipes) {
+        if (seen.has(row.recipeItemId)) continue;
+        seen.add(row.recipeItemId);
         if (row.type === 'dwarven' && row.level <= twin.createItem && held(row.recipeItemId)) learned.set(Number(row.recipeId), Number(row.recipeItemId));
     }
     for (const scroll of learned.values()) {
@@ -176,8 +179,7 @@ function fromSave(file, snapshot) {
         }
         const account = { id: bot.characterId, station: station || !picked, classId: Number(bot.classId), line: picked?.line ?? null,
             level: Number(bot.level), exp: Number(bot.exp), money, spot: bot.spotId ? String(bot.spotId) : null, party: partyOf(bot, levelOf), shots, held: [...new Set(own.map(row => Number(row.selfId)))], worn };
-        accounts.push(station ? { ...account, persona: null, warehouse: {}, twins: [] }
-            : seedAccount(account, personaOf.get(bot.characterId) || null, { bag, warehouse: vaultOf.get(bot.characterId) || {} }, snapshot));
+        accounts.push(seedAccount(account, personaOf.get(bot.characterId) || null, { bag, warehouse: vaultOf.get(bot.characterId) || {} }, snapshot));
     }
     return { accounts, source: file, lines: counts };
 }
