@@ -476,6 +476,12 @@ for (const [line, level, spotId] of [[fighter, 32, '30_-30:f2'], [mage, 32, '4_2
     const run = KitHours.gameKitHours({ snapshot, anchor }), unit = { kills: 1, shots: 1, deaths: 1 };
     const noRow = run.spotFactors(fighter, 32, kitOf(fighter, 39), 'no-such-spot'), above = run.spotFactors(fighter, 32, kitOf(fighter, 47), '30_-30:f2');
     for (const form of ['bare', 'shots', 'blessed']) { assert.deepEqual(noRow[form], unit); assert.deepEqual(above[form], unit); }
+    // A kit with no weapon fires no shot where the reference does: those forms read 1 and are counted.
+    const bare = Object.fromEntries(Object.entries(kitOf(fighter, 32)).filter(([slot]) => slot !== '7' && slot !== '14')), before = run.stats.spotUnstated;
+    const noWeapon = run.spotFactors(fighter, 32, bare, '30_-30:f2');
+    assert.deepEqual(noWeapon.shots, unit);
+    assert.equal(run.stats.spotUnstated, before + 1, 'a form only the reference fires is counted');
+    run.stats.spotUnstated = before;
     assert.equal(run.stats.spotUnstated, 2, 'each unstated read is counted');
     assert.equal(run.spotFactors(fighter, 32, kitOf(fighter, 39), 'no-such-spot'), noRow);
     assert.equal(run.stats.spotUnstated, 2, 'a held read is not counted again');

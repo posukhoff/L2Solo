@@ -305,8 +305,8 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
         return bots.get(key);
     };
     // A worn list the band states: every piece has a template of the band's grade or below.
-    const stated = (worn, band) => {
-        const rank = Grades.rankOf(band.grade);
+    const stated = (worn, grade) => {
+        const rank = Grades.rankOf(grade);
         return worn.every(([, selfId]) => { const item = Index.find(Data.items, selfId); return item && Grades.rankOf(Enchant.gradeOf(item.etc)) <= rank; });
     };
     const stateOf = (held, worn) => ({ ...held.bot, inventory: inventoryOf(worn.map(([slot, selfId]) => ({ selfId, slot }))) });
@@ -415,7 +415,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     const NONE = Object.freeze({ hour: null });
     const pass = (line, at, band, held, worn) => {
         stats.fresh++;
-        if (!held || !stated(worn, band)) return NONE;
+        if (!held || !stated(worn, band.grade)) return NONE;
         const state = stateOf(held, worn), profile = Profile.profileFor(state, 0, { store: false }), regen = regenOf(state, profile);
         const numbers = referenceNumbers(profile), hour = hourOf(cellsOf(line, at, band, held, worn, regen, () => state), numbers, band.scale);
         return hour ? { hour, state, regen } : NONE;
@@ -441,7 +441,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
             stats.swaps++;
             const next = wornKit(Object.fromEntries([...worn.filter(([s]) => !slotsConflict(slot, s)), [slot, selfId]]));
             if (next.length === worn.length && next.every(([s, id], i) => s === worn[i][0] && id === worn[i][1])) return base.hour === null ? NONE : { hour: base.hour };
-            if (base.hour === null || !stated(next, band)) return pass(line, at, band, held, next);
+            if (base.hour === null || !stated(next, band.grade)) return pass(line, at, band, held, next);
             const kept = new Set(next.map(([s, id]) => `${s}:${id}`)), added = next.filter(([s, id]) => !worn.some(([ws, wid]) => ws === s && wid === id));
             const off = new Set(worn.filter(([s, id]) => !kept.has(`${s}:${id}`)).map(([s]) => s));
             candidates ||= Profile.candidateProfiles(base.state, 0, { store: false });
@@ -474,13 +474,14 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     // reference reads 0; deaths 1 where the reference dies 0 there (the worn kit
     // then dies 0 too).
     const UNIT = Object.freeze({ kills: 1, shots: 1, deaths: 1 }), UNITS = Object.freeze({ bare: UNIT, shots: UNIT, blessed: UNIT });
-    const spots = new Map(), spotBodies = new Map();
+    const spots = new Map(), spotBodies = new Map(), refForms = new Map();
+    const sigOf = worn => worn.map(([slot, selfId]) => `${slot}:${selfId}`).join(',');
     const bodyFor = (line, level, worn) => {
-        const key = `${line}:${level}:${worn.map(([slot, selfId]) => `${slot}:${selfId}`).join(',')}`;
+        const key = `${line}:${level}:${sigOf(worn)}`;
         if (!spotBodies.has(key)) {
             const classId = Table.roleClass(line, level);
             let made = null;
-            if (classId !== null && worn.every(([, selfId]) => { const item = Index.find(Data.items, selfId); return item && Grades.rankOf(Enchant.gradeOf(item.etc)) <= Grades.rankOf(Grades.gradeForLevel(level)); })) {
+            if (classId !== null && stated(worn, Grades.gradeForLevel(level))) {
                 const body = referenceBot(owners, line, level, worn.map(([slot, selfId]) => ({ selfId, slot })));
                 made = { body, numbers: referenceNumbers(Profile.profileFor(body, 0, { store: false })), weapon: weaponIn(worn.map(([slot, selfId]) => ({ selfId, slot }))) };
             }
@@ -503,25 +504,29 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
         const form = blessed => { const kind = kinds.find(row => (row.kind === 'blessedSpiritshot') === blessed); return kind ? read(kindBody(made.body, kind.kind)) : null; };
         return { bare: read(made.body, false), shots: form(false), blessed: form(true) };
     };
+    // The line's reference kit's forms at a spot row of a level, held once.
+    const refFormsAt = (line, level, ref, spotId) => {
+        const key = `${line}:${level}:${spotId}`;
+        if (!refForms.has(key)) refForms.set(key, formsAt(ref, spotId));
+        return refForms.get(key);
+    };
     const spotFactors = (line, level, kit, spotId) => {
-        const worn = wornKit(kit), key = `${line}:${level}:${worn.map(([slot, selfId]) => `${slot}:${selfId}`).join(',')}:${spotId}`;
+        const worn = wornKit(kit), key = `${line}:${level}:${sigOf(worn)}:${spotId}`;
         if (spots.has(key)) return spots.get(key);
         stats.spotBuilds++;
         const made = bodyFor(line, level, worn), ref = bodyFor(line, level, wornKit(Object.fromEntries(lineKit(owners, line, level).map(row => [row.slot, row.selfId]))));
-        let out = UNITS;
-        if (!made || !ref) stats.spotUnstated++;
-        else {
-            const w = formsAt(made, spotId), r = formsAt(ref, spotId);
-            let unstated = w.bare === undefined || r.bare === undefined;
+        let out = UNITS, unstated = !made || !ref;
+        if (!unstated) {
+            const w = formsAt(made, spotId), r = refFormsAt(line, level, ref, spotId);
             const factor = form => {
                 const a = w[form], b = r[form];
                 if (a === undefined || b === undefined || (a === null) !== (b === null)) { unstated = true; return UNIT; }
                 if (a === null || !(b.kills > 0) || !(b.fired > 0)) return UNIT;
                 return Object.freeze({ kills: a.kills / b.kills, shots: a.fired / b.fired, deaths: b.deaths > 0 ? a.deaths / b.deaths : 1 });
             };
-            if (unstated) stats.spotUnstated++;
-            else out = Object.freeze({ bare: factor('bare'), shots: factor('shots'), blessed: factor('blessed') });
+            out = Object.freeze({ bare: factor('bare'), shots: factor('shots'), blessed: factor('blessed') });
         }
+        if (unstated) stats.spotUnstated++;
         spots.set(key, out);
         return out;
     };
