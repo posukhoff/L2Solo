@@ -354,7 +354,7 @@ assert.ok(snapshot.deathExp[4] > 0, 'level 5 loses exp');
     const file = { stamp: 'abc', range: [1, 1], fields, forms: ['bare', 'shots'], bodies: { '49|1|7/54': { classId: 49, runSpd: 121, reach: 40, point: { attack: 7, defence: 54 } } },
         spots: { '-12_43': { area: 488157, density: 10, species: { 5198: { level: 1, count: 10, production: 2400 } } } }, cells: { '49|1|7/54': { '-12_43': { 5198: [cell, cell] } } } };
     const paired = Inputs.extract({ preset: 'x50', lines: ['51'], levels: [1, 1], hunt: { name: 'hunt-1-1-abc.json', file } });
-    assert.deepEqual(paired.header.huntTable, { name: 'hunt-1-1-abc.json', stamp: 'abc', range: [1, 1] });
+    assert.deepEqual(paired.header.huntTable, { name: 'hunt-1-1-abc.json', stamp: 'abc', range: [1, 1], spots: ['-12_43'] });
     assert.equal(paired.hours[51][1].best, null, 'the game\'s spot table has no row for the orc mystic at level 1');
     const gremlin = paired.yields['-12_43@1'];
     assert.ok(gremlin && gremlin.town, 'the table spot has its yields and town at the level');

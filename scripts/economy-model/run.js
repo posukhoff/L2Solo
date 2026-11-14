@@ -5,7 +5,7 @@
 //   node scripts/economy-model/run.js [--preset x50] [--snapshot <file>: else the one of the live game data] [--hours 100] [--seed 1]
 //       [--cohort <economy ledger JSON>: its start save's accounts | --accounts 1700 --levels 20-39]
 //       [--mode plain|today|design] [--fit <economy ledger JSON>] [--hunt-share 1] [--visits 2]
-//       [--supply table|formula: design only] [--hunt-table <file>: design only, else tmp/economy-model/hunt/<the snapshot's huntTable name>]
+//       [--supply table|formula: design only] [design only: reads tmp/economy-model/hunt/<the snapshot's huntTable name>]
 //       [--json <out file>]
 //
 // plain: NPC trade only, one hunting share and visit rate for every band.
@@ -142,6 +142,8 @@ function printFooter(design = false) {
 function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFactor, walkMs }) {
     const expected = snapshot.header.huntTable;
     if (file.stamp !== expected.stamp) throw new Error(`hunt table ${name}: stamp ${file.stamp}, but the snapshot was built with ${expected.name} (stamp ${expected.stamp})`);
+    if (file.range.join('-') !== expected.range.join('-')) throw new Error(`hunt table ${name}: levels ${file.range.join('-')}, but the snapshot was built with ${expected.name} (levels ${expected.range.join('-')})`);
+    if (Object.keys(file.spots).sort().join() !== expected.spots.join()) throw new Error(`hunt table ${name}: ${Object.keys(file.spots).length} spots, but the snapshot was built with ${expected.name} (${expected.spots.length} spots, not the same set)`);
     const hours = { ...snapshot.hours }, cannot = { shots: 0, bare: 0 }, [from, to] = file.range;
     for (const line of lines) {
         if (!snapshot.hours[line]) continue;
@@ -161,12 +163,12 @@ function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFacto
     return { hours, range: [from, to], cannot };
 }
 
-// The design's hunting table: the file the snapshot pairs with (or --hunt-table), its hours over the snapshot's
+// The design's hunting table: the file the snapshot pairs with, its hours over the snapshot's
 // (tableHours) and the creation kit of each line's class at a level, the kit the table measured.
 function designTable(argv, snapshot, accounts) {
     const expected = snapshot.header.huntTable;
     if (!expected) throw new Error('design mode reads the model\'s hunting table: this snapshot pairs with none (build it with inputs.js --hunt <file>)');
-    const name = path.resolve(Boot.option(argv, 'hunt-table', path.join(Boot.root, 'tmp', 'economy-model', 'hunt', expected.name)));
+    const name = path.join(Boot.root, 'tmp', 'economy-model', 'hunt', expected.name);
     const Generator = require('../generate-spot-table'), Data = invoke('GameServer/DataCache'), Starter = invoke('GameServer/Knowledge/StarterItemCatalog');
     const table = tableHours({ snapshot, file: JSON.parse(fs.readFileSync(name, 'utf8')), name, lines: [...new Set(accounts.map(account => account.line))],
         keyOf: Generator.botFor, spoilLevelOf: invoke('GameServer/Bot/AI/SpotValueTable').roleSpoilLevel,
@@ -219,7 +221,7 @@ function printFit(basis) {
 }
 
 // The options main reads (the header names them): any other --name is refused by name.
-const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'supply', 'hunt-table', 'json']);
+const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'supply', 'json']);
 
 function refuseUnknownOptions(argv) {
     for (const word of argv) {

@@ -438,7 +438,7 @@ for (const supply of ['table', 'formula']) {
         cells: { '49|1|7/54': { '-12_43': { [GREMLIN]: [orc, orc] }, cut: { [DEADLY]: [deadly, deadly] } },
             '10|1|7/54': { '-12_43': { [GREMLIN]: [humanBare, humanShots] }, cut: { [DEADLY]: [deadly, deadly] } } } };
     const gameRow = row('s1', 100, 200);
-    const snapshot = { header: { levels: [1, 2], rates: { exp: 1 }, huntTable: { name: 'hunt-1-1-abc.json', stamp: 'abc', range: [1, 1] } },
+    const snapshot = { header: { levels: [1, 2], rates: { exp: 1 }, huntTable: { name: 'hunt-1-1-abc.json', stamp: 'abc', range: [1, 1], spots: ['-12_43', 'cut'] } },
         exp: [0, 1e9], kits: { 51: { 1: [] }, 12: { 1: [] } },
         hours: { 51: { 1: { classId: 49, shotId: SPIRIT, best: null, bareBest: null, top: [] }, 2: { classId: 49, shotId: SPIRIT, best: gameRow, top: [gameRow] } },
             12: { 1: { classId: 10, shotId: SPIRIT, best: gameRow, top: [gameRow] } } },
@@ -451,6 +451,10 @@ for (const supply of ['table', 'formula']) {
     const read = (over = {}) => Run.tableHours({ snapshot, file, name: 'test table', lines: ['51', '12'], keyOf: line => (line === '51' ? '49' : '10'),
         spoilLevelOf: () => 0, gapFactor: () => 1, walkMs: (density, runSpd, area, reach) => (density === 10 && runSpd === 121.2 && area === 488157 && reach === 40 ? 581 : NaN), ...over });
     assert.throws(() => read({ file: { ...file, stamp: 'other' } }), /hunt table test table: stamp other, but the snapshot was built with hunt-1-1-abc\.json \(stamp abc\)/, 'another table stamp is refused by name');
+    assert.throws(() => read({ file: { ...file, range: [1, 2] } }), /hunt table test table: levels 1-2, but the snapshot was built with hunt-1-1-abc\.json \(levels 1-1\)/, 'another level range is refused by name');
+    const { cut, ...onlyGremlin } = file.spots;
+    assert.throws(() => read({ file: { ...file, spots: onlyGremlin } }), /hunt table test table: 1 spots, but the snapshot was built with hunt-1-1-abc\.json \(2 spots, not the same set\)/, 'a table of fewer spots (a pick) is refused by name');
+    assert.throws(() => read({ file: { ...file, spots: { ...onlyGremlin, other: cut } } }), /hunt table test table: 2 spots, but the snapshot was built with .* not the same set/, 'a table of as many other spots is refused too');
     const table = read();
     assert.deepEqual(table.cannot, { shots: 2, bare: 2 }, 'the spot whose species dies over the limit is cut in both forms for both lines, and counted');
     assert.equal(snapshot.hours[51][1].best, null, 'the snapshot\'s hours are not edited');
@@ -486,6 +490,17 @@ for (const supply of ['table', 'formula']) {
     assert.ok(Math.abs(firedBy['12:1'] - shotsKills * 1.027) < 1e-9, `the human mystic with spiritshots fires its shots cell's count (${firedBy['12:1']})`);
     assert.ok(Math.abs(humanHour.bareBest.shotless.deaths - 3600 / (7.039 + 15.59 + 10.6 + 0.581) * 0.02) < 1e-9, 'the bare hour carries the bare cell\'s own deaths');
     assert.equal(humanHour.bareBest.deaths, 0, 'the shots hour its own (none)');
+    // The creation kit is the measured point: a main wearing exactly it (non-empty) is on the grid, one wearing another piece is counted off it.
+    {
+        const worn = Engine.viewOf({ ...snapshot, hours: table.hours, kits: { 51: { 1: [{ slot: 6, selfId: 1001 }] }, 12: { 1: [] } }, items: { ...snapshot.items, 1001: { kind: 'Armor.Chest', npcBuy: 1 } } });
+        const offGrid = measured => {
+            const account = freshBot('51', { held: [1001] });
+            const made = Plane.plane({ view: worn, kitHours: kitsOf, variant: 'table', accounts: [account], table: { range: [1, 1], creation: () => measured } });
+            return Engine.simulate({ view: worn, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 1, seed: 3, plane: made }).design.offGrid;
+        };
+        assert.equal(offGrid({ 6: 1001 }), 0, 'wearing exactly the creation kit counts no main off the grid');
+        assert.equal(offGrid({ 6: 1002 }), 1, 'wearing another piece counts the main off the grid');
+    }
 }
 
 console.log('economy model design: ok');

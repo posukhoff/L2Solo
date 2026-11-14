@@ -85,7 +85,7 @@ const NOTES = Object.freeze([
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
     'fallbacks names what the snapshot filled in: noMarketToC the spots with no no-grade market near their centre (tradeTowns.none holds the C town).',
-    'huntTable (with --hunt): the model\'s hunting table (hunt-table.js) the snapshot pairs with, by its file name, stamp and level range; a design run reads that file and refuses one of another stamp. speciesYields["<selfId>@<level>@<spoil level>"] is one species\' per-kill yields at the preset (spotYields over that species alone) for a killer of the level, for every species of the table\'s spots at each level of its range and every line\'s Spoil level there; yields holds every such spot at those levels.',
+    'huntTable (with --hunt): the model\'s hunting table (hunt-table.js) the snapshot pairs with, by its file name, stamp, level range and spot set (ids, sorted); a design run reads that file and refuses one of another stamp, range or spot set. speciesYields["<selfId>@<level>@<spoil level>"] is one species\' per-kill yields at the preset (spotYields over that species alone) for a killer of the level, for every species of the table\'s spots at each level of its range and every line\'s Spoil level there; yields holds every such spot at those levels.',
     'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
 ]);
 
@@ -578,7 +578,7 @@ function huntYields(hunt, lines, spots, owners) {
             }
         }
     }
-    return { speciesYields, pairs, header: { name: hunt.name, stamp: file.stamp, range: file.range } };
+    return { speciesYields, pairs, header: { name: hunt.name, stamp: file.stamp, range: file.range, spots: Object.keys(file.spots).sort() } };
 }
 
 function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base = null, spots: save = null, hunt = null } = {}) {

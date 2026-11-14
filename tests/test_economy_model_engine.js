@@ -417,6 +417,14 @@ assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, b
     const doubledOut = go(doubled.plane, 200);
     assert.ok(Math.abs(doubledOut.counters.deaths - 200) <= 3 * Math.sqrt(200), `factor 2: deaths ${doubledOut.counters.deaths} within 3 sigma of 200`);
     assert.ok(doubledOut.counters.deaths > go(deadPlane(() => null).plane, 200).counters.deaths * 1.5, 'factor 2 has clearly more deaths than factor 1');
+    // (c3) shots that run out inside the run: it dies at the fired form's rate (none) while they last, then at the bare rate.
+    // 20 shots at 20 an hour last 1 h; the row's own deaths are 0 and its bare hour's 5 an hour.
+    const crossing = { ...snapshot, deathExp: [10, 50, 120, 200], hours: { 9: Object.fromEntries(Object.entries(snapshot.hours[9]).map(([level, row]) => [level, { ...row, best: { ...row.best, deaths: 0, shotless: { deaths: 5 } } }])) } };
+    const crossed = deadPlane(() => null, { snap: crossing });
+    Engine.simulate({ view: Engine.viewOf(crossing), accounts: [{ ...accounts[0], shots: { 1463: 20 } }], bands, rates: { default: { huntShare: 1, visitsPerBotHour: 1 } }, hours: 10, seed: 3, plane: crossed.plane });
+    const diedAt = crossed.seen.visits.filter(visit => visit.died).map(visit => visit.now);
+    assert.ok(diedAt.length > 0, 'once its shots are out it dies at the bare form\'s deaths');
+    assert.ok(diedAt[0] >= 1, `it does not die while its shots last (first death at ${diedAt[0]} h)`);
     // (d) a plane without deaths rolls none.
     const d = deadPlane(() => null, { deaths: false });
     assert.equal(go(d.plane, 50).counters.deaths, 0);
