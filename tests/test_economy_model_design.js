@@ -302,14 +302,14 @@ for (const supply of ['table', 'formula']) {
 // one that bought none of the need it went for, and the shadow names the rows where the two variants answer differently.
 // levelWorld: line 9 at levels first..last (a level starts every 50 exp; the row gives 100 exp an hour with shots), its shots
 // sold at price, the road to town and back as given.
-const levelWorld = (first, last, price = 7, road = { to: 0.2, back: 0.3 }, slots = 80) => {
+const levelWorld = (first, last, price = 7, road = { to: 0.2, back: 0.3 }) => {
     const levels = Array.from({ length: last - first + 1 }, (_, at) => first + at), per = fill => Object.fromEntries(levels.map(level => [level, fill(level)]));
     return Engine.viewOf({ header: { levels: [1, last] }, exp: Array.from({ length: last }, (_, at) => at * 50), kits: { 9: per(() => []) },
         hours: { 9: per(() => ({ classId: 9, shotId: SHOT, best: near, top: [near, far] })) },
         yields: Object.fromEntries(levels.flatMap(level => [[`s1@${level}`, drops], [`s2@${level}`, drops]])),
         items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price }] } }, deathExp: Array(last).fill(15),
-        tripHours: { to: { s1: road.to, s2: road.to }, back: { s1: { TownA: road.back }, s2: { TownA: road.back } } }, bags: { 9: { slots, maxLoad: 1e6 } } });
+        tripHours: { to: { s1: road.to, s2: road.to }, back: { s1: { TownA: road.back }, s2: { TownA: road.back } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
 };
 for (const supply of ['table', 'formula']) {
     // a trip that buys its shots is not empty: the born walk 0.3 h, the walk to town 0.2 h and the walk back 0.3 h are the road
