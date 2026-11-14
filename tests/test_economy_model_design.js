@@ -238,6 +238,7 @@ assert.equal(Supply.stuck({ ...field({ wallet: 0, fightsBare: false }), need: { 
 // The held spot is the line's best row in the form the bot can hunt: line 9's best row s1 kills nothing without shots, its
 // bare best is s2. A bot born holding none of its shots holds s2 and hunts there bare; after the town chain that bought shots
 // it holds s1 (the chain's end takes the held spot again).
+// bareBest is an hour row of the shape the extract writes: the spot's hour with shots at the top level (shots 30), the bare reading in shotless.
 const farBare = row('s2', 150, 100, { shotless: { kills: 10, exp: 60, adena: 40, dropLoot: 20, loot: 20, deaths: 0 } });
 const bareWorld = { ...world, tripHours: { to: { ...world.tripHours.to, s2: 0.2 }, back: { ...world.tripHours.back, s2: { TownA: 0.3 } } }, hours: { ...world.hours, 9: { 1: { classId: 9, shotId: SHOT, best: near, bareBest: farBare, top: [near, far] } } } };
 for (const supply of ['table', 'formula']) {
