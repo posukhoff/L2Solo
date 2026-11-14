@@ -58,12 +58,13 @@ const townOf = (view, main) => Engine.townOfRow(view, Engine.spotRowOf(view, mai
 
 // The held spot: its line's best row at the level in the form the bot can hunt, taken at its birth and at the end of each
 // town chain and held between (the engine keeps it while its row exists at the level): the best row with shots when it
-// holds the shots it fires (the weapon's grade), else the best row without them (bareBest: the game's own answer for a
-// line hunting without shots, SpotValueTable.best with shots off, often another spot than the one a gate closes).
+// holds the shots it fires (the weapon's grade; the beginner shots that charge them count: Engine.heldOf), else the
+// best row without them (bareBest: the game's own answer for a line hunting without shots, SpotValueTable.best with
+// shots off, often another spot than the one a gate closes).
 // A snapshot with no bareBest row holds the best row.
 function heldSpot(view, main) {
     const hour = Engine.hourOf(view, main), shot = hour?.shotId ? Engine.shotOf(view, main, hour) : 0;
-    const row = shot && main.shots[shot] > 0 ? hour.best : hour?.bareBest || hour?.best;
+    const row = shot && Engine.heldOf(main, { id: shot, beginner: Engine.beginnerOf(view, shot) }) > 0 ? hour.best : hour?.bareBest || hour?.best;
     return row ? String(row.spotId) : null;
 }
 

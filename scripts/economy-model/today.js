@@ -55,6 +55,7 @@ function nextArrival(main, { event, now, pending, rate, roll }) {
 // grade of the weapon in hand (shotOf) at the shots its spot row's hour of
 // that kind fires (shotsPerHour: times the worn weapon's count per action,
 // scaleOf(main, row, form), and the worn kit's shots, factorsOf(main)[form]);
+// beginner: the beginner shot that charges it (Engine.beginnerOf, 0 for none);
 // null where the hour fires no shot or that count is 0. kills(main): per form
 // the worn kit's kills over the reference kit's (factorsOf(main)[form].kills;
 // 1 unstated). factorsOf null: every main hunts the row's own kit (the plain
@@ -70,7 +71,7 @@ function hunter(view, factorsOf = null, scaleOf = null) {
         if (row && hour?.shotId) {
             const id = Engine.shotOf(view, main, hour), form = Engine.formOf(view, id);
             const perHour = Engine.shotsPerHour(row, form, scaleOf ? scaleOf(main, row, form) : 1, factors?.[form]);
-            firing = perHour > 0 ? { id, perHour } : null;
+            firing = perHour > 0 ? { id, perHour, beginner: Engine.beginnerOf(view, id) } : null;
         }
         const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(form => [form, factors?.[form]?.kills ?? 1]));
         const answer = { kit: main.kit, weapon: main.weapon, level: main.level, row, firing, kills };

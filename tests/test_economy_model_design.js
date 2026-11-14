@@ -116,6 +116,10 @@ assert.deepEqual(Needs.consumable(holder, { id: SHOT, perHour: 99.5 }), { id: SH
 assert.equal(Needs.consumable(holder, null), null);
 assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 })), [[DROP, 4], [1463, 5], [SHOT, 50]]);
 assert.deepEqual(Needs.surplus({ shots: { [SHOT]: 120 }, bag: {} }, Needs.consumable({ shots: { [SHOT]: 120 } }, { id: SHOT, perHour: 100 })), []);
+// The beginner shots that charge the shot it fires count as held of it; they are never spare (no sale, trade or drop).
+const starterHolder = { shots: { 5789: 150, [SHOT]: 20 }, bag: {} };
+assert.deepEqual(Needs.consumable(starterHolder, { id: SHOT, perHour: 100, beginner: 5789 }), { id: SHOT, perHour: 100, target: 200, held: 170, short: 30 });
+assert.deepEqual(Needs.surplus(starterHolder, null), [[SHOT, 20]], 'the beginner shots are never surplus');
 
 // Attention: a stock run out on the road waits and is heard on arrival in one chain with the town fact.
 let account = { id: 1, led: 7, place: 'road', queue: [] };
@@ -164,6 +168,15 @@ function run(account, supply, hours, dies = 0, view = world) {
     return { result, visits };
 }
 const close = (a, b) => Math.abs(a - b) < 1e-6;
+// The world with SHOT as the no-grade Soulshot: Soulshots for Beginners (5789) charge it.
+const BEGINNER = 5789, taught = { ...world, shotFamilies: { grades: ['NONE'], ids: [[SHOT]] } };
+// Holding both, a hunt fires the beginner shots first, then the bought ones.
+{
+    const both = Engine.mainOf(freshBot(9, { shots: { [BEGINNER]: 20, [SHOT]: 60 } }), 0, taught, [['all', 1]]);
+    const firing = { id: SHOT, perHour: 30, beginner: Engine.beginnerOf(taught, SHOT) };
+    assert.deepEqual(Engine.hunt(both, taught, 0.5, () => 0.5, firing).main.shots, { [BEGINNER]: 5, [SHOT]: 60 }, 'half an hour spends beginner shots only');
+    assert.deepEqual(Engine.hunt(both, taught, 1, () => 0.5, firing).main.shots, { [BEGINNER]: 0, [SHOT]: 50 }, 'an hour spends the beginner shots, then 10 bought');
+}
 // Both variants from one simulate call, only the variant changed.
 for (const supply of ['table', 'formula']) {
     // a fresh bot that runs out of shots walks to its spot's town, buys up to its target, sells its drop, walks back:
@@ -180,6 +193,13 @@ for (const supply of ['table', 'formula']) {
     assert.equal(trip.main.money, trip.before.money + trip.delta.flows.npcSales - 60 * 7);
     assert.ok(close(result.huntHours.ownSpot + result.huntHours.bestSpot, 2.2), `${supply}: hunted ${result.huntHours.ownSpot + result.huntHours.bestSpot} h`);
     assert.equal(result.money.closureGap, 0);
+    // a fresh bot born with 45 beginner shots and none bought hunts with them first (1.5 h at 30 an hour), never sells
+    // them, and only when they run out walks to town and buys no-grade shots with what its drop sold for.
+    const starter = run(freshBot(9, { shots: { [BEGINNER]: 45 } }), supply, 3, 0, taught);
+    const restock = starter.visits[1];
+    assert.ok(restock && close(restock.now, 0.3 + 1.5 + 0.2), `${supply}: it hunts its beginner shots first and walks to town when they run out (${restock?.now})`);
+    assert.deepEqual([restock.before.shots[BEGINNER], restock.main.shots[SHOT] > 0], [0, true], `${supply}: it buys its no-grade shots once the beginner shots are spent`);
+    assert.ok(starter.visits.every(visit => !visit.delta.shotsSoldNpc), `${supply}: it never sells a beginner shot`);
     // with no money, nothing to sell and a zero bare hour it stays and stuck counts 1 with reason no_bare_hour
     const broke = run(freshBot(10, { shots: { [SHOT]: 60 } }), supply, 10);
     assert.equal(broke.visits.length, 1, `${supply}: it never goes to town`);

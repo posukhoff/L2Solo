@@ -53,6 +53,7 @@
 // (run seed, account id, the account's situation counter).
 const { hash, mulberry } = require('../hunt-tables/common');
 const PartyRewardMath = require('../../src/GameServer/Actor/PartyRewardMath');
+const BeginnerShots = require('../../src/GameServer/Items/C4BeginnerShots');
 const Ledger = require('./ledger');
 
 const ADENA = 57;
@@ -62,6 +63,8 @@ const WHOLE_DRAW_MEAN = 5;
 // The Blessed Spiritshots' place in the snapshot's shot families (soulshot,
 // spiritshot, blessed spiritshot).
 const BLESSED_FAMILY = 2;
+// The game's kinds of the snapshot's shot families, in their order.
+const FAMILY_KINDS = Object.freeze(['soulshot', 'spiritshot', 'blessedSpiritshot']);
 
 // The paperdoll's hand slots: a one-handed weapon's and a two-handed one's.
 const HAND_SLOTS = Object.freeze([7, 14]);
@@ -163,6 +166,21 @@ function shotOf(view, main, hour) {
     const at = family ? view.shotFamilies.grades.indexOf(view.items[main.weapon]?.grade) : -1;
     return at >= 0 ? family[at] : hour.shotId;
 }
+
+// The beginner shot that charges a shot's skill, 0 for none: the game's rule
+// (C4BeginnerShots.selfIdFor of the shot's kind and grade: Soulshots for
+// Beginners charge the no-grade Soulshot, Spiritshots for Beginners the
+// no-grade Spiritshot; no graded or blessed shot).
+function beginnerOf(view, shotId) {
+    const at = view.shotFamilies?.ids.findIndex(ids => ids.includes(Number(shotId))) ?? -1;
+    if (at < 0) return 0;
+    const grade = view.shotFamilies.grades[view.shotFamilies.ids[at].indexOf(Number(shotId))];
+    return BeginnerShots.selfIdFor(FAMILY_KINDS[at], String(grade).toLowerCase()) || 0;
+}
+
+// The shots a firing ({ id, beginner }) can spend: the beginner shots that
+// charge its skill (beginnerOf) and the shot itself.
+const heldOf = (main, firing) => (main.shots[firing.id] || 0) + (firing.beginner ? main.shots[firing.beginner] || 0 : 0);
 
 // The form of its spot row a main hunts firing a shot (0: none): 'bare' the
 // row's hour without shots, 'blessed' its hour firing Blessed Spiritshots,
@@ -267,7 +285,7 @@ function adenaFactor(view, row, level) {
 // bag (huntYields: today's or the design's rates) at the kills and kill mix
 // of the spot row's hour of the kind it fires (formOf: its plain shot the
 // row, Blessed Spiritshots the row's blessed hour); the shots the main fires
-// (firing: { id, perHour }, the run's hunter's answer, perHour that hour's
+// (firing: { id, perHour, beginner }, the run's hunter's answer, perHour that hour's
 // shots at its weapon's count: shotsPerHour; null fires none) last shots
 // held / shots per hour, and past them, or firing none, it hunts at the same
 // spot's hour without shots (fewer kills, less exp and loot) until it
@@ -279,10 +297,10 @@ function adenaFactor(view, row, level) {
 // hunt's yields carry no spoil for is lost, so its kills are counted
 // (spoilUnyielded).
 // The shot a hunt fires and the hunting hours its held stock lasts
-// (held over the shots an hour; then it hunts bare), and the form of its
-// row it fires in (formOf).
+// (held over the shots an hour, the beginner shots that charge it counted:
+// heldOf; then it hunts bare), and the form of its row it fires in (formOf).
 function firedOf(view, main, firing) {
-    const shotId = firing?.id || 0, held = shotId ? main.shots[shotId] || 0 : 0, perHour = shotId ? firing.perHour || 0 : 0;
+    const shotId = firing?.id || 0, held = shotId ? heldOf(main, firing) : 0, perHour = shotId ? firing.perHour || 0 : 0;
     return { shotId, held, perHour, lasts: perHour > 0 ? held / perHour : 0, form: formOf(view, shotId) };
 }
 
@@ -321,11 +339,20 @@ function hunt(main, view, huntHours, random, firing = null, kills = null) {
         bag[id] = (bag[id] || 0) + count;
         delta.drops.push([id, count]);
     }
-    delta.shotId = shotId;
     delta.shotsWanted = Math.round(perHour * huntHours);
     delta.shotsUsed = Math.min(held, delta.shotsWanted);
     delta.huntBare = huntHours - shotHours;
-    const shots = delta.shotsUsed ? { ...main.shots, [shotId]: held - delta.shotsUsed } : main.shots;
+    // The beginner shots that charge its skill fire first, then the shot itself
+    // (the game's combatPlanForState); the shot it fires next is the beginner
+    // while some are left, else its own.
+    const beginnerHeld = firing?.beginner ? main.shots[firing.beginner] || 0 : 0, fromBeginner = Math.min(beginnerHeld, delta.shotsUsed);
+    let shots = main.shots;
+    if (delta.shotsUsed) {
+        shots = { ...main.shots };
+        if (fromBeginner) shots[firing.beginner] = beginnerHeld - fromBeginner;
+        if (delta.shotsUsed > fromBeginner) shots[shotId] = (main.shots[shotId] || 0) - (delta.shotsUsed - fromBeginner);
+    }
+    delta.shotId = beginnerHeld > fromBeginner ? firing.beginner : shotId;
     const exp = main.exp + delta.exp;
     return { main: { ...main, exp, level: levelOf(view, exp, main.level), money: main.money + flows.huntCold, bag, shots }, delta };
 }
@@ -650,5 +677,5 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: money }), ...added };
 }
 
-module.exports = { HAND_SLOTS, townOfRow, viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
+module.exports = { HAND_SLOTS, beginnerOf, heldOf, townOfRow, viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
     killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf, firedOf };
