@@ -3,7 +3,7 @@
 # `workflow.js verify <slug> --picked-list` prints it (a raw-map file carries +). This run plus `verify --check` is the
 # task's CI evidence (evidence.md "Evidence gates"); the full suite is not a task's: `land` starts it on the branch head.
 # --pr also sends full PR checks on the SHA (ci-<sha>), for the rare task that wants the whole suite before landing.
-# Pushes to the fork only (gpush.sh retries).
+# Pushes to the fork only (gpush.sh retries). Sent a second time for the same head, it reruns the run it already has.
 # Usage: ci-dispatch.sh <task-worktree> <slug> [--pr]      (--no-pr is accepted and means the default)
 set -u
 wt=$1 slug=$2; cd "$wt" || exit 1
@@ -18,6 +18,16 @@ if [[ ${3:-} == --pr ]]; then
   echo "PR ci-$s"
 fi
 [[ -z $names ]] && { echo "no selected tests for $s: nothing to pick (ready then asks the review's --selection-ack)"; exit 0; }
+# A second dispatch for the same head: the list commit is new each time, so the push would not be a fast-forward (and is
+# never forced). The same list is rerun whole on the run it already has (GitHub now and then loses a shard's record,
+# 2026-11-14); a list that changed for the same head is a different selection and is not sent over the old one.
+if git ls-remote --exit-code fork refs/heads/tests/list-$s >/dev/null 2>&1; then
+  git fetch -q fork tests/list-$s || exit 1
+  [[ $(git show FETCH_HEAD:ci-tests.txt) == "$names" ]] || { echo "tests/list-$s is on the fork with another list (the selection changed on the same head): tell the flow session"; exit 1; }
+  id=$(gh run list -R posukhoff/L2Solo --branch tests/list-$s --limit 1 --json databaseId -q '.[0].databaseId')
+  [[ -n $id ]] && gh run rerun $id -R posukhoff/L2Solo || { echo "tests/list-$s is on the fork and its run ${id:-(none found)} could not be rerun (still going?)"; exit 1; }
+  echo "Picked tests/list-$s was sent before: reran run $id whole; then: ci-finish $slug $wt"; exit 0
+fi
 printf '%s\n' "$names" > ci-tests.txt
 git add ci-tests.txt && git -c user.name=iposukhoff commit -q -m "ci tests"
 $P fork HEAD:refs/heads/tests/list-$s >/dev/null; rc=$?
