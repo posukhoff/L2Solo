@@ -23,6 +23,7 @@ const Engine = require('./engine');
 const Today = require('./today');
 const KitHours = require('./kit-hours');
 const Plane = require('./design/plane');
+const DesignLimits = require('./design/limits');
 const Load = require('./load');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
 const { STAGE_BANDS } = require('../economy/ledger-rules');
@@ -101,6 +102,27 @@ function printRun(out, { rates }) {
     console.log(`COUNTERS ${Object.entries(out.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
 }
 
+// The design run's report: per class of level (1-19 are the design's numbers, 20 and above are printed apart), the
+// consumable trips, empty trips, road share and stuck episodes; where the other supply variant would have decided
+// otherwise; the bare hours before each line's first purchase of shots; the level distribution at the end.
+function printDesign(design) {
+    const percent = value => (value === null ? '-' : `${(value * 100).toFixed(1)} %`), number = value => (value === null ? '-' : value.toFixed(2));
+    const stuckOf = book => `${Object.entries(book.stuckEpisodes).map(([reason, n]) => `${reason} ${n} episodes, ${(book.stuckHoursByReason[reason] || 0).toFixed(1)} h (${percent(book.wallHours > 0 ? (book.stuckHoursByReason[reason] || 0) / book.wallHours : null)} of wall hours)`).join('; ') || 'none'}; at an unmeasured bare row ${book.stuckUnmeasuredEpisodes} (${book.stuckUnmeasuredHours.toFixed(1)} h)`;
+    console.log(`DESIGN supply variant ${design.variant}, per class of level at the event's start`);
+    for (const [name, label] of [['low', 'levels 1-19'], ['high', 'levels 20+ (printed only)']]) {
+        const book = design.levels[name];
+        console.log(`  ${label}: wall hours ${book.wallHours.toFixed(1)}, consumable trips ${book.consumableTrips}, empty trips ${book.emptyTrips} (${percent(book.emptyShare)}${name === 'low' ? `, bound ${percent(DesignLimits.EMPTY_TRIP_SHARE.value)}` : ''}), `
+            + `road hours ${book.roadHours.toFixed(1)} = road share ${percent(book.roadShare)} of the ${book.decidingHours.toFixed(1)} h of mains with a spot row (${percent(book.roadShareAllMains)} of all wall hours)${name === 'low' ? ` (limit ${percent(DesignLimits.ROAD_SHARE_LIMIT.value)}, today's bots ${percent(DesignLimits.CURRENT_BOTS_ROAD_SHARE.value)})` : ''}`);
+        console.log(`    stuck: ${stuckOf(book)}`);
+    }
+    console.log(`  shadow: ${design.shadow.decisions} field decisions run in both variants; ${design.shadow.differ.reduce((sum, row) => sum + row.count, 0)} differ`);
+    for (const row of design.shadow.differ) console.log(`    ${pad(row.count, 7)}  row ${row.row}: ${row.reason}`);
+    console.log(`  bare hunting hours before the first purchase of shots, per line (bots; bought; mean hours of those that bought; never bought, their mean bare hours so far):`);
+    for (const row of design.bareBeforeFirstBuy) console.log(`    line ${pad(row.line, 4)} ${pad(row.bots, 5)} ${pad(row.bought, 5)} ${pad(number(row.meanHoursBeforeFirstBuy), 8)} ${pad(row.neverBought, 5)} ${pad(number(row.meanHoursNeverBought), 8)}`);
+    console.log(`  spotUnstated ${design.spotUnstated}`);
+    console.log(`  level distribution at the end: ${Object.entries(design.levelDistribution).sort((a, b) => a[0] - b[0]).map(([level, n]) => `${level}:${n}`).join(' ')}`);
+}
+
 function printFooter(design = false) {
     console.log('LEFT OUT of these numbers:');
     for (const line of design ? LEFT_OUT_DESIGN : LEFT_OUT) console.log(`  - ${line}`);
@@ -165,6 +187,7 @@ function main(argv) {
     const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, plane,
         onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates } });
     printRun(out, { rates });
+    if (out.design) printDesign(out.design);
     console.log(`MONEY per start band, mean per bot start -> end: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.meanStart)} -> ${k(row.money.meanEnd)}`).join(' | ')}`);
     console.log(`RUN ${out.counters.events} events in ${((Date.now() - began) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);
     printFooter(Boot.option(argv, 'mode', 'plain') === 'design');
@@ -174,4 +197,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { cohortOf, printRun, printFit, printFooter, progress, LEFT_OUT, LEFT_OUT_DESIGN, STAGE_BANDS };
+module.exports = { cohortOf, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, LEFT_OUT_DESIGN, STAGE_BANDS };

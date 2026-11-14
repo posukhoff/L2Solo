@@ -152,7 +152,7 @@ const world = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: {
 const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, exp: 0, money: 0, spot: null, shots: {}, held: [], worn: {},
     persona: { primaryDrive: 'progression', traits: { caution: 0.5, commitment: 0.5 } }, ...over });
 // The kit's factors (the reference kit's: 1), deaths times dies.
-const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1 });
+const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1, stats: { spotUnstated: 0 } });
 // One run through the plane, its visits seen as the engine calls them.
 function run(account, supply, hours, dies = 0, view = world) {
     const visits = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account] });
@@ -271,6 +271,79 @@ for (const supply of ['table', 'formula']) {
     assert.ok(result.progress.stageBands.all.levelUps >= 1 && levelled.length >= 1, `${supply}: it reached level 2`);
     assert.deepEqual([levelled[0].level, levelled[0].before, levelled[0].spot], [2, null, 's3'], `${supply}: the level's bare best, not the shots best s1`);
     assert.equal(result.counters.stuckNoBareHour, 0, `${supply}: not stuck`);
+}
+
+// The run report (finish().design): trips, road hours and wall hours are counted at levels 1-19 and 20+ apart, an empty trip is
+// one that bought none of the need it went for, and the shadow names the rows where the two variants answer differently.
+// levelWorld: line 9 at levels first..last (a level starts every 50 exp; the row gives 100 exp an hour with shots), its shots
+// sold at price, the road to town and back as given.
+const levelWorld = (first, last, price = 7, road = { to: 0.2, back: 0.3 }) => {
+    const levels = Array.from({ length: last - first + 1 }, (_, at) => first + at), per = fill => Object.fromEntries(levels.map(level => [level, fill(level)]));
+    return Engine.viewOf({ header: { levels: [1, last] }, exp: Array.from({ length: last }, (_, at) => at * 50), kits: { 9: per(() => []) },
+        hours: { 9: per(() => ({ classId: 9, shotId: SHOT, best: near, top: [near, far] })) },
+        yields: Object.fromEntries(levels.flatMap(level => [[`s1@${level}`, drops], [`s2@${level}`, drops]])),
+        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price }] } }, deathExp: Array(last).fill(15),
+        tripHours: { to: { s1: road.to, s2: road.to }, back: { s1: { TownA: road.back }, s2: { TownA: road.back } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+};
+for (const supply of ['table', 'formula']) {
+    // a trip that buys its shots is not empty: the born walk 0.3 h, the walk to town 0.2 h and the walk back 0.3 h are the road
+    const bought = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 3, 0, levelWorld(1, 3)).result.design.levels;
+    assert.deepEqual([bought.low.consumableTrips, bought.low.emptyTrips], [1, 0], `${supply}: one trip, it bought`);
+    assert.ok(close(bought.low.roadHours, 0.8) && close(bought.low.wallHours, 3) && close(bought.low.roadShare, 0.8 / 3), `${supply}: road ${bought.low.roadHours} of ${bought.low.wallHours}`);
+    // shots no adena buys: the table's trips are all empty (the formula sees the trip buys nothing and stays)
+    const empty = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 6, 0, levelWorld(1, 3, 1e9)).result.design.levels;
+    if (supply === 'table') {
+        assert.ok(empty.low.consumableTrips >= 1 && empty.low.emptyTrips === empty.low.consumableTrips, `table: it bought none of its need (${empty.low.emptyTrips} of ${empty.low.consumableTrips})`);
+        assert.equal(empty.low.emptyShare, 1);
+    } else assert.equal(empty.low.consumableTrips, 0, 'formula: no trip for shots it cannot buy');
+    // a bot at level 20 is in the 20+ numbers only
+    const high = run(freshBot(9, { level: 20, exp: 950, shots: { [SHOT]: 60 } }), supply, 3, 0, levelWorld(20, 25)).result.design.levels;
+    assert.deepEqual([high.low.wallHours, high.low.roadHours, high.low.consumableTrips, high.low.emptyTrips], [0, 0, 0, 0], `${supply}: nothing at 1-19`);
+    assert.ok(high.high.consumableTrips >= 1 && close(high.high.wallHours, 3), `${supply}: its trips and hours are 20+`);
+    // a bot that crosses level 20 splits its hours at the crossing (0.3 h walk out, 0.5 h to its 50 exp)
+    const crossing = run(freshBot(9, { level: 19, exp: 900, shots: { [SHOT]: 60 } }), supply, 3, 0, levelWorld(19, 25)).result.design.levels;
+    assert.ok(Math.abs(crossing.low.wallHours - 0.8) < 1e-3 && close(crossing.low.wallHours + crossing.high.wallHours, 3), `${supply}: low ${crossing.low.wallHours} h, high ${crossing.high.wallHours} h`);
+    // its walk out is the only road at level 19; the trip it makes after its shots run out starts at level 20+ and is counted there
+    assert.ok(close(crossing.low.roadHours, 0.3) && crossing.low.consumableTrips === 0 && crossing.high.consumableTrips === 1, `${supply}: the walk out at 19, the trip at 20+`);
+}
+// Two variants on the same facts: where they agree the shadow lists nothing, where the table goes and the formula stays on a
+// road of 3 h each way the differ row names the table's row and both answers, whichever variant runs.
+const agree = run(freshBot(9, { shots: { [SHOT]: 60 } }), 'table', 3, 0, levelWorld(1, 3)).result.design.shadow;
+assert.ok(agree.decisions >= 1 && agree.differ.length === 0, 'the variants agree on a short road');
+for (const supply of ['table', 'formula']) {
+    const shadow = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 8, 0, levelWorld(1, 3, 7, { to: 3, back: 3 })).result.design.shadow;
+    assert.ok(shadow.decisions >= 1 && shadow.differ.length >= 1, `${supply}: the variants disagree on a long road`);
+    assert.match(shadow.differ[0].reason, /^table go \/ formula stay:trip_costs_more$/, supply);
+    assert.ok(shadow.differ[0].count >= 1 && typeof shadow.differ[0].row === 'string' && shadow.differ[0].row.length > 0, supply);
+}
+// The bare hours before a line's first purchase: a funded bot buys at birth (0 h), an unfunded one hunts bare until it can pay.
+for (const supply of ['table', 'formula']) {
+    const funded = run(freshBot(9, { money: 5000 }), supply, 3, 0, bareWorld).result.design.bareBeforeFirstBuy;
+    assert.deepEqual([funded[0].line, funded[0].bought, funded[0].meanHoursBeforeFirstBuy], [9, 1, 0], `${supply}: bought at birth`);
+    const poor = run(freshBot(9), supply, 3, 0, bareWorld).result.design.bareBeforeFirstBuy;
+    assert.equal(poor[0].bought, 0, `${supply}: no purchase yet`);
+    assert.ok(poor[0].meanHoursNeverBought > 2, `${supply}: it hunted ${poor[0].meanHoursNeverBought} h bare`);
+}
+
+// A main whose level has no spot row for its line stands: one stuck episode with its own reason and its hours, and the road share
+// is over the wall hours of the mains that hold a row (line 9 has rows from level 2 only; line 11 hunts and walks to town).
+const noRow = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [], 2: [] }, 11: { 1: [] } },
+    hours: { 9: { 2: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 11: { 1: { classId: 11, shotId: SHOT, best: near, top: [near, far] } } },
+    yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
+    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 }, 11: { slots: 80, maxLoad: 1e6 } } });
+for (const supply of ['table', 'formula']) {
+    const accounts = [freshBot(9, { id: 1 }), freshBot(11, { id: 2, shots: { [SHOT]: 60 } })];
+    const { design, counters } = Engine.simulate({ view: noRow, accounts, bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3,
+        plane: Plane.plane({ view: noRow, kitHours: kitAt(0), variant: supply, accounts }) });
+    const low = design.levels.low;
+    assert.deepEqual(low.stuckEpisodes, { no_spot_row: 1 }, `${supply}: the main with no row is one stuck episode`);
+    assert.ok(close(low.stuckHoursByReason.no_spot_row, 3) && close(low.stuckHours, 3), `${supply}: it stands its 3 hours`);
+    assert.equal(counters.stuckNoBareHour, 0, `${supply}: the no-bare-hour counter is the supply rule's`);
+    assert.ok(close(low.wallHours, 6) && close(low.decidingHours, 3), `${supply}: ${low.decidingHours} h of mains with a row`);
+    assert.ok(close(low.roadShare, 0.8 / 3) && close(low.roadShareAllMains, 0.8 / 6), `${supply}: the road share leaves its hours out (${low.roadShare}, all ${low.roadShareAllMains})`);
 }
 
 console.log('economy model design: ok');
