@@ -473,4 +473,4 @@ function kitFactors({ snapshot, view, kitHours }) {
         kitHours.hour(main.line, main.level, slotsOf(view.kits[main.line]?.[main.level] || [])));
 }
 
-module.exports = { gameKitHours, kitFactors, wornKit, slotsConflict, huntFactors, lineKit, referenceShot, referenceBot, referenceNumbers, TOP_SPOTS };
+module.exports = { gameKitHours, kitFactors, wornKit, slotsConflict, huntFactors, lineKit, referenceShot, referenceNumbers, TOP_SPOTS };

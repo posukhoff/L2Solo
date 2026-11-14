@@ -4,15 +4,15 @@
 // run's start population, fitted on --fit (default the baseline itself: the
 // hunting share and visits per stage band), runs the run's hours and prints
 // two tables.
-//   Shared with the design mode: what both modes take from the same rules
+//   What the model computes from the rules it keeps
 //     (exp, hunt adena, drops by class and grade, shots fired, fares,
 //     arrivals), each with a verdict at its tolerance; a fitted number, a
 //     consequence of the fit (level-ups) and a number with too few real units
 //     are printed without one. Where the real ledger counts only the cold
 //     bots (hunt adena, drops) while the model hunts every main, the real
 //     number is a range, cold to cold plus hot, and the verdict says which end.
-//   Today's mechanisms, imitated coarsely: the flows of mechanisms the design
-//     deletes (fixed buyers and sellers, NPC trade, money growth), printed
+//   Today's mechanisms, imitated coarsely: the flows of mechanisms the target
+//     model has none of (fixed buyers and sellers, NPC trade, money growth), printed
 //     with the reason the model differs, never judged.
 //
 //   node scripts/economy-model/compare.js --baseline <ledger JSON> [--fit <ledger JSON>]
