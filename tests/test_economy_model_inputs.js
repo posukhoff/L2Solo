@@ -52,6 +52,15 @@ for (const row of hour.others || []) {
     assert.ok(!hour.top.some(top => top.spotId === row.spotId), `${row.spotId} is not a top spot`);
     assert.ok(row.scrolls === undefined || row.scrolls.every(id => snapshot.recipes.some(recipe => recipe.recipeItemId === id && snapshot.items[recipe.productId]?.kind === 'Other.Shot')), 'scrolls named are shot recipes\' scrolls');
 }
+// A line whose best row with shots the game's solo gate closes without shots has the game's own shotless best beside it: the
+// hour of the spot SpotValueTable.best names for a line hunting without shots, its yields written (Human Mystic at level 1).
+const mystic = Inputs.extract({ preset: 'x50', lines: [caster], levels: [1, 1] }), mysticHour = mystic.hours[caster][1];
+const bareBest = Table.best(caster, 1, false, 'income');
+for (const field of Inputs.HOUR_FIELDS) assert.equal(mysticHour.bareBest[field], bareBest[field], `bareBest ${field}`);
+assert.ok(mysticHour.bareBest.shotless.kills > 0, 'its bare best kills without shots');
+assert.equal(mysticHour.best.shotless.kills, 0, 'the best row with shots kills nothing without them');
+assert.notEqual(mysticHour.bareBest.spotId, mysticHour.best.spotId, 'the bare best is another spot');
+assert.ok(mystic.yields[`${mysticHour.bareBest.spotId}@1`]?.town, 'the bare best spot\'s yields and town are written');
 const low = Inputs.extract({ preset: 'x50', lines: [line], levels: [22, 22] });
 assert.ok((low.hours[line][22].others || []).some(row => row.scrolls?.includes(ssdScroll)), 'at 22 a spot that yields the Soulshot D recipe is a candidate outside the top');
 

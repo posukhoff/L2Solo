@@ -116,8 +116,8 @@ function bandOf(bands, level) {
 
 const hourOf = (view, main) => view.hours[main.line]?.[main.level] || null;
 // The row of a spot a main may hold at a level: the spot's own hour (inputs.js --spots) when the snapshot has it,
-// else the line's best, top or other row of that spot at the level.
-const rowAt = (hour, id) => (hour && String(hour.best?.spotId) === String(id) ? hour.best : hour?.top?.find(row => String(row.spotId) === String(id)) || hour?.others?.find(row => String(row.spotId) === String(id)) || null);
+// else the line's best, bare best, top or other row of that spot at the level.
+const rowAt = (hour, id) => (hour && String(hour.best?.spotId) === String(id) ? hour.best : hour && String(hour.bareBest?.spotId) === String(id) ? hour.bareBest : hour?.top?.find(row => String(row.spotId) === String(id)) || hour?.others?.find(row => String(row.spotId) === String(id)) || null);
 const ownRow = (view, line, level, spot) => (spot ? view.spotHours?.[line]?.[level]?.[spot] || rowAt(view.hours[line]?.[level], spot) : null);
 // The town of a spot row at a level (its spot card's), null without one.
 const townOfRow = (view, row, level) => (row ? view.yields[`${row.spotId}@${level}`]?.town || null : null);

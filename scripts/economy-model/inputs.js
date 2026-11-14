@@ -72,6 +72,7 @@ const HOUR_FIELDS = Object.freeze(['spotId', 'kills', 'deaths', 'exp', 'adena', 
 // ore, shot and arrow recipes, potions, scrolls, arrows, the D crystal.
 const OTHER_GAP_IDS = Object.freeze([1785, 3031, 1804, 1805, 3953, 1060, 736, 17, 1666, 1458]);
 const NOTES = Object.freeze([
+    'bareBest (SpotValueTable.best with shots off): the line\'s best hour hunting without shots, often another spot than best; the design plane\'s bot that holds none of its shots holds it.',
     'best (SpotValueTable.best) and top[0] (rankedIncome) are two owners and differ on some line-levels: read best for the income of the hour, top for the candidates a bot ranks.',
     'Per-kill item yields (yields) are taken at the spot\'s spawn mix; the hour\'s income (best, top) uses the kill mix the spot table measured for the line.',
     'spotHours (with --spots): spotHours.rows[line][level][spotId] is the spot table\'s hour at the spot a save\'s bot starts at (Cohort.savedBots: the spot it stands at, else its travel\'s, else its stay\'s), for the line the model draws for it, null where that line may fight nothing there.',
@@ -554,10 +555,12 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
             const top = Table.rankedIncome(line, level).slice(0, TOP_SPOTS);
             const classId = Table.roleClass(line, level);
             kits[line][level] = KitHours.lineKit(owners, line, level);
+            const bareBest = Table.best(line, level, false, 'income');
             hours[line][level] = { classId, shotId: KitHours.referenceShot(classId, level, line),
-                best: best && hourRowWithForms(best, line, level, Table), top: top.map(row => hourRowWithForms(row, line, level, Table)) };
+                best: best && hourRowWithForms(best, line, level, Table), bareBest: bareBest && hourRowWithForms(bareBest, line, level, Table),
+                top: top.map(row => hourRowWithForms(row, line, level, Table)) };
             const skill = Table.roleSpoilLevel(line, level);
-            for (const row of [best, ...top]) if (row) {
+            for (const row of [best, bareBest, ...top]) if (row) {
                 const key = `${row.spotId}@${level}`, held = pairs.get(key);
                 pairs.set(key, { spotId: String(row.spotId), level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
             }

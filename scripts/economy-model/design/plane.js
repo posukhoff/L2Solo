@@ -15,9 +15,10 @@
 //   arrival  the town chain: sell to the NPC, buy to the outing's target,
 //            walk back (the visit's afterHours);
 //   death    the respawn town (the held spot's town) runs the same chain.
-// The held spot is the line's best row at the level, kept while its row
-// exists. Called by the engine (the only module of the design that touches
-// the engine contract); pure on the view and the main except the account
+// The held spot is the line's best row at the level in the form the bot can
+// hunt (heldSpot), taken at its birth and the end of each town chain. Called
+// by the engine (the only module of the design that touches the engine
+// contract); pure on the view and the main except the account
 // queues it holds by main index.
 const Engine = require('../engine');
 const Today = require('../today');
@@ -45,8 +46,16 @@ const FACTS = Object.freeze({
 // The held spot's town (the spot card's town at the level), null without one.
 const townOf = (view, main) => Engine.townOfRow(view, Engine.spotRowOf(view, main), main.level);
 
-// The held spot: the one it holds (the engine keeps it while its row exists at the level), else its line's best row.
-const heldSpot = (view, main) => main.spot || (Engine.hourOf(view, main)?.best ? String(Engine.hourOf(view, main).best.spotId) : null);
+// The held spot: its line's best row at the level in the form the bot can hunt, taken at its birth and at the end of each
+// town chain and held between (the engine keeps it while its row exists at the level): the best row with shots when it
+// holds the shots it fires (the weapon's grade), else the best row without them (bareBest: the game's own answer for a
+// line hunting without shots, SpotValueTable.best with shots off, often another spot than the one a gate closes).
+// A snapshot with no bareBest row holds the best row.
+function heldSpot(view, main) {
+    const hour = Engine.hourOf(view, main), shot = hour?.shotId ? Engine.shotOf(view, main, hour) : 0;
+    const row = shot && main.shots[shot] > 0 ? hour.best : hour?.bareBest || hour?.best;
+    return row ? String(row.spotId) : null;
+}
 
 // The game's inventory full rule (SurvivalFloor.evaluate: its slots or the
 // first weight penalty) on counts { id: count } of what it carries (the worn
@@ -236,7 +245,10 @@ function plane({ view, kitHours, variant, accounts }) {
                     }
                     state = queueFact(placed(state, 'town'), 'town', at, now);
                     const { state: heard, actions, row } = decide(at, state, town);
-                    const done = executed(at, actions, town, row ? Engine.backHoursOf(view, row.spotId, town) : 0);
+                    const chain = executed(at, actions, town, row ? Engine.backHoursOf(view, row.spotId, town) : 0);
+                    // The chain's end takes the held spot again (the shots it bought) and it walks back to that spot.
+                    const held = { ...chain.main, spot: heldSpot(view, chain.main) }, heldRow = Engine.spotRowOf(view, held);
+                    const done = { ...chain, main: held, afterHours: chain.afterHours > 0 && heldRow ? Engine.backHoursOf(view, heldRow.spotId, town) : chain.afterHours };
                     // It walks back and hunts again from the visit's end.
                     put(done.main, { ...placed(heard, 'hunt'), full: fullOf(view, bagsOf(done.main), carried(done.main)) });
                     return done;

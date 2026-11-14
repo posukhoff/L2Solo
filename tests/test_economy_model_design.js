@@ -235,4 +235,20 @@ for (const supply of ['table', 'formula']) {
 }
 assert.equal(Supply.stuck({ ...field({ wallet: 0, fightsBare: false }), need: { ...field().need, held: 5 } }), false, 'a bot that holds shots is not stuck');
 
+// The held spot is the line's best row in the form the bot can hunt: line 9's best row s1 kills nothing without shots, its
+// bare best is s2. A bot born holding none of its shots holds s2 and hunts there bare; after the town chain that bought shots
+// it holds s1 (the chain's end takes the held spot again).
+const farBare = row('s2', 150, 100, { shotless: { kills: 10, exp: 60, adena: 40, dropLoot: 20, loot: 20, deaths: 0 } });
+const bareWorld = { ...world, tripHours: { to: { ...world.tripHours.to, s2: 0.2 }, back: { ...world.tripHours.back, s2: { TownA: 0.3 } } }, hours: { ...world.hours, 9: { 1: { classId: 9, shotId: SHOT, best: near, bareBest: farBare, top: [near, far] } } } };
+for (const supply of ['table', 'formula']) {
+    const poor = run(freshBot(9), supply, 4, 0, bareWorld);
+    assert.equal(poor.visits[0].main.spot, 's2', `${supply}: born with no shots it holds its bare best`);
+    assert.equal(poor.result.counters.stuckNoBareHour, 0, `${supply}: it hunts bare, not stuck`);
+    assert.ok(poor.result.huntHours.ownSpot + poor.result.huntHours.bestSpot > 3.5 && poor.result.progress.stageBands.all.expPerBotHour > 0, `${supply}: it hunts and gains exp`);
+    const funded = run(freshBot(9, { money: 5000 }), supply, 4, 0, bareWorld);
+    assert.equal(funded.visits[0].before.spot, null);
+    assert.ok(funded.visits[0].main.shots[SHOT] > 0, `${supply}: the birth chain buys its shots`);
+    assert.equal(funded.visits[0].main.spot, 's1', `${supply}: after the chain that bought shots it holds the shots best`);
+}
+
 console.log('economy model design: ok');
