@@ -235,7 +235,7 @@ function main(argv) {
     console.log(`COHORT ${cohort.source}: lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}; run ${((Date.now() - began) / 1000).toFixed(1)} s`);
     console.log(`HUNTING HOURS at the mains' own spots ${model.huntHours.ownSpot}, at their line's best ${model.huntHours.bestSpot}`);
     const shared = sharedRows(baseline, model, snapshot.items), today = todayRows(baseline, model);
-    printShared(shared, `SHARED WITH THE DESIGN MODE: today mode against ${baselineFile}`);
+    printShared(shared, `THE RULES THE MODEL KEEPS: today mode against ${baselineFile}`);
     printToday(today, 'TODAY\'S MECHANISMS, IMITATED COARSELY, NOT A VALIDATION (baseline, model, ratio, why they differ)');
     console.log(`  model counters: ${Object.entries(model.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
     const results = { baseline: baselineFile, shared, today, model };
