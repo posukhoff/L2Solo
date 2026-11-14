@@ -48,9 +48,11 @@ const START = 1_750_000_000_000;
 // species of (all in the window, each with a kill and within the limit),
 // hunted whole.
 const CHECK_SPOTS = 3;
-// The files the stamp adds to the spot table generator's inputs.
+// The files the stamp adds to the spot table generator's inputs. Of the design
+// limits only the rest rule's value enters a cell (stamp's fightCover); the
+// kill-death limit is applied at read time, so moving it keeps the table.
 const STAMP_FILES = Object.freeze(['src/GameServer/Knowledge/StarterItemCatalog.js', 'scripts/economy-model/hunt-lift.js',
-    'scripts/economy-model/hunt-table.js', 'scripts/economy-model/design/limits.js', 'scripts/geodata-release.json', 'scripts/hunt-tables/common.js']);
+    'scripts/economy-model/hunt-table.js', 'scripts/geodata-release.json', 'scripts/hunt-tables/common.js']);
 
 const round = value => value === 0 ? 0 : Number(value.toPrecision(4));
 
@@ -181,9 +183,9 @@ function weaponTypes(lines, from, to) {
 // (TableFingerprint 'spot': the hunt's code and data) and what this table adds
 // (the creation kit, the lift and its limits row, this builder, the geodata
 // release and the hunt tables' common code).
-function stamp() {
+function stamp({ fightCover = LIMITS.FIGHT_COVER.value } = {}) {
     const TableFingerprint = invoke('GameServer/Bot/AI/TableFingerprint');
-    return crypto.createHash('sha256').update(`${TableFingerprint.compute('spot').hash}\n${Boot.sourcesHash(STAMP_FILES)}`).digest('hex').slice(0, 12);
+    return crypto.createHash('sha256').update(`${TableFingerprint.compute('spot').hash}\n${Boot.sourcesHash(STAMP_FILES)}\nfightCover ${fightCover}`).digest('hex').slice(0, 12);
 }
 
 // The server's spot catalogue, saved for the children; built on the geodata

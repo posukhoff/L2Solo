@@ -31,6 +31,9 @@ const options = { from: 1, to: 1, hours: 1, children: 1, spots: [GREMLIN_SPOT], 
         const { file, table } = await HuntTable.build(options);
         assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), table, 'the file holds the table');
         assert.match(table.stamp, /^[0-9a-f]{12}$/);
+        // the rest rule's value is a cell input, so it moves the stamp; the kill-death limit is read at read time and does not
+        assert.strictEqual(HuntTable.stamp(), table.stamp);
+        assert.notStrictEqual(HuntTable.stamp({ fightCover: 1.25 }), table.stamp, 'another rest bound is another table');
         const at = Object.fromEntries(table.fields.map((field, index) => [field, index]));
         for (const field of ['kills', 'deaths', 'fight', 'rest', 'walk', 'exp', 'shots', 'pull']) assert(field in at, `a cell carries ${field}`);
         const bodies = Object.keys(table.bodies).filter(body => body.startsWith(`${key}|1|`));
