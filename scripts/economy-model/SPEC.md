@@ -39,22 +39,22 @@ How the rows read:
 | `KNOW.TWIN` | Own twin: its stock, seat, lines | always (same player) | never | planned | — |
 | `KNOW.UNSEEN` | Not known: any line in a town it has not visited and has not heard. The live books of all towns are not read. | never gained without a visit or a shout heard | as a seen row, at the visit or the shout | planned | — |
 
-## 3. Hunter
-### 3.1 Shots low (held < the reserve of the next outing) and shots out (held 0)
-| id | actor | fact | levers | status |
-|---|---|---|---|---|
-| `H.SIT.SHOTS_LOW` | hunter | held shots under the reserve of the next outing | F1, F2, M1, M2, M3, S in that order. Not a lever: paying above worth (worth is the break-even price). | planned |
-| `H.SIT.SHOTS_OUT` | hunter | held shots become 0 (running out is one situation) | F1, F2, M1, M2, M3, M4, S in that order. Not a lever: paying above worth (worth is the break-even price). | planned |
+## 3. Hunter (a solo bot in an NPC world, build F step 1)
+### 3.1 Situations (the facts of one bot; heard where it stands, by the catalog in design/catalog.js)
+| id | fact | heard | wakes | status | test |
+|---|---|---|---|---|---|
+| `SIT.BORN` | a new character enters the world and stands in its first town | at once | supply | built | test_economy_model_design.js: a fresh bot that runs out of shots walks to its spot's town, buys up to its target, sells its drop, walks back |
+| `SIT.OUT` | the shots it fires run out while it hunts (held becomes 0) | at its next stop: at once while hunting, in town; on arrival from the road | supply | built | test_economy_model_design.js: Out of shots while hunting is heard at once |
+| `SIT.BAG` | its bag reaches the game's full rule (slots or weight, worn kit and shots counted) and was not full before | at its next stop, as OUT | supply | built | test_economy_model_design.js: Its bag full with shots held |
+| `SIT.TOWN` | it arrives in a town (a trip's end, a birth or a respawn) | at once | supply | built | test_economy_model_design.js: a stock run out on the road waits and is heard on arrival in one chain with the town fact |
+| `SIT.DIED` | it dies | at once | nothing: the respawn town's arrival runs the town's decisions | built | test_economy_model_design.js: a death puts the bot in its respawn town where the town chain runs |
 
+### 3.2 Levers (the supply decision: pure on the bot's own state, in the run's variant, table or formula)
 | id | situation | kind | lever | condition | waking event | C4 source | status | test | counter |
 |---|---|---|---|---|---|---|---|---|---|
-| `H.SHOTS.F1` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | free | Shout WTB at its worth in the region it stands in (from the field too) | nothing known at or under worth | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | WTB in trade chat | planned | — | lever report |
-| `H.SHOTS.F2` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | free | Whisper a known seller (seen or heard), ask ≤ worth; the seller holds the units for this buyer | a known row at or under worth; purse covers units + way | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | not verified: whisper "keep 5k shots, coming" | planned | — | lever report |
-| `H.SHOTS.M1` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to own twin | twin holds the shot; way payable or walkable | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | ours: the twin is the model's stand-in for a player's second character | planned | — | none per lever yet |
-| `H.SHOTS.M2` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to the seller that holds its units (F2 answered, or a crafter answered F1) | a held deal | an answer to its whisper or its shout | not verified: a seller holds units for its buyer | planned | — | lever report |
-| `H.SHOTS.M3` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | move | Go to the NPC that sells it at or under worth | prior knowledge | the situation; a town visit of another cause while short, after it looks at the market (updates "seen") | not verified: grocer sells no-grade shots | planned | — | none per lever yet |
-| `H.SHOTS.M4` | H.SIT.SHOTS_OUT | move | Go and look once: the trade town of the grade it has never seen, else the one seen longest ago; if nothing there, F1 is shouted there and it returns to its spot | at the moment it runs out (held becomes 0), nothing known, no deal; one look, not a loop | held becomes 0 | not verified: runs to Giran and looks | planned | — | lever report |
-| `H.SHOTS.S` | H.SIT.SHOTS_LOW, H.SIT.SHOTS_OUT | stay | Hunt without shots at its spot; hours counted. A bot back from an empty town hunts without shots until an answer to its shout or a town visit of another cause; no "look again after N" | no move lever taken | no move lever taken | not verified: hunts on without shots | planned | — | hours in S (lever report) |
+| `LEV.BUY` | SIT.BORN, SIT.OUT, SIT.BAG, SIT.TOWN | move | In a town: buy the shots it fires up to its outing's target with its wallet; in the field: walk to the town of its held spot (the NPC that sells them) when money, a surplus to sell or a bare hour that pays say so | the town's NPC sells the shot; the wallet is money plus what the surplus sells for there | the facts of the situation column | not verified: a C4 player buys shots at the grocer and walks back | built | test_economy_model_design.js: a fresh bot that runs out of shots walks to its spot's town, buys up to its target, sells its drop, walks back | design counters |
+| `LEV.SELL` | SIT.TOWN | free | In a town: sell the whole surplus (bag, the shots it does not fire and those above target) to the NPC at its buy price | something to spare | arrival in the town | not verified: a C4 player sells drops to the NPC | built | test_economy_model_design.js: Table in town with 0 adena and 40 drop | design counters |
+| `LEV.STAY` | SIT.OUT, SIT.BAG | stay | Hunt on in the state it is in (without shots): no money, nothing to sell; stuck counts only where the bot kills nothing bare | no move lever taken | no move lever taken | not verified: hunts on without shots | built | test_economy_model_design.js: Out of shots with nothing to pay with, both variants stay for the same reason | stuckNoBareHour |
 
 | id | rule | status | test |
 |---|---|---|---|
