@@ -58,7 +58,7 @@ assert.deepEqual(by(1).twins[0].recipes, [1, 2, 5], 'the crafter knows the held 
 assert.deepEqual(by(2).twins[0].recipes, [1, 6], 'a scroll teaches only the first recipe row with its id (706: 6, not 7); a first row above the level (707) teaches nothing')
 assert.deepEqual(by(1).warehouse, { 701: 1, 702: 1 }, 'learning takes one stored scroll its bag does not hold (702 down by one, 705 gone), not 701');
 assert.deepEqual(by(5).warehouse, {}, 'a station keeps no warehouse');
-assert.deepEqual(by(3).persona, { primaryDrive: 'progression', commitment: 0.61 });
+assert.deepEqual(by(3).persona, { primaryDrive: 'progression', traits: { caution: undefined, commitment: 0.61 } });
 assert.deepEqual(by(3).warehouse, {}, 'a main with no stored rows has an empty warehouse');
 assert.equal(by(1).twins[0].level, 30);
 assert.deepEqual([by(2).twins[0].level, by(2).twins[0].classId, by(4).twins[0].level, by(4).twins[0].classId], [39, 56, 40, 57], 'the crafter follows the main\'s level and class table');
@@ -80,7 +80,7 @@ const run = { header: { levels: [1, 4], rates: { adena: 1 } }, exp: [0, 100, 300
 const plain = { id: 1, station: false, classId: 9, line: '9', level: 2, exp: 100, money: 10000, shots: {}, held: [100], worn: { 7: 100 } };
 const seededAccount = (() => {
     const cohort = [plain];
-    return cohort.map(account => ({ ...account, persona: { primaryDrive: 'wealth', commitment: 0.9 }, warehouse: { 1: 1 },
+    return cohort.map(account => ({ ...account, persona: { primaryDrive: 'wealth', traits: { caution: 0.5, commitment: 0.9 } }, warehouse: { 1: 1 },
         twins: [{ role: 'crafter', id: '1:crafter', classId: 56, level: 2, recipes: [], money: 0, warehouse: {}, town: null }] }));
 })();
 const simulate = accountsIn => {
@@ -101,7 +101,7 @@ assert.deepEqual(simulate(seededAccount), simulate([plain]), 'twins, persona and
     kits: { 9: { 1: pieces, 2: pieces, 3: pieces }, 12: { 1: pieces.slice(0, 2) } }, exp: [0, 68, 363], items: {},
     twins: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [i + 1, { classId: i + 1 < 40 ? 56 : 57, createItem: i + 1 < 5 ? 0 : 1 }])), recipes: [] };
     const accounts = Cohort.synthetic({ count: 30, low: 1, high: 3, seed: 7 }, synSnapshot).accounts;
-    assert.equal(crypto.createHash('sha256').update(JSON.stringify(accounts)).digest('hex').slice(0, 16), '6cac97119963bb16', 'a synthetic cohort is unchanged');
+    assert.equal(crypto.createHash('sha256').update(JSON.stringify(accounts)).digest('hex').slice(0, 16), '39a241c1dd38a3f1', 'a synthetic cohort is unchanged');
 }
 
 // A fresh world: every account a new character at level 1 on a beneficiary
@@ -147,6 +147,8 @@ let expected = 0;
 for (const account of fresh) {
     const persona = BotPersona.generate({ characterId: account.id, classId: account.classId, stats: { generatedIndex: account.id - 1 } }, { counts, total: COUNT });
     counts[persona.archetype] = (counts[persona.archetype] || 0) + 1;
+    // every fresh account carries a persona drawn by the game's rule
+    assert.deepEqual(account.persona, { primaryDrive: persona.primaryDrive, traits: { caution: persona.traits.caution, commitment: persona.traits.commitment } }, `account ${account.id} carries its generated persona`);
     if (persona.primaryDrive === 'wealth' || persona.traits.commitment >= 0.62) expected++;
 }
 assert.ok(expected > 0 && expected < COUNT, 'the generated personas split');
