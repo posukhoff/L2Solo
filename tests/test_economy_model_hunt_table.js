@@ -72,6 +72,30 @@ const options = { from: 1, to: 1, hours: 1, children: 1, spots: [GREMLIN_SPOT], 
         } finally {
             Object.defineProperty(ER, 'evaluate', { value: evaluate, writable: true, configurable: true, enumerable: true });
         }
+        // A build stopped after its hunts (the combat inputs change under it) leaves its parts.
+        const TF = invoke('GameServer/Bot/AI/TableFingerprint'), computeReal = TF.compute;
+        const stopped = async more => {
+            let calls = 0;
+            TF.compute = (...args) => { calls += 1; const got = computeReal(...args); return calls === 1 ? got : { ...got, hash: `${got.hash}x` }; };
+            try { await assert.rejects(HuntTable.build(more), /combat inputs changed/); } finally { TF.compute = computeReal; }
+        };
+        const seeded = { ...options, out: path.join(dir, 'seeded.json') }, lines = [];
+        const run = more => HuntTable.build({ ...more, log: line => lines.push(line) });
+        await stopped(seeded);
+        const left = fs.readdirSync(`${seeded.out}.parts`).filter(name => name.endsWith('.jsonl'));
+        assert(left.length > 0, 'the stopped build left its hunts');
+        const again = await run(seeded);
+        assert(lines.some(line => /round species: [1-9]\d* hunts already .* 0 to run/.test(line)), 'the hunts of the same inputs are not run again');
+        assert.deepEqual(again.table, table, 'the resumed table is the built one');
+
+        // Parts made under other hours are cleared, not reused.
+        const other = { ...options, out: path.join(dir, 'other.json') };
+        await stopped(other);
+        lines.length = 0;
+        const longer = await run({ ...other, hours: 2 });
+        assert(lines.some(line => /were made under other inputs: cleared/.test(line)), 'the parts of other hours are cleared');
+        assert(lines.some(line => /round species: 0 hunts already/.test(line)), 'none of them is reused');
+        assert.equal(longer.table.hours, 2);
         console.log('test_economy_model_hunt_table: ok');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });

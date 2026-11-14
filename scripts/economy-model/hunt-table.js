@@ -284,6 +284,21 @@ function doneResults(parts, stamp) {
     return { done, cut };
 }
 
+// The parts directory serves a build only when it was made under the same
+// stamp, hours and catalogue (the hunts' inputs not in the stamp): its meta file
+// says so; any other parts are removed and the build starts clean.
+function prepareParts(parts, meta, log) {
+    const metaFile = path.join(parts, 'meta.json'), want = JSON.stringify(meta);
+    let held = null;
+    try { held = fs.readFileSync(metaFile, 'utf8'); } catch (error) { held = null; }
+    if (held !== want) {
+        if (fs.existsSync(parts) && fs.readdirSync(parts).length) log(`parts ${path.relative(ROOT, parts)} were made under other inputs: cleared`);
+        fs.rmSync(parts, { recursive: true, force: true });
+    }
+    fs.mkdirSync(parts, { recursive: true });
+    fs.writeFileSync(metaFile, want);
+}
+
 const quantile = (values, q) => values.length ? [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(q * values.length))] : null;
 
 async function build({ from, to, hours = 2, children = 7, spots: onlySpots = null, keys: onlyKeys = null, catalogue = null, out = null, log = console.log }) {
@@ -302,7 +317,7 @@ async function build({ from, to, hours = 2, children = 7, spots: onlySpots = nul
         }
         const { tasks, bodies, hunters, spots } = plan({ profiles, from, to, lines, onlyKeys, onlySpots });
         const before = stamp(), file = out || path.join(ROOT, 'tmp/economy-model/hunt', `hunt-${from}-${to}-${before}.json`), parts = `${file}.parts`;
-        fs.mkdirSync(parts, { recursive: true });
+        prepareParts(parts, { stamp: before, hours, catalogue: catalogue ? crypto.createHash('sha256').update(fs.readFileSync(catalogue)).digest('hex') : 'geodata' }, log);
         log(`levels ${from}-${to}: bodies ${Object.keys(bodies).length}, spots ${Object.keys(spots).length}, hunts ${tasks.length} on ${children} children, stamp ${before}`);
         const hunted = async (list, round) => {
             const first = doneResults(parts, before), todo = list.filter(task => !first.done.has(task.k));
