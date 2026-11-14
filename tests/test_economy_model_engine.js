@@ -361,9 +361,10 @@ assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, b
     const dyingAt = rate => ({ ...snapshot, deathExp: [10, 50, 120, 200], hours: Object.fromEntries(Object.entries(snapshot.hours).map(([line, levels]) => [line,
         Object.fromEntries(Object.entries(levels).map(([level, row]) => [level, { ...row, best: { ...row.best, deaths: rate } }]))])) });
     const dying = dyingAt(0.5);
-    const deadPlane = (rule, { afterHours = 0, deaths = true, snap = dying } = {}) => {
+    const deadPlane = (rule, { afterHours = 0, deaths = true, snap = dying, deathFactor = null } = {}) => {
         const seen = { visits: [], spotHours: 0, levels: [], huntExp: 0, huntLevel: 0 };
         const plane = { sinks: [], deaths, start: () => ({
+            ...(deathFactor ? { deathFactor } : {}),
             hunt: (main, delta) => { seen.spotHours += delta.spotHours; seen.huntExp = main.exp; seen.huntLevel = main.level; },
             visit: (main, now, options) => { seen.visits.push({ now, died: options.died === true, exp: main.exp, level: main.level, huntExp: seen.huntExp, huntLevel: seen.huntLevel }); return { ...Today.visit(main, Engine.viewOf(snap), options), afterHours }; },
             nextArrival: rule, firing: () => ({ id: 1463, perHour: 20 }), kills: () => null,
@@ -396,11 +397,95 @@ assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, b
     assert.ok(c.seen.visits.filter(visit => visit.died).length > 10, 'it dies while hunting');
     assert.ok(c.seen.visits.filter(visit => visit.now > 8).every(visit => !visit.died), 'no death after it has left for town');
     assert.ok(c.seen.visits.some(visit => visit.now === 10 && !visit.died), 'it arrives at 10');
+    // (c2) a deathFactor of 2 doubles the deaths of the same long run: 0.5 per hour x 2 over 200 h, 3 sigma of 200.
+    const doubled = deadPlane(() => null, { deathFactor: () => 2 });
+    const doubledOut = go(doubled.plane, 200);
+    assert.ok(Math.abs(doubledOut.counters.deaths - 200) <= 3 * Math.sqrt(200), `factor 2: deaths ${doubledOut.counters.deaths} within 3 sigma of 200`);
+    assert.ok(doubledOut.counters.deaths > go(deadPlane(() => null).plane, 200).counters.deaths * 1.5, 'factor 2 has clearly more deaths than factor 1');
     // (d) a plane without deaths rolls none.
     const d = deadPlane(() => null, { deaths: false });
     assert.equal(go(d.plane, 50).counters.deaths, 0);
     assert.deepEqual(d.seen.visits, []);
     assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates, hours: 3, seed: 1, plane: deadPlane(() => null).plane }), /deathExp/);
+}
+
+// A situation read commits the hunt to its hour: the plane answering it sees the adena and the exp hunted
+// in the hours before it (row: 100 adena and 50 exp an hour, read at 1.5 h).
+{
+    const seen = [];
+    const view = Engine.viewOf(snapshot), today = Today.plane({ view, hunter: Today.hunter(view) });
+    const plane = { ...today, start: context => ({ ...today.start(context), nextArrival: (main, ev) => {
+        if (ev.event === 'start') return { at: 1.5, read: true };
+        if (ev.event !== 'situation') return ev.pending === null ? null : { at: ev.pending, read: true };
+        seen.push({ event: ev.event, now: ev.now, money: main.money, exp: main.exp });
+        return null;
+    } }) };
+    Engine.simulate({ view, accounts: [accounts[0]], bands, rates: silent, hours: 3, seed: 7, plane });
+    assert.equal(seen.length, 1, 'the situation is read once');
+    assert.equal(seen[0].event, 'situation');
+    assert.equal(seen[0].exp, 75, 'the read sees the 1.5 hours of exp hunted before it');
+    assert.ok(seen[0].money > 10000, `and their adena: ${seen[0].money}`);
+}
+
+// A read schedules the main's level and death again on what it saw: a plane whose kit changes at its read (more
+// kills, no deaths from then on, as after a better kit) has its level crossing earlier and its deaths gone.
+{
+    const ruleAt = readAt => (main, ev) => (ev.event === 'start' ? { at: readAt, read: true } : ev.event === 'situation' ? null : (ev.pending === null ? null : { at: ev.pending, read: true }));
+    const planeOf = (extra, view, readAt) => {
+        const today = Today.plane({ view, hunter: Today.hunter(view) });
+        return { ...today, start: context => ({ ...today.start(context), nextArrival: ruleAt(readAt), ...extra }) };
+    };
+    // Level: 50 exp an hour, level 2 at exp 100; from the read it kills twice as many: 25 exp at the read, then
+    // 75 at 100 an hour, so level 2 at 1.25 h (2 h if the old schedule were kept).
+    const levels = [];
+    const view = Engine.viewOf(snapshot);
+    const faster = planeOf({ firing: () => null, kills: main => ({ bare: main.counter >= 1 ? 2 : 1, shots: 1, blessed: 1 }), levelUp: (main, now) => { levels.push([now, main.level]); return main; } }, view, 0.5);
+    Engine.simulate({ view, accounts: [accounts[0]], bands, rates: silent, hours: 3, seed: 7, plane: faster });
+    const two = levels.find(([, level]) => level === 2);
+    assert.ok(two && Math.abs(two[0] - 1.25) < 1e-6, `the level is scheduled again at the read: level 2 at ${two && two[0]} h, not 2`);
+    // Deaths: 0.5 an hour for the first draw only; from the read the factor is 0, so a death pending from the
+    // start (drawn at the start) is void: none in 200 h.
+    const dying = { ...snapshot, deathExp: [10, 50, 120, 200], hours: Object.fromEntries(Object.entries(snapshot.hours).map(([line, lv]) => [line,
+        Object.fromEntries(Object.entries(lv).map(([level, row]) => [level, { ...row, best: { ...row.best, deaths: 0.5 } }]))])) };
+    const dview = Engine.viewOf(dying);
+    const safe = planeOf({ deathFactor: main => (main.counter >= 1 ? 0 : 1) }, dview, 0.01);
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+        const out = Engine.simulate({ view: dview, accounts: [accounts[0]], bands, rates: silent, hours: 200, seed, plane: { ...safe, deaths: true } });
+        assert.equal(out.counters.deaths, 0, `seed ${seed}: the death schedule is redrawn at the read (factor 0): no death`);
+    }
+}
+
+// A born plane: each main's one visit at hour 0 (born: true) with its sales in the ledger; it hunts after the
+// visit's way back (afterHours 1.5), not before.
+{
+    const seen = { visits: [], spotHours: 0 };
+    const view = Engine.viewOf(snapshot), today = Today.plane({ view, hunter: Today.hunter(view) });
+    const plane = { ...today, born: true, start: context => {
+        const hooks = today.start(context);
+        return { ...hooks, nextArrival: () => null,
+            hunt: (main, delta) => { seen.spotHours += delta.spotHours; },
+            visit: (main, now, options) => { seen.visits.push({ now, born: options.born === true, outingHours: options.outingHours }); const out = hooks.visit(main, now, options); return { ...out, afterHours: 1.5 }; } };
+    } };
+    const stocked = [{ ...accounts[0], held: [100], shots: { 1463: 100 } }];
+    const out = Engine.simulate({ view, accounts: [...stocked, accounts[1]], bands, rates: silent, hours: 3, seed: 7, plane });
+    assert.deepEqual(seen.visits, [{ now: 0, born: true, outingHours: 0 }], 'one born visit at hour 0 for the main, none for the station');
+    assert.equal(seen.spotHours, 1.5, 'it hunts the 1.5 hours after the way back');
+    const without = Engine.simulate({ view, accounts: stocked, bands, rates: silent, hours: 3, seed: 7, plane: { ...plane, born: false } });
+    assert.equal(out.flows.totals.npcSales, 500, 'the born visit sold the 100 shots of a grade it does not fire (5 adena each): its sale is in the ledger');
+    assert.equal(without.flows.totals.npcSales, 0, 'a plane without born has no such sale');
+    assert.ok(out.flows.totals.huntCold < 300, `the 1.5 hunted hours only: ${out.flows.totals.huntCold}`);
+}
+
+// A main without shots at a row where its line kills nothing bare (the snapshot's zero shotless hour) gains
+// nothing: no exp, no adena (it stood), where the shots hour would credit it.
+{
+    const zero = { kills: 0, exp: 0, adena: 0, dropLoot: 0, spoilLoot: 0, loot: 0 };
+    const row = { ...hour(100, 50, 20).best, shotless: zero }, line = { ...hour(100, 50, 20), best: row };
+    const dry = { ...snapshot, hours: { 9: { 1: line, 2: line, 3: line, 4: line } } }, at = Engine.viewOf(dry);
+    const out = Engine.simulate({ view: at, accounts: [accounts[0]], bands, rates: silent, hours: 2, seed: 7, plane: planeWith(at, () => null) });
+    assert.equal(out.flows.totals.huntCold, 0, 'no adena without shots where the line kills nothing bare');
+    assert.equal(out.progress.stageBands.low.expPerBotHour, 0, 'and no exp');
+    assert.equal(out.counters.unlevelableMains, 1, 'the main that gains no exp there is counted once as unlevelable (physically right: it gains nothing bare)');
 }
 
 console.log('economy model engine: ok');
