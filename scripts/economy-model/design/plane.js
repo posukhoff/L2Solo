@@ -189,13 +189,13 @@ function plane({ view, kitHours, variant, accounts }) {
             };
             // The same with the formula's hour values (the table variant never reads them).
             // A field decision also runs the other variant (the shadow), so its state carries the hour values too.
-            const decisionState = (main, row, place, town, spotTown) => {
+            const decisionState = (main, row, place, town, spotTown, bagFull) => {
                 const state = supplyState(main, row, place, town, spotTown);
                 if (variant !== 'formula' && place === 'town') return state;
                 const factors = factorsOf(main), persona = personas.get(main.id), way = { wayBackHours: state.backHours };
                 const { form, held, lasts, hunted } = huntedOf(main), kills = hunter.kills(main);
                 const valueOf = (at, withoutDrop = false) => Value.hourValue(view, main, at, factors, persona, { ...way, withoutDrop });
-                return { ...state, value: { hour: valueOf(form), bare: valueOf('bare'), withoutDrop: valueOf(hunted, true),
+                return { ...state, value: { bagFull, hour: valueOf(form), bare: valueOf('bare'), withoutDrop: valueOf(hunted, true),
                     bagHoursBare: hoursToFull(view, bagsOf(main), main, row, [{ form: 'bare', kills: kills.bare, hours: Infinity }]),
                     outHours: held > 0 ? lasts : Infinity, M: Value.bestOf(view, main).npc, moneyWeight: Value.moneyWeight(persona) } };
             };
@@ -204,7 +204,7 @@ function plane({ view, kitHours, variant, accounts }) {
                 const { chain, account } = Attention.heard(state.account), next = { ...state, account };
                 const row = Engine.spotRowOf(view, main), spotTown = townOf(view, main);
                 if (!chain.length || !Catalog.woken(chain).includes('supply') || !row || !spotTown) return { state: next, actions: [], row, spotTown, chain, need: null };
-                const deciding = decisionState(main, row, account.place, town, spotTown);
+                const deciding = decisionState(main, row, account.place, town, spotTown, state.full);
                 if (account.place === 'town') return { state: next, actions: Supply.supplyChoice(chain, deciding), row, spotTown, chain, need: deciding.need };
                 const seen = Supply.shadow(chain, deciding);
                 shadowed.decisions++;

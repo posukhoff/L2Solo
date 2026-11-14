@@ -17,7 +17,7 @@
 //   the nearest NPC selling need.id, null when none), fightsBare (its held
 //   row's hour without shots kills anything), variant,
 //   value (formula only: { hour, bare, withoutDrop: hour values of its shots
-//   form, its bare form and its hunted form with a full bag; bagHoursBare:
+//   form, its bare form and its hunted form with a full bag; bagFull: its bag is full now; bagHoursBare:
 //   hours to its bag's fact hunting bare; outHours: hours to its shots' end;
 //   M: the line's best NPC income an hour; moneyWeight }) }
 const LIMITS = require('./limits');
@@ -140,7 +140,9 @@ function table(facts, state, rows = ROWS) {
 // within any buyer's ceiling where an NPC sells), back.
 function formula(facts, state) {
     if (state.place === 'town') return townChain(state, ROWS.TOWN, 'formula');
-    const kinds = kindsOf(facts), out = kinds.has('out'), bag = kinds.has('bag');
+    const kinds = kindsOf(facts), out = kinds.has('out');
+    // A bag already full (its fact heard earlier and declined) stands with an out fact as both at once.
+    const bag = kinds.has('bag') || (out && state.value.bagFull === true);
     if (!out && !bag) return [];
     const value = state.value, horizon = LIMITS.OUTING_HOURS.value, offer = state.offers;
     const units = out && state.need && state.need.short > 0 && offer ? affordable(state, offer, state.wallet + saleOf(state)) : 0;

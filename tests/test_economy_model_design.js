@@ -107,6 +107,11 @@ const zeroBare = { hour: hourOf('shots'), bare: hourOf('bare'), withoutDrop: 0, 
 // Shots at a tenth of an adena against the view's best income of 250 an hour.
 const longRoad = { toHours: 0.4, backHours: 0.4, offers: { town: 'TownA', price: 0.1 } };
 assert.deepEqual(brief(Supply.supplyChoice(out, formula({ ...longRoad, value: zeroBare }))).map(a => a.kind), ['go']);
+// An out fact with the bag already full (its fact declined earlier; bagHoursBare 0) is both at once: the outing's hours of
+// each loss, not a 0-hour out loss, so the bare shortfall over the outing beats the trip's price.
+const standingFull = { hour: 0.8, bare: 0.2, withoutDrop: 0.7, bagHoursBare: 0, outHours: 2, M: 25000, moneyWeight: 0.5 };
+assert.deepEqual(brief(Supply.supplyChoice(out, formula({ value: { ...standingFull, bagFull: true } }))).map(a => a.kind), ['go']);
+assert.deepEqual(brief(Supply.supplyChoice(out, formula({ value: { ...standingFull, bagFull: false } }))).map(a => [a.kind, a.reason]), [['stay', 'trip_costs_more']]);
 // The same road where the bare hour keeps 0.6 of it and the bag fills in an hour: it stays.
 assert.deepEqual(brief(Supply.supplyChoice(out, formula({ ...longRoad, value: { ...zeroBare, bare: zeroBare.hour * 0.6, bagHoursBare: 1 } }))).map(a => a.kind), ['stay']);
 
