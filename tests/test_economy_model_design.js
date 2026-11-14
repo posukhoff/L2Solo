@@ -251,4 +251,25 @@ for (const supply of ['table', 'formula']) {
     assert.equal(funded.visits[0].main.spot, 's1', `${supply}: after the chain that bought shots it holds the shots best`);
 }
 
+// At a level where the held bare best has no row the bot takes the new level's bare best (the form it can hunt now), not the line's
+// best row with shots: line 9 holds s2 bare at level 1; at level 2 its rows are s1 (kills nothing bare) and the bare best s3.
+const farBare2 = row('s3', 150, 100, { shotless: { kills: 10, exp: 60, adena: 40, dropLoot: 20, loot: 20, deaths: 0 } });
+const stepWorld = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+    hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: near, bareBest: farBare2, top: [near] } } },
+    yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
+    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+for (const supply of ['table', 'formula']) {
+    const levelled = [], made = Plane.plane({ view: stepWorld, kitHours: kitAt(0), variant: supply, accounts: [freshBot(9)] });
+    const seen = { ...made, start: context => {
+        const hooks = made.start(context);
+        return { ...hooks, levelUp: (main, now) => { const next = hooks.levelUp(main, now); levelled.push({ level: main.level, before: main.spot, spot: next.spot }); return next; } };
+    } };
+    const result = Engine.simulate({ view: stepWorld, accounts: [freshBot(9)], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 4, seed: 3, plane: seen });
+    assert.ok(result.progress.stageBands.all.levelUps >= 1 && levelled.length >= 1, `${supply}: it reached level 2`);
+    assert.deepEqual([levelled[0].level, levelled[0].before, levelled[0].spot], [2, null, 's3'], `${supply}: the level's bare best, not the shots best s1`);
+    assert.equal(result.counters.stuckNoBareHour, 0, `${supply}: not stuck`);
+}
+
 console.log('economy model design: ok');
