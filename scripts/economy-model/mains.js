@@ -15,6 +15,7 @@ const Books = require('./books');
 const Bounds = require('./rules/bounds');
 const Knowledge = require('./rules/knowledge');
 const Worth = require('./rules/worth');
+const KitHours = require('./kit-hours');
 const { path, refillHours } = require('./rules/path');
 const { acquire, crystalsStanding, payableKit } = require('./rules/acquire');
 const { trip, goalOf, deathAt, shotTown, shotsLow, shotsShort } = require('./rules/trip');
@@ -32,13 +33,6 @@ const SHARED_KIT_TABLES = 5000;
 // Blessed Spiritshot): a kit table's columns per row.
 const SHOT_KINDS = 2;
 const gradeOfItem = item => String(item?.grade || 'NONE').toLowerCase();
-
-// The kit a main wears: its kit with the weapon in hand in its own slot.
-function wornKit(snapshot, main) {
-    const worn = { ...main.kit, 7: 0, 14: 0 };
-    if (main.weapon) worn[Object.keys(main.kit).find(slot => main.kit[slot] === main.weapon) || snapshot.gearLadder.slots?.[main.weapon] || 7] = main.weapon;
-    return worn;
-}
 
 // ctx: the design plane's state and helpers (design.js startPlane).
 function mainsSide(ctx) {
@@ -60,7 +54,7 @@ function mainsSide(ctx) {
     const ladderOf = main => bandAt(main.line, main.level);
     const groupOf = Worth.ladderGroup;
     const slotsOf = pieces => Object.fromEntries(pieces.map(piece => [piece.slot, piece.selfId]));
-    const wornOf = main => wornKit(snapshot, main);
+    const wornOf = main => KitHours.kitInHand(snapshot, main);
     // A shot's price to a main: its last deal, else the first price; null
     // for a shot it knows no price of. pricesOf(main): that reader for a main.
     const shotPrice = (memory, id) => Knowledge.known(memory, id) ?? game.firstPrice[id] ?? null;
@@ -944,4 +938,4 @@ function marketStart() {
         stalled: {}, deal: null, tripReason: null, indexed: [], spotHeld: false, visits: 0, lastSpot: null, movedAt: null, needs: {} };
 }
 
-module.exports = { mainsSide, marketStart, wornKit };
+module.exports = { mainsSide, marketStart };

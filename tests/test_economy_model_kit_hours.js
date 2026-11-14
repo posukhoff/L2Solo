@@ -5,7 +5,7 @@
 // hour firing no shots and, per kind of shot the worn weapon fires, the hour
 // gross of shots and the shots fired an hour at that weapon's own count per
 // action, and for a bow the arrows each option spends an hour; a decision
-// prices the shots (rules/worth firing).
+// prices the shots.
 const assert = require('node:assert/strict');
 const os = require('os');
 
@@ -23,11 +23,13 @@ const Rewards = require('../src/GameServer/Bot/Economy/SpotRewardExpectation');
 const Index = require('../src/GameServer/Item/ItemTemplateIndex');
 const Grades = require('../src/GameServer/Bot/AI/GearGradeRule');
 const Load = require('../scripts/economy-model/load');
-const Worth = require('../scripts/economy-model/rules/worth');
 
 const SSNG = 1835, SSD = 1463, SSC = 1464, SSB = 1465, SPSD = 2510, SPSC = 2511, BSPSD = 3948, BSPSC = 3949;
 // The anchor the cells are chosen at: a shot's cost from its inputs at NPC prices.
 const anchor = { [SSNG]: 8, [SSD]: 7.4, [SSC]: 11.8, [SSB]: 43, [SPSD]: 16.45, [SPSC]: 29.5, [BSPSD]: 41.7, [BSPSC]: 81 };
+// What the best option of an hour nets an hour: firing none, or a kind of shot at its price (the kits read
+// here fire no arrows).
+const best = (hour, priceOf) => Math.max(hour.none, ...hour.shots.map(shot => shot.gross - shot.units * priceOf(shot.id)));
 // Bands of the gear ladder (five levels or fewer, read at the middle): D at 25-29, 30-34 and 35-39, C at 45-49, B at 57-60.
 const band = (line, from, to, scale, caster) => ({ from, to, level: Math.floor((from + to) / 2), grade: Grades.gradeForLevel(from), scale, caster,
     best: String(Table.best(line, Math.floor((from + to) / 2), true, 'income')?.spotId) });
@@ -301,26 +303,17 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
     const dKit = kitOf(fighter, 27), plain = kitOf(fighter, 19), hand = kit => (kit[14] ? 14 : 7), ngKit = { ...dKit, 7: 0, 14: 0, [hand(plain)]: plain[hand(plain)] };
     const d = kitHours.hour(fighter, 27, dKit), ng = kitHours.hour(fighter, 27, ngKit);
     assert.deepEqual([d.shots[0].id, ng.shots[0].id], [SSD, SSNG], 'D and no-grade soulshots');
-    const ngNet = Worth.firing(ng, () => 8), dShots = price => d.shots[0].gross - d.shots[0].units * price;
-    assert.equal(ngNet.id, SSNG, 'the no-grade weapon fires its shots');
-    assert.ok(dShots(7.4) > ngNet.net, `at 7.4: ${dShots(7.4)} against ${ngNet.net}`);
-    assert.ok(dShots(500) < ngNet.net, `at 500: ${dShots(500)} against ${ngNet.net}`);
-    assert.equal(Worth.firing(d, id => (id === SSD ? 500 : 8)).id, 0, 'at 500 it fires none');
+    const ngShots = ng.shots[0].gross - ng.shots[0].units * 8, ngNet = best(ng, () => 8), dShots = price => d.shots[0].gross - d.shots[0].units * price;
+    assert.ok(ngShots > ng.none && ngNet === ngShots, 'the no-grade weapon fires its shots');
+    assert.ok(dShots(7.4) > ngNet, `at 7.4: ${dShots(7.4)} against ${ngNet}`);
+    assert.ok(dShots(500) < ngNet, `at 500: ${dShots(500)} against ${ngNet}`);
+    assert.ok(d.none > dShots(500), 'at 500 it fires none');
 }
 
-// (4) A caster (line 12 at 47 in its Paradia staff): Blessed Spiritshot C or
-// Spiritshot C by what nets more at the prices given; its worth is the most
-// a shot of that kind may cost and stay chosen; a kit row's net (the worth
-// of a piece reads it) is the same answer's.
+// (4) A caster (line 12 at 47 in its Paradia staff): the hunt's count of each
+// kind of shot is the hour's.
 {
-    const hour = kitHours.hour(mage, 47, kitOf(mage, 47)), [spirit, blessed] = hour.shots;
-    const at = (plainPrice, blessedPrice) => Worth.firing(hour, id => (id === SPSC ? plainPrice : id === BSPSC ? blessedPrice : null));
-    const cheap = at(29.5, 81), dear = at(29.5, 2 * cheap.worth);
-    assert.deepEqual([cheap.id, dear.id], [BSPSC, SPSC], `blessed at 81, plain at ${2 * cheap.worth}`);
-    near(cheap.net, blessed.gross - blessed.units * 81, 'the blessed net');
-    near(cheap.worth, (blessed.gross - Math.max(hour.none, spirit.gross - spirit.units * 29.5)) / blessed.units, 'its worth against the plain kind');
-    assert.ok(at(29.5, cheap.worth - 1).id === BSPSC && at(29.5, cheap.worth + 1).id === SPSC, 'at its worth the choice turns');
-    assert.equal(Worth.netRow({ hour }, id => (id === SPSC ? 29.5 : 2 * cheap.worth)).hour, dear.net, 'a kit row nets the same answer');
+    const hour = kitHours.hour(mage, 47, kitOf(mage, 47));
     // The hunt's count of each kind is the hour's: at the kind's cell the
     // row's shots times the weapon's scale (the blessed row's own reference
     // count for Blessed Spiritshots) are the units the hour states.
@@ -331,12 +324,10 @@ for (const line of [fighter, mage, archer]) for (const level of [32, 47]) {
     }
 }
 
-// (5) A kit's hour carries no shot price: a price that changes moves the
-// decision's net, not the hour.
+// (5) A kit's hour carries no shot price: the worn hour of a swap read is the
+// hour read alone.
 {
     const read = kitHours.swaps(fighter, 47, kitOf(fighter, 47), [{ slot: 6, selfId: kitOf(fighter, 44)[6] }]);
-    const nets = [11.8, 150].map(price => Worth.firing(read.hour, () => price).net);
-    assert.ok(nets[0] > nets[1], `the net at 11.8 ${nets[0]}, at 150 ${nets[1]}`);
     assert.deepEqual(kitHours.hour(fighter, 47, kitOf(fighter, 47)), read.hour, 'the same hour');
 }
 
@@ -363,7 +354,7 @@ const mixed = { ...kitOf(fighter, 44), 6: 0 }, pieces = [{ slot: 7, selfId: kitO
 const read = kitHours.swaps(fighter, 46, mixed, pieces);
 assert.deepEqual(read.hour, kitHours.hour(fighter, 46, mixed), 'the worn kit');
 pieces.forEach(({ slot, selfId }, at) => {
-    const next = Object.fromEntries([...KitHours.wornKit(mixed).filter(([worn]) => !Worth.slotsConflict(slot, worn)), [slot, selfId]]);
+    const next = Object.fromEntries([...KitHours.wornKit(mixed).filter(([worn]) => !KitHours.slotsConflict(slot, worn)), [slot, selfId]]);
     assert.deepEqual(read.swaps[at].hour, kitHours.hour(fighter, 46, next), `${selfId} in slot ${slot}`);
 });
 assert.equal(read.swaps[5].hour, read.hour, 'the piece worn: the worn kit\'s hour');
@@ -373,7 +364,7 @@ assert.equal(read.swaps[5].hour, read.hour, 'the piece worn: the worn kit\'s hou
 // entry kit (all no-grade), each firing what nets most at the anchor prices.
 {
     const entry = kitOf(fighter, 19), dKit = kitOf(fighter, 30), worn = { ...dKit, 14: 0, 7: entry[7], 8: entry[8] }, sword = [{ slot: 14, selfId: dKit[14] }];
-    const net = hour => Worth.firing(hour, id => anchor[id]).net;
+    const net = hour => best(hour, id => anchor[id]);
     const gain = kit => { const out = kitHours.swaps(fighter, 30, kit, sword); return net(out.swaps[0].hour) - net(out.hour); };
     const own = gain(worn), atEntry = gain(entry);
     assert.ok(own > 0 && atEntry > 0 && Math.abs(own - atEntry) > 0.03 * atEntry, `over its kit ${own}, over the entry kit ${atEntry}`);
@@ -383,9 +374,8 @@ assert.equal(read.swaps[5].hour, read.hour, 'the piece worn: the worn kit\'s hou
 // to a heavy breastplate: its robe passives end with the robe, though the
 // plate's P.Def alone would suggest a gain.
 {
-    const robes = kitOf(mage, 39), read = kitHours.swaps(mage, 39, robes, [{ slot: 10, selfId: 58 }]), rows = Worth.swapRows(read), priceOf = id => anchor[id];
-    const worn = Worth.netRow(rows.worn, priceOf), plate = Worth.netRow(rows.rows[0], priceOf);
-    const gain = plate.hour - worn.hour;
+    const robes = kitOf(mage, 39), read = kitHours.swaps(mage, 39, robes, [{ slot: 10, selfId: 58 }]), priceOf = id => anchor[id];
+    const gain = best(read.swaps[0].hour, priceOf) - best(read.hour, priceOf);
     assert.ok(gain < 0, `the plate on robes: ${gain} an hour`);
 }
 
@@ -394,6 +384,19 @@ assert.equal(kitHours.hour(fighter, 32, { ...firstKit, 15: fullPlate }), null, '
 assert.equal(kitHours.hour(fighter, 32, { ...firstKit, 9: 999999 }), null, 'an item without a template');
 assert.equal(kitHours.swaps(fighter, 32, firstKit, [{ slot: 15, selfId: fullPlate }]).swaps[0].hour, null, 'put on over a D kit');
 assert.deepEqual(kitHours.swaps(fighter, 32, { ...firstKit, 15: fullPlate }, [{ slot: 6, selfId: firstKit[6] }]).swaps.map(swap => swap.hour), [null], 'over a kit not stated');
+
+// The worn kit's hunt over the reference kit's per form, by kind of shot: a
+// lower-grade weapon fires another id of the same kind; a form either hour
+// does not state the shares of has no factor.
+{
+    const share = (killShare, shotShare) => ({ killShare, shotShare });
+    const worn = { none: 1, noneShare: share(0.4, 0.3), shots: [{ id: 2509, kind: 'spiritshot', ...share(0.5, 0.6) }, { id: 3947, kind: 'blessedSpiritshot', ...share(0.9, 0.9) }] };
+    const reference = { none: 1, noneShare: share(0.8, 0.6), shots: [{ id: 2510, kind: 'spiritshot', ...share(1, 1.2) }, { id: 3948, kind: 'blessedSpiritshot', ...share(null, null) }] };
+    assert.deepEqual(KitHours.huntFactors(worn, reference), { bare: { kills: 0.5, shots: 0.5 }, shots: { kills: 0.5, shots: 0.5 }, blessed: null },
+        'each form the worn share over the reference\'s, matched by kind; the reference states no blessed shares: none');
+    assert.deepEqual(KitHours.huntFactors(null, reference), { bare: null, shots: null, blessed: null }, 'no worn hour: no factor');
+    assert.equal(KitHours.huntFactors(worn, { ...reference, noneShare: share(0, 0) }).bare, null, 'a reference share of 0: no factor');
+}
 
 // (12) The anchor is required.
 assert.throws(() => KitHours.gameKitHours({ snapshot }), /anchor .* required/);

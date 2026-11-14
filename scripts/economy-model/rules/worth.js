@@ -8,6 +8,8 @@
 // - firing: the shots a main fires with a kit at the prices it knows, and
 //   the kit's net hour then.
 
+const { ladderGroup, slotsConflict, huntFactors, wornKit } = require('../kit-hours');
+
 function positive(value) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : 0;
@@ -26,24 +28,6 @@ function rungWorth({ rung, worn, useHours, ownHour, gainBound, resale = 0 }) {
     const own = positive(ownHour), gain = positive(rung.hour - worn.hour);
     const bounded = gain > gainBound * own, perHour = bounded ? gainBound * own : gain;
     return { adena: perHour * positive(useHours) + positive(resale), perHour, bounded };
-}
-
-// The gear ladder group of a slot (the hunt tables' gear table keys): both
-// hands one, the earrings (1, 2) one, the rings (4, 5) one, any other slot
-// its own.
-function ladderGroup(slot) {
-    const at = Number(slot);
-    return at === 7 || at === 14 ? 'weapon' : at === 2 ? '1' : at === 5 ? '4' : String(at);
-}
-
-// Whether wearing a piece in slot takes the piece worn in other off: the
-// same slot, either hand's weapon slot (7, 14), a two-handed weapon (14)
-// the shield (8), a full armour (15) the chest and legs (10, 11) and either
-// of those the full armour.
-function slotsConflict(slot, other) {
-    const at = Number(slot), was = Number(other);
-    return at === was || (ladderGroup(at) === 'weapon' && ladderGroup(was) === 'weapon') || (at === 14 && was === 8)
-        || (at === 15 && (was === 10 || was === 11)) || ((at === 10 || at === 11) && was === 15);
 }
 
 // The shots a main fires with a kit (ours; C4 leaves it to the player): of
@@ -88,37 +72,6 @@ function firing(hour, priceOf) {
     return { id: best.id, units: best.units, net: best.net, worth: best.id && best.units > 0 ? Math.max(0, (best.gross - rival) / best.units) : 0 };
 }
 
-// The worn kit's hunt over the reference kit's at a level (two kit hours:
-// kit-hours, each option with its kill share and shot share, the kit's kills
-// an hour and its kills times fight share over the cell row's), per form a
-// main hunts its spot row in (Engine.formOf): bare (firing none), shots (its
-// plain shot: a soulshot or a Spiritshot) and blessed (Blessed Spiritshots),
-// matched by kind, since a lower-grade weapon fires another id. Each form
-// { kills, shots }: the worn share over the reference's; null where either
-// hour does not state the form's shares or the reference's share is not above
-// 0. The spot row is the reference kit's hour, so a main's hunt is the row
-// times kills (adena, exp, drops) and its shots the row's times shots.
-function huntFactors(worn, reference) {
-    const ratio = (w, r) => (w && r && Number.isFinite(w.killShare) && Number.isFinite(w.shotShare) && r.killShare > 0 && r.shotShare > 0
-        ? { kills: w.killShare / r.killShare, shots: w.shotShare / r.shotShare } : null);
-    const kind = (hour, blessed) => (hour?.shots || []).find(shot => (shot.kind === 'blessedSpiritshot') === blessed) || null;
-    return { bare: ratio(worn?.noneShare, reference?.noneShare), shots: ratio(kind(worn, false), kind(reference, false)), blessed: ratio(kind(worn, true), kind(reference, true)) };
-}
-
-// The pieces a body wears of a kit ({ paperdoll slot: selfId }): [[slot,
-// selfId]] in paperdoll order, each piece taking off what it cannot be worn
-// with (slotsConflict): one weapon (a two-handed one over a one-handed), a
-// two-handed weapon no shield, a full armour no chest or legs. An empty slot
-// is absent.
-function wornKit(kit) {
-    const worn = [];
-    for (const [slot, selfId] of Object.entries(kit || {}).map(([slot, selfId]) => [Number(slot), Number(selfId)]).sort((a, b) => a[0] - b[0])) {
-        if (!(selfId > 0)) continue;
-        for (let at = worn.length - 1; at >= 0; at--) if (slotsConflict(slot, worn[at][0])) worn.splice(at, 1);
-        worn.push([slot, selfId]);
-    }
-    return worn;
-}
 // The key of a kit as a body wears it (wornKit): two kits worn alike share it.
 function kitKey(kit) {
     return wornKit(kit).map(([slot, selfId]) => `${slot}:${selfId}`).join(',');
