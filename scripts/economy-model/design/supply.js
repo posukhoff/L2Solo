@@ -177,4 +177,4 @@ function shadow(facts, state) {
     return { actions, other: shadowed, differ: same ? null : { row, reason: `table ${kindList(byTable)} / formula ${kindList(byFormula)}` } };
 }
 
-module.exports = { ACTIONS, WORDS, MAKERS, RESERVED, stuck, supplyChoice, table, formula, shadow };
+module.exports = { ACTIONS, WORDS, MAKERS, RESERVED, stuck, stayReason, supplyChoice, table, formula, shadow };

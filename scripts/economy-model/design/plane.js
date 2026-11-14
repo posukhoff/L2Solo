@@ -20,6 +20,10 @@
 // by the engine (the only module of the design that touches the engine
 // contract); pure on the view and the main except the account
 // queues it holds by main index.
+// Its report (finish) is bookkeeping the decisions never read: trips, road
+// and stuck hours at levels 1-19 apart from 20 and above, the supply decision
+// of the other variant on every field decision, the bare hours before a line's
+// first shot purchase.
 const Engine = require('../engine');
 const Today = require('../today');
 const SurvivalFloor = require('../../../src/GameServer/Bot/Population/SurvivalFloor');
@@ -28,6 +32,10 @@ const Catalog = require('./catalog');
 const Needs = require('./needs');
 const Value = require('./value');
 const Supply = require('./supply');
+
+// The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
+const LOW_LEVEL_LAST = 19;
+const classOf = level => (level <= LOW_LEVEL_LAST ? 'low' : 'high');
 
 // The facts the plane raises, each a test on what just happened.
 const FACTS = Object.freeze({
@@ -139,9 +147,27 @@ function plane({ view, kitHours, variant, accounts }) {
         sinks: [],
         deaths: true,
         born: true,
-        start({ ledger }) {
+        start({ ledger, mains }) {
             ledger.counters.stuckNoBareHour = 0;
             const states = new Map();
+            // The run report's tallies (each class by the level at the event's start): wall hours from a clock of
+            // the level each main holds since an hour; road hours (the walk out, to town and back); trips whose
+            // chain had an out fact or a short need and those that bought none of it; stuck episodes by reason
+            // and their hours; the other variant's answers that differ; each main's bare hunting hours until its
+            // first purchase of shots.
+            const blank = () => ({ wallHours: 0, roadHours: 0, consumableTrips: 0, emptyTrips: 0, stuckEpisodes: {}, stuckHours: 0,
+                stuckUnmeasuredEpisodes: 0, stuckUnmeasuredHours: 0 });
+            const tally = { low: blank(), high: blank() };
+            const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
+            const bareFirst = new Map(), differs = new Map(), shadowed = { decisions: 0 };
+            // A stuck episode ends: its hours go to the class of the level it began at.
+            const unstuck = (state, now) => {
+                if (!state.stuck) return state;
+                const book = tally[classOf(state.stuck.level)], hours = now - state.stuck.at;
+                book.stuckHours += hours;
+                if (state.stuck.unmeasured) book.stuckUnmeasuredHours += hours;
+                return { ...state, stuck: false };
+            };
             const stateOf = main => states.get(main.index) || { account: { id: main.id, led: main.id, place: 'hunt', queue: [] }, full: false, stuck: false };
             const put = (main, state) => states.set(main.index, state);
             const queueFact = (state, kind, main, at) => ({ ...state, account: Attention.push(state.account, { kind, who: main.id, at }) });
@@ -158,9 +184,10 @@ function plane({ view, kitHours, variant, accounts }) {
                     offers: offer ? { town: offer.town, price: offer.price } : null, fightsBare: Engine.rowIn(row, 'bare').kills > 0, variant };
             };
             // The same with the formula's hour values (the table variant never reads them).
+            // A field decision also runs the other variant (the shadow), so its state carries the hour values too.
             const decisionState = (main, row, place, town, spotTown) => {
                 const state = supplyState(main, row, place, town, spotTown);
-                if (variant !== 'formula') return state;
+                if (variant !== 'formula' && place === 'town') return state;
                 const factors = factorsOf(main), persona = personas.get(main.id), way = { wayBackHours: state.backHours };
                 const { form, held, lasts, hunted } = huntedOf(main), kills = hunter.kills(main);
                 const valueOf = (at, withoutDrop = false) => Value.hourValue(view, main, at, factors, persona, { ...way, withoutDrop });
@@ -172,8 +199,16 @@ function plane({ view, kitHours, variant, accounts }) {
             const decide = (main, state, town) => {
                 const { chain, account } = Attention.heard(state.account), next = { ...state, account };
                 const row = Engine.spotRowOf(view, main), spotTown = townOf(view, main);
-                if (!chain.length || !Catalog.woken(chain).includes('supply') || !row || !spotTown) return { state: next, actions: [], row, spotTown };
-                return { state: next, actions: Supply.supplyChoice(chain, decisionState(main, row, account.place, town, spotTown)), row, spotTown };
+                if (!chain.length || !Catalog.woken(chain).includes('supply') || !row || !spotTown) return { state: next, actions: [], row, spotTown, chain, need: null };
+                const deciding = decisionState(main, row, account.place, town, spotTown);
+                if (account.place === 'town') return { state: next, actions: Supply.supplyChoice(chain, deciding), row, spotTown, chain, need: deciding.need };
+                const seen = Supply.shadow(chain, deciding);
+                shadowed.decisions++;
+                if (seen.differ) {
+                    const key = JSON.stringify([seen.differ.row, seen.differ.reason]);
+                    differs.set(key, (differs.get(key) || 0) + 1);
+                }
+                return { state: next, actions: seen.actions, row, spotTown, chain, need: deciding.need };
             };
             // The hunting hours to its next fact: its shots' end, else its bag's fill (Infinity: none comes).
             const nextFactHours = (main, state) => {
@@ -204,27 +239,41 @@ function plane({ view, kitHours, variant, accounts }) {
                 // The worn kit's deaths at its row in the form it hunts.
                 deathFactor: main => factorsOf(main)?.[huntedOf(main).hunted]?.deaths ?? 1,
                 nextArrival(main, { now, huntShare }) {
-                    const { state, actions, row } = decide(main, stateOf(main), null);
+                    const { state, actions, row, chain, need } = decide(main, stateOf(main), null);
                     const go = actions.find(action => action.kind === 'go');
                     if (go) {
                         const away = Engine.toHoursOf(view, row.spotId);
-                        put(main, placed({ ...state, stuck: false }, 'road'));
+                        const trip = { at: now, level: main.level, consumable: chain.some(fact => fact.kind === 'out') || need?.short > 0 };
+                        put(main, placed({ ...unstuck(state, now), trip }, 'road'));
                         return { at: now + away, away };
                     }
                     for (const action of actions) if (action.kind === 'stay') EXECUTORS.stay(main, action);
                     const hours = nextFactHours(main, state);
                     if (Number.isFinite(hours) && huntShare > 0) {
-                        put(main, { ...state, stuck: false });
+                        put(main, unstuck(state, now));
                         return { at: now + hours / huntShare, read: true };
                     }
                     // No fact will come. Stuck is the supply rule's state (no shots of its need, nothing to pay with or sell, nothing
                     // killed bare), however it came there (a birth, a run-out, a respawn); one episode counts once, until the state ends.
-                    const stuck = !!row && Supply.stuck(supplyState(main, row, 'hunt', null, townOf(view, main)));
-                    if (stuck && !state.stuck) ledger.counters.stuckNoBareHour++;
-                    put(main, { ...state, stuck });
+                    const standing = row ? supplyState(main, row, 'hunt', null, townOf(view, main)) : null;
+                    if (!standing || !Supply.stuck(standing)) {
+                        put(main, unstuck(state, now));
+                        return null;
+                    }
+                    if (state.stuck) {
+                        put(main, state);
+                        return null;
+                    }
+                    const reason = Supply.stayReason(standing), unmeasured = !!row.shotlessUnmeasured, book = tally[classOf(main.level)];
+                    ledger.counters.stuckNoBareHour++;
+                    book.stuckEpisodes[reason] = (book.stuckEpisodes[reason] || 0) + 1;
+                    if (unmeasured) book.stuckUnmeasuredEpisodes++;
+                    put(main, { ...state, stuck: { at: now, level: main.level, unmeasured } });
                     return null;
                 },
                 hunt(main, delta) {
+                    const first = bareFirst.get(main.index);
+                    if (!first?.bought) bareFirst.set(main.index, { hours: (first?.hours || 0) + delta.huntBare, bought: false });
                     let state = stateOf(main);
                     if (FACTS.out(main, delta)) state = queueFact(state, 'out', main, main.since);
                     const bags = view.bags?.[main.line], full = bags ? fullOf(view, bags, carried(main)) : false;
@@ -233,6 +282,7 @@ function plane({ view, kitHours, variant, accounts }) {
                 },
                 visit(main, now, visitInfo) {
                     let state = stateOf(main), at = main;
+                    const trip = state.account.place === 'road' ? state.trip : null;
                     if (FACTS.born(visitInfo)) {
                         at = { ...main, spot: heldSpot(view, main) };
                         state = queueFact(state, 'born', at, now);
@@ -250,13 +300,59 @@ function plane({ view, kitHours, variant, accounts }) {
                     const held = { ...chain.main, spot: heldSpot(view, chain.main) }, heldRow = Engine.spotRowOf(view, held);
                     const done = { ...chain, main: held, afterHours: chain.afterHours > 0 && heldRow ? Engine.backHoursOf(view, heldRow.spotId, town) : chain.afterHours };
                     // It walks back and hunts again from the visit's end.
-                    put(done.main, { ...placed(heard, 'hunt'), full: fullOf(view, bagsOf(done.main), carried(done.main)) });
+                    put(done.main, { ...placed(heard, 'hunt'), trip: null, full: fullOf(view, bagsOf(done.main), carried(done.main)) });
+                    // The report: the trip that ends here (its road, whether it bought its need) and the road back.
+                    if (trip) {
+                        const book = tally[classOf(trip.level)];
+                        book.roadHours += now - trip.at;
+                        if (trip.consumable) {
+                            book.consumableTrips++;
+                            if (!(chain.delta.shotsBoughtNpc > 0)) book.emptyTrips++;
+                        }
+                    }
+                    tally[classOf(done.main.level)].roadHours += done.afterHours;
+                    if (chain.delta.shotsBoughtNpc > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
                     return done;
                 },
-                levelUp: main => (main.spot ? main : { ...main, spot: heldSpot(view, main) }),
+                levelUp(main, now) {
+                    const clock = clocks.get(main.index);
+                    tally[classOf(clock.level)].wallHours += now - clock.at;
+                    clocks.set(main.index, { level: main.level, at: now });
+                    return main.spot ? main : { ...main, spot: heldSpot(view, main) };
+                },
                 event(event) { throw new Error(`an event of an unknown kind: ${event.kind}`); },
                 hour: () => 0,
-                finish: () => ({})
+                finish(hours, ended) {
+                    // What is still open at the end: wall hours at the level held, stuck episodes, the walk of a trip
+                    // on the road and the part of a way back that falls after the run's last hour.
+                    for (const clock of clocks.values()) tally[classOf(clock.level)].wallHours += hours - clock.at;
+                    for (const state of states.values()) {
+                        unstuck(state, hours);
+                        if (state.trip) tally[classOf(state.trip.level)].roadHours += hours - state.trip.at;
+                    }
+                    for (const main of ended) if (main.since > hours) tally[classOf(main.level)].roadHours -= main.since - hours;
+                    const levels = {}, lines = new Map(), distribution = {};
+                    for (const [name, book] of Object.entries(tally)) {
+                        levels[name] = { ...book, roadShare: book.wallHours > 0 ? book.roadHours / book.wallHours : null,
+                            emptyShare: book.consumableTrips > 0 ? book.emptyTrips / book.consumableTrips : null };
+                    }
+                    for (const main of ended) {
+                        if (main.station) continue;
+                        distribution[main.level] = (distribution[main.level] || 0) + 1;
+                        const first = bareFirst.get(main.index) || { hours: 0, bought: false };
+                        const row = lines.get(main.line) || { line: main.line, bots: 0, bought: 0, boughtHours: 0, neverHours: 0 };
+                        row.bots++;
+                        if (first.bought) { row.bought++; row.boughtHours += first.hours; } else row.neverHours += first.hours;
+                        lines.set(main.line, row);
+                    }
+                    const bare = [...lines.values()].sort((a, b) => a.line - b.line).map(row => ({ line: row.line, bots: row.bots, bought: row.bought,
+                        neverBought: row.bots - row.bought, meanHoursBeforeFirstBuy: row.bought ? row.boughtHours / row.bought : null,
+                        meanHoursNeverBought: row.bots > row.bought ? row.neverHours / (row.bots - row.bought) : null }));
+                    const differ = [...differs].map(([key, count]) => ({ row: JSON.parse(key)[0], reason: JSON.parse(key)[1], count }))
+                        .sort((a, b) => b.count - a.count || (a.row + a.reason < b.row + b.reason ? -1 : 1));
+                    return { design: { variant, levels, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
+                        spotUnstated: kitHours.stats.spotUnstated, levelDistribution: distribution } };
+                }
             };
         }
     };

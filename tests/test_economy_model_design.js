@@ -152,7 +152,7 @@ const world = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: {
 const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, exp: 0, money: 0, spot: null, shots: {}, held: [], worn: {},
     persona: { primaryDrive: 'progression', traits: { caution: 0.5, commitment: 0.5 } }, ...over });
 // The kit's factors (the reference kit's: 1), deaths times dies.
-const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1 });
+const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1, stats: { spotUnstated: 0 } });
 // One run through the plane, its visits seen as the engine calls them.
 function run(account, supply, hours, dies = 0, view = world) {
     const visits = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account] });
