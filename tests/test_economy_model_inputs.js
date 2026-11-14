@@ -23,6 +23,10 @@ assert.ok(snapshot.recipes.length > 700, 'recipes are read wherever the script s
 const ssd = snapshot.recipes.find(row => row.productId === 1463);
 assert.equal(ssd.productCount / ssd.mpCost, 3.9);
 
+const DeathExperience = invoke('GameServer/Progression/DeathExperience');
+assert.equal(snapshot.deathExp[40 - 1], DeathExperience.calculateLoss({ level: 40, exp: Number.MAX_SAFE_INTEGER }).expLost, 'the death exp is the game\'s rule');
+assert.ok(snapshot.deathExp[40 - 1] > 0, 'a level 40 death takes exp');
+
 const Table = invoke('GameServer/Bot/AI/SpotValueTable');
 const hour = snapshot.hours[line][level];
 const best = Table.best(line, level, true, 'income');

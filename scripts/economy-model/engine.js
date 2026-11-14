@@ -29,6 +29,11 @@
 //                 left for is held: no later event asks the rule again for
 //                 it. A visit's afterHours (its onward stops and its way back
 //                 to the spot) are not hunted either.
+//   died          a plane with deaths (plane.deaths === true; needs the snapshot's deathExp): the main dies
+//                 over its hunting hours at its row's deaths per hour, loses the death exp of its level
+//                 (levels down when it crosses the level's start), and the plane's visit runs at once as
+//                 in the respawn town, called with died: true; the way back is the visit's afterHours.
+//                 It never dies after it has left for town.
 //   situation     a situation the arrival rule names to be read at its hour
 //                 without going to town (its answer { at, read: true }, held
 //                 in the same pending slot): the rule is asked again then.
@@ -79,7 +84,7 @@ function viewOf(snapshot, options = {}) {
         hours: snapshot.hours, kits: snapshot.kits, yields: snapshot.yields, items: snapshot.items, exp: snapshot.exp,
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(), rowItems: new Map(),
-        tripHours: snapshot.tripHours || null,
+        tripHours: snapshot.tripHours || null, deathExp: snapshot.deathExp || null,
         spotHours: snapshot.spotHours?.rows || null, spotLevels: snapshot.spotLevels || null,
         huntYields: (options.yields === 'design' ? snapshot.yieldsDesign : snapshot.yields) || null,
         blessedShots: new Set(snapshot.shotFamilies?.ids?.[BLESSED_FAMILY] || [])
@@ -386,7 +391,7 @@ function heap() {
 //             lumped before the visit, not hunted), or { at, read: true } for a
 //             situation to read at that hour without going (null: neither), asked on the main as it is
 //             after the committed event. view is the plain data a trip rule may read:
-//     event     'start' | 'visit' | 'level_up' | 'situation'
+//     event     'start' | 'visit' | 'level_up' | 'situation'  (a visit after a death is a 'visit' called with died: true)
 //     now       the time of the event, hours
 //     pending   the hour of the arrival or situation already scheduled (null after a visit or at the start)
 //     rate      the main's band's rates
@@ -396,7 +401,7 @@ function heap() {
 //     huntShare the band's share of wall time spent hunting
 //   firing(main), kills(main)  the shot a main fires as it hunts and its worn kit's kills (hunt's)
 //   hunt(main, delta)  told each committed hunt, the delta with its spotHours and wayHours
-//   visit(main, now, { outingHours })  { main, delta, afterHours }: afterHours, the hours after
+//   visit(main, now, { outingHours, died })  { main, delta, afterHours }: afterHours, the hours after
 //             the arrival before it hunts again (its onward stops and its way back to the spot)
 //   levelUp(main, now)  the main after a level read
 //   event(event)  an event the plane pushed (any kind but the run's own); it throws on a kind it does not own
@@ -415,7 +420,14 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     const queue = heap();
     const hooks = plane.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf,
         rearrive: (index, now, event) => reschedule(mains[index], now, event),
-        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; scheduleLevel(main, now); reschedule(main, now, event); return main; } });
+        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; scheduleLevel(main, now); scheduleDeath(main, now); reschedule(main, now, event); return main; } });
+    // A plane with deaths: a main dies over its hunting hours at its row's deaths per hour, loses the
+    // game's death exp for its level (levels down past the level's start) and is in its respawn town
+    // for a visit (called with died: true). Ours: the respawn town is the spot card's town, the game's
+    // is its RestartPoint region; the row's hour already holds the respawn and the rest, so the loss
+    // and the way back are all the death adds.
+    const deaths = plane.deaths === true;
+    if (deaths && !view.deathExp) throw new Error('a plane with deaths needs the snapshot\'s deathExp');
     const randomFor = main => mulberry(hash(`${seed}:${main.id}:${main.counter}`));
     let events = 0;
 
@@ -454,6 +466,21 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
         pendingLevel.set(main.index, at);
         if (at !== held) queue.push({ at, kind: 'level_up', who: main.index });
     };
+    // The one pending death per main: an exponential draw over its hunting hours from the hour it hunts
+    // again (memoryless, so a redraw after a visit or deal is exact); one that falls after it has left for
+    // town is dropped (it dies only while hunting), as a level is.
+    const pendingDeath = new Map();
+    const scheduleDeath = (main, now) => {
+        if (!deaths) return;
+        const row = spotRowOf(view, main), rate = row?.deaths, share = rateOf(main.band).huntShare, held = pendingDeath.get(main.index) ?? null;
+        if (!(rate > 0 && share > 0)) { pendingDeath.set(main.index, null); return; }
+        const roll = mulberry(hash(`${seed}:${main.id}:death:${main.counter}`))();
+        const at = main.since + (-Math.log(1 - roll) / rate) / share;
+        const trip = pending.get(main.index);
+        if (trip && trip.departs !== null && at > trip.departs) { pendingDeath.set(main.index, null); return; }
+        pendingDeath.set(main.index, at);
+        if (at !== held) queue.push({ at, kind: 'died', who: main.index });
+    };
     // The one pending arrival (or situation to read) per main, replaced by the
     // rule's answer after each committed event; departs: the hour it leaves its
     // spot for it (null: it hunts to the arrival). An arrival it has left for
@@ -477,7 +504,7 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
         pending.set(main.index, next);
         if (next !== null && !(held && held.at === at && held.kind === kind)) queue.push({ at, kind, who: main.index });
         // A departure set or moved after the level was scheduled: the level counts hunting hours only.
-        if ((next?.departs ?? null) !== (held?.departs ?? null)) scheduleLevel(main, now);
+        if ((next?.departs ?? null) !== (held?.departs ?? null)) { scheduleLevel(main, now); scheduleDeath(main, now); }
     };
     // Hunting from the main's last situation to now, committed: to the hour it
     // left its spot when it is on its way (departs), and none while it is in
@@ -495,6 +522,7 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     for (const main of mains) {
         if (main.station) continue;
         scheduleLevel(main, 0);
+        scheduleDeath(main, 0);
         reschedule(main, 0, 'start');
     }
     for (let hour = 1; hour <= hours; hour++) queue.push({ at: hour, kind: 'report', who: -1 });
@@ -510,7 +538,7 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
             continue;
         }
         // Any kind but the run's own is the plane's.
-        if (event.kind !== 'arrived_town' && event.kind !== 'situation' && event.kind !== 'level_up') {
+        if (event.kind !== 'arrived_town' && event.kind !== 'situation' && event.kind !== 'level_up' && event.kind !== 'died') {
             hooks.event(event);
             continue;
         }
@@ -527,7 +555,25 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
             if (pendingLevel.get(event.who) !== event.at) continue; // replaced by a later schedule
             pendingLevel.set(event.who, null);
         }
+        if (event.kind === 'died') {
+            if (pendingDeath.get(event.who) !== event.at) continue; // replaced by a later schedule
+            pendingDeath.set(event.who, null);
+        }
         let main = event.kind === 'arrived_town' ? huntTo(mains[event.who], event.at, departs) : huntTo(mains[event.who], event.at);
+        if (event.kind === 'died') {
+            // The loss, the level it leaves (down: from level 1), then the respawn town's visit; the arrival
+            // it had pending is void, and its hours back are the visit's afterHours (not hunted).
+            const lost = Math.min(main.exp, view.deathExp[main.level - 1]);
+            const exp = main.exp - lost, level = levelOf(view, exp, 1);
+            ledger.counters.deaths++;
+            ledger.counters.deathExpLost += lost;
+            if (level !== main.level) {
+                const spot = ownRow(view, main.line, level, main.spot) ? main.spot : null;
+                if (main.spot && !spot) ledger.counters.leftOwnSpot++;
+                main = hooks.levelUp({ ...main, exp, level, band: bandOf(bands, level), spot }, event.at);
+            } else main = { ...main, exp };
+            pending.set(event.who, null);
+        }
         if (event.kind === 'level_up') {
             // The read takes a level its hunted exp reaches within float rounding (LEVEL_ROUNDING), no more.
             const level = levelOf(view, main.exp, main.level, LEVEL_ROUNDING);
@@ -536,19 +582,21 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
             main = { ...main, level, band, spot };
             main = hooks.levelUp(main, event.at);
             scheduleLevel(main, event.at);
+            scheduleDeath(main, event.at);
             mains[event.who] = main;
             reschedule(main, event.at, 'level_up');
         } else {
             // The restock covers an outing as long as the one just ended: its hours at the spot, from
             // the end of its last visit to the hour it left (lastVisit: the hour that visit ended).
             const outingHours = ((departs ?? event.at) - main.lastVisit) * rateOf(main.band).huntShare;
-            const { main: after, delta, afterHours = 0 } = hooks.visit(main, event.at, { outingHours });
+            const { main: after, delta, afterHours = 0 } = hooks.visit(main, event.at, event.kind === 'died' ? { outingHours, died: true } : { outingHours });
             Ledger.recordVisit(ledger, after, delta);
             // Its onward stops and its way back are not hunted: it hunts again from their end.
             main = { ...after, lastVisit: event.at + afterHours, since: event.at + afterHours };
             mains[event.who] = main;
             // A visit changes the kit and the shots held, so the hour's exp and how long its shots last.
             scheduleLevel(main, event.at);
+            scheduleDeath(main, event.at);
             reschedule(main, event.at, 'visit');
         }
     }

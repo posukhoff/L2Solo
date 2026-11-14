@@ -57,7 +57,7 @@ const run = (seed, hours = 3) => plainRun({ view: Engine.viewOf(snapshot), accou
 // level's exp, as levelOf counts it, no longer one exp later.
 const crypto = require('node:crypto');
 // The failure counters added since are left out of the hash: every other number is as before.
-const pinned = out => { const { arrivalNotAhead, unlevelableMains, ...counters } = out.counters; return { ...out, counters }; };
+const pinned = out => { const { arrivalNotAhead, unlevelableMains, deaths, deathExpLost, ...counters } = out.counters; return { ...out, counters }; };
 assert.equal(crypto.createHash('sha256').update(JSON.stringify(pinned(run(3, 40)))).digest('hex'), '235d189ec6043f27bdde6516124894160c9d1da098497ae6537ffc9e3947ccfd',
     'the ledger without the design mode is unchanged');
 
@@ -353,5 +353,54 @@ assert.equal(idle.counters.unlevelableMains, 1, 'the hunting main with no huntin
 assert.equal(run(3, 40).counters.unlevelableMains, 0, 'a main that levels is not counted');
 const today = planeWith(Engine.viewOf(snapshot), () => null), bogus = { ...today, start: context => { context.push({ at: 0.5, kind: 'bogus', who: 0 }); return today.start(context); } };
 assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts, bands, rates, hours: 3, seed: 7, plane: bogus }), /unknown kind: bogus/);
+
+// A plane with deaths: a main dies over its hunting hours at its row's deaths per hour, loses the death exp
+// of its level (levels down past the level's start), runs the visit at the death hour (died: true), does not
+// hunt the way back and never dies after it has left for town; a plane without deaths rolls none.
+{
+    const dyingAt = rate => ({ ...snapshot, deathExp: [10, 50, 120, 200], hours: Object.fromEntries(Object.entries(snapshot.hours).map(([line, levels]) => [line,
+        Object.fromEntries(Object.entries(levels).map(([level, row]) => [level, { ...row, best: { ...row.best, deaths: rate } }]))])) });
+    const dying = dyingAt(0.5);
+    const deadPlane = (rule, { afterHours = 0, deaths = true, snap = dying } = {}) => {
+        const seen = { visits: [], spotHours: 0, levels: [], huntExp: 0, huntLevel: 0 };
+        const plane = { sinks: [], deaths, start: () => ({
+            hunt: (main, delta) => { seen.spotHours += delta.spotHours; seen.huntExp = main.exp; seen.huntLevel = main.level; },
+            visit: (main, now, options) => { seen.visits.push({ now, died: options.died === true, exp: main.exp, level: main.level, huntExp: seen.huntExp, huntLevel: seen.huntLevel }); return { ...Today.visit(main, Engine.viewOf(snap), options), afterHours }; },
+            nextArrival: rule, firing: () => ({ id: 1463, perHour: 20 }), kills: () => null,
+            levelUp: (main, now) => { seen.levels.push([now, main.level]); return main; }, event() {}, hour: () => 0, finish: () => ({ money: { start: 0, end: 0 }, design: {} }) }) };
+        return { plane, seen };
+    };
+    const go = (plane, hours, { seed = 3, share = 1, snap = dying } = {}) => Engine.simulate({ view: Engine.viewOf(snap), accounts: [accounts[0]], bands, rates: { default: { huntShare: share, visitsPerBotHour: 1 } }, hours, seed, plane });
+    // (a) the rate: 0.5 deaths per hunting hour over 200 h, 3 sigma of the expected; at a hunting share of 0.5
+    // the main hunts half the hours, so half the deaths.
+    for (const share of [1, 0.5]) {
+        const a = deadPlane(() => null, { afterHours: 0.25 });
+        const out = go(a.plane, 200, { share });
+        assert.equal(out.counters.deaths, a.seen.visits.length, 'every death is one visit');
+        const huntingHours = 200 - 0.25 * a.seen.visits.length, expected = 0.5 * share * huntingHours;
+        assert.ok(Math.abs(out.counters.deaths - expected) <= 3 * Math.sqrt(expected), `share ${share}: deaths ${out.counters.deaths} within 3 sigma of ${expected}`);
+        assert.ok(Math.abs(a.seen.spotHours - huntingHours) < 1e-6, 'the hours back (afterHours) are not hunted');
+        if (share !== 1) continue;
+        // (b) each died visit: the exp hunted to the hour less the death exp of the level it died at; the level
+        // read from that exp (down past a level's start); the exp lost is counted.
+        assert.ok(a.seen.visits.every(visit => visit.died), 'a visit at a death is called with died: true');
+        for (const visit of a.seen.visits) assert.equal(visit.exp, visit.huntExp - Math.min(visit.huntExp, dying.deathExp[visit.huntLevel - 1]), `the loss at ${visit.now} h is the death exp of level ${visit.huntLevel}`);
+        assert.ok(a.seen.visits.some(visit => visit.level < visit.huntLevel), 'a death that crosses a level start levels the main down');
+        assert.ok(out.counters.deathExpLost > 0 && a.seen.levels.some(([, level]) => level < 4), 'the exp lost is counted and the level read goes down');
+    }
+    // (c) no death between departs and arrival: it leaves at 8, arrives at 10; at 5 deaths an hour one would
+    // fall in [8, 10] with certainty if drawn, so none is.
+    const fast = dyingAt(5);
+    const c = deadPlane((main, ev) => (ev.now < 8 ? { at: 10, away: 2 } : null), { snap: fast });
+    go(c.plane, 10, { snap: fast });
+    assert.ok(c.seen.visits.filter(visit => visit.died).length > 10, 'it dies while hunting');
+    assert.ok(c.seen.visits.filter(visit => visit.now > 8).every(visit => !visit.died), 'no death after it has left for town');
+    assert.ok(c.seen.visits.some(visit => visit.now === 10 && !visit.died), 'it arrives at 10');
+    // (d) a plane without deaths rolls none.
+    const d = deadPlane(() => null, { deaths: false });
+    assert.equal(go(d.plane, 50).counters.deaths, 0);
+    assert.deepEqual(d.seen.visits, []);
+    assert.throws(() => Engine.simulate({ view: Engine.viewOf(snapshot), accounts: [accounts[0]], bands, rates, hours: 3, seed: 1, plane: deadPlane(() => null).plane }), /deathExp/);
+}
 
 console.log('economy model engine: ok');

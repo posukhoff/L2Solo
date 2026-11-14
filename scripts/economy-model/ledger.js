@@ -43,9 +43,10 @@ function create({ bands, mains, view, extraSinks = [] }) {
         // spoilUnyielded: kills at spot rows with spoil loot where the snapshot holds no spoil yields (the loot is lost).
         // leftOwnSpot: level-ups after which the main's own spot had no hour and it moved to its line's best.
         // arrivalNotAhead: arrival answers at or before the event's hour, dropped (the main goes at none).
+        // deaths, deathExpLost: the deaths a plane with deaths rolled and the exp they took.
         // unlevelableMains: mains below the max level that once had no level time (no exp at their row or no hunting share).
         counters: { visits: 0, onwardHops: 0, missingPieces: 0, missingShots: 0, unsoldUnits: 0, noSpotRow: 0, noTown: 0, spoilUnyielded: 0,
-            startAtOwnSpot: mains.filter(main => main.spot).length, leftOwnSpot: 0, arrivalNotAhead: 0, unlevelableMains: 0 },
+            startAtOwnSpot: mains.filter(main => main.spot).length, leftOwnSpot: 0, arrivalNotAhead: 0, unlevelableMains: 0, deaths: 0, deathExpLost: 0 },
         hourly: []
     };
 }
