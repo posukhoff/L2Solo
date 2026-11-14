@@ -163,8 +163,9 @@ function formOf(view, shotId) {
 }
 
 // A spot row's hour in a form (formOf): the row with the form's fields over
-// it, the row itself where it has no such hour (no hour without shots: the
-// line fights nothing there without shots; no blessed hour: the spot table
+// it, the row itself where it has no such hour (a row without a shotless
+// field, as a hand-built row: the snapshot always writes one, the zero hour
+// where the line kills nothing bare; no blessed hour: the spot table
 // measured no such fight there, where a main fires its plain shot and the
 // plane's firing offers no Blessed Spiritshots).
 function rowIn(row, form) {
@@ -411,7 +412,7 @@ function heap() {
 //   event(event)  an event the plane pushed (any kind but the run's own); it throws on a kind it does not own
 //   hour(at)  the money the plane holds apart from the mains at a report hour
 //   finish(hours, mains)  { money: { start, end } the plane holds (none: no such money), ...fields the output adds }
-// push(event) queues a plane's event. rearrive(index, now, event) asks the arrival rule again
+// push(event) queues a plane's event. rearrive(index, now, event) hunts the main to now and asks the arrival rule again
 // for a main after a situation raised outside its own events (a line in
 // reach, a bid for what it sells); commit(index, now, change) hunts a main to
 // now, replaces it by change(main) (a deal met with it while it hunts) and
@@ -423,8 +424,8 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     const ledger = Ledger.create({ bands, mains, view, extraSinks: plane.sinks });
     const queue = heap();
     const hooks = plane.start({ view, mains, ledger, push: event => queue.push(event), seed, rateOf,
-        rearrive: (index, now, event) => reschedule(mains[index], now, event),
-        commit: (index, now, change, event) => { const main = change(huntTo(mains[index], now)); mains[index] = main; scheduleLevel(main, now); scheduleDeath(main, now); reschedule(main, now, event); return main; } });
+        rearrive: (index, now, event) => commitTo(index, now, main => main, event),
+        commit: (index, now, change, event) => commitTo(index, now, change, event) });
     // A plane with deaths: a main dies over its hunting hours at its row's deaths per hour, loses the
     // game's death exp for its level (levels down past the level's start) and is in its respawn town
     // for a visit (called with died: true). Ours: the respawn town is the spot card's town, the game's
@@ -438,7 +439,7 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     // The level is scheduled at the hour the exp the hunt credits reaches it
     // (as levelOf reads it), counted from the hour its exp stands at (its
     // last credited hunt, or the hour it hunts again after a visit's onward
-    // stops): a situation reads the main as it stands, not hunted to now. The
+    // stops): a situation read hunts the main to the read hour first. The
     // hunt credits the form it fires while its held shots last, then the bare
     // form (firedOf, formExp: as hunt credits), so the crossing is read on
     // those two pieces. A committed visit or deal may change the kit, the shots
@@ -525,6 +526,16 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
         return next;
     };
 
+    // Hunts a main to now, replaces it by change(main), schedules its level and death and asks the arrival rule
+    // again: the one commit of a situation read, a raised situation (rearrive: change is the identity) and a deal.
+    const commitTo = (index, now, change, event) => {
+        const main = change(huntTo(mains[index], now));
+        mains[index] = main;
+        scheduleLevel(main, now);
+        scheduleDeath(main, now);
+        reschedule(main, now, event);
+        return main;
+    };
     // A born plane (plane.born === true): each main has one visit at hour 0 first, called with born: true; its way
     // back is the visit's afterHours (not hunted), as after any visit.
     if (plane.born === true) {
@@ -567,14 +578,7 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
             departs = held.departs;
             // A situation is read on the main with its hunt committed to the read hour (the exp, adena and drops of the hours
             // before it), then the rule is asked again.
-            if (event.kind === 'situation') {
-                const read = huntTo(mains[event.who], event.at);
-                mains[event.who] = read;
-                scheduleLevel(read, event.at);
-                scheduleDeath(read, event.at);
-                reschedule(read, event.at, 'situation');
-                continue;
-            }
+            if (event.kind === 'situation') { commitTo(event.who, event.at, main => main, 'situation'); continue; }
         }
         if (event.kind === 'level_up') {
             if (pendingLevel.get(event.who) !== event.at) continue; // replaced by a later schedule

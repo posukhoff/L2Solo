@@ -77,7 +77,7 @@ const NOTES = Object.freeze([
     'spotHours (with --spots): spotHours.rows[line][level][spotId] is the spot table\'s hour at the spot a save\'s bot starts at (Cohort.savedBots: the spot it stands at, else its travel\'s, else its stay\'s), for the line the model draws for it, null where that line may fight nothing there.',
     'rates are today\'s presets as the game applies them, not the design\'s per-kind rates; yieldsDesign holds the per-kill yields at the design\'s rates of the preset (rules/dropRule), at the same spawn mix and Spoil level as yields.',
     'hours[line][level].others: rows of spots outside the top at that level that a main may hold (a spot of its top at an earlier level, while the level stays in the spot\'s range) or rank for a shot recipe\'s scroll (scrolls: the ones it yields); spotLevels[line][spotId] is the lowest and highest level the spot table has a row for the line there.',
-    'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off).',
+    'An hour row\'s shotless holds the same spot\'s hour for the same line and level hunting without shots (SpotValueTable.value with shots off); where that reading kills nothing or does not exist it is the zero hour, and a missing reading also marks the row shotlessUnmeasured: true.',
     'An hour row\'s blessed holds the same spot\'s hour for the same line and level firing Blessed Spiritshots (SpotValueTable.value with shots 2); only a line the spot table measures firing them there (a spiritshot class) has it, and the row itself is the hour firing its plain shot.',
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
@@ -109,15 +109,16 @@ function hourRow(row) {
 }
 
 // An hour row with the same spot's hour without shots beside it (the zero hour where
-// the line fights nothing there without shots) and, for a line the spot
+// the line fights nothing there without shots or the spot table has no reading) and, for a line the spot
 // table measures firing Blessed Spiritshots there, its hour firing them
 // (absent for any other line).
 function hourRowWithForms(row, line, level, Table) {
     const out = hourRow(row), bare = Table.value(String(row.spotId), String(line), level, false), blessed = Table.value(String(row.spotId), String(line), level, 2);
     if (bare && bare.kills > 0) out.shotless = Object.fromEntries(SHOTLESS_FIELDS.map(field => [field, bare[field]]));
     else {
-        // The line kills nothing bare there (measured) or the spot table has no bare reading (not measured): the
-        // hour without shots is the zero hour, so a main out of shots there gains nothing; unmeasured is marked.
+        // Measured kills 0: the line kills nothing bare there, the zero hour is the reading. No bare reading: the
+        // zero hour is our choice for a missing reading, marked shotlessUnmeasured (in C4 a main without shots
+        // still kills there, slower; the spot table's missing bare readings are a data gap of its own).
         out.shotless = Object.fromEntries(SHOTLESS_FIELDS.map(field => [field, 0]));
         if (!bare) out.shotlessUnmeasured = true;
     }
