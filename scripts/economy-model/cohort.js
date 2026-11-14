@@ -19,7 +19,7 @@
 // world's cohort: every account a new character.
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
-const { hash, mulberry, boot, readTable } = require('../hunt-tables/common');
+const { hash, mulberry, boot } = require('../hunt-tables/common');
 const Weights = require('./weights');
 const BotPersona = require('../../src/GameServer/Bot/AI/BotPersona');
 const StarterItemCatalog = require('../../src/GameServer/Knowledge/StarterItemCatalog');
@@ -30,11 +30,11 @@ const StarterItemCatalog = require('../../src/GameServer/Knowledge/StarterItemCa
 const STATION_ACCOUNT_PREFIX = 'bot_craft_';
 const MERCHANT_ACTIVITY = 'merchant';
 const ADENA = 57;
-// The roles an account's beneficiary (the main its plan levels and kits)
-// plays: the game's role (data/Bots/hunt/classes.json) of its line's final
-// class. Spoiler is support, and the dwarf line never starts as a main: its
-// Artisan and Warsmith are dps in the game's table and support by our rule.
-const BENEFICIARY_ROLES = new Set(['dps', 'tank', 'dagger', 'archer', 'mage', 'healer', 'buffer']);
+// The base class of the one line whose characters never start as an account's
+// beneficiary (the main its plan levels and kits): the dwarf's. Its Scavenger
+// and Bounty Hunter are spoilers and its Artisan and Warsmith crafters, all
+// support by our rule; every other line's role (dps, tank, dagger, archer,
+// mage, healer, buffer) plays a main.
 const DWARF_FIGHTER = 53;
 // A trait at or above it is high: ours, initial from the game's persona text
 // cards (BotPersona.js: commitment >= 0.62).
@@ -230,17 +230,19 @@ function synthetic({ count, low, high, seed = 1 }, snapshot) {
 
 // A fresh world: count new characters, one per account, each its account's
 // beneficiary. Its line is drawn by the model's class weights (weights.js)
-// among the beneficiary lines; it starts at level 1 with 0 exp in its line's
-// base class (its line's class below 20: the race's fighter or mystic), with
-// 0 adena (C4: Lisvus Other.properties StartingAdena = 0), no shots and the
-// game's character-creation kit of that class, worn as a new character wears
-// it (StarterItemCatalog.starterRows, the game's one rule for players and
-// bots). Needs the game's data (the hunt tables' boot).
+// among every line but the dwarf's; it starts at level 1 with 0 exp in its
+// line's base class (its line's class below 20: the race's fighter or
+// mystic), with 0 adena (C4: Lisvus Other.properties StartingAdena = 0), no
+// shots and the game's character-creation kit of that class, worn as a new
+// character wears it (StarterItemCatalog.starterRows, the game's one rule for
+// players and bots). Needs the game's data (the hunt tables' boot). A line
+// without its level-1 class in the snapshot throws: no class to start in.
 function fresh({ count, seed = 1 }, snapshot) {
     boot();
     const Data = invoke('GameServer/DataCache');
-    const roles = new Map(readTable('classes').classes.map(row => [row.key, row.role]));
-    const lines = weightedLines(snapshot).filter(line => BENEFICIARY_ROLES.has(roles.get(line)) && snapshot.hours[line][1]?.classId !== DWARF_FIGHTER);
+    const weighted = weightedLines(snapshot);
+    for (const line of weighted) if (!snapshot.hours[line][1]) throw new Error(`fresh world: line ${line} has no level-1 class in the snapshot (hours[${line}][1])`);
+    const lines = weighted.filter(line => snapshot.hours[line][1].classId !== DWARF_FIGHTER);
     const kitOf = (line, level, classId) => StarterItemCatalog.starterRows(Data.newbieItems, classId, Data.items)
         .map(row => ({ selfId: Number(row.selfId), slot: row.slot, amount: Number(row.amount) || 1, equipped: row.equipped }));
     const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), lines, levelOf: () => 1, moneyOf: () => 0, kitOf }, snapshot);

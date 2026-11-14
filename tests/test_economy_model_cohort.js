@@ -90,6 +90,20 @@ const simulate = accountsIn => {
 };
 assert.deepEqual(simulate(seededAccount), simulate([plain]), 'twins, persona and warehouse change no number of a run');
 
+// A synthetic cohort is the one it was before the fresh world's builder
+// shared its account builder (its records hashed at ce622ce43): lines by the
+// class weights, levels in the range, every kit piece worn and held, no money.
+{
+    const crypto = require('node:crypto');
+    const pieces = [{ selfId: 2369, slot: 7 }, { selfId: 1146, slot: 10 }, { selfId: 882, slot: 13 }, { selfId: 882, slot: 14 }];
+    const synSnapshot = { hours: { 9: { 1: { classId: 0 }, 2: { classId: 0 }, 3: { classId: 0 } }, 12: { 1: { classId: 10 }, 2: { classId: 10 }, 3: { classId: 10 } },
+        55: { 1: { classId: 53 }, 2: { classId: 53 }, 3: { classId: 53 } } },
+    kits: { 9: { 1: pieces, 2: pieces, 3: pieces }, 12: { 1: pieces.slice(0, 2) } }, exp: [0, 68, 363], items: {},
+    twins: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [i + 1, { classId: i + 1 < 40 ? 56 : 57, createItem: i + 1 < 5 ? 0 : 1 }])), recipes: [] };
+    const accounts = Cohort.synthetic({ count: 30, low: 1, high: 3, seed: 7 }, synSnapshot).accounts;
+    assert.equal(crypto.createHash('sha256').update(JSON.stringify(accounts)).digest('hex').slice(0, 16), '6cac97119963bb16', 'a synthetic cohort is unchanged');
+}
+
 // A fresh world: every account a new character at level 1 on a beneficiary
 // line, in its line's base class, wearing the game's character-creation kit,
 // with 0 adena and no shots. The game's lines and their classes below 20.
@@ -97,6 +111,8 @@ const Boot = require('../scripts/economy-model/boot');
 const Data = Boot.boot('x50'), Table = invoke('GameServer/Bot/AI/SpotValueTable');
 const freshSnapshot = { hours: Object.fromEntries(Table.roles().map(line => [line, { 1: { classId: Table.roleClass(line, 1) } }])),
     kits: {}, exp: Data.experience, items: {}, twins, recipes: snapshot.recipes };
+// A line the snapshot holds no level-1 class for has no class to start in: the builder says so.
+assert.throws(() => Cohort.fresh({ count: 1, seed: 1 }, { ...freshSnapshot, hours: { ...freshSnapshot.hours, 9: { 20: { classId: 7 } } } }), /line 9 has no level-1 class/);
 const COUNT = 4000;
 const freshWorld = Cohort.fresh({ count: COUNT, seed: 1 }, freshSnapshot).accounts;
 const creation = new Map(Data.newbieItems.map(row => [row.classId, row.items]));
