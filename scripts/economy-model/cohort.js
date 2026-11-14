@@ -15,12 +15,14 @@
 // when that class is a line; a first-profession main's line is drawn among
 // the lines that pass through its class, by the class weights (seeded by its
 // id), because the save does not keep the branch a bot will take.
-// synthetic builds a cohort from the class weights alone.
+// synthetic builds a cohort from the class weights alone; fresh builds a new
+// world's cohort: every account a new character.
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
-const { hash, mulberry } = require('../hunt-tables/common');
+const { hash, mulberry, boot, readTable } = require('../hunt-tables/common');
 const Weights = require('./weights');
 const BotPersona = require('../../src/GameServer/Bot/AI/BotPersona');
+const StarterItemCatalog = require('../../src/GameServer/Knowledge/StarterItemCatalog');
 
 // The craft-station crafters of today's world: they hunt nothing and hold the
 // money they started with. Both constants copy the ledger's own
@@ -28,8 +30,12 @@ const BotPersona = require('../../src/GameServer/Bot/AI/BotPersona');
 const STATION_ACCOUNT_PREFIX = 'bot_craft_';
 const MERCHANT_ACTIVITY = 'merchant';
 const ADENA = 57;
-// The seeder's starting adena per level (GeneratedColdSeeder: level x 85).
-const SEEDER_ADENA_PER_LEVEL = 85;
+// The roles an account's beneficiary (the main its plan levels and kits)
+// plays: the game's role (data/Bots/hunt/classes.json) of its line's final
+// class. Spoiler is support, and the dwarf line never starts as a main: its
+// Artisan and Warsmith are dps in the game's table and support by our rule.
+const BENEFICIARY_ROLES = new Set(['dps', 'tank', 'dagger', 'archer', 'mage', 'healer', 'buffer']);
+const DWARF_FIGHTER = 53;
 // A trait at or above it is high: ours, initial from the game's persona text
 // cards (BotPersona.js: commitment >= 0.62).
 const HIGH_TRAIT = 0.62;
@@ -184,23 +190,30 @@ function fromSave(file, snapshot) {
     return { accounts, source: file, lines: counts };
 }
 
+// The lines the class weights give a main (a weight above 0).
+function weightedLines(snapshot) {
+    return Object.keys(snapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0);
+}
+
 // The one account builder of the cohorts built from the class weights alone:
-// count accounts, each line drawn by the class weights from random, then its
-// level by levelOf(index, random) (called after the line's draw), each fully
-// kitted for its level, holding moneyOf(level) and no shots.
-function accountsOf({ count, random, levelOf, moneyOf }, snapshot) {
-    const lines = Object.keys(snapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0);
+// count accounts, each line drawn among lines by the class weights from
+// random, then its level by levelOf(index, random) (called after the line's
+// draw), at the line's class of that level, holding moneyOf(level), no shots
+// and the kit kitOf(line, level, classId) gives ([{ selfId, slot, amount,
+// equipped }]): the equipped pieces worn in their slots, every piece in the bag.
+function accountsOf({ count, random, lines, levelOf, moneyOf, kitOf }, snapshot) {
     const accounts = [], types = {};
     for (let i = 0; i < count; i++) {
-        const line = weightedPick(lines, random), level = levelOf(i, random), kit = snapshot.kits[line]?.[level] || [];
-        const account = { id: i + 1, station: false, classId: snapshot.hours[line][level]?.classId ?? Number(line), line, level,
+        const line = weightedPick(lines, random), level = levelOf(i, random), classId = snapshot.hours[line][level]?.classId ?? Number(line);
+        const kit = kitOf(line, level, classId);
+        const account = { id: i + 1, station: false, classId, line, level,
             exp: snapshot.exp[level - 1], money: moneyOf(level), spot: null, shots: {}, held: kit.map(piece => piece.selfId),
-            worn: Object.fromEntries(kit.map(piece => [piece.slot, piece.selfId])) };
+            worn: Object.fromEntries(kit.filter(piece => piece.equipped).map(piece => [piece.slot, piece.selfId])) };
         // The game's own persona generator, its type shares counted over the cohort so far.
         const persona = BotPersona.generate({ characterId: account.id, classId: account.classId, stats: { generatedIndex: i } }, { counts: types, total: count });
         types[persona.archetype] = (types[persona.archetype] || 0) + 1;
         const bag = {};
-        for (const piece of kit) bag[piece.selfId] = (bag[piece.selfId] || 0) + 1;
+        for (const piece of kit) bag[piece.selfId] = (bag[piece.selfId] || 0) + piece.amount;
         accounts.push(seedAccount(account, { primaryDrive: persona.primaryDrive, commitment: persona.traits.commitment }, { bag, warehouse: {} }, snapshot));
     }
     return accounts;
@@ -209,28 +222,29 @@ function accountsOf({ count, random, levelOf, moneyOf }, snapshot) {
 // count accounts, lines by the class weights, levels uniform in [low, high],
 // each fully kitted for its level, no money and no shots.
 function synthetic({ count, low, high, seed = 1 }, snapshot) {
-    const accounts = accountsOf({ count, random: mulberry(hash(`cohort:${seed}`)), levelOf: (_, random) => low + Math.floor(random() * (high - low + 1)), moneyOf: () => 0 }, snapshot);
+    const kitOf = (line, level) => (snapshot.kits[line]?.[level] || []).map(piece => ({ selfId: piece.selfId, slot: piece.slot, amount: 1, equipped: true }));
+    const accounts = accountsOf({ count, random: mulberry(hash(`cohort:${seed}`)), lines: weightedLines(snapshot),
+        levelOf: (_, random) => low + Math.floor(random() * (high - low + 1)), moneyOf: () => 0, kitOf }, snapshot);
     return { accounts, source: `synthetic ${count} accounts, levels ${low}-${high}, class weights`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 
-// A new world's start level of the bot at an index: copies the unexported
-// level rule of GeneratedColdSeeder.profileForIndex (index % 20: 2-3 for two
-// in twenty, 4-8 for nine, 8-12 for seven, 13-16 for two).
-function seederLevel(index) {
-    const roll = index % 20;
-    if (roll < 2) return 2 + (index % 2);
-    if (roll < 11) return 4 + (index % 5);
-    if (roll < 18) return 8 + (index % 5);
-    return 13 + (index % 4);
-}
-
-// A fresh world: count accounts at the seeder's start levels, each kitted for
-// its level, with the seeder's level x 85 adena and no shots. The lines are
-// drawn by the model's class weights, ours until the new seeder (weights.js),
-// not by the seeder's own mix.
+// A fresh world: count new characters, one per account, each its account's
+// beneficiary. Its line is drawn by the model's class weights (weights.js)
+// among the beneficiary lines; it starts at level 1 with 0 exp in its line's
+// base class (its line's class below 20: the race's fighter or mystic), with
+// 0 adena (C4: Lisvus Other.properties StartingAdena = 0), no shots and the
+// game's character-creation kit of that class, worn as a new character wears
+// it (StarterItemCatalog.starterRows, the game's one rule for players and
+// bots). Needs the game's data (the hunt tables' boot).
 function fresh({ count, seed = 1 }, snapshot) {
-    const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), levelOf: seederLevel, moneyOf: level => level * SEEDER_ADENA_PER_LEVEL }, snapshot);
-    return { accounts, source: `fresh ${count} accounts at the seeder's levels, class weights`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
+    boot();
+    const Data = invoke('GameServer/DataCache');
+    const roles = new Map(readTable('classes').classes.map(row => [row.key, row.role]));
+    const lines = weightedLines(snapshot).filter(line => BENEFICIARY_ROLES.has(roles.get(line)) && snapshot.hours[line][1]?.classId !== DWARF_FIGHTER);
+    const kitOf = (line, level, classId) => StarterItemCatalog.starterRows(Data.newbieItems, classId, Data.items)
+        .map(row => ({ selfId: Number(row.selfId), slot: row.slot, amount: Number(row.amount) || 1, equipped: row.equipped }));
+    const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), lines, levelOf: () => 1, moneyOf: () => 0, kitOf }, snapshot);
+    return { accounts, source: `fresh ${count} accounts at level 1, beneficiary lines by class weights, creation kits`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 
 module.exports = { fromSave, savedBots, synthetic, fresh, lineOf, linesByClass, STATION_ACCOUNT_PREFIX, MERCHANT_ACTIVITY };

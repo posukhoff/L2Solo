@@ -90,19 +90,50 @@ const simulate = accountsIn => {
 };
 assert.deepEqual(simulate(seededAccount), simulate([plain]), 'twins, persona and warehouse change no number of a run');
 
+// A fresh world: every account a new character at level 1 on a beneficiary
+// line, in its line's base class, wearing the game's character-creation kit,
+// with 0 adena and no shots. The game's lines and their classes below 20.
+const Boot = require('../scripts/economy-model/boot');
+const Data = Boot.boot('x50'), Table = invoke('GameServer/Bot/AI/SpotValueTable');
+const freshSnapshot = { hours: Object.fromEntries(Table.roles().map(line => [line, { 1: { classId: Table.roleClass(line, 1) } }])),
+    kits: {}, exp: Data.experience, items: {}, twins, recipes: snapshot.recipes };
+const COUNT = 4000;
+const freshWorld = Cohort.fresh({ count: COUNT, seed: 1 }, freshSnapshot).accounts;
+const creation = new Map(Data.newbieItems.map(row => [row.classId, row.items]));
+for (const account of freshWorld) {
+    assert.deepEqual([account.level, account.exp, account.money, account.shots], [1, 0, 0, {}], `account ${account.id} starts at level 1 with 0 exp, 0 adena and no shots`);
+    assert.equal(account.classId, Table.roleClass(account.line, 1), `account ${account.id} starts in its line's base class`);
+    const items = creation.get(account.classId);
+    assert.deepEqual(Object.values(account.worn).sort((a, b) => a - b), items.filter(item => item.equipped).map(item => item.selfId).sort((a, b) => a - b), `account ${account.id} wears its class's equipped creation items`);
+    assert.deepEqual([...account.held].sort((a, b) => a - b), items.map(item => item.selfId).sort((a, b) => a - b), `account ${account.id} carries every creation item`);
+}
+// An orc fighter wears its Training Gloves in both hands and carries the Squire's Sword in its bag.
+const orc = freshWorld.find(account => account.classId === 44);
+assert.ok(orc && orc.worn[14] === 2368 && !Object.values(orc.worn).includes(2369) && orc.held.includes(2369), 'an orc fighter wears its gloves and carries its sword');
+const freshLines = new Set(freshWorld.map(account => account.line));
+assert.ok(!freshWorld.some(account => account.classId === 53), 'no account starts on the dwarf line');
+for (const line of ['17', '21', '34', '51', '52']) assert.ok(freshLines.has(line), `buffer line ${line} starts`);
+// Line shares follow the class weights over the beneficiary lines (every weighted line but the dwarf's).
+const beneficiary = Object.keys(freshSnapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0 && freshSnapshot.hours[line][1].classId !== 53);
+const weightSum = beneficiary.reduce((sum, line) => sum + Weights.CLASS_WEIGHTS[line], 0);
+assert.deepEqual([...freshLines].sort(), [...beneficiary].sort(), 'every beneficiary line starts and no other');
+for (const line of beneficiary) {
+    const share = Weights.CLASS_WEIGHTS[line] / weightSum, seen = freshWorld.filter(account => account.line === line).length;
+    assert.ok(Math.abs(seen - COUNT * share) <= 4 * Math.sqrt(COUNT * share * (1 - share)), `line ${line}: ${seen} accounts against ${(COUNT * share).toFixed(0)} by its weight`);
+}
+assert.deepEqual(Cohort.fresh({ count: COUNT, seed: 1 }, freshSnapshot).accounts, freshWorld, 'one seed gives one world');
+assert.notDeepEqual(Cohort.fresh({ count: COUNT, seed: 2 }, freshSnapshot).accounts.map(account => account.line), freshWorld.map(account => account.line), 'two seeds differ');
+
 // A fresh cohort is seeded by the game's generated personas, with no recipes (it holds no scrolls).
-const line = Object.keys(Weights.CLASS_WEIGHTS).find(key => Weights.CLASS_WEIGHTS[key] > 0);
-const freshSnapshot = { hours: { [line]: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [i + 1, { classId: Number(line) }])) },
-    kits: {}, exp: Array.from({ length: 20 }, (_, i) => i * 100), items: {}, twins, recipes: snapshot.recipes };
-const fresh = Cohort.fresh({ count: 200, seed: 1 }, freshSnapshot).accounts;
+const fresh = freshWorld;
 const counts = {};
 let expected = 0;
 for (const account of fresh) {
-    const persona = BotPersona.generate({ characterId: account.id, classId: account.classId, stats: { generatedIndex: account.id - 1 } }, { counts, total: 200 });
+    const persona = BotPersona.generate({ characterId: account.id, classId: account.classId, stats: { generatedIndex: account.id - 1 } }, { counts, total: COUNT });
     counts[persona.archetype] = (counts[persona.archetype] || 0) + 1;
     if (persona.primaryDrive === 'wealth' || persona.traits.commitment >= 0.62) expected++;
 }
-assert.ok(expected > 0 && expected < 200, 'the generated personas split');
+assert.ok(expected > 0 && expected < COUNT, 'the generated personas split');
 assert.equal(fresh.filter(account => account.twins.length === 3).length, expected, 'a fresh account gets twins when its generated persona is wealth or committed');
 assert.ok(fresh.every(account => account.twins.length === 0 || account.twins[0].recipes.length === 0), 'a fresh cohort holds no scrolls, so no crafter knows a recipe');
 console.log('economy model cohort ok');

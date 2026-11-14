@@ -486,6 +486,41 @@ for (const [line, level, spotId] of [[fighter, 32, '30_-30:f2'], [mage, 32, '4_2
     assert.equal(run.spotFactors(fighter, 32, kitOf(fighter, 39), 'no-such-spot'), noRow);
     assert.equal(run.stats.spotUnstated, 2, 'a held read is not counted again');
 }
+// A fresh world's main wears its class's character-creation kit (the game's
+// starter rows) from level 1. At every spot row with shots of levels 1-19 its
+// charged forms state: a read is unstated only where the hunt cycle's
+// shotless reader holds no row for the spot (the bare form), and there the
+// line's reference kit is unstated too.
+{
+    const Starter = require('../src/GameServer/Knowledge/StarterItemCatalog');
+    const run = KitHours.gameKitHours({ snapshot, anchor }), spotIds = Load.spotCards().spots.map(row => String(row[0]));
+    const holds = (state, hunt) => HuntCycle.reader(state, { deathHours: 0, hourAdena: 1, hunt }).spotIds.map(String).includes(hunt.spotId);
+    const unstated = (line, level, kit, spotId) => { const before = run.stats.spotUnstated; run.spotFactors(line, level, kit, spotId); return run.stats.spotUnstated > before; };
+    // A human fighter line (Gladiator), the human mystic's Sorcerer and the orc fighter's Destroyer.
+    for (const line of ['2', mage, fighter]) {
+        const classId = Table.roleClass(line, 1), counts = { reads: 0, creation: 0, reference: 0 };
+        const creation = Object.fromEntries(Starter.starterRows(Data.newbieItems, classId, Data.items).filter(row => row.equipped).map(row => [row.slot, row.selfId]));
+        for (let level = 1; level <= 19; level++) {
+            const state = HuntCycle.referenceState(classId, level, { line: Number(line) });
+            let stated = 0;
+            for (const spotId of spotIds) {
+                const row = Table.value(spotId, line, level, true);
+                if (!(row && row.kills > 0)) continue;
+                counts.reads++;
+                Pricing.useBoard(() => null);
+                let charged, bare;
+                try { charged = holds(state, { spotId }); bare = holds(state, { spotId, useShots: false }); } finally { Pricing.useBoard(null); }
+                assert.ok(charged, `line ${line} at ${level}: the charged reader holds ${spotId}`);
+                const own = unstated(line, level, creation, spotId), ref = unstated(line, level, kitOf(line, level), spotId);
+                assert.equal(own, !bare, `line ${line} at ${level}, ${spotId}: the creation kit's read is unstated exactly where the shotless reader holds no row`);
+                assert.equal(own, ref, `line ${line} at ${level}, ${spotId}: the creation kit and the reference kit are unstated at the same reads`);
+                counts.creation += own; counts.reference += ref; stated += !own;
+            }
+            assert.ok(stated > 0, `line ${line} at ${level}: a read states every form, so the creation kit fires the reference's charged forms`);
+        }
+        assert.ok(counts.reads > 0 && counts.creation === counts.reference, `line ${line}: ${counts.creation} of ${counts.reads} reads unstated, the reference kit's ${counts.reference}`);
+    }
+}
 // The model's readers stand on no board while they run and leave the game's
 // board source as it was: a board the game's pricing finds after the model
 // ran is the one it finds before.
