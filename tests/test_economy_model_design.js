@@ -380,10 +380,8 @@ for (const supply of ['table', 'formula']) {
     assert.ok(close(low.roadShare, 0.8 / 3) && close(low.roadShareAllMains, 0.8 / 6), `${supply}: the road share leaves its hours out (${low.roadShare}, all ${low.roadShareAllMains})`);
 }
 
-console.log('economy model design: ok');
-
-// A bag at the game's full rule takes no item drop: the hunt credits its exp and adena as usual and counts the drop it left on the
-// ground at the NPC's price (hunt's full).
+// A bag at the game's full rule takes no item drop: the hunt credits its exp and adena as usual and counts the drop it did not take
+// at the NPC's price (hunt's full).
 {
     const hunter = freshBot(9, { shots: {}, bag: {}, spot: 's2' });
     const start = Engine.mainOf(hunter, 0, bare, [['all', 1]]);
@@ -409,3 +407,15 @@ console.log('economy model design: ok');
     assert.equal(long.drops.byItem[DROP], short.drops.byItem[DROP], 'a full bag takes no item in the later hours');
     assert.ok(long.counters.fullBagLostDrop > short.counters.fullBagLostDrop, 'each later hour loses more drop');
 }
+
+// A bag that filled goes to town (the table variant at once), sells its drop there and takes drop again after the visit: the
+// drops grow past what it held at the visit, and it never hunted with the bag full.
+const roomy = { ...bare, bags: { 9: { slots: 2, maxLoad: 1e6 } } };
+for (const supply of ['table', 'formula']) {
+    const trips = run(freshBot(9, { shots: { [SHOT]: 40 } }), supply, 6, 0, roomy), visits = trips.visits.filter(visit => !visit.info.born);
+    assert.ok(visits.length >= 2 && !visits[0].main.bag[DROP], `${supply}: it visits town and leaves with its bag emptied`);
+    assert.ok(trips.result.drops.byItem[DROP] > visits[0].before.bag[DROP], `${supply}: it takes drop again after the visit`);
+    if (supply === 'table') assert.ok(trips.result.counters.fullBagHuntHours < 1e-9, 'the table variant goes at the fill: no hour hunted full');
+}
+
+console.log('economy model design: ok');

@@ -314,9 +314,15 @@ const formExp = (main, best, form, hours, kills) => huntExp(main, rowIn(best, fo
 // form's { kills, shots }; none: 1).
 const shotsPerHour = (row, form, scale = 1, factor = null) => (rowIn(row, form)?.shots || 0) * scale * (factor?.shots ?? 1);
 
-// full: the main's bag is at the game's full rule, so the hunt takes no item
-// (the game leaves the drop on the ground; exp and adena stay): the drop it
-// would have taken is lost, counted at the NPC's buy price (lostDrop).
+// full: the main's bag is at the game's unload floor (SurvivalFloor.evaluate:
+// the slot limit or the first weight penalty), so the hunt takes no item
+// (exp and adena stay) and counts the drop it would have taken at the NPC's
+// buy price (lostDrop). Our choice, the form the design's value prices (the
+// full-bag hour is the same hour with no loot): a C4 player keeps picking up
+// below the slot limit's held stacks and below the weight limit
+// (PickupCapacity.check), past 50 % load at a speed and regen penalty. Cost:
+// none per step; it gives up the drop between the floor and the capacity and
+// the penalty.
 function hunt(main, view, huntHours, random, firing = null, kills = null, full = false) {
     const best = spotRowOf(view, main), flows = emptyFlows();
     const delta = { flows, exp: 0, drops: [], lostDrop: 0, shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0, shotId: 0, huntBare: 0 };
