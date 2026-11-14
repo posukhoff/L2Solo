@@ -108,13 +108,19 @@ function hourRow(row) {
     return out;
 }
 
-// An hour row with the same spot's hour without shots beside it (null where
+// An hour row with the same spot's hour without shots beside it (the zero hour where
 // the line fights nothing there without shots) and, for a line the spot
 // table measures firing Blessed Spiritshots there, its hour firing them
 // (absent for any other line).
 function hourRowWithForms(row, line, level, Table) {
     const out = hourRow(row), bare = Table.value(String(row.spotId), String(line), level, false), blessed = Table.value(String(row.spotId), String(line), level, 2);
-    out.shotless = bare && bare.kills > 0 ? Object.fromEntries(SHOTLESS_FIELDS.map(field => [field, bare[field]])) : null;
+    if (bare && bare.kills > 0) out.shotless = Object.fromEntries(SHOTLESS_FIELDS.map(field => [field, bare[field]]));
+    else {
+        // The line kills nothing bare there (measured) or the spot table has no bare reading (not measured): the
+        // hour without shots is the zero hour, so a main out of shots there gains nothing; unmeasured is marked.
+        out.shotless = Object.fromEntries(SHOTLESS_FIELDS.map(field => [field, 0]));
+        if (!bare) out.shotlessUnmeasured = true;
+    }
     if (blessed && blessed.kills > 0) out.blessed = Object.fromEntries(BLESSED_FIELDS.map(field => [field, blessed[field]]));
     return out;
 }
@@ -687,4 +693,5 @@ function build(argv, reads) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { extract, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, BLESSED_FIELDS, SCHEMA };
+// hourRowWithForms is exported for its unit test only.
+module.exports = { extract, hourRowWithForms, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, BLESSED_FIELDS, SCHEMA };

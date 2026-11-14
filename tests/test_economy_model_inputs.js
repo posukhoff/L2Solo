@@ -93,6 +93,22 @@ assert.ok(snapshot.npcOffers.preset[1785][0].price > 2 * x1.npcOffers.preset[178
 // The design mode's additions, each the owner's own number: the hour without
 // shots, a twin's max MP and store slots, a line's race, the crystal ids and
 // the per-kill yields at the design's rates.
+// hourRowWithForms on a stub spot table: the hour without shots is the zero hour where the bare reading kills
+// nothing or does not exist (the latter marked unmeasured), the reading's own fields otherwise.
+{
+    const row = { spotId: 's', kills: 10, exp: 50, adena: 100, shots: 20, dropLoot: 1, spoilLoot: 0, loot: 1, potions: 0, busyShare: 1, deaths: 0 };
+    const zero = Object.fromEntries(Inputs.SHOTLESS_FIELDS.map(field => [field, 0]));
+    const stub = bare => ({ value: (spot, line, level, shots) => (shots === false ? bare : null) });
+    const noKills = Inputs.hourRowWithForms(row, 1, 1, stub({ kills: 0, exp: 0, adena: 0, dropLoot: 0, spoilLoot: 0, loot: 0 }));
+    assert.deepEqual(noKills.shotless, zero, 'bare kills 0: the zero hour');
+    assert.ok(!('shotlessUnmeasured' in noKills), 'measured, so not marked');
+    const none = Inputs.hourRowWithForms(row, 1, 1, stub(null));
+    assert.deepEqual(none.shotless, zero, 'no bare reading: the zero hour');
+    assert.equal(none.shotlessUnmeasured, true, 'and marked unmeasured');
+    const normal = Inputs.hourRowWithForms(row, 1, 1, stub({ kills: 4, exp: 20, adena: 40, dropLoot: 1, spoilLoot: 0, loot: 1, extra: 9 }));
+    assert.deepEqual(normal.shotless, { kills: 4, exp: 20, adena: 40, dropLoot: 1, spoilLoot: 0, loot: 1 }, 'a normal bare reading: its fields');
+    assert.ok(!('shotlessUnmeasured' in normal));
+}
 Boot.usePreset('x50');
 const bare = Table.value(String(hour.best.spotId), line, level, false);
 for (const field of Inputs.SHOTLESS_FIELDS) assert.equal(hour.best.shotless[field], bare[field], `shotless ${field}`);
@@ -163,7 +179,13 @@ for (const from of townRows) for (const into of townRows) {
 assert.ok(snapshot.townHours.Dion.Giran > 0 && snapshot.tripHours.to[hour.best.spotId] > 0, 'a trip takes time');
 assert.ok(!('walkBack' in snapshot) && !('walkBackZero' in snapshot.fallbacks), 'one owner of a trip\'s hours: no walk back beside them');
 const topBare = Table.value(String(hour.top[9].spotId), line, level, false);
-assert.equal(hour.top[9].shotless?.kills ?? null, topBare && topBare.kills > 0 ? topBare.kills : null, 'the tenth spot carries its hour without shots');
+assert.equal(hour.top[9].shotless.kills, topBare && topBare.kills > 0 ? topBare.kills : 0, 'the tenth spot carries its hour without shots (the zero hour where the line kills nothing bare)');
+// A row with no bare reading is marked unmeasured; one measured at kills 0 or above is not.
+for (const row of [hour.best, ...hour.top]) {
+    const measured = Table.value(String(row.spotId), line, level, false);
+    assert.equal(row.shotlessUnmeasured === true, !measured, `spot ${row.spotId}: unmeasured exactly without a bare reading`);
+    if (!measured || measured.kills === 0) for (const field of Inputs.SHOTLESS_FIELDS) assert.equal(row.shotless[field], 0, `spot ${row.spotId}: the zero hour, ${field}`);
+}
 assert.deepEqual(snapshot.luxuryOptions[71], { npcId: 7097, town: 'Giran', crystals: [{ selfId: 1459, amount: 573 }, { selfId: 1458, amount: 2865 }] }, 'Flamberge for 573 C and 2865 D crystals together');
 assert.ok(!('luxury' in snapshot) && !('upkeep' in snapshot), 'one Luxury catalogue (luxuryOptions) and no servitor upkeep in the snapshot');
 
