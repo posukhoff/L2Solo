@@ -326,4 +326,24 @@ for (const supply of ['table', 'formula']) {
     assert.ok(poor[0].meanHoursNeverBought > 2, `${supply}: it hunted ${poor[0].meanHoursNeverBought} h bare`);
 }
 
+// A main whose level has no spot row for its line stands: one stuck episode with its own reason and its hours, and the road share
+// is over the wall hours of the mains that hold a row (line 9 has rows from level 2 only; line 11 hunts and walks to town).
+const noRow = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [], 2: [] }, 11: { 1: [] } },
+    hours: { 9: { 2: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 11: { 1: { classId: 11, shotId: SHOT, best: near, top: [near, far] } } },
+    yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
+    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 }, 11: { slots: 80, maxLoad: 1e6 } } });
+for (const supply of ['table', 'formula']) {
+    const accounts = [freshBot(9, { id: 1 }), freshBot(11, { id: 2, shots: { [SHOT]: 60 } })];
+    const { design, counters } = Engine.simulate({ view: noRow, accounts, bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3,
+        plane: Plane.plane({ view: noRow, kitHours: kitAt(0), variant: supply, accounts }) });
+    const low = design.levels.low;
+    assert.deepEqual(low.stuckEpisodes, { no_spot_row: 1 }, `${supply}: the main with no row is one stuck episode`);
+    assert.ok(close(low.stuckHoursByReason.no_spot_row, 3) && close(low.stuckHours, 3), `${supply}: it stands its 3 hours`);
+    assert.equal(counters.stuckNoBareHour, 0, `${supply}: the no-bare-hour counter is the supply rule's`);
+    assert.ok(close(low.wallHours, 6) && close(low.decidingHours, 3), `${supply}: ${low.decidingHours} h of mains with a row`);
+    assert.ok(close(low.roadShare, 0.8 / 3) && close(low.roadShareAllMains, 0.8 / 6), `${supply}: the road share leaves its hours out (${low.roadShare}, all ${low.roadShareAllMains})`);
+}
+
 console.log('economy model design: ok');

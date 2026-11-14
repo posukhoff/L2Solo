@@ -35,6 +35,8 @@ const Supply = require('./supply');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
 const LOW_LEVEL_LAST = 19;
+// The stuck reason of a main whose level has no spot row for its line.
+const NO_SPOT_ROW = 'no_spot_row';
 const classOf = level => (level <= LOW_LEVEL_LAST ? 'low' : 'high');
 
 // The facts the plane raises, each a test on what just happened.
@@ -155,7 +157,7 @@ function plane({ view, kitHours, variant, accounts }) {
             // chain had an out fact or a short need and those that bought none of it; stuck episodes by reason
             // and their hours; the other variant's answers that differ; each main's bare hunting hours until its
             // first purchase of shots.
-            const blank = () => ({ wallHours: 0, roadHours: 0, consumableTrips: 0, emptyTrips: 0, stuckEpisodes: {}, stuckHours: 0,
+            const blank = () => ({ wallHours: 0, roadHours: 0, consumableTrips: 0, emptyTrips: 0, stuckEpisodes: {}, stuckHours: 0, stuckHoursByReason: {},
                 stuckUnmeasuredEpisodes: 0, stuckUnmeasuredHours: 0 });
             const tally = { low: blank(), high: blank() };
             const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
@@ -165,6 +167,7 @@ function plane({ view, kitHours, variant, accounts }) {
                 if (!state.stuck) return state;
                 const book = tally[classOf(state.stuck.level)], hours = now - state.stuck.at;
                 book.stuckHours += hours;
+                book.stuckHoursByReason[state.stuck.reason] = (book.stuckHoursByReason[state.stuck.reason] || 0) + hours;
                 if (state.stuck.unmeasured) book.stuckUnmeasuredHours += hours;
                 return { ...state, stuck: false };
             };
@@ -253,10 +256,11 @@ function plane({ view, kitHours, variant, accounts }) {
                         put(main, unstuck(state, now));
                         return { at: now + hours / huntShare, read: true };
                     }
-                    // No fact will come. Stuck is the supply rule's state (no shots of its need, nothing to pay with or sell, nothing
+                    // No fact will come. A main with no spot row stands (reason no_spot_row: nothing to hunt, no supply decision to take).
+                    // Otherwise stuck is the supply rule's state (no shots of its need, nothing to pay with or sell, nothing
                     // killed bare), however it came there (a birth, a run-out, a respawn); one episode counts once, until the state ends.
                     const standing = row ? supplyState(main, row, 'hunt', null, townOf(view, main)) : null;
-                    if (!standing || !Supply.stuck(standing)) {
+                    if (standing && !Supply.stuck(standing)) {
                         put(main, unstuck(state, now));
                         return null;
                     }
@@ -264,11 +268,11 @@ function plane({ view, kitHours, variant, accounts }) {
                         put(main, state);
                         return null;
                     }
-                    const reason = Supply.stayReason(standing), unmeasured = !!row.shotlessUnmeasured, book = tally[classOf(main.level)];
-                    ledger.counters.stuckNoBareHour++;
+                    const reason = standing ? Supply.stayReason(standing) : NO_SPOT_ROW, unmeasured = !!row?.shotlessUnmeasured, book = tally[classOf(main.level)];
+                    if (standing) ledger.counters.stuckNoBareHour++;
                     book.stuckEpisodes[reason] = (book.stuckEpisodes[reason] || 0) + 1;
                     if (unmeasured) book.stuckUnmeasuredEpisodes++;
-                    put(main, { ...state, stuck: { at: now, level: main.level, unmeasured } });
+                    put(main, { ...state, stuck: { at: now, level: main.level, unmeasured, reason } });
                     return null;
                 },
                 hunt(main, delta) {
@@ -333,7 +337,11 @@ function plane({ view, kitHours, variant, accounts }) {
                     for (const main of ended) if (main.since > hours) tally[classOf(main.level)].roadHours -= main.since - hours;
                     const levels = {}, lines = new Map(), distribution = {};
                     for (const [name, book] of Object.entries(tally)) {
-                        levels[name] = { ...book, roadShare: book.wallHours > 0 ? book.roadHours / book.wallHours : null,
+                        // The road share is over the wall hours of mains that hold a spot row (the decision's denominator);
+                        // roadShareAllMains is over every main's hours.
+                        const deciding = book.wallHours - (book.stuckHoursByReason[NO_SPOT_ROW] || 0);
+                        levels[name] = { ...book, decidingHours: deciding, roadShare: deciding > 0 ? book.roadHours / deciding : null,
+                            roadShareAllMains: book.wallHours > 0 ? book.roadHours / book.wallHours : null,
                             emptyShare: book.consumableTrips > 0 ? book.emptyTrips / book.consumableTrips : null };
                     }
                     for (const main of ended) {

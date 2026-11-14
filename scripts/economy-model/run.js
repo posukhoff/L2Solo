@@ -107,12 +107,12 @@ function printRun(out, { rates }) {
 // otherwise; the bare hours before each line's first purchase of shots; the level distribution at the end.
 function printDesign(design) {
     const percent = value => (value === null ? '-' : `${(value * 100).toFixed(1)} %`), number = value => (value === null ? '-' : value.toFixed(2));
-    const stuckOf = book => `${Object.entries(book.stuckEpisodes).map(([reason, n]) => `${reason} ${n}`).join(', ') || 'none'}; ${book.stuckHours.toFixed(1)} h (${percent(book.wallHours > 0 ? book.stuckHours / book.wallHours : null)} of wall hours), at an unmeasured bare row ${book.stuckUnmeasuredEpisodes} (${book.stuckUnmeasuredHours.toFixed(1)} h)`;
+    const stuckOf = book => `${Object.entries(book.stuckEpisodes).map(([reason, n]) => `${reason} ${n} episodes, ${(book.stuckHoursByReason[reason] || 0).toFixed(1)} h (${percent(book.wallHours > 0 ? (book.stuckHoursByReason[reason] || 0) / book.wallHours : null)} of wall hours)`).join('; ') || 'none'}; at an unmeasured bare row ${book.stuckUnmeasuredEpisodes} (${book.stuckUnmeasuredHours.toFixed(1)} h)`;
     console.log(`DESIGN supply variant ${design.variant}, per class of level at the event's start`);
     for (const [name, label] of [['low', 'levels 1-19'], ['high', 'levels 20+ (printed only)']]) {
         const book = design.levels[name];
         console.log(`  ${label}: wall hours ${book.wallHours.toFixed(1)}, consumable trips ${book.consumableTrips}, empty trips ${book.emptyTrips} (${percent(book.emptyShare)}${name === 'low' ? `, bound ${percent(DesignLimits.EMPTY_TRIP_SHARE.value)}` : ''}), `
-            + `road hours ${book.roadHours.toFixed(1)} = road share ${percent(book.roadShare)}${name === 'low' ? ` (limit ${percent(DesignLimits.ROAD_SHARE_LIMIT.value)}, today's bots ${percent(DesignLimits.CURRENT_BOTS_ROAD_SHARE.value)})` : ''}`);
+            + `road hours ${book.roadHours.toFixed(1)} = road share ${percent(book.roadShare)} of the ${book.decidingHours.toFixed(1)} h of mains with a spot row (${percent(book.roadShareAllMains)} of all wall hours)${name === 'low' ? ` (limit ${percent(DesignLimits.ROAD_SHARE_LIMIT.value)}, today's bots ${percent(DesignLimits.CURRENT_BOTS_ROAD_SHARE.value)})` : ''}`);
         console.log(`    stuck: ${stuckOf(book)}`);
     }
     console.log(`  shadow: ${design.shadow.decisions} field decisions run in both variants; ${design.shadow.differ.reduce((sum, row) => sum + row.count, 0)} differ`);
