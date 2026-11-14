@@ -59,7 +59,8 @@ const townOf = (view, main) => Engine.townOfRow(view, Engine.spotRowOf(view, mai
 // The held spot: its line's best row at the level in the form the bot can hunt, taken at its birth and at the end of each
 // town chain and held between (the engine keeps it while its row exists at the level): the best row with shots when it
 // holds the shots it fires (the weapon's grade; the beginner shots that charge them count: Engine.heldOf), else the
-// best row without them (bareBest: the game's own answer for a line hunting without shots, SpotValueTable.best with
+// best row without them (bareBest: its line's one best in the bare form; at the levels of the model's hunting table
+// the table reader's best, above them the game's own answer for a line hunting without shots, SpotValueTable.best with
 // shots off, often another spot than the one a gate closes).
 // A snapshot with no bareBest row holds the best row.
 function heldSpot(view, main) {
@@ -123,17 +124,33 @@ function hoursToFull(view, bags, main, row, phases) {
     return high;
 }
 
-// plane({ view, kitHours, variant, accounts }): kitHours, the game's kit-hour
+// The worn kit's factors on a row of the kit it was measured with: none.
+const UNIT = Object.freeze({ kills: 1, shots: 1, deaths: 1 }), UNITS = Object.freeze({ bare: UNIT, shots: UNIT, blessed: UNIT });
+
+// plane({ view, kitHours, variant, accounts, table }): kitHours, the game's kit-hour
 // readers (spotFactors, shotScale); variant, the supply variant ('table' |
-// 'formula'); accounts, the run's account records (each main's persona).
-function plane({ view, kitHours, variant, accounts }) {
+// 'formula'); accounts, the run's account records (each main's persona);
+// table: the model's hunting table's levels { range: [from, to], creation(line,
+// level): the creation kit { slot: selfId }, the one kit point it measured }, or none.
+function plane({ view, kitHours, variant, accounts, table = null }) {
     if (variant !== 'table' && variant !== 'formula') throw new Error(`no supply variant '${variant}' (table or formula)`);
     const personas = new Map(accounts.map(account => [account.id, account.persona || null]));
+    // At the table's levels a row is the hour of the kit point it measured: the creation kit reads it as it is
+    // (factor 1); another worn kit is off the table's grid, read at that one point and counted (offGrid: a main at a level).
+    const offGrid = new Set();
+    const measured = main => {
+        if (!table || main.level < table.range[0] || main.level > table.range[1]) return false;
+        const worn = Object.entries(main.kit).filter(([, selfId]) => selfId), creation = table.creation(main.line, main.level);
+        if (worn.length !== Object.keys(creation).length || worn.some(([slot, selfId]) => creation[slot] !== Number(selfId))) offGrid.add(`${main.id}@${main.level}`);
+        return true;
+    };
     const factorsOf = main => {
         const row = Engine.spotRowOf(view, main);
-        return row ? kitHours.spotFactors(main.line, main.level, main.kit, row.spotId) : null;
+        if (!row) return null;
+        return measured(main) ? UNITS : kitHours.spotFactors(main.line, main.level, main.kit, row.spotId);
     };
-    const scaleOf = (main, row, form) => kitHours.shotScale(main.line, main.level, row.spotId, main.weapon, form === 'blessed');
+    // The row's shots are the measured kit's weapon's at the table's levels (factor 1).
+    const scaleOf = (main, row, form) => (measured(main) ? 1 : kitHours.shotScale(main.line, main.level, row.spotId, main.weapon, form === 'blessed'));
     const hunter = Today.hunter(view, factorsOf, scaleOf);
     const bagsOf = main => {
         const bags = view.bags?.[main.line];
@@ -368,7 +385,7 @@ function plane({ view, kitHours, variant, accounts }) {
                     const differ = [...differs].map(([key, count]) => ({ row: JSON.parse(key)[0], reason: JSON.parse(key)[1], count }))
                         .sort((a, b) => b.count - a.count || (a.row + a.reason < b.row + b.reason ? -1 : 1));
                     return { design: { variant, levels, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
-                        spotUnstated: kitHours.stats.spotUnstated, levelDistribution: distribution } };
+                        spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution } };
                 }
             };
         }

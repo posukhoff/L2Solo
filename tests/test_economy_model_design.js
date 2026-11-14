@@ -243,7 +243,8 @@ for (const supply of ['table', 'formula']) {
 }
 
 // A bot stuck out of shots is counted once: its death and respawn visit change neither its shots, its money nor its bag.
-const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 }, dropLoot: 0, loot: 0 });
+// Its bare hour carries no deaths of its own (the game spot table's shape), so it dies at the row's.
+const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0 }, dropLoot: 0, loot: 0 });
 const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, far] } } } };
 const stuckDying = run(freshBot(10, { shots: { [SHOT]: 20 } }), 'table', 10, 2, mortalWorld);
 assert.ok(stuckDying.visits.filter(visit => visit.info.died && visit.before.shots[SHOT] === 0).length >= 3, 'the stuck bot dies and respawns several times after it stands');
@@ -416,6 +417,90 @@ for (const supply of ['table', 'formula']) {
     assert.ok(visits.length >= 2 && !visits[0].main.bag[DROP], `${supply}: it visits town and leaves with its bag emptied`);
     assert.ok(trips.result.drops.byItem[DROP] > visits[0].before.bag[DROP], `${supply}: it takes drop again after the visit`);
     if (supply === 'table') assert.ok(trips.result.counters.fullBagHuntHours < 1e-9, 'the table variant goes at the fill: no hour hunted full');
+}
+
+// The model's hunting table at level 1 (run.js tableHours over rules/hunt-rows.js), cells as measured: a level-1 orc
+// mystic (line 51, key 49), for which the game's spot table has no row at level 1, holds the gremlin spot (-12_43) and
+// hunts it at its measured kills; a level-1 human mystic (line 12, key 10) without spiritshots holds its bare best and
+// hunts it at the bare cell's kills, its bare hour with the bare cell's own deaths (not the shots hour's). A spot whose
+// only species dies over the kill-death limit is cut (SPOT.6) and counted; a table of another stamp is refused by name.
+{
+    const Run = require('../scripts/economy-model/run');
+    const GREMLIN = '5198', DEADLY = '20001', SPIRIT = 2509;
+    const fields = ['kills', 'deaths', 'fight', 'rest', 'other', 'walk', 'exp', 'shots', 'potions', 'pull'];
+    const orc = [41.5, 0.04819, 11.86, 51.53, 22.52, 0.8434, 29, 0, 0.1687, 1];
+    const humanBare = [106.5, 0.02, 7.039, 15.59, 10.6, 0.581, 29, 0, 0, 1], humanShots = [149.5, 0, 6.632, 11.18, 5.69, 0.581, 29, 1.027, 0.003344, 1];
+    const deadly = [20, 0.5, 30, 60, 90, 1, 40, 0, 0, 1];
+    const body = classId => ({ classId, runSpd: 121.2, reach: 40, point: { attack: 7, defence: 54 } });
+    const file = { stamp: 'abc', range: [1, 1], fields, forms: ['bare', 'shots'], bodies: { '49|1|7/54': body(49), '10|1|7/54': body(10) },
+        spots: { '-12_43': { area: 488157, density: 10, species: { [GREMLIN]: { level: 1, count: 10, production: 2400 } } },
+            cut: { area: 488157, density: 10, species: { [DEADLY]: { level: 3, count: 10, production: 2400 } } } },
+        cells: { '49|1|7/54': { '-12_43': { [GREMLIN]: [orc, orc] }, cut: { [DEADLY]: [deadly, deadly] } },
+            '10|1|7/54': { '-12_43': { [GREMLIN]: [humanBare, humanShots] }, cut: { [DEADLY]: [deadly, deadly] } } } };
+    const gameRow = row('s1', 100, 200);
+    const snapshot = { header: { levels: [1, 2], rates: { exp: 1 }, huntTable: { name: 'hunt-1-1-abc.json', stamp: 'abc', range: [1, 1], spots: ['-12_43', 'cut'] } },
+        exp: [0, 1e9], kits: { 51: { 1: [] }, 12: { 1: [] } },
+        hours: { 51: { 1: { classId: 49, shotId: SPIRIT, best: null, bareBest: null, top: [] }, 2: { classId: 49, shotId: SPIRIT, best: gameRow, top: [gameRow] } },
+            12: { 1: { classId: 10, shotId: SPIRIT, best: gameRow, top: [gameRow] } } },
+        speciesYields: { [`${GREMLIN}@1@0`]: { drop: { 57: 4, [DROP]: 0.1 }, spoil: {} }, [`${DEADLY}@1@0`]: { drop: { 57: 9 }, spoil: {} } },
+        yields: { '-12_43@1': { town: 'TownA', drop: { 57: 4, [DROP]: 0.1 }, spoil: {} }, 's1@2': drops },
+        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SPIRIT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        npcOffers: { preset: { [SPIRIT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+        tripHours: { to: { '-12_43': 0.2 }, back: { '-12_43': { TownA: 0.3 } } }, bags: { 51: { slots: 80, maxLoad: 1e6 }, 12: { slots: 80, maxLoad: 1e6 } } };
+    // The walk the game's rule gives at the spot: the measured walk a kill, so one species reads its measured kills.
+    const read = (over = {}) => Run.tableHours({ snapshot, file, name: 'test table', lines: ['51', '12'], keyOf: line => (line === '51' ? '49' : '10'),
+        spoilLevelOf: () => 0, gapFactor: () => 1, walkMs: (density, runSpd, area, reach) => (density === 10 && runSpd === 121.2 && area === 488157 && reach === 40 ? 581 : NaN), ...over });
+    assert.throws(() => read({ file: { ...file, stamp: 'other' } }), /hunt table test table: stamp other, but the snapshot was built with hunt-1-1-abc\.json \(stamp abc\)/, 'another table stamp is refused by name');
+    assert.throws(() => read({ file: { ...file, range: [1, 2] } }), /hunt table test table: levels 1-2, but the snapshot was built with hunt-1-1-abc\.json \(levels 1-1\)/, 'another level range is refused by name');
+    const { cut, ...onlyGremlin } = file.spots;
+    assert.throws(() => read({ file: { ...file, spots: onlyGremlin } }), /hunt table test table: 1 spots, but the snapshot was built with hunt-1-1-abc\.json \(2 spots, not the same set\)/, 'a table of fewer spots (a pick) is refused by name');
+    assert.throws(() => read({ file: { ...file, spots: { ...onlyGremlin, other: cut } } }), /hunt table test table: 2 spots, but the snapshot was built with .* not the same set/, 'a table of as many other spots is refused too');
+    const table = read();
+    assert.deepEqual(table.cannot, { shots: 2, bare: 2 }, 'the spot whose species dies over the limit is cut in both forms for both lines, and counted');
+    assert.equal(snapshot.hours[51][1].best, null, 'the snapshot\'s hours are not edited');
+    assert.equal(table.hours[51][2], snapshot.hours[51][2], 'above the table\'s range the game\'s row stays');
+    const orcHour = table.hours[51][1], humanHour = table.hours[12][1];
+    assert.deepEqual([orcHour.best.spotId, orcHour.bareBest.spotId, orcHour.top.map(held => held.spotId)], ['-12_43', '-12_43', ['-12_43']]);
+    assert.equal(humanHour.bareBest.spotId, '-12_43');
+    const tableView = Engine.viewOf({ ...snapshot, hours: table.hours });
+    // Its walk is 0.581 s a kill at the human's spot, 0.8434 at the orc's: the orc's spot reads the human's walk.
+    // The game's kit readers: no factor at the table's levels, and the game's shot scale has no row there (null).
+    const kitsOf = { spotFactors: () => assert.fail('the table\'s levels read no game kit factor'), shotScale: () => null, stats: { spotUnstated: 0 } };
+    const creation = { range: [1, 1], creation: () => ({}) };
+    const firedBy = {}, diedBy = {};
+    for (const [line, cell, spiritshots] of [['51', orc, { [SPIRIT]: 100 }], ['12', humanBare, {}], ['12', humanBare, { [SPIRIT]: 1000 }]]) {
+        const account = freshBot(line, { shots: spiritshots }), visits = [];
+        const made = Plane.plane({ view: tableView, kitHours: kitsOf, variant: 'table', accounts: [account], table: creation });
+        let held = null;
+        const seen = { ...made, start: context => { const hooks = held = made.start(context); return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ ...done, died: info.died === true }); return done; } }; } };
+        const result = Engine.simulate({ view: tableView, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3, plane: seen });
+        assert.equal(visits[0].main.spot, '-12_43', `line ${line} holds the gremlin spot`);
+        const main = { ...visits[0].main, shots: {} }, hunted = Engine.hunt(main, tableView, 1, () => 0.5, null).delta;
+        const kills = 3600 / (cell[2] + cell[3] + cell[4] + 0.581 / cell[9]);
+        assert.ok(Math.abs(hunted.exp - kills * 29) < 1e-6, `line ${line} hunts bare at its cell's kills (${hunted.exp / 29} vs ${kills})`);
+        assert.equal(result.design.offGrid, 0, 'the creation kit is the measured point');
+        firedBy[`${line}:${Object.keys(spiritshots).length}`] = held.firing(visits[0].main)?.perHour || 0;
+        diedBy[`${line}:${Object.keys(spiritshots).length}`] = visits.filter(visit => visit.died).length;
+    }
+    // The human mystic dies at the form it hunts in: bare (0.02 a kill, some 2 an hour) it dies within 3 h, firing its
+    // spiritshots (1000 last over 6 h; no death a kill) it does not.
+    assert.ok(diedBy['12:0'] > 0, `the bare human mystic dies at its bare hour's deaths (${diedBy['12:0']} deaths)`);
+    assert.equal(diedBy['12:1'], 0, 'firing its spiritshots it dies at its shots hour\'s (none)');
+    const shotsKills = 3600 / (6.632 + 11.18 + 5.69 + 0.581);
+    assert.ok(Math.abs(firedBy['12:1'] - shotsKills * 1.027) < 1e-9, `the human mystic with spiritshots fires its shots cell's count (${firedBy['12:1']})`);
+    assert.ok(Math.abs(humanHour.bareBest.shotless.deaths - 3600 / (7.039 + 15.59 + 10.6 + 0.581) * 0.02) < 1e-9, 'the bare hour carries the bare cell\'s own deaths');
+    assert.equal(humanHour.bareBest.deaths, 0, 'the shots hour its own (none)');
+    // The creation kit is the measured point: a main wearing exactly it (non-empty) is on the grid, one wearing another piece is counted off it.
+    {
+        const worn = Engine.viewOf({ ...snapshot, hours: table.hours, kits: { 51: { 1: [{ slot: 6, selfId: 1001 }] }, 12: { 1: [] } }, items: { ...snapshot.items, 1001: { kind: 'Armor.Chest', npcBuy: 1 } } });
+        const offGrid = measured => {
+            const account = freshBot('51', { held: [1001] });
+            const made = Plane.plane({ view: worn, kitHours: kitsOf, variant: 'table', accounts: [account], table: { range: [1, 1], creation: () => measured } });
+            return Engine.simulate({ view: worn, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 1, seed: 3, plane: made }).design.offGrid;
+        };
+        assert.equal(offGrid({ 6: 1001 }), 0, 'wearing exactly the creation kit counts no main off the grid');
+        assert.equal(offGrid({ 6: 1002 }), 1, 'wearing another piece counts the main off the grid');
+    }
 }
 
 console.log('economy model design: ok');

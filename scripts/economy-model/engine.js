@@ -123,9 +123,9 @@ function bandOf(bands, level) {
 
 const hourOf = (view, main) => view.hours[main.line]?.[main.level] || null;
 // The row of a spot a main may hold at a level: the spot's own hour (inputs.js --spots) when the snapshot has it,
-// else the line's best, top or other row of that spot at the level, else the line's bare best.
-const rowAt = (hour, id) => (hour && String(hour.best?.spotId) === String(id) ? hour.best : hour?.top?.find(row => String(row.spotId) === String(id)) || hour?.others?.find(row => String(row.spotId) === String(id))
-    || (hour && String(hour.bareBest?.spotId) === String(id) ? hour.bareBest : null) || null);
+// else the line's best or bare best, else its top or other row of that spot at the level.
+const rowAt = (hour, id) => (hour && String(hour.best?.spotId) === String(id) ? hour.best : hour && String(hour.bareBest?.spotId) === String(id) ? hour.bareBest
+    : hour?.top?.find(row => String(row.spotId) === String(id)) || hour?.others?.find(row => String(row.spotId) === String(id)) || null);
 const ownRow = (view, line, level, spot) => (spot ? view.spotHours?.[line]?.[level]?.[spot] || rowAt(view.hours[line]?.[level], spot) : null);
 // The town of a spot row at a level (its spot card's), null without one.
 const townOfRow = (view, row, level) => (row ? view.yields[`${row.spotId}@${level}`]?.town || null : null);
@@ -536,11 +536,16 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     const scheduleDeath = (main, now) => {
         if (!deaths) return;
         const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, held = pendingDeath.get(main.index) ?? null;
-        // The row's deaths per hour at the reference kit, times the plane's factor for the kit the main wears (default 1).
-        const rate = row?.deaths * (hooks.deathFactor ? hooks.deathFactor(main) : 1);
-        if (!(rate > 0 && share > 0)) { pendingDeath.set(main.index, null); return; }
-        const roll = mulberry(hash(`${seed}:${main.id}:death:${main.counter}`))();
-        const at = main.since + (-Math.log(1 - roll) / rate) / share;
+        // The deaths per hour of the form it hunts in, as the hunt credits it (firedOf: the form it fires while its held
+        // shots last, then bare; rowIn: a form without its own deaths dies at the row's), at the reference kit, times the
+        // plane's factor for the kit the main wears (default 1).
+        const factor = hooks.deathFactor ? hooks.deathFactor(main) : 1, { lasts, form } = firedOf(view, main, hooks.firing(main));
+        const fired = rowIn(row, form)?.deaths * factor, bare = rowIn(row, 'bare')?.deaths * factor;
+        if (!((fired > 0 || bare > 0) && share > 0)) { pendingDeath.set(main.index, null); return; }
+        const roll = mulberry(hash(`${seed}:${main.id}:death:${main.counter}`))(), draw = -Math.log(1 - roll);
+        const hours = draw <= fired * lasts || fired === bare ? draw / fired : bare > 0 ? lasts + (draw - fired * lasts) / bare : Infinity;
+        if (!Number.isFinite(hours)) { pendingDeath.set(main.index, null); return; }
+        const at = main.since + hours / share;
         const trip = pending.get(main.index);
         if (trip && trip.departs !== null && at > trip.departs) { pendingDeath.set(main.index, null); return; }
         pendingDeath.set(main.index, at);

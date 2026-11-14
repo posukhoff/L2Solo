@@ -17,6 +17,9 @@
 //
 // --spots adds the hours at the spots a save's bots start at (spotHours), so
 // a model run that starts from that save hunts where its bots hunted.
+// --hunt <hunt table file> pairs the snapshot with the model's hunting table
+// (hunt-table.js): its stamp in the header, its species' yields (a design run
+// reads the table's hours through rules/hunt-rows.js).
 //
 // Writes <out>/inputs-<preset>-<revision>-<fingerprint>.json (default
 // tmp/economy-model in the tree): the git revision, "-dirty" with uncommitted
@@ -82,6 +85,7 @@ const NOTES = Object.freeze([
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
     'fallbacks names what the snapshot filled in: noMarketToC the spots with no no-grade market near their centre (tradeTowns.none holds the C town).',
+    'huntTable (with --hunt): the model\'s hunting table (hunt-table.js) the snapshot pairs with, by its file name, stamp, level range and spot set (ids, sorted); a design run reads that file and refuses one of another stamp, range or spot set. speciesYields["<selfId>@<level>@<spoil level>"] is one species\' per-kill yields at the preset (spotYields over that species alone) for a killer of the level, for every species of the table\'s spots at each level of its range and every line\'s Spoil level there; yields holds every such spot at those levels.',
     'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
 ]);
 
@@ -540,7 +544,44 @@ function moreRows(line, levels, hours, scrolls, owners) {
     return { others, range };
 }
 
-function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base = null, spots: save = null } = {}) {
+// The model's hunting table's spots at each level of its range (the spots of
+// the cells of that level's bodies) and the per-kill yields at the preset of
+// each of their species alone, per line Spoil level there (the table's
+// reader prices a row by the species it kills). hunt: { name, file }.
+function huntYields(hunt, lines, spots, owners) {
+    const { Table } = owners, file = hunt.file, atLevel = new Map(), entries = new Map(), speciesYields = {};
+    for (const [body, bySpot] of Object.entries(file.cells)) {
+        const level = Number(body.split('|')[1]);
+        if (!atLevel.has(level)) atLevel.set(level, new Set());
+        Object.keys(bySpot).forEach(spotId => atLevel.get(level).add(spotId));
+    }
+    // A species' composition entry, from the first reward spot that holds it.
+    const entryOf = (selfId, spotId) => {
+        if (!entries.has(selfId)) {
+            const spot = spots.get(spotId);
+            entries.set(selfId, spot ? composition(spot, owners).find(entry => String(entry.npcId) === selfId) || null : null);
+        }
+        return entries.get(selfId);
+    };
+    const pairs = [];
+    for (const [level, levelSpots] of [...atLevel].sort((a, b) => a[0] - b[0])) {
+        const skills = [...new Set(lines.map(line => Table.roleSpoilLevel(line, level)))];
+        for (const spotId of levelSpots) {
+            pairs.push({ spotId, level, spoilSkill: Math.max(...skills) });
+            for (const selfId of Object.keys(file.spots[spotId].species)) {
+                const entry = entryOf(selfId, spotId);
+                if (!entry) continue;
+                for (const skill of skills) {
+                    const key = `${selfId}@${level}@${skill}`;
+                    if (!speciesYields[key]) speciesYields[key] = spotYields([entry], level, skill, owners);
+                }
+            }
+        }
+    }
+    return { speciesYields, pairs, header: { name: hunt.name, stamp: file.stamp, range: file.range, spots: Object.keys(file.spots).sort() } };
+}
+
+function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base = null, spots: save = null, hunt = null } = {}) {
     const owners = gameOwners(), { Table, Data, Index, Enchant, Sell, Rates } = owners;
     if (!x1Offers) { Boot.usePreset('x1'); x1Offers = npcOffers(owners); }
     Boot.usePreset(preset);
@@ -584,6 +625,11 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
                 pairs.set(pair, { spotId: String(row.spotId), level, spoilSkill: Math.max(held?.spoilSkill || 0, skill) });
             }
         }
+    }
+    const table = hunt ? huntYields(hunt, lines || Table.roles(), spots, owners) : null;
+    for (const { spotId, level, spoilSkill } of table?.pairs || []) {
+        const key = `${spotId}@${level}`, held = pairs.get(key);
+        pairs.set(key, { spotId, level, spoilSkill: Math.max(held?.spoilSkill || 0, spoilSkill) });
     }
     const spotRows = save ? spotHours(save, hours, levels, owners, pairs) : null;
     const yields = {}, yieldsDesign = {}, game = DesignIncome.gameRules();
@@ -633,8 +679,8 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const { noMarket, ...trade } = tradeTowns(Object.keys(items).map(Number));
     const fallbacks = { noMarketToC: noMarket };
     return {
-        header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES },
-        hours, spotLevels, kits, yields, yieldsDesign, items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}), bags, gearLadder: { bands, slots, lines: gearLadders }, tradeTowns: trade,
+        header: { schema: SCHEMA, preset, rates: Rates.profile(), levels: [levels[0], levels[1]], quests, notes: NOTES, ...(table ? { huntTable: table.header } : {}) },
+        hours, spotLevels, kits, yields, yieldsDesign, ...(table ? { speciesYields: table.speciesYields } : {}), items, npcOffers: { preset: offers, x1: x1Offers }, ...kept, ...(spotRows ? { spotHours: spotRows } : {}), bags, gearLadder: { bands, slots, lines: gearLadders }, tradeTowns: trade,
         fallbacks, sources: rawSources(owners, ids)
     };
 }
@@ -670,11 +716,13 @@ function build(argv, reads) {
     const owners = gameOwners();
     // NPC prices at x1 ride in every snapshot: the design's NPC prices at every preset.
     const x1Offers = npcOffers(owners), base = staticInputs(owners, rewardSpots());
+    const huntFile = Boot.option(argv, 'hunt', null);
+    const hunt = huntFile && { name: path.basename(huntFile), file: JSON.parse(fs.readFileSync(path.resolve(huntFile), 'utf8')) };
     fs.mkdirSync(out, { recursive: true });
     let first = null;
     for (const preset of presets) {
         const began = Date.now();
-        const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null) });
+        const snapshot = extract({ preset, x1Offers, base, spots: Boot.option(argv, 'spots', null), hunt });
         // The files the extract has loaded or read by now are the ones it
         // used: the stamp a run checks the live game data against.
         const sourceFiles = [...new Set([...Boot.loadedFiles(), ...reads.files()])].sort(), { fingerprint, spotTable, sources } = Boot.dataStamp(sourceFiles);
