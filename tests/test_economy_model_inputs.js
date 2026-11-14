@@ -262,7 +262,7 @@ assert.equal(snapshot.items[1341]?.name, 'Bone Arrow', 'the arrows ride in items
         const baseline = path.join(scratch, 'baseline.json');
         fs.writeFileSync(baseline, '{}');
         const node = args => childProcess.spawnSync(process.execPath, args, { cwd: Boot.root, encoding: 'utf8' });
-        for (const mode of ['design', 'today', 'plain']) {
+        for (const mode of ['today', 'plain']) {
             const run = node(['scripts/economy-model/run.js', '--preset', 'x50', '--mode', mode, '--snapshot', stale, '--fit', baseline, '--cohort', baseline]);
             assert.ok(run.status !== 0 && build.test(run.stderr), `${mode} mode refuses the stale snapshot: ${run.stderr.split('\n').find(text => /Error/.test(text))}`);
         }

@@ -25,7 +25,7 @@ const round = (value, digits = 1) => {
 };
 const ratio = (value, base) => (base ? value / base : 0);
 
-// extraSinks: the design mode's own sinks (warehouse fees); today's ledger has none.
+// extraSinks: a plane's own sinks; today's ledger has none.
 function create({ bands, mains, view, extraSinks = [] }) {
     const bandNames = [...bands.map(([name]) => name), STATION], sinks = [...SINKS, ...extraSinks];
     const byBand = Object.fromEntries(bandNames.map(name => [name, { flows: Object.fromEntries([...FAUCETS, ...sinks].map(kind => [kind, 0])) }]));
@@ -99,7 +99,7 @@ function recordVisit(ledger, main, delta) {
 
 // The hourly report: the money stock, the flows so far and the mains per
 // current stage band. Counters only. held: money the mains do not hold (the
-// design mode's twins).
+// plane's twins).
 function recordHour(ledger, mains, hour, held = 0) {
     const bands = {};
     let money = held;
@@ -110,7 +110,7 @@ function recordHour(ledger, mains, hour, held = 0) {
     ledger.hourly.push({ hour, money, totals: { ...ledger.totals }, bands });
 }
 
-// held: { start, end } money the mains do not hold (the design mode's twins).
+// held: { start, end } money the mains do not hold (a plane's twins).
 function build(ledger, { mains, hours, events, inputs, held = { start: 0, end: 0 } }) {
     const botHours = mains.length * hours;
     const totals = ledger.totals;

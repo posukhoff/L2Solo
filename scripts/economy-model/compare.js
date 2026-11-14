@@ -4,15 +4,15 @@
 // run's start population, fitted on --fit (default the baseline itself: the
 // hunting share and visits per stage band), runs the run's hours and prints
 // two tables.
-//   Shared with the design mode: what both modes take from the same rules
+//   What the model computes from the rules it keeps
 //     (exp, hunt adena, drops by class and grade, shots fired, fares,
 //     arrivals), each with a verdict at its tolerance; a fitted number, a
 //     consequence of the fit (level-ups) and a number with too few real units
 //     are printed without one. Where the real ledger counts only the cold
 //     bots (hunt adena, drops) while the model hunts every main, the real
 //     number is a range, cold to cold plus hot, and the verdict says which end.
-//   Today's mechanisms, imitated coarsely: the flows of mechanisms the design
-//     deletes (fixed buyers and sellers, NPC trade, money growth), printed
+//   Today's mechanisms, imitated coarsely: the flows of mechanisms the target
+//     model has none of (fixed buyers and sellers, NPC trade, money growth), printed
 //     with the reason the model differs, never judged.
 //
 //   node scripts/economy-model/compare.js --baseline <ledger JSON> [--fit <ledger JSON>]
@@ -53,8 +53,7 @@ const footerOf = (baseline, preset) => [
     `WHAT THE SHARED TABLE SAYS: adena, drops and shots per unit of exp at the bots' real spots, over one ${+(baseline.window.hours * 60).toFixed(1)}-minute ${preset} run.`,
     'The hunting share is fitted on this same run\'s exp (in-sample), so it says',
     'nothing about the time bots hunt, and the level-ups follow from the fitted exp. It says nothing about visits (arrivals are fitted),',
-    `longer horizons, today's flows, other presets than ${preset} (no real run there), or what only the design mode adds (the price step, the workshop,`,
-    'the caps, the worth of goods: no baseline).'
+    `longer horizons, today's flows or other presets than ${preset} (no real run there).`
 ];
 
 const pick = (json, at) => at.split('.').reduce((value, name) => value?.[name], json);
@@ -236,7 +235,7 @@ function main(argv) {
     console.log(`COHORT ${cohort.source}: lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}; run ${((Date.now() - began) / 1000).toFixed(1)} s`);
     console.log(`HUNTING HOURS at the mains' own spots ${model.huntHours.ownSpot}, at their line's best ${model.huntHours.bestSpot}`);
     const shared = sharedRows(baseline, model, snapshot.items), today = todayRows(baseline, model);
-    printShared(shared, `SHARED WITH THE DESIGN MODE: today mode against ${baselineFile}`);
+    printShared(shared, `THE RULES THE MODEL KEEPS: today mode against ${baselineFile}`);
     printToday(today, 'TODAY\'S MECHANISMS, IMITATED COARSELY, NOT A VALIDATION (baseline, model, ratio, why they differ)');
     console.log(`  model counters: ${Object.entries(model.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
     const results = { baseline: baselineFile, shared, today, model };

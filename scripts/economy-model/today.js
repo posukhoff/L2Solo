@@ -50,8 +50,7 @@ function nextArrival(main, { event, now, pending, rate, roll }) {
     return now + (event === 'start' ? roll : 1) / visits;
 }
 
-// The run's hunter in today's and the plain mode (the design mode's is its
-// plane): what a main fires as it hunts and its worn kit's kills, the two
+// The run's hunter in today's and the plain mode: what a main fires as it hunts and its worn kit's kills, the two
 // answers the engine's one hunt reads. firing(main): the hour's shot at the
 // grade of the weapon in hand (shotOf) at the shots its spot row's hour of
 // that kind fires (shotsPerHour: times the worn weapon's count per action,
@@ -171,7 +170,7 @@ function visit(main, view, context = {}) {
     return { main: { ...main, money, bag: {}, shots, kit, weapon }, delta };
 }
 
-// Today's plane (the engine's plane contract, as design.js's): no sinks
+// Today's plane (the engine's plane contract): no sinks
 // or events of its own and no money apart from the mains; a main fires and
 // kills as the hunter answers, visits by today's visit and comes to town by
 // nextArrival (the fitted periodic rule).
