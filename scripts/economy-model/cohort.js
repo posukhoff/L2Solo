@@ -198,16 +198,16 @@ function weightedLines(snapshot) {
 // The one account builder of the cohorts built from the class weights alone:
 // count accounts, each line drawn among lines by the class weights from
 // random, then its level by levelOf(index, random) (called after the line's
-// draw), at the line's class of that level, holding moneyOf(level), no shots
-// and the kit kitOf(line, level, classId) gives ([{ selfId, slot, amount,
+// draw), at the line's class of that level, holding moneyOf(level), the shots
+// shotsOf(classId) gives ({ selfId: count }; none by default) and the kit kitOf(line, level, classId) gives ([{ selfId, slot, amount,
 // equipped }]): the equipped pieces worn in their slots, every piece in the bag.
-function accountsOf({ count, random, lines, levelOf, moneyOf, kitOf }, snapshot) {
+function accountsOf({ count, random, lines, levelOf, moneyOf, kitOf, shotsOf = () => ({}) }, snapshot) {
     const accounts = [], types = {};
     for (let i = 0; i < count; i++) {
         const line = weightedPick(lines, random), level = levelOf(i, random), classId = snapshot.hours[line][level]?.classId ?? Number(line);
         const kit = kitOf(line, level, classId);
         const account = { id: i + 1, station: false, classId, line, level,
-            exp: snapshot.exp[level - 1], money: moneyOf(level), spot: null, shots: {}, held: kit.map(piece => piece.selfId),
+            exp: snapshot.exp[level - 1], money: moneyOf(level), spot: null, shots: shotsOf(classId), held: kit.map(piece => piece.selfId),
             worn: Object.fromEntries(kit.filter(piece => piece.equipped).map(piece => [piece.slot, piece.selfId])) };
         // The game's own persona generator, its type shares counted over the cohort so far.
         const persona = BotPersona.generate({ characterId: account.id, classId: account.classId, stats: { generatedIndex: i } }, { counts: types, total: count });
@@ -232,10 +232,12 @@ function synthetic({ count, low, high, seed = 1 }, snapshot) {
 // beneficiary. Its line is drawn by the model's class weights (weights.js)
 // among every line but the dwarf's; it starts at level 1 with 0 exp in its
 // line's base class (its line's class below 20: the race's fighter or
-// mystic), with 0 adena (C4: Lisvus Other.properties StartingAdena = 0), no
-// shots and the game's character-creation kit of that class, worn as a new
-// character wears it (StarterItemCatalog.starterRows, the game's one rule for
-// players and bots). Needs the game's data (the hunt tables' boot). A line
+// mystic), with 0 adena (C4: Lisvus Other.properties StartingAdena = 0), the
+// game's starter shots of its class (ShotStock.starterPlanFor: the C4 tutorial
+// reward, 600 Soulshots or 300 Spiritshots for Beginners by the class's kind,
+// which every generated bot gets at creation) and the game's
+// character-creation kit of that class, worn as a new character wears it
+// (StarterItemCatalog.starterRows, the game's one rule for players and bots). Needs the game's data (the hunt tables' boot). A line
 // without its level-1 class in the snapshot throws: no class to start in.
 function fresh({ count, seed = 1 }, snapshot) {
     boot();
@@ -245,7 +247,9 @@ function fresh({ count, seed = 1 }, snapshot) {
     const lines = weighted.filter(line => snapshot.hours[line][1].classId !== DWARF_FIGHTER);
     const kitOf = (line, level, classId) => StarterItemCatalog.starterRows(Data.newbieItems, classId, Data.items)
         .map(row => ({ selfId: Number(row.selfId), slot: row.slot, amount: Number(row.amount) || 1, equipped: row.equipped }));
-    const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), lines, levelOf: () => 1, moneyOf: () => 0, kitOf }, snapshot);
+    const ShotStock = invoke('GameServer/Inventory/ShotStock');
+    const shotsOf = classId => { const plan = ShotStock.starterPlanFor(classId); return { [plan.selfId]: plan.amount }; };
+    const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), lines, levelOf: () => 1, moneyOf: () => 0, kitOf, shotsOf }, snapshot);
     return { accounts, source: `fresh ${count} accounts at level 1, beneficiary lines by class weights, creation kits`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 

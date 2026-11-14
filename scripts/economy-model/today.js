@@ -17,6 +17,7 @@
 // Crafting is not imitated: today's crafts are a few per cent of the shots
 // fired and no flow of the ledger depends on them.
 const Engine = require('./engine');
+const BeginnerShots = require('../../src/GameServer/Items/C4BeginnerShots');
 const KitHours = require('./kit-hours');
 const { STAGE_BANDS } = require('../economy/ledger-rules');
 
@@ -55,6 +56,7 @@ function nextArrival(main, { event, now, pending, rate, roll }) {
 // grade of the weapon in hand (shotOf) at the shots its spot row's hour of
 // that kind fires (shotsPerHour: times the worn weapon's count per action,
 // scaleOf(main, row, form), and the worn kit's shots, factorsOf(main)[form]);
+// beginner: the beginner shot that charges it (Engine.beginnerOf, 0 for none);
 // null where the hour fires no shot or that count is 0. kills(main): per form
 // the worn kit's kills over the reference kit's (factorsOf(main)[form].kills;
 // 1 unstated). factorsOf null: every main hunts the row's own kit (the plain
@@ -70,7 +72,7 @@ function hunter(view, factorsOf = null, scaleOf = null) {
         if (row && hour?.shotId) {
             const id = Engine.shotOf(view, main, hour), form = Engine.formOf(view, id);
             const perHour = Engine.shotsPerHour(row, form, scaleOf ? scaleOf(main, row, form) : 1, factors?.[form]);
-            firing = perHour > 0 ? { id, perHour } : null;
+            firing = perHour > 0 ? { id, perHour, beginner: Engine.beginnerOf(view, id) } : null;
         }
         const kills = Object.fromEntries(['bare', 'shots', 'blessed'].map(form => [form, factors?.[form]?.kills ?? 1]));
         const answer = { kit: main.kit, weapon: main.weapon, level: main.level, row, firing, kills };
@@ -82,11 +84,12 @@ function hunter(view, factorsOf = null, scaleOf = null) {
 
 // The main's errands in town, in its wallet's order: the shot restock (of
 // the shot it fires at its shots an hour, context.firing: the run's hunter's
-// answer; none firing none), then the kit plan's pieces it does not wear, by slot.
+// answer, held with the beginner shots that charge it, Engine.heldOf; none
+// firing none), then the kit plan's pieces it does not wear, by slot.
 function errands(main, view, context) {
     const out = [], firing = context.firing;
     if (firing) {
-        const held = main.shots[firing.id] || 0;
+        const held = Engine.heldOf(main, firing);
         const target = Math.ceil(firing.perHour * Math.max(SHOT_LINE_HOURS, context.outingHours || 0));
         if (held < firing.perHour * SHOT_LINE_HOURS && target > held) out.push({ kind: 'shots', id: firing.id, amount: target - held });
     }
@@ -98,7 +101,8 @@ function errands(main, view, context) {
 
 // A visit: the main arrives in its spot's town, sells its bag (to a fixed
 // buyer of the town when one buys the item, else to the NPC), sells shots of
-// a grade it no longer fires to the NPC, then runs its errands where it
+// a grade it no longer fires to the NPC (never a restricted item: the beginner
+// shots, BeginnerShots.isRestricted, stay), then runs its errands where it
 // stands; an errand nobody sells here takes it by gatekeeper to the nearest
 // town that sells it (one such hop per visit), where it runs what it can.
 function visit(main, view, context = {}) {
@@ -124,7 +128,7 @@ function visit(main, view, context = {}) {
     }
     const shots = {}, firing = Engine.shotOf(view, main, hour);
     for (const [key, count] of Object.entries(main.shots)) {
-        if (Number(key) === firing || !count) { if (count) shots[key] = count; continue; }
+        if (Number(key) === firing || BeginnerShots.isRestricted(key) || !count) { if (count) shots[key] = count; continue; }
         if (sellToNpc(Number(key), count)) delta.shotsSoldNpc += count; else delta.unsold += count;
     }
     const kit = { ...main.kit };

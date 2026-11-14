@@ -332,6 +332,21 @@ assert.equal(atOwn.counters.spoilUnyielded, 0, 'no spoil loot, nothing lost');
     assert.deepEqual(levels, [[2, 2, 100], [10, 3, 300]], 'each level read once, at the hour its hunted exp reaches it, with that exp');
 }
 
+// A worn two-handed weapon is carried in the slot it is worn in: a fresh orc
+// fighter's Training Gloves (slot 14), where its line's level kit names a
+// one-handed weapon (slot 7) it does not hold, are worn in 14 and read there
+// by the kit factors (kitInHand); while the kit holds a weapon of its own the
+// worn one does not take a second hand.
+{
+    const KitHours = require('../scripts/economy-model/kit-hours');
+    const gloved = { ...snapshot, items: { ...snapshot.items, 2368: { kind: 'Weapon.DualFist', grade: 'NONE', ref: 138, npcBuy: 69 } }, gearLadder: { slots: {} } };
+    const orc = Engine.mainOf({ ...accounts[0], held: [2368], worn: { 14: 2368 } }, 0, Engine.viewOf(gloved), bands);
+    assert.deepEqual([orc.kit, orc.weapon], [{ 7: 0, 14: 2368 }, 2368], 'the gloves are worn in slot 14 and are the weapon in hand');
+    assert.deepEqual(KitHours.kitInHand(gloved, orc), { 7: 0, 14: 2368 }, 'the kit factors read the gloves in slot 14');
+    const armed = Engine.mainOf({ ...accounts[0], held: [100, 2368], worn: { 14: 2368 } }, 0, Engine.viewOf(gloved), bands);
+    assert.deepEqual([armed.kit, armed.weapon], [{ 7: 100 }, 100], 'the kit\'s own weapon keeps the hands');
+}
+
 // The hunt rule is pure: the main it is given is left as it was.
 const main = Engine.mainOf(accounts[0], 0, Engine.viewOf(snapshot), bands);
 const frozen = JSON.stringify(main);

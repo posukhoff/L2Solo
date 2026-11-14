@@ -106,7 +106,10 @@ assert.deepEqual(simulate(seededAccount), simulate([plain]), 'twins, persona and
 
 // A fresh world: every account a new character at level 1 on a beneficiary
 // line, in its line's base class, wearing the game's character-creation kit,
-// with 0 adena and no shots. The game's lines and their classes below 20.
+// with 0 adena and the game's starter shots of its class (the C4 tutorial
+// reward every generated bot gets at creation: 600 Soulshots for Beginners for
+// a fighter, 300 Spiritshots for Beginners for a caster). The game's lines and
+// their classes below 20.
 const Boot = require('../scripts/economy-model/boot');
 const Data = Boot.boot('x50'), Table = invoke('GameServer/Bot/AI/SpotValueTable');
 const freshSnapshot = { hours: Object.fromEntries(Table.roles().map(line => [line, { 1: { classId: Table.roleClass(line, 1) } }])),
@@ -116,8 +119,10 @@ assert.throws(() => Cohort.fresh({ count: 1, seed: 1 }, { ...freshSnapshot, hour
 const COUNT = 4000;
 const freshWorld = Cohort.fresh({ count: COUNT, seed: 1 }, freshSnapshot).accounts;
 const creation = new Map(Data.newbieItems.map(row => [row.classId, row.items]));
+const ShotStock = invoke('GameServer/Inventory/ShotStock');
 for (const account of freshWorld) {
-    assert.deepEqual([account.level, account.exp, account.money, account.shots], [1, 0, 0, {}], `account ${account.id} starts at level 1 with 0 exp, 0 adena and no shots`);
+    const starter = ShotStock.planFor({ classId: account.classId }).kind === 'spiritshot' ? { 5790: 300 } : { 5789: 600 };
+    assert.deepEqual([account.level, account.exp, account.money, account.shots], [1, 0, 0, starter], `account ${account.id} starts at level 1 with 0 exp, 0 adena and its class's beginner shots`);
     assert.equal(account.classId, Table.roleClass(account.line, 1), `account ${account.id} starts in its line's base class`);
     const items = creation.get(account.classId);
     assert.deepEqual(Object.values(account.worn).sort((a, b) => a - b), items.filter(item => item.equipped).map(item => item.selfId).sort((a, b) => a - b), `account ${account.id} wears its class's equipped creation items`);
@@ -125,6 +130,9 @@ for (const account of freshWorld) {
 }
 // An orc fighter wears its Training Gloves in both hands and carries the Squire's Sword in its bag.
 const orc = freshWorld.find(account => account.classId === 44);
+// A human fighter fires soulshots and a human mystic spiritshots: each starts with its kind's beginner shots.
+assert.deepEqual(freshWorld.find(account => account.classId === 0).shots, { 5789: 600 }, 'a fresh fighter starts with 600 Soulshots for Beginners');
+assert.deepEqual(freshWorld.find(account => account.classId === 10).shots, { 5790: 300 }, 'a fresh caster starts with 300 Spiritshots for Beginners');
 assert.ok(orc && orc.worn[14] === 2368 && !Object.values(orc.worn).includes(2369) && orc.held.includes(2369), 'an orc fighter wears its gloves and carries its sword');
 const freshLines = new Set(freshWorld.map(account => account.line));
 assert.ok(!freshWorld.some(account => account.classId === 53), 'no account starts on the dwarf line');
