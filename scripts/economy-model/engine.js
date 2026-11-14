@@ -22,8 +22,7 @@
 //                 each committed event that changes the main (a visit, a
 //                 level-up), its answer is the one pending arrival (replaced,
 //                 or dropped by null): today's and the plain mode's plane
-//                 answer by the fitted periodic rule, the design mode's by
-//                 the situations that send a bot to town.
+//                 answer by the fitted periodic rule.
 //                 A bot is in one state at a time: an answer { at, away }
 //                 leaves the spot at at - away (the hunt stops there and the
 //                 way to town is not hunted), and an arrival it has
@@ -37,11 +36,9 @@
 // Every mode hunts one way: a main fires the shots its plane names (firing)
 // while it holds them, then hunts the hour without shots, at the worn kit's
 // kill factor (kills), at the spot its occupation or save chose. The run's
-// plane (today.js plane() for today's and the plain mode, design.js plane()
-// for the design mode) owns what differs between the modes: its sinks, the
-// visit, the arrival rule, what a main fires, its own events (the design's
-// account plane: crafter twins woken by account_wake and batch_done) and the
-// money it holds apart from the mains.
+// plane (today.js plane() for today's and the plain mode) owns what differs
+// between the modes: its sinks, the visit, the arrival rule, what a main
+// fires, its own events and the money it holds apart from the mains.
 //
 // hunt and visit are pure: they take a main and the view and return the new
 // main with the flows it caused; the engine commits both. Rolls are seeded per
@@ -65,7 +62,7 @@ const isWeapon = item => /^Weapon/.test(item?.kind || '');
 // { buy: { town: { item: price } }, sell: { town: { item: price } } }, the
 // fixed stores a mode adds (none by default). options.npcPrices: 'preset' (the
 // game's NPC prices at the snapshot's rate) or 'x1'. options.yields: 'design'
-// hunts the per-kill yields at the design's rates (yieldsDesign), else the
+// hunts the per-kill yields at the design's rates (the snapshot's yieldsDesign), else the
 // snapshot's (today's rates): huntYields, the one table a hunt reads.
 function viewOf(snapshot, options = {}) {
     const npcTable = snapshot.npcOffers[options.npcPrices || 'preset'];
@@ -83,7 +80,7 @@ function viewOf(snapshot, options = {}) {
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(), rowItems: new Map(),
         tripHours: snapshot.tripHours || null,
-        spotHours: snapshot.spotHours?.rows || null, yieldsDesign: snapshot.yieldsDesign || null, spotLevels: snapshot.spotLevels || null,
+        spotHours: snapshot.spotHours?.rows || null, spotLevels: snapshot.spotLevels || null,
         huntYields: (options.yields === 'design' ? snapshot.yieldsDesign : snapshot.yields) || null,
         blessedShots: new Set(snapshot.shotFamilies?.ids?.[BLESSED_FAMILY] || [])
     };
@@ -112,8 +109,8 @@ function bandOf(bands, level) {
 const hourOf = (view, main) => view.hours[main.line]?.[main.level] || null;
 const ownRow = (view, line, level, spot) => (spot ? view.spotHours?.[line]?.[level]?.[spot] || null : null);
 
-// The spot row a main hunts: the spot its occupation chose (the design
-// mode's, among its line's top spots at its level or the other rows it may
+// The spot row a main hunts: the spot its occupation chose (a
+// plane's, among its line's top spots at its level or the other rows it may
 // hold there), else its own spot's hour, else its line's best.
 function spotRowOf(view, main) {
     const hour = main.occupied ? hourOf(view, main) : null, chosen = row => String(row.spotId) === main.occupied;
@@ -161,7 +158,7 @@ function formOf(view, shotId) {
 // it, the row itself where it has no such hour (no hour without shots: the
 // line fights nothing there without shots; no blessed hour: the spot table
 // measured no such fight there, where a main fires its plain shot and the
-// design plane's firing offers no Blessed Spiritshots).
+// plane's firing offers no Blessed Spiritshots).
 function rowIn(row, form) {
     const over = form === 'bare' ? row?.shotless : form === 'blessed' ? row?.blessed : null;
     return over ? { ...row, ...over } : row;
@@ -381,8 +378,8 @@ function heap() {
 }
 
 // A run: accounts (cohort.js), the view, the stage bands [[name, fromLevel]],
-// per band { huntShare, ... } and the run's plane (today.js plane() or
-// design.js plane()): { sinks, start(context) }. sinks: the plane's own
+// per band { huntShare, ... } and the run's plane (today.js plane()):
+// { sinks, start(context) }. sinks: the plane's own
 // ledger sinks. start({ view, mains, ledger, push, seed, rateOf, rearrive,
 // commit }) returns the hooks the run calls:
 //   nextArrival(main, view)  the time of the main's next arrival in town ({ at, away }: away, the hours of the way
@@ -411,7 +408,7 @@ function heap() {
 // now, replaces it by change(main) (a deal met with it while it hunts) and
 // asks again. Returns the model ledger.
 function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProgress = null, inputs = {} }) {
-    if (!plane) throw new Error('simulate needs a plane (today.js plane() or design.js plane())');
+    if (!plane) throw new Error('simulate needs a plane (today.js plane())');
     const rateOf = band => rates[band] || rates.default;
     const mains = accounts.map((account, index) => mainOf(account, index, view, bands));
     const ledger = Ledger.create({ bands, mains, view, extraSinks: plane.sinks });

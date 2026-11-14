@@ -53,8 +53,7 @@ const footerOf = (baseline, preset) => [
     `WHAT THE SHARED TABLE SAYS: adena, drops and shots per unit of exp at the bots' real spots, over one ${+(baseline.window.hours * 60).toFixed(1)}-minute ${preset} run.`,
     'The hunting share is fitted on this same run\'s exp (in-sample), so it says',
     'nothing about the time bots hunt, and the level-ups follow from the fitted exp. It says nothing about visits (arrivals are fitted),',
-    `longer horizons, today's flows, other presets than ${preset} (no real run there), or what only the design mode adds (the price step, the workshop,`,
-    'the caps, the worth of goods: no baseline).'
+    `longer horizons, today's flows or other presets than ${preset} (no real run there).`
 ];
 
 const pick = (json, at) => at.split('.').reduce((value, name) => value?.[name], json);

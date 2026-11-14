@@ -81,8 +81,8 @@ function kitInHand(snapshot, main) {
 // class's soulshot; a spiritshot class's Spiritshot and Blessed
 // Spiritshot; a kind the anchor has no price for is left out) the hour gross of shots (gross) and the shots it fires an
 // hour (units) at the worn weapon's own count per action; empty for a
-// weapon that fires none or bare hands. A decision prices the shots
-// (rules/worth firing). A worn bow spends one arrow per attack: its hour
+// weapon that fires none or bare hands. A decision prices the shots.
+// A worn bow spends one arrow per attack: its hour
 // states per option the arrows it spends, { id: the arrow of the bow's
 // grade, units: an hour }, on each shot kind (arrows) and for the hour
 // firing none (noneArrows, beside none when none is stated); `arrows: null`
