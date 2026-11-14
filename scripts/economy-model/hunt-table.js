@@ -9,7 +9,9 @@
 // revision (stamp) and level range:
 //   node scripts/economy-model/hunt-table.js --levels 1-19 [--children 7] [--hours 2]
 //        [--spots id,id] [--keys k,k] [--out file]   (a pick: --out required)
-//        [--catalogue file]   (a saved { spots, profiles } catalogue; default: built now, geodata required)
+//        [--catalogue file]   (a saved { spots, profiles } catalogue, --out required; default: built now, geodata required)
+// The hunts' results go to <out>.parts/ as they come, by stamp: a build run
+// again on the same tree skips the hunts already there.
 require('../../src/Global');
 const childProcess = require('child_process');
 const crypto = require('crypto');
@@ -17,6 +19,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Boot = require('./boot');
+const Cohort = require('./cohort');
+const LIMITS = require('./design/limits');
+const HuntRows = require('./rules/hunt-rows');
 const Generator = require('../generate-spot-table');
 const Lift = require('./hunt-lift');
 const Weights = require('./weights');
@@ -24,26 +29,28 @@ const Weights = require('./weights');
 const ROOT = path.resolve(__dirname, '../..');
 // A cell, per form [bare, shots]: kills an hour, then per kill: deaths, the
 // fight without the walk (s), the rest it calls for (s), the other time of the
-// hunt (death recovery, waits; s), the walk to the mobs (s), exp (x1, before
-// the level-gap penalty), shots, potions, and the mobs per engagement (pull).
+// hunt (death recovery, waits; s), the walk to the mobs (s), exp (x1 and before
+// the C4 level-gap penalty: the generator's simulation takes it out of the cold
+// kill, the reader applies it per species), shots, potions, and the mobs per
+// engagement (pull).
 // fight + rest + other + walk = the hunt's time per kill, so species combine
 // on time. A cell without a kill has kills 0 and every per-kill field null.
 const FIELDS = Object.freeze(['kills', 'deaths', 'fight', 'rest', 'other', 'walk', 'exp', 'shots', 'potions', 'pull']);
 const FORMS = Object.freeze(['bare', 'shots']);
-// Species level minus bot level: below -9 the mob is deep blue (the reader's
-// world rule); above +7 every swept cell was a death per kill or worse.
+// Species level minus bot level, our edges: from a gap of 9 below the mob is
+// deep blue (ProgressionRates: its drops fall, the reader's world rule), so -9
+// is the last gap kept; above +7 every swept cell was a death per kill or worse.
 const WINDOW = Object.freeze([-9, 7]);
 const POINT_FIELDS = Object.freeze(['attack', 'defence']);
-const REST_RULE = 'fight when the vitals cover one expected fight with the mob (survival ratio 1), or at a whole bar';
+const REST_RULE = `fight when HP above the potion line and MP cover ${LIMITS.FIGHT_COVER.value} expected fight with the mob, or at a whole bar`;
 const START = 1_750_000_000_000;
-const DWARF_FIGHTER = 53;
 // The combination check: per body and form this many spots the reader cuts no
 // species of (all in the window, each with a kill and within the limit),
 // hunted whole.
 const CHECK_SPOTS = 3;
-// The combat inputs the stamp covers (their live git tree).
-const STAMP_PATHS = Object.freeze(['src', 'data', 'scripts/generate-spot-table.js', 'scripts/economy-model/hunt-lift.js',
-    'scripts/economy-model/hunt-table.js']);
+// The files the stamp adds to the spot table generator's inputs.
+const STAMP_FILES = Object.freeze(['src/GameServer/Knowledge/StarterItemCatalog.js', 'scripts/economy-model/hunt-lift.js',
+    'scripts/economy-model/hunt-table.js', 'scripts/economy-model/design/limits.js', 'scripts/geodata-release.json', 'scripts/hunt-tables/common.js']);
 
 const round = value => value === 0 ? 0 : Number(value.toPrecision(4));
 
@@ -119,10 +126,9 @@ function pointOf(profile, classId) {
         defence: Math.round(gear.pDef * CCP.statMultiplier(null, 'pDefMul', START, sets) + CCP.statAdd(null, 'pDefAdd', START, sets)) };
 }
 
-// The lines of the fresh world: weighted, without the dwarf fighter (no dwarf is created).
+// The lines of the fresh world (cohort's rule).
 function freshLines() {
-    return Object.keys(Weights.CLASS_WEIGHTS).filter(line => Weights.CLASS_WEIGHTS[line] > 0 && Generator.classFor(line, 1) !== DWARF_FIGHTER)
-        .sort((a, b) => Number(a) - Number(b));
+    return Cohort.freshLines(Object.keys(Weights.CLASS_WEIGHTS), line => Generator.classFor(line, 1)).sort((a, b) => Number(a) - Number(b));
 }
 
 // The kit keys of a level: key -> { line, classId, point, lines }. Lines that
@@ -147,11 +153,11 @@ function keysAt(level, lines, onlyKeys) {
 }
 
 // Where a line's creation kit wields another weapon type than the best rung of
-// its gear ladder (the hunt tables' gear table, the rungs of the level's grade
-// and below): the stat grid built later starts from the ladder's type there.
+// its gear ladder (the snapshot's reading of the hunt tables' gear table,
+// inputs.ladderRungs): the stat grid built later starts from the ladder's type there.
 // [{ line, from, to, creation, ladder, types }] by line and level band.
 function weaponTypes(lines, from, to) {
-    const Mask = invoke('GameServer/Skills/WeaponMask'), Grades = require('../../src/GameServer/Bot/AI/GearGradeRule');
+    const Mask = invoke('GameServer/Skills/WeaponMask'), Grades = require('../../src/GameServer/Bot/AI/GearGradeRule'), Inputs = require('./inputs');
     const Table = invoke('GameServer/Bot/AI/SpotValueTable');
     const gear = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/Bots/hunt/gear.json'), 'utf8'));
     const items = new Map(gear.items.map(row => [Number(row[0]), row]));
@@ -160,60 +166,24 @@ function weaponTypes(lines, from, to) {
         let band = null;
         for (let level = from; level <= to; level++) {
             const creation = creationBody(line, level).profile.equipment.weaponKind || 'none';
-            const rank = Grades.rankOf(Grades.gradeForLevel(level));
-            const row = gear.classes.find(held => Number(held.classId) === Number(Table.roleClass(line, level)));
-            const rungs = (row?.slots.weapon || []).map(([selfId]) => items.get(Number(selfId))).filter(item => item && Grades.rankOf(item[4]) <= rank);
+            const ladder = Inputs.ladderRungs(gear, Table.roleClass(line, level), Grades.gradeForLevel(level), Grades);
+            const rungs = (ladder?.weapon || []).map(selfId => items.get(selfId));
             const kinds = [...new Set(rungs.map(item => Mask.weaponType(item[2], item[3])))];
-            const ladder = kinds[0] || 'none', types = kinds.join(',');
-            if (band && band.creation === creation && band.ladder === ladder && band.types === types) band.to = level;
-            else out.push(band = { line, from: level, to: level, creation, ladder, types });
+            const best = kinds[0] || 'none', types = kinds.join(',');
+            if (band && band.creation === creation && band.ladder === best && band.types === types) band.to = level;
+            else out.push(band = { line, from: level, to: level, creation, ladder: best, types });
         }
     }
     return out.filter(band => band.creation !== band.ladder);
 }
 
-// The model's combination of species on time for an admitted set of a spot:
-// species drawn by their density share p, the time per kill the share-weighted
-// fight, rest and other time plus the walk at the set's density over its pull
-// (walkMs: BackgroundResolver.soloWalkMs, the game's rule), kills an hour at
-// most the set's production. cells: selfId -> [bare, shots]; admitted: selfIds.
-function combine({ spot, cells, body, form, admitted, walkMs }) {
-    const total = Object.values(spot.species).reduce((sum, held) => sum + held.count, 0);
-    let count = 0, production = 0, capped = true;
-    for (const selfId of admitted) {
-        count += spot.species[selfId].count;
-        if (spot.species[selfId].production === null) capped = false;
-        else production += spot.species[selfId].production;
-    }
-    if (!count) return null;
-    const at = Object.fromEntries(FIELDS.map((field, index) => [field, index]));
-    let perKill = 0, deaths = 0, pull = 0;
-    for (const selfId of admitted) {
-        const share = spot.species[selfId].count / count, cell = cells[selfId][FORMS.indexOf(form)];
-        perKill += share * (cell[at.fight] + cell[at.rest] + cell[at.other]);
-        deaths += share * cell[at.deaths];
-        pull += share * cell[at.pull];
-    }
-    perKill += walkMs(spot.density * count / total, body.runSpd, spot.area, body.reach) / 1000 / pull;
-    const kills = 3600 / perKill;
-    return { kills: capped ? Math.min(kills, production) : kills, deaths };
-}
-
-// The live tree's combat inputs: the git tree ids of STAMP_PATHS over a copy of
-// the index with the working files added (edits count, HEAD does not).
+// The table's combat inputs as they are now: the spot table generator's own
+// (TableFingerprint 'spot': the hunt's code and data) and what this table adds
+// (the creation kit, the lift and its limits row, this builder, the geodata
+// release and the hunt tables' common code).
 function stamp() {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hunt-stamp-'));
-    try {
-        const git = (args, env = {}) => childProcess.execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ...env } }).trim();
-        const index = path.join(dir, 'index');
-        fs.copyFileSync(path.resolve(ROOT, git(['rev-parse', '--git-path', 'index'])), index);
-        git(['add', '-A', '--', ...STAMP_PATHS], { GIT_INDEX_FILE: index });
-        const tree = git(['write-tree'], { GIT_INDEX_FILE: index });
-        const ids = STAMP_PATHS.map(entry => `${entry} ${git(['rev-parse', `${tree}:${entry}`])}`);
-        return crypto.createHash('sha256').update(ids.join('\n')).digest('hex').slice(0, 12);
-    } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-    }
+    const TableFingerprint = invoke('GameServer/Bot/AI/TableFingerprint');
+    return crypto.createHash('sha256').update(`${TableFingerprint.compute('spot').hash}\n${Boot.sourcesHash(STAMP_FILES)}`).digest('hex').slice(0, 12);
 }
 
 // The server's spot catalogue, saved for the children; built on the geodata
@@ -224,6 +194,8 @@ function saveCatalogue(file) {
     fs.writeFileSync(file, JSON.stringify({ spots: built.spots, profiles: built.profiles }));
     return file;
 }
+
+const taskKey = task => `${task.body}|${task.spotId}|${task.selfId}|${task.form}`;
 
 function plan({ profiles, from, to, lines, onlyKeys, onlySpots }) {
     const tasks = [], bodies = {}, hunters = {}, spots = {}, pick = onlySpots ? profiles.filter(spot => onlySpots.includes(String(spot.id))) : profiles;
@@ -241,7 +213,7 @@ function plan({ profiles, from, to, lines, onlyKeys, onlySpots }) {
             }
         }
     }
-    tasks.forEach((task, index) => { task.i = index; });
+    for (const task of tasks) task.k = taskKey(task);
     return { tasks, bodies, hunters, spots };
 }
 
@@ -258,46 +230,65 @@ function checkTasks({ cells, spots, hunters, limit }) {
             tasks.push({ body, ...hunters[body], spotId, selfId: 0, form });
         }
     }
-    tasks.forEach((task, index) => { task.i = index; });
+    for (const task of tasks) task.k = taskKey(task);
     return tasks;
 }
 
-// A child: its share of the tasks (every n-th), one result line each.
-function runChild([tasksFile, shard, n, outFile, catalogueFile, hours]) {
+// A child: its share of the tasks (every n-th), one result line each, appended
+// to its parts file as it comes.
+function runChild([tasksFile, shard, n, partsFile, catalogueFile, hours]) {
     Generator.loadSimulation(catalogueFile);
     const profiles = new Map(JSON.parse(fs.readFileSync(catalogueFile, 'utf8')).profiles.map(spot => [String(spot.id), spot]));
     const tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8')).filter((task, index) => index % Number(n) === Number(shard));
-    const out = fs.openSync(outFile, 'w');
+    const out = fs.openSync(partsFile, 'a');
     Lift.lift(true);
     for (const task of tasks) {
         const spot = profiles.get(task.spotId), started = Date.now();
         const sum = Generator.hunt(task.selfId ? speciesSpot(spot, task.selfId) : spot, task.line, task.level, task.form, Number(hours),
             undefined, creationKit(task.classId), task.classId);
-        fs.writeSync(out, `${JSON.stringify({ i: task.i, cell: cellOf(sum, Number(hours)), runSpd: sum.runSpd, reach: sum.reach, ms: Date.now() - started })}\n`);
+        fs.writeSync(out, `${JSON.stringify({ k: task.k, cell: cellOf(sum, Number(hours)), runSpd: sum.runSpd, reach: sum.reach, ms: Date.now() - started })}\n`);
     }
     fs.closeSync(out);
     Lift.lift(false);
 }
 
-function runChildren(dir, tasks, children, catalogueFile, hours) {
+function runChildren({ dir, tasks, children, catalogueFile, hours, parts, prefix }) {
     const tasksFile = path.join(dir, 'tasks.json');
     fs.writeFileSync(tasksFile, JSON.stringify(tasks));
     const n = Math.max(1, Math.min(children, tasks.length));
-    const runs = Array.from({ length: n }, (_, shard) => new Promise((resolve, reject) => {
-        const outFile = path.join(dir, `results-${shard}.jsonl`);
-        const child = childProcess.fork(__filename, ['child', tasksFile, String(shard), String(n), outFile, catalogueFile, String(hours)],
+    return Promise.all(Array.from({ length: n }, (_, shard) => new Promise((resolve, reject) => {
+        const child = childProcess.fork(__filename, ['child', tasksFile, String(shard), String(n), path.join(parts, `${prefix}-${shard}.jsonl`), catalogueFile, String(hours)],
             { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
         child.on('error', reject);
-        child.on('exit', code => code === 0 ? resolve(outFile) : reject(new Error(`hunt table child ${shard} exited ${code}`)));
-    }));
-    return Promise.all(runs).then(files => files.flatMap(file => fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))));
+        child.on('exit', code => code === 0 ? resolve() : reject(new Error(`hunt table child ${shard} exited ${code}`)));
+    })));
+}
+
+// The results in the parts directory under this stamp: key -> result; cut:
+// lines a stopped child left unfinished (counted, their hunts run again).
+function doneResults(parts, stamp) {
+    const done = new Map();
+    let cut = 0;
+    if (!fs.existsSync(parts)) return { done, cut };
+    for (const file of fs.readdirSync(parts).filter(name => name.startsWith(`${stamp}-`)).sort()) {
+        for (const line of fs.readFileSync(path.join(parts, file), 'utf8').split('\n')) {
+            if (!line) continue;
+            try {
+                const result = JSON.parse(line);
+                done.set(result.k, result);
+            } catch {
+                cut += 1;
+            }
+        }
+    }
+    return { done, cut };
 }
 
 const quantile = (values, q) => values.length ? [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(q * values.length))] : null;
 
-async function build({ from, to, hours = 2, children = 7, spots: onlySpots = null, keys: onlyKeys = null, catalogue = null, out = null,
-    limit = 0.05, log = console.log }) {
-    if ((onlySpots || onlyKeys) && !out) throw new Error('a pick of spots or keys is not the table: name its --out');
+async function build({ from, to, hours = 2, children = 7, spots: onlySpots = null, keys: onlyKeys = null, catalogue = null, out = null, log = console.log }) {
+    if ((onlySpots || onlyKeys || catalogue) && !out) throw new Error('a pick of spots or keys, or a given catalogue, is not the table: name its --out');
+    const limit = LIMITS.KILL_DEATH_LIMIT.value;
     const started = Date.now(), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hunt-table-'));
     try {
         const catalogueFile = catalogue || saveCatalogue(path.join(dir, 'catalogue.json'));
@@ -310,31 +301,36 @@ async function build({ from, to, hours = 2, children = 7, spots: onlySpots = nul
             log(`weapon type: line ${band.line} L${band.from}-${band.to} creation kit ${band.creation}, gear ladder ${band.ladder} (rungs ${band.types || 'none'})`);
         }
         const { tasks, bodies, hunters, spots } = plan({ profiles, from, to, lines, onlyKeys, onlySpots });
-        log(`levels ${from}-${to}: bodies ${Object.keys(bodies).length}, spots ${Object.keys(spots).length}, hunts ${tasks.length} on ${children} children`);
-        const hunted = async list => {
-            if (!list.length) return [];
-            const results = await runChildren(dir, list, children, catalogueFile, hours);
-            if (results.length !== list.length) throw new Error(`hunt table: ${results.length} results for ${list.length} hunts`);
-            for (const result of results) {
-                const body = bodies[list[result.i].body];
+        const before = stamp(), file = out || path.join(ROOT, 'tmp/economy-model/hunt', `hunt-${from}-${to}-${before}.json`), parts = `${file}.parts`;
+        fs.mkdirSync(parts, { recursive: true });
+        log(`levels ${from}-${to}: bodies ${Object.keys(bodies).length}, spots ${Object.keys(spots).length}, hunts ${tasks.length} on ${children} children, stamp ${before}`);
+        const hunted = async (list, round) => {
+            const first = doneResults(parts, before), todo = list.filter(task => !first.done.has(task.k));
+            log(`round ${round}: ${list.length - todo.length} hunts already in ${path.relative(ROOT, parts)} (${first.cut} cut lines), ${todo.length} to run`);
+            if (todo.length) await runChildren({ dir, tasks: todo, children, catalogueFile, hours, parts, prefix: `${before}-${round}-${process.pid}` });
+            const { done } = doneResults(parts, before), results = list.map(task => done.get(task.k));
+            if (results.some(result => !result)) throw new Error(`hunt table round ${round}: ${results.filter(result => !result).length} hunts without a result`);
+            results.forEach((result, index) => {
+                const body = bodies[list[index].body];
                 if (body.runSpd === null) Object.assign(body, { runSpd: result.runSpd, reach: result.reach });
-                else if (body.runSpd !== result.runSpd || body.reach !== result.reach) throw new Error(`body ${list[result.i].body}: run speed or reach differs between its hunts`);
-            }
+                else if (body.runSpd !== result.runSpd || body.reach !== result.reach) throw new Error(`body ${list[index].body}: run speed or reach differs between its hunts`);
+            });
             return results;
         };
-        const results = await hunted(tasks), cells = {};
-        for (const result of results) {
-            const task = tasks[result.i];
+        const results = await hunted(tasks, 'species'), cells = {};
+        results.forEach((result, index) => {
+            const task = tasks[index];
             const held = ((cells[task.body] ||= {})[task.spotId] ||= {})[task.selfId] ||= [null, null];
             held[task.form] = result.cell;
-        }
+        });
         const wholeTasks = checkTasks({ cells, spots, hunters, limit });
-        const wholeResults = await hunted(wholeTasks), whole = wholeResults.map(result => ({ task: wholeTasks[result.i], cell: result.cell }));
-        const table = { stamp: stamp(), range: [from, to], window: WINDOW, hours, restRule: REST_RULE, point: { fields: POINT_FIELDS },
+        const wholeResults = await hunted(wholeTasks, 'check'), whole = wholeResults.map((result, index) => ({ task: wholeTasks[index], cell: result.cell }));
+        const after = stamp();
+        if (after !== before) throw new Error(`the combat inputs changed during the build (stamp ${before} -> ${after}): not written`);
+        const table = { stamp: before, range: [from, to], window: WINDOW, hours, restRule: REST_RULE, point: { fields: POINT_FIELDS },
             fields: FIELDS, forms: FORMS, bodies, spots, cells };
-        const file = out || path.join(ROOT, 'tmp/economy-model/hunt', `hunt-${from}-${to}-${table.stamp}.json`);
-        fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify(table));
+        fs.rmSync(parts, { recursive: true, force: true });
         const check = summary({ table, whole, results: [...results, ...wholeResults], limit, log });
         log(`wrote ${path.relative(ROOT, file)} (${(fs.statSync(file).size / 1e6).toFixed(1)} MB) in ${Math.round((Date.now() - started) / 1000)} s`);
         return { file, table, check };
@@ -344,29 +340,33 @@ async function build({ from, to, hours = 2, children = 7, spots: onlySpots = nul
 }
 
 // The build's prints: hunts and their time, the cells over the kill-death
-// limit and without a kill, the rest share per key and level, and the
-// combination check (the whole spot hunted against combine over its species).
+// limit, without a kill and bound by their species' production, the rest
+// share per key and level, and the combination check (the whole spot hunted
+// against the reader's combination over its species).
 function summary({ table, whole, results, limit, log }) {
     const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
     const ms = results.reduce((sum, result) => sum + result.ms, 0);
     log(`hunts ${results.length}, ${(ms / Math.max(1, results.length)).toFixed(0)} ms a hunt (child time)`);
     let over = 0, none = 0, all = 0;
+    const bound = [];
     for (const [body, bySpot] of Object.entries(table.cells)) {
         const rest = [];
-        for (const bySpecies of Object.values(bySpot)) for (const forms of Object.values(bySpecies)) for (const cell of forms) {
+        for (const [spotId, bySpecies] of Object.entries(bySpot)) for (const [selfId, forms] of Object.entries(bySpecies)) for (const [form, cell] of forms.entries()) {
             all += 1;
             if (!(cell[0] > 0)) { none += 1; continue; }
             if (cell[1] > limit) over += 1;
+            const production = table.spots[spotId].species[selfId].production;
+            if (production !== null && cell[0] >= 0.95 * production) bound.push(`${body} ${spotId} ${selfId} ${FORMS[form]} ${cell[0]}/${production}`);
             rest.push(cell[3] * cell[0] / 3600);
         }
         log(`rest share ${body}: p50 ${quantile(rest, 0.5)?.toFixed(3)} p90 ${quantile(rest, 0.9)?.toFixed(3)} (${rest.length} cells with kills)`);
     }
-    log(`cells ${all}: deaths a kill over ${limit} ${over}, without a kill ${none}`);
+    log(`cells ${all}: deaths a kill over ${limit} ${over}, without a kill ${none}, at >= 95 % of their species' production ${bound.length}${bound.length ? ` (${bound.slice(0, 5).join('; ')})` : ''}`);
     const check = [];
     for (const { task, cell } of whole) {
         const spot = table.spots[task.spotId], cells = table.cells[task.body]?.[task.spotId] || {};
         const admitted = Object.keys(spot.species);
-        const read = combine({ spot, cells, body: table.bodies[task.body], form: FORMS[task.form], admitted, walkMs: BR.soloWalkMs });
+        const read = HuntRows.combine({ spot, cells, body: table.bodies[task.body], form: task.form, fields: table.fields, admitted, walkMs: BR.soloWalkMs });
         const row = { body: task.body, spotId: task.spotId, form: FORMS[task.form], species: admitted.length,
             measured: { kills: cell[0], deaths: cell[1] }, combined: read && { kills: round(read.kills), deaths: round(read.deaths) } };
         check.push(row);
@@ -391,4 +391,4 @@ if (require.main === module) {
         .catch(error => { console.error(error.stack || error); process.exit(1); });
 }
 
-module.exports = { build, combine, stamp, cellOf, FIELDS, FORMS, WINDOW, POINT_FIELDS };
+module.exports = { build, stamp, cellOf, FIELDS, FORMS, WINDOW, POINT_FIELDS };

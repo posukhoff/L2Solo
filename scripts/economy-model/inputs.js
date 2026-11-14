@@ -237,16 +237,23 @@ function ladderBands(owners) {
 // [{ from, to, level, grade, best, rungs: { group: [selfId] } }].
 function gearLadder(line, owners, gearTable, bands) {
     const { Table, Grades } = owners, out = [];
-    const rankOf = new Map(gearTable.items.map(row => [Number(row[0]), Grades.rankOf(row[4])]));
     for (const [from, to] of bands) {
-        const level = Math.floor((from + to) / 2), grade = Grades.gradeForLevel(level), rank = Grades.rankOf(grade);
-        const best = Table.best(line, level, true, 'income'), gearClass = gearTable.classes.find(row => Number(row.classId) === Number(Table.roleClass(line, level)));
-        if (!best || !gearClass) continue;
-        const rungs = {};
-        for (const [group, ladder] of Object.entries(gearClass.slots)) rungs[group] = ladder.map(([selfId]) => Number(selfId)).filter(selfId => rankOf.get(selfId) <= rank);
+        const level = Math.floor((from + to) / 2), grade = Grades.gradeForLevel(level);
+        const best = Table.best(line, level, true, 'income'), rungs = ladderRungs(gearTable, Table.roleClass(line, level), grade, Grades);
+        if (!best || !rungs) continue;
         out.push({ from, to, level, grade, best: String(best.spotId), rungs });
     }
     return out;
+}
+
+// A class's rungs in the gear table: per slot group its ladder's pieces of the
+// grade and below (best first); null when the table has no such class.
+function ladderRungs(gearTable, classId, grade, Grades) {
+    const gearClass = gearTable.classes.find(row => Number(row.classId) === Number(classId));
+    if (!gearClass) return null;
+    const rankOf = new Map(gearTable.items.map(row => [Number(row[0]), Grades.rankOf(row[4])])), rank = Grades.rankOf(grade), rungs = {};
+    for (const [group, ladder] of Object.entries(gearClass.slots)) rungs[group] = ladder.map(([selfId]) => Number(selfId)).filter(selfId => rankOf.get(selfId) <= rank);
+    return rungs;
 }
 
 // Luxury (C4 multisell 7097, 7098 where the NPC is spawned): each item's
@@ -702,4 +709,4 @@ function build(argv, reads) {
 if (require.main === module) main(process.argv.slice(2));
 
 // hourRowWithForms is exported for its unit test only.
-module.exports = { extract, hourRowWithForms, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, BLESSED_FIELDS, SCHEMA };
+module.exports = { extract, ladderRungs, hourRowWithForms, rewardSpots, spotYields, composition, HOUR_FIELDS, SHOTLESS_FIELDS, BLESSED_FIELDS, SCHEMA };

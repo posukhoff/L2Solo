@@ -64,6 +64,14 @@ const options = { from: 1, to: 1, hours: 1, children: 1, spots: [GREMLIN_SPOT], 
             Object.assign(TM, { spotShares: real.spotShares });
             Object.assign(CCP, { npcForSpot: real.npcForSpot });
         }
+        // The resolver stops reading the readiness rule through its module object: the lift's write does not reach it.
+        const ER = invoke('GameServer/Bot/AI/BotEncounterReadiness'), evaluate = ER.evaluate;
+        Object.defineProperty(ER, 'evaluate', { get: () => evaluate, set: () => {}, configurable: true, enumerable: true });
+        try {
+            await assert.rejects(HuntTable.build({ ...options, out: path.join(dir, 'refused.json') }), /lift no longer reaches/);
+        } finally {
+            Object.defineProperty(ER, 'evaluate', { value: evaluate, writable: true, configurable: true, enumerable: true });
+        }
         console.log('test_economy_model_hunt_table: ok');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });

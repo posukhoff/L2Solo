@@ -195,6 +195,12 @@ function weightedLines(snapshot) {
     return Object.keys(snapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0);
 }
 
+// The lines of the fresh world: the weighted lines without the dwarf fighter's
+// (no dwarf is created). classAtOne(line): the line's level-1 class.
+function freshLines(lines, classAtOne) {
+    return lines.filter(line => Weights.CLASS_WEIGHTS[line] > 0 && classAtOne(line) !== DWARF_FIGHTER);
+}
+
 // The one account builder of the cohorts built from the class weights alone:
 // count accounts, each line drawn among lines by the class weights from
 // random, then its level by levelOf(index, random) (called after the line's
@@ -244,7 +250,7 @@ function fresh({ count, seed = 1 }, snapshot) {
     const Data = invoke('GameServer/DataCache');
     const weighted = weightedLines(snapshot);
     for (const line of weighted) if (!snapshot.hours[line][1]) throw new Error(`fresh world: line ${line} has no level-1 class in the snapshot (hours[${line}][1])`);
-    const lines = weighted.filter(line => snapshot.hours[line][1].classId !== DWARF_FIGHTER);
+    const lines = freshLines(weighted, line => snapshot.hours[line][1].classId);
     const kitOf = (line, level, classId) => StarterItemCatalog.starterRows(Data.newbieItems, classId, Data.items)
         .map(row => ({ selfId: Number(row.selfId), slot: row.slot, amount: Number(row.amount) || 1, equipped: row.equipped }));
     const ShotStock = invoke('GameServer/Inventory/ShotStock');
@@ -253,4 +259,4 @@ function fresh({ count, seed = 1 }, snapshot) {
     return { accounts, source: `fresh ${count} accounts at level 1, beneficiary lines by class weights, creation kits`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 
-module.exports = { fromSave, savedBots, synthetic, fresh, lineOf, linesByClass, STATION_ACCOUNT_PREFIX, MERCHANT_ACTIVITY };
+module.exports = { fromSave, savedBots, synthetic, fresh, freshLines, lineOf, linesByClass, STATION_ACCOUNT_PREFIX, MERCHANT_ACTIVITY };

@@ -7,6 +7,7 @@
 // code, unchanged. Offline only (the builder and its children); never loaded by
 // the server.
 require('../../src/Global');
+const LIMITS = require('./design/limits');
 
 const TM = invoke('GameServer/Bot/AI/BotTargetMatchup');
 const CCP = invoke('GameServer/Bot/Population/ColdCombatProfile');
@@ -18,9 +19,10 @@ let saved = null;
 // ARCH-NOTE: the solo gate is the game's decision ("our choice, not C4" in
 // BotEncounterReadiness); the model measures combat and applies its own
 // admission per species when it reads the table. The rest rule here is the
-// model's (ours, a limits row): the bot fights when its vitals cover one
-// expected fight with this mob (survival ratio 1, no margin), or at a whole
-// bar; the game's rest physics (sit and stand-up lines) stay.
+// model's (ours, the FIGHT_COVER limits row): the bot fights when its HP above
+// the potion line (the game's atVitals takes the line off the bar) and its MP
+// cover one expected fight with this mob, so the fight ends without a potion,
+// or at a whole bar; the game's rest physics (sit and stand-up lines) stay.
 function lift(on) {
     if (!on) {
         if (saved) {
@@ -45,7 +47,7 @@ function lift(on) {
         const verdict = held.evaluate(remaining, target, attacksOf);
         if (verdict.ready) return verdict;
         if (remaining[WHOLE]) return { ...verdict, ready: true, reason: 'whole_bar' };
-        return Number(verdict.survival?.survivalRatio) >= 1 ? { ...verdict, ready: true, reason: 'covers_one_fight' } : verdict;
+        return Number(verdict.survival?.survivalRatio) >= LIMITS.FIGHT_COVER.value ? { ...verdict, ready: true, reason: 'covers_one_fight' } : verdict;
     };
 }
 
