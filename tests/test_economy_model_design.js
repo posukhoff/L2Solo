@@ -154,13 +154,13 @@ const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, 
 // The kit's factors (the reference kit's: 1), deaths times dies.
 const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1 });
 // One run through the plane, its visits seen as the engine calls them.
-function run(account, supply, hours, dies = 0) {
-    const visits = [], made = Plane.plane({ view: world, kitHours: kitAt(dies), variant: supply, accounts: [account] });
+function run(account, supply, hours, dies = 0, view = world) {
+    const visits = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account] });
     const seen = { ...made, start: context => {
         const hooks = made.start(context);
         return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ now, info, before: main, ...done }); return done; } };
     } };
-    const result = Engine.simulate({ view: world, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours, seed: 3, plane: seen });
+    const result = Engine.simulate({ view, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours, seed: 3, plane: seen });
     return { result, visits };
 }
 const close = (a, b) => Math.abs(a - b) < 1e-6;
@@ -190,5 +190,38 @@ for (const supply of ['table', 'formula']) {
     assert.ok(death && death.delta.towns[0] === 'TownA' && close(death.afterHours, 0.3), `${supply}: the respawn town runs the town chain and walks back`);
     assert.equal(death.main.money - death.before.money, death.delta.flows.npcSales + death.delta.flows.npcBuys, `${supply}: only the town chain moves money`);
 }
+
+// A held spot stays through a level while its row exists there (the line's best at the new level is another spot).
+const growth = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+    hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: far, top: [far, near] } } },
+    yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
+    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+for (const supply of ['table', 'formula']) {
+    const grown = run(freshBot(9, { shots: { [SHOT]: 600 } }), supply, 1, 0, growth);
+    assert.ok(grown.result.progress.stageBands.all.levelUps >= 1, `${supply}: it reached level 2`);
+    assert.equal(grown.result.counters.leftOwnSpot, 0, `${supply}: it keeps the spot it holds through the level`);
+}
+
+// A bot with no shots, no adena and a bag that fills: it hunts bare at a row that kills bare, and the formula goes to town for the shots
+// (with no shot to run out there is no out fact, the outing's hours stand in for it); the same as the table.
+const bare = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } }, hours: { 9: { 1: { classId: 9, shotId: SHOT, best: far, top: [far] } } },
+    yields: { 's2@1': drops }, items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+    tripHours: { to: { s2: 0.02 }, back: { s2: { TownA: 0.03 } } }, bags: { 9: { slots: 1, maxLoad: 1e6 } } });
+for (const supply of ['table', 'formula']) {
+    const filled = run(freshBot(9), supply, 3, 0, bare);
+    const trip = filled.visits.find(visit => !visit.info.born);
+    assert.ok(trip && trip.before.bag[DROP] > 0, `${supply}: it goes to town when its bag is full with no shots`);
+    assert.ok(trip.main.shots[SHOT] > 0, `${supply}: it buys shots with what its drop sold for`);
+}
+
+// A bot stuck out of shots is counted once: its death and respawn visit change neither its shots, its money nor its bag.
+const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 }, dropLoot: 0, loot: 0 });
+const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, far] } } } };
+const stuckDying = run(freshBot(10, { shots: { [SHOT]: 20 } }), 'table', 10, 2, mortalWorld);
+assert.ok(stuckDying.visits.filter(visit => visit.info.died && visit.before.shots[SHOT] === 0).length >= 3, 'the stuck bot dies and respawns several times after it stands');
+assert.equal(stuckDying.result.counters.stuckNoBareHour, 1, 'stuck once for the one run-out');
 
 console.log('economy model design: ok');

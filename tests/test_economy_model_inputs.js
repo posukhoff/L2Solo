@@ -323,4 +323,8 @@ assert.deepEqual(taken.fallbacks.noMarketToC, sharing, 'the spots whose centre h
 for (const id of sharing) assert.equal(taken.tradeTowns.none[id], taken.tradeTowns.higher, `spot ${id} gets the C town`);
 console.log(`  fallbacks taken: no market ${sharing.join(' ')}`);
 
+// A death takes no exp at levels 1-4 (the game's rule for a character with Lucky, which every class learns at level 1), then the rule's percent of the level.
+assert.deepEqual(snapshot.deathExp.slice(0, 4), [0, 0, 0, 0], 'levels 1-4 lose no exp');
+assert.ok(snapshot.deathExp[4] > 0, 'level 5 loses exp');
+
 console.log('PASS economy model inputs snapshot');

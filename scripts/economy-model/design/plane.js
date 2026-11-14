@@ -43,13 +43,9 @@ const FACTS = Object.freeze({
 });
 
 // The held spot's town (the spot card's town at the level), null without one.
-function townOf(view, main) {
-    const row = Engine.spotRowOf(view, main);
-    return row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null;
-}
+const townOf = (view, main) => Engine.townOfRow(view, Engine.spotRowOf(view, main), main.level);
 
-// The held spot: the one it holds while its row exists (the engine drops it
-// on a level without it), else its line's best row at the level.
+// The held spot: the one it holds (the engine keeps it while its row exists at the level), else its line's best row.
 const heldSpot = (view, main) => main.spot || (Engine.hourOf(view, main)?.best ? String(Engine.hourOf(view, main).best.spotId) : null);
 
 // The game's inventory full rule (SurvivalFloor.evaluate: its slots or the
@@ -137,7 +133,7 @@ function plane({ view, kitHours, variant, accounts }) {
         start({ ledger }) {
             ledger.counters.stuckNoBareHour = 0;
             const states = new Map();
-            const stateOf = main => states.get(main.index) || { account: { id: main.id, led: main.id, place: 'hunt', queue: [] }, full: false, stuck: false };
+            const stateOf = main => states.get(main.index) || { account: { id: main.id, led: main.id, place: 'hunt', queue: [] }, full: false };
             const put = (main, state) => states.set(main.index, state);
             const queueFact = (state, kind, main, at) => ({ ...state, account: Attention.push(state.account, { kind, who: main.id, at }) });
             const placed = (state, place) => ({ ...state, account: { ...state.account, place } });
@@ -157,7 +153,7 @@ function plane({ view, kitHours, variant, accounts }) {
                 const valueOf = (at, withoutDrop = false) => Value.hourValue(view, main, at, factors, persona, { ...way, withoutDrop });
                 return { ...state, value: { hour: valueOf(form), bare: valueOf('bare'), withoutDrop: valueOf(hunted, true),
                     bagHoursBare: hoursToFull(view, bagsOf(main), main, row, [{ form: 'bare', kills: kills.bare, hours: Infinity }]),
-                    outHours: held > 0 ? lasts : 0, M: Value.bestOf(view, main).npc, moneyWeight: Value.moneyWeight(persona) } };
+                    outHours: held > 0 ? lasts : Infinity, M: Value.bestOf(view, main).npc, moneyWeight: Value.moneyWeight(persona) } };
             };
             // The heard chain where it stands and the supply decision's actions on it.
             const decide = (main, state, town) => {
@@ -199,19 +195,18 @@ function plane({ view, kitHours, variant, accounts }) {
                     const go = actions.find(action => action.kind === 'go');
                     if (go) {
                         const away = Engine.toHoursOf(view, row.spotId);
-                        put(main, placed({ ...state, stuck: false }, 'road'));
+                        put(main, placed(state, 'road'));
                         return { at: now + away, away };
                     }
                     for (const action of actions) if (action.kind === 'stay') EXECUTORS.stay(main, action);
+                    // The supply decision's stuck reason (out of shots, nothing to pay with, nothing killed bare) counts once, at the out fact that raised it.
+                    if (actions.some(action => action.kind === 'stay' && action.reason === 'no_bare_hour')) ledger.counters.stuckNoBareHour++;
                     const hours = nextFactHours(main, state);
                     if (Number.isFinite(hours) && huntShare > 0) {
-                        put(main, { ...state, stuck: false });
+                        put(main, state);
                         return { at: now + hours / huntShare, read: true };
                     }
-                    // No fact will come: out of shots where it kills nothing bare, it stands, counted once until its state changes.
-                    const stuck = !state.stuck && row && huntedOf(main).hunted === 'bare' && !(Engine.rowIn(row, 'bare').kills > 0);
-                    if (stuck) ledger.counters.stuckNoBareHour++;
-                    put(main, { ...state, stuck: state.stuck || !!stuck });
+                    put(main, state);
                     return null;
                 },
                 hunt(main, delta) {
@@ -237,7 +232,7 @@ function plane({ view, kitHours, variant, accounts }) {
                     const { state: heard, actions, row } = decide(at, state, town);
                     const done = executed(at, actions, town, row ? Engine.backHoursOf(view, row.spotId, town) : 0);
                     // It walks back and hunts again from the visit's end.
-                    put(done.main, { ...placed(heard, 'hunt'), stuck: false, full: fullOf(view, bagsOf(done.main), carried(done.main)) });
+                    put(done.main, { ...placed(heard, 'hunt'), full: fullOf(view, bagsOf(done.main), carried(done.main)) });
                     return done;
                 },
                 levelUp: main => (main.spot ? main : { ...main, spot: heldSpot(view, main) }),
