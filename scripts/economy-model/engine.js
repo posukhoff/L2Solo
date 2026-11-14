@@ -87,7 +87,7 @@ function viewOf(snapshot, options = {}) {
         hours: snapshot.hours, kits: snapshot.kits, yields: snapshot.yields, items: snapshot.items, exp: snapshot.exp,
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(), rowItems: new Map(),
-        tripHours: snapshot.tripHours || null, deathExp: snapshot.deathExp || null,
+        tripHours: snapshot.tripHours || null, deathExp: snapshot.deathExp || null, bags: snapshot.bags || null,
         spotHours: snapshot.spotHours?.rows || null, spotLevels: snapshot.spotLevels || null,
         huntYields: (options.yields === 'design' ? snapshot.yieldsDesign : snapshot.yields) || null,
         blessedShots: new Set(snapshot.shotFamilies?.ids?.[BLESSED_FAMILY] || [])
@@ -635,4 +635,4 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
 }
 
 module.exports = { viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
-    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf };
+    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf, firedOf };
