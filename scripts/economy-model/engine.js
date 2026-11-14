@@ -314,9 +314,18 @@ const formExp = (main, best, form, hours, kills) => huntExp(main, rowIn(best, fo
 // form's { kills, shots }; none: 1).
 const shotsPerHour = (row, form, scale = 1, factor = null) => (rowIn(row, form)?.shots || 0) * scale * (factor?.shots ?? 1);
 
-function hunt(main, view, huntHours, random, firing = null, kills = null) {
+// full: the main's bag is at the game's unload floor (SurvivalFloor.evaluate:
+// the slot limit or the first weight penalty), so the hunt takes no item
+// (exp and adena stay) and counts the drop it would have taken at the NPC's
+// buy price (lostDrop). Our choice, the form the design's value prices (the
+// full-bag hour is the same hour with no loot): a C4 player keeps picking up
+// below the slot limit's held stacks and below the weight limit
+// (PickupCapacity.check), past 50 % load at a speed and regen penalty. Cost:
+// none per step; it gives up the drop between the floor and the capacity and
+// the penalty.
+function hunt(main, view, huntHours, random, firing = null, kills = null, full = false) {
     const best = spotRowOf(view, main), flows = emptyFlows();
-    const delta = { flows, exp: 0, drops: [], shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0, shotId: 0, huntBare: 0 };
+    const delta = { flows, exp: 0, drops: [], lostDrop: 0, shotsUsed: 0, shotsWanted: 0, noSpot: 0, huntHours: 0, ownSpot: false, spoilUnyielded: 0, shotId: 0, huntBare: 0 };
     if (!best || !(huntHours > 0)) { delta.noSpot = best ? 0 : 1; return { main, delta }; }
     delta.huntHours = huntHours;
     delta.ownSpot = best === ownRow(view, main.line, main.level, main.spot);
@@ -330,7 +339,11 @@ function hunt(main, view, huntHours, random, firing = null, kills = null) {
         flows.huntCold += row.adena * adenaRatio * worn;
         if (row.spoilLoot > 0 && !Object.keys(view.huntYields?.[`${best.spotId}@${main.level}`]?.spoil || {}).length) delta.spoilUnyielded += row.kills * worn;
         delta.exp += formExp(main, best, at, hours, kills);
-        for (const [id, perKill] of yieldRows(view, main.line, main.level, row, at)) counts.set(id, (counts.get(id) || 0) + perKill * row.kills * worn);
+        for (const [id, perKill] of yieldRows(view, main.line, main.level, row, at)) {
+            const mean = perKill * row.kills * worn;
+            if (full) delta.lostDrop += mean * (view.items[id]?.npcBuy || 0);
+            else counts.set(id, (counts.get(id) || 0) + mean);
+        }
     }
     flows.huntCold = Math.round(flows.huntCold);
     for (const [id, mean] of counts) {
@@ -448,6 +461,7 @@ function heap() {
 //     shotsPerHour  the row's shots per hunting hour; the main's own bag and shots are on main
 //     huntShare the band's share of wall time spent hunting
 //   firing(main), kills(main)  the shot a main fires as it hunts and its worn kit's kills (hunt's)
+//   full(main)  (optional) whether its bag is at the game's full rule: it hunts with no item drop (hunt's; none: never full)
 //   hunt(main, delta)  told each committed hunt, the delta with its spotHours and wayHours
 //   visit(main, now, { outingHours, died })  { main, delta, afterHours }: afterHours, the hours after
 //             the arrival before it hunts again (its onward stops and its way back to the spot)
@@ -563,7 +577,7 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
         const share = rateOf(main.band).huntShare, end = departs !== null && departs < now ? departs : now;
         const spotHours = Math.max(0, end - main.since), wayHours = end < now ? now - Math.max(end, main.since) : 0;
         const moved = { ...main, counter: main.counter + 1, since: Math.max(now, main.since) };
-        const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), hooks.firing(main), hooks.kills(main));
+        const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), hooks.firing(main), hooks.kills(main), hooks.full ? hooks.full(main) : false);
         Ledger.recordHunt(ledger, next, delta);
         hooks.hunt(next, { ...delta, spotHours, wayHours });
         return next;

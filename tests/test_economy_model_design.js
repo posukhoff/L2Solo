@@ -380,4 +380,42 @@ for (const supply of ['table', 'formula']) {
     assert.ok(close(low.roadShare, 0.8 / 3) && close(low.roadShareAllMains, 0.8 / 6), `${supply}: the road share leaves its hours out (${low.roadShare}, all ${low.roadShareAllMains})`);
 }
 
+// A bag at the game's full rule takes no item drop: the hunt credits its exp and adena as usual and counts the drop it did not take
+// at the NPC's price (hunt's full).
+{
+    const hunter = freshBot(9, { shots: {}, bag: {}, spot: 's2' });
+    const start = Engine.mainOf(hunter, 0, bare, [['all', 1]]);
+    const open = Engine.hunt(start, bare, 2, () => 0.5), shut = Engine.hunt(start, bare, 2, () => 0.5, null, null, true);
+    assert.ok(open.main.bag[DROP] > 0, 'an open bag takes the drop');
+    assert.equal(shut.main.exp, open.main.exp, 'a full bag gains the exp of the hunt');
+    assert.equal(shut.main.money, open.main.money, 'a full bag gains the adena of the hunt');
+    assert.ok(!shut.main.bag[DROP] && shut.delta.drops.length === 0, 'a full bag takes no item');
+    assert.equal(open.delta.lostDrop, 0, 'an open bag loses none');
+    assert.ok(Math.abs(shut.delta.lostDrop - 2 * Engine.rowItems(bare, start, far, 'bare').loot) < 1e-6, 'the drop it left is counted at the NPC buy price');
+}
+
+// The design plane tells the engine its bag is full from the hunt that fills it until a town visit: a bot that is read every half
+// hour and never goes keeps its filled bag as it was and loses the drop of the hours after.
+{
+    const hunted = hours => {
+        const made = Plane.plane({ view: bare, kitHours: kitAt(0), variant: 'formula', accounts: [freshBot(9)] });
+        const lingering = { ...made, start: context => ({ ...made.start(context), nextArrival: (main, { now }) => ({ at: now + 0.5, read: true }) }) };
+        return Engine.simulate({ view: bare, accounts: [freshBot(9)], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours, seed: 3, plane: lingering });
+    };
+    const short = hunted(3), long = hunted(6);
+    assert.ok(short.counters.fullBagHuntHours > 0 && short.counters.fullBagLostDrop > 0, 'a full bag hunts and loses the drop');
+    assert.equal(long.drops.byItem[DROP], short.drops.byItem[DROP], 'a full bag takes no item in the later hours');
+    assert.ok(long.counters.fullBagLostDrop > short.counters.fullBagLostDrop, 'each later hour loses more drop');
+}
+
+// A bag that filled goes to town (the table variant at once), sells its drop there and takes drop again after the visit: the
+// drops grow past what it held at the visit, and it never hunted with the bag full.
+const roomy = { ...bare, bags: { 9: { slots: 2, maxLoad: 1e6 } } };
+for (const supply of ['table', 'formula']) {
+    const trips = run(freshBot(9, { shots: { [SHOT]: 40 } }), supply, 6, 0, roomy), visits = trips.visits.filter(visit => !visit.info.born);
+    assert.ok(visits.length >= 2 && !visits[0].main.bag[DROP], `${supply}: it visits town and leaves with its bag emptied`);
+    assert.ok(trips.result.drops.byItem[DROP] > visits[0].before.bag[DROP], `${supply}: it takes drop again after the visit`);
+    if (supply === 'table') assert.ok(trips.result.counters.fullBagHuntHours < 1e-9, 'the table variant goes at the fill: no hour hunted full');
+}
+
 console.log('economy model design: ok');

@@ -39,7 +39,7 @@ function bestOf(view, main) {
 // 'blessed'; factors: the worn kit's { kills, deaths } per form against the
 // line's reference kit). wayBackHours: the trip hours from the respawn town
 // back to the held spot. withoutDrop: the same hour with a full bag, its items
-// left on the ground (adena and exp stay).
+// not taken (adena and exp stay; the engine's hunt, full).
 function hourValue(view, main, form, factors, persona, { wayBackHours, withoutDrop = false }) {
     const row = Engine.spotRowOf(view, main), hour = Engine.rowIn(row, form), factor = factors[form];
     const best = bestOf(view, main), wMoney = moneyWeight(persona);
