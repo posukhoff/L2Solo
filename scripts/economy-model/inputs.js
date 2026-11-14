@@ -38,6 +38,7 @@ const Cohort = require('./cohort');
 const DesignIncome = require('./design-income');
 const Load = require('./load');
 const { DESIGN_RATES } = require('./rules/dropRule');
+const { npcBuyValue, SHOTLESS_FIELDS } = require('./rules/hunt-rows');
 const KitHours = require('./kit-hours');
 const common = require('../hunt-tables/common');
 
@@ -47,8 +48,6 @@ const { TOP_SPOTS } = KitHours;
 const TWIN_LEVELS = Object.freeze([1, common.MAX_LEVEL]);
 // Private store types (PrivateStoreLimits.tradeLimit) and Expand Trade, the skill that adds slots.
 const STORE_SELL = 1, STORE_BUY = 3, EXPAND_TRADE = 1370, DWARF = 4;
-// The fields of an hour without shots (SpotValueTable.value(spot, line, level, false)).
-const SHOTLESS_FIELDS = Object.freeze(['kills', 'exp', 'adena', 'dropLoot', 'spoilLoot', 'loot']);
 // The fields of an hour firing Blessed Spiritshots (SpotValueTable.value(spot, line, level, 2)).
 const BLESSED_FIELDS = Object.freeze([...SHOTLESS_FIELDS, 'shots']);
 // Spots that yield a shot recipe's scroll a main's occupation may also rank
@@ -620,8 +619,7 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     // A band's scale: the design's money per kill over today's at the band's
     // best spot (adena and loot at the NPC's buy price; 1 where today's is 0),
     // which turns the band's kit hours at the preset into the design's money.
-    const moneyOf = row => Object.entries(row?.drop || {}).concat(Object.entries(row?.spoil || {}))
-        .reduce((sum, [id, count]) => sum + count * (Number(id) === 57 ? 1 : items[id]?.npcBuy || 0), 0);
+    const moneyOf = row => (row?.drop?.[57] || 0) + (row?.spoil?.[57] || 0) + npcBuyValue(row?.drop, items) + npcBuyValue(row?.spoil, items);
     const gearLadders = {};
     for (const [line, rows] of Object.entries(ladders)) {
         gearLadders[line] = rows.map(row => {

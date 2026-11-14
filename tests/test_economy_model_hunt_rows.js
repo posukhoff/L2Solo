@@ -3,7 +3,7 @@
 // kill it at most once in so many kills (the limit moves the row without a
 // rebuild, and a spot with none reads 'cannot hunt here'); the species it
 // hunts combine on time (the walk at their own density, kills capped by their
-// production), not by summing their kills; the hour's exp carries the C4
+// production as the game caps a cold solo bot), not by summing their kills; the hour's exp carries the C4
 // level-gap penalty once per species and the preset's exp rate; and one best
 // ranks the same rows for the row a bot holds and its candidates.
 const assert = require('node:assert/strict');
@@ -40,14 +40,19 @@ const speciesYields = {
 };
 const items = { 100: { npcBuy: 40 }, 200: { npcBuy: 7 } };
 const rates = { exp: 3 };
-const read = limit => HuntRows.lineRows({ file, key: 'k', level: 10, point: { attack: 7, defence: 54 }, limit, rates, speciesYields,
+const lines = limit => HuntRows.lineRows({ file, key: 'k', level: 10, point: { attack: 7, defence: 54 }, limit, rates, speciesYields,
     spoilLevel: 0, items, gapFactor, walkMs });
+const read = limit => lines(limit).rows;
 const close = (actual, expected, what) => assert(Math.abs(actual - expected) <= 1e-9 * Math.max(1, Math.abs(expected)), `${what}: ${actual} vs ${expected}`);
 const spotA = { spot: file.spots.a, cells: file.cells['k|10|7/54'].a, body: file.bodies['k|10|7/54'], fields: FIELDS, walkMs };
 
 // Species 1 kills a bot once in 10 kills, species 2 once in 5 (firing shots).
 assert.deepEqual(HuntRows.spotHour({ ...spotA, form: 1, limit: 0.05 }), { hour: null, reason: 'cannot_hunt' }, 'every species over the limit: cannot hunt here');
 assert.deepEqual(read(0.05).map(row => row.spotId), ['b'], 'no row for a spot the bot cannot hunt in either form');
+assert.deepEqual(lines(0.05).cannot, [{ spotId: 'a', form: 'shots', reason: 'cannot_hunt' }, { spotId: 'a', form: 'bare', reason: 'cannot_hunt' },
+    { spotId: 'b', form: 'bare', reason: 'cannot_hunt' }], 'each spot and form it cannot hunt, with the reason');
+assert.throws(() => HuntRows.lineRows({ file, key: 'k', level: 11, point: { attack: 7, defence: 54 }, rates, speciesYields, spoilLevel: 0, items, gapFactor, walkMs }),
+    /no body k\|11\|7\/54/, 'a body the table lacks is refused, not read as no spot');
 
 walked.length = 0;
 const alone = read(0.15).find(row => row.spotId === 'a');
@@ -80,6 +85,14 @@ assert.notDeepEqual(alone, both, 'the limit moved the row on the same file');
 const capped = rows.find(row => row.spotId === 'b');
 assert.equal(capped.kills, 30, 'kills capped by the species\' production');
 assert.equal(capped.shotless.kills, 0, 'the zero hour where the bot kills nothing bare');
+
+// The cap as the game's soloShareMobs: a species without production adds none and does not lift the cap; a spot
+// whose production is 0 (no respawn data) is not capped.
+const one = [1, 0, 3, 3, 0, 6, 50, 1, 0, 1];
+const capOf = species => HuntRows.combine({ spot: { area: 1e6, density: 10, species }, cells: { 3: [one, one], 4: [one, one] },
+    body: file.bodies['k|10|7/54'], form: 1, fields: FIELDS, admitted: ['3', '4'], walkMs }).kills;
+assert.equal(capOf({ 3: { level: 10, count: 1, production: 30 }, 4: { level: 10, count: 1, production: null } }), 30, 'a species without production keeps the cap');
+close(capOf({ 3: { level: 10, count: 1, production: 0 }, 4: { level: 10, count: 1, production: 0 } }), 3600 / 12, 'production 0: no cap');
 
 // One best for the held row and the candidates, by income an hour in the form.
 const shots = HuntRows.best(rows, 'income', 'shots'), bare = HuntRows.best(rows, 'income', 'bare');

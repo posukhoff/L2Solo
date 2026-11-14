@@ -55,6 +55,7 @@ const { hash, mulberry } = require('../hunt-tables/common');
 const PartyRewardMath = require('../../src/GameServer/Actor/PartyRewardMath');
 const BeginnerShots = require('../../src/GameServer/Items/C4BeginnerShots');
 const Ledger = require('./ledger');
+const { npcBuyValue } = require('./rules/hunt-rows');
 
 const ADENA = 57;
 // Counts drawn whole below this mean, rounded by a draw above it.
@@ -211,7 +212,7 @@ function rowIn(row, form) {
 // line without Spoil the spoiler's materials and shrink its gear drops.
 function killMixCorrection(view, row, level) {
     const yields = row && view.yields[`${row.spotId}@${level}`];
-    const valueOf = table => Object.entries(table || {}).reduce((sum, [id, perKill]) => sum + (Number(id) === ADENA ? 0 : perKill * (view.items[id]?.npcBuy || 0)), 0) * (row?.kills || 0);
+    const valueOf = table => npcBuyValue(table, view.items) * (row?.kills || 0);
     const drop = valueOf(yields?.drop), spoil = valueOf(yields?.spoil);
     return { drop: drop > 0 ? row.dropLoot / drop : 1, spoil: spoil > 0 ? row.spoilLoot / spoil : 1 };
 }

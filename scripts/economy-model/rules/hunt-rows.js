@@ -1,15 +1,24 @@
 'use strict';
 // The model's hour at a spot from its hunt table (hunt-table.js): pure, plain
 // data in (the table's cells and statics), the game's rules it needs passed in
-// as functions (the walk, the exp level-gap factor). Read by the design's boot
-// for every line and level of the table's range, and by the table build's
-// combination check.
+// as functions (the walk, the exp level-gap factor). Read by the table build's
+// combination check; the design's boot reads it for every line and level of
+// the table's range once the design takes its hours from the table.
 
 const LIMITS = require('../design/limits');
 
 const ADENA = 57;
-// The fields of a row's bare hour (shotless): no shots fired, its potions the shots hour's.
-const SHOTLESS = Object.freeze(['kills', 'deaths', 'exp', 'adena', 'dropLoot', 'spoilLoot', 'loot', 'busyShare', 'mix']);
+// The fields of an hour row's hour without shots (shotless), which the engine
+// lays over the row for a bot hunting bare: its potions stay the shots hour's.
+const SHOTLESS_FIELDS = Object.freeze(['kills', 'exp', 'adena', 'dropLoot', 'spoilLoot', 'loot']);
+// The table's rows carry their bare hour's own deaths, busy share and kill mix as well.
+const READ_SHOTLESS = Object.freeze([...SHOTLESS_FIELDS, 'deaths', 'busyShare', 'mix']);
+
+// The items of a yields table (item -> per kill) at the NPC's buy price
+// (items: id -> { npcBuy }), adena apart.
+function npcBuyValue(table, items) {
+    return Object.entries(table || {}).reduce((sum, [id, perKill]) => sum + (Number(id) === ADENA ? 0 : perKill * (items[id]?.npcBuy || 0)), 0);
+}
 
 // The species of a spot a bot hunts in a form: measured with a kill and at
 // most limit deaths a kill (the design's KILL_DEATH_LIMIT). A species the
@@ -24,18 +33,20 @@ function admitted({ cells, form, fields, limit }) {
 // drawn by their density share p, the time per kill the share-weighted fight,
 // rest and other time plus the walk at the set's density over its pull
 // (walkMs: BackgroundResolver.soloWalkMs, the game's rule), kills an hour at
-// most the set's production. cells: selfId -> [form cells]; form: its index;
+// most the set's production as the game's soloShareMobs caps a cold solo bot
+// (no cap where the spot has no production or its production is 0: no respawn
+// data; a species without production adds none). cells: selfId -> [form cells]; form: its index;
 // fields: the table's cell fields; admitted: selfIds. Null for an empty set,
 // else { kills an hour, deaths a kill, busy: the fight, walk and rest a kill
 // (s), mix: selfId -> its share of the kills }.
 function combine({ spot, cells, body, form, fields, admitted, walkMs }) {
     const at = Object.fromEntries(fields.map((field, index) => [field, index]));
-    const total = Object.values(spot.species).reduce((sum, held) => sum + held.count, 0);
-    let count = 0, production = 0, capped = true;
+    const all = Object.values(spot.species), total = all.reduce((sum, held) => sum + held.count, 0);
+    const produced = all.filter(held => held.production !== null), capped = produced.length > 0 && produced.reduce((sum, held) => sum + held.production, 0) > 0;
+    let count = 0, production = 0;
     for (const selfId of admitted) {
         count += spot.species[selfId].count;
-        if (spot.species[selfId].production === null) capped = false;
-        else production += spot.species[selfId].production;
+        if (spot.species[selfId].production !== null) production += spot.species[selfId].production;
     }
     if (!count) return null;
     let perKill = 0, busy = 0, deaths = 0, pull = 0;
@@ -76,8 +87,7 @@ function spotHour({ spot, cells, body, form, fields, limit = LIMITS.KILL_DEATH_L
 // at the preset's rates as the game's drop rule gives them): adena, and the
 // drop and spoil items at the NPC's buy price (items: id -> { npcBuy }).
 function moneyOf(yields, items) {
-    const value = table => Object.entries(table || {}).reduce((sum, [id, perKill]) => sum + (Number(id) === ADENA ? 0 : perKill * (items[id]?.npcBuy || 0)), 0);
-    return { adena: yields.drop?.[ADENA] || 0, drop: value(yields.drop), spoil: value(yields.spoil) };
+    return { adena: yields.drop?.[ADENA] || 0, drop: npcBuyValue(yields.drop, items), spoil: npcBuyValue(yields.spoil, items) };
 }
 
 // An hour row (the snapshot's hour-row fields and the kill mix) of a spot's
@@ -108,21 +118,26 @@ function hourRow({ spot, hour, level, rates, speciesYields, spoilLevel, items, g
 // hour firing its shots with, as shotless, the same spot's hour bare (the
 // zero hour where it hunts nothing in that form). key: the table's kit key;
 // point: { attack, defence }; limit: the kill-death limit (the design's by
-// default); rates: { exp };
-// walkMs, gapFactor: the game's rules.
+// default); rates: { exp }; walkMs, gapFactor: the game's rules. Returns
+// { rows, cannot: [{ spotId, form, reason }] }: each spot and form the bot
+// hunts nothing in, with spotHour's reason. A body the file lacks throws.
 function lineRows({ file, key, level, point, limit = LIMITS.KILL_DEATH_LIMIT.value, rates, speciesYields, spoilLevel, items, gapFactor, walkMs }) {
     const name = `${key}|${level}|${point.attack}/${point.defence}`, body = file.bodies[name], bySpot = file.cells[name];
-    if (!body || !bySpot) return [];
-    const fields = file.fields, shotsForm = file.forms.indexOf('shots'), bareForm = file.forms.indexOf('bare'), rows = [];
+    if (!body || !bySpot) throw new Error(`hunt rows: the table has no body ${name} (range ${file.range})`);
+    const fields = file.fields, shotsForm = file.forms.indexOf('shots'), bareForm = file.forms.indexOf('bare'), rows = [], cannot = [];
     for (const [spotId, cells] of Object.entries(bySpot)) {
-        const spot = file.spots[spotId], read = form => spotHour({ spot, cells, body, form, fields, limit, walkMs }).hour;
+        const spot = file.spots[spotId], read = form => {
+            const { hour, reason } = spotHour({ spot, cells, body, form, fields, limit, walkMs });
+            if (!hour) cannot.push({ spotId, form: file.forms[form], reason });
+            return hour;
+        };
         const shots = read(shotsForm), bare = read(bareForm);
         if (!shots && !bare) continue;
         const row = hour => hourRow({ spot, hour, level, rates, speciesYields, spoilLevel, items, gapFactor });
         const shotless = row(bare);
-        rows.push({ spotId, ...row(shots), shotless: Object.fromEntries(SHOTLESS.map(field => [field, shotless[field]])) });
+        rows.push({ spotId, ...row(shots), shotless: Object.fromEntries(READ_SHOTLESS.map(field => [field, shotless[field]])) });
     }
-    return rows;
+    return { rows, cannot };
 }
 
 // The hour a row gives in a form: the row itself firing shots, its shotless bare.
@@ -142,4 +157,4 @@ function best(rows, measure, form) {
     return { best: top[0] || null, top };
 }
 
-module.exports = { admitted, combine, spotHour, lineRows, best };
+module.exports = { admitted, combine, spotHour, lineRows, best, npcBuyValue, SHOTLESS_FIELDS };
