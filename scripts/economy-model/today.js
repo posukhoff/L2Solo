@@ -103,7 +103,7 @@ function errands(main, view, context) {
 // town that sells it (one such hop per visit), where it runs what it can.
 function visit(main, view, context = {}) {
     const hour = Engine.hourOf(view, main), row = Engine.spotRowOf(view, main), flows = Engine.emptyFlows();
-    const town = row ? view.yields[`${row.spotId}@${main.level}`]?.town || null : null;
+    const town = Engine.townOfRow(view, row, main.level);
     const delta = { flows, towns: [], gearToNpc: 0, gearBought: 0, shotsBoughtFixed: 0, shotsBoughtNpc: 0, shotsSoldNpc: 0,
         unsold: 0, missingPieces: 0, missingShots: 0, noTown: 0 };
     if (!town) { delta.noTown = 1; return { main, delta }; }

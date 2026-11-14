@@ -325,10 +325,11 @@ function staticInputs(owners, spots) {
     }
     const quests = { scrolls: questScrolls.size, withRecipe: recipes.filter(row => row.quest).length };
     // The exp a death takes at each level (index 0 is level 1), the game's rule (DeathExperience) with
-    // exp ample to lose. Ours: no Lucky protection (levels 1-4) in the export.
+    // exp ample to lose, for a character with Lucky: every class learns it at level 1 for 0 sp, and the rule
+    // takes nothing from it at levels 1-4.
     const DeathExperience = invoke('GameServer/Progression/DeathExperience');
-    const deathExp = [];
-    for (let level = LEVELS[0]; level <= LEVELS[1]; level++) deathExp.push(DeathExperience.calculateLoss({ level, exp: Number.MAX_SAFE_INTEGER }).expLost);
+    const lucky = [{ selfId: 194 }], deathExp = [];
+    for (let level = LEVELS[0]; level <= LEVELS[1]; level++) deathExp.push(DeathExperience.calculateLoss({ level, exp: Number.MAX_SAFE_INTEGER, skills: lucky }).expLost);
     return { recipes, stores, exp: [...Data.experience], deathExp, twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
         races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), ...tripHours(spots) };
 }

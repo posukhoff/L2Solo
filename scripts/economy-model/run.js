@@ -4,12 +4,14 @@
 //
 //   node scripts/economy-model/run.js [--preset x50] [--snapshot <file>: else the one of the live game data] [--hours 100] [--seed 1]
 //       [--cohort <economy ledger JSON>: its start save's accounts | --accounts 1700 --levels 20-39]
-//       [--mode plain|today] [--fit <economy ledger JSON>] [--hunt-share 1] [--visits 2] [--json <out file>]
+//       [--mode plain|today|design] [--fit <economy ledger JSON>] [--hunt-share 1] [--visits 2]
+//       [--supply table|formula: design only] [--json <out file>]
 //
 // plain: NPC trade only, one hunting share and visit rate for every band.
 // today: today's fixed stores and NPC prices (today.js), the hunting share
 // and visits per band fitted on --fit (default: the --cohort ledger).
-// There is no design mode here: it is written again from the model's own rows in a later step.
+// design: a fresh world (--accounts new level-1 characters, --seed; --cohort and --levels are refused) whose
+// solo bots are driven by their own facts (design/plane.js) in the supply variant --supply names.
 //
 // Prints per stage band (by start level) the faucets and sinks per bot-hour,
 // the money stock, the bands over the hours, town visits and the run's
@@ -19,6 +21,8 @@ const Boot = require('./boot');
 const Cohort = require('./cohort');
 const Engine = require('./engine');
 const Today = require('./today');
+const KitHours = require('./kit-hours');
+const Plane = require('./design/plane');
 const Load = require('./load');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
 const { STAGE_BANDS } = require('../economy/ledger-rules');
@@ -36,7 +40,20 @@ const LEFT_OUT = Object.freeze([
     'today\'s gear improvement (crystallizing, enchanting: the gear bots buy at the NPC for it) and the funding limits of today\'s purchases (PurchaseFunding)'
 ]);
 
+// What the design mode leaves out (its own list: the fresh world is solo, in an NPC world, and travel is events).
+const LEFT_OUT_DESIGN = Object.freeze([
+    'a solo bot in an NPC world: no market, no fixed buyers, no party, no twin acting, no bot-to-bot trade or crafting',
+    'potions, enchanting, augments, henna, quests, clans, the player, sessions, entry and retirement (a closed cohort of new characters)',
+    'a main buys only the shots it fires, at the NPC of its held spot\'s town (a town without the seller is an empty trip); its gear is its creation kit',
+    'the held spot is its line\'s best row at its level (no occupation, no travel to other spots); the walk is the town\'s tripHours both ways, not the Scroll of Escape or a fare',
+    'per-kill item yields at the kill mix beyond the spot row\'s drop and spoil loot (Engine.killMixCorrection)'
+]);
+
 function cohortOf(argv, snapshot) {
+    if (Boot.option(argv, 'mode', 'plain') === 'design') {
+        for (const name of ['cohort', 'levels']) if (Boot.option(argv, name, null) !== null) throw new Error(`design mode runs a fresh world: --${name} is refused (use --accounts and --seed)`);
+        return Cohort.fresh({ count: Number(Boot.option(argv, 'accounts', 1700)), seed: Number(Boot.option(argv, 'seed', 1)) }, snapshot);
+    }
     const baseline = Boot.option(argv, 'cohort', null);
     if (baseline) {
         const real = JSON.parse(fs.readFileSync(baseline, 'utf8'));
@@ -62,7 +79,7 @@ function progress(label) {
 
 function printRun(out, { rates }) {
     const flows = out.flows.perBotHour;
-    console.log(`RATES per band (hunting share, visits per bot-hour): ${Object.entries(rates).map(([band, rate]) => `${band} ${rate.huntShare.toFixed(3)}/${rate.visitsPerBotHour.toFixed(2)}`).join(' | ')}`);
+    console.log(`RATES per band (hunting share, visits per bot-hour): ${Object.entries(rates).map(([band, rate]) => `${band} ${rate.huntShare.toFixed(3)}/${rate.visitsPerBotHour === undefined ? 'by its facts' : rate.visitsPerBotHour.toFixed(2)}`).join(' | ')}`);
     console.log(`POPULATION ${out.population.bots} accounts, ${out.population.botHours} bot-h over ${out.window.hours} h; start bands ${Object.entries(out.population.stageBands).map(([band, n]) => `${band} ${n}`).join(' | ')}`);
     console.log(`FLOWS per bot-hour: ${Object.entries(flows).map(([kind, adena]) => `${kind} ${k(adena)}`).join(' | ')}; faucets ${(out.flows.faucets / 1e6).toFixed(1)}M sinks ${(out.flows.sinks / 1e6).toFixed(1)}M net ${(out.flows.net / 1e6).toFixed(1)}M; fixed buyers ${(out.flows.fixedBuyerShareOfFaucets * 100).toFixed(1)} % of faucets`);
     console.log(`MONEY ${(out.money.stockStart / 1e6).toFixed(1)}M -> ${(out.money.stockEnd / 1e6).toFixed(1)}M, growth ${(out.money.growthPerHour * 100).toFixed(2)} %/h, closure gap ${out.money.closureGap}`);
@@ -84,9 +101,9 @@ function printRun(out, { rates }) {
     console.log(`COUNTERS ${Object.entries(out.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
 }
 
-function printFooter() {
+function printFooter(design = false) {
     console.log('LEFT OUT of these numbers:');
-    for (const line of LEFT_OUT) console.log(`  - ${line}`);
+    for (const line of design ? LEFT_OUT_DESIGN : LEFT_OUT) console.log(`  - ${line}`);
 }
 
 // The view, rates and plane of the run's mode.
@@ -97,8 +114,17 @@ function modeOf(argv, snapshot, cohort) {
         return { view, plane: Today.plane({ view, hunter: Today.hunter(view) }),
             rates: { default: { huntShare: Number(Boot.option(argv, 'hunt-share', 1)), visitsPerBotHour: Number(Boot.option(argv, 'visits', 2)) } } };
     }
-    if (mode === 'design') throw new Error('design mode is deleted until build F step 1 writes it from the spec; modes: plain, today');
-    if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain or today; design is deleted until build F step 1 writes it from the spec)`);
+    if (mode === 'design') {
+        const variant = Boot.option(argv, 'supply', null);
+        if (!variant) throw new Error('design mode needs --supply table|formula (the supply variant is named)');
+        const view = Engine.viewOf(snapshot), anchor = {};
+        // The design is an NPC world: the shot's first price is the NPC's cheapest sell price (as today's anchor is its cheapest fixed line).
+        for (const [id, rows] of view.offers) anchor[id] = rows.find(row => row.channel === 'npc_buy')?.price;
+        const kitHours = KitHours.gameKitHours({ snapshot, anchor });
+        kitHours.warm();
+        return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts }) };
+    }
+    if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
     const fitFile = Boot.option(argv, 'fit', Boot.option(argv, 'cohort', null));
     if (!fitFile) throw new Error('today mode needs --fit <economy ledger JSON> (or --cohort)');
     const booted = Date.now(), { view, rates, basis, hunter } = Today.setup(snapshot, JSON.parse(fs.readFileSync(fitFile, 'utf8')), cohort.accounts);
@@ -116,7 +142,7 @@ function printFit(basis) {
 }
 
 // The options main reads (the header names them): any other --name is refused by name.
-const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'json']);
+const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'supply', 'json']);
 
 function refuseUnknownOptions(argv) {
     for (const word of argv) {
@@ -141,11 +167,11 @@ function main(argv) {
     printRun(out, { rates });
     console.log(`MONEY per start band, mean per bot start -> end: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.meanStart)} -> ${k(row.money.meanEnd)}`).join(' | ')}`);
     console.log(`RUN ${out.counters.events} events in ${((Date.now() - began) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);
-    printFooter();
+    printFooter(Boot.option(argv, 'mode', 'plain') === 'design');
     const json = Boot.option(argv, 'json', null);
     if (json) fs.writeFileSync(json, `${JSON.stringify(out, null, 1)}\n`);
 }
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { cohortOf, printRun, printFit, printFooter, progress, LEFT_OUT, STAGE_BANDS };
+module.exports = { cohortOf, printRun, printFit, printFooter, progress, LEFT_OUT, LEFT_OUT_DESIGN, STAGE_BANDS };

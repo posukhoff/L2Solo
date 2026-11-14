@@ -30,13 +30,14 @@ const ACTIONS = Object.freeze(['go', 'buy', 'sell', 'equip', 'stay', 'back']);
 const act = (kind, fields, row) => ({ kind, ...fields, row });
 
 const hasMoney = state => state.wallet > state.roadMoney || state.surplus.length > 0;
-// Stuck: out of its shots with no adena, nothing to sell, and a held row where
-// it kills nothing without shots; no new fact but a change of its state (loot,
-// a gift) ends it. The one rule for both variants and the run's count.
-const stuck = (kinds, state) => kinds.has('out') && !hasMoney(state) && !state.fightsBare;
+// Stuck is a state of the bot, whichever fact woke it: it holds none of the shots
+// it fires, has no adena, nothing to sell, and its held row kills nothing without
+// shots; no new fact but a change of its state (loot, a gift) ends it. The one
+// rule for both variants and the run's count.
+const stuck = state => !!state.need && state.need.held === 0 && !hasMoney(state) && !state.fightsBare;
 // Why a bot stays: stuck, no adena and nothing to sell (it hunts bare), or the
 // trip costs more than it prevents (the formula only).
-const stayReason = (kinds, state) => (stuck(kinds, state) ? 'no_bare_hour' : !hasMoney(state) ? 'no_money' : 'trip_costs_more');
+const stayReason = state => (stuck(state) ? 'no_bare_hour' : !hasMoney(state) ? 'no_money' : 'trip_costs_more');
 // Units of the need adena buys from its offer, the fare back kept.
 const affordable = (state, offer, money) => Math.min(state.need.short, Math.floor(Math.max(0, money - state.roadMoney) / offer.price));
 const sellerTown = state => state.offers?.town ?? state.spotTown;
@@ -60,7 +61,7 @@ function npcBuyOf(state, id) {
 // The action makers a row runs: (state, row id, kinds of the heard facts) -> actions.
 const MAKERS = Object.freeze({
     goNearestSeller: (state, row) => [act('go', { town: sellerTown(state) }, row)],
-    stay: (state, row, kinds) => [act('stay', { reason: stayReason(kinds, state) }, row)],
+    stay: (state, row) => [act('stay', { reason: stayReason(state) }, row)],
     sellAllNpc: (state, row) => state.surplus.map(([id, count]) => act('sell', { id, count, price: npcBuyOf(state, id) }, row)),
     // Only where this town's NPC sells it.
     buyToTarget: (state, row) => {
@@ -149,7 +150,7 @@ function formula(facts, state) {
     const price = (state.toHours + state.backHours) * value.hour
         + (state.roadMoney + units * (offer?.price || 0)) / value.M * value.moneyWeight;
     if (outLoss + bagLoss - price > 0) return [act('go', { town: sellerTown(state) }, 'formula')];
-    return [act('stay', { reason: stayReason(kinds, state) }, 'formula')];
+    return [act('stay', { reason: stayReason(state) }, 'formula')];
 }
 
 const VARIANTS = Object.freeze({ table: (facts, state) => table(facts, state), formula });

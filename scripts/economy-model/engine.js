@@ -87,7 +87,7 @@ function viewOf(snapshot, options = {}) {
         hours: snapshot.hours, kits: snapshot.kits, yields: snapshot.yields, items: snapshot.items, exp: snapshot.exp,
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(), rowItems: new Map(),
-        tripHours: snapshot.tripHours || null, deathExp: snapshot.deathExp || null,
+        tripHours: snapshot.tripHours || null, deathExp: snapshot.deathExp || null, bags: snapshot.bags || null,
         spotHours: snapshot.spotHours?.rows || null, spotLevels: snapshot.spotLevels || null,
         huntYields: (options.yields === 'design' ? snapshot.yieldsDesign : snapshot.yields) || null,
         blessedShots: new Set(snapshot.shotFamilies?.ids?.[BLESSED_FAMILY] || [])
@@ -115,7 +115,12 @@ function bandOf(bands, level) {
 }
 
 const hourOf = (view, main) => view.hours[main.line]?.[main.level] || null;
-const ownRow = (view, line, level, spot) => (spot ? view.spotHours?.[line]?.[level]?.[spot] || null : null);
+// The row of a spot a main may hold at a level: the spot's own hour (inputs.js --spots) when the snapshot has it,
+// else the line's best, top or other row of that spot at the level.
+const rowAt = (hour, id) => (hour && String(hour.best?.spotId) === String(id) ? hour.best : hour?.top?.find(row => String(row.spotId) === String(id)) || hour?.others?.find(row => String(row.spotId) === String(id)) || null);
+const ownRow = (view, line, level, spot) => (spot ? view.spotHours?.[line]?.[level]?.[spot] || rowAt(view.hours[line]?.[level], spot) : null);
+// The town of a spot row at a level (its spot card's), null without one.
+const townOfRow = (view, row, level) => (row ? view.yields[`${row.spotId}@${level}`]?.town || null : null);
 
 // The spot row a main hunts: the spot its occupation chose (a
 // plane's, among its line's top spots at its level or the other rows it may
@@ -634,5 +639,5 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: money }), ...added };
 }
 
-module.exports = { viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
-    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf };
+module.exports = { townOfRow, viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf,
+    killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf, firedOf };
