@@ -71,6 +71,12 @@ function kitInHand(snapshot, main) {
 //   the row's plain shots or its Blessed Spiritshots (blessed); null
 //   where the table has no reference count for the row (rowCharge: the kind
 //   is no option there).
+// - spotFactors(line, level, kit, spotId) -> { bare, shots, blessed } of
+//   { kills, shots, deaths }: the worn kit's hunt at a spot row over the
+//   line's reference kit's at that level, per form (huntFactors' forms), read
+//   through the game's hunt cycle reader at that row: kills an hour, kills
+//   times fight share, kills times deaths. The reference kit reads 1; a field
+//   that cannot be stated reads 1 (counted in stats.spotUnstated).
 // - warm(): builds every band's body at once.
 // kit: { paperdoll slot: selfId }, an empty slot absent or 0 (the body
 // fights with its class's bare numbers there).
@@ -275,7 +281,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
         Pricing.useBoard(() => null);
         try { return read(...args); } finally { Pricing.useBoard(null); }
     };
-    const owners = kitOwners(), { Data, Index, Table, Profile, Valuation, ColdRest, Enchant, Grades, ShotStock, Arrows } = owners;
+    const owners = kitOwners(), { Data, Index, Table, Profile, Valuation, ColdRest, Enchant, Grades, ShotStock, Arrows, HuntCycle } = owners;
     const lines = snapshot.gearLadder?.lines || {};
     // A shot the anchor has no price for (no route makes it) is no option for
     // the spot choice: null. A price of 0 is a free shot.
@@ -286,7 +292,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     const bots = new Map();
     // (line, band index, option, shot fired, regeneration terms) -> its cells, null without one.
     const hunts = new Map();
-    const stats = { builds: 0, fresh: 0, swaps: 0, fast: 0 };
+    const stats = { builds: 0, fresh: 0, swaps: 0, fast: 0, spotBuilds: 0, spotUnstated: 0 };
     const bandOf = (line, level) => { const bands = lines[line] || [], at = bands.findIndex(band => level >= band.from && level <= band.to); return at < 0 ? null : { at, band: bands[at] }; };
     const botOf = (line, at, band) => {
         const key = `${line}:${at}`;
@@ -343,17 +349,23 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
     // ArrowStock's of the bow's grade, as Actor/BowResources takes it; null
     // for any other weapon).
     const shots = new Map();
+    // The kinds of shot a body fires with a weapon and the arrow a bow spends:
+    // the one rule for which shots a body fires (the hour's options and a spot
+    // row's forms both read it).
+    const kindsOf = (state, weapon) => {
+        const plain = ShotStock.planForState(state, { blessed: false }), charge = plain ? chargeOf(state.stats.classId, weapon) : 0, kinds = [];
+        if (charge > 0) {
+            const blessed = plain.kind === 'soulshot' ? null : ShotStock.planForState(state, { blessed: true });
+            for (const plan of [plain, blessed]) if (plan?.selfId) kinds.push({ kind: plan.kind, id: Number(plan.selfId), charge, key: `${plan.kind}:${plan.selfId}` });
+        }
+        const item = weapon ? Index.find(Data.items, weapon) : null;
+        const arrow = item?.template?.kind === 'Weapon.Bow' ? Arrows.BY_RANK[String(item.etc?.rank ?? 'none').toLowerCase()] ?? null : null;
+        return { kinds, arrow };
+    };
     const firesOf = (line, at, weapon, body) => {
         const key = `${line}:${at}:${weapon}`;
         if (!shots.has(key)) {
-            const state = body(), own = ShotStock.planForState(state), plain = ShotStock.planForState(state, { blessed: false });
-            const charge = plain ? chargeOf(state.stats.classId, weapon) : 0, kinds = [];
-            if (charge > 0) {
-                const blessed = plain.kind === 'soulshot' ? null : ShotStock.planForState(state, { blessed: true });
-                for (const plan of [plain, blessed]) if (plan?.selfId) kinds.push({ kind: plan.kind, id: Number(plan.selfId), charge, key: `${plan.kind}:${plan.selfId}` });
-            }
-            const item = weapon ? Index.find(Data.items, weapon) : null;
-            const arrow = item?.template?.kind === 'Weapon.Bow' ? Arrows.BY_RANK[String(item.etc?.rank ?? 'none').toLowerCase()] ?? null : null;
+            const state = body(), own = ShotStock.planForState(state), { kinds, arrow } = kindsOf(state, weapon);
             shots.set(key, { own: own ? `${own.kind}:${own.selfId}` : 'none', kinds, arrow });
         }
         return shots.get(key);
@@ -450,6 +462,69 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
         const ref = rowCharge(line, spotId, blessed ? 2 : true);
         return ref === null ? null : chargeOf(Table.roleClass(String(line), level), Number(weapon) || 0) / ref;
     };
+    // A worn kit's hunt at one spot row over the line's reference kit's at the
+    // main's level (spotFactors): per form the reader's kills an hour, its
+    // kills times fight share and its kills times deaths, read on a body
+    // wearing the kit with the reader the game's hunt cycle builds for that row
+    // (no death or money weighing: only the kit's numbers enter). Cached by
+    // (line, level, worn kit, spot): the kits a run meets are not known
+    // beforehand. Each field the worn kit's over the reference's, 1 where it
+    // cannot be stated (no class, a piece above the level's grade, no row at the
+    // level, a form one body fires and the other does not) and the field's
+    // reference reads 0; deaths 1 where the reference dies 0 there (the worn kit
+    // then dies 0 too).
+    const UNIT = Object.freeze({ kills: 1, shots: 1, deaths: 1 }), UNITS = Object.freeze({ bare: UNIT, shots: UNIT, blessed: UNIT });
+    const spots = new Map(), spotBodies = new Map();
+    const bodyFor = (line, level, worn) => {
+        const key = `${line}:${level}:${worn.map(([slot, selfId]) => `${slot}:${selfId}`).join(',')}`;
+        if (!spotBodies.has(key)) {
+            const classId = Table.roleClass(line, level);
+            let made = null;
+            if (classId !== null && worn.every(([, selfId]) => { const item = Index.find(Data.items, selfId); return item && Grades.rankOf(Enchant.gradeOf(item.etc)) <= Grades.rankOf(Grades.gradeForLevel(level)); })) {
+                const body = referenceBot(owners, line, level, worn.map(([slot, selfId]) => ({ selfId, slot })));
+                made = { body, numbers: referenceNumbers(Profile.profileFor(body, 0, { store: false })), weapon: weaponIn(worn.map(([slot, selfId]) => ({ selfId, slot }))) };
+            }
+            spotBodies.set(key, made);
+        }
+        return spotBodies.get(key);
+    };
+    // The forms' readings of a body at a spot: { bare, shots, blessed } of
+    // { kills, fired, deaths } (null for a form the body does not fire), and
+    // whether the spot has a row at the level.
+    const formsAt = (made, spotId) => {
+        const { kinds } = kindsOf(made.body, made.weapon);
+        const read = (state, useShots) => {
+            const reader = HuntCycle.reader(state, useShots === false ? { deathHours: 0, hourAdena: 1, hunt: { spotId, useShots: false } } : { deathHours: 0, hourAdena: 1, hunt: { spotId } });
+            const index = reader.spotIds.map(String).indexOf(String(spotId));
+            if (index < 0) return undefined;
+            const one = reader.hourAt(made.numbers, index);
+            return { kills: one.kills, fired: one.kills * one.share, deaths: one.kills * one.deaths };
+        };
+        const form = blessed => { const kind = kinds.find(row => (row.kind === 'blessedSpiritshot') === blessed); return kind ? read(kindBody(made.body, kind.kind)) : null; };
+        return { bare: read(made.body, false), shots: form(false), blessed: form(true) };
+    };
+    const spotFactors = (line, level, kit, spotId) => {
+        const worn = wornKit(kit), key = `${line}:${level}:${worn.map(([slot, selfId]) => `${slot}:${selfId}`).join(',')}:${spotId}`;
+        if (spots.has(key)) return spots.get(key);
+        stats.spotBuilds++;
+        const made = bodyFor(line, level, worn), ref = bodyFor(line, level, wornKit(Object.fromEntries(lineKit(owners, line, level).map(row => [row.slot, row.selfId]))));
+        let out = UNITS;
+        if (!made || !ref) stats.spotUnstated++;
+        else {
+            const w = formsAt(made, spotId), r = formsAt(ref, spotId);
+            let unstated = w.bare === undefined || r.bare === undefined;
+            const factor = form => {
+                const a = w[form], b = r[form];
+                if (a === undefined || b === undefined || (a === null) !== (b === null)) { unstated = true; return UNIT; }
+                if (a === null || !(b.kills > 0) || !(b.fired > 0)) return UNIT;
+                return Object.freeze({ kills: a.kills / b.kills, shots: a.fired / b.fired, deaths: b.deaths > 0 ? a.deaths / b.deaths : 1 });
+            };
+            if (unstated) stats.spotUnstated++;
+            else out = Object.freeze({ bare: factor('bare'), shots: factor('shots'), blessed: factor('blessed') });
+        }
+        spots.set(key, out);
+        return out;
+    };
     // Every band's body and the cells of its reference kit (BotGear's kit of
     // the band's level), built at once: the game's spot table reads each
     // line's levels on first use, a stretch of up to some 60 ms a read would
@@ -460,7 +535,7 @@ function gameKitHours({ snapshot, preset = snapshot?.header?.preset, anchor }) {
             if (held) pass(line, at, band, held, wornKit(Object.fromEntries(lineKit(owners, line, band.level).map(row => [row.slot, row.selfId]))));
         });
     };
-    return { hour: noBoard(hour), swaps: noBoard(swaps), shotScale: noBoard(shotScale), warm: noBoard(warm), stats };
+    return { hour: noBoard(hour), swaps: noBoard(swaps), shotScale: noBoard(shotScale), spotFactors: noBoard(spotFactors), warm: noBoard(warm), stats };
 }
 
 // A main's worn kit's hunt over its level's reference kit's, per form
@@ -473,4 +548,4 @@ function kitFactors({ snapshot, view, kitHours }) {
         kitHours.hour(main.line, main.level, slotsOf(view.kits[main.line]?.[main.level] || [])));
 }
 
-module.exports = { gameKitHours, kitFactors, wornKit, slotsConflict, huntFactors, lineKit, referenceShot, referenceNumbers, TOP_SPOTS };
+module.exports = { gameKitHours, kitFactors, kitInHand, wornKit, slotsConflict, huntFactors, lineKit, referenceShot, referenceNumbers, TOP_SPOTS };
