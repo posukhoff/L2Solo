@@ -61,6 +61,17 @@ assert.equal(Today.visit({ ...main, bag: {}, money: 100000 }, view, { outingHour
 assert.equal(delta.flows.fixedSellers, -20 * 500);
 assert.equal(after.money, 40000 + 50 - 10000);
 assert.deepEqual(after.bag, {});
+// A beginner stack (Soulshots for Beginners charge the no-grade 1463 here) is
+// never sold and counts as held of the shot it charges: the restock buys only
+// what the line lacks over it.
+{
+    const taught = { ...view, shotFamilies: { grades: ['NONE'], ids: [[1463]] } };
+    const starter = { ...main, bag: {}, money: 100000, shots: { 5789: 15 } };
+    const firing = Today.hunter(taught).firing(starter);
+    const { main: kept, delta: seen } = Today.visit(starter, taught, { outingHours: 0.5, firing });
+    assert.deepEqual([firing.beginner, kept.shots[5789], seen.shotsSoldNpc, seen.unsold], [5789, 15, 0, 0], 'the beginner stack stays');
+    assert.equal(seen.shotsBoughtFixed, Math.ceil(20 * Today.SHOT_LINE_HOURS) - 15, 'the restock counts the beginner shots as held');
+}
 
 // The fit: the band's realized exp over the mains' exp per hunting hour at
 // the spot rows they hunt; visits per hunting main; an empty band takes its
