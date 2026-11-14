@@ -379,7 +379,7 @@ function firstPrices(snapshot, view, { recipes, byProduct, crystalGrade, npcMin,
         for (const [key, hour] of Object.entries(byLevel)) {
             const row = hour.best, level = Number(key);
             if (!row || !(row.kills > 0)) continue;
-            const { items: per, npc: income, adena } = Engine.rowItems(view, { line, level }, row, 'shots'), loot = income - adena;
+            const { items: per, npc: income, loot } = Engine.rowItems(view, { line, level }, row, 'shots');
             for (const { id, rate: count } of per) {
                 // band_hour: 1 / count hours each; hour_share: the item's share of the loot's value per unit.
                 const hours = dropAt === 'band_hour' ? 1 / count : loot > 0 ? (view.items[id]?.npcBuy || 0) / loot : 0;

@@ -200,7 +200,7 @@ function yieldRows(view, line, level, row, form) {
 
 // A spot row's items per hunting hour at the hunt's yields in a form
 // (formOf: without shots, its plain shot, Blessed Spiritshots):
-// { items: [{ id, rate, weight, stack }], adena, npc: its income at the NPC's buy price }.
+// { items: [{ id, rate, weight, stack }], adena, loot: the items at the NPC's buy price, npc: adena + loot }.
 // One per line, level, spot and form.
 function rowItems(view, main, row, form) {
     const key = `${main.line}@${main.level}@${row.spotId}@${form}`;
@@ -209,7 +209,8 @@ function rowItems(view, main, row, form) {
     const items = yieldRows(view, main.line, main.level, hour, form).map(([id, perKill]) => ({ id, rate: perKill * hour.kills,
         weight: view.items[id]?.weight || 0, stack: !isGear(view.items[id]) }));
     const adena = hour.adena * adenaFactor(view, row, main.level);
-    const out = { items, adena, npc: adena + items.reduce((sum, item) => sum + item.rate * (view.items[item.id]?.npcBuy || 0), 0) };
+    const loot = items.reduce((sum, item) => sum + item.rate * (view.items[item.id]?.npcBuy || 0), 0);
+    const out = { items, adena, loot, npc: adena + loot };
     view.rowItems.set(key, out);
     return out;
 }
