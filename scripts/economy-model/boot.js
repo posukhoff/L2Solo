@@ -100,4 +100,4 @@ function presetsOption(argv) {
     return String(option(argv, 'preset', PRESETS.join(','))).split(',').map(text => text.trim()).filter(Boolean);
 }
 
-module.exports = { boot, usePreset, loadedFiles, recordReads, dataStamp, stampMatches, option, presetsOption, PRESETS, root: common.root };
+module.exports = { boot, usePreset, loadedFiles, recordReads, sourcesHash, dataStamp, stampMatches, option, presetsOption, PRESETS, root: common.root };
