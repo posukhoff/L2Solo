@@ -103,7 +103,7 @@ function printRun(out, { rates }) {
 }
 
 // The design run's report: per class of level (1-19 are the design's numbers, 20 and above are printed apart), the
-// consumable trips, empty trips, road share and stuck episodes; where the other supply variant would have decided
+// consumable trips (an out fact), bag trips (a bag fact, no out), both, empty trips, road share and stuck episodes; where the other supply variant would have decided
 // otherwise; the bare hours before each line's first purchase of shots; the level distribution at the end.
 function printDesign(design) {
     const percent = value => (value === null ? '-' : `${(value * 100).toFixed(1)} %`), number = value => (value === null ? '-' : value.toFixed(2));
@@ -111,7 +111,7 @@ function printDesign(design) {
     console.log(`DESIGN supply variant ${design.variant}, per class of level at the event's start`);
     for (const [name, label] of [['low', 'levels 1-19'], ['high', 'levels 20+ (printed only)']]) {
         const book = design.levels[name];
-        console.log(`  ${label}: wall hours ${book.wallHours.toFixed(1)}, consumable trips ${book.consumableTrips}, empty trips ${book.emptyTrips} (${percent(book.emptyShare)}${name === 'low' ? `, bound ${percent(DesignLimits.EMPTY_TRIP_SHARE.value)}` : ''}), `
+        console.log(`  ${label}: wall hours ${book.wallHours.toFixed(1)}, consumable trips (an out fact) ${book.consumableTrips}, bag trips (a bag fact, no out) ${book.bagTrips}, both ${book.bothTrips}, empty trips ${book.emptyTrips} (${percent(book.emptyShare)}${name === 'low' ? `, bound ${percent(DesignLimits.EMPTY_TRIP_SHARE.value)}` : ''}), `
             + `road hours ${book.roadHours.toFixed(1)} = road share ${percent(book.roadShare)} of the ${book.decidingHours.toFixed(1)} h of mains with a spot row (${percent(book.roadShareAllMains)} of all wall hours)${name === 'low' ? ` (limit ${percent(DesignLimits.ROAD_SHARE_LIMIT.value)}, today's bots ${percent(DesignLimits.CURRENT_BOTS_ROAD_SHARE.value)})` : ''}`);
         console.log(`    stuck: ${stuckOf(book)}`);
     }
