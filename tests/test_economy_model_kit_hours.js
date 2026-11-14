@@ -418,6 +418,74 @@ assert.throws(() => KitHours.gameKitHours({ snapshot: wrongBest, anchor }).hour(
     const free = KitHours.gameKitHours({ snapshot: x1, anchor: Object.fromEntries(Object.keys(anchor).map(id => [id, 0])) }).hour(line, level, kit).shots[0];
     assert.ok(priced.units < free.units && priced.gross < free.gross, 'priced shots choose a cell that fires fewer shots');
 }
+// A worn kit's hunt at one spot row over the level's reference kit's (spotFactors):
+// per form the game's own hunt cycle reader at that row, kills an hour, kills
+// times fight share (the shots fired) and kills times deaths, the worn kit's over
+// the reference's.
+const gameRow = (line, level, kit, spotId, form) => {
+    Pricing.useBoard(() => null);
+    try {
+        const classId = Table.roleClass(line, level), base = HuntCycle.referenceState(classId, level, { line: Number(line) }), inventory = {};
+        for (const [slot, selfId] of KitHours.wornKit(kit)) {
+            const key = `kit-${selfId}`, prior = inventory[key], amount = (prior?.amount || 0) + 1;
+            inventory[key] = { selfId, amount, equipped: true, equippedCount: amount, equippedSlots: [...(prior?.equippedSlots || []), slot], slot };
+        }
+        const state = { ...base, inventory, stats: { ...base.stats, exp: Data.experience[level - 1], ...(form === 'blessed' ? { earning: { shotKind: 'blessedSpiritshot' } } : {}) } };
+        const numbers = KitHours.referenceNumbers(Profile.profileFor(state, 0, { store: false }));
+        const reader = HuntCycle.reader(state, { deathHours: 0, hourAdena: 1, hunt: form === 'bare' ? { spotId, useShots: false } : { spotId } });
+        const one = reader.hourAt(numbers, reader.spotIds.map(String).indexOf(String(spotId)));
+        return { kills: one.kills, fired: one.kills * one.share, deaths: one.kills * one.deaths };
+    } finally { Pricing.useBoard(null); }
+};
+const gameFactor = (line, level, kit, spotId, form) => {
+    const worn = gameRow(line, level, kit, spotId, form), ref = gameRow(line, level, kitOf(line, level), spotId, form);
+    return { kills: worn.kills / ref.kills, shots: worn.fired / ref.fired, deaths: ref.deaths > 0 ? worn.deaths / ref.deaths : 1 };
+};
+const sameFactor = (actual, expected, message) => { for (const field of ['kills', 'shots', 'deaths']) near(actual[field], expected[field], `${message}: ${field}`); };
+// The reference kit reads 1 at every row and form.
+for (const [line, level, spotId] of [[fighter, 32, '30_-30:f2'], [mage, 32, '4_25'], [mage, 39, '17_21']]) {
+    const spot = kitHours.spotFactors(line, level, kitOf(line, level), spotId);
+    for (const form of ['bare', 'shots', 'blessed']) sameFactor(spot[form], { kills: 1, shots: 1, deaths: 1 }, `line ${line} at ${level}: the reference kit's ${form} factor at ${spotId}`);
+}
+// A stronger kit (a higher rung of the grade) kills more at an uncapped row, as the game's reader reads
+// that row; at a capped row (the table's cap at or below the kill rate: the spawns bound the kills)
+// the reference's kills are the cap and the stronger kit's the same.
+{
+    const strong = kitOf(mage, 39), spot = kitHours.spotFactors(mage, 32, strong, '4_25');
+    assert.ok(spot.shots.kills > 1.05, `a stronger kit kills more at an uncapped row: ${spot.shots.kills}`);
+    for (const form of ['bare', 'shots', 'blessed']) sameFactor(spot[form], gameFactor(mage, 32, strong, '4_25', form), `the stronger kit's ${form} factor`);
+    const cycle = Table.cycle;
+    try {
+        Table.cycle = (...args) => { const row = cycle(...args); return row && { ...row, cap: row.kph * 0.9 }; };
+        const capped = KitHours.gameKitHours({ snapshot, anchor }).spotFactors(mage, 32, strong, '4_25');
+        for (const form of ['bare', 'shots', 'blessed']) near(capped[form].kills, 1, `the stronger kit's ${form} kills at a capped row`);
+    } finally { Table.cycle = cycle; }
+}
+// A weaker kit's factor differs from row to row (a long fight costs it more), as the game's reader's does.
+{
+    const weak = { 7: kitOf(mage, 39)[7] ?? kitOf(mage, 39)[14] }, at = ['17_21', '-6_34'].map(spotId => kitHours.spotFactors(mage, 39, weak, spotId));
+    assert.ok(Math.abs(at[0].shots.kills - at[1].shots.kills) > 0.1, `one kit reads different factors at two rows: ${at[0].shots.kills} and ${at[1].shots.kills}`);
+    ['17_21', '-6_34'].forEach((spotId, i) => sameFactor(at[i].shots, gameFactor(mage, 39, weak, spotId, 'shots'), `the weak kit at ${spotId}`));
+    // Where the reference dies the weak kit's deaths are the game's load ratio times its kills, not its kills factor.
+    const row = Table.cycle('17_21', Table.roleFor(HuntCycle.referenceState(Table.roleClass(mage, 39), 39, { line: Number(mage) })), 39, true, {});
+    assert.ok(row.deaths > 0, 'the reference dies at the row');
+    assert.ok(at[0].shots.deaths > at[0].shots.kills * 2, `the weak kit dies more than its kills factor says: ${at[0].shots.deaths} against ${at[0].shots.kills}`);
+}
+// A row with no table row at the level, or a piece above the level's grade, reads 1 and is counted.
+{
+    const run = KitHours.gameKitHours({ snapshot, anchor }), unit = { kills: 1, shots: 1, deaths: 1 };
+    const noRow = run.spotFactors(fighter, 32, kitOf(fighter, 39), 'no-such-spot'), above = run.spotFactors(fighter, 32, kitOf(fighter, 47), '30_-30:f2');
+    for (const form of ['bare', 'shots', 'blessed']) { assert.deepEqual(noRow[form], unit); assert.deepEqual(above[form], unit); }
+    // A kit with no weapon fires no shot where the reference does: those forms read 1 and are counted.
+    const bare = Object.fromEntries(Object.entries(kitOf(fighter, 32)).filter(([slot]) => slot !== '7' && slot !== '14')), before = run.stats.spotUnstated;
+    const noWeapon = run.spotFactors(fighter, 32, bare, '30_-30:f2');
+    assert.deepEqual(noWeapon.shots, unit);
+    assert.equal(run.stats.spotUnstated, before + 1, 'a form only the reference fires is counted');
+    run.stats.spotUnstated = before;
+    assert.equal(run.stats.spotUnstated, 2, 'each unstated read is counted');
+    assert.equal(run.spotFactors(fighter, 32, kitOf(fighter, 39), 'no-such-spot'), noRow);
+    assert.equal(run.stats.spotUnstated, 2, 'a held read is not counted again');
+}
 // The model's readers stand on no board while they run and leave the game's
 // board source as it was: a board the game's pricing finds after the model
 // ran is the one it finds before.
