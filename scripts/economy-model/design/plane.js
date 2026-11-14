@@ -139,7 +139,7 @@ function plane({ view, kitHours, variant, accounts }) {
             const states = new Map();
             const stateOf = main => states.get(main.index) || { account: { id: main.id, led: main.id, place: 'hunt', queue: [] }, full: false, stuck: false };
             const put = (main, state) => states.set(main.index, state);
-            const raise = (state, kind, main, at) => ({ ...state, account: Attention.push(state.account, { kind, who: main.id, at }) });
+            const queueFact = (state, kind, main, at) => ({ ...state, account: Attention.push(state.account, { kind, who: main.id, at }) });
             const placed = (state, place) => ({ ...state, account: { ...state.account, place } });
 
             // The supply decision's state on the main where it stands (place, the town it is in).
@@ -216,24 +216,24 @@ function plane({ view, kitHours, variant, accounts }) {
                 },
                 hunt(main, delta) {
                     let state = stateOf(main);
-                    if (FACTS.out(main, delta)) state = raise(state, 'out', main, main.since);
+                    if (FACTS.out(main, delta)) state = queueFact(state, 'out', main, main.since);
                     const bags = view.bags?.[main.line], full = bags ? fullOf(view, bags, carried(main)) : false;
-                    if (FACTS.bag(state.full, full)) state = raise(state, 'bag', main, main.since);
+                    if (FACTS.bag(state.full, full)) state = queueFact(state, 'bag', main, main.since);
                     put(main, { ...state, full });
                 },
                 visit(main, now, visitInfo) {
                     let state = stateOf(main), at = main;
                     if (FACTS.born(visitInfo)) {
                         at = { ...main, spot: heldSpot(view, main) };
-                        state = raise(state, 'born', at, now);
+                        state = queueFact(state, 'born', at, now);
                     }
-                    if (FACTS.died(visitInfo)) state = raise(state, 'died', at, now);
+                    if (FACTS.died(visitInfo)) state = queueFact(state, 'died', at, now);
                     const town = townOf(view, at);
                     if (!FACTS.town(town)) {
                         put(at, placed(state, 'hunt'));
                         return { main: at, delta: { ...executed(at, [], null, 0).delta, towns: [], noTown: 1 } };
                     }
-                    state = raise(placed(state, 'town'), 'town', at, now);
+                    state = queueFact(placed(state, 'town'), 'town', at, now);
                     const { state: heard, actions, row } = decide(at, state, town);
                     const done = executed(at, actions, town, row ? Engine.backHoursOf(view, row.spotId, town) : 0);
                     // It walks back and hunts again from the visit's end.
