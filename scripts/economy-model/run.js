@@ -5,7 +5,8 @@
 //   node scripts/economy-model/run.js [--preset x50] [--snapshot <file>: else the one of the live game data] [--hours 100] [--seed 1]
 //       [--cohort <economy ledger JSON>: its start save's accounts | --accounts 1700 --levels 20-39]
 //       [--mode plain|today|design] [--fit <economy ledger JSON>] [--hunt-share 1] [--visits 2]
-//       [--supply table|formula: design only] [--json <out file>]
+//       [--supply table|formula: design only] [--hunt-table <file>: design only, else tmp/economy-model/hunt/<the snapshot's huntTable name>]
+//       [--json <out file>]
 //
 // plain: NPC trade only, one hunting share and visit rate for every band.
 // today: today's fixed stores and NPC prices (today.js), the hunting share
@@ -17,6 +18,7 @@
 // the money stock, the bands over the hours, town visits and the run's
 // counters; progress goes to stderr every 10 simulated hours.
 const fs = require('node:fs');
+const path = require('node:path');
 const Boot = require('./boot');
 const Cohort = require('./cohort');
 const Engine = require('./engine');
@@ -25,6 +27,7 @@ const KitHours = require('./kit-hours');
 const Plane = require('./design/plane');
 const DesignLimits = require('./design/limits');
 const Load = require('./load');
+const HuntRows = require('./rules/hunt-rows');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
 const { STAGE_BANDS } = require('../economy/ledger-rules');
 
@@ -119,13 +122,64 @@ function printDesign(design) {
     for (const row of design.shadow.differ) console.log(`    ${pad(row.count, 7)}  row ${row.row}: ${row.reason}`);
     console.log(`  bare hunting hours before the first purchase of shots, per line (bots; bought; mean hours of those that bought; never bought, their mean bare hours so far):`);
     for (const row of design.bareBeforeFirstBuy) console.log(`    line ${pad(row.line, 4)} ${pad(row.bots, 5)} ${pad(row.bought, 5)} ${pad(number(row.meanHoursBeforeFirstBuy), 8)} ${pad(row.neverBought, 5)} ${pad(number(row.meanHoursNeverBought), 8)}`);
-    console.log(`  spotUnstated ${design.spotUnstated}`);
+    console.log(`  spotUnstated ${design.spotUnstated}; off the hunting table's grid (a main at a level wearing another kit than the measured one) ${design.offGrid}`);
     console.log(`  level distribution at the end: ${Object.entries(design.levelDistribution).sort((a, b) => a[0] - b[0]).map(([level, n]) => `${level}:${n}`).join(' ')}`);
 }
 
 function printFooter(design = false) {
     console.log('LEFT OUT of these numbers:');
     for (const line of design ? LEFT_OUT_DESIGN : LEFT_OUT) console.log(`  - ${line}`);
+}
+
+// The design's hours at the levels of the model's hunting table (hunt-table.js): per line and level of the table's
+// range, from its reader (rules/hunt-rows.js) at the kit point the table measured for the line's kit key there (the
+// creation kit), its one best by income an hour with shots (best, top: its candidates ranked) and bare (bareBest), the
+// level's kill-death limit applied at the read (the design's KILL_DEATH_LIMIT); above the range the snapshot's game spot
+// table rows stay. A new hours object, the snapshot's untouched. A table whose stamp is not the one the snapshot was
+// built with is refused by name. lines: the run's lines; keyOf(line, level): the table's kit key (the spot table
+// generator's botFor); spoilLevelOf(line, level), gapFactor, walkMs: the game's rules the reader takes.
+// Returns { hours, range, cannot: { shots, bare } (the spot forms a line hunts nothing in) }.
+function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFactor, walkMs }) {
+    const expected = snapshot.header.huntTable;
+    if (file.stamp !== expected.stamp) throw new Error(`hunt table ${name}: stamp ${file.stamp}, but the snapshot was built with ${expected.name} (stamp ${expected.stamp})`);
+    const hours = { ...snapshot.hours }, cannot = { shots: 0, bare: 0 }, [from, to] = file.range;
+    for (const line of lines) {
+        if (!snapshot.hours[line]) continue;
+        hours[line] = { ...snapshot.hours[line] };
+        for (let level = from; level <= to; level++) {
+            const held = snapshot.hours[line][level];
+            if (!held) continue;
+            const key = keyOf(line, level), bodies = Object.entries(file.bodies).filter(([body]) => body.startsWith(`${key}|${level}|`));
+            if (bodies.length !== 1) throw new Error(`hunt table ${name}: ${bodies.length} kit points for key ${key} at level ${level} (one measured point, the creation kit's)`);
+            const read = HuntRows.lineRows({ file, key, level, point: bodies[0][1].point, rates: snapshot.header.rates, speciesYields: snapshot.speciesYields,
+                spoilLevel: spoilLevelOf(line, level), items: snapshot.items, gapFactor, walkMs });
+            for (const row of read.cannot) cannot[row.form]++;
+            const shots = HuntRows.best(read.rows, 'income', 'shots'), bare = HuntRows.best(read.rows, 'income', 'bare');
+            hours[line][level] = { classId: held.classId, shotId: held.shotId, best: shots.best, bareBest: bare.best, top: shots.top };
+        }
+    }
+    return { hours, range: [from, to], cannot };
+}
+
+// The design's hunting table: the file the snapshot pairs with (or --hunt-table), its hours over the snapshot's
+// (tableHours) and the creation kit of each line's class at a level, the kit the table measured.
+function designTable(argv, snapshot, accounts) {
+    const expected = snapshot.header.huntTable;
+    if (!expected) throw new Error('design mode reads the model\'s hunting table: this snapshot pairs with none (build it with inputs.js --hunt <file>)');
+    const name = path.resolve(Boot.option(argv, 'hunt-table', path.join(Boot.root, 'tmp', 'economy-model', 'hunt', expected.name)));
+    const Generator = require('../generate-spot-table'), Data = invoke('GameServer/DataCache'), Starter = invoke('GameServer/Knowledge/StarterItemCatalog');
+    const table = tableHours({ snapshot, file: JSON.parse(fs.readFileSync(name, 'utf8')), name, lines: [...new Set(accounts.map(account => account.line))],
+        keyOf: Generator.botFor, spoilLevelOf: invoke('GameServer/Bot/AI/SpotValueTable').roleSpoilLevel,
+        gapFactor: invoke('GameServer/Progression/MobExperience').gapFactor, walkMs: invoke('GameServer/Bot/Population/BackgroundResolver').soloWalkMs });
+    const kits = new Map();
+    const creation = (line, level) => {
+        const classId = snapshot.hours[line][level].classId;
+        if (!kits.has(classId)) kits.set(classId, Object.fromEntries(Starter.starterRows(Data.newbieItems, classId, Data.items).filter(row => row.equipped).map(row => [row.slot, Number(row.selfId)])));
+        return kits.get(classId);
+    };
+    console.log(`HUNT TABLE ${name} (stamp ${expected.stamp}): levels ${table.range.join('-')} read from the model's table, above ${table.range[1]} the game's spot table; `
+        + `spot forms a line hunts nothing in (every species over the kill-death limit ${DesignLimits.KILL_DEATH_LIMIT.value} or killed by none): shots ${table.cannot.shots}, bare ${table.cannot.bare}`);
+    return { ...table, creation };
 }
 
 // The view, rates and plane of the run's mode.
@@ -139,12 +193,13 @@ function modeOf(argv, snapshot, cohort) {
     if (mode === 'design') {
         const variant = Boot.option(argv, 'supply', null);
         if (!variant) throw new Error('design mode needs --supply table|formula (the supply variant is named)');
-        const view = Engine.viewOf(snapshot), anchor = {};
+        const table = designTable(argv, snapshot, cohort.accounts);
+        const view = Engine.viewOf({ ...snapshot, hours: table.hours }), anchor = {};
         // The design is an NPC world: the shot's first price is the NPC's cheapest sell price (as today's anchor is its cheapest fixed line).
         for (const [id, rows] of view.offers) anchor[id] = rows.find(row => row.channel === 'npc_buy')?.price;
         const kitHours = KitHours.gameKitHours({ snapshot, anchor });
         kitHours.warm();
-        return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts }) };
+        return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation } }) };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
     const fitFile = Boot.option(argv, 'fit', Boot.option(argv, 'cohort', null));
@@ -164,7 +219,7 @@ function printFit(basis) {
 }
 
 // The options main reads (the header names them): any other --name is refused by name.
-const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'supply', 'json']);
+const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'supply', 'hunt-table', 'json']);
 
 function refuseUnknownOptions(argv) {
     for (const word of argv) {
@@ -197,4 +252,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { cohortOf, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, LEFT_OUT_DESIGN, STAGE_BANDS };
+module.exports = { tableHours, cohortOf, printRun, printDesign, printFit, printFooter, progress, LEFT_OUT, LEFT_OUT_DESIGN, STAGE_BANDS };

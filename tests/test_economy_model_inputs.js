@@ -346,4 +346,23 @@ console.log(`  fallbacks taken: no market ${sharing.join(' ')}`);
 assert.deepEqual(snapshot.deathExp.slice(0, 4), [0, 0, 0, 0], 'levels 1-4 lose no exp');
 assert.ok(snapshot.deathExp[4] > 0, 'level 5 loses exp');
 
+// Paired with the model's hunting table (--hunt): the header names its file, stamp and range; each table species has
+// its own per-kill yields at the preset for a killer of the level (the gremlin alone at the gremlin spot), and every
+// table spot of a level has its spot yields and town there, though the game's spot table has no row for the line.
+{
+    const fields = ['kills', 'deaths', 'fight', 'rest', 'other', 'walk', 'exp', 'shots', 'potions', 'pull'], cell = [41.5, 0.048, 11.9, 51.5, 22.5, 0.84, 29, 0, 0.17, 1];
+    const file = { stamp: 'abc', range: [1, 1], fields, forms: ['bare', 'shots'], bodies: { '49|1|7/54': { classId: 49, runSpd: 121, reach: 40, point: { attack: 7, defence: 54 } } },
+        spots: { '-12_43': { area: 488157, density: 10, species: { 5198: { level: 1, count: 10, production: 2400 } } } }, cells: { '49|1|7/54': { '-12_43': { 5198: [cell, cell] } } } };
+    const paired = Inputs.extract({ preset: 'x50', lines: ['51'], levels: [1, 1], hunt: { name: 'hunt-1-1-abc.json', file } });
+    assert.deepEqual(paired.header.huntTable, { name: 'hunt-1-1-abc.json', stamp: 'abc', range: [1, 1] });
+    assert.equal(paired.hours[51][1].best, null, 'the game\'s spot table has no row for the orc mystic at level 1');
+    const gremlin = paired.yields['-12_43@1'];
+    assert.ok(gremlin && gremlin.town, 'the table spot has its yields and town at the level');
+    assert.deepEqual(Object.keys(paired.speciesYields), ['5198@1@0']);
+    // The spot holds the gremlin alone: the species' yields are the spot's.
+    assert.deepEqual(paired.speciesYields['5198@1@0'], { drop: gremlin.drop, spoil: gremlin.spoil });
+    assert.ok(gremlin.drop[57] > 0, 'a gremlin drops adena');
+    assert.equal(snapshot.header.huntTable, undefined, 'a snapshot built without --hunt pairs with no table');
+}
+
 console.log('PASS economy model inputs snapshot');
