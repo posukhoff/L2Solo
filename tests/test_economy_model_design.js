@@ -68,7 +68,7 @@ for (const fightsBare of [true, false]) {
     const both = Supply.shadow(out, broke);
     assert.equal(both.differ, null);
     assert.deepEqual(brief(both.other).map(a => [a.kind, a.reason]), [['stay', fightsBare ? 'no_money' : 'no_bare_hour']]);
-    assert.equal(Supply.stuck(new Set(['out']), broke), !fightsBare);
+    assert.equal(Supply.stuck(broke), !fightsBare);
 }
 // In town the formula takes the same levers in the same order.
 assert.deepEqual(brief(Supply.supplyChoice(town, { ...broke, variant: 'formula' })).map(a => [a.kind, a.count]), [['sell', 40], ['buy', 28], ['back', undefined]]);
@@ -223,5 +223,16 @@ const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10,
 const stuckDying = run(freshBot(10, { shots: { [SHOT]: 20 } }), 'table', 10, 2, mortalWorld);
 assert.ok(stuckDying.visits.filter(visit => visit.info.died && visit.before.shots[SHOT] === 0).length >= 3, 'the stuck bot dies and respawns several times after it stands');
 assert.equal(stuckDying.result.counters.stuckNoBareHour, 1, 'stuck once for the one run-out');
+
+// Stuck is the bot's state, not the fact that woke it: a fresh bot born with no shots and no adena at a row that kills nothing bare
+// stands from birth and counts once, and its deaths and respawn visits do not count it again.
+for (const supply of ['table', 'formula']) {
+    const fresh = run(freshBot(10), supply, 4, 0, mortalWorld);
+    assert.equal(fresh.result.counters.stuckNoBareHour, 1, `${supply}: stuck from birth counts once`);
+    const dies = run(freshBot(10), supply, 10, 2, mortalWorld);
+    assert.ok(dies.visits.filter(visit => visit.info.died).length >= 3, `${supply}: the standing bot dies and respawns`);
+    assert.equal(dies.result.counters.stuckNoBareHour, 1, `${supply}: its deaths do not count it again`);
+}
+assert.equal(Supply.stuck({ ...field({ wallet: 0, fightsBare: false }), need: { ...field().need, held: 5 } }), false, 'a bot that holds shots is not stuck');
 
 console.log('economy model design: ok');

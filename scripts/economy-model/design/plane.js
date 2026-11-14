@@ -133,22 +133,26 @@ function plane({ view, kitHours, variant, accounts }) {
         start({ ledger }) {
             ledger.counters.stuckNoBareHour = 0;
             const states = new Map();
-            const stateOf = main => states.get(main.index) || { account: { id: main.id, led: main.id, place: 'hunt', queue: [] }, full: false };
+            const stateOf = main => states.get(main.index) || { account: { id: main.id, led: main.id, place: 'hunt', queue: [] }, full: false, stuck: false };
             const put = (main, state) => states.set(main.index, state);
             const queueFact = (state, kind, main, at) => ({ ...state, account: Attention.push(state.account, { kind, who: main.id, at }) });
             const placed = (state, place) => ({ ...state, account: { ...state.account, place } });
 
             // The supply decision's state on the main where it stands (place, the town it is in).
-            const decisionState = (main, row, place, town, spotTown) => {
+            const supplyState = (main, row, place, town, spotTown) => {
                 const firing = hunter.firing(main), need = Needs.consumable(main, firing), surplus = Needs.surplus(main, need);
                 const npcBuy = Object.fromEntries(surplus.map(([id]) => [id, view.items[id]?.npcBuy || 0]));
                 // The NPC of the held spot's town that sells its shots (every starter town's does).
                 const offer = need ? (view.offers.get(need.id) || []).find(each => each.town === spotTown && each.channel === 'npc_buy') : null;
                 const toHours = Engine.toHoursOf(view, row.spotId), backHours = Engine.backHoursOf(view, row.spotId, spotTown);
-                const state = { place, town, spotTown, need, surplus, npcBuy, wallet: main.money, roadMoney: 0, toHours, backHours,
+                return { place, town, spotTown, need, surplus, npcBuy, wallet: main.money, roadMoney: 0, toHours, backHours,
                     offers: offer ? { town: offer.town, price: offer.price } : null, fightsBare: Engine.rowIn(row, 'bare').kills > 0, variant };
+            };
+            // The same with the formula's hour values (the table variant never reads them).
+            const decisionState = (main, row, place, town, spotTown) => {
+                const state = supplyState(main, row, place, town, spotTown);
                 if (variant !== 'formula') return state;
-                const factors = factorsOf(main), persona = personas.get(main.id), way = { wayBackHours: backHours };
+                const factors = factorsOf(main), persona = personas.get(main.id), way = { wayBackHours: state.backHours };
                 const { form, held, lasts, hunted } = huntedOf(main), kills = hunter.kills(main);
                 const valueOf = (at, withoutDrop = false) => Value.hourValue(view, main, at, factors, persona, { ...way, withoutDrop });
                 return { ...state, value: { hour: valueOf(form), bare: valueOf('bare'), withoutDrop: valueOf(hunted, true),
@@ -195,18 +199,20 @@ function plane({ view, kitHours, variant, accounts }) {
                     const go = actions.find(action => action.kind === 'go');
                     if (go) {
                         const away = Engine.toHoursOf(view, row.spotId);
-                        put(main, placed(state, 'road'));
+                        put(main, placed({ ...state, stuck: false }, 'road'));
                         return { at: now + away, away };
                     }
                     for (const action of actions) if (action.kind === 'stay') EXECUTORS.stay(main, action);
-                    // The supply decision's stuck reason (out of shots, nothing to pay with, nothing killed bare) counts once, at the out fact that raised it.
-                    if (actions.some(action => action.kind === 'stay' && action.reason === 'no_bare_hour')) ledger.counters.stuckNoBareHour++;
                     const hours = nextFactHours(main, state);
                     if (Number.isFinite(hours) && huntShare > 0) {
-                        put(main, state);
+                        put(main, { ...state, stuck: false });
                         return { at: now + hours / huntShare, read: true };
                     }
-                    put(main, state);
+                    // No fact will come. Stuck is the supply rule's state (no shots of its need, nothing to pay with or sell, nothing
+                    // killed bare), however it came there (a birth, a run-out, a respawn); one episode counts once, until the state ends.
+                    const stuck = !!row && Supply.stuck(supplyState(main, row, 'hunt', null, townOf(view, main)));
+                    if (stuck && !state.stuck) ledger.counters.stuckNoBareHour++;
+                    put(main, { ...state, stuck });
                     return null;
                 },
                 hunt(main, delta) {
