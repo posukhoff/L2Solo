@@ -2,8 +2,12 @@
 
 // The accounts a model run starts from, as plain records the engine reads:
 // { id, station, classId, line, level, exp, money, spot, shots: { selfId: count },
-//   held: [selfId], worn: { slot: selfId } }; spot is the spot the bot stood
-// at in the save (null without one).
+//   held: [selfId], worn: { slot: selfId }, persona: { primaryDrive, commitment } | null,
+//   warehouse: { selfId: count }, twins: [] | [crafter, shop seller, shop buyer] };
+// spot is the spot the bot stood at in the save (null without one).
+// seedAccount (the one seeder of every cohort) gives an account whose main is
+// a wealth type or highly committed a dwarf crafter twin that knows the recipe
+// scrolls the account holds, and two shop twins, a seller and a buyer.
 //
 // fromSave reads a real run's start save read-only (the economy ledger names
 // it in inputs.start.db); savedBots is the model's only reader of a save's
@@ -16,6 +20,7 @@ const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const { hash, mulberry } = require('../hunt-tables/common');
 const Weights = require('./weights');
+const BotPersona = require('../../src/GameServer/Bot/AI/BotPersona');
 
 // The craft-station crafters of today's world: they hunt nothing and hold the
 // money they started with. Both constants copy the ledger's own
@@ -25,6 +30,12 @@ const MERCHANT_ACTIVITY = 'merchant';
 const ADENA = 57;
 // The seeder's starting adena per level (GeneratedColdSeeder: level x 85).
 const SEEDER_ADENA_PER_LEVEL = 85;
+// A trait at or above it is high: ours, initial from the game's persona text
+// cards (BotPersona.js: commitment >= 0.62).
+const HIGH_TRAIT = 0.62;
+// The share of qualifying accounts given twins: ours, every one (the maintainer's
+// rule); a lower share is drawn per account by its own seed, never the cohort's.
+const TWIN_SHARE = 1;
 
 // class -> the lines whose kit passes through it at some level.
 function linesByClass(snapshot) {
@@ -59,7 +70,7 @@ function lineOf(classId, id, snapshot, byClass) {
 // A save's bots, read-only: { characterId, accountName, level, exp, activity,
 // spotId, classId, station, partyIds } without the merchants (partyIds: the
 // member ids of the active background party the bot is in, else null); with
-// items, every item row. spotId: the spot the bot stands at; else its travel's
+// items, every item row, every persona row and every warehouse row. spotId: the spot the bot stands at; else its travel's
 // spot, where the game lands a traveller on arrival (BackgroundResolver); else
 // its stay's spot, which is our reading: the stay is the game's tally of the
 // bot's last solo hunt, and a spot-less resting or shopping bot is sent by the
@@ -80,7 +91,9 @@ function savedBots(file, { items = false } = {}) {
             for (const id of ids) parties.set(id, ids);
         }
         for (const bot of bots) bot.partyIds = parties.get(bot.characterId) || null;
-        return { bots, items: items ? db.prepare('SELECT characterId, selfId, amount, equipped, slot FROM items').all() : [] };
+        return { bots, items: items ? db.prepare('SELECT characterId, selfId, amount, equipped, slot FROM items').all() : [],
+            personas: items ? db.prepare('SELECT characterId, primaryDrive, traitsJson FROM bot_personas').all() : [],
+            warehouse: items ? db.prepare('SELECT characterId, selfId, amount FROM warehouse_items WHERE amount > 0').all() : [] };
     } finally {
         db.close();
     }
@@ -95,12 +108,51 @@ function partyOf(bot, levelOf) {
     return ids.length > 1 ? { levels: ids.map(id => levelOf.get(id)), self: ids.indexOf(bot.characterId) } : null;
 }
 
+// The twins of an account, seeded from its main's persona and what it holds
+// (holdings: { bag: { selfId: count }, warehouse: { selfId: count } }). A
+// persona that is a wealth type or has commitment >= HIGH_TRAIT gives a dwarf
+// crafter at the main's level (capped at the highest level the snapshot has a
+// twin for) that knows every dwarven recipe whose scroll the account holds and
+// whose level the crafter's Create Item reaches (the game's learning rule,
+// Backpack: a known recipe or one above the craft level is not learned; a
+// common recipe is skipped: the snapshot holds no Common Craft level), and a
+// shop seller and a shop buyer. Learning consumes one scroll: the main's
+// warehouse loses one unit of each learned scroll its bag does not hold. The
+// town, the twins' adena and the shop twins' class are the next step's.
+// Returns a new record; the main stays the record itself.
+function seedAccount(account, persona, holdings, snapshot) {
+    const warehouse = { ...holdings.warehouse };
+    const qualifies = persona && !account.station && (persona.primaryDrive === 'wealth' || persona.commitment >= HIGH_TRAIT)
+        && (TWIN_SHARE >= 1 || mulberry(hash(`twin:${account.id}`))() < TWIN_SHARE);
+    const base = { ...account, persona: persona ? { primaryDrive: persona.primaryDrive, commitment: persona.commitment } : null, warehouse, twins: [] };
+    if (!qualifies) return base;
+    const level = Math.min(account.level, Math.max(...Object.keys(snapshot.twins).map(Number)));
+    const twin = snapshot.twins[level], held = scroll => (holdings.bag[scroll] || 0) + (holdings.warehouse[scroll] || 0) > 0;
+    const learned = new Map();
+    for (const row of snapshot.recipes) {
+        if (row.type === 'dwarven' && row.level <= twin.createItem && held(row.recipeItemId)) learned.set(Number(row.recipeId), Number(row.recipeItemId));
+    }
+    for (const scroll of learned.values()) {
+        if (holdings.bag[scroll]) continue;
+        if (warehouse[scroll] > 1) warehouse[scroll]--;
+        else delete warehouse[scroll];
+    }
+    const crafter = { role: 'crafter', id: `${account.id}:crafter`, classId: twin.classId, level, recipes: [...learned.keys()].sort((a, b) => a - b), money: 0, warehouse: {}, town: null };
+    const shop = side => ({ role: 'shop', side, id: `${account.id}:shop-${side}`, money: 0, warehouse: {}, town: null });
+    return { ...base, twins: [crafter, shop('sell'), shop('buy')] };
+}
+
 function fromSave(file, snapshot) {
-    const { bots, items } = savedBots(file, { items: true });
-    const byOwner = new Map();
+    const { bots, items, personas, warehouse } = savedBots(file, { items: true });
+    const byOwner = new Map(), personaOf = new Map(), vaultOf = new Map();
     for (const row of items) {
         if (!byOwner.has(row.characterId)) byOwner.set(row.characterId, []);
         byOwner.get(row.characterId).push(row);
+    }
+    for (const row of personas) personaOf.set(row.characterId, { primaryDrive: row.primaryDrive, commitment: Number(JSON.parse(row.traitsJson || '{}').commitment) });
+    for (const row of warehouse) {
+        if (!vaultOf.has(row.characterId)) vaultOf.set(row.characterId, {});
+        vaultOf.get(row.characterId)[row.selfId] = (vaultOf.get(row.characterId)[row.selfId] || 0) + Number(row.amount);
     }
     const byClass = linesByClass(snapshot), shotIds = new Set(Object.entries(snapshot.items)
         .filter(([, item]) => item.kind === 'Other.Shot').map(([id]) => Number(id)));
@@ -114,14 +166,18 @@ function fromSave(file, snapshot) {
         else counts[picked.exact ? 'exact' : 'drawn']++;
         const own = byOwner.get(bot.characterId) || [], shots = {}, worn = {};
         let money = 0;
+        const bag = {};
         for (const row of own) {
             const selfId = Number(row.selfId), amount = Number(row.amount) || 0;
+            bag[selfId] = (bag[selfId] || 0) + amount;
             if (selfId === ADENA) money += amount;
             else if (shotIds.has(selfId)) shots[selfId] = (shots[selfId] || 0) + amount;
             if (Number(row.equipped) === 1 && row.slot !== null) worn[Number(row.slot)] = selfId;
         }
-        accounts.push({ id: bot.characterId, station: station || !picked, classId: Number(bot.classId), line: picked?.line ?? null,
-            level: Number(bot.level), exp: Number(bot.exp), money, spot: bot.spotId ? String(bot.spotId) : null, party: partyOf(bot, levelOf), shots, held: [...new Set(own.map(row => Number(row.selfId)))], worn });
+        const account = { id: bot.characterId, station: station || !picked, classId: Number(bot.classId), line: picked?.line ?? null,
+            level: Number(bot.level), exp: Number(bot.exp), money, spot: bot.spotId ? String(bot.spotId) : null, party: partyOf(bot, levelOf), shots, held: [...new Set(own.map(row => Number(row.selfId)))], worn };
+        accounts.push(station ? { ...account, persona: null, warehouse: {}, twins: [] }
+            : seedAccount(account, personaOf.get(bot.characterId) || null, { bag, warehouse: vaultOf.get(bot.characterId) || {} }, snapshot));
     }
     return { accounts, source: file, lines: counts };
 }
@@ -132,12 +188,18 @@ function fromSave(file, snapshot) {
 // kitted for its level, holding moneyOf(level) and no shots.
 function accountsOf({ count, random, levelOf, moneyOf }, snapshot) {
     const lines = Object.keys(snapshot.hours).filter(line => Weights.CLASS_WEIGHTS[line] > 0);
-    const accounts = [];
+    const accounts = [], types = {};
     for (let i = 0; i < count; i++) {
         const line = weightedPick(lines, random), level = levelOf(i, random), kit = snapshot.kits[line]?.[level] || [];
-        accounts.push({ id: i + 1, station: false, classId: snapshot.hours[line][level]?.classId ?? Number(line), line, level,
+        const account = { id: i + 1, station: false, classId: snapshot.hours[line][level]?.classId ?? Number(line), line, level,
             exp: snapshot.exp[level - 1], money: moneyOf(level), spot: null, shots: {}, held: kit.map(piece => piece.selfId),
-            worn: Object.fromEntries(kit.map(piece => [piece.slot, piece.selfId])) });
+            worn: Object.fromEntries(kit.map(piece => [piece.slot, piece.selfId])) };
+        // The game's own persona generator, its type shares counted over the cohort so far.
+        const persona = BotPersona.generate({ characterId: account.id, classId: account.classId, stats: { generatedIndex: i } }, { counts: types, total: count });
+        types[persona.archetype] = (types[persona.archetype] || 0) + 1;
+        const bag = {};
+        for (const piece of kit) bag[piece.selfId] = (bag[piece.selfId] || 0) + 1;
+        accounts.push(seedAccount(account, { primaryDrive: persona.primaryDrive, commitment: persona.traits.commitment }, { bag, warehouse: {} }, snapshot));
     }
     return accounts;
 }

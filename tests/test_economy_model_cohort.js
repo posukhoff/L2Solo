@@ -1,0 +1,107 @@
+'use strict';
+
+// The economy model's cohort seeds twins by the maintainer's rule: an account
+// whose main is a wealth type or has commitment >= 0.62 gets a dwarf crafter
+// that knows the recipe scrolls the account holds (at the main's level, by the
+// game's learning rule) and a shop seller and buyer; no other account gets
+// any. A seeded cohort runs as the same cohort without twins.
+const assert = require('node:assert/strict');
+const os = require('node:os'), fs = require('node:fs'), path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
+const Cohort = require('../scripts/economy-model/cohort');
+const Weights = require('../scripts/economy-model/weights');
+const BotPersona = require('../src/GameServer/Bot/AI/BotPersona');
+
+const createItemAt = level => (level < 5 ? 0 : level < 20 ? 1 : level < 28 ? 2 : level < 36 ? 3 : level < 43 ? 4 : 5);
+const twins = {};
+for (let level = 1; level <= 60; level++) twins[level] = { classId: level < 40 ? 56 : 57, createItem: createItemAt(level) };
+const recipe = (recipeId, recipeItemId, level, type = 'dwarven', productId = 900 + recipeId) => ({ type, recipeId, recipeItemId, level, productId });
+const snapshot = {
+    hours: { 9: { 1: { classId: 9 } } }, items: { 1463: { kind: 'Other.Shot' } }, twins,
+    recipes: [recipe(1, 701, 2), recipe(2, 702, 3), recipe(3, 703, 4), recipe(4, 704, 1, 'common'), recipe(5, 705, 1, 'dwarven', 1463)]
+};
+
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'seed-save-')), file = path.join(folder, 'database.sqlite');
+const save = new DatabaseSync(file);
+save.exec(`CREATE TABLE characters (id INTEGER PRIMARY KEY, classId INTEGER);
+    CREATE TABLE bot_life_state (characterId INTEGER PRIMARY KEY, accountName TEXT, level INTEGER, exp INTEGER, activity TEXT, spotId TEXT, statsJson TEXT);
+    CREATE TABLE items (characterId INTEGER, selfId INTEGER, amount INTEGER, equipped INTEGER, slot INTEGER);
+    CREATE TABLE warehouse_items (characterId INTEGER, selfId INTEGER, amount INTEGER);
+    CREATE TABLE bot_personas (characterId INTEGER PRIMARY KEY, primaryDrive TEXT, traitsJson TEXT);
+    CREATE TABLE bot_background_parties (partyId TEXT, memberIdsJson TEXT, status TEXT);`);
+// id: [account, level, drive, commitment]
+const mains = { 1: ['bot_1', 30, 'wealth', 0.1], 2: ['bot_2', 39, 'progression', 0.62], 3: ['bot_3', 30, 'progression', 0.61],
+    4: ['bot_4', 40, 'social', 0.9], 5: ['bot_craft_1', 30, 'wealth', 0.9], 6: ['bot_6', 70, 'wealth', 0.1] };
+for (const [id, [account, level, drive, commitment]] of Object.entries(mains)) {
+    save.prepare('INSERT INTO characters VALUES (?, 9)').run(id);
+    save.prepare('INSERT INTO bot_life_state VALUES (?, ?, ?, 0, ?, NULL, NULL)').run(id, account, level, 'hunting');
+    save.prepare('INSERT INTO bot_personas VALUES (?, ?, ?)').run(id, drive, JSON.stringify({ commitment }));
+}
+const item = (id, selfId, amount) => save.prepare('INSERT INTO items VALUES (?, ?, ?, 0, NULL)').run(id, selfId, amount);
+const stored = (id, selfId, amount) => save.prepare('INSERT INTO warehouse_items VALUES (?, ?, ?)').run(id, selfId, amount);
+// Main 1 (Create Item 3): 701 twice in the bag, a duplicate learns once; 703 is a level above; 704 is common;
+// 702 only in the warehouse is learned and its stored count drops; 701 also stored stays (the bag holds one).
+item(1, 701, 2); item(1, 703, 1); item(1, 704, 1); stored(1, 702, 2); stored(1, 701, 1); stored(1, 705, 1);
+item(2, 701, 1); item(3, 701, 1); item(4, 701, 1); item(5, 701, 1); item(6, 701, 1);
+save.close();
+const { accounts } = Cohort.fromSave(file, snapshot);
+fs.rmSync(folder, { recursive: true });
+const by = id => accounts.find(account => account.id === id);
+
+for (const id of [1, 2, 4, 6]) {
+    assert.deepEqual(by(id).twins.map(twin => twin.role === 'shop' ? `shop-${twin.side}` : twin.role), ['crafter', 'shop-sell', 'shop-buy'], `main ${id} gets a crafter and two shop twins`);
+}
+assert.deepEqual(by(3).twins, [], 'commitment 0.61 of a progression main gets none');
+assert.deepEqual(by(5).twins, [], 'a station gets none');
+assert.deepEqual(by(1).twins[0].recipes, [1, 2, 5], 'the crafter knows the held dwarven scrolls up to its Create Item level, each once');
+assert.deepEqual(by(2).twins[0].recipes, [1], 'a scroll the account holds is learned');
+assert.deepEqual(by(1).warehouse, { 701: 1, 702: 1 }, 'learning takes one stored scroll its bag does not hold (702 down by one, 705 gone), not 701');
+assert.deepEqual(by(5).warehouse, {}, 'a station keeps no warehouse');
+assert.deepEqual(by(3).persona, { primaryDrive: 'progression', commitment: 0.61 });
+assert.deepEqual(by(3).warehouse, {}, 'a main with no stored rows has an empty warehouse');
+assert.equal(by(1).twins[0].level, 30);
+assert.deepEqual([by(2).twins[0].level, by(2).twins[0].classId, by(4).twins[0].level, by(4).twins[0].classId], [39, 56, 40, 57], 'the crafter follows the main\'s level and class table');
+assert.equal(by(6).twins[0].level, 60, 'above the highest twin level the crafter sits at it');
+const crafter = by(1).twins[0];
+assert.deepEqual([crafter.money, crafter.warehouse, crafter.town], [0, {}, null]);
+
+// A seeded cohort runs as the same cohort without the seeded fields (plain plane).
+const Engine = require('../scripts/economy-model/engine');
+const Today = require('../scripts/economy-model/today');
+const hour = { classId: 9, shotId: 1463, best: { spotId: 's1', kills: 10, exp: 50, adena: 100, shots: 20, dropLoot: 30, spoilLoot: 0, loot: 30, potions: 0, busyShare: 1, deaths: 0 }, top: [] };
+const yields = { town: 'TownA', drop: { 57: 10, 200: 0.5 }, spoil: {} };
+const run = { header: { levels: [1, 4], rates: { adena: 1 } }, exp: [0, 100, 300, 600], hours: { 9: { 1: hour, 2: hour, 3: hour, 4: hour } },
+    kits: { 9: { 1: [{ selfId: 100, slot: 7 }], 2: [{ selfId: 100, slot: 7 }], 3: [{ selfId: 100, slot: 7 }], 4: [{ selfId: 100, slot: 7 }] } },
+    yields: { 's1@1': yields, 's1@2': yields, 's1@3': yields, 's1@4': yields },
+    items: { 100: { kind: 'Weapon.Sword', grade: 'NONE', ref: 1000, npcBuy: 500 }, 200: { kind: 'Other.Material', grade: 'NONE', ref: 10, npcBuy: 5 }, 1463: { kind: 'Other.Shot', grade: 'NONE', ref: 10, npcBuy: 5 } },
+    shotFamilies: { grades: ['NONE', 'D', 'C', 'B', 'A', 'S'], ids: [[1835, 1463, 1464, 1465, 1466, 1467]] },
+    npcOffers: { preset: {}, x1: {} }, recipes: [], fares: { TownA: { TownA: 0 } }, twins };
+const plain = { id: 1, station: false, classId: 9, line: '9', level: 2, exp: 100, money: 10000, shots: {}, held: [100], worn: { 7: 100 } };
+const seededAccount = (() => {
+    const cohort = [plain];
+    return cohort.map(account => ({ ...account, persona: { primaryDrive: 'wealth', commitment: 0.9 }, warehouse: { 1: 1 },
+        twins: [{ role: 'crafter', id: '1:crafter', classId: 56, level: 2, recipes: [], money: 0, warehouse: {}, town: null }] }));
+})();
+const simulate = accountsIn => {
+    const view = Engine.viewOf(run), today = Today.plane({ view, hunter: Today.hunter(view) });
+    return Engine.simulate({ view, plane: { ...today, start: context => ({ ...today.start(context), nextArrival: (main, { event, now, roll }) => now + (event === 'start' ? roll : 1) }) },
+        accounts: accountsIn, bands: [['low', 1], ['high', 2]], rates: { default: { huntShare: 1, visitsPerBotHour: 1 } }, hours: 5, seed: 3 });
+};
+assert.deepEqual(simulate(seededAccount), simulate([plain]), 'twins, persona and warehouse change no number of a run');
+
+// A fresh cohort is seeded by the game's generated personas, with no recipes (it holds no scrolls).
+const line = Object.keys(Weights.CLASS_WEIGHTS).find(key => Weights.CLASS_WEIGHTS[key] > 0);
+const freshSnapshot = { hours: { [line]: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [i + 1, { classId: Number(line) }])) },
+    kits: {}, exp: Array.from({ length: 20 }, (_, i) => i * 100), items: {}, twins, recipes: snapshot.recipes };
+const fresh = Cohort.fresh({ count: 200, seed: 1 }, freshSnapshot).accounts;
+const counts = {};
+let expected = 0;
+for (const account of fresh) {
+    const persona = BotPersona.generate({ characterId: account.id, classId: account.classId, stats: { generatedIndex: account.id - 1 } }, { counts, total: 200 });
+    counts[persona.archetype] = (counts[persona.archetype] || 0) + 1;
+    if (persona.primaryDrive === 'wealth' || persona.traits.commitment >= 0.62) expected++;
+}
+assert.ok(expected > 0 && expected < 200, 'the generated personas split');
+assert.equal(fresh.filter(account => account.twins.length === 3).length, expected, 'a fresh account gets twins when its generated persona is wealth or committed');
+assert.ok(fresh.every(account => account.twins.length === 0 || account.twins[0].recipes.length === 0), 'a fresh cohort holds no scrolls, so no crafter knows a recipe');
+console.log('economy model cohort ok');
