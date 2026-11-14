@@ -3,7 +3,6 @@
 // The design's limits for a solo bot in an NPC world: every threshold and
 // bound the design reads or is judged by, with its source, its reader and how
 // a hit shows. Frozen rows { value, source, readBy, hit }.
-const EconomicValuation = require('../../../src/GameServer/Bot/Economy/EconomicValuation');
 
 const row = fields => Object.freeze(fields);
 const LIMITS = Object.freeze({
@@ -19,9 +18,6 @@ const LIMITS = Object.freeze({
     // The weight of a death's price in an hour's value.
     RISK_WEIGHT: row({ value: 1, source: 'ours; C4 not checked',
         readBy: 'value.hourValue', hit: 'none: a weight, not a bound' }),
-    // The hours a death costs besides its exp: the game's respawn wait.
-    DEATH_HOURS: row({ value: EconomicValuation.liveDeathHours(0), source: 'the game\'s respawn wait (EconomicValuation.liveDeathHours); C4 not checked',
-        readBy: 'value.hourValue', hit: 'none: a price, not a bound' }),
     // Today's bots' road share of wall hours, printed beside the design's for comparison only.
     CURRENT_BOTS_ROAD_SHARE: row({ value: 0.41, source: 'a measured run of today\'s bots: target = threshold puts 41 % of the window on the road',
         readBy: 'run report (printed only)', hit: 'none: printed only' })

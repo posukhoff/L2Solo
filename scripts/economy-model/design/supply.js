@@ -12,7 +12,7 @@
 // state = { place: 'hunt' | 'road' | 'town', town (where it stands, null in
 //   the field), spotTown (the held spot's town), need (needs.consumable or
 //   null), surplus ([[id, count]], needs.surplus), npcBuy ({ id: the NPC's buy
-//   price here }), wallet (adena), roadMoney (the fare back to the held spot;
+//   price in the town it stands in or goes to }), wallet (adena), roadMoney (the fare back to the held spot;
 //   walking: 0), toHours, backHours (the trip's legs), offers ({ town, price }:
 //   the nearest NPC selling need.id, null when none), variant,
 //   value (formula only: { hour, bare, withoutDrop: hour values of its shots
@@ -32,8 +32,8 @@ function act(kind, fields, row) {
 }
 
 const hasMoney = state => state.wallet > state.roadMoney || state.surplus.length > 0;
-// Units of the need the wallet buys from its offer, the fare back kept.
-const affordable = (state, offer) => Math.min(state.need.short, Math.floor(Math.max(0, state.wallet - state.roadMoney) / offer.price));
+// Units of the need adena buys from its offer, the fare back kept.
+const affordable = (state, offer, money) => Math.min(state.need.short, Math.floor(Math.max(0, money - state.roadMoney) / offer.price));
 const sellerTown = state => state.offers?.town ?? state.spotTown;
 
 // The words a row's condition is made of: (kinds of the heard facts, state) -> bool.
@@ -48,7 +48,7 @@ const WORDS = Object.freeze({
 
 function npcBuyOf(state, id) {
     const price = state.npcBuy[id];
-    if (typeof price !== 'number') throw new Error(`no NPC buy price for item ${id} in ${state.town}`);
+    if (typeof price !== 'number') throw new Error(`no NPC buy price for item ${id}`);
     return price;
 }
 
@@ -61,7 +61,7 @@ const MAKERS = Object.freeze({
     buyToTarget: (state, row) => {
         const offer = state.offers;
         if (!offer || offer.town !== state.town) return [];
-        const count = affordable(state, offer);
+        const count = affordable(state, offer, state.wallet);
         return count > 0 ? [act('buy', { id: state.need.id, count, price: offer.price }, row)] : [];
     },
     back: (state, row) => [act('back', {}, row)]
@@ -78,6 +78,9 @@ function checked(row) {
     return row;
 }
 const holds = (row, kinds, state) => row.when.every(word => WORDS[word](kinds, state));
+
+// What its surplus brings at the NPC.
+const saleOf = state => state.surplus.reduce((sum, [id, count]) => sum + count * npcBuyOf(state, id), 0);
 
 // The state after town actions: a sale adds its adena and leaves nothing to
 // spare of the item, a purchase spends its adena and adds to the need.
@@ -120,7 +123,8 @@ function table(facts, state, rows = ROWS) {
 // The formula variant. In the field: stay is worth 0; going prevents the loss
 // of the hours until the next fact on which it would go anyway (at most an
 // outing): out of shots, the hours to its bag's fact hunting bare at the
-// bare hour's shortfall, scaled by the share of the target its wallet buys;
+// bare hour's shortfall, scaled by the share of the target the trip buys
+// (with its wallet and what its surplus sells for there first, as in town);
 // its bag full, the hours to its shots' end at the drop's share of the hour;
 // both at once, the outing's hours of each. Its price: the road's hours at
 // its own hour's value and the adena it spends at the money weight. Going
@@ -133,7 +137,7 @@ function formula(facts, state) {
     const kinds = kindsOf(facts), out = kinds.has('out'), bag = kinds.has('bag');
     if (!out && !bag) return [];
     const value = state.value, horizon = LIMITS.OUTING_HOURS.value, offer = state.offers;
-    const units = out && state.need && state.need.short > 0 && offer ? affordable(state, offer) : 0;
+    const units = out && state.need && state.need.short > 0 && offer ? affordable(state, offer, state.wallet + saleOf(state)) : 0;
     const share = out && state.need && state.need.short > 0 ? units / state.need.short : 0;
     const outLoss = out ? Math.min(bag ? horizon : value.bagHoursBare, horizon) * (value.hour - value.bare) * share : 0;
     const bagLoss = bag ? Math.min(out ? horizon : value.outHours, horizon) * ((out ? value.bare : value.hour) - value.withoutDrop) : 0;

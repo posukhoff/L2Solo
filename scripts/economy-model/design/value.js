@@ -3,7 +3,9 @@
 // What an hour of a design bot is worth, in hours of value: its exp over the
 // line's best exp an hour at its level, its NPC income (adena, drop and spoil
 // at the NPC's price) over the line's best income an hour there, weighted by
-// its persona, less the price of its deaths. The best hours are its line's top
+// its persona, less the price of its deaths: each loses its level's death
+// exp and the way back from its respawn town to the held spot (the row's death
+// rate already holds the respawn wait). The best hours are its line's top
 // rows with shots (static spot-table data). The weights come from the persona
 // alone (the game's powerWeight, without the wallet: a value held between
 // decisions would go stale with every purchase if it moved with money).
@@ -35,15 +37,16 @@ function bestOf(view, main) {
 
 // The hour's value at the main's spot row in a form ('bare', 'shots',
 // 'blessed'; factors: the worn kit's { kills, deaths } per form against the
-// line's reference kit). withoutDrop: the same hour with a full bag, its items
+// line's reference kit). wayBackHours: the trip hours from the respawn town
+// back to the held spot. withoutDrop: the same hour with a full bag, its items
 // left on the ground (adena and exp stay).
-function hourValue(view, main, form, factors, persona, withoutDrop = false) {
+function hourValue(view, main, form, factors, persona, { wayBackHours, withoutDrop = false }) {
     const row = Engine.spotRowOf(view, main), hour = Engine.rowIn(row, form), factor = factors[form];
     const best = bestOf(view, main), wMoney = moneyWeight(persona);
     const items = Engine.rowItems(view, main, row, form);
     const exp = Engine.huntExp(main, hour, 1) * factor.kills;
     const income = (withoutDrop ? items.adena : items.npc) * factor.kills;
-    const risk = (hour.deaths || 0) * factor.deaths * (LIMITS.DEATH_HOURS.value + view.deathExp[main.level - 1] / best.exp) * LIMITS.RISK_WEIGHT.value;
+    const risk = (hour.deaths || 0) * factor.deaths * (Engine.tripLeg(wayBackHours, 'the way back from the respawn town') + view.deathExp[main.level - 1] / best.exp) * LIMITS.RISK_WEIGHT.value;
     return exp / best.exp * (1 - wMoney) + income / best.npc * wMoney - risk;
 }
 

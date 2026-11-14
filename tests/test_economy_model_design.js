@@ -14,7 +14,6 @@ const Attention = require('../scripts/economy-model/design/attention');
 const Needs = require('../scripts/economy-model/design/needs');
 const Value = require('../scripts/economy-model/design/value');
 const Supply = require('../scripts/economy-model/design/supply');
-const LIMITS = require('../scripts/economy-model/design/limits');
 
 const SHOT = 1835, DROP = 200;
 const out = [{ kind: 'out', who: 7, at: 3 }], bag = [{ kind: 'bag', who: 7, at: 3 }], town = [{ kind: 'town', who: 7, at: 4 }];
@@ -57,6 +56,11 @@ const nearFull = formula({ need: { id: SHOT, perHour: 100, target: 200, held: 19
 assert.deepEqual(brief(Supply.supplyChoice(bag, nearFull)).map(a => [a.kind, a.reason]), [['stay', 'trip_costs_more']]);
 // A partial wallet scales the loss the trip prevents: 70 adena buys 10 of 200 shots, and the same trip no longer pays.
 assert.deepEqual(brief(Supply.supplyChoice(out, formula({ wallet: 70 }))).map(a => [a.kind, a.reason]), [['stay', 'trip_costs_more']]);
+// With 0 adena and 400 drop the trip spends what the drop sells for there (2000 adena: the whole target), as the town rows
+// do: it goes under both variants, and the shadow sees no difference.
+const dropOnly = field({ wallet: 0, surplus: [[DROP, 400]] });
+assert.deepEqual(brief(Supply.supplyChoice(out, { ...dropOnly, variant: 'formula' })).map(a => [a.kind, a.town]), [['go', 'TownA']]);
+assert.equal(Supply.shadow(out, dropOnly).differ, null);
 // Out of shots, nothing to pay with and a bare hour worth nothing: stuck, as in the table.
 assert.deepEqual(brief(Supply.supplyChoice(out, formula({ wallet: 0, value: { ...field().value, bare: 0 } }))).map(a => [a.kind, a.reason]), [['stay', 'stuck']]);
 // In town the formula takes the same levers in the same order.
@@ -80,15 +84,18 @@ const view = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 100], hours: {
 const main = { line: 9, level: 1, spot: null, shots: {}, bag: {} };
 const kit = deaths => ({ bare: { kills: 1, deaths }, shots: { kills: 1, deaths }, blessed: { kills: 1, deaths } });
 const persona = { primaryDrive: 'progression', traits: { caution: 0 } };
-// Exp 100 of the best 150 and income 250 (200 adena + 50 drop) of the best 250, half each; a death costs its wait and 15 exp of 150.
-const risk = 0.1 * (LIMITS.DEATH_HOURS.value + 15 / 150);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona) - (100 / 150 * 0.5 + 0.5 - risk)) < 1e-9);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, true) - (100 / 150 * 0.5 + 200 / 250 * 0.5 - risk)) < 1e-9);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona) - Value.hourValue(view, main, 'shots', kit(2), persona) - risk) < 1e-9);
-assert.equal(Value.hourValue(view, main, 'bare', kit(1), persona), 0);
+// Exp 100 of the best 150 and income 250 (200 adena + 50 drop) of the best 250, half each; a death costs 15 exp of 150
+// and the way back from its respawn town (0.3 h), no respawn wait (the row's death rate holds it).
+const way = { wayBackHours: 0.3 };
+const risk = 0.1 * (0.3 + 15 / 150);
+assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, way) - (100 / 150 * 0.5 + 0.5 - risk)) < 1e-9);
+assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, { ...way, withoutDrop: true }) - (100 / 150 * 0.5 + 200 / 250 * 0.5 - risk)) < 1e-9);
+assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, way) - Value.hourValue(view, main, 'shots', kit(2), persona, way) - risk) < 1e-9);
+assert.equal(Value.hourValue(view, main, 'bare', kit(1), persona, way), 0);
 // A wealth-driven, cautious-free persona weighs money above exp.
 assert.ok(Value.moneyWeight({ primaryDrive: 'wealth', traits: { caution: 0 } }) > Value.moneyWeight(persona));
-const hourOf = form => Value.hourValue(view, main, form, kit(1), persona);
+const hourOf = form => Value.hourValue(view, main, form, kit(1), persona, way);
+assert.throws(() => Value.hourValue(view, main, 'shots', kit(1), persona, {}), /no trip hours for the way back/);
 const zeroBare = { hour: hourOf('shots'), bare: hourOf('bare'), withoutDrop: 0, bagHoursBare: Infinity, outHours: 0, M: Value.bestOf(view, main).npc, moneyWeight: Value.moneyWeight(persona) };
 // Shots at a tenth of an adena against the view's best income of 250 an hour.
 const longRoad = { toHours: 0.4, backHours: 0.4, offers: { town: 'TownA', price: 0.1 } };
