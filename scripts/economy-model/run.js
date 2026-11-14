@@ -108,7 +108,18 @@ function printFit(basis) {
     }
 }
 
+// The options main reads (the header names them): any other --name is refused by name.
+const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'json']);
+
+function refuseUnknownOptions(argv) {
+    for (const word of argv) {
+        const name = word.startsWith('--') ? word.slice(2).split('=')[0] : null;
+        if (name !== null && !OPTIONS.includes(name)) throw new Error(`unknown option --${name} (run.js reads: ${OPTIONS.map(option => `--${option}`).join(' ')})`);
+    }
+}
+
 function main(argv) {
+    refuseUnknownOptions(argv);
     const preset = Boot.option(argv, 'preset', 'x50'), hours = Number(Boot.option(argv, 'hours', 100)), seed = Number(Boot.option(argv, 'seed', 1));
     const { snapshot, file } = Load.loadSnapshot(Load.SNAPSHOT_DIR, preset, Boot.option(argv, 'snapshot', null));
     const cohort = cohortOf(argv, snapshot);
