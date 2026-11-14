@@ -37,8 +37,9 @@ const POINT_FIELDS = Object.freeze(['attack', 'defence']);
 const REST_RULE = 'fight when the vitals cover one expected fight with the mob (survival ratio 1), or at a whole bar';
 const START = 1_750_000_000_000;
 const DWARF_FIGHTER = 53;
-// The combination check: per key and level this many spots whose species all
-// lie in the window, hunted whole.
+// The combination check: per body and form this many spots the reader cuts no
+// species of (all in the window, each with a kill and within the limit),
+// hunted whole.
 const CHECK_SPOTS = 3;
 // The combat inputs the stamp covers (their live git tree).
 const STAMP_PATHS = Object.freeze(['src', 'data', 'scripts/generate-spot-table.js', 'scripts/economy-model/hunt-lift.js',
@@ -225,27 +226,40 @@ function saveCatalogue(file) {
 }
 
 function plan({ profiles, from, to, lines, onlyKeys, onlySpots }) {
-    const tasks = [], bodies = {}, spots = {}, pick = onlySpots ? profiles.filter(spot => onlySpots.includes(String(spot.id))) : profiles;
+    const tasks = [], bodies = {}, hunters = {}, spots = {}, pick = onlySpots ? profiles.filter(spot => onlySpots.includes(String(spot.id))) : profiles;
     for (let level = from; level <= to; level++) {
         for (const [key, held] of keysAt(level, lines, onlyKeys)) {
             const body = `${key}|${level}|${held.point.attack}/${held.point.defence}`;
             bodies[body] = { classId: held.classId, runSpd: null, reach: null, point: held.point };
-            let checks = 0;
+            hunters[body] = { line: held.line, classId: held.classId, level };
             for (const spot of pick) {
                 const species = speciesOf(spot), spotId = String(spot.id);
                 const near = [...species].filter(([, one]) => one.level - level >= WINDOW[0] && one.level - level <= WINDOW[1]);
                 if (!near.length) continue;
                 spots[spotId] ||= { area: spot.spawnArea, density: spot.density, species: Object.fromEntries([...species].map(([selfId, one]) => [selfId, one])) };
                 for (const [selfId] of near) for (const form of [0, 1]) tasks.push({ body, line: held.line, classId: held.classId, level, spotId, selfId, form });
-                if (checks < CHECK_SPOTS && near.length === species.size && species.size > 1) {
-                    checks += 1;
-                    for (const form of [0, 1]) tasks.push({ body, line: held.line, classId: held.classId, level, spotId, selfId: 0, form });
-                }
             }
         }
     }
     tasks.forEach((task, index) => { task.i = index; });
-    return { tasks, bodies, spots };
+    return { tasks, bodies, hunters, spots };
+}
+
+// The combination check's whole-spot hunts (CHECK_SPOTS).
+function checkTasks({ cells, spots, hunters, limit }) {
+    const tasks = [];
+    for (const [body, bySpot] of Object.entries(cells)) for (const form of [0, 1]) {
+        let taken = 0;
+        for (const [spotId, bySpecies] of Object.entries(bySpot)) {
+            if (taken >= CHECK_SPOTS) break;
+            const species = Object.keys(spots[spotId].species);
+            if (species.length < 2 || !species.every(selfId => bySpecies[selfId]?.[form]?.[0] > 0 && bySpecies[selfId][form][1] <= limit)) continue;
+            taken += 1;
+            tasks.push({ body, ...hunters[body], spotId, selfId: 0, form });
+        }
+    }
+    tasks.forEach((task, index) => { task.i = index; });
+    return tasks;
 }
 
 // A child: its share of the tasks (every n-th), one result line each.
@@ -295,25 +309,33 @@ async function build({ from, to, hours = 2, children = 7, spots: onlySpots = nul
         for (const band of weaponTypes(lines, from, to)) {
             log(`weapon type: line ${band.line} L${band.from}-${band.to} creation kit ${band.creation}, gear ladder ${band.ladder} (rungs ${band.types || 'none'})`);
         }
-        const { tasks, bodies, spots } = plan({ profiles, from, to, lines, onlyKeys, onlySpots });
+        const { tasks, bodies, hunters, spots } = plan({ profiles, from, to, lines, onlyKeys, onlySpots });
         log(`levels ${from}-${to}: bodies ${Object.keys(bodies).length}, spots ${Object.keys(spots).length}, hunts ${tasks.length} on ${children} children`);
-        const results = await runChildren(dir, tasks, children, catalogueFile, hours);
-        if (results.length !== tasks.length) throw new Error(`hunt table: ${results.length} results for ${tasks.length} hunts`);
-        const cells = {}, whole = [];
+        const hunted = async list => {
+            if (!list.length) return [];
+            const results = await runChildren(dir, list, children, catalogueFile, hours);
+            if (results.length !== list.length) throw new Error(`hunt table: ${results.length} results for ${list.length} hunts`);
+            for (const result of results) {
+                const body = bodies[list[result.i].body];
+                if (body.runSpd === null) Object.assign(body, { runSpd: result.runSpd, reach: result.reach });
+                else if (body.runSpd !== result.runSpd || body.reach !== result.reach) throw new Error(`body ${list[result.i].body}: run speed or reach differs between its hunts`);
+            }
+            return results;
+        };
+        const results = await hunted(tasks), cells = {};
         for (const result of results) {
-            const task = tasks[result.i], body = bodies[task.body];
-            if (body.runSpd === null) Object.assign(body, { runSpd: result.runSpd, reach: result.reach });
-            else if (body.runSpd !== result.runSpd || body.reach !== result.reach) throw new Error(`body ${task.body}: run speed or reach differs between its hunts`);
-            if (!task.selfId) { whole.push({ task, cell: result.cell }); continue; }
+            const task = tasks[result.i];
             const held = ((cells[task.body] ||= {})[task.spotId] ||= {})[task.selfId] ||= [null, null];
             held[task.form] = result.cell;
         }
+        const wholeTasks = checkTasks({ cells, spots, hunters, limit });
+        const wholeResults = await hunted(wholeTasks), whole = wholeResults.map(result => ({ task: wholeTasks[result.i], cell: result.cell }));
         const table = { stamp: stamp(), range: [from, to], window: WINDOW, hours, restRule: REST_RULE, point: { fields: POINT_FIELDS },
             fields: FIELDS, forms: FORMS, bodies, spots, cells };
         const file = out || path.join(ROOT, 'tmp/economy-model/hunt', `hunt-${from}-${to}-${table.stamp}.json`);
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify(table));
-        const check = summary({ table, whole, results, limit, log });
+        const check = summary({ table, whole, results: [...results, ...wholeResults], limit, log });
         log(`wrote ${path.relative(ROOT, file)} (${(fs.statSync(file).size / 1e6).toFixed(1)} MB) in ${Math.round((Date.now() - started) / 1000)} s`);
         return { file, table, check };
     } finally {
@@ -323,8 +345,7 @@ async function build({ from, to, hours = 2, children = 7, spots: onlySpots = nul
 
 // The build's prints: hunts and their time, the cells over the kill-death
 // limit and without a kill, the rest share per key and level, and the
-// combination check (the whole spot hunted against combine over its species
-// within the limit).
+// combination check (the whole spot hunted against combine over its species).
 function summary({ table, whole, results, limit, log }) {
     const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
     const ms = results.reduce((sum, result) => sum + result.ms, 0);
@@ -344,13 +365,12 @@ function summary({ table, whole, results, limit, log }) {
     const check = [];
     for (const { task, cell } of whole) {
         const spot = table.spots[task.spotId], cells = table.cells[task.body]?.[task.spotId] || {};
-        // The reader's admission: the species with a kill and deaths a kill within the limit.
-        const admitted = Object.keys(spot.species).filter(selfId => cells[selfId]?.[task.form]?.[0] > 0 && cells[selfId][task.form][1] <= limit);
+        const admitted = Object.keys(spot.species);
         const read = combine({ spot, cells, body: table.bodies[task.body], form: FORMS[task.form], admitted, walkMs: BR.soloWalkMs });
-        const row = { body: task.body, spotId: task.spotId, form: FORMS[task.form], species: Object.keys(spot.species).length, admitted: admitted.length,
+        const row = { body: task.body, spotId: task.spotId, form: FORMS[task.form], species: admitted.length,
             measured: { kills: cell[0], deaths: cell[1] }, combined: read && { kills: round(read.kills), deaths: round(read.deaths) } };
         check.push(row);
-        log(`check ${row.body} ${row.spotId} ${row.form}: species ${row.admitted}/${row.species}, whole kills/h ${row.measured.kills} deaths/kill ${row.measured.deaths}`
+        log(`check ${row.body} ${row.spotId} ${row.form}: species ${row.species}, whole kills/h ${row.measured.kills} deaths/kill ${row.measured.deaths}`
             + ` | combined ${read ? `${row.combined.kills} ${row.combined.deaths}` : 'none'}`);
     }
     const ratios = check.filter(row => row.combined && row.measured.kills > 0).map(row => row.combined.kills / row.measured.kills);
