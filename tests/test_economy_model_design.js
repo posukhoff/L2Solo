@@ -243,7 +243,8 @@ for (const supply of ['table', 'formula']) {
 }
 
 // A bot stuck out of shots is counted once: its death and respawn visit change neither its shots, its money nor its bag.
-const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 }, dropLoot: 0, loot: 0 });
+// Its bare hour carries no deaths of its own (the game spot table's shape), so it dies at the row's.
+const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0 }, dropLoot: 0, loot: 0 });
 const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, far] } } } };
 const stuckDying = run(freshBot(10, { shots: { [SHOT]: 20 } }), 'table', 10, 2, mortalWorld);
 assert.ok(stuckDying.visits.filter(visit => visit.info.died && visit.before.shots[SHOT] === 0).length >= 3, 'the stuck bot dies and respawns several times after it stands');
@@ -462,20 +463,25 @@ for (const supply of ['table', 'formula']) {
     // The game's kit readers: no factor at the table's levels, and the game's shot scale has no row there (null).
     const kitsOf = { spotFactors: () => assert.fail('the table\'s levels read no game kit factor'), shotScale: () => null, stats: { spotUnstated: 0 } };
     const creation = { range: [1, 1], creation: () => ({}) };
-    const firedBy = {};
+    const firedBy = {}, diedBy = {};
     for (const [line, cell, spiritshots] of [['51', orc, { [SPIRIT]: 100 }], ['12', humanBare, {}], ['12', humanBare, { [SPIRIT]: 1000 }]]) {
         const account = freshBot(line, { shots: spiritshots }), visits = [];
         const made = Plane.plane({ view: tableView, kitHours: kitsOf, variant: 'table', accounts: [account], table: creation });
         let held = null;
-        const seen = { ...made, start: context => { const hooks = held = made.start(context); return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push(done); return done; } }; } };
-        const result = Engine.simulate({ view: tableView, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 1, seed: 3, plane: seen });
+        const seen = { ...made, start: context => { const hooks = held = made.start(context); return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ ...done, died: info.died === true }); return done; } }; } };
+        const result = Engine.simulate({ view: tableView, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3, plane: seen });
         assert.equal(visits[0].main.spot, '-12_43', `line ${line} holds the gremlin spot`);
         const main = { ...visits[0].main, shots: {} }, hunted = Engine.hunt(main, tableView, 1, () => 0.5, null).delta;
         const kills = 3600 / (cell[2] + cell[3] + cell[4] + 0.581 / cell[9]);
         assert.ok(Math.abs(hunted.exp - kills * 29) < 1e-6, `line ${line} hunts bare at its cell's kills (${hunted.exp / 29} vs ${kills})`);
         assert.equal(result.design.offGrid, 0, 'the creation kit is the measured point');
         firedBy[`${line}:${Object.keys(spiritshots).length}`] = held.firing(visits[0].main)?.perHour || 0;
+        diedBy[`${line}:${Object.keys(spiritshots).length}`] = visits.filter(visit => visit.died).length;
     }
+    // The human mystic dies at the form it hunts in: bare (0.02 a kill, some 2 an hour) it dies within 3 h, firing its
+    // spiritshots (1000 last over 6 h; no death a kill) it does not.
+    assert.ok(diedBy['12:0'] > 0, `the bare human mystic dies at its bare hour's deaths (${diedBy['12:0']} deaths)`);
+    assert.equal(diedBy['12:1'], 0, 'firing its spiritshots it dies at its shots hour\'s (none)');
     const shotsKills = 3600 / (6.632 + 11.18 + 5.69 + 0.581);
     assert.ok(Math.abs(firedBy['12:1'] - shotsKills * 1.027) < 1e-9, `the human mystic with spiritshots fires its shots cell's count (${firedBy['12:1']})`);
     assert.ok(Math.abs(humanHour.bareBest.shotless.deaths - 3600 / (7.039 + 15.59 + 10.6 + 0.581) * 0.02) < 1e-9, 'the bare hour carries the bare cell\'s own deaths');

@@ -536,11 +536,16 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     const scheduleDeath = (main, now) => {
         if (!deaths) return;
         const row = spotRowOf(view, main), share = rateOf(main.band).huntShare, held = pendingDeath.get(main.index) ?? null;
-        // The row's deaths per hour at the reference kit, times the plane's factor for the kit the main wears (default 1).
-        const rate = row?.deaths * (hooks.deathFactor ? hooks.deathFactor(main) : 1);
-        if (!(rate > 0 && share > 0)) { pendingDeath.set(main.index, null); return; }
-        const roll = mulberry(hash(`${seed}:${main.id}:death:${main.counter}`))();
-        const at = main.since + (-Math.log(1 - roll) / rate) / share;
+        // The deaths per hour of the form it hunts in, as the hunt credits it (firedOf: the form it fires while its held
+        // shots last, then bare; rowIn: a form without its own deaths dies at the row's), at the reference kit, times the
+        // plane's factor for the kit the main wears (default 1).
+        const factor = hooks.deathFactor ? hooks.deathFactor(main) : 1, { lasts, form } = firedOf(view, main, hooks.firing(main));
+        const fired = rowIn(row, form)?.deaths * factor, bare = rowIn(row, 'bare')?.deaths * factor;
+        if (!((fired > 0 || bare > 0) && share > 0)) { pendingDeath.set(main.index, null); return; }
+        const roll = mulberry(hash(`${seed}:${main.id}:death:${main.counter}`))(), draw = -Math.log(1 - roll);
+        const hours = draw <= fired * lasts || fired === bare ? draw / fired : bare > 0 ? lasts + (draw - fired * lasts) / bare : Infinity;
+        if (!Number.isFinite(hours)) { pendingDeath.set(main.index, null); return; }
+        const at = main.since + hours / share;
         const trip = pending.get(main.index);
         if (trip && trip.departs !== null && at > trip.departs) { pendingDeath.set(main.index, null); return; }
         pendingDeath.set(main.index, at);
