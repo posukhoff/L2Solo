@@ -179,6 +179,8 @@ const save = new DatabaseSync(file);
 save.exec(`CREATE TABLE characters (id INTEGER PRIMARY KEY, classId INTEGER);
     CREATE TABLE bot_life_state (characterId INTEGER PRIMARY KEY, accountName TEXT, level INTEGER, exp INTEGER, activity TEXT, spotId TEXT, statsJson TEXT);
     CREATE TABLE items (characterId INTEGER, selfId INTEGER, amount INTEGER, equipped INTEGER, slot INTEGER);
+    CREATE TABLE warehouse_items (characterId INTEGER, selfId INTEGER, amount INTEGER);
+    CREATE TABLE bot_personas (characterId INTEGER PRIMARY KEY, primaryDrive TEXT, traitsJson TEXT);
     CREATE TABLE bot_background_parties (partyId TEXT, memberIdsJson TEXT, status TEXT);`);
 // Spot-less bots start on the spot the save names for them (a travel's, else a stay's), a bot on a spot keeps it.
 const spots = { 1: [null, '{"travel":{"spotId":"X"},"stay":{"spotId":"Y"}}'], 2: [null, '{"stay":{"spotId":"Y"}}'],
@@ -192,7 +194,7 @@ save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('a', '[1
 save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('b', '[3,4]', 'dissolved');
 save.prepare('INSERT INTO bot_background_parties VALUES (?, ?, ?)').run('c', '[5,98]', 'active');
 save.close();
-const cohort = Cohort.fromSave(file, { hours: { 9: { 20: { classId: 7 } } }, items: {} });
+const cohort = Cohort.fromSave(file, { hours: { 9: { 20: { classId: 7 } } }, items: {}, twins: {}, recipes: [] });
 fs.rmSync(folder, { recursive: true });
 assert.deepEqual(cohort.accounts.map(account => account.party), [{ levels: [20, 24], self: 0 }, { levels: [20, 24], self: 1 }, null, null, null, null]);
 assert.deepEqual(cohort.accounts.map(account => account.spot), ['X', 'Y', 'Z', null, null, null], 'the save\'s own spot, else its travel\'s, else its stay\'s');

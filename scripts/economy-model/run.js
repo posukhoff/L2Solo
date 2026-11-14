@@ -30,7 +30,7 @@ const LEFT_OUT = Object.freeze([
     'occupation does not answer prices: a main hunts the spot its bot stood at in the save (else the one its travel or stay names there) while the snapshot has that spot\'s hour (inputs.js --spots), else its line\'s best spot for its level',
     'per-kill item yields at the kill mix: the spawn-mix yields scaled per spot row by its drop and spoil loot (Engine.killMixCorrection)',
     'potions, enchanting, augments, henna, quests, clans, the player, sessions, entry and retirement (a closed cohort)',
-    'bot-to-bot trade, crafting, crafter twins, seller twins and field deals',
+    'bot-to-bot trade, crafting, field deals; what twins do (they are seeded, not yet acting)',
     'hot bodies near a player (the real ledger\'s hotUnlabeled flow)',
     'the bag a main holds at the start (it starts empty) and what today\'s bots keep instead of selling',
     'today\'s gear improvement (crystallizing, enchanting: the gear bots buy at the NPC for it) and the funding limits of today\'s purchases (PurchaseFunding)'
@@ -44,6 +44,13 @@ function cohortOf(argv, snapshot) {
     }
     const [low, high] = String(Boot.option(argv, 'levels', '20-39')).split('-').map(Number);
     return Cohort.synthetic({ count: Number(Boot.option(argv, 'accounts', 1700)), low, high, seed: Number(Boot.option(argv, 'seed', 1)) }, snapshot);
+}
+
+// The seeded twins: accounts with a crafter, and those whose crafter knows a shot recipe.
+function twinsLine(accounts, snapshot) {
+    const shotRecipes = new Set(snapshot.recipes.filter(row => snapshot.items[row.productId]?.kind === 'Other.Shot').map(row => Number(row.recipeId)));
+    const crafters = accounts.map(account => account.twins.find(twin => twin.role === 'crafter')).filter(Boolean);
+    return `twins ${crafters.length}, with a shot recipe ${crafters.filter(crafter => crafter.recipes.some(id => shotRecipes.has(id))).length}`;
 }
 
 const k = value => `${(value / 1000).toFixed(1)}k`;
@@ -127,7 +134,7 @@ function main(argv) {
     const fallbacks = snapshot.fallbacks;
     console.log(`SNAPSHOT ${file} (revision ${snapshot.header.revision}, fingerprint ${snapshot.header.fingerprint}, rates ${JSON.stringify(snapshot.header.rates)}); fallbacks: `
         + `no no-grade market (the C town) ${fallbacks.noMarketToC.length} spots`);
-    console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}`);
+    console.log(`COHORT ${cohort.source}: ${cohort.accounts.length} accounts; lines exact ${cohort.lines.exact}, drawn by class weights ${cohort.lines.drawn}, no line ${cohort.lines.noLine}, stations ${cohort.lines.stations}; ${twinsLine(cohort.accounts, snapshot)}`);
     const began = Date.now();
     const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, plane,
         onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates } });
