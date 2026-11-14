@@ -379,10 +379,8 @@ function firstPrices(snapshot, view, { recipes, byProduct, crystalGrade, npcMin,
         for (const [key, hour] of Object.entries(byLevel)) {
             const row = hour.best, level = Number(key);
             if (!row || !(row.kills > 0)) continue;
-            const per = Engine.yieldRows(view, line, level, row, 'shots').map(([id, perKill]) => [id, perKill * row.kills]);
-            const loot = per.reduce((sum, [id, count]) => sum + count * (view.items[id]?.npcBuy || 0), 0);
-            const income = row.adena * Engine.adenaFactor(view, row, level) + loot;
-            for (const [id, count] of per) {
+            const { items: per, npc: income, adena } = Engine.rowItems(view, { line, level }, row, 'shots'), loot = income - adena;
+            for (const { id, rate: count } of per) {
                 // band_hour: 1 / count hours each; hour_share: the item's share of the loot's value per unit.
                 const hours = dropAt === 'band_hour' ? 1 / count : loot > 0 ? (view.items[id]?.npcBuy || 0) / loot : 0;
                 if (count > 0 && hours > 0 && (!farm[id] || income * hours < farm[id].bandHour * farm[id].farmHours)) farm[id] = { farmHours: hours, bandHour: income };

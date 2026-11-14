@@ -101,7 +101,7 @@ function modeOf(argv, snapshot, cohort) {
     const mode = Boot.option(argv, 'mode', 'plain');
     if (mode === 'plain') {
         const view = Engine.viewOf(snapshot);
-        return { view, plane: Today.plane({ view, hunter: Today.hunter(view), arrival: Today.nextArrival }),
+        return { view, plane: Today.plane({ view, hunter: Today.hunter(view) }),
             rates: { default: { huntShare: Number(Boot.option(argv, 'hunt-share', 1)), visitsPerBotHour: Number(Boot.option(argv, 'visits', 2)) } } };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
@@ -110,7 +110,7 @@ function modeOf(argv, snapshot, cohort) {
     const booted = Date.now(), { view, rates, basis, hunter } = Today.setup(snapshot, JSON.parse(fs.readFileSync(fitFile, 'utf8')), cohort.accounts);
     console.log(`TODAY ${JSON.stringify(Today.TODAY)}; fitted on ${fitFile}; kit hours booted in ${((Date.now() - booted) / 1000).toFixed(1)} s`);
     printFit(basis);
-    return { view, rates, plane: Today.plane({ view, hunter, arrival: Today.nextArrival }) };
+    return { view, rates, plane: Today.plane({ view, hunter }) };
 }
 
 function printFit(basis) {

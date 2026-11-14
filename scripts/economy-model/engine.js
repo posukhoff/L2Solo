@@ -21,7 +21,9 @@
 //                 alone: asked at the start and after
 //                 each committed event that changes the main (a visit, a
 //                 level-up), its answer is the one pending arrival (replaced,
-//                 or dropped by null): the situations that send a bot to town.
+//                 or dropped by null): today's and the plain mode's plane
+//                 answer by the fitted periodic rule, the design mode's by
+//                 the situations that send a bot to town.
 //                 A bot is in one state at a time: an answer { at, away }
 //                 leaves the spot at at - away (the hunt stops there and the
 //                 way to town is not hunted), and an arrival it has

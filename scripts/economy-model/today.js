@@ -33,13 +33,13 @@ const TODAY = Object.freeze({
     // A fixed buyer pays at most this share of the item's cheapest repeatable
     // supply (StaticMerchantPricing BUYBACK_RATIO).
     buybackRatio: 0.9,
-    // Shot restock: below this many hunting hours of use, up to the use of the hunting hours since the last visit (the engine's rule).
+    // Shot restock: below this many hunting hours of use, up to the use of the hunting hours since the last visit (Today.errands).
     shotLineHours: SHOT_LINE_HOURS,
     // When a main comes to town: periodic at the band's visits per bot-hour, fitted on a real run (nextArrival).
     arrivals: 'fitted periodic'
 });
 
-// Today's arrivals (the engine's nextArrival): every 1 / visitsPerBotHour
+// Today's arrivals (the plane's nextArrival): every 1 / visitsPerBotHour
 // hours, the first at a seeded share of that interval so mains do not all
 // arrive at once; none at a rate of 0. A level-up changes no trip: the
 // arrival already pending stays.
@@ -174,14 +174,14 @@ function visit(main, view, context = {}) {
 // Today's plane (the engine's plane contract, as design.js's): no sinks
 // or events of its own and no money apart from the mains; a main fires and
 // kills as the hunter answers, visits by today's visit and comes to town by
-// arrival(main, view).
-function plane({ view, hunter, arrival }) {
+// nextArrival (the fitted periodic rule).
+function plane({ view, hunter }) {
     return {
         sinks: [],
         start: () => ({
             firing: hunter.firing,
             kills: hunter.kills,
-            nextArrival: arrival,
+            nextArrival,
             visit: (main, now, { outingHours }) => visit(main, view, { outingHours, firing: hunter.firing(main) }),
             hunt() {},
             levelUp: main => main,
