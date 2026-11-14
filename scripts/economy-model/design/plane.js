@@ -152,6 +152,8 @@ function plane({ view, kitHours, variant, accounts }) {
         born: true,
         start({ ledger, mains }) {
             ledger.counters.stuckNoBareHour = 0;
+            ledger.counters.fullBagHuntHours = 0;
+            ledger.counters.fullBagLostDrop = 0;
             const states = new Map();
             // The run report's tallies (each class by the level at the event's start): wall hours from a clock of
             // the level each main holds since an hour; road hours (the walk out, to town and back); trips by the facts in
@@ -240,6 +242,8 @@ function plane({ view, kitHours, variant, accounts }) {
             return {
                 firing: hunter.firing,
                 kills: hunter.kills,
+                // A full bag takes no item drop until a town visit empties it.
+                full: main => stateOf(main).full,
                 // The worn kit's deaths at its row in the form it hunts.
                 deathFactor: main => factorsOf(main)?.[huntedOf(main).hunted]?.deaths ?? 1,
                 nextArrival(main, { now, huntShare }) {
@@ -280,6 +284,8 @@ function plane({ view, kitHours, variant, accounts }) {
                     const first = bareFirst.get(main.index);
                     if (!first?.bought) bareFirst.set(main.index, { hours: (first?.hours || 0) + delta.huntBare, bought: false });
                     let state = stateOf(main);
+                    if (state.full) ledger.counters.fullBagHuntHours += delta.huntHours;
+                    ledger.counters.fullBagLostDrop += Math.round(delta.lostDrop);
                     if (FACTS.out(main, delta)) state = queueFact(state, 'out', main, main.since);
                     const bags = view.bags?.[main.line], full = bags ? fullOf(view, bags, carried(main)) : false;
                     if (FACTS.bag(state.full, full)) state = queueFact(state, 'bag', main, main.since);
