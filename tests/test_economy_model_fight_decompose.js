@@ -56,7 +56,7 @@ try {
     Lift.lift(true);
     try {
         const plain = HuntTable.cellOf(Generator.hunt(Decompose.speciesSpot(spot, selfId), line, level, form, hours, undefined,
-            Decompose.creationKit(classId), classId), hours);
+            Decompose.creationKit(classId), classId));
         const out = Decompose.decompose({ spot, selfId, line, level, form, hours });
         const { asIs, terms } = out;
         assert.deepEqual(asIs.cell, plain, 'watching the hunt does not change its cell');

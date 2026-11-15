@@ -60,13 +60,16 @@ const STAMP_FILES = Object.freeze(['src/GameServer/Knowledge/StarterItemCatalog.
 
 const round = value => value === 0 ? 0 : Number(value.toPrecision(4));
 
-// A hunt's sums as one cell form (FIELDS).
-function cellOf(sum, hours) {
+// A hunt's sums as one cell form (FIELDS). Kills an hour and the other time
+// count over the hunt's measured span (Generator.hunt's spanMs: to where its
+// last round or rest ended), the span its fight and rest were counted in, so
+// the parts tile the hour per kill.
+function cellOf(sum) {
     const mobs = sum.mobs;
     if (!(mobs > 0)) return [0, ...FIELDS.slice(1).map(() => null)];
     const seconds = ms => round(ms / 1000 / mobs);
-    return [round(mobs / hours), round(sum.deaths / mobs), seconds(sum.fightMs - sum.walkMs), seconds(sum.restMs),
-        seconds(hours * 3600000 - sum.fightMs - sum.restMs), seconds(sum.walkMs), round(sum.exp / mobs),
+    return [round(mobs / (sum.spanMs / 3600000)), round(sum.deaths / mobs), seconds(sum.fightMs - sum.walkMs), seconds(sum.restMs),
+        seconds(sum.spanMs - sum.fightMs - sum.restMs), seconds(sum.walkMs), round(sum.exp / mobs),
         round(sum.shots / mobs), round(sum.potions / mobs), round(sum.pullMobs / sum.pulls)];
 }
 
@@ -252,7 +255,7 @@ function runChild([tasksFile, shard, n, partsFile, catalogueFile, hours]) {
         const spot = profiles.get(task.spotId), started = Date.now();
         const sum = Generator.hunt(task.selfId ? speciesSpot(spot, task.selfId) : spot, task.line, task.level, task.form, Number(hours),
             undefined, creationKit(task.classId), task.classId);
-        fs.writeSync(out, `${JSON.stringify({ k: task.k, cell: cellOf(sum, Number(hours)), runSpd: sum.runSpd, reach: sum.reach, ms: Date.now() - started })}\n`);
+        fs.writeSync(out, `${JSON.stringify({ k: task.k, cell: cellOf(sum), runSpd: sum.runSpd, reach: sum.reach, ms: Date.now() - started })}\n`);
     }
     fs.closeSync(out);
     Lift.lift(false);
