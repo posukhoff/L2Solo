@@ -264,6 +264,19 @@ try {
     try {
         const swords = amount => ({ ...hunter, exp: Number(invoke('GameServer/DataCache').experience[28]), vitals: { ...hunter.vitals, mp: 932 },
             inventory: { 1: { selfId: 1, name: 'Short Sword', amount, stackable: false } } });
+        // The last shot spent ends the round at that fight's end (shots_out: the earning
+        // spot is asked again). An Apprentice's Wand fires one Spiritshot a cast; the kit
+        // rates pay the shots, so their line is the spot's hour of use.
+        const armed = shots => ({ ...swords(0), inventory: {
+            6: { selfId: 6, name: 'Apprentice\'s Wand', amount: 1, equipped: true, slot: 7, stackable: false },
+            2509: { selfId: 2509, name: 'Spiritshot', amount: shots, stackable: true } },
+            stats: { ...hunter.stats, kitRates: [2509, 1, 1, 1061, 0, 1, -1, 1, 1], earning: { spotId: 'field', shotsPerHour: 100, potionsPerHour: 0 } } });
+        const stocked = BackgroundResolver.resolveSolo({ state: armed(1000), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        const dry = BackgroundResolver.resolveSolo({ state: armed(4), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        assert(stocked.debug.shotActions > 4 && stocked.debug.wins > 2, `fixture: with shots to spare the round fires on (${stocked.debug.shotActions} shots, ${stocked.debug.wins} wins)`);
+        assert.strictEqual(dry.debug.shotActions, 4, 'the round fires its four shots');
+        assert(dry.debug.wins < stocked.debug.wins && dry.doneAt < at,
+            `the round ends at the fight that spends its last shot (${dry.debug.wins} wins, ${stocked.debug.wins} with shots to spare)`);
         const filling = BackgroundResolver.resolveSolo({ state: swords(78), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
         assert.strictEqual(filling.debug.wins, 2, `the round ends at the kill whose drop fills the bag's 80 slots (${filling.debug.wins} wins)`);
         assert(filling.doneAt < at, `at that fight's end, before the round's bound (${at - filling.doneAt} ms before)`);
