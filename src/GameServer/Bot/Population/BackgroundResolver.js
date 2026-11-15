@@ -1749,9 +1749,12 @@ function pulledMob(picked, profiles, areaShare = null) {
 // (resolveSolo; {} at its start), so its fights share one setup: the
 // inventory copy they spend from (with the shot supply drawn from it), the
 // fight profile while it holds (ColdCombatProfile.heldFightProfile) and its
-// hits' stat sources; each fight leaves its own there.
+// hits' stat sources; each fight leaves its own there. scanOnly: the target scan
+// alone (the mob and the bot's readiness for it, as hot reads them at its target
+// scan, before its walk), returned as { target } or a refusal; target: that scan's
+// answer, which the fight then takes instead of scanning again.
 function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(), fightLimitMs = 12000, maxActions = 48,
-    roundProfiles = null, round = null }) {
+    roundProfiles = null, round = null, scanOnly = false, target = null }) {
     const fightState = mutableCombatState(state, round);
     let bot;
     if (round) {
@@ -1767,7 +1770,7 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
     const matchupProfiles = pending ? null : roundProfiles || TargetMatchup.coldProfiles(bot, fightState, timestamp, { shot });
     // A continued fight's mob is the fight's own copy: its self buffs
     // (ColdMobAction.buffColdMob) reach the save only with the slice's mobFight.
-    const picked = (pending?.mob && { ...pending.mob }) || ColdCombatProfile.npcForSpot(spot, rng, { preferredNpcId: targetNpcId,
+    const picked = target?.picked || (pending?.mob && { ...pending.mob }) || ColdCombatProfile.npcForSpot(spot, rng, { preferredNpcId: targetNpcId,
         ...soloPickOptions(state), pull: true, matchupProfiles }) || {
         level: Number(spot.avgLevel || bot.level), maxHp: Math.max(1, Number(spot.mob?.hp || 1)),
         pAtk: Math.max(1, Number(spot.mob?.damage || 1)), pAtkRnd: 0, pDef: 1, mDef: 1,
@@ -1779,8 +1782,8 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
     // neighbours and minions beyond it come regardless.
     // The share of the bot's damage by area skills: a pull it wears down
     // together keeps its mobs standing together (BotPullEstimate.pullView).
-    let areaShare = 0, petNear = null;
-    if (!pending && !picked.aggressiveInterruption) {
+    let areaShare = target?.areaShare || 0, petNear = target?.petNear || null;
+    if (!target && !pending && !picked.aggressiveInterruption) {
         // A full-health route verdict cannot admit the next mob after a win
         // depleted the owner. Keep the same damage margin with the HP/MP that
         // remain now; pending fights and aggressive interruptions still run.
@@ -1799,6 +1802,7 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
             return { avoided: true, needsRest: true, reason: 'solo_recovery_needed' };
         }
     }
+    if (scanOnly) return { target: { picked, areaShare, petNear } };
     const vitals = {
         hp: clamp(Number(state.vitals?.hp ?? bot.maxHp), 0, bot.maxHp),
         mp: clamp(Number(state.vitals?.mp ?? bot.maxMp), 0, bot.maxMp),
@@ -2959,6 +2963,7 @@ const BackgroundResolver = {
                 shareCut = Math.max(1, Math.ceil((timestamp - at) / Math.max(1, walkMs)));
                 break;
             }
+            let target = null;
             if (!engaged) {
                 // Its own buffs first (a round builds the fighter for them once at most).
                 accrue();
@@ -2972,14 +2977,21 @@ const BackgroundResolver = {
                     at += buffed.durationMs;
                     buffCasts += buffed.buffCasts;
                 }
+                // Then the target scan, before the walk (as hot's): below its line,
+                // or before a mob it is not ready for, the bot sits where it stands.
+                accrue();
+                target = resolveFight({ state: { ...state, vitals: patch.vitals, inventory: patch.inventory || state.inventory,
+                    stats: { ...(state.stats || {}), ...(patch.stats || {}) } }, spot, targetNpcId, rng,
+                    timestamp: at, roundProfiles: profiles, round, scanOnly: true });
                 // Then the walk to the mob. A walk past the round's end
                 // engages the mob still (the opening action, at least 1 ms of
                 // fight): its fight goes on in the next round.
-                accrue();
-                combatMs += walkMs;
-                at += walkMs;
-                walkedMs += walkMs;
-                accrue(moving);
+                if (!target.avoided) {
+                    combatMs += walkMs;
+                    at += walkMs;
+                    walkedMs += walkMs;
+                    accrue(moving);
+                }
             }
             accrue();
             const fightState = {
@@ -2988,9 +3000,9 @@ const BackgroundResolver = {
                 inventory: patch.inventory || state.inventory,
                 stats: { ...(state.stats || {}), ...(patch.stats || {}) }
             };
-            const result = countedBuilds('fight', 'solo', resolveFight, { state: fightState, spot, targetNpcId, rng,
-                timestamp: at, fightLimitMs: Math.max(1, timestamp - at),
-                maxActions: actionBudget - combatActions, roundProfiles: profiles, round });
+            const result = target?.avoided ? target : countedBuilds('fight', 'solo', resolveFight, { state: fightState, spot,
+                targetNpcId, rng, timestamp: at, fightLimitMs: Math.max(1, timestamp - at),
+                maxActions: actionBudget - combatActions, roundProfiles: profiles, round, target: target?.target });
             if (result.avoided) {
                 patch.stats.lastReason = result.reason;
                 noPrey = result.reason === NO_PREY;
