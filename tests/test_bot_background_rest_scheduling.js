@@ -220,10 +220,27 @@ try {
     assert.strictEqual(refused.debug.attemptedFights, 0);
     assert.strictEqual(refused.debug.walkedMs, 0, 'below its line the bot sits before it walks');
     assert.strictEqual(refused.debug.combatMs, 0, 'fixture: nothing comes before the refusal');
-    // A walk regenerates at the moving rate (C4 x0.7, the hot rule's).
-    const movingRate = ColdRest.coldRestRegenPerTick(tired, { profile: caster, moving: true, timestamp: at });
-    assert(Math.abs(movingRate.hp / ColdRest.coldRestRegenPerTick(tired, { profile: caster, standing: true, timestamp: at }).hp - 0.7 / 1.1) < 1e-9,
-        'a walk regenerates at the moving rate, not the standing one');
+    // A walk regenerates at the moving rate (C4 x0.7, the hot rule's): two rounds that
+    // walk past their end to one mob and kill it with one nuke, differing only in the
+    // walk's length (the spot's spawn area), differ in HP and MP by the moving rate over
+    // the walks' difference.
+    const walker = { ...hunter, vitals: { ...hunter.vitals, hp: 500 } };
+    const movingRate = ColdRest.coldRestRegenPerTick(walker, { profile: caster, moving: true, timestamp: at });
+    const [near, far] = [1e8, 4e8].map(spawnArea => BackgroundResolver.resolveSolo({ state: walker, spot: { ...field, spawnArea },
+        elapsedMs: 1000, timestamp: at, rng: () => 0.5 }));
+    assert(near.debug.attemptedFights === 1 && far.debug.attemptedFights === 1
+        && Math.abs((near.debug.combatMs - near.debug.walkedMs) - (far.debug.combatMs - far.debug.walkedMs)) < 1e-6,
+        `fixture: each round walks to one mob and does the same after it (${near.debug.attemptedFights}, ${far.debug.attemptedFights})`);
+    assert(far.debug.walkedMs > near.debug.walkedMs && near.debug.walkedMs > 1000,
+        `fixture: the walks differ and each crosses the round's end (${near.debug.walkedMs}, ${far.debug.walkedMs} ms)`);
+    // The fight keeps whole HP and MP (each round rounds once: within 1 of the walks' regen;
+    // the standing rate would be (1.1 / 0.7 - 1) x the moving one's further off).
+    const walkTicks = (near.debug.walkedMs - far.debug.walkedMs) / tick;
+    assert(Math.abs(movingRate.hp * walkTicks) * (1.1 / 0.7 - 1) > 2, 'fixture: the standing rate would differ by more than the rounding');
+    assert(Math.abs(near.patch.vitals.hp - far.patch.vitals.hp - movingRate.hp * walkTicks) < 1,
+        `a walk regenerates HP at the moving rate (${near.patch.vitals.hp - far.patch.vitals.hp} vs ${movingRate.hp * walkTicks})`);
+    assert(Math.abs(near.patch.vitals.mp - far.patch.vitals.mp - movingRate.mp * walkTicks) < 1,
+        `a walk regenerates MP at the moving rate (${near.patch.vitals.mp - far.patch.vitals.mp} vs ${movingRate.mp * walkTicks})`);
     const refusedNeed = BackgroundResolver.estimateRestMs(tired, tired.vitals, line);
     assert.strictEqual(refused.patch.stats.restUntil, Math.ceil(at - 30_000 + refusedNeed),
         'a refused fight\'s rest starts at the round\'s start, where the bot stands');
