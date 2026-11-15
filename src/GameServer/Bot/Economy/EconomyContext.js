@@ -912,7 +912,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
 // clearing left. The clearing stands only when that bag then needs no trip: a trip sells
 // those rows for their worth. The clearing is asked only when the bag's need says trip (a
 // solo bot's bag). { cleanupDue, bagClear }: bagClear { items, freed, value } is executed at
-// once by the step or body that lands it (ColdSimulationKernel, HuntingState).
+// once by the step or body that lands it (BotLifeState.prepareResolve, HuntingState).
 function bagDecisions(state, base, deps, now) {
     const Break = invoke('GameServer/Bot/Population/PartyMarketBreak');
     const cleanupDue = Break.cleanupDecision(state, now);
