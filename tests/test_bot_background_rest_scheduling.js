@@ -197,6 +197,19 @@ try {
         `at the round's end it has rested seated since its fight, no standing regen after it (MP ${worn.patch.vitals.mp} from ${fightEnd.mp})`);
     assert(Math.abs(worn.debug.seatedMs - (at - sitAt)) < 0.01, 'the round\'s time after the sit is seated');
     assert.strictEqual(worn.doneAt, at, 'its clock is the round\'s end: no field carries the rest');
+    // At its deadline the rest step (seated from the round's end) finds the bot at its line.
+    const rested = BackgroundResolver.resolveRest({ ...hunter, activity: 'resting', vitals: worn.patch.vitals,
+        stats: { ...hunter.stats, ...worn.patch.stats } }, restUntil - worn.doneAt, restUntil);
+    assert(rested.patch.vitals.mp >= RestPolicy.THRESHOLDS.rested.mp * caster.maxMp,
+        `at its deadline the bot is at its rested line (MP ${rested.patch.vitals.mp})`);
+    assert.strictEqual(rested.patch.activity, 'hunting', 'and stands up, the rest not extended');
+    // A rest step's own deadline (from a whole-ms step time) is never short of the line either.
+    for (const mp of [300, 301, 302, 303]) {
+        const low = { ...hunter, activity: 'resting', vitals: { ...hunter.vitals, mp }, stats: { ...hunter.stats } };
+        const until = BackgroundResolver.resolveRest(low, 0, at).patch.stats.restUntil;
+        const up = BackgroundResolver.resolveRest({ ...low, stats: { ...low.stats, restUntil: until } }, until - at, until);
+        assert.strictEqual(up.patch.activity, 'hunting', `at its deadline the bot stands up at its line (MP ${mp}: ${up.patch.vitals.mp})`);
+    }
 
     // A fight refused (the bot cannot take the mob at its HP) seats it where it was refused.
     const tired = { ...hunter, vitals: { ...hunter.vitals, hp: 150 } };
