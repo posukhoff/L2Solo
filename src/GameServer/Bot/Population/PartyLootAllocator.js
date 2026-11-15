@@ -1,5 +1,6 @@
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const DataCache = invoke('GameServer/DataCache');
+const RoundLoot = require('./RoundLoot');
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 
 const WEAPON_SLOTS = new Set([7, 14]);
@@ -58,18 +59,9 @@ function recipientScore(state, item, projected) {
     return targetBonus + slotPriority(template) * improvement + fairness;
 }
 
+// The member's projected bag with the drop added (RoundLoot.addTo, the one bag-add rule).
 function addProjectedItem(state, item, projected) {
-    const inventory = { ...projectedInventory(state, projected) };
-    const key = String(item.selfId);
-    inventory[key] = {
-        ...(inventory[key] || {}),
-        selfId: Number(item.selfId),
-        name: item.name || inventory[key]?.name || '',
-        amount: Number(inventory[key]?.amount || 0) + Number(item.amount || 0),
-        kind: item.kind || inventory[key]?.kind || '',
-        rank: item.rank || inventory[key]?.rank || 'none'
-    };
-    projected.set(Number(state.characterId), inventory);
+    projected.set(Number(state.characterId), RoundLoot.addTo(projectedInventory(state, projected), [item]));
 }
 
 // A party with no agreement: each member keeps its own drops (C4 finders keepers:

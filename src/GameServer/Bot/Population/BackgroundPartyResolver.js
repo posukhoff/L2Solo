@@ -804,7 +804,7 @@ const BackgroundPartyResolver = {
                     // raid does not spend most of its lifetime sleeping
                     // between otherwise continuous combat rounds.
                     doneAt,
-                    nextResolveAt: raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS),
+                    nextResolveAt: raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS),
                     debug: {
                         partyId: party.partyId,
                         partyRoster: members.map(member => Number(member.characterId)).sort((a, b) => a - b).join(','),
@@ -1003,7 +1003,7 @@ const BackgroundPartyResolver = {
             },
             nextResolveAt: raidFailed || raidDefeated
                 ? null
-                : partyRestUntil || (raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS)),
+                : partyRestUntil || (raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS)),
             debug: {
                 fights,
                 attemptedFights,

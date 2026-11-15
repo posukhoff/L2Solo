@@ -1,5 +1,6 @@
 'use strict';
 
+const RoundLoot = require('./RoundLoot');
 const MODES = ['need', 'random', 'turn'];
 const positive = value => Math.max(0, Number(value) || 0);
 const trait = (persona, key) => Math.max(0, Math.min(1, Number(persona?.traits?.[key] ?? 0.5)));
@@ -56,8 +57,7 @@ function allocate(memberResults, agreement, { rng = Math.random, needScore = () 
                 const reward = { ...item, amount: count }; delete reward.partySpoil;
                 owner.result.materialize.items.push(reward);
                 goal.collected = positive(goal.collected) + count;
-                inventory[item.selfId] = { ...inventory[item.selfId], ...reward,
-                    amount: positive(inventory[item.selfId]?.amount) + count };
+                projected.set(Number(owner.state.characterId), RoundLoot.addTo(inventory, [reward]));
                 if (Number(owner.state.characterId) !== Number(source.state.characterId))
                     transfers.push({ from: source.state, to: owner.state, item: reward });
                 unassigned -= count;
@@ -92,9 +92,7 @@ function allocate(memberResults, agreement, { rng = Math.random, needScore = () 
         }
         const reward = { ...distributedItem }; delete reward.partySpoil;
         recipient.result.materialize.items.push(reward);
-        const inventory = projected.get(Number(recipient.state.characterId));
-        projected.set(Number(recipient.state.characterId), { ...inventory, [item.selfId]: { ...inventory[item.selfId], ...item,
-            amount: positive(inventory[item.selfId]?.amount) + positive(distributedItem.amount) } });
+        projected.set(Number(recipient.state.characterId), RoundLoot.addTo(projected.get(Number(recipient.state.characterId)), [reward]));
         if (Number(recipient.state.characterId) !== Number(source.state.characterId)) {
             transfers.push({ from: source.state, to: recipient.state, item: distributedItem });
         }
