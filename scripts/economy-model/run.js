@@ -117,6 +117,9 @@ function printDesign(design) {
         console.log(`  ${label}: wall hours ${book.wallHours.toFixed(1)}, consumable trips (an out fact) ${book.consumableTrips}, bag trips (a bag fact, no out) ${book.bagTrips}, both ${book.bothTrips}, empty trips ${book.emptyTrips} (${percent(book.emptyShare)}${name === 'low' ? `, bound ${percent(DesignLimits.EMPTY_TRIP_SHARE.value)}` : ''}), `
             + `road hours ${book.roadHours.toFixed(1)} = road share ${percent(book.roadShare)} of the ${book.decidingHours.toFixed(1)} h of mains with a spot row (${percent(book.roadShareAllMains)} of all wall hours)${name === 'low' ? ` (limit ${percent(DesignLimits.ROAD_SHARE_LIMIT.value)}, today's bots ${percent(DesignLimits.CURRENT_BOTS_ROAD_SHARE.value)})` : ''}`);
         console.log(`    stuck: ${stuckOf(book)}`);
+        const binds = book.needBinds, share = n => percent(book.needDecisions > 0 ? n / book.needDecisions : null);
+        console.log(`    stock hours to a full bag (town decisions with a need): ${book.needDecisions} decisions, mean ${number(book.needDecisions > 0 ? book.needHours / book.needDecisions : null)} h; `
+            + `set by the slots ${binds.slots} (${share(binds.slots)}), the drop's load ${binds.dropLoad} (${share(binds.dropLoad)}), the stock's own weight ${binds.stockLoad} (${share(binds.stockLoad)})`);
     }
     console.log(`  shadow: ${design.shadow.decisions} field decisions run in both variants; ${design.shadow.differ.reduce((sum, row) => sum + row.count, 0)} differ`);
     for (const row of design.shadow.differ) console.log(`    ${pad(row.count, 7)}  row ${row.row}: ${row.reason}`);

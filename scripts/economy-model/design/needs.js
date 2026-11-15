@@ -3,19 +3,27 @@
 // What a design bot needs and what it can spare, on its engine state (the
 // main: { shots: { id: count }, bag: { id: count } }; the worn kit is never in
 // the bag). Pure; called by the design plane when it builds a decision's state.
-const LIMITS = require('./limits');
 const Engine = require('../engine');
+const { SHOT_LINE_HOURS } = require('../today');
 const BeginnerShots = require('../../../src/GameServer/Items/C4BeginnerShots');
+const ConsumableTarget = require('../../../src/GameServer/Bot/Economy/ConsumableTarget');
 
 // The consumable the bot fires at its row (firing: { id, perHour, beginner },
-// null when its line fires nothing there): its purchase target is an outing's
-// use, held what it can fire of it (the beginner shots that charge it
-// counted: Engine.heldOf), short what it lacks to it (below 0: it holds more
-// than an outing).
-function consumable(main, firing, limits = LIMITS) {
+// null when its line fires nothing there): its purchase target is the game's
+// stock rule (ConsumableTarget): its use over the hunting hours to a full bag
+// after the visit's sale, plus the reserve, at least the line (an hour's use,
+// the game's survival line); fill: { slotHours, freeLoad, loadPerHour, mass }
+// the plane reads at the held spot. held is what it can fire of it (the
+// beginner shots that charge it counted: Engine.heldOf), short what it lacks
+// to it (below 0: it holds more than a full bag's use).
+function consumable(main, firing, fill) {
     if (!firing) return null;
-    const target = Math.ceil(firing.perHour * limits.OUTING_HOURS.value), held = Engine.heldOf(main, firing);
-    return { id: firing.id, perHour: firing.perHour, target, held, short: target - held };
+    const hours = ConsumableTarget.bagHours({ slotHours: fill.slotHours, freeLoad: fill.freeLoad, loadPerHour: fill.loadPerHour,
+        stock: [{ use: firing.perHour, mass: fill.mass }] });
+    if (!Number.isFinite(hours)) throw new Error(`no bag fact bounds the stock of ${firing.id}: no slot forecast and no weight`);
+    const target = Math.max(Math.ceil(firing.perHour * SHOT_LINE_HOURS), ConsumableTarget.target(firing.perHour, hours));
+    const held = Engine.heldOf(main, firing);
+    return { id: firing.id, perHour: firing.perHour, hours, target, held, short: target - held };
 }
 
 // [[id, count]] the bot can spare: every bag item (its drop and the creation

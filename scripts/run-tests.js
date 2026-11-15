@@ -792,6 +792,7 @@ const tests = [
     'tests/test_economy_model_spec.js',
     'tests/test_economy_model_cohort.js',
     'tests/test_economy_model_design.js',
+    'tests/test_consumable_target.js',
     'tests/test_economy_model_hunt_table.js',
     'tests/test_economy_model_hunt_rows.js',
     'tests/test_economy_model_fight_decompose.js',

@@ -4,13 +4,15 @@
 // bound the design reads or is judged by, with its source, its reader and how
 // a hit shows. Frozen rows { value, source, readBy, hit }.
 
+const ConsumableTarget = require('../../../src/GameServer/Bot/Economy/ConsumableTarget');
+
 const row = fields => Object.freeze(fields);
 const LIMITS = Object.freeze({
-    // A consumable's purchase target: this many hunting hours of its use.
-    OUTING_HOURS: row({ value: 2, source: 'ours: an outing of two hunting hours',
-        readBy: 'needs.consumable (target), supply formula (loss horizon)', hit: 'a buy stops at the target: trips per outing in the run report' }),
+    // A consumable's purchase target keeps this share above a full bag's use (the game's stock rule, ConsumableTarget).
+    CONSUMABLE_RESERVE: row({ value: ConsumableTarget.RESERVE, source: 'owner 11-16, decision 364; number ours',
+        readBy: 'needs.consumable (target)', hit: 'shots carried per trip in the run report' }),
     // The road's share of a bot's wall hours at levels 1-19 the design may reach.
-    ROAD_SHARE_LIMIT: row({ value: 0.15, source: 'ours: the walk to and back over a 2 h outing from the starter towns',
+    ROAD_SHARE_LIMIT: row({ value: 0.15, source: 'ours: the walk to and back from the starter towns, measured by the run',
         readBy: 'run report', hit: 'road hours / wall hours at levels 1-19 printed beside it' }),
     // Trips that bought none of the need they went for, as a share of consumable trips.
     EMPTY_TRIP_SHARE: row({ value: 0.05, source: 'ours: the design\'s acceptance bound',
