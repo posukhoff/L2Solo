@@ -191,14 +191,15 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
     // buy price (the trip's sale), the hour's money at its spot row in the form it hunts (adena and the
     // drop at the NPC's price, at its kit's kills), the walk back from the spot's town (the game's
     // WalkBack leg) and the slots the row fills an hour (a stack at most one, a piece of gear each:
-    // our reading of the game's spot-table stacks). It stands when the cleared bag is no longer full;
+    // our reading of the game's spot-table stacks); a row frees the slots it takes in the bag (slotsOf,
+    // the full rule's count: a stack below one unit frees none). It stands when the cleared bag is no longer full;
     // else the bag goes to town. { bag, clear } or null.
     const clearedBag = (main, bags) => {
         const row = Engine.spotRowOf(view, main), factors = factorsOf(main);
         if (!row || !factors) return null;
         const { hunted } = huntedOf(main), kills = factors[hunted]?.kills ?? 1, hour = Engine.rowItems(view, main, row, hunted);
-        const rows = Object.entries(main.bag).filter(([, count]) => count > 0).map(([id, count]) => ({ selfId: Number(id), count,
-            slots: Engine.isGear(view.items[id]) ? count : 1, value: count * (view.items[id]?.npcBuy || 0) }));
+        const rows = Object.entries(main.bag).map(([id, count]) => ({ selfId: Number(id), count,
+            slots: slotsOf(view, [[id, count]]), value: count * (view.items[id]?.npcBuy || 0) })).filter(item => item.slots > 0);
         const clear = BagClearing.choose(rows, { hourValue: hour.npc * kills, tripHours: Engine.backHoursOf(view, row.spotId, townOf(view, main)),
             slots: slotsOf(view, carried(main)), slotsPerHour: hour.items.reduce((sum, item) => sum + (item.stack ? Math.min(1, item.rate) : item.rate), 0) * kills });
         if (!clear) return null;
