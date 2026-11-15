@@ -490,8 +490,11 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
             sum.stacks += countNewStacks(gained.items || [], seen, simulation.items);
             sum.potions += Number(debug.potionsUsed || 0);
             // The bots' records count a cycle's combat and the rest it calls for, a rest
-            // step's extension of it too (a dead bot's step rests it to its respawn: death time).
-            const restMs = state.activity === 'dead' ? 0 : Math.max(0, Number(patch.stats?.restUntil || t) - t);
+            // step's extension of it too (a dead bot's step rests it to its respawn: death time):
+            // the round's seated time and its rest from the round's last action on (doneAt).
+            const from = Math.max(t, Math.ceil(Number(result.doneAt) || 0));
+            const restMs = state.activity === 'dead' ? 0
+                : Number(debug.seatedMs || 0) + Math.max(0, Number(patch.stats?.restUntil || t) - from);
             sum.busyMs += restMs;
             sum.restMs += restMs;
             if (Number.isFinite(debug.combatMs)) {
@@ -524,7 +527,8 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
                 throw new Error(`spot ${spot.id} ${role} L${level}: unexpected activity ${state.activity}`);
             }
             const next = Math.max(t + 1000, Number(result.nextResolveAt) || t + 30000);
-            elapsed = next - t;
+            // The next round starts where this one's last action ended (ColdSoloWindow.stepElapsedMs).
+            elapsed = Math.max(1000, next - from);
             t = next;
         }
         if (made.shotId) sum.shots = 1e9 - Number(state.inventory[String(made.shotId)]?.amount || 0);
