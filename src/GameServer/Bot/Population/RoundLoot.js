@@ -2,6 +2,7 @@
 
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const InventorySummary = require('./InventorySummary');
+const PickupCapacity = require('../../Inventory/PickupCapacity');
 const DataCache = invoke('GameServer/DataCache');
 
 // A far bot's loot in its bag, one rule for the round that picks it up (its running
@@ -21,6 +22,30 @@ function itemStackable(selfId, item = {}) {
     if (template) return template.etc?.stackable === true;
     if (typeof item.fetchStackable === 'function') return !!item.fetchStackable();
     return item.stackable === true;
+}
+
+// C4 pickup (PickupCapacity.refusal, the rule a body near a player picks up by) on a far
+// round's running bag, solo (BackgroundResolver.resolveSolo) and party
+// (BackgroundPartyResolver): a drop past the bag's slots (limit, InventoryLimits.forState)
+// or carrying load (maxLoad, the fight profile's) stays on the ground. Returns
+// { kept, refused }: the drops picked up, in order, and how many stayed.
+function keep(bag, loot, limit, maxLoad) {
+    const counts = invoke('GameServer/Bot/Population/SurvivalFloor').stateInventory({ inventory: bag || {} }, DataCache.items);
+    const kept = [];
+    let refused = 0;
+    for (const item of loot || []) {
+        const drop = { stackable: itemStackable(item.selfId, item), amount: Number(item.amount || 0),
+            mass: Math.max(0, Number(itemTemplate(item.selfId)?.template?.mass ?? item.mass ?? 0)) };
+        const has = Number(bag?.[item.selfId]?.amount) > 0 || kept.some(other => Number(other.selfId) === Number(item.selfId));
+        if (PickupCapacity.refusal({ ...counts, limit, maxLoad, held: has }, drop)) {
+            refused += 1;
+            continue;
+        }
+        counts.slots += drop.stackable ? Number(!has) : drop.amount;
+        counts.load += drop.mass * drop.amount;
+        kept.push(item);
+    }
+    return { kept, refused };
 }
 
 // The bag with the drops added (a new object; the stacks it changes are new too).
@@ -65,4 +90,4 @@ function addTo(bag, items) {
     return inventory;
 }
 
-module.exports = { addTo, itemTemplate, itemName, itemStackable };
+module.exports = { addTo, keep, itemTemplate, itemName, itemStackable };

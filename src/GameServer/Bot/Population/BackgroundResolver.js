@@ -42,7 +42,6 @@ const summonAttackDelay = ColdCombatProfile.summonAttackMs, coldShotSupply = Col
 const SurvivalFloor = require('./SurvivalFloor');
 const RoundLoot = require('./RoundLoot');
 const InventoryLimits = require('../../Inventory/InventoryLimits');
-const PickupCapacity = require('../../Inventory/PickupCapacity');
 const ProgressionCap = invoke('GameServer/Progression/ProgressionCap');
 const { SPOT_CELL_SIZE } = invoke('GameServer/World/WorldConstants');
 const { RUN_SPEED } = require('./ColdTrip');
@@ -2881,26 +2880,15 @@ const BackgroundResolver = {
         // the drops kept so far (RoundLoot.addTo, the step's own merge).
         const held = () => materialize.items.length ? RoundLoot.addTo(patch.inventory || state.inventory, materialize.items)
             : patch.inventory || state.inventory;
-        // C4 pickup (PickupCapacity.refusal, the rule a body near a player picks up by): a drop
-        // past the running bag's slots or carrying load stays on the ground.
+        // C4 pickup on the running bag (RoundLoot.keep): a drop past its slots or carrying
+        // load stays on the ground.
         let slotLimit = null, refused = 0;
         const keep = (loot) => {
             if (!loot?.length) return [];
-            const bag = held(), counts = SurvivalFloor.stateInventory({ inventory: bag }, DataCache.items), kept = [];
             slotLimit ??= InventoryLimits.forState(state, roundProfile);
-            for (const item of loot) {
-                const drop = { stackable: RoundLoot.itemStackable(item.selfId, item), amount: Number(item.amount || 0),
-                    mass: Math.max(0, Number(RoundLoot.itemTemplate(item.selfId)?.template?.mass ?? item.mass ?? 0)) };
-                const has = Number(bag[item.selfId]?.amount) > 0 || kept.some(other => Number(other.selfId) === Number(item.selfId));
-                if (PickupCapacity.refusal({ ...counts, limit: slotLimit, maxLoad: roundProfile.maxLoad, held: has }, drop)) {
-                    refused += 1;
-                    continue;
-                }
-                counts.slots += drop.stackable ? Number(!has) : drop.amount;
-                counts.load += drop.mass * drop.amount;
-                kept.push(item);
-            }
-            return kept;
+            const picked = RoundLoot.keep(held(), loot, slotLimit, roundProfile.maxLoad);
+            refused += picked.refused;
+            return picked.kept;
         };
         // The round ends at the end of a won fight that gained a level (its profile, rates and
         // walk are one level's; C4 applies a level at the kill that reaches it, its stats and
