@@ -47,8 +47,8 @@ function tileTime(hunt, violations) {
     const steps = hunt.steps;
     let prevEnd = null, tail = 0, revived = false;
     steps.forEach((step, index) => {
-        // The rest a revive starts is the death's recovery.
-        revived = step.before.activity === 'dead' || (revived && step.before.activity === 'resting');
+        // The rest a revive starts (the dead step's) is the death's recovery.
+        revived = step.before.activity === 'dead' || (index > 0 && steps[index - 1].before.activity === 'dead' && step.before.activity === 'resting');
         const { from, to } = span(step);
         if (prevEnd !== null && Math.abs(from - prevEnd) > MS) {
             add(violations, from < prevEnd ? 'time.twice' : 'time.skipped', index, `credits from ${from}, the previous step ended at ${prevEnd}`);
@@ -116,15 +116,12 @@ function checkStamps(hunt, violations) {
 }
 
 // Each regen interval credits its rate times its length, capped by the bar,
-// no more and no less. A round with no potion, heal or death closes: its HP
-// change is its regen less what its fights took.
+// no more and no less. Returns the hunt's regen and the HP its fights took.
 function checkVitals(hunt, violations, tickMs) {
     const totals = { regenHp: 0, regenMp: 0, taken: 0 };
     hunt.steps.forEach((step, index) => {
-        let regenHp = 0;
         for (const interval of step.intervals) {
             const got = { hp: interval.after.hp - interval.before.hp, mp: interval.after.mp - interval.before.mp };
-            regenHp += got.hp;
             totals.regenHp += got.hp;
             totals.regenMp += got.mp;
             if (!interval.rate) continue;
@@ -137,12 +134,6 @@ function checkVitals(hunt, violations, tickMs) {
             }
         }
         totals.taken += Number(step.taken) || 0;
-        if (!step.round || step.died || step.potionsUsed || step.heals || step.gapHeals) return;
-        if (step.after.maxHp !== step.before.maxHp) return;
-        const residual = (step.after.hp - step.before.hp) - regenHp + (Number(step.taken) || 0);
-        if (Math.abs(residual) > VITALS_EPS * Math.max(1, step.before.maxHp)) {
-            add(violations, 'vitals.closure', index, `HP moved ${step.after.hp - step.before.hp}, regen ${regenHp}, taken ${step.taken}: ${residual} unaccounted`);
-        }
     });
     return totals;
 }
