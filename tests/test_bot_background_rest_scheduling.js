@@ -303,6 +303,19 @@ try {
         assert.strictEqual(up.debug.wins, 1, `the round ends at the kill that gains a level (${up.debug.wins} wins)`);
         assert(up.doneAt < at && up.patch.activity === 'hunting', 'at that fight\'s end, still hunting');
         assert.strictEqual(up.debug.ended, 'level');
+        // A bag at 48 % of its carrying load (under the first weight penalty, so it hunts): a
+        // drop of 20000 Iron Ore (mass 2 each, a stack it holds) would pass the load and stays
+        // on the ground, the weightless Adena beside it is picked up.
+        Cold.profileFor = Cold.fightProfile = () => ({ ...caster, maxLoad: 64000 });
+        const laden = { ...swords(0), inventory: { 1869: { selfId: 1869, name: 'Iron Ore', amount: 15500, stackable: true } } };
+        Rewards.roll = options => ({ ...originalRoll(options), adena: 0,
+            loot: [{ drops: [{ selfId: 1869, name: 'Iron Ore', amount: 20000 }, { selfId: 57, name: 'Adena', amount: 10 }], spoil: [] }] });
+        const hauled = BackgroundResolver.resolveSolo({ state: laden, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        Cold.profileFor = Cold.fightProfile = () => ({ ...caster });
+        const kept = hauled.materialize.items.map(item => Number(item.selfId));
+        assert(kept.includes(57), 'fixture: the round kills and picks up the Adena');
+        assert(!kept.includes(1869), `no drop past the bag's carrying load (${kept.filter(id => id === 1869).length} ore drops kept)`);
+        assert(hauled.debug.wins > 1, `the bag does not move: the round hunts on (${hauled.debug.wins} wins)`);
     } finally { Rewards.roll = originalRoll; }
     // The same rule near a player (PickupCapacity.check on a body's bag): a full bag takes
     // no new slot, a stack it holds still grows.
