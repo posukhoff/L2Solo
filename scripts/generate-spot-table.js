@@ -328,7 +328,7 @@ function loadSimulation(catalogueFile) {
     invoke('GameServer/DataCache').init();
     const Floor = invoke('GameServer/Bot/Population/SurvivalFloor');
     const nativeFloor = Floor.forState;
-    // ARCH-NOTE: the measured combat has unlimited supplies (1e9 each), so
+    // ARCH-NOTE: the use pass of a hunt has unlimited supplies (1e9 each), so
     // the new native bag gate rejects every run as overweight. This offline
     // table excludes town unloading; keep death/mana gates and skip unload.
     Floor.forState = (...args) => {
@@ -362,8 +362,8 @@ function loadSimulation(catalogueFile) {
 }
 
 // A bot of the class and level in the author's kit for that level (BotGear),
-// with the shots of its weapon (or none, never running out) and the healing
-// potions the author's restock buys at that level (hunt sets their number).
+// with the shots of its weapon (or none) and the healing potions the author's
+// restock buys at that level, never running out (hunt sets their number).
 // kit(bot): changes the worn gear before the shots are chosen (hunt);
 // line: the table line's second class the bot fights for.
 function newBot(classId, level, shots, simulation = sim, kit = null, line = null) {
@@ -421,20 +421,29 @@ function countNewStacks(items, seen, definitions = invoke('GameServer/DataCache'
     return invoke('GameServer/Bot/Population/SurvivalFloor').stateInventory({ inventory }, definitions).slots;
 }
 
-// The hunt of a row, with the potions a bot of that level really carries
-// (T141). The stock rule reads this table (EconomyContext.foundation: use = the
-// row's potions), so the row comes first, on an unbounded bag: its drinks are
-// the use. A row with deaths gives the stock worth: the bot buys the outing's
-// use, which is the bag that run drank from. A row at 0 deaths gives it none:
-// the bot buys only the survival tranche (kitReader: the use of one hour,
-// whole, each outing), and that hunt is run again on it. The bottles that save
-// rest are not here: the reference bot has no hour (RestPotion.betweenFights),
-// the reader adds them at the bot's own (RestPotion.stockUse).
-function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, classId = classFor(role, level)) {
-    const unbounded = huntOn(Infinity, spot, role, level, shots, hours, simulation, kit, classId);
-    const tranche = Math.ceil(unbounded.potions / hours);
-    return unbounded.deaths > 0 || unbounded.potions <= tranche ? unbounded
-        : huntOn(tranche, spot, role, level, shots, hours, simulation, kit, classId);
+// The hunt of a row, with the shots and potions a bot of that level really
+// carries. The stock rule reads this table (EconomyContext.kitRates: use = the
+// row's shots and potions per hour), so the use is measured first, on an
+// endless supply; the row is the hunt again on what the game buys for that
+// use: an outing's (EconomyContext.kitReader at TownVisitInterval.targetHours,
+// the reference bot's 2 h; the game buys one outing's refill whatever the
+// deaths), topped up at each outing. Its loot is then kept or
+// refused by the bag that supply really weighs. The bottles that save rest are
+// not here: the reference bot has no hour (RestPotion.betweenFights), the
+// reader adds them at the bot's own (RestPotion.stockUse). onPass(name): told
+// 'use' and then 'row' as each pass starts, so a caller that watches the
+// rounds can tell the row's from the measuring pass's.
+function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, classId = classFor(role, level), onPass = null) {
+    if (onPass) onPass('use');
+    const use = huntOn(null, spot, role, level, shots, hours, simulation, kit, classId);
+    const { stock } = invoke('GameServer/Bot/Economy/EconomyContext').kitReader({ shotUse: use.shots / hours, shotsPay: true,
+        shotsCanRestock: true, potionUse: use.potions / hours, potionRestUse: 0,
+        outingHours: invoke('GameServer/Bot/Economy/TownVisitInterval').targetHours() }, { shots: 0, potions: 0 }, Infinity, () => 0);
+    // The game buys one outing's refill whatever the deaths (EconomyContext.kitReader,
+    // PurchaseFunding, HealingPotionStock), so the row carries the stock's target.
+    const supply = { shots: stock('shots').target, potions: stock('potions').target };
+    if (onPass) onPass('row');
+    return huntOn(supply, spot, role, level, shots, hours, simulation, kit, classId);
 }
 
 // The author's cold combat for `hours` of game time. A death costs the time
@@ -446,8 +455,9 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
 // it per death on the row's deaths (EconomicValuation.deathHours). kit(bot): changes the
 // reference bot's worn gear before the hunt (scripts/hunt-cycle-check.js);
 // classId: another class than the role's (scripts/hunt-tables);
-// potions: the bottles it carries each outing (Infinity: it never runs out).
-function huntOn(potions, spot, role, level, shots, hours, simulation, kit, classId) {
+// supply: the shots and bottles it carries each outing ({ shots, potions };
+// null: it never runs out).
+function huntOn(supply, spot, role, level, shots, hours, simulation, kit, classId) {
     // One seed with and without shots: the two rows' difference is the shots'
     // (common random numbers), not two draws' (T106 audit).
     const seed = hash(`${spot.id}|${classId}|${level}`);
@@ -459,7 +469,12 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
     try {
         const made = newBot(classId, level, shots, simulation, kit, lineClassFor(role));
         const potionId = String(simulation.Potions.purchasePotionFor({ level }).selfId);
-        const restock = inventory => { if (Number.isFinite(potions)) inventory[potionId] = { ...inventory[potionId], amount: potions }; };
+        const shotId = String(made.shotId);
+        const restock = inventory => {
+            if (!supply) return;
+            inventory[potionId] = { ...inventory[potionId], amount: supply.potions };
+            if (made.shotId) inventory[shotId] = { ...inventory[shotId], amount: supply.shots };
+        };
         restock(made.bot.inventory);
         const seen = new Set(Object.values(made.bot.inventory).filter(item => item.amount > 0).map(item => Number(item.selfId)));
         let state = { ...made.bot, spotId: spot.id, loc: { ...spot.center } };
@@ -483,6 +498,7 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
         while (due < end) {
             const { timestamp: t, elapsedMs } = Clock.step(state, due);
             if (t >= nextVisit) { restock(state.inventory); nextVisit += outingMs; }
+            const shotsHeld = Number(state.inventory[shotId]?.amount || 0);
             const result = simulation.BR.resolveSolo({ state, spot: target, elapsedMs, timestamp: t, rng });
             const gained = result.materialize || {};
             const debug = result.debug || {};
@@ -499,7 +515,7 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
             // The bots' records count a cycle's combat and the rest it calls for, a rest
             // step's extension of it too (a dead bot's step rests it to its respawn: death time):
             // the round's seated time and its rest from the round's last action on (doneAt).
-            const from = Math.max(t, Math.ceil(Number(result.doneAt) || 0));
+            const from = Clock.doneAt(result) ?? t;
             const restEnd = Math.max(from, Number(patch.stats?.restUntil) || 0);
             const restMs = state.activity === 'dead' ? 0 : Number(debug.seatedMs || 0) + restEnd - from;
             sum.busyMs += restMs;
@@ -527,6 +543,7 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
                 sum.mpLost += Math.max(0, Number(state.vitals?.mp) - Number(patch.vitals?.mp ?? state.vitals?.mp));
             }
             const inventory = patch.inventory || state.inventory;
+            if (made.shotId) sum.shots += Math.max(0, shotsHeld - Number(inventory[shotId]?.amount || 0));
             // The commit's clock (BotLifeState): where the round's last action ended.
             state = { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) },
                 stats: { ...(patch.stats || state.stats), classId }, inventory,
@@ -539,7 +556,6 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
             due = Number(result.nextResolveAt) || t + 30000;
         }
         sum.spanMs = through - started;
-        if (made.shotId) sum.shots = 1e9 - Number(state.inventory[String(made.shotId)]?.amount || 0);
     } finally {
         Math.random = random;
     }

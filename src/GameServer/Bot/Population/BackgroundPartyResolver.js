@@ -14,6 +14,8 @@ const PartyAffinity = invoke('GameServer/Bot/Population/BackgroundPartyAffinity'
 const PartyLootAllocator = invoke('GameServer/Bot/Population/PartyLootAllocator');
 const PartyRewardMath = invoke('GameServer/Actor/PartyRewardMath');
 const BotRoles = invoke('GameServer/Bot/AI/BotRoles');
+const RoundLoot = invoke('GameServer/Bot/Population/RoundLoot');
+const InventoryLimits = invoke('GameServer/Inventory/InventoryLimits');
 const TargetMatchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
 const ClanRaidPolicy = invoke('GameServer/Clan/ClanRaidPolicy');
 const ColdRaidEncounter = require('./ColdRaidEncounter');
@@ -87,7 +89,9 @@ function partyRound({ party, members, spot, elapsedMs, spotHunters, timestamp })
         shareMobs: share === null ? Infinity : share * members.length + carry };
 }
 
-// kills: the mobs the round killed, every mob of a won pull one.
+// kills: the mobs the round killed, every mob of a won pull one. items: the drops each
+// member rolled, before the party's loot rule hands them out; limit and maxLoad: its
+// bag's slots and carrying load, the C4 pickup rule's (RoundLoot.keep).
 function distributeRewards({ members, spot, kills: killCount, defeatedNpcIds = [], overhitContexts = [], rng, timestamp }) {
     const rates = ProgressionRates.profile();
     const levels = members.map((state) => Number(state.level || 1));
@@ -128,7 +132,9 @@ function distributeRewards({ members, spot, kills: killCount, defeatedNpcIds = [
         exp: memberProgression[index].exp,
         sp: memberProgression[index].sp,
         adena: adenaPerMember + (index < adenaRemainder ? 1 : 0),
-        items: loot[index]
+        items: loot[index],
+        limit: InventoryLimits.forState(state, profiles[index]),
+        maxLoad: profiles[index].maxLoad
     }));
 }
 
@@ -559,6 +565,29 @@ const BackgroundPartyResolver = {
             if (!sat.up) restUntil = sat.restUntil;
             return sat.up;
         };
+        // A won fight ends the round at its end when it crossed a member's shot or bottle
+        // lines (Situations.roundCrossing on its running bag, as the solo round's): the
+        // only situation a member's state shows mid-round, its loot, exp and adena being
+        // rolled at the round's end. Read only for a member the fight spent from.
+        // Returns the situation's name, null to go on.
+        Situations ||= require('../Situations');
+        const lineStart = new Map(), lineFacts = new Map();
+        const linesCrossed = (fought) => {
+            for (let index = 0; index < fought.length; index++) {
+                const member = fought[index], state = members[index];
+                if (!(member.shotActions > 0) && !member.drunkPotions) continue;
+                const id = state.characterId;
+                if (!lineStart.has(id)) lineStart.set(id, Situations.roundFacts(state));
+                const facts = Situations.roundFacts({ ...state, inventory: member.state.inventory },
+                    lineFacts.get(id) || lineStart.get(id), { supply: true });
+                lineFacts.set(id, facts);
+                const name = Situations.roundCrossing(state.stats, lineStart.get(id), facts);
+                if (name) return name;
+            }
+            return null;
+        };
+        // The step's bound, or the end of the fight a round ends at (ended: what ended it there).
+        let bound = timestamp, ended = null;
         let mobsKilled = 0;
         for (let i = 0; i < fightBudget; i++) {
             if (lastFight && !pending) break;
@@ -664,6 +693,11 @@ const BackgroundPartyResolver = {
                 }
             }
             else if (!pending) losses += 1;
+            if (encounter.won && round) ended = linesCrossed(encounter.members);
+            if (ended) {
+                bound = clock.at;
+                break;
+            }
             if (!encounter.won || combatMembers.some((member) => Number(member.vitals?.hp || 0) <= 0)) break;
             // The party sits at its fight's end; past the round it rests on from there.
             if (combatMembers.some((member) => restsNow(member, member, member.vitals)) && !sitDown()) break;
@@ -677,7 +711,7 @@ const BackgroundPartyResolver = {
         // A party below its line at its round's end sits there, as at a fight's end.
         if (!restUntil && !pending && combatMembers.some((member) => alive(member) && restsNow(member, member, member.vitals))) sitDown();
         // A party that does not rest on stands to its round's end.
-        const doneAt = ColdClock.end(clock, timestamp);
+        const doneAt = ColdClock.end(clock, bound);
         if (!restUntil) combatMembers = ColdClock.advanceAll(clock, combatMembers, doneAt - clock.at, 'standing', huntRates);
 
         const rewards = distributeRewards({ members, spot, kills: mobsKilled, defeatedNpcIds, overhitContexts, rng, timestamp });
@@ -770,13 +804,14 @@ const BackgroundPartyResolver = {
                     // raid does not spend most of its lifetime sleeping
                     // between otherwise continuous combat rounds.
                     doneAt,
-                    nextResolveAt: raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS),
+                    nextResolveAt: raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS),
                     debug: {
                         partyId: party.partyId,
                         partyRoster: members.map(member => Number(member.characterId)).sort((a, b) => a - b).join(','),
                         fights,
                         wins,
                         losses,
+                        ended,
                         dropsRolled: items.length,
                         dropsAwarded: items.reduce((sum, item) => sum + Number(item.amount || 0), 0),
                         spotId: spot.id,
@@ -800,8 +835,15 @@ const BackgroundPartyResolver = {
             });
         });
 
+        // A drop goes only to a member whose running bag takes it (RoundLoot.keep, the C4 pickup rule).
+        const pickup = { bags: combatMembers.map((member) => member.inventory), takes: (state, bag, item) => {
+            const { limit, maxLoad } = rewards[members.indexOf(state)];
+            return RoundLoot.keep(bag, [item], limit, maxLoad).refused === 0;
+        } };
         const lootDistribution = PartyAgreement.allocate(memberResults, party.stats?.agreement,
-            { rng, needScore: PartyGoalPolicy.itemNeed }) || PartyLootAllocator.transferGearDrops(memberResults);
+            { rng, needScore: PartyGoalPolicy.itemNeed, ...pickup }) || PartyLootAllocator.transferGearDrops(memberResults, pickup);
+        // cold_fight:loot:refused: the drops left on the ground at a full bag, as the solo round's.
+        if (lootDistribution.refused > 0 && Diagnostics.active()) Diagnostics.count('cold_fight', 'loot', 'refused', lootDistribution.refused);
         let distributedMemberResults = lootDistribution.memberResults;
         let partyRestUntil = null;
 
@@ -961,7 +1003,7 @@ const BackgroundPartyResolver = {
             },
             nextResolveAt: raidFailed || raidDefeated
                 ? null
-                : partyRestUntil || (raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS)),
+                : partyRestUntil || (raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS)),
             debug: {
                 fights,
                 attemptedFights,

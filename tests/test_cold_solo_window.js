@@ -164,7 +164,45 @@ const roundsOf = state => state.stats.stepCount;
         kernel.upsert({ state: await hunter({ exp: next - 1 }) });
         const { state } = await step();
         assert.equal(state.level, 19);
-        assert(roundsOf(state) > 1, `the window runs on past the round that reached it (${roundsOf(state)} rounds)`);
+        assert(roundsOf(state) > 1, `the window runs on past the round that reached it, ended early, not stalled (${roundsOf(state)} rounds)`);
+    }
+
+    {
+        // A round ended early by its level moved the bot's clock to its kill: the window
+        // counts it as no stalled round even when its next due falls before the round's
+        // own bound (a long first round whose first kill gains the level).
+        const next = Number(Data.experience[18]), rounds = [];
+        const { kernel, step } = world({ ground: earning, onSolo: (options, result) => rounds.push({ timestamp: options.timestamp, result }) });
+        kernel.upsert({ state: await hunter({ exp: next - 1, timing: { lastResolvedAt: T - 120000, nextResolveAt: T } }) });
+        const { state } = await step();
+        assert.equal(state.level, 19);
+        const first = rounds[0];
+        assert(first.result.doneAt < first.timestamp && Math.ceil(first.result.nextResolveAt) <= first.timestamp,
+            `fixture: the levelling round's next due falls before its bound (${first.timestamp - first.result.nextResolveAt} ms)`);
+        assert(!kernel.soloWindowStats.ended.stalled && roundsOf(state) > 1,
+            `the window runs on past it, not stalled (${roundsOf(state)} rounds, stalled ${kernel.soloWindowStats.ended.stalled})`);
+    }
+
+    {
+        // C4: a level up fills HP and MP to the new level's maxima (hot LevelUp); the round
+        // ends at the kill that reached it.
+        const next = Number(Data.experience[18]);
+        const levelling = await hunter({ exp: next - 1, spotId: earning.id });
+        const worn = { ...levelling, vitals: { ...levelling.vitals, hp: 1 + Math.floor(levelling.vitals.maxHp / 2), mp: 1 } };
+        const result = Resolver.resolveSolo({ state: worn, spot: earning, elapsedMs: 120000, timestamp: T, rng: () => 0.5 });
+        assert(result.doneAt < T && result.patch.activity === 'hunting', 'the round ends at the kill that gains the level');
+        const up = await Life.prepareResolve(worn, result, { timestamp: T, persist: false, projectClassProgression: true });
+        const max = Cold.fightProfile({ ...up, level: 19 }, T);
+        assert.equal(up.level, 19);
+        assert.deepEqual([up.vitals.hp, up.vitals.mp], [up.vitals.maxHp, up.vitals.maxMp], 'HP and MP are full at the level up');
+        assert.deepEqual([up.vitals.maxHp, up.vitals.maxMp], [max.maxHp, max.maxMp], 'to the new level\'s maxima');
+        // A body that levelled and then died in the round lies dead at the MP it died with,
+        // and gets up at that MP, not refilled by the level.
+        const died = { ...result, patch: { ...result.patch, activity: 'dead', vitals: { ...result.patch.vitals, hp: 0, mp: 1 } } };
+        const dead = await Life.prepareResolve(worn, died, { timestamp: T, persist: false, projectClassProgression: true });
+        assert.deepEqual([dead.level, dead.activity, dead.vitals.hp, dead.vitals.mp], [19, 'dead', 0, 1], 'dead at the MP it died with');
+        const risen = Resolver.resolveDeathRecovery(dead, T + 3600000);
+        assert.strictEqual(risen.patch.vitals.mp, 1, `it gets up at that MP (${risen.patch.vitals.mp} of ${max.maxMp})`);
     }
 
     {
@@ -174,7 +212,8 @@ const roundsOf = state => state.stats.stepCount;
         const Situations = invoke('GameServer/Bot/Situations');
         const raised = () => Object.entries(Situations.counts().raised).filter(([key]) => key.startsWith('goal_affordable'))
             .reduce((sum, [, n]) => sum + n, 0);
-        const { kernel, step } = world({});
+        const rounds = [];
+        const { kernel, step } = world({ onSolo: (options, result) => rounds.push({ timestamp: options.timestamp, doneAt: result.doneAt }) });
         const bound = await hunter();
         bound.stats.wishSections = { ...bound.stats.wishSections, affordAt: { at: bound.adena + 1, kind: 'focus' } };
         kernel.upsert({ state: bound });
@@ -183,6 +222,12 @@ const roundsOf = state => state.stats.stepCount;
         assert.equal(state.activity, 'hunting');
         assert.equal(roundsOf(state), 1, 'the round that paid it is the last');
         assert.equal(raised() - before, 1, 'the crossing is raised once');
+        // The round ended at the fight that paid it: the hunt is credited to there and the
+        // decision it woke is taken there, not a hunt cycle later.
+        const paid = rounds[rounds.length - 1];
+        assert(paid.doneAt < paid.timestamp, `the round ends at the paying fight, before its bound (${paid.timestamp - paid.doneAt} ms)`);
+        assert.equal(state.stats.huntedThrough, Math.ceil(paid.doneAt), 'the hunt is credited through that fight');
+        assert.equal(state.timing.nextResolveAt, state.stats.huntedThrough, 'the woken decision is due where the round ended');
     }
 
     {

@@ -2561,7 +2561,7 @@ class ColdSimulationKernel {
             // huntedThrough (ColdSoloWindow): the end of the round's last action, the end of the
             // credited hunt when it is the last; a round's own clock (lastResolvedAt) is the same.
             const stamped = { ...round.result, patch: { ...round.result.patch,
-                stats: { ...round.result.patch?.stats, huntedThrough: Math.max(round.timestamp, Math.ceil(Number(round.result.doneAt) || 0)) } } };
+                stats: { ...round.result.patch?.stats, huntedThrough: ColdClock.doneAt(round.result) ?? round.timestamp } } };
             // A round's projection is its own turn, as its fight is (resolveStep: phases).
             await nextTurn();
             if (!this.resolverSourceCurrent(source)) return null;
@@ -2569,17 +2569,20 @@ class ColdSimulationKernel {
             if (!this.resolverSourceCurrent(source)) return null;
             // Three guards bound the loop whatever endOf decides: a round cap, the
             // look-ahead (the next round due past the step's clock + WINDOW_LEAD_MS:
-            // huntedThrough stays inside it) and a round that does not move the
-            // clock (counted in windowEnd).
+            // huntedThrough stays inside it) and a round that does not move the bot's
+            // clock (ColdClock.own; counted in windowEnd).
             const ended = ColdSoloWindow.endOf(round.state, after, round.result, readers)
                 || (rounds >= MAX_WINDOW_ROUNDS ? 'round_cap' : '')
                 || (Math.ceil(Number(after.timing?.nextResolveAt)) >= first.timestamp + WINDOW_LEAD_MS ? 'lead' : '')
-                || (Math.ceil(Number(after.timing?.nextResolveAt)) > round.timestamp ? '' : 'stalled');
+                || (ColdClock.own(after) > ColdClock.own(round.state) ? '' : 'stalled');
             if (ended) {
                 // projected: the last round's projection, the step's own (its situations raised
                 // once): the step's projection goes on from it, it does not project the round again.
+                // Its due is the window's (ColdSoloWindow.dueAt).
                 const result = { ...stamped, ...(soulCrystals.length ? { soulCrystals } : {}) };
-                return { ...round, result, projected: after, ended, rounds, loot: { ...result, materialize: { items } }, posted: { events, debug } };
+                const due = ColdSoloWindow.dueAt(ended, after);
+                const projected = due === after.timing?.nextResolveAt ? after : { ...after, timing: { ...after.timing, nextResolveAt: due } };
+                return { ...round, result, projected, ended, rounds, loot: { ...result, materialize: { items } }, posted: { events, debug } };
             }
             await nextTurn();
             if (!this.resolverSourceCurrent(source)) return null;

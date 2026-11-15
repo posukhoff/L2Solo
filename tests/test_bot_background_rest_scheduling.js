@@ -255,6 +255,80 @@ try {
     assert.strictEqual(longer.debug.walkedMs, worn.debug.walkedMs / worn.debug.attemptedFights * longer.debug.attemptedFights,
         'after the rest it walks once to each mob: one walk per mob');
 
+    // A round ends at the end of the fight that crosses a situation the bot hears now (its
+    // step decides at once): the kill whose drop fills the bag. A drop past the bag's slot
+    // limit stays on the ground (C4 pickup). Each kill drops one Short Sword (a slot each).
+    const Rewards = invoke('GameServer/Bot/Population/ColdKillRewards'), originalRoll = Rewards.roll;
+    let dropped = 1, paid = 0;
+    Rewards.roll = options => ({ ...originalRoll(options), adena: paid, loot: [{ drops: dropped ? [{ selfId: 1, name: 'Short Sword', amount: dropped }] : [], spoil: [] }] });
+    try {
+        const swords = amount => ({ ...hunter, exp: Number(invoke('GameServer/DataCache').experience[28]), vitals: { ...hunter.vitals, mp: 932 },
+            inventory: { 1: { selfId: 1, name: 'Short Sword', amount, stackable: false } } });
+        // The last shot spent ends the round at that fight's end (shots_out: the earning
+        // spot is asked again). An Apprentice's Wand fires one Spiritshot a cast; the kit
+        // rates pay the shots, so their line is the spot's hour of use. These rounds drop
+        // nothing: twenty surplus swords are the bag's cleanup count (bag_full).
+        const armed = shots => ({ ...swords(0), inventory: {
+            6: { selfId: 6, name: 'Apprentice\'s Wand', amount: 1, equipped: true, slot: 7, stackable: false },
+            2509: { selfId: 2509, name: 'Spiritshot', amount: shots, stackable: true } },
+            stats: { ...hunter.stats, kitRates: [2509, 1, 1, 1061, 0, 1, -1, 1, 1], earning: { spotId: 'field', shotsPerHour: 100, potionsPerHour: 0 } } });
+        dropped = 0;
+        const stocked = BackgroundResolver.resolveSolo({ state: armed(1000), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        const dry = BackgroundResolver.resolveSolo({ state: armed(4), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        dropped = 1;
+        assert(stocked.debug.shotActions > 4 && stocked.debug.wins > 2, `fixture: with shots to spare the round fires on (${stocked.debug.shotActions} shots, ${stocked.debug.wins} wins)`);
+        assert.strictEqual(dry.debug.shotActions, 4, 'the round fires its four shots');
+        assert(dry.debug.wins < stocked.debug.wins && dry.doneAt < at,
+            `the round ends at the fight that spends its last shot (${dry.debug.wins} wins, ${stocked.debug.wins} with shots to spare)`);
+        assert.deepStrictEqual([dry.debug.ended, stocked.debug.ended], ['shots_out', null], 'the round names the crossing it ended at');
+        const filling = BackgroundResolver.resolveSolo({ state: swords(78), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        assert.strictEqual(filling.debug.wins, 2, `the round ends at the kill whose drop fills the bag's 80 slots (${filling.debug.wins} wins)`);
+        assert(filling.doneAt < at, `at that fight's end, before the round's bound (${at - filling.doneAt} ms before)`);
+        assert.strictEqual(filling.debug.ended, 'bag_full');
+        assert.strictEqual(filling.patch.activity, 'hunting');
+        assert.strictEqual(filling.materialize.items.length, 2, 'both drops fit');
+        // Two swords a kill into a bag one slot short of full: each drop stays on the ground
+        // (the bag does not move: the round hunts on).
+        dropped = 2;
+        const full = BackgroundResolver.resolveSolo({ state: swords(79), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        dropped = 1;
+        assert(full.debug.wins > 2, `fixture: the round hunts on (${full.debug.wins} wins)`);
+        assert.strictEqual(full.materialize.items.length, 0, `no drop past the bag's slots (${full.materialize.items.length} kept)`);
+        // A raise standing when the round began (the goal in reach, not taken yet) ends no round.
+        paid = 10;
+        const standing = BackgroundResolver.resolveSolo({ state: { ...swords(0), inventory: {}, adena: 100,
+            stats: { ...hunter.stats, wishSections: { affordAt: { at: 50, kind: 'focus' } } } }, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        paid = 0;
+        assert(standing.debug.wins > 2 && standing.materialize.adena > 0, `a raise standing at the round's start does not end it (${standing.debug.wins} wins)`);
+        // A level gained ends the round at its kill (its profile is one level's).
+        const levelling = { ...swords(0), inventory: {}, exp: Number(invoke('GameServer/DataCache').experience[29]) - 1 };
+        const up = BackgroundResolver.resolveSolo({ state: levelling, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        assert.strictEqual(up.debug.wins, 1, `the round ends at the kill that gains a level (${up.debug.wins} wins)`);
+        assert(up.doneAt < at && up.patch.activity === 'hunting', 'at that fight\'s end, still hunting');
+        assert.strictEqual(up.debug.ended, 'level');
+        // A bag at 48 % of its carrying load (under the first weight penalty, so it hunts): a
+        // drop of 20000 Iron Ore (mass 2 each, a stack it holds) would pass the load and stays
+        // on the ground, the weightless Adena beside it is picked up.
+        Cold.profileFor = Cold.fightProfile = () => ({ ...caster, maxLoad: 64000 });
+        const laden = { ...swords(0), inventory: { 1869: { selfId: 1869, name: 'Iron Ore', amount: 15500, stackable: true } } };
+        Rewards.roll = options => ({ ...originalRoll(options), adena: 0,
+            loot: [{ drops: [{ selfId: 1869, name: 'Iron Ore', amount: 20000 }, { selfId: 57, name: 'Adena', amount: 10 }], spoil: [] }] });
+        const hauled = BackgroundResolver.resolveSolo({ state: laden, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        Cold.profileFor = Cold.fightProfile = () => ({ ...caster });
+        const kept = hauled.materialize.items.map(item => Number(item.selfId));
+        assert(kept.includes(57), 'fixture: the round kills and picks up the Adena');
+        assert(!kept.includes(1869), `no drop past the bag's carrying load (${kept.filter(id => id === 1869).length} ore drops kept)`);
+        assert(hauled.debug.wins > 1, `the bag does not move: the round hunts on (${hauled.debug.wins} wins)`);
+    } finally { Rewards.roll = originalRoll; }
+    // The same rule near a player (PickupCapacity.check on a body's bag): a full bag takes
+    // no new slot, a stack it holds still grows.
+    const Pickup = invoke('GameServer/Inventory/PickupCapacity');
+    const piece = (selfId, stackable) => ({ fetchAmount: () => 1, fetchStackable: () => stackable, fetchSelfId: () => selfId, fetchMass: () => 0 });
+    const body = { backpack: { fetchItems: () => [piece(1864, true), ...Array.from({ length: 79 }, () => piece(1, false))] },
+        fetchRace: () => 0, fetchMaxLoad: () => 1e9 };
+    assert.strictEqual(Pickup.check(body, 1869, 1, {}).reason, 'slots', 'a full bag takes no new stack');
+    assert.strictEqual(Pickup.check(body, 1864, 5, {}).reason, undefined, 'a stack it holds still grows');
+
     // MP under every cast (the survival floor) is what the last round left: the bot sat
     // down there, so the interval before the step is a seated rest.
     const drained = { ...hunter, vitals: { ...hunter.vitals, mp: 20 } };
@@ -354,6 +428,73 @@ try {
     const petExpected = Math.min(pet.maxHp, petHp(scripted[0]) + pet.revHp * (scripted[1].at - scripted[0].at) / tick);
     assert(Math.abs(petHp(scripted[1]) - petExpected) < 1e-6,
         `the pet regenerates between the fights (${petHp(scripted[1])} vs ${petExpected})`);
+
+    // A party round ends at the end of the fight that spends a member's last shot, as the
+    // solo round (its loot, exp and adena are rolled at the round's end: only the members'
+    // shots and bottles are read in it). The first member (its tank, who kills each mob
+    // here) fires one Spiritshot a cast.
+    const shooting = (shots) => pair(932).map((member, k) => k ? member : { ...member, exp: Number(invoke('GameServer/DataCache').experience[28]), inventory: {
+        6: { selfId: 6, name: 'Apprentice\'s Wand', amount: 1, equipped: true, slot: 7, stackable: false },
+        2509: { selfId: 2509, name: 'Spiritshot', amount: shots, stackable: true } },
+        stats: { ...member.stats, kitRates: [2509, 1, 1, 1061, 0, 1, -1, 1, 1], earning: { spotId: 'field', shotsPerHour: 100, potionsPerHour: 0 } } });
+    const partyRound = (members) => BackgroundPartyResolver.resolve({ party: { partyId: 'lines', cohesion: 0.7, risk: 0.2,
+        roleCoverage: { dps: 2 }, stats: {} }, members, spot: field, elapsedMs: 120_000, timestamp: at, rng: () => 0.5 });
+    const dryParty = partyRound(shooting(2));
+    const loaded = partyRound(shooting(1000)).memberResults[0].result, empty = dryParty.memberResults[0].result;
+    assert(loaded.debug.wins > 2 && loaded.debug.shotActions > 2, `fixture: with shots to spare the party fights on (${loaded.debug.wins} wins, ${loaded.debug.shotActions} shots)`);
+    assert.strictEqual(empty.debug.shotActions, 2, 'the member fires its two shots');
+    assert(empty.debug.wins < loaded.debug.wins && empty.doneAt < at,
+        `the party round ends at the fight that spends its last shot (${empty.debug.wins} wins, ${loaded.debug.wins} with shots to spare)`);
+    assert.deepStrictEqual([empty.debug.ended, loaded.debug.ended], ['shots_out', null], 'the party round names the crossing it ended at');
+    // Its next step is at that fight's end: the crossing is decided at once.
+    assert.deepStrictEqual([dryParty.nextResolveAt, ...dryParty.memberResults.map(({ result }) => result.nextResolveAt)],
+        [empty.doneAt, empty.doneAt, empty.doneAt], 'the party round ended at a crossing steps again at its end');
+    // A drop a member cannot pick up stays on the ground (C4 pickup on its own bag): a
+    // sword a kill into bags one slot short of their 80, each built as a round builds it
+    // (RoundLoot.addTo: one slot a non-stackable copy). Each bag takes one sword, no more.
+    const Rolls = invoke('GameServer/Bot/Population/ColdKillRewards'), nativeRoll = Rolls.roll;
+    const crowdedBag = () => invoke('GameServer/Bot/Population/RoundLoot').addTo({}, [{ selfId: 1, name: 'Short Sword', amount: 79 }]);
+    const swordsOf = party => party.memberResults.map(({ result }) => result.materialize.items
+        .filter(item => Number(item.selfId) === 1).reduce((sum, item) => sum + Number(item.amount), 0));
+    let rolled = 0;
+    const swordRoll = owner => options => {
+        rolled += options.kills.length;
+        return { ...nativeRoll(options), adena: 0,
+            loot: options.kills.map((kill, k) => ({ drops: [{ selfId: 1, name: 'Short Sword', amount: 1 }], owner: owner ?? k % 2, spoil: [] })) };
+    };
+    let crowded;
+    Rolls.roll = swordRoll(null);
+    try {
+        crowded = partyRound(pair(932).map(member => ({ ...member, inventory: crowdedBag() })));
+    } finally { Rolls.roll = nativeRoll; }
+    const swordsKept = swordsOf(crowded);
+    assert(rolled > 2, `fixture: the party kills (${rolled} swords rolled)`);
+    assert(swordsKept.every(count => count <= 1) && swordsKept.some(count => count === 1),
+        `no party drop past a member's bag slots (${swordsKept} kept of ${rolled})`);
+    // A party sharing its loot hands a drop only to a member whose bag takes it, and one its
+    // full rolling member cannot take passes on to a member who can (C4
+    // L2Party.getCheckedNextLooter / getCheckedRandomMember): in turn, every sword a kill
+    // rolls, by either member, goes to the first (empty) but one the second, one slot short
+    // of its 80, takes; at random and by need the second takes one too.
+    const shared = (mode, owner) => {
+        rolled = 0;
+        Rolls.roll = swordRoll(owner);
+        try {
+            return BackgroundPartyResolver.resolve({ party: { partyId: 'turns', cohesion: 0.7, risk: 0.2, roleCoverage: { dps: 2 },
+                stats: { agreement: { mode, spoil: 'spoiler', cursor: 0 } } },
+            members: pair(932).map((member, k) => k ? { ...member, inventory: crowdedBag() } : member),
+            spot: field, elapsedMs: 120_000, timestamp: at, rng: () => 0.5 });
+        } finally { Rolls.roll = nativeRoll; }
+    };
+    for (const owner of [0, 1]) {
+        const swordsTo = swordsOf(shared('turn', owner));
+        assert(rolled > 2, `fixture: the party kills (${rolled} swords rolled)`);
+        assert.deepStrictEqual(swordsTo, [rolled - 1, 1], `a drop member ${owner} rolls goes to a member whose bag takes it (${swordsTo} of ${rolled})`);
+    }
+    for (const mode of ['random', 'need']) {
+        const swordsTo = swordsOf(shared(mode, 0));
+        assert(rolled > 2 && swordsTo[1] <= 1, `${mode}: the second member's bag takes one sword (${swordsTo} of ${rolled})`);
+    }
 } finally {
     Cold.profileFor = originalProfile;
     Cold.fightProfile = originalFightProfile;

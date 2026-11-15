@@ -40,6 +40,9 @@ const { mobHitModifier, coldMobFight, coldMobFightSave, coldMobAction, mobAttack
 const { hitSources, attackerView, defenderView, hitSucceeds, actionDelayMs } = ColdCombatProfile;
 const summonAttackDelay = ColdCombatProfile.summonAttackMs, coldShotSupply = ColdCombatProfile.shotSupply;
 const SurvivalFloor = require('./SurvivalFloor');
+const RoundLoot = require('./RoundLoot');
+const InventoryLimits = require('../../Inventory/InventoryLimits');
+const ProgressionCap = invoke('GameServer/Progression/ProgressionCap');
 const { SPOT_CELL_SIZE } = invoke('GameServer/World/WorldConstants');
 const { RUN_SPEED } = require('./ColdTrip');
 const ColdClock = require('./ColdClock');
@@ -2539,7 +2542,9 @@ function soloShareMobs(spot, elapsedMs, hunters, shares = null) {
     return admitted * elapsedMs / 3600000 / Math.max(1, Number(hunters) || 1);
 }
 
-// The wait before the next solo hunt cycle, from a roll in [0, 1).
+// The wait before the next solo hunt cycle, from a roll in [0, 1). No situation waits for
+// it (a round ends at the first one it crosses, resolveSolo): it bounds one round's work,
+// its fights and their actions, in one turn of the thread that runs it.
 function huntCycleDelayMs(roll) {
     return 30000 + Math.round(roll * 90000);
 }
@@ -2558,7 +2563,6 @@ const BackgroundResolver = {
         coldRaidEncounterProfile, coldMobFight, coldMobFightSave, coldMobAction, strikeSide, ownerWaitsForPet },
     resolveDeathRecovery,
     resolveRest,
-    resolveDeathRecovery,
     resolvePartyFight: options => countedBuilds('fight', 'party', resolvePartyFight, options),
     needsRest,
     staleShopping,
@@ -2872,6 +2876,46 @@ const BackgroundResolver = {
         let walkedMs = 0, buffCasts = 0, buffsTried = false;
         // The fights' shared setup (resolveFight's round).
         const round = {};
+        // The round's running bag: the fights' own (the shots and bottles they spent) with
+        // the drops kept so far (RoundLoot.addTo, the step's own merge).
+        const held = () => materialize.items.length ? RoundLoot.addTo(patch.inventory || state.inventory, materialize.items)
+            : patch.inventory || state.inventory;
+        // C4 pickup on the running bag (RoundLoot.keep): a drop past its slots or carrying
+        // load stays on the ground.
+        let slotLimit = null, refused = 0;
+        const keep = (loot) => {
+            if (!loot?.length) return [];
+            slotLimit ??= InventoryLimits.forState(state, roundProfile);
+            const picked = RoundLoot.keep(held(), loot, slotLimit, roundProfile.maxLoad);
+            refused += picked.refused;
+            return picked.kept;
+        };
+        // The round ends at the end of a won fight that gained a level (its profile, rates and
+        // walk are one level's; C4 applies a level at the kill that reaches it, its stats and
+        // full HP/MP at once: L2J C4 PcStat.addLevel, the hot LevelUp) or crossed a situation
+        // the bot hears now (Situations.roundCrossing, on its running state: the bag, the
+        // supply, the kills, the wallet). Each part is read again only when a fight moved its
+        // input. Returns what ended it ('level' or the situation's name), null to go on.
+        const level = Number(state.level || 1);
+        const nextLevelExp = Number(DataCache.experience?.[level]);
+        let start = null, facts = null, marks = null;
+        const roundEnds = () => {
+            if (Number(state.exp || 0) + materialize.exp >= nextLevelExp && ProgressionCap.levelForExperience(
+                ProgressionCap.applyAward(state.exp, materialize.exp).totalExp, level) > level) return 'level';
+            const Situations = invoke('GameServer/Bot/Situations');
+            start ||= Situations.roundFacts(state);
+            const now = { spent: shotActions + potionsUsed, items: materialize.items.length, adena: materialize.adena };
+            const was = marks || { spent: 0, items: 0, adena: 0 };
+            const moved = { supply: now.spent !== was.spent, bag: now.items !== was.items, money: now.adena !== was.adena || now.items !== was.items };
+            marks = now;
+            const adenaItems = materialize.items.reduce((sum, item) => Number(item.selfId) === 57 ? sum + Number(item.amount || 0) : sum, 0);
+            facts = Situations.roundFacts({ ...state, inventory: moved.supply || moved.bag ? held() : state.inventory,
+                adena: Number(state.adena || 0) + materialize.adena + adenaItems,
+                stats: { ...(state.stats || {}), fightsWon: Number(state.stats?.fightsWon || 0) + wins } }, facts || start, moved);
+            return Situations.roundCrossing(state.stats, start, facts);
+        };
+        // The step's bound, or the end of the fight a round ends at (ended: what ended it there).
+        let bound = timestamp, ended = null;
         // The bottles that save rest (coldRestPotions) go into the round's
         // counts; returns the ms they run for.
         const drinkToRest = (profile, resting, pet) => {
@@ -2976,7 +3020,7 @@ const BackgroundResolver = {
             materialize.exp += result.exp;
             materialize.sp += result.sp;
             materialize.adena += result.adena;
-            materialize.items.push(...result.loot);
+            materialize.items.push(...keep(result.loot));
             combatActions += Number(result.debug?.actions || 0);
             shotActions += Number(result.debug?.shotActions || 0);
             // A kill costs at least its killing action, walk or not:
@@ -3044,6 +3088,11 @@ const BackgroundResolver = {
                 gapHeals += healed.casts;
                 petHeals += healed.petCasts;
                 skillUses += healed.casts + healed.petCasts;
+            }
+            if (result.won) ended = roundEnds();
+            if (ended) {
+                bound = clock.at;
+                break;
             }
 
             const hpPct = patch.vitals.hp / Math.max(1, patch.vitals.maxHp || patch.vitals.hp);
@@ -3115,7 +3164,7 @@ const BackgroundResolver = {
         // The time the round acted (fights, buffs, heals, walks), before it stands.
         const combatMs = clock.activeMs;
         // A hunting bot stands to the round's bound or its last action's end.
-        const doneAt = ColdClock.end(clock, timestamp);
+        const doneAt = ColdClock.end(clock, bound);
         if (patch.activity === 'hunting') wear(ColdClock.advance(clock, body(), doneAt - clock.at, 'standing', roundRates));
         if (unhuntable) patch.stats.emptyGround = String(spot.id);
         else if (!noPrey && patch.stats.emptyGround != null) patch.stats.emptyGround = null;
@@ -3126,7 +3175,9 @@ const BackgroundResolver = {
         }
         // cold_fight:pet: the round's pet damage, deaths, heals and an owner's waits for the live read;
         // cold_fight:continued: a fight carried into the next round; only while diagnostics count.
+        // cold_fight:loot:refused: the drops left on the ground at a full bag.
         if (Diagnostics.active()) {
+            if (refused > 0) Diagnostics.count('cold_fight', 'loot', 'refused', refused);
             if (patch.stats.pveEncounter) Diagnostics.count('cold_fight', 'continued', 'all');
             if (petWaits > 0) Diagnostics.count('cold_fight', 'pet', 'waits', petWaits);
             if (petTaken > 0) Diagnostics.count('cold_fight', 'pet', 'taken', Math.round(petTaken));
@@ -3161,6 +3212,7 @@ const BackgroundResolver = {
                 seatedMs: clock.seatedMs,
                 fights: completedFights,
                 attemptedFights,
+                ended,
                 pendingFight: !!patch.stats.pveEncounter,
                 wins,
                 died,
