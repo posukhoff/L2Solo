@@ -25,6 +25,12 @@ function own(state) {
     return Math.max(Number(state?.timing?.lastResolvedAt) || 0, Number(state?.stats?.huntedThrough) || 0);
 }
 
+// Where a round's last action ended (its result's doneAt: a round that ended at a
+// situation it crossed ends before its step's bound), null for a result with none.
+function doneAt(result) {
+    return Number(result?.doneAt) > 0 ? Math.ceil(Number(result.doneAt)) : null;
+}
+
 // Where a step at timestamp starts crediting. A bot that held for an event
 // (stats.eventWait, BotLifeState.prepareResolve) steps at that event or at the
 // wait's known end: the time before it was lived waiting, not hunting.
@@ -170,4 +176,4 @@ function end(clock, bound) {
     return Math.max(bound, clock.at);
 }
 
-module.exports = { since, step, handedAt, rates, regen, seated, open, advance, advanceAll, sit, sitAll, end };
+module.exports = { own, doneAt, since, step, handedAt, rates, regen, seated, open, advance, advanceAll, sit, sitAll, end };

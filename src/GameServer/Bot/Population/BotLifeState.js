@@ -2961,8 +2961,9 @@ const BotLifeState = {
                     ? (state.timing?.activityStartedAt == null
                         ? state.timing?.activityStartedAt : Math.ceil(state.timing.activityStartedAt))
                     : timestamp,
-                // The bot's clock: where its round's last action ended (doneAt), at least the step's.
-                lastResolvedAt: Math.max(timestamp, Math.ceil(Number(result.doneAt) || 0)),
+                // The bot's clock: where its round's last action ended (doneAt: before the step's
+                // timestamp when a crossing ended the round), else the step's.
+                lastResolvedAt: ColdClock.doneAt(result) ?? timestamp,
                 nextResolveAt: Math.ceil(result.nextResolveAt || timestamp + 60000)
             },
             stats: {
