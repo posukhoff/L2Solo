@@ -5,7 +5,7 @@
 // timestamp, the one the resolver budgets it from) tile the hunt's hours from
 // the first round's budget to the hunt-end tail, its fatal fights are the
 // hunt's deaths, the rest the builder reads is the rest the rounds set, and
-// every cell names the term that carries the mean path's error.
+// every cell names the term that carries the matchup's error.
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -67,7 +67,7 @@ try {
         const read = asIs.reportedRestMs / 1000 / asIs.mobs;
         assert(Math.abs(asIs.cell[3] - read) <= 1e-3 * Math.max(1, read), `the cell's rest is the rest the rounds set (${asIs.cell[3]} vs ${read})`);
         assert(terms.named.length >= 1 && ['mpAtStart', 'rotation'].includes(terms.named[0]), `a term is named (${terms.named})`);
-        assert(terms.meanRested && terms.meanAtStart, 'the mean path runs from the rested line and from the measured start');
+        assert(terms.matchupRested?.fight > 0 && terms.matchupAtStart?.fight > 0, 'the matchup fights from the rested line and from the measured start');
 
         const dying = built.profiles.find(one => String(one.id) === DYING_SPOT);
         assert(dying, `the catalogue has the spot ${DYING_SPOT}`);
