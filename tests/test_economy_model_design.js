@@ -299,6 +299,37 @@ for (const supply of ['table', 'formula']) {
     assert.equal(result.counters.stuckNoBareHour, 0, `${supply}: not stuck`);
 }
 
+// A level that changes the shot it fires to one it holds none of is the run-out the hunt raises when it spends the last shot: line 9
+// fires the no-grade Spiritshot 2509 at level 1 (Spiritshots for Beginners 5790 charge it, 600 held) and the no-grade Soulshot 1835 at
+// level 2 (5789 charges it, none held). Rooms are roomy so no bag fact comes in the run.
+const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+    shotFamilies: { grades: ['NONE'], ids: [[1835], [2509]] },
+    hours: { 9: { 1: { classId: 9, shotId: 2509, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: shotAtTwo, best: near, bareBest: farBare2, top: [near] } } },
+    yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
+    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, 1835: { kind: 'Other.Shot', npcBuy: 2 }, 2509: { kind: 'Other.Shot', npcBuy: 2 } },
+    npcOffers: { preset: { 1835: [{ town: 'TownA', price: 7 }], 2509: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+{
+    const changed = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(1835));
+    assert.ok(changed.result.progress.stageBands.all.levelUps >= 1, 'it reached level 2');
+    const trip = changed.visits.find(visit => !visit.info.born && visit.before.level >= 2);
+    // a. at level 2 it holds none of the Soulshot it now fires: it goes to town and buys it (old code: no fact, no visit)
+    assert.ok(trip && trip.delta.shotsBoughtNpc > 0 && trip.main.shots[1835] > 0, 'the level that changed its shot sends it to town to buy the new shot');
+    assert.equal(changed.result.design.bareBeforeFirstBuy[0].bought, 1, 'its first buy is counted');
+    // b. a level that keeps the shot (still 2509, 600 held) sends it nowhere
+    const kept = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(2509));
+    assert.ok(kept.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
+    assert.equal(kept.visits.filter(visit => !visit.info.born).length, 0, 'a level that keeps the shot sends it nowhere');
+    // c. a level whose row fires no shot sends it nowhere (nothing to buy)
+    const none = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(0));
+    assert.ok(none.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
+    assert.equal(none.visits.filter(visit => !visit.info.born).length, 0, 'a level that fires no shot sends it nowhere');
+    // d. it held none of the shot before the level: the level is no run-out (it hunts bare, adena 1 buys nothing at birth)
+    const bareBefore = run(freshBot(9, { shots: {}, money: 1 }), 'table', 4, 0, classWorld(1835));
+    assert.ok(bareBefore.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
+    assert.equal(bareBefore.visits.filter(visit => !visit.info.born).length, 0, 'a main that held none before the level goes nowhere at it');
+}
+
 // The run report (finish().design): trips, road hours and wall hours are counted at levels 1-19 and 20+ apart, an empty trip is
 // one that bought none of the need it went for, and the shadow names the rows where the two variants answer differently.
 // levelWorld: line 9 at levels first..last (a level starts every 50 exp; the row gives 100 exp an hour with shots), its shots
