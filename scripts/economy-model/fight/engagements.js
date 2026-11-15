@@ -9,12 +9,12 @@
 // through the resolver's own resolveFight (a compiled copy that exports it, as
 // test_cold_combat_parity.js does) with limits no engagement reaches, so one
 // call is one whole engagement: the pull it rolls (k mobs), its time, the damage
-// taken before any heal, the bot's actions and skills, potions, death. Beside
-// each replay the model under test runs from the same start; today that is the
-// mean-path fight of decompose (the baseline a fight formula must beat).
+// taken before any heal, the bot's actions, skills and heals, potions, death.
+// Beside each replay the model under test runs from the same start: the
+// fight matchup (rules/fight-matchup), at each replay's start state and pull.
 // Offline only.
 //   node scripts/economy-model/fight/engagements.js --table <hunt table json> [--catalogue <catalogue json>]
-//        [--adm 120] [--close 50] [--refused 30] [--states 50] [--seeds 20] [--out <json>]
+//        [--adm 120] [--close 50] [--refused 30] [--states 50] [--seeds 20] [--out <json>] [--fixture <json>]
 require('../../../src/Global');
 const fs = require('fs');
 const os = require('os');
@@ -26,9 +26,10 @@ const Lift = require('../hunt-lift');
 const Cohort = require('../cohort');
 const Weights = require('../weights');
 const Decompose = require('./decompose');
+const Matchup = require('../rules/fight-matchup');
 
 const CCPol = invoke('GameServer/Bot/Population/ColdClassPolicy');
-const RP = invoke('GameServer/Bot/AI/RestPolicy');
+const Potions = invoke('GameServer/Bot/AI/HealingPotionStock');
 const PveEncounter = require('../../../src/GameServer/Bot/Population/ColdPveEncounter');
 
 const HOURS = 2;
@@ -177,15 +178,15 @@ function spread(starts, n) {
     return Array.from({ length: n }, (_, i) => starts[Math.floor(i * step + step / 2)]);
 }
 
-// The model under test at one start state: today the mean-path fight
-// (decompose.meanPathFight) on the readiness's usual view, its cooldowns fresh.
-function baseline(seen, start) {
+// The model under test at one start state and pull: the matchup (fight-matchup)
+// from the replay's own start state, pull and area share.
+function matchupAt(seen, start, k) {
     const p = seen.profiles?.find(q => q.servitor !== true);
     if (!p || !seen.view || !seen.fp) return null;
-    const out = Decompose.meanPathFight(p, seen.view, seen.fp, start.hp, start.mp);
-    const k = Math.max(1, Number(seen.view.pull) || 1);
-    return out.fight == null ? { cut: true } : { msPerKill: out.fight * 1000, taken: out.taken, square: out.takenSquare,
-        actionsPerKill: out.actionsPerKill, castsPerKill: out.castsPerKill, k };
+    const m = Matchup.engagement({ profile: p, fp: seen.fp, mob: seen.view, k, start, bag: start.bag, holder: start.holder,
+        areaShare: Matchup.areaShareAt(seen.profiles, start.hp, start.mp, seen.view) });
+    return m.cut ? { cut: true } : { k, ms: m.ms, taken: m.taken.mean, square: m.taken.square, actions: m.botActions,
+        casts: Object.values(m.casts).reduce((a, n) => a + n, 0), potions: m.potions };
 }
 
 function measureCell(c, spotProfile, { states, seeds }) {
@@ -205,8 +206,10 @@ function measureCell(c, spotProfile, { states, seeds }) {
     try {
         picked.forEach((s, si) => {
             const cooldowns = s.state.stats?.coldCombat?.cooldowns || {};
-            plain.push({ hp: Number(s.state.vitals?.hp), mp: Number(s.state.vitals?.mp),
-                cooldowns: Object.fromEntries(Object.entries(cooldowns).map(([id, at]) => [id, Math.max(0, Number(at) - s.timestamp)]).filter(([, left]) => left > 0)) });
+            plain.push({ hp: Number(s.state.vitals?.hp), mp: Number(s.state.vitals?.mp), at: s.timestamp,
+                cooldowns: Object.fromEntries(Object.entries(cooldowns).map(([id, at]) => [id, Math.max(0, Number(at) - s.timestamp)]).filter(([, left]) => left > 0)),
+                potionLeft: Math.max(0, (Number(s.state.stats?.coldCombat?.potionUntil) || 0) - s.timestamp), bag: potionRows(s.state.inventory),
+                holder: s.state });
             for (let seed = 0; seed < seeds; seed++) {
                 const roll = fnv(`${c.k}|${si}|${seed}`);
                 Math.random = seeded(roll ^ 0x9e3779b9);
@@ -220,15 +223,16 @@ function measureCell(c, spotProfile, { states, seeds }) {
                 const d = r.debug || {};
                 // The round's clock: a kill costs at least its killing action (resolveSolo foughtMs).
                 replays.push([si, Number(d.pullMobs) || 1, Math.max(Number(d.durationMs) || 0, Number(d.killMs) || 0), Number(d.damageTaken) || 0,
-                    botActions, Number(d.skillUses) || 0, Number(d.potionsUsed) || 0, r.died ? 1 : 0]);
+                    botActions, Number(d.skillUses) || 0, Number(d.potionsUsed) || 0, r.died ? 1 : 0, Number(d.heals) || 0]);
             }
         });
     } finally { Math.random = random; CCPol.select = select; }
-    const v0 = plain.map(start => baseline(seen, start));
+    const fm = replays.map(r => matchupAt(seen, plain[r[0]], r[1]));
+    for (const start of plain) delete start.holder;
     return { k: c.k, key: c.key, level: c.level, spotId: c.spotId, selfId: c.selfId, form: c.form, line, classId: c.classId, kind: c.kind,
         cell: c.cell, huntCell: asIs.cell, same: asIs.cell.every((v, i) => v === c.cell[i]), maxHp: owner?.maxHp ?? null, maxMp: owner?.maxMp ?? null,
         starts: starts.length, states: plain, replays, avoided, cut, longestReplayMs: longestMs,
-        R: reference(replays), v0: alongside(replays, v0), ms: Date.now() - started };
+        R: reference(replays), fm: alongside(fm), ms: Date.now() - started };
 }
 
 // The game's fight per cell: time per kill over all kills, damage per engagement and its second moment.
@@ -236,15 +240,27 @@ function reference(replays) {
     if (!replays.length) return null;
     const sum = i => replays.reduce((a, r) => a + r[i], 0), kills = sum(1), n = replays.length;
     return { n, k: kills / n, msPerKill: sum(2) / kills, taken: sum(3) / n, square: replays.reduce((a, r) => a + r[3] ** 2, 0) / n,
-        actionsPerKill: sum(4) / kills, castsPerKill: sum(5) / kills, potions: sum(6) / n, died: sum(7) / n };
+        actionsPerKill: sum(4) / kills, castsPerKill: sum(5) / kills, potions: sum(6) / n, died: sum(7) / n, healsPerKill: sum(8) / kills };
 }
-// A model's per-start answers weighted as the replays that ran from each start.
-function alongside(replays, perStart) {
-    const ran = replays.map(r => perStart[r[0]]).filter(Boolean), done = ran.filter(m => !m.cut);
-    if (!done.length) return { n: 0, cut: ran.length };
-    const avg = name => done.reduce((a, m) => a + m[name], 0) / done.length;
-    return { n: done.length, cut: ran.length - done.length, k: avg('k'), msPerKill: avg('msPerKill'), taken: avg('taken'), square: avg('square'),
-        actionsPerKill: avg('actionsPerKill'), castsPerKill: avg('castsPerKill') };
+// A model's answers per replay (null: no model): time per kill over all kills,
+// damage per engagement and its second moment, actions and casts per kill.
+function alongside(perReplay) {
+    const done = perReplay.filter(m => m && !m.cut), cut = perReplay.filter(m => m?.cut).length;
+    if (!done.length) return { n: 0, cut };
+    const sum = name => done.reduce((a, m) => a + m[name], 0), kills = sum('k');
+    return { n: done.length, cut, k: kills / done.length, msPerKill: sum('ms') / kills, taken: sum('taken') / done.length,
+        square: sum('square') / done.length, actionsPerKill: sum('actions') / kills, castsPerKill: sum('casts') / kills,
+        potions: sum('potions') / done.length };
+}
+
+// The bottles of an inventory (the rows the potion rule reads), plain.
+const bottle = selfId => Potions.POTIONS.some(potion => potion.selfId === Number(selfId));
+function potionRows(inventory) {
+    const rows = {};
+    for (const [key, item] of Object.entries(inventory || {})) {
+        if (bottle(item?.selfId ?? key) && Number(item?.amount) > 0) rows[key] = { selfId: Number(item.selfId ?? key), amount: Number(item.amount) };
+    }
+    return rows;
 }
 
 const pct = (values, p) => { const s = values.filter(v => v != null && Number.isFinite(v)).sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : null; };
@@ -270,6 +286,26 @@ function bounds(cells, model) {
     return out;
 }
 
+// The matchup test's frozen sample: per key two admitted cells and one close,
+// forms taken in turn, each with its start states, the replays ran per (state,
+// pull) and the game fight's per-cell means; the tree stamp it was read on.
+function fixture(result) {
+    const keys = [...new Set(result.cells.map(c => c.key))].sort((a, b) => a - b), cells = [];
+    for (const key of keys) {
+        const of = kind => result.cells.filter(c => c.key === key && c.kind === kind && c.R && c.replays.length);
+        const adm = of('admitted'), close = of('close');
+        const pick = [adm.find(c => c.form === 0) || adm[0], adm.find(c => c.form === 1) || adm[1], close.find(c => c.form === 0) || close[0]];
+        for (const c of pick.filter((one, i, all) => one && all.indexOf(one) === i)) {
+            const ran = new Map();
+            for (const r of c.replays) ran.set(`${r[0]}|${r[1]}`, (ran.get(`${r[0]}|${r[1]}`) || 0) + 1);
+            cells.push({ k: c.k, key: c.key, level: c.level, spotId: c.spotId, selfId: c.selfId, form: c.form, classId: c.classId, kind: c.kind,
+                maxHp: c.maxHp, states: c.states, ran: [...ran].map(([at, n]) => [...at.split('|').map(Number), n]),
+                R: { n: c.R.n, msPerKill: c.R.msPerKill, taken: c.R.taken, square: c.R.square } });
+        }
+    }
+    return { stamp: result.treeStamp, table: result.tableStamp, cells };
+}
+
 function report(result) {
     const f = v => v == null ? '-' : Number(v).toFixed(3);
     const cells = result.cells;
@@ -283,9 +319,9 @@ function report(result) {
         }
     }
     for (const c of cells) {
-        const m = c.v0 || {}, r = c.R || {};
+        const m = c.fm || {}, r = c.R || {};
         console.log(`  ${c.k} ${c.kind} L${c.line} same ${c.same} starts ${c.starts} eng ${c.replays.length} k ${f(r.k)}/${f(m.k)} ms/kill ${f(r.msPerKill)}/${f(m.msPerKill)} dmg ${f(r.taken)}/${f(m.taken)} `
-            + `E[D2] ${f(r.square)}/${f(m.square)} act/kill ${f(r.actionsPerKill)}/${f(m.actionsPerKill)} cast/kill ${f(r.castsPerKill)}/${f(m.castsPerKill)} pot ${f(r.potions)} died ${f(r.died)} cut ${m.cut ?? '-'}`);
+            + `E[D2] ${f(r.square)}/${f(m.square)} act/kill ${f(r.actionsPerKill)}/${f(m.actionsPerKill)} cast/kill ${f(r.castsPerKill)}/${f(m.castsPerKill)} heal/kill ${f(r.healsPerKill)} pot ${f(r.potions)}/${f(m.potions)} died ${f(r.died)} cut ${m.cut ?? '-'}`);
     }
 }
 
@@ -316,8 +352,9 @@ function main(argv) {
                 cells.push(measureCell(c, spot, options));
             }
         } finally { Lift.lift(false); }
-        const result = { tableStamp: table.stamp, treeStamp: HuntTable.stamp(), counts, options, cells, bounds: { v0: bounds(cells, 'v0') }, ms: Date.now() - started };
+        const result = { tableStamp: table.stamp, treeStamp: HuntTable.stamp(), counts, options, cells, bounds: { fm: bounds(cells, 'fm') }, ms: Date.now() - started };
         if (arg('out')) fs.writeFileSync(arg('out'), JSON.stringify(result));
+        if (arg('fixture')) fs.writeFileSync(arg('fixture'), JSON.stringify(fixture(result)));
         report(result);
         return result;
     } finally {
@@ -325,5 +362,5 @@ function main(argv) {
     }
 }
 
-module.exports = { heldOut, kindOf, sampleCells, huntStarts, measureCell, reference, bounds, main };
+module.exports = { heldOut, kindOf, sampleCells, huntStarts, measureCell, matchupAt, reference, alongside, bounds, main };
 if (require.main === module) main(process.argv.slice(2));
