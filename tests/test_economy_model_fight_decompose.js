@@ -1,10 +1,11 @@
 'use strict';
 // The fight decomposition watches the hunt table's own hunt without changing
-// it: its cell is the builder's cell, its wall-clock parts (fight, walk, rest
-// sat, rest extensions, death recovery, idle, minus the combat that overlaps
-// the next step) add up to the hunt's hours, its fatal fights are the hunt's
-// deaths, the rest the builder reads is the rest the rounds set, and every
-// cell names the term that carries the mean path's error.
+// it: its cell is the builder's cell, its wall-clock parts (fight, walk, rest,
+// death recovery, other; a round's combat in the interval before its
+// timestamp, the one the resolver budgets it from) tile the hunt's hours from
+// the first round's budget to the hunt-end tail, its fatal fights are the
+// hunt's deaths, the rest the builder reads is the rest the rounds set, and
+// every cell names the term that carries the mean path's error.
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -30,18 +31,22 @@ try {
     try {
         const plain = HuntTable.cellOf(Generator.hunt(Decompose.speciesSpot(spot, selfId), line, level, form, hours, undefined,
             Decompose.creationKit(classId), classId), hours);
-        const { asIs, moved, terms } = Decompose.decompose({ spot, selfId, line, level, form, hours });
+        const out = Decompose.decompose({ spot, selfId, line, level, form, hours });
+        const { asIs, terms } = out;
         assert.deepEqual(asIs.cell, plain, 'watching the hunt does not change its cell');
         assert(asIs.mobs > 0, 'the lifted mystic kills gremlins');
-        for (const [name, one] of [['as is', asIs], ['rest moved', moved]]) {
-            const w = one.wallMs, total = w.fight + w.walk + w.rest + w.restExt + w.death + w.idle - w.overlap;
-            assert(Math.abs(total - hours * 3600000) < 1e-3, `${name}: the parts add up to the hunt's time (${total})`);
-            assert.equal(one.fatal.length, one.deaths, `${name}: each death is one fatal fight`);
-        }
+        assert.deepEqual(Object.keys(out).sort(), ['asIs', 'terms'], 'one hunt, no variant with the rest moved');
+        const w = asIs.wallMs, { before, tail } = asIs.edgeMs;
+        assert.deepEqual(Object.keys(w).sort(), ['death', 'fight', 'other', 'rest', 'walk'], 'no overlap part: fight and rest do not share a second');
+        assert(w.rest > 0 && w.fight > 0, `the hunt fights and rests (${JSON.stringify(w)})`);
+        const total = w.fight + w.walk + w.rest + w.death + w.other;
+        assert.equal(before, 60000, 'the first round is credited the builder\'s first interval before the hunt\'s start');
+        assert(tail >= 0 && tail <= 120000, `the hunt-end tail is at most one hunt cycle (${tail})`);
+        assert(Math.abs(total - (hours * 3600000 + before - tail)) < 1e-3, `the parts tile the clock from the first budget to the hunt-end tail (${total})`);
+        assert.equal(asIs.fatal.length, asIs.deaths, 'each death is one fatal fight');
         const read = asIs.reportedRestMs / 1000 / asIs.mobs;
         assert(Math.abs(asIs.cell[3] - read) <= 1e-3 * Math.max(1, read), `the cell's rest is the rest the rounds set (${asIs.cell[3]} vs ${read})`);
-        assert(asIs.restInCombat > 0, 'the resolver\'s rest starts inside the round\'s combat');
-        assert(terms.named.length >= 1 && ['mpAtStart', 'rotation', 'restOverlap'].includes(terms.named[0]), `a term is named (${terms.named})`);
+        assert(terms.named.length >= 1 && ['mpAtStart', 'rotation'].includes(terms.named[0]), `a term is named (${terms.named})`);
         assert(terms.meanRested && terms.meanAtStart, 'the mean path runs from the rested line and from the measured start');
     } finally {
         Lift.lift(false);
