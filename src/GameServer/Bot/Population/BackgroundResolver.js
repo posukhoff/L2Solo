@@ -2849,6 +2849,11 @@ const BackgroundResolver = {
             stats: { ...((continuing ? state : petRegen(state, elapsedMs, roundProfile)).stats || {}), restUntil: null, pveEncounter: continuing },
             spotId: spot.id
         };
+        // What the opening standing regen (applyStandingRegen above) gave, up to the cap it met (sitDown).
+        const opened = continuing ? null : {
+            hp: patch.vitals.hp - Math.max(0, Number(state.vitals?.hp ?? patch.vitals.maxHp)),
+            mp: patch.vitals.mp - Math.max(0, Number(state.vitals?.mp ?? patch.vitals.maxMp))
+        };
 
         let wins = 0;
         let died = false;
@@ -2905,15 +2910,26 @@ const BackgroundResolver = {
         // between fights (HuntingState), not at the round's end. The rest's part
         // before the timestamp regenerates seated here (seatedRegen, the rest
         // step's rule); a rest over by then leaves the bot hunting at it.
+        // Standing regen runs through the fights (C4), but the opening one counted
+        // the time from the sit moment on as well (in time order, up to its cap):
+        // that part comes off the fight's end, so a seated stretch is never also
+        // a standing one, and goes back for any of it the bot stands after its
+        // rest. The pet's regen over the interval is the opening one alone.
+        // needOf(vitals): the rest those vitals need.
         const roundStart = timestamp - combatBudgetMs;
-        const sitDown = (sitAt, needMs) => {
-            const restEnd = sitAt + needMs;
+        const sitDown = (sitAt, needOf) => {
+            const tick = Formulas.REGEN_TICK_MS;
+            const standing = opened && sitAt < timestamp ? coldRestRegenPerTick(state, { profile: roundProfile, standing: true, timestamp }) : null;
+            const given = standing ? Object.fromEntries(['hp', 'mp'].map(key => [key, Math.min(
+                Math.max(0, opened[key] - standing[key] * (sitAt - roundStart) / tick), standing[key] * (timestamp - sitAt) / tick)])) : null;
+            const sat = given ? { ...patch.vitals, hp: patch.vitals.hp - given.hp, mp: patch.vitals.mp - given.mp } : patch.vitals;
+            const restEnd = sitAt + needOf(sat);
             const seatedMs = Math.min(restEnd, timestamp) - sitAt;
             if (seatedMs > 0) {
-                const seated = seatedRegen({ ...state, vitals: patch.vitals, inventory: patch.inventory || state.inventory,
-                    stats: patch.stats }, patch.vitals, seatedMs, timestamp);
-                patch.vitals = seated.vitals;
-                patch.stats = seated.stats;
+                const seated = seatedRegen({ ...state, vitals: sat, inventory: patch.inventory || state.inventory,
+                    stats: patch.stats }, sat, seatedMs, timestamp).vitals;
+                const stood = key => given ? Math.max(0, given[key] - standing[key] * seatedMs / tick) : 0;
+                patch.vitals = { ...seated, hp: Math.min(seated.maxHp, seated.hp + stood('hp')), mp: Math.min(seated.maxMp, seated.mp + stood('mp')) };
             }
             if (restEnd > timestamp) {
                 patch.activity = 'resting';
@@ -2965,7 +2981,7 @@ const BackgroundResolver = {
                     const drinkMs = drinkToRest(roundProfile, true, coldPetView(roundProfile, patch.stats.coldCombat?.summon, patch.vitals,
                         patch.stats.coldCombat?.cooldowns, timestamp + combatMs));
                     // It sits down where the fight was refused.
-                    sitDown(roundStart + combatMs, Math.max(soloRestMs(fightState, patch.vitals, { refused: true }), drinkMs));
+                    sitDown(roundStart + combatMs, vitals => Math.max(soloRestMs(fightState, vitals, { refused: true }), drinkMs));
                     events.push({ type: 'rest', weight: 2,
                         summary: `${state.name || 'Bot'} sat down before another fight near ${spot.name}`,
                         meta: { spotId: spot.id, reason: result.reason } });
@@ -3082,8 +3098,8 @@ const BackgroundResolver = {
                 // cold_fight:pet:rest: a rest its pet sent it to (the live read).
                 if (Diagnostics.active() && !RestPolicy.petRested(petView)) Diagnostics.count('cold_fight', 'pet', 'rest');
                 // It sits down at the fight's end, after its run when it fled.
-                sitDown(roundStart + combatMs + Math.round(result.runMs || 0), Math.max(soloRestMs(fightState, patch.vitals), drinkMs,
-                    RestPolicy.petRested(petView) ? 0 : petRestMs(fightProfile, summonLeft, patch.vitals, timestamp + combatMs)));
+                sitDown(roundStart + combatMs + Math.round(result.runMs || 0), vitals => Math.max(soloRestMs(fightState, vitals), drinkMs,
+                    RestPolicy.petRested(petView) ? 0 : petRestMs(fightProfile, summonLeft, vitals, timestamp + combatMs)));
                 events.push({
                     type: 'rest',
                     summary: `${state.name || 'Bot'} sat down to recover near ${spot.name}`,

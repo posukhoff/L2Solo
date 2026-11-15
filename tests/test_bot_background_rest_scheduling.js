@@ -185,21 +185,34 @@ try {
     // The vitals the last fight left (the rest event reads them at the fight's end).
     const sat = worn.events.find(event => event.type === 'rest').meta;
     const fightEnd = { hp: sat.hpPct * caster.maxHp, maxHp: caster.maxHp, mp: sat.mpPct * caster.maxMp, maxMp: caster.maxMp };
-    const need = BackgroundResolver.estimateRestMs(hunter, fightEnd, line);
+    // The round's opening standing regen (MP 300 -> 415, under the cap; HP already full)
+    // counted the time after the fight too: seated there, the bot does not also stand.
+    const ColdRest = invoke('GameServer/Bot/Population/ColdRest');
+    const tick = invoke('GameServer/Formulas').REGEN_TICK_MS;
+    const standing = ColdRest.coldRestRegenPerTick(hunter, { profile: caster, standing: true, timestamp: at });
+    const seatedRate = ColdRest.coldRestRegenPerTick(hunter, { profile: caster, timestamp: at });
+    const sitAt = at - budget + worn.debug.combatMs, seatedTicks = (at - sitAt) / tick;
+    const seatedFrom = { ...fightEnd, mp: fightEnd.mp - standing.mp * seatedTicks };
+    const need = BackgroundResolver.estimateRestMs(hunter, seatedFrom, line);
     const restUntil = worn.patch.stats.restUntil;
-    assert(Math.abs(restUntil - Math.ceil(at - budget + worn.debug.combatMs + need)) <= 1,
-        `the rest ends at the fight's end + the rest it needs (${restUntil - at} ms after the round), not ${Math.ceil(need)} ms after the round`);
-    assert(worn.patch.vitals.mp > fightEnd.mp, 'at the round\'s end it has rested seated since its fight');
+    assert(Math.abs(restUntil - Math.ceil(sitAt + need)) <= 1,
+        `the rest ends at the fight's end + the rest it needs (${restUntil - at} ms after the round), not ${Math.ceil(need + sitAt - at)}`);
+    assert(Math.abs(worn.patch.vitals.mp - (fightEnd.mp + (seatedRate.mp - standing.mp) * seatedTicks)) < 0.01,
+        `at the round's end it has rested seated since its fight, standing no longer (MP ${worn.patch.vitals.mp} from ${fightEnd.mp})`);
     const rested = BackgroundResolver.resolveRest({ ...hunter, activity: 'resting', vitals: worn.patch.vitals,
         stats: { ...hunter.stats, ...worn.patch.stats } }, restUntil - at, restUntil);
-    assert.strictEqual(rested.patch.activity, 'hunting', 'at its deadline the bot stands at its rested line, the rest not extended');
+    // At its deadline the bot is at its rested line, within the half millisecond of
+    // regen the rest estimate rounds away.
+    assert(rested.patch.vitals.mp >= RestPolicy.THRESHOLDS.rested.mp * caster.maxMp - seatedRate.mp / tick,
+        `at its deadline the bot is at its rested line (MP ${rested.patch.vitals.mp})`);
 
     // A fight refused (the bot cannot take the mob at its HP) seats it where it was refused.
     const tired = { ...hunter, vitals: { ...hunter.vitals, hp: 150 } };
     const refused = BackgroundResolver.resolveSolo({ state: tired, spot: field, elapsedMs: 30_000, timestamp: at, rng: () => 0.5 });
     assert.strictEqual(refused.patch.stats.lastReason, 'solo_recovery_needed');
     assert.strictEqual(refused.debug.attemptedFights, 0);
-    const refusedAt = BackgroundResolver.applyStandingRegen(tired, tired.vitals, 30_000, at);
+    // It stood (walked) only until the refusal: its standing regen runs that long, no longer.
+    const refusedAt = BackgroundResolver.applyStandingRegen(tired, tired.vitals, refused.debug.combatMs, at);
     assert.strictEqual(refused.patch.stats.restUntil,
         Math.ceil(at - 30_000 + refused.debug.combatMs + BackgroundResolver.estimateRestMs(tired, refusedAt, line)),
         'a refused fight\'s rest starts at the refusal, inside the interval the round credits');
