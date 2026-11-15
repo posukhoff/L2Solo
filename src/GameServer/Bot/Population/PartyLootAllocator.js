@@ -81,9 +81,8 @@ function transferGearDrops(memberResults = [], { bags = [], takes = () => true }
             }
         }
     }));
-    const projected = new Map(copies.map(({ state }) => [Number(state.characterId), { ...(state.inventory || {}) }]));
-    const held = new Map(copies.map(({ state }, index) => [Number(state.characterId), { ...(bags[index] || state.inventory || {}) }]));
-    const fits = (state, item) => takes(state, held.get(Number(state.characterId)), item);
+    const projected = new Map(copies.map(({ state }, index) => [Number(state.characterId), { ...(bags[index] || state.inventory || {}) }]));
+    const fits = (state, item) => takes(state, projected.get(Number(state.characterId)), item);
     const transfers = [];
     let refused = 0;
 
@@ -98,7 +97,7 @@ function transferGearDrops(memberResults = [], { bags = [], takes = () => true }
             .sort((left, right) => right.score - left.score
                 || Number(left.entry.state.characterId) - Number(right.entry.state.characterId))[0]?.entry : null;
         if (!recipient) {
-            if (fits(source.state, item)) addProjectedItem(source.state, item, held);
+            if (fits(source.state, item)) addProjectedItem(source.state, item, projected);
             else {
                 const at = sourceItems.indexOf(item);
                 if (at >= 0) sourceItems.splice(at, 1);
@@ -108,7 +107,6 @@ function transferGearDrops(memberResults = [], { bags = [], takes = () => true }
         }
 
         addProjectedItem(recipient.state, item, projected);
-        addProjectedItem(recipient.state, item, held);
         if (Number(recipient.state.characterId) === Number(source.state.characterId)) return;
         const index = sourceItems.indexOf(item);
         if (index >= 0) sourceItems.splice(index, 1);

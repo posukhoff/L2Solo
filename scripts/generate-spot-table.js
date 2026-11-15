@@ -426,7 +426,7 @@ function countNewStacks(items, seen, definitions = invoke('GameServer/DataCache'
 // row's shots and potions per hour), so the use is measured first, on an
 // endless supply; the row is the hunt again on what the game buys for that
 // use: an outing's (EconomyContext.kitReader at TownVisitInterval.targetHours,
-// the reference bot's 2 h; bottles only their survival tranche on a row without
+// the reference bot's 2 h; the game buys one outing's refill whatever the
 // deaths), topped up at each outing. Its loot is then kept or
 // refused by the bag that supply really weighs. The bottles that save rest are
 // not here: the reference bot has no hour (RestPotion.betweenFights), the
@@ -439,10 +439,9 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
     const { stock } = invoke('GameServer/Bot/Economy/EconomyContext').kitReader({ shotUse: use.shots / hours, shotsPay: true,
         shotsCanRestock: true, potionUse: use.potions / hours, potionRestUse: 0,
         outingHours: invoke('GameServer/Bot/Economy/TownVisitInterval').targetHours() }, { shots: 0, potions: 0 }, Infinity, () => 0);
-    // A bottle is worth carrying past its survival tranche (an hour's use) only where the
-    // bot dies (the stock's worth is the deaths it saves, kitRates potionBenefit): a row
-    // without deaths carries the tranche each outing, as the game buys it.
-    const supply = { shots: stock('shots').target, potions: use.deaths > 0 ? stock('potions').target : stock('potions').survivalTarget };
+    // The game buys one outing's refill whatever the deaths (EconomyContext.kitReader,
+    // PurchaseFunding, HealingPotionStock), so the row carries the stock's target.
+    const supply = { shots: stock('shots').target, potions: stock('potions').target };
     if (onPass) onPass('row');
     return huntOn(supply, spot, role, level, shots, hours, simulation, kit, classId);
 }

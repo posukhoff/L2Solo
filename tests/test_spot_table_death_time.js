@@ -76,10 +76,8 @@ assert(tired.calls.restedMs > 0, 'the rest step extends the 1 s rest');
 assert.equal(rested.restMs, FIGHT_MS + 1000 + tired.calls.restedMs, 'the row\'s rest holds the fight\'s rest and every extension of it');
 assert.equal(rested.busyMs, rested.fightMs + rested.restMs, 'and its busy time with it');
 
-// T141: the row's potions are what a bot of that level carries. A bot that
-// drinks one bottle a fight from its bag: at 0 deaths its stock has no worth
-// and it carries the survival tranche, the use of one hour, each outing (2 h);
-// a row with deaths gives the stock worth, the bot buys the outing's use.
+// T141: the row's potions are what the game buys for a bot of that level: the
+// outing's use (2 h), a bottle every fight here, whatever the deaths.
 function drinker(dieAfter = Infinity) {
     let fights = 0;
     return { onPass: () => { fights = 0; }, sim: {
@@ -104,7 +102,7 @@ function drinker(dieAfter = Infinity) {
 }
 const huntOf = ({ sim, onPass }) => Generator.hunt(spot, 'dps', 20, 0, 2, sim, null, undefined, onPass);
 const lean = huntOf(drinker());
-assert.equal(lean.potions, 60, 'a 0-death row wants 60 bottles an hour and carries one hour\'s use for its two hours');
+assert.equal(lean.potions, 120, 'a 0-death row carries the outing\'s use too: the game buys the outing\'s refill whatever the deaths');
 const dying = huntOf(drinker(5));
 assert.equal(dying.potions, 120, 'a row with deaths carries the outing\'s use: a bottle every fight');
 console.log('PASS spot table death time');
