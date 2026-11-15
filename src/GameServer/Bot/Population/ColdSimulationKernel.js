@@ -2556,10 +2556,10 @@ class ColdSimulationKernel {
         };
         add(first.result);
         for (;;) {
-            // huntedThrough (ColdSoloWindow): the round's start, the end of the credited hunt
-            // when it is the last; a round's own clock (lastResolvedAt) is the same.
+            // huntedThrough (ColdSoloWindow): the end of the round's last action, the end of the
+            // credited hunt when it is the last; a round's own clock (lastResolvedAt) is the same.
             const stamped = { ...round.result, patch: { ...round.result.patch,
-                stats: { ...round.result.patch?.stats, huntedThrough: round.timestamp } } };
+                stats: { ...round.result.patch?.stats, huntedThrough: Math.max(round.timestamp, Math.ceil(Number(round.result.doneAt) || 0)) } } };
             // A round's projection is its own turn, as its fight is (resolveStep: phases).
             await nextTurn();
             if (!this.resolverSourceCurrent(source)) return null;
