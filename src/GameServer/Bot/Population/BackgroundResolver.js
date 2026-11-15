@@ -1,4 +1,4 @@
-const { coldRestRegenPerTick, restRegenPerTick, requiresManaRecovery, estimateRestMs } = require('./ColdRest');
+const { coldRestRegenPerTick, requiresManaRecovery, estimateRestMs } = require('./ColdRest');
 const PveEncounter = require('./ColdPveEncounter');
 const Expedition = require('../../Clan/ClanRaidExpedition');
 const ColdSoulCrystal = require('./ColdSoulCrystal');
@@ -42,6 +42,7 @@ const summonAttackDelay = ColdCombatProfile.summonAttackMs, coldShotSupply = Col
 const SurvivalFloor = require('./SurvivalFloor');
 const { SPOT_CELL_SIZE } = invoke('GameServer/World/WorldConstants');
 const { RUN_SPEED } = require('./ColdTrip');
+const ColdClock = require('./ColdClock');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 const GameTime = invoke('GameServer/World/GameTime');
 
@@ -193,35 +194,21 @@ function soloRestMs(state, vitals, { refused = false } = {}) {
     return estimateRestMs(state, vitals, { line: RestPolicy.restedLine(persona) });
 }
 
-// A rest's regeneration over ms from at: seated, or standing when that refills
-// the rest faster (restRegenPerTick); the pet rests with it (petRegen). One rule
-// for the rest step and a rest inside a hunt round. profile: the bot's at at.
-// Returns { vitals, state (its stats carry the pet), regen }.
-function seatedRegen(state, vitals, ms, at, profile, options = {}) {
-    const regen = restRegenPerTick(state, vitals.maxHp - vitals.hp, vitals.maxMp - vitals.mp, { profile, timestamp: at, ...options });
-    const ticks = Math.max(0, Number(ms) || 0) / Formulas.REGEN_TICK_MS;
-    return {
-        vitals: { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + regen.hp * ticks), mp: Math.min(vitals.maxMp, vitals.mp + regen.mp * ticks) },
-        state: petRegen(state, ms, profile),
-        regen
-    };
-}
-
 function resolveRest(state, elapsedMs, timestamp, options = {}) {
     const combat = botCombatStats(state, timestamp);
-    const seated = seatedRegen(state, {
+    // Seated over the step's credited span (ColdClock.seated, the round's rest rule).
+    const seated = ColdClock.seated(state, { vitals: {
         hp: Math.max(0, Number(state.vitals?.hp || 0)),
         maxHp: combat.maxHp,
         mp: Math.max(0, Number(state.vitals?.mp || 0)),
         maxMp: combat.maxMp
-    }, elapsedMs, timestamp, combat, options);
+    }, stats: state.stats }, elapsedMs, timestamp, combat, options);
     const { vitals, regen } = seated;
 
     const requireMana = requiresManaRecovery(state, options);
     // The pet rests too (RestPolicy.petRested): one its owner cannot heal waits to be whole.
-    const rested = seated.state;
-    const summon = rested.stats?.coldCombat?.summon;
-    const petView = coldPetView(combat, summon, vitals, rested.stats?.coldCombat?.cooldowns, timestamp);
+    const summon = seated.stats?.coldCombat?.summon;
+    const petView = coldPetView(combat, summon, vitals, seated.stats?.coldCombat?.cooldowns, timestamp);
     const petReady = RestPolicy.petRested(petView);
     // Solo to the bot's rested line, a party at its locked line (RestPolicy.restOver).
     const party = options.party === true, persona = party ? null : BotPersona.of(state);
@@ -252,7 +239,7 @@ function resolveRest(state, elapsedMs, timestamp, options = {}) {
         patch: {
             activity: resting ? 'resting' : 'hunting',
             vitals,
-            stats: { ...(rested.stats || {}), restUntil }
+            stats: { ...(seated.stats || {}), restUntil }
         },
         events: resting ? [] : [{
             type: 'recovered',
@@ -1259,17 +1246,6 @@ function ownerWaitsForPet(fighter, mob, skill, time) {
     return PetTankRule.ownerWaits({ petCanTake: pet.readyAt <= time, onOwner, ownerHate: fighter.hate || 0, petHate: fighter.petHate || 0,
         nextHit: TargetMatchup.expectedHit(fighter.profile, mob, skill, fighter.shot),
         petHit: onOwner ? TargetMatchup.expectedHit(fighter.summon, mob) : 0 });
-}
-
-// A saved pet's HP after elapsedMs out of a fight (its template's revHp per
-// regen tick); the state unchanged without a wounded pet. profile: its owner's.
-function petRegen(state, elapsedMs, profile) {
-    const saved = state.stats?.coldCombat?.summon;
-    if (!saved?.active || !(Number(saved.hp) > 0)) return state;
-    const summon = fullPet(profile, saved);
-    if (!(Number(summon.hp) < Number(summon.maxHp))) return state;
-    const hp = Math.min(Number(summon.maxHp), Number(summon.hp) + Number(summon.revHp || 0) * Math.max(0, elapsedMs) / Formulas.REGEN_TICK_MS);
-    return { ...state, stats: { ...state.stats, coldCombat: { ...state.stats.coldCombat, summon: { ...summon, hp } } } };
 }
 
 function setPersistedSummon(fighter, summon) {
@@ -2823,7 +2799,7 @@ const BackgroundResolver = {
         // moment. The step's timestamp bounds it: no action starts at or past it,
         // one begun before it runs to its end (doneAt, the next round's start).
         const roundStart = timestamp - elapsedMs;
-        let at = roundStart;
+        const clock = ColdClock.open(roundStart);
         const roundProfile = botCombatStats(state, roundStart);
         const profiles = roundProfiles(state, roundStart, roundProfile);
         const admitted = admittedShares(state, spot, roundStart, profiles);
@@ -2862,43 +2838,23 @@ const BackgroundResolver = {
             stats: { ...(state.stats || {}), restUntil: null, pveEncounter: continuing },
             spotId: spot.id
         };
-        // C4 regeneration goes on while the bot fights and stands (x1.1, its standing
-        // passives) and walks (x0.7), its pet's with it (petRegen): accrued up to at
-        // before each read of its vitals, a walk's span at the moving rate.
-        const standing = coldRestRegenPerTick(state, { profile: roundProfile, standing: true, timestamp: roundStart });
-        const moving = coldRestRegenPerTick(state, { profile: roundProfile, moving: true, timestamp: roundStart });
-        let regenAt = roundStart, seatedMs = 0;
-        const accrue = (rate = standing) => {
-            const ms = at - regenAt;
-            regenAt = at;
-            if (!(ms > 0)) return;
-            const ticks = ms / Formulas.REGEN_TICK_MS;
-            patch.vitals.hp = Math.min(patch.vitals.maxHp, patch.vitals.hp + rate.hp * ticks);
-            patch.vitals.mp = Math.min(patch.vitals.maxMp, patch.vitals.mp + rate.mp * ticks);
-            patch.stats = petRegen({ ...state, stats: patch.stats }, ms, roundProfile).stats;
+        // C4 regeneration goes on while the bot fights and stands and walks, its pet's
+        // with it: each action advances the round's clock in its posture (ColdClock.advance)
+        // and the body it returns is the round's (its vitals; its pet in stats).
+        const roundRates = ColdClock.rates(state, roundProfile, roundStart);
+        const body = () => ({ vitals: patch.vitals, stats: patch.stats });
+        const wear = (next) => {
+            patch.vitals = next.vitals;
+            patch.stats = next.stats;
         };
-        // A rest inside the round (RestPolicy.restOver's need, read at the sit): the bot
-        // sits at at, seated (seatedRegen) to its end or the round's bound. One that
-        // ends inside the round stands the bot up at its end to go on hunting (true);
+        // A rest inside the round (ColdClock.sit, RestPolicy.restOver's need read at the
+        // sit): one that ends by the round's bound stands the bot up to hunt on (true);
         // past it the bot rests on (restUntil, the rest step).
-        const sitDown = (needMs) => {
-            accrue();
-            const end = at + needMs;
-            const sat = Math.max(0, Math.min(end, timestamp) - at);
-            const seated = seatedRegen({ ...state, vitals: patch.vitals, stats: patch.stats }, patch.vitals, sat, at, roundProfile);
-            patch.vitals = seated.vitals;
-            patch.stats = { ...(seated.state.stats || {}) };
-            seatedMs += sat;
-            if (end > timestamp) {
-                patch.activity = 'resting';
-                patch.stats.restUntil = Math.ceil(end);
-                return false;
-            }
-            at = end;
-            regenAt = end;
-            patch.activity = 'hunting';
-            patch.stats.restUntil = null;
-            return true;
+        const seat = (sat) => {
+            patch.vitals = sat.body.vitals;
+            patch.stats = { ...(sat.body.stats || {}), restUntil: sat.up ? null : sat.restUntil };
+            patch.activity = sat.up ? 'hunting' : 'resting';
+            return sat.up;
         };
 
         let wins = 0;
@@ -2916,7 +2872,6 @@ const BackgroundResolver = {
         let summonActions = 0;
         let potionsUsed = 0;
         const drunkPotions = {};
-        let combatMs = 0;
         let damageTaken = 0, spellTaken = 0;
         // The pet's share (it tanks a solo fight): the damage it took, its deaths.
         let petTaken = 0, summonDeaths = 0, petWaits = 0;
@@ -2940,7 +2895,7 @@ const BackgroundResolver = {
             // The potion line by the kit's one use rule (EquipmentIncomeRoute.spotUseOf).
             const use = invoke('GameServer/Bot/Economy/EquipmentIncomeRoute').spotUseOf({ ...state, stats: patch.stats || state.stats });
             const drank = coldRestPotions(profile, patch.vitals, patch.stats, patch.inventory || state.inventory,
-                at, { resting, pet, shared: state.inventory, use });
+                clock.at, { resting, pet, shared: state.inventory, use });
             if (!drank.count) return 0;
             patch.inventory = drank.bag;
             patch.stats.coldCombat = { ...patch.stats.coldCombat, potionUntil: drank.until };
@@ -2954,46 +2909,40 @@ const BackgroundResolver = {
 
         for (let i = 0; i < fights && !noPrey; i++) {
             // The first fight starts in any round (its readiness may send the bot to rest).
-            if (i > 0 && (at >= timestamp || combatActions >= actionBudget)) break;
+            if (i > 0 && (clock.at >= timestamp || combatActions >= actionBudget)) break;
             // A mob already engaged is finished; a new one needs a whole mob of the share.
             const engaged = i === 0 && !!continuing;
             if (lastFight && !engaged) break;
             if (mobsKilled + 1 > shareMobs && !engaged) {
                 // The fights the walk would still allow.
-                shareCut = Math.max(1, Math.ceil((timestamp - at) / Math.max(1, walkMs)));
+                shareCut = Math.max(1, Math.ceil((timestamp - clock.at) / Math.max(1, walkMs)));
                 break;
             }
             let target = null;
             if (!engaged) {
                 // Its own buffs first (a round builds the fighter for them once at most).
-                accrue();
                 const buffed = buffsTried ? null : castSoloBuffs({ ...state, vitals: patch.vitals,
                     inventory: patch.inventory || state.inventory,
-                    stats: { ...(state.stats || {}), ...(patch.stats || {}) } }, at, roundProfile);
+                    stats: { ...(state.stats || {}), ...(patch.stats || {}) } }, clock.at, roundProfile);
                 if (buffed) {
                     buffsTried = buffed.buffCasts === 0;
-                    applySoloBuffs(patch, buffed, at);
-                    combatMs += buffed.durationMs;
-                    at += buffed.durationMs;
+                    applySoloBuffs(patch, buffed, clock.at);
+                    wear(ColdClock.advance(clock, body(), buffed.durationMs, 'standing', roundRates));
                     buffCasts += buffed.buffCasts;
                 }
                 // Then the target scan, before the walk (as hot's): below its line,
                 // or before a mob it is not ready for, the bot sits where it stands.
-                accrue();
                 target = resolveFight({ state: { ...state, vitals: patch.vitals, inventory: patch.inventory || state.inventory,
                     stats: { ...(state.stats || {}), ...(patch.stats || {}) } }, spot, targetNpcId, rng,
-                    timestamp: at, roundProfiles: profiles, round, scanOnly: true });
+                    timestamp: clock.at, roundProfiles: profiles, round, scanOnly: true });
                 // Then the walk to the mob. A walk past the round's end
                 // engages the mob still (the opening action, at least 1 ms of
                 // fight): its fight goes on in the next round.
                 if (!target.avoided) {
-                    combatMs += walkMs;
-                    at += walkMs;
+                    wear(ColdClock.advance(clock, body(), walkMs, 'moving', roundRates));
                     walkedMs += walkMs;
-                    accrue(moving);
                 }
             }
-            accrue();
             const fightState = {
                 ...state,
                 vitals: patch.vitals,
@@ -3001,18 +2950,19 @@ const BackgroundResolver = {
                 stats: { ...(state.stats || {}), ...(patch.stats || {}) }
             };
             const result = target?.avoided ? target : countedBuilds('fight', 'solo', resolveFight, { state: fightState, spot,
-                targetNpcId, rng, timestamp: at, fightLimitMs: Math.max(1, timestamp - at),
+                targetNpcId, rng, timestamp: clock.at, fightLimitMs: Math.max(1, timestamp - clock.at),
                 maxActions: actionBudget - combatActions, roundProfiles: profiles, round, target: target?.target });
             if (result.avoided) {
                 patch.stats.lastReason = result.reason;
                 noPrey = result.reason === NO_PREY;
                 if (result.needsRest) {
                     const drinkMs = drinkToRest(roundProfile, true, coldPetView(roundProfile, patch.stats.coldCombat?.summon, patch.vitals,
-                        patch.stats.coldCombat?.cooldowns, at));
+                        patch.stats.coldCombat?.cooldowns, clock.at));
                     events.push({ type: 'rest', weight: 2,
                         summary: `${state.name || 'Bot'} sat down before another fight near ${spot.name}`,
                         meta: { spotId: spot.id, reason: result.reason } });
-                    if (sitDown(Math.max(soloRestMs(fightState, patch.vitals, { refused: true }), drinkMs))) continue;
+                    if (seat(ColdClock.sit(clock, body(), Math.max(soloRestMs(fightState, patch.vitals, { refused: true }), drinkMs),
+                        timestamp, state, roundRates))) continue;
                 }
                 break;
             }
@@ -3049,8 +2999,6 @@ const BackgroundResolver = {
             // A kill costs at least its killing action, walk or not:
             // the swing or cast that killed ends after the kill.
             const foughtMs = Math.max(Number(result.debug?.durationMs || 0), Number(result.debug?.killMs || 0));
-            combatMs += foughtMs;
-            at += foughtMs;
             skillUses += Number(result.debug?.skillUses || 0);
             heals += Number(result.debug?.heals || 0);
             petHeals += Number(result.debug?.petHeals || 0);
@@ -3093,21 +3041,22 @@ const BackgroundResolver = {
                     // killer: the mob's template id (the decision trace's death record).
                     meta: { spotId: spot.id, fights: i + 1, killer: Number(result.debug?.mobSelfId) || 0 }
                 });
+                // The fight's time passes; the dead regenerate nothing (its body is not worn).
+                ColdClock.advance(clock, body(), foughtMs, 'standing', roundRates);
                 break;
             }
+            // The fight's time, on its feet.
+            wear(ColdClock.advance(clock, body(), foughtMs, 'standing', roundRates));
             // A won fight's gap: the pet's heals, then the self-heals that
             // beat sitting (SoloSelfHeal); the shots of the round.
-            accrue();
             if (result.won && result.profile) {
                 // The round's inventory: the fight spent from its own copy (resolveFight), not fightState's.
                 const shooter = round.shot ? { shot: round.shot, state: { ...fightState, inventory: round.inventory || patch.inventory },
                     shotActions: 0 } : null;
                 const healed = coldHealBetweenFights(result.profile, patch.vitals, patch.stats.coldCombat.cooldowns,
-                    at, patch.stats.coldCombat.summon, { shooter });
+                    clock.at, patch.stats.coldCombat.summon, { shooter });
                 if (shooter) { round.shot = shooter.shot; shotActions += shooter.shotActions; }
-                combatMs += healed.ms;
-                at += healed.ms;
-                accrue();
+                wear(ColdClock.advance(clock, body(), healed.ms, 'standing', roundRates));
                 heals += healed.casts;
                 gapHeals += healed.casts;
                 petHeals += healed.petCasts;
@@ -3118,7 +3067,7 @@ const BackgroundResolver = {
             const mpPct = patch.vitals.mp / Math.max(1, patch.vitals.maxMp || patch.vitals.mp || 1);
             const summonLeft = patch.stats.coldCombat?.summon;
             const fightProfile = result.profile || (result.fled ? roundProfile : null);
-            const petView = coldPetView(fightProfile, summonLeft, patch.vitals, patch.stats.coldCombat?.cooldowns, at);
+            const petView = coldPetView(fightProfile, summonLeft, patch.vitals, patch.stats.coldCombat?.cooldowns, clock.at);
             // A rest is a between-fights choice, as HuntingState's (its guard
             // !encounterActionInFlight): a fight the round cut goes on in the
             // next round, whatever the bot's HP and MP; only a kill, a death,
@@ -3131,18 +3080,16 @@ const BackgroundResolver = {
                 // cold_fight:pet:rest: a rest its pet sent it to (the live read).
                 if (Diagnostics.active() && !RestPolicy.petRested(petView)) Diagnostics.count('cold_fight', 'pet', 'rest');
                 // A flight's run is no rest: the bot sits where it ends.
-                const runMs = Math.round(result.runMs || 0);
-                combatMs += runMs;
-                at += runMs;
-                accrue(moving);
+                wear(ColdClock.advance(clock, body(), Math.round(result.runMs || 0), 'moving', roundRates));
                 events.push({
                     type: 'rest',
                     summary: `${state.name || 'Bot'} sat down to recover near ${spot.name}`,
                     weight: 2,
                     meta: { spotId: spot.id, hpPct, mpPct }
                 });
-                if (sitDown(Math.max(soloRestMs(fightState, patch.vitals), drinkMs,
-                    RestPolicy.petRested(petView) ? 0 : petRestMs(fightProfile, summonLeft, patch.vitals, at)))) continue;
+                if (seat(ColdClock.sit(clock, body(), Math.max(soloRestMs(fightState, patch.vitals), drinkMs,
+                    RestPolicy.petRested(petView) ? 0 : petRestMs(fightProfile, summonLeft, patch.vitals, clock.at)),
+                timestamp, state, roundRates))) continue;
                 break;
             }
             if (result.debug?.timedOut) {
@@ -3168,28 +3115,25 @@ const BackgroundResolver = {
         // reuse): the bot gets ready instead of standing (getReady); when nothing it
         // can do changes what the gate reads, the ground is raised after all.
         if (noPrey && !raised && !unhuntable) {
-            accrue();
-            const ready = getReady(state, patch, roundProfile, at);
+            const ready = getReady(state, patch, roundProfile, clock.at);
             summonUses += ready.summonUses;
             petHeals += ready.petCasts;
             skillUses += ready.summonUses + ready.petCasts;
-            combatMs += ready.ms;
-            at += ready.ms;
+            wear(ColdClock.advance(clock, body(), ready.ms, 'standing', roundRates));
             if (ready.restMs > 0) {
                 patch.stats.lastReason = 'solo_recovery_needed';
                 events.push({ type: 'rest', weight: 2,
                     summary: `${state.name || 'Bot'} sat down to get ready near ${spot.name}`,
                     meta: { spotId: spot.id, reason: 'solo_recovery_needed' } });
                 // Ready inside the round, it stands (no prey: nothing to go on with).
-                sitDown(ready.restMs);
+                seat(ColdClock.sit(clock, body(), ready.restMs, timestamp, state, roundRates));
             } else if (!ready.acted) unhuntable = true;
         }
+        // The time the round acted (fights, buffs, heals, walks), before it stands.
+        const combatMs = clock.activeMs;
         // A hunting bot stands to the round's bound or its last action's end.
-        const doneAt = Math.max(timestamp, at);
-        if (patch.activity === 'hunting') {
-            at = doneAt;
-            accrue();
-        }
+        const doneAt = ColdClock.end(clock, timestamp);
+        if (patch.activity === 'hunting') wear(ColdClock.advance(clock, body(), doneAt - clock.at, 'standing', roundRates));
         if (unhuntable) patch.stats.emptyGround = String(spot.id);
         else if (!noPrey && patch.stats.emptyGround != null) patch.stats.emptyGround = null;
         if (share !== null) {
@@ -3231,7 +3175,7 @@ const BackgroundResolver = {
                 ...(noPrey ? { reason: NO_PREY, unhuntable } : {}),
                 elapsedMs,
                 combatMs,
-                seatedMs,
+                seatedMs: clock.seatedMs,
                 fights: completedFights,
                 attemptedFights,
                 pendingFight: !!patch.stats.pveEncounter,
