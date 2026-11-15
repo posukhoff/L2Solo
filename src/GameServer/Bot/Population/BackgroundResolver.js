@@ -193,25 +193,35 @@ function soloRestMs(state, vitals, { refused = false } = {}) {
     return estimateRestMs(state, vitals, { line: RestPolicy.restedLine(persona) });
 }
 
+// A rest of ms on vitals ({ hp, maxHp, mp, maxMp }): seated, or standing when that
+// refills the rest faster (restRegenPerTick), and the pet rests too (petRegen).
+// One rule for the rest step (resolveRest) and a solo round's rest begun inside
+// the interval the round credits. options.profile: the bot's fight profile.
+function seatedRegen(state, vitals, ms, timestamp, options = {}) {
+    const profile = options.profile || botCombatStats(state, timestamp);
+    const regen = restRegenPerTick(state, vitals.maxHp - vitals.hp, vitals.maxMp - vitals.mp, { timestamp, ...options, profile });
+    const ticks = Math.max(0, Number(ms) || 0) / Formulas.REGEN_TICK_MS;
+    return {
+        vitals: { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + regen.hp * ticks), mp: Math.min(vitals.maxMp, vitals.mp + regen.mp * ticks) },
+        stats: petRegen(state, ms, profile).stats,
+        regen
+    };
+}
+
 function resolveRest(state, elapsedMs, timestamp, options = {}) {
     const combat = botCombatStats(state, timestamp);
-    const vitals = {
+    const seated = seatedRegen(state, {
         hp: Math.max(0, Number(state.vitals?.hp || 0)),
         maxHp: combat.maxHp,
         mp: Math.max(0, Number(state.vitals?.mp || 0)),
         maxMp: combat.maxMp
-    };
-    // Seated, or standing when that refills the rest faster.
-    const regen = restRegenPerTick(state, vitals.maxHp - vitals.hp, vitals.maxMp - vitals.mp, { profile: combat, timestamp, ...options });
-    const ticks = Math.max(0, Number(elapsedMs) || 0) / Formulas.REGEN_TICK_MS;
-    vitals.hp = Math.min(vitals.maxHp, vitals.hp + regen.hp * ticks);
-    vitals.mp = Math.min(vitals.maxMp, vitals.mp + regen.mp * ticks);
+    }, elapsedMs, timestamp, { profile: combat, ...options });
+    const { vitals, regen } = seated;
 
     const requireMana = requiresManaRecovery(state, options);
     // The pet rests too (RestPolicy.petRested): one its owner cannot heal waits to be whole.
-    const rested = petRegen(state, elapsedMs, combat);
-    const summon = rested.stats?.coldCombat?.summon;
-    const petView = coldPetView(combat, summon, vitals, rested.stats?.coldCombat?.cooldowns, timestamp);
+    const summon = seated.stats?.coldCombat?.summon;
+    const petView = coldPetView(combat, summon, vitals, seated.stats?.coldCombat?.cooldowns, timestamp);
     const petReady = RestPolicy.petRested(petView);
     // Solo to the bot's rested line, a party at its locked line (RestPolicy.restOver).
     const party = options.party === true, persona = party ? null : BotPersona.of(state);
@@ -242,7 +252,7 @@ function resolveRest(state, elapsedMs, timestamp, options = {}) {
         patch: {
             activity: resting ? 'resting' : 'hunting',
             vitals,
-            stats: { ...(rested.stats || {}), restUntil }
+            stats: { ...(seated.stats || {}), restUntil }
         },
         events: resting ? [] : [{
             type: 'recovered',
