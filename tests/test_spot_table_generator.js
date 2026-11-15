@@ -100,6 +100,11 @@ try {
         assert(Array.isArray(share) && share.length === table.gaps.length && share.every(part => part > 0 && part <= 1),
             'a production share per gap');
     }
+    // A row hunts on an outing's shots and potions, so its bag weighs what a bot
+    // carries and the drops it picks up stay in its loot and stacks.
+    const hunted = table.rows.flat().filter(Boolean);
+    const looted = hunted.filter((row) => row[field('loot')] > 0 && row[field('stacks')] > 0).length;
+    assert(looted * 4 > hunted.length, `the rows keep their loot (${looted} of ${hunted.length} rows with loot and stacks)`);
     // Gladiator and Warlord lines are one Warrior below 40: a row read there is measured once.
     const gladiator = table.roles.indexOf('2'), warlord = table.roles.indexOf('3'), exp = field('exp');
     table.rows.forEach((rows, spot) => {
