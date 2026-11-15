@@ -21,6 +21,7 @@ const HuntTable = require('../hunt-table');
 const Lift = require('../hunt-lift');
 
 const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
+const ColdClock = invoke('GameServer/Bot/Population/ColdClock');
 const ER = invoke('GameServer/Bot/AI/BotEncounterReadiness');
 const RP = invoke('GameServer/Bot/AI/RestPolicy');
 const CCPol = invoke('GameServer/Bot/Population/ColdClassPolicy');
@@ -108,7 +109,7 @@ function watchHunt({ spot, line, level, form, hours, classId, kit }) {
         const c = kind === 'hunt' ? Number(debug.combatMs) : 0, walk = Number(debug.walkedMs) || 0;
         // A round runs from its budget's start to its last action's end (doneAt); the seated
         // part of a rest inside it is rest.
-        const from = Math.max(options.timestamp, Math.ceil(Number(result.doneAt) || 0)), seated = Number(debug.seatedMs) || 0;
+        const from = ColdClock.doneAt(result) ?? options.timestamp, seated = Number(debug.seatedMs) || 0;
         if (prev) close(options.timestamp, kind);
         if (kind === 'hunt') {
             const parts = rec.parts;
