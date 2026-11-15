@@ -198,7 +198,7 @@ function summarize({ sum, rec }, hours) {
     for (const m of fights) for (const [key, n] of Object.entries(m.skills)) skills[key] = (skills[key] || 0) + n;
     const actions = fights.reduce((a, m) => a + m.actions, 0), casts = fights.reduce((a, m) => a + m.casts, 0);
     return {
-        cell: HuntTable.cellOf(sum, hours), mobs, deaths: sum.deaths, kills: sum.mobs / hours,
+        cell: HuntTable.cellOf(sum), mobs, deaths: sum.deaths,
         wall: Object.fromEntries(Object.entries(rec.parts).map(([k, ms]) => [k, perKill(ms)])),
         wallMs: { ...rec.parts }, edgeMs: { ...rec.edgeMs }, reportedRestMs: rec.reportedRest,
         restReasons: Object.fromEntries(Object.entries(rec.restReasons).map(([k, r]) => [k, { n: r.n, sat: perKill(r.ms), asked: perKill(r.asked) }])),

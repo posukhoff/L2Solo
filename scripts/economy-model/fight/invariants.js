@@ -8,8 +8,8 @@
 // and rest fit in its hour per kill.
 // Callers: tests/test_cold_sim_invariants.js (the generator's hunt on a fixed
 // sample), tests/test_spot_table_generator.js (the built table through the
-// reader). Pure: plain records in, violations out; the recording is the
-// caller's.
+// reader), tests/test_economy_model_hunt_table.js (the model's hunt table).
+// Pure: plain records in, violations out; the recording is the caller's.
 //
 // A hunt record: { steps: [step], sum } where sum is the generator's hunt sum
 // (Generator.hunt) and each step, in the order resolved:
@@ -222,4 +222,33 @@ function checkHunt(hunt, { row = null, tickMs, rounding }) {
     return { violations, parts: tiled.parts, other: generator?.other ?? null, balance };
 }
 
-module.exports = { checkHunt, overHour };
+// The model's hunt table (HuntTable: { fields, cells: body -> spot -> species
+// -> [form cells] }): every cell's kills and deaths finite and non-negative;
+// a cell with a kill keeps its other time above the rounding and its fight +
+// rest + other + walk is its hour per kill (3600 / kills), within the
+// rounding. Returns the violations, each naming its cell.
+function checkTable(table, { rounding }) {
+    const violations = [];
+    const at = Object.fromEntries(table.fields.map((field, index) => [field, index]));
+    for (const [body, bySpot] of Object.entries(table.cells)) {
+        for (const [spotId, bySpecies] of Object.entries(bySpot)) {
+            for (const [selfId, forms] of Object.entries(bySpecies)) {
+                forms.forEach((cell, form) => {
+                    const flag = (kind, detail) => violations.push({ kind, cell: `${body} ${spotId}/${selfId} form ${form}`, detail });
+                    const kills = cell[at.kills], deaths = cell[at.deaths];
+                    if (!Number.isFinite(kills) || kills < 0) return flag('numbers.invalid', `kills ${kills}`);
+                    if (kills === 0) return;
+                    if (!Number.isFinite(deaths) || deaths < 0) flag('numbers.invalid', `deaths ${deaths}`);
+                    const hour = 3600 / kills, partList = [cell[at.fight], cell[at.rest], cell[at.other], cell[at.walk]], parts = partList.reduce((a, b) => a + b, 0);
+                    // round() keeps 4 significant digits (error up to 5e-4 of the value): each part and the hour carry that.
+                    const tolerance = 5e-4 * (hour + partList.reduce((a, b) => a + Math.abs(b), 0));
+                    if (cell[at.other] < -rounding * hour) flag('cell.otherNegative', `other ${cell[at.other]} s of ${hour} s a kill`);
+                    if (!(Math.abs(parts - hour) <= tolerance)) flag('cell.untiled', `fight + rest + other + walk ${parts} s, the hour per kill ${hour} s`);
+                });
+            }
+        }
+    }
+    return violations;
+}
+
+module.exports = { checkHunt, checkTable, overHour };

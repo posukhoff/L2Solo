@@ -32,7 +32,7 @@ function child(tree, catalogue, seeds, hours) {
             total.kills += sum.mobs;
             total.deaths += sum.deaths;
             total.restMs += sum.restMs;
-            total.spanMs += hours * 3600000; // the hunt's clock: an older generator records no span
+            total.spanMs += sum.spanMs || hours * 3600000; // an older generator records no span: its nominal hours
         }
         return { cell: `${cell.spotId}/${cell.selfId} L${cell.level} line ${cell.line}`, ...total };
     });

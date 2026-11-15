@@ -13,6 +13,7 @@ const path = require('path');
 require('../src/Global');
 const Generator = require('../scripts/generate-spot-table');
 const HuntTable = require('../scripts/economy-model/hunt-table');
+const Invariants = require('../scripts/economy-model/fight/invariants');
 
 const GREMLIN_SPOT = '-12_43';
 // A dark elf fighter at level 15 hunts differently by night; a 2 h hunt from
@@ -58,6 +59,8 @@ const options = { from: 1, to: 1, hours: 1, children: 1, spots: [GREMLIN_SPOT], 
             const perKill = cell[at.fight] + cell[at.rest] + cell[at.other] + cell[at.walk];
             assert(Math.abs(perKill * cell[at.kills] - 3600) < 3600 * 0.01, `${name}: the parts make the hour (${perKill} s x ${cell[at.kills]})`);
         }
+        // No cell's other time below the rounding; the parts tile each cell's hour per kill.
+        assert.deepEqual(Invariants.checkTable(table, { rounding: Generator.ROUNDING }), [], 'the table keeps the conservation laws');
 
         // The game ignores the lift's option (a renamed or removed solo-safety switch): the gate stays.
         const TM = invoke('GameServer/Bot/AI/BotTargetMatchup'), CCP = invoke('GameServer/Bot/Population/ColdCombatProfile');
@@ -134,6 +137,7 @@ const options = { from: 1, to: 1, hours: 1, children: 1, spots: [GREMLIN_SPOT], 
         const [utc, kiev] = await Promise.all([zoned('UTC'), zoned('Europe/Kiev')]);
         assert(Object.keys(utc).length > 0, 'the night body has cells');
         assert.deepEqual(kiev, utc, 'a build in Europe/Kiev gives the cells of a build in UTC');
+        assert.deepEqual(Invariants.checkTable({ fields: table.fields, cells: utc }, { rounding: Generator.ROUNDING }), [], 'the night body\'s 2 h cells keep the conservation laws');
         console.log('test_economy_model_hunt_table: ok');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });

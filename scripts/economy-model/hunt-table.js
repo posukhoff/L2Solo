@@ -60,14 +60,16 @@ const STAMP_FILES = Object.freeze(['src/GameServer/Knowledge/StarterItemCatalog.
 
 const round = value => value === 0 ? 0 : Number(value.toPrecision(4));
 
-// A hunt's sums as one cell form (FIELDS).
-function cellOf(sum, hours) {
-    const mobs = sum.mobs;
-    if (!(mobs > 0)) return [0, ...FIELDS.slice(1).map(() => null)];
-    const seconds = ms => round(ms / 1000 / mobs);
-    return [round(mobs / hours), round(sum.deaths / mobs), seconds(sum.fightMs - sum.walkMs), seconds(sum.restMs),
-        seconds(hours * 3600000 - sum.fightMs - sum.restMs), seconds(sum.walkMs), round(sum.exp / mobs),
-        round(sum.shots / mobs), round(sum.potions / mobs), round(sum.pullMobs / sum.pulls)];
+// A hunt's sums as one cell form (FIELDS). Kills an hour and the other time
+// count over the hunt's measured span (Generator.hunt's spanMs: to where its
+// last round or rest ended), the span its fight and rest were counted in, so
+// the parts tile the hour per kill.
+function cellOf(sum) {
+    const per = Generator.perKill(sum);
+    if (!per) return [0, ...FIELDS.slice(1).map(() => null)];
+    const k = sum.mobs, walk = sum.walkMs / 1000 / k;
+    return [round(per.kph), round(per.deaths), round(per.fight - walk), round(per.rest), round(sum.spanMs / 1000 / k - per.fight - per.rest),
+        round(walk), round(per.exp), round(per.shots), round(per.potions), round(sum.pullMobs / sum.pulls)];
 }
 
 // The spot's species: selfId -> { level, count, production (mobs an hour, null without a production table) }.
@@ -231,7 +233,7 @@ function checkTasks({ cells, spots, hunters, limit }) {
         for (const [spotId, bySpecies] of Object.entries(bySpot)) {
             if (taken >= CHECK_SPOTS) break;
             const species = Object.keys(spots[spotId].species);
-            if (species.length < 2 || !species.every(selfId => bySpecies[selfId]?.[form]?.[0] > 0 && bySpecies[selfId][form][1] <= limit)) continue;
+            if (species.length < 2 || HuntRows.admitted({ cells: bySpecies, form, fields: FIELDS, limit }).length !== species.length) continue;
             taken += 1;
             tasks.push({ body, ...hunters[body], spotId, selfId: 0, form });
         }
@@ -252,7 +254,7 @@ function runChild([tasksFile, shard, n, partsFile, catalogueFile, hours]) {
         const spot = profiles.get(task.spotId), started = Date.now();
         const sum = Generator.hunt(task.selfId ? speciesSpot(spot, task.selfId) : spot, task.line, task.level, task.form, Number(hours),
             undefined, creationKit(task.classId), task.classId);
-        fs.writeSync(out, `${JSON.stringify({ k: task.k, cell: cellOf(sum, Number(hours)), runSpd: sum.runSpd, reach: sum.reach, ms: Date.now() - started })}\n`);
+        fs.writeSync(out, `${JSON.stringify({ k: task.k, cell: cellOf(sum), runSpd: sum.runSpd, reach: sum.reach, ms: Date.now() - started })}\n`);
     }
     fs.closeSync(out);
     Lift.lift(false);
