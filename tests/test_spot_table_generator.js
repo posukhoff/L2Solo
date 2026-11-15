@@ -145,26 +145,34 @@ try {
     })().then(() => {
         fs.rmSync(dir, { recursive: true, force: true });
         // The built table through the real reader: every row's fight + rest fit
-        // in its hour per kill at its own level, so a reader's idle (HuntCycle's
-        // hour: 3600 / kph - fight - rest) is never clamped and the kills an
-        // hour a reader charges are the row's, within the rows' 4-digit rounding.
+        // in its hour per kill at every level the reader serves it (its least
+        // gap to the deep-blue gap), so a reader's idle (HuntCycle's hour:
+        // 3600 / kph - fight - rest) is never clamped and the kills an hour a
+        // reader charges are the cell's own, within the rows' 4-digit rounding.
         const { ROUNDING } = require('../scripts/generate-spot-table');
         const Table = invoke('GameServer/Bot/AI/SpotValueTable');
+        const ProgressionRates = invoke('GameServer/ProgressionRates');
         const built = JSON.parse(fs.readFileSync(path.join(root, 'data', 'Bots', 'spot-table.json'), 'utf8'));
         const field = Object.fromEntries(built.rowFields.map((name, index) => [name, index]));
+        const maxLevel = built.header.inputs.maxLevel;
         const over = [];
         let read = 0;
         built.rows.forEach((rows, s) => rows.forEach((row, index) => {
             if (!row) return;
             const [spotId, spotLevel] = built.spots[s];
             const role = built.roles[Math.floor(index / built.shots.length)], shots = built.shots[index % built.shots.length];
-            const cell = Table.cycle(spotId, role, spotLevel + row[field.refGap], shots === 2 ? 2 : shots === 1);
-            if (!cell) return;
-            read += 1;
-            if (cell.fight + cell.rest > 3600 / cell.kph * (1 + ROUNDING)) over.push(`${spotId} ${role} shots ${shots}: ${cell.fight + cell.rest} s over ${3600 / cell.kph} s`);
+            const from = Math.max(1, Math.ceil(spotLevel + row[field.minGap]));
+            const to = Math.min(maxLevel, Math.floor(spotLevel + ProgressionRates.DEEP_BLUE_LEVEL_GAP));
+            for (let level = from; level <= to; level++) {
+                const cell = Table.cycle(spotId, role, level, shots === 2 ? 2 : shots === 1);
+                if (!cell) continue;
+                read += 1;
+                if (cell.fight + cell.rest > 3600 / cell.kph * (1 + ROUNDING)) over.push(`${spotId} ${role} level ${level} shots ${shots}: ${cell.fight + cell.rest} s over ${3600 / cell.kph} s`);
+            }
         }));
-        assert(read > 1000, `the reader reads the built rows (${read})`);
-        assert.deepStrictEqual(over.slice(0, 10), [], `every built row fits in its hour per kill (${over.length} do not)`);
+        console.log(`the reader read ${read} cells of the built table, ${over.length} over their hour per kill`);
+        assert(read > 1000000, `the reader reads the built rows at every gap (${read})`);
+        assert.deepStrictEqual(over.slice(0, 10), [], `every built row fits in its hour per kill at every gap (${over.length} do not)`);
         console.log('Spot table generator determinism and counts passed');
     }, (error) => {
         fs.rmSync(dir, { recursive: true, force: true });
