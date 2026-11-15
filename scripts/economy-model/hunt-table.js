@@ -231,7 +231,7 @@ function checkTasks({ cells, spots, hunters, limit }) {
         for (const [spotId, bySpecies] of Object.entries(bySpot)) {
             if (taken >= CHECK_SPOTS) break;
             const species = Object.keys(spots[spotId].species);
-            if (species.length < 2 || !species.every(selfId => bySpecies[selfId]?.[form]?.[0] > 0 && bySpecies[selfId][form][1] <= limit)) continue;
+            if (species.length < 2 || HuntRows.admitted({ cells: bySpecies, form, fields: FIELDS, limit }).length !== species.length) continue;
             taken += 1;
             tasks.push({ body, ...hunters[body], spotId, selfId: 0, form });
         }
