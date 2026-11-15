@@ -101,12 +101,14 @@ const items = invoke('GameServer/DataCache').items;
 const profiles = new Map(fixture.profiles.map((profile) => [String(profile.id), profile]));
 
 // One hunt recorded step by step at the generator's seam (BackgroundResolver.resolveSolo)
-// and the clock's (ColdClock: every span a step credits regen over). defect: wrappers
+// and the clock's (ColdClock: every span a step credits regen over). Only the row's
+// pass is recorded: the hunt first measures the shots and potions used on an endless
+// supply, and the row is its second pass on what that use buys. defect: wrappers
 // that re-introduce a defect ({ open, advance, result }).
 function recordHunt(cell, seed, defect = {}) {
     const real = { resolveSolo: BR.resolveSolo, open: ColdClock.open, advance: ColdClock.advance, sit: ColdClock.sit, seated: ColdClock.seated };
     const steps = [];
-    let step = null;
+    let step = null, pass = null;
     // A regen interval is rate-checked at any depth; it is a change of the
     // step's vitals only outside a probed call (inside one it is that call's).
     const credit = (on, interval, kind) => {
@@ -151,7 +153,7 @@ function recordHunt(cell, seed, defect = {}) {
             const done = step;
             step = null;
             probe.step = null;
-            if (result) {
+            if (result && pass === 'row') {
                 const debug = result.debug || {}, patch = result.patch || {};
                 const after = { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) }, inventory: patch.inventory || state.inventory };
                 const gained = (result.materialize?.items || []).length;
@@ -172,7 +174,7 @@ function recordHunt(cell, seed, defect = {}) {
     const classId = Generator.classFor(cell.line, cell.level);
     let sum;
     try {
-        sum = Generator.hunt(spot, cell.line, cell.level, cell.form, HOURS, undefined, Decompose.creationKit(classId), classId);
+        sum = Generator.hunt(spot, cell.line, cell.level, cell.form, HOURS, undefined, Decompose.creationKit(classId), classId, (name) => { pass = name; });
     } finally {
         Object.assign(BR, { resolveSolo: real.resolveSolo });
         Object.assign(ColdClock, { open: real.open, advance: real.advance, sit: real.sit, seated: real.seated });

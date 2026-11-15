@@ -429,13 +429,17 @@ function countNewStacks(items, seen, definitions = invoke('GameServer/DataCache'
 // the reference bot's 2 h), topped up at each outing. Its loot is then kept or
 // refused by the bag that supply really weighs. The bottles that save rest are
 // not here: the reference bot has no hour (RestPotion.betweenFights), the
-// reader adds them at the bot's own (RestPotion.stockUse).
-function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, classId = classFor(role, level)) {
+// reader adds them at the bot's own (RestPotion.stockUse). onPass(name): told
+// 'use' and then 'row' as each pass starts, so a caller that watches the
+// rounds can tell the row's from the measuring pass's.
+function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, classId = classFor(role, level), onPass = null) {
+    if (onPass) onPass('use');
     const use = huntOn(null, spot, role, level, shots, hours, simulation, kit, classId);
     const { stock } = invoke('GameServer/Bot/Economy/EconomyContext').kitReader({ shotUse: use.shots / hours, shotsPay: true,
         shotsCanRestock: true, potionUse: use.potions / hours, potionRestUse: 0,
         outingHours: invoke('GameServer/Bot/Economy/TownVisitInterval').targetHours() }, { shots: 0, potions: 0 }, Infinity, () => 0);
     const supply = { shots: stock('shots').target, potions: stock('potions').target };
+    if (onPass) onPass('row');
     return huntOn(supply, spot, role, level, shots, hours, simulation, kit, classId);
 }
 
