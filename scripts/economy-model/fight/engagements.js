@@ -12,6 +12,8 @@
 // taken before any heal, the bot's actions, skills and heals, potions, death.
 // Beside each replay the model under test runs from the same start: the
 // fight matchup (rules/fight-matchup), at each replay's start state and pull.
+// The report reads it against every engagement, and close cells also against
+// the engagements the bot survived, by the cell's deaths per engagement.
 // Offline only.
 //   node scripts/economy-model/fight/engagements.js --table <hunt table json> [--catalogue <catalogue json>]
 //        [--adm 120] [--close 50] [--refused 30] [--states 50] [--seeds 20] [--out <json>] [--fixture <json>]
@@ -232,7 +234,8 @@ function measureCell(c, spotProfile, { states, seeds }) {
     return { k: c.k, key: c.key, level: c.level, spotId: c.spotId, selfId: c.selfId, form: c.form, line, classId: c.classId, kind: c.kind,
         cell: c.cell, huntCell: asIs.cell, same: asIs.cell.every((v, i) => v === c.cell[i]), maxHp: owner?.maxHp ?? null, maxMp: owner?.maxMp ?? null,
         starts: starts.length, states: plain, replays, avoided, cut, longestReplayMs: longestMs,
-        R: reference(replays), fm: alongside(fm), ms: Date.now() - started };
+        R: reference(replays), fm: alongside(fm), RS: reference(replays.filter(r => !r[7])), fmS: alongside(fm.filter((m, i) => !replays[i][7])),
+        ms: Date.now() - started };
 }
 
 // The game's fight per cell: time per kill over all kills, damage per engagement and its second moment.
@@ -266,24 +269,37 @@ function potionRows(inventory) {
 const pct = (values, p) => { const s = values.filter(v => v != null && Number.isFinite(v)).sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : null; };
 const rel = (m, r) => m != null && r > 0 ? Math.abs(m - r) / r : null;
 
-// B1-B4 of a model against the reference, per kind.
-function bounds(cells, model) {
+// B1-B4 of a model against a reference (R: every engagement; RS: the
+// engagements the bot survived), per kind.
+function bounds(cells, model, ref = 'R') {
     const out = {};
     for (const kind of ['admitted', 'close', 'refused']) {
-        const g = cells.filter(c => c.kind === kind && c.R && c[model]?.n > 0);
+        const g = cells.filter(c => c.kind === kind && c[ref] && c[model]?.n > 0);
         if (!g.length) { out[kind] = { cells: 0 }; continue; }
-        const b1 = g.map(c => rel(c[model].msPerKill, c.R.msPerKill));
-        const big = g.filter(c => c.R.taken >= SMALL_DAMAGE * c.maxHp), small = g.filter(c => c.R.taken < SMALL_DAMAGE * c.maxHp);
-        const b2 = big.map(c => rel(c[model].taken, c.R.taken));
-        const ratio = g.filter(c => c.R.square > 0 && c[model].square > 0).map(c => c[model].square / c.R.square);
+        const b1 = g.map(c => rel(c[model].msPerKill, c[ref].msPerKill));
+        const big = g.filter(c => c[ref].taken >= SMALL_DAMAGE * c.maxHp), small = g.filter(c => c[ref].taken < SMALL_DAMAGE * c.maxHp);
+        const b2 = big.map(c => rel(c[model].taken, c[ref].taken));
+        const ratio = g.filter(c => c[ref].square > 0 && c[model].square > 0).map(c => c[model].square / c[ref].square);
         out[kind] = { cells: g.length, b1: { p50: pct(b1, 0.5), p90: pct(b1, 0.9) },
             b2: { cells: big.length, p50: pct(b2, 0.5), p90: pct(b2, 0.9), small: small.length,
-                smallWithin: small.filter(c => Math.abs(c[model].taken - c.R.taken) / c.maxHp <= 0.01).length },
+                smallWithin: small.filter(c => Math.abs(c[model].taken - c[ref].taken) / c.maxHp <= 0.01).length },
             b3: { cells: ratio.length, p50: pct(ratio, 0.5), p10: pct(ratio, 0.1), p90: pct(ratio, 0.9), absLnP90: pct(ratio.map(r => Math.abs(Math.log(r))), 0.9) },
-            b4: { actions: pct(g.map(c => c[model].actionsPerKill / c.R.actionsPerKill), 0.5), castsP50: pct(g.map(c => c.R.castsPerKill > 0 ? c[model].castsPerKill / c.R.castsPerKill : null), 0.5) },
+            b4: { actions: pct(g.map(c => c[model].actionsPerKill / c[ref].actionsPerKill), 0.5), castsP50: pct(g.map(c => c[ref].castsPerKill > 0 ? c[model].castsPerKill / c[ref].castsPerKill : null), 0.5) },
             cutCells: cells.filter(c => c.kind === kind && c[model]?.cut > 0).length };
     }
     return out;
+}
+
+// Close cells on the engagements the bot survived, by the cell's deaths per
+// engagement: the matchup fights on to the kill, the game's fight stops at the
+// death, so survivors are the fights that killed fast and took little and the
+// gap grows with the deaths.
+const DEATH_STRATA = [0, 0.05, 0.15, 0.3, Infinity];
+function strata(cells) {
+    return DEATH_STRATA.slice(0, -1).map((from, i) => {
+        const to = DEATH_STRATA[i + 1], g = cells.filter(c => c.kind === 'close' && c.R && c.R.died >= from && c.R.died < to);
+        return { from, to, ...bounds(g, 'fmS', 'RS').close };
+    });
 }
 
 // The matchup test's frozen sample: per key two admitted cells and one close,
@@ -317,6 +333,10 @@ function report(result) {
             console.log(`${model} ${kind} cells ${s.cells}: B1 time/kill p50 ${f(s.b1.p50)} p90 ${f(s.b1.p90)}; B2 damage/eng (${s.b2.cells} cells) p50 ${f(s.b2.p50)} p90 ${f(s.b2.p90)}, small ${s.b2.smallWithin}/${s.b2.small} within 0.01 maxHp; `
                 + `B3 E[D^2] ratio (${s.b3.cells}) p10 ${f(s.b3.p10)} p50 ${f(s.b3.p50)} p90 ${f(s.b3.p90)} |ln| p90 ${f(s.b3.absLnP90)}; B4 actions ratio p50 ${f(s.b4.actions)} casts ${f(s.b4.castsP50)}; cells with cut paths ${s.cutCells}`);
         }
+    }
+    for (const s of result.strata || []) {
+        console.log(`close survivors, died per engagement ${f(s.from)}-${f(s.to)}: cells ${s.cells}`
+            + (s.cells ? `; B1 p50 ${f(s.b1.p50)} p90 ${f(s.b1.p90)}; B2 (${s.b2.cells}) p50 ${f(s.b2.p50)} p90 ${f(s.b2.p90)}; B3 p50 ${f(s.b3.p50)}` : ''));
     }
     for (const c of cells) {
         const m = c.fm || {}, r = c.R || {};
@@ -352,7 +372,7 @@ function main(argv) {
                 cells.push(measureCell(c, spot, options));
             }
         } finally { Lift.lift(false); }
-        const result = { tableStamp: table.stamp, treeStamp: HuntTable.stamp(), counts, options, cells, bounds: { fm: bounds(cells, 'fm') }, ms: Date.now() - started };
+        const result = { tableStamp: table.stamp, treeStamp: HuntTable.stamp(), counts, options, cells, bounds: { fm: bounds(cells, 'fm'), fmS: bounds(cells, 'fmS', 'RS') }, strata: strata(cells), ms: Date.now() - started };
         if (arg('out')) fs.writeFileSync(arg('out'), JSON.stringify(result));
         if (arg('fixture')) fs.writeFileSync(arg('fixture'), JSON.stringify(fixture(result)));
         report(result);
