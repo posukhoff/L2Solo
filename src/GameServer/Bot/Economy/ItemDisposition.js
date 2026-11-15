@@ -264,7 +264,7 @@ function saleSlots(state, candidates) {
     return slots;
 }
 // The slots count items of selfId leave empty: a stack only when all of it goes, a
-// piece of gear one slot each (a sale's, saleSlots, and a destroy's, clearingRows).
+// piece of gear one slot each (a sale's, saleSlots).
 function freedSlots(state, selfId, count) {
     const row = state.inventory?.[selfId], stackable = row?.stackable ?? templateFor(selfId)?.etc?.stackable;
     return Array.isArray(row?.instances) || stackable === false ? count : count >= Number(row?.amount || 0) ? 1 : 0;
@@ -272,11 +272,17 @@ function freedSlots(state, selfId, count) {
 // The rows a full bag may destroy (BagClearing): the sale set, so every class a sale keeps
 // (worn, quest, reserved, kit stock, the personal and beginner shots, Adena) is kept here
 // too, each with the slots it frees and its nominal worth. A kind the last sale visit
-// could not place stays in: it is the first one a player destroys.
+// could not place stays in: it is the first one a player destroys. The slots are those the
+// destroy itself empties (RoundLoot.removeFrom: the row's named or unworn copies), so a
+// copy the sale counts but the destroy cannot take frees none.
 function clearingRows(state) {
-    return saleCandidates(state, { unlimited: true }).map(item => ({ selfId: item.selfId, enchant: item.enchant,
-        count: item.count, slots: freedSlots(state, item.selfId, item.count), value: item.price * item.count,
-        ...(item.objectIds ? { objectIds: item.objectIds } : {}) })).filter(row => row.slots > 0);
+    const { removeFrom } = invoke('GameServer/Bot/Population/RoundLoot');
+    return saleCandidates(state, { unlimited: true }).map(item => {
+        const row = { selfId: item.selfId, enchant: item.enchant, count: item.count, ...(item.objectIds ? { objectIds: item.objectIds } : {}) };
+        const held = { [item.selfId]: state.inventory?.[item.selfId] };
+        const slots = inventorySlotCount({ inventory: held }) - inventorySlotCount({ inventory: removeFrom(held, [row]) });
+        return { ...row, slots, value: item.price * item.count };
+    }).filter(row => row.slots > 0);
 }
 
 function npcOnlySlotCount(state = {}, candidates) {
