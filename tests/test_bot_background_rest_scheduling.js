@@ -425,6 +425,35 @@ try {
     const petExpected = Math.min(pet.maxHp, petHp(scripted[0]) + pet.revHp * (scripted[1].at - scripted[0].at) / tick);
     assert(Math.abs(petHp(scripted[1]) - petExpected) < 1e-6,
         `the pet regenerates between the fights (${petHp(scripted[1])} vs ${petExpected})`);
+
+    // A party round ends at the end of the fight that spends a member's last shot, as the
+    // solo round (its loot, exp and adena are rolled at the round's end: only the members'
+    // shots and bottles are read in it). The first member (its tank, who kills each mob
+    // here) fires one Spiritshot a cast.
+    const shooting = (shots) => pair(932).map((member, k) => k ? member : { ...member, exp: Number(invoke('GameServer/DataCache').experience[28]), inventory: {
+        6: { selfId: 6, name: 'Apprentice\'s Wand', amount: 1, equipped: true, slot: 7, stackable: false },
+        2509: { selfId: 2509, name: 'Spiritshot', amount: shots, stackable: true } },
+        stats: { ...member.stats, kitRates: [2509, 1, 1, 1061, 0, 1, -1, 1, 1], earning: { spotId: 'field', shotsPerHour: 100, potionsPerHour: 0 } } });
+    const partyRound = (members) => BackgroundPartyResolver.resolve({ party: { partyId: 'lines', cohesion: 0.7, risk: 0.2,
+        roleCoverage: { dps: 2 }, stats: {} }, members, spot: field, elapsedMs: 120_000, timestamp: at, rng: () => 0.5 });
+    const loaded = partyRound(shooting(1000)).memberResults[0].result, empty = partyRound(shooting(2)).memberResults[0].result;
+    assert(loaded.debug.wins > 2 && loaded.debug.shotActions > 2, `fixture: with shots to spare the party fights on (${loaded.debug.wins} wins, ${loaded.debug.shotActions} shots)`);
+    assert.strictEqual(empty.debug.shotActions, 2, 'the member fires its two shots');
+    assert(empty.debug.wins < loaded.debug.wins && empty.doneAt < at,
+        `the party round ends at the fight that spends its last shot (${empty.debug.wins} wins, ${loaded.debug.wins} with shots to spare)`);
+    assert.deepEqual([empty.debug.ended, loaded.debug.ended], ['shots_out', null], 'the party round names the crossing it ended at');
+    // A drop a member cannot pick up stays on the ground (C4 pickup on its own bag): two
+    // swords a kill into bags one slot short of their 80.
+    const Rolls = invoke('GameServer/Bot/Population/ColdKillRewards'), nativeRoll = Rolls.roll;
+    Rolls.roll = options => ({ ...nativeRoll(options), adena: 0,
+        loot: options.kills.map((kill, k) => ({ drops: [{ selfId: 1, name: 'Short Sword', amount: 2 }], owner: k % 2, spoil: [] })) });
+    let crowded;
+    try {
+        crowded = partyRound(pair(932).map(member => ({ ...member, inventory: { 1: { selfId: 1, name: 'Short Sword', amount: 79, stackable: false } } })));
+    } finally { Rolls.roll = nativeRoll; }
+    const swordsKept = crowded.memberResults.reduce((sum, { result }) => sum + result.materialize.items.filter(item => Number(item.selfId) === 1).length, 0);
+    assert(crowded.memberResults[0].result.debug.wins > 1, `fixture: the party kills (${crowded.memberResults[0].result.debug.wins} wins)`);
+    assert.strictEqual(swordsKept, 0, `no party drop past a member's bag slots (${swordsKept} kept)`);
 } finally {
     Cold.profileFor = originalProfile;
     Cold.fightProfile = originalFightProfile;
