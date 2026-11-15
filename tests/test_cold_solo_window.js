@@ -128,8 +128,9 @@ const roundsOf = state => state.stats.stepCount;
     }
 
     {
-        // A rest ends the window at the round that sat down.
-        const { kernel, step } = world({});
+        // A rest ends the window at the round that sat down (a level-16 field: a rest
+        // that runs past the round's end; one that ends inside it hunts on).
+        const { kernel, step } = world({ ground: fieldOf(16) });
         kernel.upsert({ state: await hunter() });
         const { state } = await step();
         assert.equal(state.activity, 'resting', 'the fights wore the bot out');
