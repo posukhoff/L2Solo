@@ -6,7 +6,6 @@ const CharacterLocationRuntime = require('../../World/CharacterLocationRuntime')
 const RefreshPartyMemberships = require('../../World/PartyMembershipPublication');
 const ShopPlaces = require('../Economy/ShopPlaces');
 const { isMainThread } = require('node:worker_threads');
-const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Database = invoke('Database');
 const { CLIENT_VISIBILITY_RADIUS } = invoke('GameServer/World/WorldConstants');
 const Metrics  = invoke('GameServer/Bot/Population/PopulationMetrics');
@@ -35,6 +34,7 @@ const BotEquipmentCompatibility = invoke('GameServer/Bot/AI/BotEquipmentCompatib
 const GearAcquisitionPlanner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner');
 const ColdCombatProfile = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const InventorySummary = invoke('GameServer/Bot/Population/InventorySummary');
+const RoundLoot = invoke('GameServer/Bot/Population/RoundLoot');
 const SpotRiskPolicy = invoke('GameServer/Bot/Population/SpotRiskPolicy');
 const WorldAreaCatalog = invoke('GameServer/World/WorldAreaCatalog');
 const ProgressionCap = invoke('GameServer/Progression/ProgressionCap');
@@ -262,20 +262,7 @@ function levelBand(level) {
 }
 
 
-function itemTemplate(selfId) {
-    return ItemTemplateIndex.find(DataCache.items, selfId) || null;
-}
-
-function itemName(selfId, fallback = '') {
-    return itemTemplate(selfId)?.template?.name || fallback || `Item ${selfId}`;
-}
-
-function itemStackable(selfId, item = {}) {
-    const template = itemTemplate(selfId);
-    if (template) return template.etc?.stackable === true;
-    if (typeof item.fetchStackable === 'function') return !!item.fetchStackable();
-    return item.stackable === true;
-}
+const { itemTemplate, itemName, itemStackable } = RoundLoot;
 
 function normalizeInventoryStackability(inventory = {}) {
     const normalizedInventory = Object.fromEntries(Object.entries(inventory || {}).map(([key, item]) => {
@@ -2877,7 +2864,7 @@ const BotLifeState = {
             route: result.debug?.route || state.stats?.route || null,
             ...(targetCombat ? { targetCombat } : {})
         };
-        const inventory = { ...(state.inventory || {}) };
+        let inventory = { ...(state.inventory || {}) };
         // ARCH-NOTE: the resolver already consumed authored summon materials
         // from its private combat inventory. Lifecycle normally rebuilds from
         // the input (shots/potions have separate counters), so carry only these
@@ -2897,41 +2884,7 @@ const BotLifeState = {
                 }
             }
         }
-        materializedItems.filter((item) => Number(item.selfId) !== 57).forEach((item) => {
-            const key = String(item.selfId);
-            const previous = inventory[key] || {};
-            const template = itemTemplate(item.selfId);
-            const amount = Number(item.amount || 0);
-            const kind = item.kind || previous.kind || template?.template?.kind || '';
-            const protectedStarterLoot = Number(item.sourceMobLevel || 0) > 0
-                && Number(item.sourceMobLevel) <= 5
-                && !String(kind).startsWith('Other.Material')
-                ? amount
-                : 0;
-            const nextAmount = Number(previous.amount || 0) + amount;
-            const starterMobLootAmount = Math.min(
-                nextAmount,
-                Number(previous.starterMobLootAmount || 0) + protectedStarterLoot
-            );
-            // Loot adds to the stack the bag holds: its worn copies, instances and
-            // reserves stay (a looted second dagger must not unequip the first).
-            const acquired = {
-                ...previous,
-                selfId: item.selfId,
-                name: item.name || previous.name || itemName(item.selfId),
-                amount: nextAmount,
-                kind,
-                rank: item.rank || previous.rank || template?.etc?.rank || 'none',
-                stackable: itemStackable(item.selfId, item),
-                slot: Number(previous.slot || template?.etc?.slot || 0),
-                ...(starterMobLootAmount > 0 ? { starterMobLootAmount } : {})
-            };
-            // Loot grows the bag without replacing its physical copies or worn
-            // slots. New gear gets anonymous +0 copies until the native sync.
-            if (acquired.stackable) delete acquired.instances;
-            else acquired.instances = previous.instances || [];
-            inventory[key] = InventorySummary.completeInstances(acquired);
-        });
+        inventory = RoundLoot.addTo(inventory, materializedItems);
         if (adena > 0) {
             inventory['57'] = {
                 selfId: 57,
