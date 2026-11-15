@@ -1,6 +1,7 @@
 const FailureLog = require('../../../FailureLog');
 const ClanMembershipPolicy = require('../../Clan/ClanMembershipPolicy');
 const LifeStateCache = require('./LifeStateCache');
+const ColdClock = require('./ColdClock');
 const CharacterLocationRuntime = require('../../World/CharacterLocationRuntime');
 const RefreshPartyMemberships = require('../../World/PartyMembershipPublication');
 const ShopPlaces = require('../Economy/ShopPlaces');
@@ -2313,8 +2314,9 @@ const BotLifeState = {
                     ...(craftState.timing || {}),
                     activityStartedAt: now(),
                     nextResolveAt: null,
-                    // The hot time is lived: the first cold step starts now.
-                    lastResolvedAt: now()
+                    // The hot time is lived: the first cold step starts now, or at
+                    // the end of a cold round that ran past the hand-over.
+                    lastResolvedAt: ColdClock.handedAt(craftState, now())
                 },
                 stats: { ...(craftState.stats || {}), ...membershipStats, pvpEnemies: BotEnemyMemory.snapshot(session), lastReason: reason },
                 inventory: InventorySummary.read(row.inventorySummary)
@@ -2332,8 +2334,9 @@ const BotLifeState = {
                 physicalLocation,
                 loc: preserved.loc,
                 nextResolveAt: now() + 30000 + Math.round(Math.random() * 90000),
-                // The hot time is lived: the first cold step's length starts now.
-                lastResolvedAt: now()
+                // The hot time is lived: the first cold step's length starts now,
+                // or at the end of a cold round that ran past the hand-over.
+                lastResolvedAt: ColdClock.handedAt(preserved, now())
             });
             const nextState = bodyTrip(session, preserved, merged, physicalLocation, now()) || merged;
             session.coldLifeState = nextState;
@@ -2857,7 +2860,7 @@ const BotLifeState = {
         if (patchedStats.travel && state.activity !== 'traveling'
             && (result.patch?.activity || state.activity) !== 'traveling') patchedStats.travel = null;
         // A hold that waits for an event names it (result.eventWait); any other
-        // round ends the wait (ColdSoloWindow.livedClock reads it).
+        // round ends the wait (ColdClock.since reads it).
         if (result.eventWait) patchedStats.eventWait = result.eventWait;
         else delete patchedStats.eventWait;
         const stats = {

@@ -246,7 +246,9 @@ const roundsOf = state => state.stats.stepCount;
         for (const lastResolvedAt of [window.timing.lastResolvedAt, at - 1000]) {
             kernel.upsert({ state: { ...window, timing: { lastResolvedAt, nextResolveAt: at }, simulation: { revision: revision += 10 } } });
             const { state: woken } = await step(at);
-            assert.equal(woken.timing.lastResolvedAt, end, 'the bot\'s clock never runs back');
+            // The round starts at the clock's end and credits nothing before it; its
+            // first action may end a moment past it.
+            assert(woken.timing.lastResolvedAt >= end, `the bot's clock never runs back (${woken.timing.lastResolvedAt - end} ms past it)`);
             assert.equal(roundsOf(woken), roundsOf(window) + 1, 'a wake earns one round, no window');
         }
     }
