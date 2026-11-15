@@ -83,7 +83,7 @@ assert.equal(Supply.shadow(out, field()).differ, null);
 // worth nothing bare, and with a long road the formula goes there all the same
 // (the bag never fills bare: its loss is the whole outing).
 const row = (spotId, exp, adena, extra = {}) => ({ spotId, kills: 10, exp, adena, shots: 30, dropLoot: 50, spoilLoot: 0, loot: 50, potions: 0, busyShare: 1, deaths: 0, ...extra });
-const near = row('s1', 100, 200, { deaths: 0.1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } }), far = row('s2', 150, 100);
+const near = row('s1', 100, 200, { deaths: 0.1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } }), far = row('s2', 60, 100);
 const drops = { town: 'TownA', drop: { 57: 10, [DROP]: 0.5 }, spoil: {} };
 const view = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 100], hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } } },
     kits: { 9: { 1: [] } }, yields: { 's1@1': drops, 's2@1': drops }, items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
@@ -91,12 +91,12 @@ const view = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 100], hours: {
 const main = { line: 9, level: 1, spot: null, shots: {}, bag: {} };
 const kit = deaths => ({ bare: { kills: 1, deaths }, shots: { kills: 1, deaths }, blessed: { kills: 1, deaths } });
 const persona = { primaryDrive: 'progression', traits: { caution: 0 } };
-// Exp 100 of the best 150 and income 250 (200 adena + 50 drop) of the best 250, half each; a death costs 15 exp of 150
+// Exp 100 of the best 100 and income 250 (200 adena + 50 drop) of the best 250, half each; a death costs 15 exp of 100
 // and the way back from its respawn town (0.3 h), no respawn wait (the row's death rate holds it).
 const way = { wayBackHours: 0.3 };
-const risk = 0.1 * (0.3 + 15 / 150);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, way) - (100 / 150 * 0.5 + 0.5 - risk)) < 1e-9);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, { ...way, withoutDrop: true }) - (100 / 150 * 0.5 + 200 / 250 * 0.5 - risk)) < 1e-9);
+const risk = 0.1 * (0.3 + 15 / 100);
+assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, way) - (100 / 100 * 0.5 + 0.5 - risk)) < 1e-9);
+assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, { ...way, withoutDrop: true }) - (100 / 100 * 0.5 + 200 / 250 * 0.5 - risk)) < 1e-9);
 assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, way) - Value.hourValue(view, main, 'shots', kit(2), persona, way) - risk) < 1e-9);
 assert.equal(Value.hourValue(view, main, 'bare', kit(1), persona, way), 0);
 // A wealth-driven, cautious-free persona weighs money above exp.
@@ -152,12 +152,14 @@ assert.throws(() => Attention.push(twice, { kind: 'rumour', who: 7, at: 1 }), /n
 // bare), line 10 hunts s3 (exp only: no adena, no drop, nothing bare). Both spots' town is TownA: 0.2 h to it, 0.3 h back.
 const Plane = require('../scripts/economy-model/design/plane');
 const quiet = row('s3', 100, 0, { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 }, dropLoot: 0, loot: 0 });
+// Line 10's other candidate, s2, is worth less to it than s3 (nothing bare either).
+const dull = row('s2', 10, 100, { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } });
 const world = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] }, 10: { 1: [] } },
-    hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 10: { 1: { classId: 10, shotId: SHOT, best: quiet, top: [quiet, far] } } },
+    hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 10: { 1: { classId: 10, shotId: SHOT, best: quiet, top: [quiet, dull] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's3@1': { town: 'TownA', drop: {}, spoil: {} } },
     items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-    tripHours: { to: { s1: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 }, 10: { slots: 80, maxLoad: 1e6 } } });
+    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 }, 10: { slots: 80, maxLoad: 1e6 } } });
 const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, exp: 0, money: 0, spot: null, shots: {}, held: [], worn: {},
     persona: { primaryDrive: 'progression', traits: { caution: 0.5, commitment: 0.5 } }, ...over });
 // The kit's factors (the reference kit's: 1), deaths times dies.
@@ -209,8 +211,9 @@ for (const supply of ['table', 'formula']) {
     const broke = run(freshBot(10, { shots: { [SHOT]: 60 } }), supply, 10);
     assert.equal(broke.visits.length, 1, `${supply}: it never goes to town`);
     assert.equal(broke.result.counters.stuckNoBareHour, 1, `${supply}: stuck once`);
-    // a death puts the bot in its respawn town where the town chain runs; the death fact alone moves no money
-    const dying = run(freshBot(9, { shots: { [SHOT]: 60 }, money: 1000 }), supply, 3, 40);
+    // a death puts the bot in its respawn town where the town chain runs; the death fact alone moves no money (s1 its
+    // only row: it would not hold a spot that kills it so often where a safe one is)
+    const dying = run(freshBot(9, { shots: { [SHOT]: 60 }, money: 1000 }), supply, 3, 40, { ...world, hours: { ...world.hours, 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near] } } } });
     const death = dying.visits.find(visit => visit.info.died);
     assert.ok(death && death.delta.towns[0] === 'TownA' && close(death.afterHours, 0.3), `${supply}: the respawn town runs the town chain and walks back`);
     assert.equal(death.main.money - death.before.money, death.delta.flows.npcSales + death.delta.flows.npcBuys, `${supply}: only the town chain moves money`);
@@ -245,7 +248,7 @@ for (const supply of ['table', 'formula']) {
 // A bot stuck out of shots is counted once: its death and respawn visit change neither its shots, its money nor its bag.
 // Its bare hour carries no deaths of its own (the game spot table's shape), so it dies at the row's.
 const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0 }, dropLoot: 0, loot: 0 });
-const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, far] } } } };
+const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, { ...dull, deaths: 1 }] } } } };
 const stuckDying = run(freshBot(10, { shots: { [SHOT]: 20 } }), 'table', 10, 2, mortalWorld);
 assert.ok(stuckDying.visits.filter(visit => visit.info.died && visit.before.shots[SHOT] === 0).length >= 3, 'the stuck bot dies and respawns several times after it stands');
 assert.equal(stuckDying.result.counters.stuckNoBareHour, 1, 'stuck once for the one run-out');
@@ -261,11 +264,11 @@ for (const supply of ['table', 'formula']) {
 }
 assert.equal(Supply.stuck({ ...field({ wallet: 0, fightsBare: false }), need: { ...field().need, held: 5 } }), false, 'a bot that holds shots is not stuck');
 
-// The held spot is the line's best row in the form the bot can hunt: line 9's best row s1 kills nothing without shots, its
+// The held spot is the bot's best row in the form it can hunt: line 9's best row s1 kills nothing without shots, its
 // bare best is s2. A bot born holding none of its shots holds s2 and hunts there bare; after the town chain that bought shots
 // it holds s1 (the chain's end takes the held spot again).
 // bareBest is an hour row of the shape the extract writes: the spot's hour with shots at the top level (shots 30), the bare reading in shotless.
-const farBare = row('s2', 150, 100, { shotless: { kills: 10, exp: 60, adena: 40, dropLoot: 20, loot: 20, deaths: 0 } });
+const farBare = row('s2', 60, 100, { shotless: { kills: 10, exp: 60, adena: 40, dropLoot: 20, loot: 20, deaths: 0 } });
 const bareWorld = { ...world, tripHours: { to: { ...world.tripHours.to, s2: 0.2 }, back: { ...world.tripHours.back, s2: { TownA: 0.3 } } }, hours: { ...world.hours, 9: { 1: { classId: 9, shotId: SHOT, best: near, bareBest: farBare, top: [near, far] } } } };
 for (const supply of ['table', 'formula']) {
     const poor = run(freshBot(9), supply, 4, 0, bareWorld);
@@ -328,6 +331,24 @@ const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, ex
     const bareBefore = run(freshBot(9, { shots: {}, money: 1 }), 'table', 4, 0, classWorld(1835));
     assert.ok(bareBefore.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(bareBefore.visits.filter(visit => !visit.info.born).length, 0, 'a main that held none before the level goes nowhere at it');
+}
+
+// The held spot is the one worth most to the bot by its persona's weights (exp against money, less its death risk), not
+// the most income: line 9 at level 1 has sE (exp 200, 20 adena an hour) and sM (exp 50, 300 adena; the line's best by
+// income). A bot driven by progression and cautious (money weight 1/3) holds sE; one driven by wealth (2/3) holds sM.
+{
+    const keen = row('sE', 200, 20), rich = row('sM', 50, 300);
+    const choice = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+        hours: { 9: { 1: { classId: 9, shotId: SHOT, best: rich, top: [rich, keen] } } }, yields: { 'sE@1': drops, 'sM@1': drops },
+        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+        tripHours: { to: { sE: 0.2, sM: 0.2 }, back: { sE: { TownA: 0.3 }, sM: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+    const levelling = { primaryDrive: 'progression', traits: { caution: 1 } }, earning = { primaryDrive: 'wealth', traits: { caution: 0 } };
+    assert.deepEqual([Value.moneyWeight(levelling), Value.moneyWeight(earning)].map(weight => weight.toFixed(3)), ['0.333', '0.667']);
+    for (const supply of ['table', 'formula']) {
+        const heldBy = persona => run(freshBot(9, { shots: { [SHOT]: 60 }, persona }), supply, 1, 0, choice).visits[0].main.spot;
+        assert.deepEqual([heldBy(levelling), heldBy(earning)], ['sE', 'sM'], `${supply}: two personas hold different spots on the same line and level`);
+    }
 }
 
 // The run report (finish().design): trips, road hours and wall hours are counted at levels 1-19 and 20+ apart, an empty trip is
@@ -478,9 +499,8 @@ for (const supply of ['table', 'formula']) {
         items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SPIRIT]: { kind: 'Other.Shot', npcBuy: 2 } },
         npcOffers: { preset: { [SPIRIT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
         tripHours: { to: { '-12_43': 0.2 }, back: { '-12_43': { TownA: 0.3 } } }, bags: { 51: { slots: 80, maxLoad: 1e6 }, 12: { slots: 80, maxLoad: 1e6 } } };
-    // The walk the game's rule gives at the spot: the measured walk a kill, so one species reads its measured kills.
     const read = (over = {}) => Run.tableHours({ snapshot, file, name: 'test table', lines: ['51', '12'], keyOf: line => (line === '51' ? '49' : '10'),
-        spoilLevelOf: () => 0, gapFactor: () => 1, walkMs: (density, runSpd, area, reach) => (density === 10 && runSpd === 121.2 && area === 488157 && reach === 40 ? 581 : NaN), ...over });
+        spoilLevelOf: () => 0, gapFactor: () => 1, ...over });
     assert.throws(() => read({ file: { ...file, stamp: 'other' } }), /hunt table test table: stamp other, but the snapshot was built with hunt-1-1-abc\.json \(stamp abc\)/, 'another table stamp is refused by name');
     assert.throws(() => read({ file: { ...file, range: [1, 2] } }), /hunt table test table: levels 1-2, but the snapshot was built with hunt-1-1-abc\.json \(levels 1-1\)/, 'another level range is refused by name');
     const { cut, ...onlyGremlin } = file.spots;
@@ -491,10 +511,10 @@ for (const supply of ['table', 'formula']) {
     assert.equal(snapshot.hours[51][1].best, null, 'the snapshot\'s hours are not edited');
     assert.equal(table.hours[51][2], snapshot.hours[51][2], 'above the table\'s range the game\'s row stays');
     const orcHour = table.hours[51][1], humanHour = table.hours[12][1];
-    assert.deepEqual([orcHour.best.spotId, orcHour.bareBest.spotId, orcHour.top.map(held => held.spotId)], ['-12_43', '-12_43', ['-12_43']]);
-    assert.equal(humanHour.bareBest.spotId, '-12_43');
+    assert.deepEqual([orcHour.top.map(held => held.spotId), orcHour.bareTop.map(held => held.spotId)], [['-12_43'], ['-12_43']], 'the candidates per form: the cut spot is none');
+    assert.deepEqual(humanHour.bareTop.map(held => held.spotId), ['-12_43']);
+    assert.equal(orcHour.best, undefined, 'no line-wide best: each bot ranks the candidates by its own hour value');
     const tableView = Engine.viewOf({ ...snapshot, hours: table.hours });
-    // Its walk is 0.581 s a kill at the human's spot, 0.8434 at the orc's: the orc's spot reads the human's walk.
     // The game's kit readers: no factor at the table's levels, and the game's shot scale has no row there (null).
     const kitsOf = { spotFactors: () => assert.fail('the table\'s levels read no game kit factor'), shotScale: () => null, stats: { spotUnstated: 0 } };
     const creation = { range: [1, 1], creation: () => ({}) };
@@ -507,7 +527,7 @@ for (const supply of ['table', 'formula']) {
         const result = Engine.simulate({ view: tableView, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3, plane: seen });
         assert.equal(visits[0].main.spot, '-12_43', `line ${line} holds the gremlin spot`);
         const main = { ...visits[0].main, shots: {} }, hunted = Engine.hunt(main, tableView, 1, () => 0.5, null).delta;
-        const kills = 3600 / (cell[2] + cell[3] + cell[4] + 0.581 / cell[9]);
+        const kills = 3600 / (cell[2] + cell[3] + cell[4] + cell[5]);
         assert.ok(Math.abs(hunted.exp - kills * 29) < 1e-6, `line ${line} hunts bare at its cell's kills (${hunted.exp / 29} vs ${kills})`);
         assert.equal(result.design.offGrid, 0, 'the creation kit is the measured point');
         firedBy[`${line}:${Object.keys(spiritshots).length}`] = held.firing(visits[0].main)?.perHour || 0;
@@ -519,8 +539,8 @@ for (const supply of ['table', 'formula']) {
     assert.equal(diedBy['12:1'], 0, 'firing its spiritshots it dies at its shots hour\'s (none)');
     const shotsKills = 3600 / (6.632 + 11.18 + 5.69 + 0.581);
     assert.ok(Math.abs(firedBy['12:1'] - shotsKills * 1.027) < 1e-9, `the human mystic with spiritshots fires its shots cell's count (${firedBy['12:1']})`);
-    assert.ok(Math.abs(humanHour.bareBest.shotless.deaths - 3600 / (7.039 + 15.59 + 10.6 + 0.581) * 0.02) < 1e-9, 'the bare hour carries the bare cell\'s own deaths');
-    assert.equal(humanHour.bareBest.deaths, 0, 'the shots hour its own (none)');
+    assert.ok(Math.abs(humanHour.bareTop[0].shotless.deaths - 3600 / (7.039 + 15.59 + 10.6 + 0.581) * 0.02) < 1e-9, 'the bare hour carries the bare cell\'s own deaths');
+    assert.equal(humanHour.bareTop[0].deaths, 0, 'the shots hour its own (none)');
     // The creation kit is the measured point: a main wearing exactly it (non-empty) is on the grid, one wearing another piece is counted off it.
     {
         const worn = Engine.viewOf({ ...snapshot, hours: table.hours, kits: { 51: { 1: [{ slot: 6, selfId: 1001 }] }, 12: { 1: [] } }, items: { ...snapshot.items, 1001: { kind: 'Armor.Chest', npcBuy: 1 } } });
