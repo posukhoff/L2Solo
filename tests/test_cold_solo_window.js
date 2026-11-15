@@ -168,6 +168,22 @@ const roundsOf = state => state.stats.stepCount;
     }
 
     {
+        // A round ended early by its level moved the bot's clock to its kill: the window
+        // counts it as no stalled round even when its next due falls before the round's
+        // own bound (a long first round whose first kill gains the level).
+        const next = Number(Data.experience[18]), rounds = [];
+        const { kernel, step } = world({ ground: earning, onSolo: (options, result) => rounds.push({ timestamp: options.timestamp, result }) });
+        kernel.upsert({ state: await hunter({ exp: next - 1, timing: { lastResolvedAt: T - 120000, nextResolveAt: T } }) });
+        const { state } = await step();
+        assert.equal(state.level, 19);
+        const first = rounds[0];
+        assert(first.result.doneAt < first.timestamp && Math.ceil(first.result.nextResolveAt) <= first.timestamp,
+            `fixture: the levelling round's next due falls before its bound (${first.timestamp - first.result.nextResolveAt} ms)`);
+        assert(!kernel.soloWindowStats.ended.stalled && roundsOf(state) > 1,
+            `the window runs on past it, not stalled (${roundsOf(state)} rounds, stalled ${kernel.soloWindowStats.ended.stalled})`);
+    }
+
+    {
         // C4: a level up fills HP and MP to the new level's maxima (hot LevelUp); the round
         // ends at the kill that reached it.
         const next = Number(Data.experience[18]);
