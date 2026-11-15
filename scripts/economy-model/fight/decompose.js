@@ -214,10 +214,11 @@ function summarize({ sum, rec }, hours) {
 
 // The fight on expected values from (hp, mp): bot actions by the game's class
 // policy with cooldowns and MP, expected hit, action delay; mob actions at their
-// mean per action and pace (ColdMobAction.actionMix).
+// mean per action and pace (ColdMobAction.actionMix); the damage taken over the
+// path, and its second moment from the mob's actions alone.
 function meanPathFight(p, view, fp, hp, mp) {
     const shot = p.shot || null, mix = CMA.actionMix(view, { profile: p }, 0);
-    let t = 0, botAt = 0, mobAt = CCP.openingMs(p, view), mobHp = view.maxHp, actions = 0, casts = 0;
+    let t = 0, botAt = 0, mobAt = CCP.openingMs(p, view), mobHp = view.maxHp, actions = 0, casts = 0, mobActions = 0;
     const cooldowns = {};
     while (mobHp > 0 && actions < MEAN_PATH_ACTIONS) {
         if (botAt <= mobAt) {
@@ -229,10 +230,11 @@ function meanPathFight(p, view, fp, hp, mp) {
             if (skill) { mp = Math.max(0, mp - Number(skill.mp || 0)); cooldowns[skill.selfId] = START + t + Number(skill.reuse || 0); casts += 1; }
             botAt += CCP.actionDelayMs(fp, skill, CCP.actionShot(shot, skill)?.spiritshot === true);
             mobHp -= Math.max(0.01, dmg);
-        } else { t = mobAt; hp -= mix.perAction; mobAt += mix.actionMs; }
+        } else { t = mobAt; hp -= mix.perAction; mobActions += 1; mobAt += mix.actionMs; }
     }
-    const pull = Math.max(1, Number(view.pull) || 1);
-    return { fight: mobHp > 0 ? null : Math.max(t, botAt) / 1000 / pull, castsPerKill: casts / pull, actionsPerKill: actions / pull };
+    const pull = Math.max(1, Number(view.pull) || 1), taken = mobActions * mix.perAction;
+    return { fight: mobHp > 0 ? null : Math.max(t, botAt) / 1000 / pull, castsPerKill: casts / pull, actionsPerKill: actions / pull,
+        taken, takenSquare: taken ** 2 + mobActions * (mix.squarePerAction - mix.perAction ** 2) };
 }
 
 // The terms per cell (s per kill unless named a count): what the mean path
