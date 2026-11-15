@@ -196,6 +196,13 @@ const roundsOf = state => state.stats.stepCount;
         assert.equal(up.level, 19);
         assert.deepEqual([up.vitals.hp, up.vitals.mp], [up.vitals.maxHp, up.vitals.maxMp], 'HP and MP are full at the level up');
         assert.deepEqual([up.vitals.maxHp, up.vitals.maxMp], [max.maxHp, max.maxMp], 'to the new level\'s maxima');
+        // A body that levelled and then died in the round lies dead at the MP it died with,
+        // and gets up at that MP, not refilled by the level.
+        const died = { ...result, patch: { ...result.patch, activity: 'dead', vitals: { ...result.patch.vitals, hp: 0, mp: 1 } } };
+        const dead = await Life.prepareResolve(worn, died, { timestamp: T, persist: false, projectClassProgression: true });
+        assert.deepEqual([dead.level, dead.activity, dead.vitals.hp, dead.vitals.mp], [19, 'dead', 0, 1], 'dead at the MP it died with');
+        const risen = Resolver.resolveDeathRecovery(dead, T + 3600000);
+        assert.strictEqual(risen.patch.vitals.mp, 1, `it gets up at that MP (${risen.patch.vitals.mp} of ${max.maxMp})`);
     }
 
     {
