@@ -167,22 +167,6 @@ function petRestMs(profile, summon, vitals, at) {
     return Math.min(lives, regen > 0 ? missing / regen * Formulas.REGEN_TICK_MS : lives);
 }
 
-function applyStandingRegen(state, sourceVitals, elapsedMs, timestamp = Date.now()) {
-    const combat = botCombatStats(state, timestamp);
-    const vitals = {
-        hp: Math.max(0, Number(sourceVitals?.hp ?? combat.maxHp)),
-        maxHp: combat.maxHp,
-        mp: Math.max(0, Number(sourceVitals?.mp ?? combat.maxMp)),
-        maxMp: combat.maxMp
-    };
-    // C4 regeneration continues on the bot's feet (x1.1, its standing passives).
-    const standing = coldRestRegenPerTick(state, { profile: combat, standing: true, timestamp });
-    const ticks = Math.max(0, Number(elapsedMs) || 0) / Formulas.REGEN_TICK_MS;
-    vitals.hp = Math.min(vitals.maxHp, vitals.hp + standing.hp * ticks);
-    vitals.mp = Math.min(vitals.maxMp, vitals.mp + standing.mp * ticks);
-    return vitals;
-}
-
 // The rest a solo cold bot sits down to (RestPolicy.restOver, the hot rest's rule):
 // to its rested line; one its next fight sent it to when it was already rested
 // (refused at its line) goes on to a full bar, HP and MP.
@@ -2585,7 +2569,6 @@ const BackgroundResolver = {
     petViewForState,
     // A solo bot's own buffs before a fight: the offline hunt model prices their casting time.
     castSoloBuffs,
-    applyStandingRegen,
     prepareRaidParty,
     castHuntPartyBuffs,
     effectiveSkillPower,

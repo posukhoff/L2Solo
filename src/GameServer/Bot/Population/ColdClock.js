@@ -8,7 +8,8 @@
 // Callers: the kernel's steps (regular, command, party, window rounds) and main's
 // cold steps (PopulationService), every hand-over that writes the clock (hot,
 // a PvP encounter, a party conflict), the solo round and the rest step
-// (BackgroundResolver). Hot is not a caller: a hot body lives in real time.
+// (BackgroundResolver), the party round, raids and party rests
+// (BackgroundPartyResolver). Hot is not a caller: a hot body lives in real time.
 // Pure: plain state in, numbers out.
 
 const Formulas = invoke('GameServer/Formulas');
@@ -38,10 +39,12 @@ function stepAt(state, now) {
     return Math.ceil(Math.max(Number(now) || 0, own(state)));
 }
 
-// The step's credited span: the time since its start, none when the step lies
-// at or before it. The only producer of a cold round's elapsedMs.
-function elapsedMs(state, timestamp) {
-    return Math.max(0, timestamp - since(state, timestamp));
+// A step woken at now: the moment it resolves at (stepAt) and its credited span,
+// the time since its start (none when it lies at or before it). The only
+// producer of a cold round's timestamp and elapsedMs.
+function step(state, now) {
+    const timestamp = stepAt(state, now);
+    return { timestamp, elapsedMs: Math.max(0, timestamp - since(state, timestamp)) };
 }
 
 // The clock a hand-over writes at `at`: the clock never moves back, so time a
@@ -71,15 +74,17 @@ function petHealed(stats, ms, profile) {
     return { ...stats, coldCombat: { ...stats.coldCombat, summon: { ...summon, hp } } };
 }
 
+// Vitals after ms at a rate (per regen tick), capped at the bars.
+function filled(vitals, ms, rate) {
+    const ticks = Math.max(0, Number(ms) || 0) / Formulas.REGEN_TICK_MS;
+    return { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + rate.hp * ticks), mp: Math.min(vitals.maxMp, vitals.mp + rate.mp * ticks) };
+}
+
 // Regeneration over a span at a rate (per regen tick), the pet's with it.
 // body: { vitals, stats }; returns a new body (stats replaced only when the pet heals).
 function regen(body, ms, rate, profile) {
     if (!(ms > 0)) return body;
-    const ticks = ms / Formulas.REGEN_TICK_MS, vitals = body.vitals;
-    return {
-        vitals: { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + rate.hp * ticks), mp: Math.min(vitals.maxMp, vitals.mp + rate.mp * ticks) },
-        stats: petHealed(body.stats, ms, profile)
-    };
+    return { vitals: filled(body.vitals, ms, rate), stats: petHealed(body.stats, ms, profile) };
 }
 
 // A rest's regeneration over ms from at: seated, or standing when that refills
@@ -90,12 +95,7 @@ function seated(state, body, ms, at, profile, options = {}) {
     const vitals = body.vitals;
     const rate = restRegenPerTick({ ...state, vitals, stats: body.stats }, vitals.maxHp - vitals.hp, vitals.maxMp - vitals.mp,
         { profile, timestamp: at, ...options });
-    const ticks = Math.max(0, Number(ms) || 0) / Formulas.REGEN_TICK_MS;
-    return {
-        vitals: { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + rate.hp * ticks), mp: Math.min(vitals.maxMp, vitals.mp + rate.mp * ticks) },
-        stats: petHealed(body.stats, ms, profile),
-        regen: rate
-    };
+    return { vitals: filled(vitals, ms, rate), stats: petHealed(body.stats, ms, profile), regen: rate };
 }
 
 // A round's clock from where it starts: its moment, the time it acted (fights,
@@ -113,19 +113,56 @@ function advance(clock, body, ms, posture, roundRates) {
     return regen(body, ms, posture === 'moving' ? roundRates.moving : roundRates.standing, roundRates.profile);
 }
 
-// The bot sits at the clock's moment for needMs (the rest it needs, read at the
-// sit), seated up to the round's bound. A rest that ends by the bound stands it up
+// A party acts together for ms: one clock, each living member regenerating at its
+// own rates (ratesById: characterId -> rates; a member without rates does not).
+// Returns the new members.
+function advanceAll(clock, members, ms, posture, ratesById) {
+    clock.at += ms;
+    clock.activeMs += ms;
+    return members.map((member) => {
+        const memberRates = ratesById.get(member.characterId);
+        if (!memberRates || !(Number(member.vitals?.hp) > 0)) return member;
+        return { ...member, ...regen({ vitals: member.vitals, stats: member.stats }, ms,
+            posture === 'moving' ? memberRates.moving : memberRates.standing, memberRates.profile) };
+    });
+}
+
+// The span a sit at the clock's moment lasts inside the round's bound, and its end.
+function seatSpan(clock, needMs, bound) {
+    const end = clock.at + needMs;
+    return { end, sat: Math.max(0, Math.min(end, bound) - clock.at) };
+}
+
+// A sat rest's end on the clock: one that ends by the bound stands the bot up
 // there (up: true, the clock at the rest's end); past it the bot rests on to
 // restUntil (the rest step goes on from the round's end), the clock at the sit.
-function sit(clock, body, needMs, bound, state, roundRates, options = {}) {
-    const end = clock.at + needMs;
-    const sat = Math.max(0, Math.min(end, bound) - clock.at);
-    const rested = seated(state, body, sat, clock.at, roundRates.profile, options);
+function rise(clock, end, sat, bound) {
     clock.seatedMs += sat;
-    const restedBody = { vitals: rested.vitals, stats: rested.stats };
-    if (end > bound) return { body: restedBody, up: false, restUntil: Math.ceil(end) };
+    if (end > bound) return { up: false, restUntil: Math.ceil(end) };
     clock.at = end;
-    return { body: restedBody, up: true };
+    return { up: true };
+}
+
+// The bot sits at the clock's moment for needMs (the rest it needs, read at the
+// sit), seated up to the round's bound (rise). Returns { body, up, restUntil }.
+function sit(clock, body, needMs, bound, state, roundRates, options = {}) {
+    const { end, sat } = seatSpan(clock, needMs, bound);
+    const rested = seated(state, body, sat, clock.at, roundRates.profile, options);
+    return { body: { vitals: rested.vitals, stats: rested.stats }, ...rise(clock, end, sat, bound) };
+}
+
+// A party sits together at the clock's moment for needMs (its slowest member's
+// rest, read by the caller), each living member seated at its own rate.
+// Returns { members, up, restUntil }.
+function sitAll(clock, members, needMs, bound, ratesById, options = {}) {
+    const { end, sat } = seatSpan(clock, needMs, bound);
+    const rested = members.map((member) => {
+        const memberRates = ratesById.get(member.characterId);
+        if (!memberRates || !(Number(member.vitals?.hp) > 0)) return member;
+        const body = seated(member, { vitals: member.vitals, stats: member.stats }, sat, clock.at, memberRates.profile, options);
+        return { ...member, vitals: body.vitals, stats: body.stats };
+    });
+    return { members: rested, ...rise(clock, end, sat, bound) };
 }
 
 // The round's end: its bound, or its last action's end when that runs past it.
@@ -133,4 +170,4 @@ function end(clock, bound) {
     return Math.max(bound, clock.at);
 }
 
-module.exports = { own, since, stepAt, elapsedMs, handedAt, rates, regen, seated, open, advance, sit, end };
+module.exports = { since, step, handedAt, rates, regen, seated, open, advance, advanceAll, sit, sitAll, end };
