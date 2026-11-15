@@ -2881,7 +2881,7 @@ const BackgroundResolver = {
         // the drops kept so far (RoundLoot.addTo, the step's own merge).
         const held = () => materialize.items.length ? RoundLoot.addTo(patch.inventory || state.inventory, materialize.items)
             : patch.inventory || state.inventory;
-        // C4 pickup (PickupCapacity.fits, the rule a body near a player picks up by): a drop
+        // C4 pickup (PickupCapacity.refusal, the rule a body near a player picks up by): a drop
         // past the running bag's slots or carrying load stays on the ground.
         let slotLimit = null, refused = 0;
         const keep = (loot) => {
@@ -2892,7 +2892,7 @@ const BackgroundResolver = {
                 const drop = { stackable: RoundLoot.itemStackable(item.selfId, item), amount: Number(item.amount || 0),
                     mass: Math.max(0, Number(RoundLoot.itemTemplate(item.selfId)?.template?.mass ?? item.mass ?? 0)) };
                 const has = Number(bag[item.selfId]?.amount) > 0 || kept.some(other => Number(other.selfId) === Number(item.selfId));
-                if (PickupCapacity.fits({ ...counts, limit: slotLimit, maxLoad: roundProfile.maxLoad, held: has }, drop)) {
+                if (PickupCapacity.refusal({ ...counts, limit: slotLimit, maxLoad: roundProfile.maxLoad, held: has }, drop)) {
                     refused += 1;
                     continue;
                 }
