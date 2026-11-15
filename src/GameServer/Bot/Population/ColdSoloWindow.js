@@ -64,6 +64,12 @@ function endOf(before, after, result, readers) {
     return readers.kind(after) !== 'resolver' ? 'command' : '';
 }
 
+// The window's next due: a decision its last round woke is taken where that round
+// ended (huntedThrough), not a hunt cycle later; else the round's own due.
+function dueAt(ended, after) {
+    return ended === 'event' && Number(after.stats?.huntedThrough) > 0 ? Number(after.stats.huntedThrough) : after.timing?.nextResolveAt;
+}
+
 // A window's debug for main: the rounds' numbers summed over the last round's fields.
 function sumDebug(total, debug = {}) {
     const sum = { ...debug };
@@ -71,4 +77,4 @@ function sumDebug(total, debug = {}) {
     return sum;
 }
 
-module.exports = { opens, huntingRound, endOf, sumDebug };
+module.exports = { opens, huntingRound, endOf, dueAt, sumDebug };
