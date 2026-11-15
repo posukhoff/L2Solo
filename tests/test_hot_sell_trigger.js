@@ -55,6 +55,7 @@ try {
 // slots from its live bag as a player destroys items (unworn copies only, up to the count)
 // and hunts on: no town trip starts.
 {
+    const FailureLog = require('../src/FailureLog');
     const Events = invoke('GameServer/Bot/AI/DecisionEvents'), TownTravel = invoke('GameServer/Bot/AI/BotTownTravel');
     const trips = [], request = TownTravel.request, held = Events.held, huntedOn = Error('hunted_on');
     TownTravel.request = (_session, _bot, _ai, reason) => { trips.push(reason); return 'escape'; };
@@ -80,6 +81,7 @@ try {
     } finally { TownTravel.request = request; Events.held = held; }
     assert.deepStrictEqual(deleted, [[8810000, 1], [8810001, 1], [8810002, 1]],
         'the cleared slots are destroyed: the worn copy and the enchanted one stay, a copy the bag lost is skipped');
+    assert.strictEqual(FailureLog.snapshot()?.['ai.bag_clear_missing'], 1, 'the row the bag lost is counted');
     assert.deepStrictEqual(trips, [], 'no town trip starts');
     assert.strictEqual(session.coldLifeState.stats.bagClear, null, 'the clearing is spent');
 }
