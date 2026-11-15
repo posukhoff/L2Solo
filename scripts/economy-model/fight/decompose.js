@@ -275,7 +275,6 @@ function main(argv) {
     const hours = Number(arg('hours') || 2), nAdm = Number(arg('adm') || 40), nClose = Number(arg('close') || 20);
     const catalogue = arg('catalogue'), rowsFile = arg('rows');
     if (!catalogue || !rowsFile) throw new Error('decompose: --rows <est rows json> and --catalogue <catalogue json> are required');
-    process.env.TZ = 'UTC';
     Generator.loadSimulation(catalogue);
     const profiles = new Map(JSON.parse(fs.readFileSync(catalogue, 'utf8')).profiles.map(spot => [String(spot.id), spot]));
     const rows = JSON.parse(fs.readFileSync(rowsFile, 'utf8')).rows.filter(r => r.cell[0] > 0);

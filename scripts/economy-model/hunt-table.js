@@ -411,12 +411,7 @@ function summary({ table, whole, results, limit, log }) {
     return check;
 }
 
-// The hunts read the game clock (GameTime.isNight) at fixed timestamps, and
-// the game day counts from local midnight: every build, its children too, runs
-// in UTC (as the tables workflow), so a table is one in every zone and its
-// stamp needs no zone (a library caller keeps its own).
 if (require.main === module) {
-    process.env.TZ = 'UTC';
     const argv = process.argv.slice(2);
     if (argv[0] === 'child') {
         runChild(argv.slice(1));
@@ -424,7 +419,12 @@ if (require.main === module) {
     }
     const [from, to] = String(Boot.option(argv, 'levels', '1-19')).split('-').map(Number);
     const list = name => Boot.option(argv, name, null)?.split(',') || null;
-    const [i, n] = String(Boot.option(argv, 'shard', '')).split('/').map(Number);
+    const shardArg = Boot.option(argv, 'shard', null);
+    const [i, n] = String(shardArg ?? '').split('/').map(Number);
+    if (shardArg !== null && !(i >= 1 && n >= 1 && i <= n)) {
+        console.error(`--shard needs i/N with 1 <= i <= N, got "${shardArg}"`);
+        process.exit(1);
+    }
     build({ from, to: to || from, hours: Number(Boot.option(argv, 'hours', 2)), children: Number(Boot.option(argv, 'children', 7)),
         spots: list('spots'), keys: list('keys'), catalogue: Boot.option(argv, 'catalogue', null), out: Boot.option(argv, 'out', null),
         shard: n ? { i, n } : null, join: argv.includes('--join') })
