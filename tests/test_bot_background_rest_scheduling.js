@@ -288,6 +288,14 @@ try {
         assert.strictEqual(up.debug.wins, 1, `the round ends at the kill that gains a level (${up.debug.wins} wins)`);
         assert(up.doneAt < at && up.patch.activity === 'hunting', 'at that fight\'s end, still hunting');
     } finally { Rewards.roll = originalRoll; }
+    // The same rule near a player (PickupCapacity.check on a body's bag): a full bag takes
+    // no new slot, a stack it holds still grows.
+    const Pickup = invoke('GameServer/Inventory/PickupCapacity');
+    const piece = (selfId, stackable) => ({ fetchAmount: () => 1, fetchStackable: () => stackable, fetchSelfId: () => selfId, fetchMass: () => 0 });
+    const body = { backpack: { fetchItems: () => [piece(1864, true), ...Array.from({ length: 79 }, () => piece(1, false))] },
+        fetchRace: () => 0, fetchMaxLoad: () => 1e9 };
+    assert.strictEqual(Pickup.check(body, 1869, 1, {}).reason, 'slots', 'a full bag takes no new stack');
+    assert.strictEqual(Pickup.check(body, 1864, 5, {}).reason, undefined, 'a stack it holds still grows');
 
     // MP under every cast (the survival floor) is what the last round left: the bot sat
     // down there, so the interval before the step is a seated rest.
