@@ -117,6 +117,77 @@ async function step(states, { project = state => state } = {}) {
     assert(!Situations.detect(full, { ...full, updatedAt: 2000 }).includes('bag_full'), 'a bag that stays full raises nothing');
     assert(!Situations.detect(empty, { ...empty, updatedAt: 2000 }).includes('bag_full'));
 
+    // At its need the bag first clears the slots that bring too little to carry (EconomyContext.bagDecisions):
+    // a row whose worth per slot is below theta = hourValue x tripHours / slots is destroyed when the
+    // clearing frees at least the slots the spot fills in the trip's hours and the cleared bag then
+    // needs no trip; else the bag goes to town and nothing is destroyed.
+    const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
+    const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+    const spots = invoke('GameServer/Bot/Population/SpotProfiles').ensure();
+    const tripHours = invoke('GameServer/Bot/Economy/WalkBack').hours(spots[0].id, {}, spots);
+    assert(tripHours > 0, 'the spot has a walk back from town');
+    const loot = Object.fromEntries(Array.from({ length: 45 }, (_, index) => {
+        const selfId = 1864 + index;
+        return [selfId, { selfId, name: `Material ${selfId}`, kind: 'Other.Material', stackable: true, amount: 1 }];
+    }));
+    const looter = bot(510, { inventory: loot });
+    const worth = Disposition.clearingRows(looter).map(row => row.value).sort((a, b) => a - b);
+    assert.strictEqual(worth.length, 45, 'every loot row may be cleared');
+    // The hour's value that puts theta between the 30th and the 31st cheapest row.
+    const hourFor = cheap => (worth[cheap - 1] + worth[cheap]) / 2 * 45 / tripHours;
+    const hunt = (cheap, bagStacks = 1) => ({ hourAdena: hourFor(cheap), bestSpotId: spots[0].id, bagStacks });
+    const answer = (state, base) => Economy.bagDecisions(state, base, { spots }, 3000);
+    const cleared = answer(looter, hunt(30));
+    assert.strictEqual(cleared.cleanupDue, null, 'a bag cleared below its count takes no trip');
+    assert.strictEqual(cleared.bagClear.freed, 30);
+    const cheapIds = Disposition.clearingRows(looter).filter(row => row.value < worth[30]).map(row => row.selfId).sort();
+    assert.deepStrictEqual(cleared.bagClear.items.map(item => item.selfId).sort(), cheapIds, 'only the cheap rows are cleared');
+    // The far step destroys them at once: its commit carries the bag without them, and no trip.
+    const destroyed = (await step([bot(511, { inventory: loot, stats: { classId: 0, bagClear: cleared.bagClear } })])).get(511);
+    assert.deepStrictEqual(Object.keys(destroyed.nextState.inventory).map(Number).sort(),
+        Object.keys(loot).map(Number).filter(id => !cheapIds.includes(id)).sort(), 'the cleared slots leave the bag');
+    assert.deepStrictEqual(destroyed.removedItemIds.sort(), cheapIds, 'the commit names the destroyed stacks');
+    assert.strictEqual(destroyed.nextState.stats.bagClear, null, 'the clearing is spent');
+    assert.strictEqual(destroyed.cleanupNeed, undefined, 'no trip starts');
+    assert.strictEqual(destroyed.nextState.activity, 'hunting', 'the bot hunts on');
+    // A bag of valuable loot (no row below theta) goes to town, nothing destroyed.
+    const valuable = answer(looter, { ...hunt(30), hourAdena: worth[0] / 2 * 45 / tripHours });
+    assert.strictEqual(valuable.cleanupDue?.reason, 'inventory_half_full');
+    assert.strictEqual(valuable.bagClear, null, 'nothing is destroyed');
+    // Too few cheap slots for the trip's hours of loot: the trip.
+    const few = answer(looter, hunt(30, Math.ceil(31 / tripHours)));
+    assert.strictEqual(few.cleanupDue?.reason, 'inventory_half_full', 'a clearing that buys less than the trip is no answer');
+    assert.strictEqual(few.bagClear, null);
+    // A clearing after which the bag still needs its trip is dropped: the trip sells those rows.
+    const still = answer(looter, hunt(3));
+    assert.strictEqual(still.cleanupDue?.reason, 'inventory_half_full', 'three cleared slots leave the bag at its count');
+    assert.strictEqual(still.bagClear, null);
+    // A party member's bag goes by its stay: no clearing.
+    assert.deepStrictEqual(answer(bot(512, { inventory: loot, partyId: 'p' }), hunt(30)), { cleanupDue: null, bagClear: null });
+    // Protected slots are never cleared, whatever they are worth: a worn piece, a quest item, the kit's
+    // potions and Scrolls of Escape, beginner shots, a material a wished craft holds.
+    const Template = id => Data.items.find(item => item.selfId === id);
+    const quest = Data.items.find(item => item.template.kind === 'Other.Quest');
+    const sword = Data.items.find(item => item.template.kind === 'Weapon.Sword' && item.etc?.rank === 'none');
+    assert(quest && sword, 'the catalogue supplies a quest item and a no-grade sword');
+    // The bot's own kit potion (a potion it does not use is loot like any other).
+    const potion = Number(invoke('GameServer/Bot/AI/HealingPotionStock').purchasePotionFor(bot(513)).selfId);
+    const kept = { ...loot,
+        [sword.selfId]: { selfId: sword.selfId, name: sword.template.name, kind: sword.template.kind, stackable: false, amount: 1,
+            equipped: true, instances: [{ id: 9900001, amount: 1, enchant: 0, equipped: true, slot: 7 }] },
+        [quest.selfId]: { selfId: quest.selfId, name: quest.template.name, kind: quest.template.kind, stackable: true, amount: 1 },
+        [potion]: { selfId: potion, name: Template(potion).template.name, kind: Template(potion).template.kind, stackable: true, amount: 5 },
+        736: { selfId: 736, name: Template(736).template.name, kind: Template(736).template.kind, stackable: true, amount: 1 },
+        5789: { selfId: 5789, name: Template(5789).template.name, kind: Template(5789).template.kind, stackable: true, amount: 100 } };
+    const reservedMaterial = 1864;
+    const keeper = bot(513, { inventory: kept, stats: { classId: 0, craftHold: [['craft:test', [[reservedMaterial, 1]]]] } });
+    const all = answer(keeper, { ...hunt(30), hourAdena: worth[44] * 1000 * 51 / tripHours });
+    const protectedIds = [sword.selfId, quest.selfId, potion, 736, 5789, reservedMaterial];
+    assert(all.bagClear, 'the loot is cleared');
+    assert.deepStrictEqual(all.bagClear.items.filter(item => protectedIds.includes(item.selfId)), [], 'no protected slot is cleared');
+    assert.strictEqual(Economy.bagDecisions({ ...keeper, inventory: Object.fromEntries(protectedIds.map(id => [id, kept[id]])) },
+        { ...hunt(30), hourAdena: 1e12 }, { spots }, 3000).bagClear, null, 'a bag of protected slots clears nothing');
+
     console.log('Cold worker cleanup need checks passed');
 })().catch((error) => {
     console.error(error);
