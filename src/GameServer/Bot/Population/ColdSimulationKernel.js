@@ -1683,9 +1683,8 @@ class ColdSimulationKernel {
         if (!this.currentCommand(id, attempt)) return;
         // At the bot's clock when that lies ahead: a command woken inside a round's
         // run-past goes on from its end, it lives that time once.
-        const timestamp = ColdClock.stepAt(current.state, this.now());
+        const { timestamp, elapsedMs } = ColdClock.step(current.state, this.now());
         try {
-            const elapsedMs = ColdClock.elapsedMs(current.state, timestamp);
             const raidPreparing = require('./RaidSupplyPolicy').held(current.state, timestamp);
             const hallVisit = !raidPreparing && mainVisit(current.state, this);
             const guide = !hallVisit && !raidPreparing && guideRound(current.state, timestamp);
@@ -2174,7 +2173,7 @@ class ColdSimulationKernel {
             // The round starts no earlier than its members' clocks (a round's last
             // action may end past its step) and credits the time since the earliest
             // member's (a member that held for an event lived its wait).
-            const roundAt = Math.max(...run.members.map(member => ColdClock.stepAt(member, startedAt)));
+            const roundAt = Math.max(...run.members.map(member => ColdClock.step(member, startedAt).timestamp));
             const resolveOptions = {
                 episodeId: stepProposalId(run.party.leaderId, run.startedAt),
                 assessRelationship: this.interactionMemory.assess.bind(this.interactionMemory),
@@ -2185,7 +2184,7 @@ class ColdSimulationKernel {
                 spotHunters: this.spotHunters(run.spot),
                 targetNpcId: run.targetNpcId,
                 lastFight: fightHoldsTrip,
-                elapsedMs: Math.max(...run.members.map(member => ColdClock.elapsedMs(member, roundAt))),
+                elapsedMs: Math.max(...run.members.map(member => ColdClock.step(member, roundAt).elapsedMs)),
                 rng: deterministicRandom(run.members[0] || {}),
                 timestamp: roundAt
             };
@@ -2441,8 +2440,7 @@ class ColdSimulationKernel {
             // the stats can hold a fraction, and every clock of the step comes from here.
             // Never before the bot's own clock: a step woken inside a hunt window
             // goes on from its end, it lives that time once.
-            const timestamp = ColdClock.stepAt(active.state, Math.max(startedAt, active.dueAt || 0));
-            const elapsedMs = ColdClock.elapsedMs(active.state, timestamp);
+            const { timestamp, elapsedMs } = ColdClock.step(active.state, Math.max(startedAt, active.dueAt || 0));
             const raidPreparing = require('./RaidSupplyPolicy').held(active.state, timestamp);
             const guide = !raidPreparing && guideRound(active.state, timestamp);
             const lifecyclePlan = !raidPreparing && !guide && this.planLifecycle
@@ -2585,8 +2583,8 @@ class ColdSimulationKernel {
             }
             await nextTurn();
             if (!this.resolverSourceCurrent(source)) return null;
-            const timestamp = Math.ceil(Number(after.timing.nextResolveAt));
-            const result = await this.resolveSolo({ ...roundOptions, state: after, elapsedMs: ColdClock.elapsedMs(after, timestamp),
+            const { timestamp, elapsedMs } = ColdClock.step(after, Number(after.timing.nextResolveAt));
+            const result = await this.resolveSolo({ ...roundOptions, state: after, elapsedMs,
                 rng: deterministicRandom(after), timestamp });
             if (!this.resolverSourceCurrent(source)) return null;
             add(result);

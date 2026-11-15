@@ -83,7 +83,7 @@ async function run() {
         timing:{...waiting.timing,nextResolveAt:at+61000},simulation:{revision:2}};
     kernel.upsert({state:cancelled});
     assert.deepEqual(kernel.dueCandidates(at+61000,4).map(c=>c.characterId),[4],'main\'s cancel wakes it on its due');
-    assert.equal(ColdClock.elapsedMs(cancelled,at+61000),0,'the minute it waited is not hunted');
+    assert.equal(ColdClock.step(cancelled,at+61000).elapsedMs,0,'the minute it waited is not hunted');
     const expired=new ColdSimulationKernel({now:()=>plan.expiresAt,resolveSolo:()=>null});
     expired.upsert({state:waiting});
     assert.deepEqual(expired.dueCandidates(plan.expiresAt,4).map(c=>c.characterId),[4],'a missed write still ends at the expiry');

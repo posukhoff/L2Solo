@@ -18,8 +18,7 @@ const TargetMatchup = invoke('GameServer/Bot/AI/BotTargetMatchup');
 const ClanRaidPolicy = invoke('GameServer/Clan/ClanRaidPolicy');
 const ColdRaidEncounter = require('./ColdRaidEncounter');
 const { RUN_SPEED } = require('./ColdTrip');
-const { coldRestRegenPerTick } = require('./ColdRest');
-const Formulas = invoke('GameServer/Formulas');
+const ColdClock = require('./ColdClock');
 const Diagnostics = require('../Economy/EconomyDiagnostics');
 
 const RAID_RESOLVE_INTERVAL_MS = 15000;
@@ -63,10 +62,14 @@ function memberVitals(state) {
 // on the spot (stats.coldShare). fights: the CPU bound, one per walk that
 // starts in the round, as solo's, 48 actions each. profiles: the pick's (its
 // fights take only those mobs). start: the round's clock, budgetMs before its
-// step (the members' credited hunt); its profiles are the members' at it.
+// step: the party acts together once its latest living member is free (a later
+// clock is that member's own last action's end, ColdClock.since), within the
+// step's credited hunt and at most PARTY_RESOLVE_MAX_MS of it; its profiles are
+// the members' at it.
 function partyRound({ party, members, spot, elapsedMs, spotHunters, timestamp }) {
-    const budgetMs = Math.min(Math.max(0, elapsedMs), PARTY_RESOLVE_MAX_MS);
-    const start = timestamp - budgetMs;
+    const start = Math.min(timestamp, Math.max(timestamp - Math.min(Math.max(0, elapsedMs), PARTY_RESOLVE_MAX_MS),
+        ...members.filter((state) => !(Number(state.vitals?.hp) <= 0)).map((state) => ColdClock.since(state, timestamp))));
+    const budgetMs = timestamp - start;
     const profiles = TargetMatchup.stateProfiles(members[0], { capacityStates: members, buffed: true, timestamp: start });
     const admitted = TargetMatchup.spotShares(profiles, spot, { soloSafety: true });
     const density = BackgroundResolver.admittedDensity(spot, admitted);
@@ -196,8 +199,7 @@ const BackgroundPartyResolver = {
             if (state.activity === 'dead' || state.vitals.hp <= 0) {
                 result = BackgroundResolver.resolveDeathRecovery(state, timestamp);
             } else if (state.activity === 'resting') {
-                const elapsedMs = Math.max(0, timestamp - Number(state.timing?.lastResolvedAt || timestamp));
-                result = BackgroundResolver.resolveRest(state, elapsedMs, timestamp);
+                result = BackgroundResolver.resolveRest(state, ColdClock.step(state, timestamp).elapsedMs, timestamp);
                 if (!state.stats?.tradeMeeting && result.patch?.activity === 'hunting')
                     result = { ...result, patch: { ...result.patch, activity: 'grouped' } };
             } else if (state.stats?.tradeMeeting && state.activity === 'traveling') {
@@ -337,7 +339,8 @@ const BackgroundPartyResolver = {
                     // not wake and consume solo capacity while the healer is
                     // still recovering.
                     stats: { ...(state.stats || {}), restUntil: partyRestUntil || null }
-                }, elapsedMs, timestamp, { party: true })
+                    // Seated over its own credited time: a member whose clock is later lived the rest.
+                }, ColdClock.step(state, timestamp).elapsedMs, timestamp, { party: true })
             }));
             const resting = memberResults.filter(({ result }) => result.patch.activity === 'resting').length;
             const nextRestUntil = resting
@@ -507,73 +510,72 @@ const BackgroundPartyResolver = {
         const memberPotions = new Map();
         const memberSoulCrystals = new Map();
         const helperRecoveries = raidCombatActive && admission?.held
-            ? require('../../Clan/ClanRaidHelperRecovery').recover(party, members, timestamp, elapsedMs) : new Map();
-        // The round's clock (round.start, the members' credited hunt): each buff, fight
-        // and pet heal is stamped at its own moment; a fight begun before the step's
-        // timestamp runs to its end (doneAt, the members' next clock). A raid's slices
-        // stay at the step's timestamp: the shared boss's leases are stamped by it.
-        let at = round ? round.start : timestamp;
+            ? require('../../Clan/ClanRaidHelperRecovery').recover(party, members, timestamp) : new Map();
+        // The round's clock (ColdClock, from round.start): each buff, fight and pet
+        // heal is stamped at its own moment; a fight begun before the step's timestamp
+        // runs to its end (doneAt, the members' next clock). A raid's slices stay at
+        // the step's timestamp: the shared boss's leases are stamped by it.
+        const clock = ColdClock.open(round ? round.start : timestamp);
         // C4 regeneration goes on while the members fight and stand (x1.1, their
-        // standing passives) and walk (x0.7), from their credited clock: accrued up to
-        // at before each read of their vitals, a walk's span at the moving rate; one
-        // pair of rates per member per round. A dead member does not.
-        const standing = new Map(round ? members.map((state) => {
-            const profile = ColdCombatProfile.fightProfile(state, round.start);
-            return [state.characterId, { profile, rate: coldRestRegenPerTick(state, { profile, standing: true, timestamp: round.start }),
-                moving: coldRestRegenPerTick(state, { profile, moving: true, timestamp: round.start }) }];
-        }) : []);
-        let regenAt = timestamp - Math.max(0, elapsedMs);
+        // standing passives) and walk (x0.7), their pets' with them: one pair of rates
+        // per member per round, read at its start. A dead member does not.
+        const ratesById = new Map(members.map((state) => [state.characterId,
+            ColdClock.rates(state, ColdCombatProfile.fightProfile(state, clock.at), clock.at)]));
+        // A raid's slices are the boss fight's own: its members regenerate only up to it.
+        const huntRates = round ? ratesById : new Map();
+        // Each living member stood from its own clock to the round's start (one whose
+        // clock is earlier waited for the latest); a raid's to the step's timestamp.
+        // A raid fight under way holds its members' vitals.
         let combatMembers = members.map((state) => {
-            const profile = standing.get(state.characterId)?.profile;
-            return { ...state, vitals: helperRecoveries.has(state.characterId) ? { ...state.vitals, hp: 0 }
-                : profile ? { hp: Math.max(0, Number(state.vitals?.hp ?? profile.maxHp)), maxHp: profile.maxHp,
-                    mp: Math.max(0, Number(state.vitals?.mp ?? profile.maxMp)), maxMp: profile.maxMp }
-                : pending ? { ...state.vitals } : BackgroundResolver.applyStandingRegen(state, state.vitals, elapsedMs, timestamp) };
+            if (helperRecoveries.has(state.characterId)) return { ...state, vitals: { ...state.vitals, hp: 0 } };
+            if (raid && pending) return { ...state, vitals: { ...state.vitals } };
+            const { profile, standing } = ratesById.get(state.characterId);
+            const vitals = { hp: Math.max(0, Number(state.vitals?.hp ?? profile.maxHp)), maxHp: profile.maxHp,
+                mp: Math.max(0, Number(state.vitals?.mp ?? profile.maxMp)), maxMp: profile.maxMp };
+            if (!(vitals.hp > 0)) return { ...state, vitals };
+            return { ...state, ...ColdClock.regen({ vitals, stats: state.stats }, clock.at - ColdClock.since(state, timestamp), standing, profile) };
         });
-        const accrue = (walking = false) => {
-            const ms = at - regenAt;
-            if (!round || !(ms > 0)) return;
-            regenAt = at;
-            const ticks = ms / Formulas.REGEN_TICK_MS;
-            combatMembers = combatMembers.map((member) => {
-                const hp = Number(member.vitals?.hp || 0);
-                if (!(hp > 0)) return member;
-                const rate = standing.get(member.characterId)[walking ? 'moving' : 'rate'];
-                return { ...member, vitals: { ...member.vitals, hp: Math.min(member.vitals.maxHp, hp + rate.hp * ticks),
-                    mp: Math.min(member.vitals.maxMp, Number(member.vitals.mp || 0) + rate.mp * ticks) } };
-            });
-        };
-        accrue();
         // Raid preparation casts its own buffs; an ordinary hunt casts them between fights.
-        const huntBuffs = raid || pending ? null : BackgroundResolver.castHuntPartyBuffs(combatMembers, at);
+        const huntBuffs = raid || pending ? null : BackgroundResolver.castHuntPartyBuffs(combatMembers, clock.at);
         if (huntBuffs) combatMembers = huntBuffs.members;
         // A party rests between fights, never in one, as hot (HotBackgroundParty:
         // no target, nothing incoming): a member below its line, or a summoner
         // for a pet it cannot heal (RestPolicy), sends it to rest at a fight's end.
         const restsNow = (state, resolved, vitals) => !raid && BackgroundResolver.needsRest(state, vitals, { party: true,
-            pet: BackgroundResolver.petViewForState(resolved, vitals, at) });
+            pet: BackgroundResolver.petViewForState(resolved, vitals, clock.at) });
         const alive = (member) => Number(member.vitals?.hp || 0) > 0;
+        // The party sits together at the clock's moment to its slowest living member's
+        // rest (resolveRest at the locked line, the rest step's rule), seated up to the
+        // round's bound (ColdClock.sitAll): one that ends inside the round stands it up
+        // there to hunt on; past it the party rests on to restUntil, the one deadline.
+        let restUntil = null;
+        const sitDown = () => {
+            const needMs = Math.max(0, ...combatMembers.filter(alive).map((member) =>
+                (Number(BackgroundResolver.resolveRest(member, 0, clock.at, { party: true }).patch.stats.restUntil) || 0) - clock.at));
+            const sat = ColdClock.sitAll(clock, combatMembers, needMs, timestamp, huntRates, { party: true });
+            combatMembers = sat.members;
+            if (!sat.up) restUntil = sat.restUntil;
+            return sat.up;
+        };
         let mobsKilled = 0;
         for (let i = 0; i < fightBudget; i++) {
             if (lastFight && !pending) break;
             // The first fight starts in any round; a new mob needs a whole one of the share and its walk.
-            if (round && i > 0 && (at >= timestamp || combatActions >= round.actions)) {
+            if (round && i > 0 && (clock.at >= timestamp || combatActions >= round.actions)) {
                 // cold_fight:party:action_bound: a round its CPU bound cut before its time.
-                if (at < timestamp && Diagnostics.active()) Diagnostics.count('cold_fight', 'party', 'action_bound');
+                if (clock.at < timestamp && Diagnostics.active()) Diagnostics.count('cold_fight', 'party', 'action_bound');
                 break;
             }
             if (round && !pending && mobsKilled + 1 > round.shareMobs) break;
             const walkMs = round && !pending ? round.walkMs : 0;
             // The walk to the mob first: the fight starts at its end.
-            accrue();
-            at += walkMs;
-            accrue(true);
+            combatMembers = ColdClock.advanceAll(clock, combatMembers, walkMs, 'moving', huntRates);
             const encounter = BackgroundResolver.resolvePartyFight({
                 members: combatMembers,
                 spot,
                 targetNpcId,
                 rng,
-                timestamp: at,
+                timestamp: clock.at,
                 encounter: pending,
                 partyId: party.partyId,
                 encounterKey: raidSnapshot?.key || null,
@@ -597,7 +599,9 @@ const BackgroundPartyResolver = {
             const foughtMs = Math.max(Number(encounter.debug?.durationMs || 0),
                 encounter.won ? Math.max(0, ...encounter.members.map(member => Number(member.readyAt) || 0)) : 0);
             combatMs += foughtMs;
-            at += foughtMs;
+            // The fight's end: the gap's heals and the members' saves are its moments.
+            const foughtAt = clock.at + foughtMs;
+            let healedMs = 0;
             skillUses += encounter.members.reduce((sum, member) => sum + Number(member.skillUses || 0), 0);
             heals += encounter.members.reduce((sum, member) => sum + Number(member.heals || 0), 0);
             musicUses += encounter.members.reduce((sum, member) => sum + Number(member.musicUses || 0), 0);
@@ -606,9 +610,9 @@ const BackgroundPartyResolver = {
             potionsUsed += Number(encounter.debug?.potionsUsed || 0);
             // A won fight's gap: the summoners heal their pets (PetHealRule), before the members are saved.
             if (encounter.won && !raid) {
-                const healed = BackgroundResolver.healPartyPetsBetweenFights(encounter.members, at);
+                const healed = BackgroundResolver.healPartyPetsBetweenFights(encounter.members, foughtAt);
                 combatMs += healed.ms;
-                at += healed.ms;
+                healedMs = healed.ms;
                 skillUses += healed.petCasts;
             }
             petHeals += encounter.members.reduce((sum, member) => sum + Number(member.petHeals || 0), 0);
@@ -634,7 +638,7 @@ const BackgroundPartyResolver = {
                 stats: {
                     ...(member.state.stats || {}),
                     coldCombat: {
-                        ...(member.state.stats?.coldCombat || ColdCombatProfile.seedSnapshot(member.state, at)),
+                        ...(member.state.stats?.coldCombat || ColdCombatProfile.seedSnapshot(member.state, foughtAt + healedMs)),
                         effects: member.profile.effects || member.state.stats?.coldCombat?.effects || [],
                         cooldowns: member.cooldowns,
                         // The bottle it drank runs on: the next one waits for it (coldPotionRuns).
@@ -644,7 +648,9 @@ const BackgroundPartyResolver = {
                     }
                 }
             }));
-            accrue();
+            // The members stood through the fight and the gap's heals (the clock to their end).
+            combatMembers = ColdClock.advanceAll(clock, combatMembers, foughtMs, 'standing', huntRates);
+            combatMembers = ColdClock.advanceAll(clock, combatMembers, healedMs, 'standing', huntRates);
             if (encounter.won) {
                 wins += 1;
                 // Every mob of the pull is a kill the share pays, as solo's; the last hit decides the overhit.
@@ -657,22 +663,8 @@ const BackgroundPartyResolver = {
             }
             else if (!pending) losses += 1;
             if (!encounter.won || combatMembers.some((member) => Number(member.vitals?.hp || 0) <= 0)) break;
-            if (combatMembers.some((member) => restsNow(member, member, member.vitals))) {
-                // The party sits at its fight's end to its slowest member's rest
-                // (resolveRest at the locked line, the rest step's rule). One that ends
-                // inside the round stands it up there to hunt on; past it the party
-                // rests on from this moment (below).
-                const end = Math.max(at, ...combatMembers.filter(alive).map((member) =>
-                    Number(BackgroundResolver.resolveRest(member, 0, at, { party: true }).patch.stats.restUntil) || 0));
-                if (end > timestamp) break;
-                combatMembers = combatMembers.map((member) => {
-                    if (!alive(member)) return member;
-                    const rested = BackgroundResolver.resolveRest(member, end - at, end, { party: true });
-                    return { ...member, vitals: rested.patch.vitals, stats: rested.patch.stats };
-                });
-                at = end;
-                regenAt = end;
-            }
+            // The party sits at its fight's end; past the round it rests on from there.
+            if (combatMembers.some((member) => restsNow(member, member, member.vitals)) && !sitDown()) break;
         }
         // The slice bound gives the fight up, before the members' rest is read.
         if (!raid && pending && pending.slices >= PveEncounter.MAX_SLICES) {
@@ -680,12 +672,11 @@ const BackgroundPartyResolver = {
             fights += 1;
             losses += 1;
         }
-        // A party that does not sit stands to its round's end.
-        const doneAt = Math.max(timestamp, at);
-        if (!combatMembers.some((member) => !pending && alive(member) && restsNow(member, member, member.vitals))) {
-            at = doneAt;
-            accrue();
-        }
+        // A party below its line at its round's end sits there, as at a fight's end.
+        if (!restUntil && !pending && combatMembers.some((member) => alive(member) && restsNow(member, member, member.vitals))) sitDown();
+        // A party that does not rest on stands to its round's end.
+        const doneAt = ColdClock.end(clock, timestamp);
+        if (!restUntil) combatMembers = ColdClock.advanceAll(clock, combatMembers, doneAt - clock.at, 'standing', huntRates);
 
         const rewards = distributeRewards({ members, spot, kills: mobsKilled, defeatedNpcIds, overhitContexts, rng, timestamp });
         const memberResults = [];
@@ -816,7 +807,7 @@ const BackgroundPartyResolver = {
         // whole group to one recovery event immediately, rather than letting
         // its next ordinary hunt tick discover the rest state 45-135 seconds
         // later and then poll all members every 30 seconds.
-        if (resting > 0) {
+        if (restUntil) {
             const restResults = distributedMemberResults.map(({ state, result }) => ({
                 state,
                 result: result.patch.activity === 'dead'
@@ -827,7 +818,8 @@ const BackgroundPartyResolver = {
                             activity: 'resting',
                             vitals: result.patch.vitals,
                             stats: { ...(state.stats || {}), ...(result.patch.stats || {}) }
-                        }, Math.max(0, timestamp - at), doneAt, { party: true });
+                            // Seated already on the round's clock: the rest step's activity and events only.
+                        }, 0, doneAt, { party: true });
                         // The fights have already completed before the party
                         // decides to rest. Keep their rewards (and any gear
                         // redistribution) while replacing only the next
@@ -845,9 +837,7 @@ const BackgroundPartyResolver = {
                         };
                     })()
             }));
-            partyRestUntil = Math.max(...restResults
-                .filter(({ result }) => result.patch.activity !== 'dead')
-                .map(({ result }) => Number(result.patch.stats?.restUntil || 0)));
+            partyRestUntil = restUntil;
             distributedMemberResults = restResults.map(({ state, result }) => ({
                 state,
                 result: result.patch.activity === 'dead'

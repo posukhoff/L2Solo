@@ -110,7 +110,7 @@ console.log('Party assembly on known ends: wait at the arrival, the absent membe
     kernel.upsert({ state: cleared });
     kernel.dueCandidates(now, 4);
     assert(kernel.busy(31), 'the objective\'s end wakes it at once (its command starts), not at the hold\'s retry');
-    assert.strictEqual(ColdClock.elapsedMs(cleared, at + 10 * minute), 0, 'ten minutes waiting are not hunted');
+    assert.strictEqual(ColdClock.step(cleared, at + 10 * minute).elapsedMs, 0, 'ten minutes waiting are not hunted');
     // The hold has no due of its own: a command holding the waiter (its clan hall
     // visit) runs at once, and the write that ends it leaves the bot held, no step.
     const behind = { ...waiting, stats: { ...waiting.stats, clanHallVisit: { hallId: 1 } }, simulation: { revision: 5 } };
