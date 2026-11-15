@@ -137,9 +137,9 @@ function printFooter(design = false) {
 // level's kill-death limit applied at the read (the design's KILL_DEATH_LIMIT); above the range the snapshot's game spot
 // table rows stay. A new hours object, the snapshot's untouched. A table whose stamp is not the one the snapshot was
 // built with is refused by name. lines: the run's lines; keyOf(line, level): the table's kit key (the spot table
-// generator's botFor); spoilLevelOf(line, level), gapFactor, walkMs: the game's rules the reader takes.
+// generator's botFor); spoilLevelOf(line, level), gapFactor: the game's rules the reader takes.
 // Returns { hours, range, cannot: { shots, bare } (the spot forms a line hunts nothing in) }.
-function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFactor, walkMs }) {
+function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFactor }) {
     const expected = snapshot.header.huntTable;
     if (file.stamp !== expected.stamp) throw new Error(`hunt table ${name}: stamp ${file.stamp}, but the snapshot was built with ${expected.name} (stamp ${expected.stamp})`);
     if (file.range.join('-') !== expected.range.join('-')) throw new Error(`hunt table ${name}: levels ${file.range.join('-')}, but the snapshot was built with ${expected.name} (levels ${expected.range.join('-')})`);
@@ -154,7 +154,7 @@ function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFacto
             const key = keyOf(line, level), bodies = Object.entries(file.bodies).filter(([body]) => body.startsWith(`${key}|${level}|`));
             if (bodies.length !== 1) throw new Error(`hunt table ${name}: ${bodies.length} kit points for key ${key} at level ${level} (one measured point, the creation kit's)`);
             const read = HuntRows.lineRows({ file, key, level, point: bodies[0][1].point, rates: snapshot.header.rates, speciesYields: snapshot.speciesYields,
-                spoilLevel: spoilLevelOf(line, level), items: snapshot.items, gapFactor, walkMs });
+                spoilLevel: spoilLevelOf(line, level), items: snapshot.items, gapFactor });
             for (const row of read.cannot) cannot[row.form]++;
             const shots = HuntRows.best(read.rows, 'income', 'shots'), bare = HuntRows.best(read.rows, 'income', 'bare');
             hours[line][level] = { classId: held.classId, shotId: held.shotId, best: shots.best, bareBest: bare.best, top: shots.top };
@@ -172,7 +172,7 @@ function designTable(argv, snapshot, accounts) {
     const Generator = require('../generate-spot-table'), Data = invoke('GameServer/DataCache'), Starter = invoke('GameServer/Knowledge/StarterItemCatalog');
     const table = tableHours({ snapshot, file: JSON.parse(fs.readFileSync(name, 'utf8')), name, lines: [...new Set(accounts.map(account => account.line))],
         keyOf: Generator.botFor, spoilLevelOf: invoke('GameServer/Bot/AI/SpotValueTable').roleSpoilLevel,
-        gapFactor: invoke('GameServer/Progression/MobExperience').gapFactor, walkMs: invoke('GameServer/Bot/Population/BackgroundResolver').soloWalkMs });
+        gapFactor: invoke('GameServer/Progression/MobExperience').gapFactor });
     const kits = new Map();
     const creation = (line, level) => {
         const classId = snapshot.hours[line][level].classId;

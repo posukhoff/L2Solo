@@ -478,9 +478,8 @@ for (const supply of ['table', 'formula']) {
         items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SPIRIT]: { kind: 'Other.Shot', npcBuy: 2 } },
         npcOffers: { preset: { [SPIRIT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
         tripHours: { to: { '-12_43': 0.2 }, back: { '-12_43': { TownA: 0.3 } } }, bags: { 51: { slots: 80, maxLoad: 1e6 }, 12: { slots: 80, maxLoad: 1e6 } } };
-    // The walk the game's rule gives at the spot: the measured walk a kill, so one species reads its measured kills.
     const read = (over = {}) => Run.tableHours({ snapshot, file, name: 'test table', lines: ['51', '12'], keyOf: line => (line === '51' ? '49' : '10'),
-        spoilLevelOf: () => 0, gapFactor: () => 1, walkMs: (density, runSpd, area, reach) => (density === 10 && runSpd === 121.2 && area === 488157 && reach === 40 ? 581 : NaN), ...over });
+        spoilLevelOf: () => 0, gapFactor: () => 1, ...over });
     assert.throws(() => read({ file: { ...file, stamp: 'other' } }), /hunt table test table: stamp other, but the snapshot was built with hunt-1-1-abc\.json \(stamp abc\)/, 'another table stamp is refused by name');
     assert.throws(() => read({ file: { ...file, range: [1, 2] } }), /hunt table test table: levels 1-2, but the snapshot was built with hunt-1-1-abc\.json \(levels 1-1\)/, 'another level range is refused by name');
     const { cut, ...onlyGremlin } = file.spots;
@@ -494,7 +493,6 @@ for (const supply of ['table', 'formula']) {
     assert.deepEqual([orcHour.best.spotId, orcHour.bareBest.spotId, orcHour.top.map(held => held.spotId)], ['-12_43', '-12_43', ['-12_43']]);
     assert.equal(humanHour.bareBest.spotId, '-12_43');
     const tableView = Engine.viewOf({ ...snapshot, hours: table.hours });
-    // Its walk is 0.581 s a kill at the human's spot, 0.8434 at the orc's: the orc's spot reads the human's walk.
     // The game's kit readers: no factor at the table's levels, and the game's shot scale has no row there (null).
     const kitsOf = { spotFactors: () => assert.fail('the table\'s levels read no game kit factor'), shotScale: () => null, stats: { spotUnstated: 0 } };
     const creation = { range: [1, 1], creation: () => ({}) };
@@ -507,7 +505,7 @@ for (const supply of ['table', 'formula']) {
         const result = Engine.simulate({ view: tableView, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3, plane: seen });
         assert.equal(visits[0].main.spot, '-12_43', `line ${line} holds the gremlin spot`);
         const main = { ...visits[0].main, shots: {} }, hunted = Engine.hunt(main, tableView, 1, () => 0.5, null).delta;
-        const kills = 3600 / (cell[2] + cell[3] + cell[4] + 0.581 / cell[9]);
+        const kills = 3600 / (cell[2] + cell[3] + cell[4] + cell[5]);
         assert.ok(Math.abs(hunted.exp - kills * 29) < 1e-6, `line ${line} hunts bare at its cell's kills (${hunted.exp / 29} vs ${kills})`);
         assert.equal(result.design.offGrid, 0, 'the creation kit is the measured point');
         firedBy[`${line}:${Object.keys(spiritshots).length}`] = held.firing(visits[0].main)?.perHour || 0;

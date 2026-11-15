@@ -1,7 +1,7 @@
 'use strict';
 // The model's hour at a spot from its hunt table (hunt-table.js): pure, plain
-// data in (the table's cells and statics), the game's rules it needs passed in
-// as functions (the walk, the exp level-gap factor). Read by the table build's
+// data in (the table's cells and statics), the game's rule it needs passed in
+// as a function (the exp level-gap factor). Read by the table build's
 // combination check; the design's boot reads it for every line and level of
 // the table's range once the design takes its hours from the table.
 
@@ -31,17 +31,20 @@ function admitted({ cells, form, fields, limit }) {
 
 // The combination of species on time for an admitted set of a spot: species
 // drawn by their density share p, the time per kill the share-weighted fight,
-// rest and other time plus the walk at the set's density over its pull
-// (walkMs: BackgroundResolver.soloWalkMs, the game's rule), kills an hour at
-// most the set's production as the game's soloShareMobs caps a cold solo bot
-// (no cap where the spot has no production or its production is 0: no respawn
-// data; a species without production adds none). cells: selfId -> [form cells]; form: its index;
-// fields: the table's cell fields; admitted: selfIds. Null for an empty set,
-// else { kills an hour, deaths a kill, busy: the fight, walk and rest a kill
-// (s), mix: selfId -> its share of the kills }.
-function combine({ spot, cells, body, form, fields, admitted, walkMs }) {
+// rest, other time and walk. A species' walk was measured at its own density;
+// at the set's density it is that walk times sqrt(p), its density over the
+// set's under the game's walk rule (BackgroundResolver.soloWalkMs: the walk to
+// the nearest mob goes as 1 / sqrt(density)), so one species alone reads back
+// its own cell. Kills an hour at most the set's production as the game's
+// soloShareMobs caps a cold solo bot (no cap where the spot has no production
+// or its production is 0: no respawn data; a species without production adds
+// none). cells: selfId -> [form cells]; form: its index; fields: the table's
+// cell fields; admitted: selfIds. Null for an empty set, else { kills an hour,
+// deaths a kill, busy: the fight, walk and rest a kill (s), mix: selfId -> its
+// share of the kills }.
+function combine({ spot, cells, form, fields, admitted }) {
     const at = Object.fromEntries(fields.map((field, index) => [field, index]));
-    const all = Object.values(spot.species), total = all.reduce((sum, held) => sum + held.count, 0);
+    const all = Object.values(spot.species);
     const produced = all.filter(held => held.production !== null), capped = produced.length > 0 && produced.reduce((sum, held) => sum + held.production, 0) > 0;
     let count = 0, production = 0;
     for (const selfId of admitted) {
@@ -49,28 +52,27 @@ function combine({ spot, cells, body, form, fields, admitted, walkMs }) {
         if (spot.species[selfId].production !== null) production += spot.species[selfId].production;
     }
     if (!count) return null;
-    let perKill = 0, busy = 0, deaths = 0, pull = 0;
+    let perKill = 0, busy = 0, deaths = 0;
     const mix = {};
     for (const selfId of admitted) {
         const share = spot.species[selfId].count / count, cell = cells[selfId][form];
+        const walk = cell[at.walk] * Math.sqrt(share);
         mix[selfId] = share;
-        perKill += share * (cell[at.fight] + cell[at.rest] + cell[at.other]);
-        busy += share * (cell[at.fight] + cell[at.rest]);
+        perKill += share * (cell[at.fight] + cell[at.rest] + cell[at.other] + walk);
+        busy += share * (cell[at.fight] + cell[at.rest] + walk);
         deaths += share * cell[at.deaths];
-        pull += share * cell[at.pull];
     }
-    const walk = walkMs(spot.density * count / total, body.runSpd, spot.area, body.reach) / 1000 / pull;
-    const kills = 3600 / (perKill + walk);
-    return { kills: capped ? Math.min(kills, production) : kills, deaths, busy: busy + walk, mix };
+    const kills = 3600 / perKill;
+    return { kills: capped ? Math.min(kills, production) : kills, deaths, busy, mix };
 }
 
 // A bot's hour at a spot in a form over the species it hunts there: null with
 // the reason 'cannot_hunt' when it hunts none (every species over the limit
 // or killed by none), else the combination with, per kill, the shots and
 // potions it spends and each species' exp (x1, before the level-gap penalty).
-function spotHour({ spot, cells, body, form, fields, limit = LIMITS.KILL_DEATH_LIMIT.value, walkMs }) {
+function spotHour({ spot, cells, form, fields, limit = LIMITS.KILL_DEATH_LIMIT.value }) {
     const set = admitted({ cells, form, fields, limit });
-    const read = combine({ spot, cells, body, form, fields, admitted: set, walkMs });
+    const read = combine({ spot, cells, form, fields, admitted: set });
     if (!read) return { hour: null, reason: 'cannot_hunt' };
     const exp = fields.indexOf('exp'), shots = fields.indexOf('shots'), potions = fields.indexOf('potions');
     const hour = { ...read, exp: {}, shots: 0, potions: 0 };
@@ -118,16 +120,16 @@ function hourRow({ spot, hour, level, rates, speciesYields, spoilLevel, items, g
 // hour firing its shots with, as shotless, the same spot's hour bare (the
 // zero hour where it hunts nothing in that form). key: the table's kit key;
 // point: { attack, defence }; limit: the kill-death limit (the design's by
-// default); rates: { exp }; walkMs, gapFactor: the game's rules. Returns
+// default); rates: { exp }; gapFactor: the game's rule. Returns
 // { rows, cannot: [{ spotId, form, reason }] }: each spot and form the bot
 // hunts nothing in, with spotHour's reason. A body the file lacks throws.
-function lineRows({ file, key, level, point, limit = LIMITS.KILL_DEATH_LIMIT.value, rates, speciesYields, spoilLevel, items, gapFactor, walkMs }) {
+function lineRows({ file, key, level, point, limit = LIMITS.KILL_DEATH_LIMIT.value, rates, speciesYields, spoilLevel, items, gapFactor }) {
     const name = `${key}|${level}|${point.attack}/${point.defence}`, body = file.bodies[name], bySpot = file.cells[name];
     if (!body || !bySpot) throw new Error(`hunt rows: the table has no body ${name} (range ${file.range})`);
     const fields = file.fields, shotsForm = file.forms.indexOf('shots'), bareForm = file.forms.indexOf('bare'), rows = [], cannot = [];
     for (const [spotId, cells] of Object.entries(bySpot)) {
         const spot = file.spots[spotId], read = form => {
-            const { hour, reason } = spotHour({ spot, cells, body, form, fields, limit, walkMs });
+            const { hour, reason } = spotHour({ spot, cells, form, fields, limit });
             if (!hour) cannot.push({ spotId, form: file.forms[form], reason });
             return hour;
         };
