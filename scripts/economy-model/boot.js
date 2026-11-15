@@ -10,6 +10,12 @@
 // model depends on it: C4RecipeItems reads data/Recipes/recipes.csv relative
 // to the working directory and, started from another folder, finds no recipe
 // and says nothing.
+// The hunts read the game clock (GameTime.isNight) at fixed timestamps, and the
+// game day counts from local midnight: every model process, forked children
+// included (they inherit the variable), runs in UTC as the tables workflow
+// does, so a table is one in every zone and its stamp needs no zone.
+process.env.TZ = 'UTC';
+
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
