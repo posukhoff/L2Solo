@@ -70,14 +70,15 @@ function heldFired(view, main) {
 
 // The held spot: the bot's best row at the level in the form it can hunt (HuntRows.best), taken at its birth, at the end
 // of each town chain and at a level where its held row is gone, and held between (the engine keeps it while its row
-// exists at the level). Its candidates: its line's rows it hunts with shots (top) when it holds the shots it fires (the
+// exists at the level). Its candidates: its line's rows it hunts with shots (the game's best and the top) when it holds the shots it fires (the
 // weapon's grade; the beginner shots that charge them count: Engine.heldOf), else those it hunts without them (bareTop
-// at the levels of the model's hunting table; above them the game's rows, its bare answer bareBest and the top); none
+// at the levels of the model's hunting table; above them the game's rows, its bare answer bareBest and the shots candidates); none
 // bare, it holds its best row with shots. Ranked by valueOf(main, row, form): its hour value there.
 function heldSpot(view, main, valueOf) {
     const hour = Engine.hourOf(view, main);
     if (!hour) return null;
-    const ranked = form => HuntRows.best(form === 'shots' ? hour.top || [] : hour.bareTop || [hour.bareBest, ...hour.top || []].filter(Boolean), form,
+    const shotsRows = [hour.best, ...hour.top || []].filter((row, at, rows) => row && rows.findIndex(other => other && String(other.spotId) === String(row.spotId)) === at);
+    const ranked = form => HuntRows.best(form === 'shots' ? shotsRows : hour.bareTop || [hour.bareBest, ...shotsRows].filter(Boolean), form,
         row => valueOf(main, row, form)).best;
     const row = heldFired(view, main) > 0 ? ranked('shots') : ranked('bare') || ranked('shots');
     return row ? String(row.spotId) : null;

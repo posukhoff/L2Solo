@@ -554,4 +554,20 @@ for (const supply of ['table', 'formula']) {
     }
 }
 
+// The held spot's candidates are the line's best row and its top: a game best outside top is held when its value is the
+// highest, and a best that kills its bot loses to a safe top row under the risk term.
+{
+    const bestOut = row('s1', 400, 800), safe = row('s2', 60, 100), deadly = row('s1', 400, 800, { deaths: 200 });
+    const outside = (best, top) => Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+        hours: { 9: { 1: { classId: 9, shotId: SHOT, best, top } } }, yields: { 's1@1': drops, 's2@1': drops },
+        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+    for (const supply of ['table', 'formula']) {
+        const held = best => run(freshBot(9, { shots: { [SHOT]: 600 } }), supply, 1, 1, outside(best, [safe])).visits[0].main.spot;
+        assert.equal(held(bestOut), 's1', `${supply}: the best outside top is held when it is worth most`);
+        assert.equal(held(deadly), 's2', `${supply}: a best that kills its bot loses to the safe top row`);
+    }
+}
+
 console.log('economy model design: ok');
