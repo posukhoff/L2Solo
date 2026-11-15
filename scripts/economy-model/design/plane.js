@@ -360,7 +360,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     clocks.set(main.index, { level: main.level, at: now });
                     const next = main.spot ? main : { ...main, spot: heldSpot(view, main) };
                     const firing = hunter.firing(next);
-                    if (FACTS.outAtLevel(heldFired(view, { ...next, level: clock.level }), firing ? Engine.heldOf(next, firing) : 0, !!firing)) {
+                    if (FACTS.outAtLevel(heldFired(view, { ...next, level: clock.level }), heldFired(view, next), !!firing)) {
                         put(next, queueFact(stateOf(next), 'out', next, now));
                     }
                     return next;

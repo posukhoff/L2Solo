@@ -320,6 +320,14 @@ const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, ex
     const kept = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(2509));
     assert.ok(kept.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(kept.visits.filter(visit => !visit.info.born).length, 0, 'a level that keeps the shot sends it nowhere');
+    // c. a level whose row fires no shot sends it nowhere (nothing to buy)
+    const none = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(0));
+    assert.ok(none.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
+    assert.equal(none.visits.filter(visit => !visit.info.born).length, 0, 'a level that fires no shot sends it nowhere');
+    // d. it held none of the shot before the level: the level is no run-out (it hunts bare, adena 1 buys nothing at birth)
+    const bareBefore = run(freshBot(9, { shots: {}, money: 1 }), 'table', 4, 0, classWorld(1835));
+    assert.ok(bareBefore.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
+    assert.equal(bareBefore.visits.filter(visit => !visit.info.born).length, 0, 'a main that held none before the level goes nowhere at it');
 }
 
 // The run report (finish().design): trips, road hours and wall hours are counted at levels 1-19 and 20+ apart, an empty trip is
