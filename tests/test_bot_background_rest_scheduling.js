@@ -201,10 +201,9 @@ try {
         `at the round's end it has rested seated since its fight, standing no longer (MP ${worn.patch.vitals.mp} from ${fightEnd.mp})`);
     const rested = BackgroundResolver.resolveRest({ ...hunter, activity: 'resting', vitals: worn.patch.vitals,
         stats: { ...hunter.stats, ...worn.patch.stats } }, restUntil - at, restUntil);
-    // At its deadline the bot is at its rested line, within the half millisecond of
-    // regen the rest estimate rounds away.
-    assert(rested.patch.vitals.mp >= RestPolicy.THRESHOLDS.rested.mp * caster.maxMp - seatedRate.mp / tick,
+    assert(rested.patch.vitals.mp >= RestPolicy.THRESHOLDS.rested.mp * caster.maxMp,
         `at its deadline the bot is at its rested line (MP ${rested.patch.vitals.mp})`);
+    assert.strictEqual(rested.patch.activity, 'hunting', 'and stands up, the rest not extended');
 
     // A fight refused (the bot cannot take the mob at its HP) seats it where it was refused.
     const tired = { ...hunter, vitals: { ...hunter.vitals, hp: 150 } };
