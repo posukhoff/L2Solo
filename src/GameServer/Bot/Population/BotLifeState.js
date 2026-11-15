@@ -2906,27 +2906,28 @@ const BotLifeState = {
             // The private combat inventory already contains exact consumption,
             // including switches between blessed, ordinary and beginner charges.
             // Carry only those decreases, preserving this resolve's new loot.
-            for (const selfId of Shots.combatShotIds(shot)) {
-                const stock = inventory[String(selfId)], original = state.inventory?.[selfId];
-                if (!stock || !original) continue;
-                const remaining = result.patch?.inventory?.[selfId]?.amount;
-                const spent = Number.isFinite(remaining)
-                    ? Math.max(0, Number(original.amount) - remaining)
-                    : selfId === shot.selfId ? shotActions * shot.perAction : 0;
-                inventory[String(selfId)] = { ...stock, amount: Math.max(0, Number(stock.amount) - spent) };
-                if (consumeFacts && spent > 0) Consumption.fact(consumeFacts, selfId, Number(stock.amount),
-                    inventory[String(selfId)].amount, 0);
-            }
+            const spent = Shots.combatShotIds(shot).filter(selfId => inventory[String(selfId)] && state.inventory?.[selfId])
+                .map(selfId => {
+                    const remaining = result.patch?.inventory?.[selfId]?.amount;
+                    return { selfId, count: Number.isFinite(remaining)
+                        ? Math.max(0, Number(state.inventory[selfId].amount) - remaining)
+                        : selfId === shot.selfId ? shotActions * shot.perAction : 0 };
+                });
+            const before = inventory;
+            inventory = RoundLoot.removeFrom(inventory, spent);
+            if (consumeFacts) for (const { selfId, count } of spent) if (count > 0) Consumption.fact(consumeFacts, selfId,
+                Number(before[String(selfId)].amount), inventory[String(selfId)].amount, 0);
         }
         // Cold combat drinks healing potions from the same stock. The fight
         // debits only its own copy; drunkPotions counts the bottles by selfId
         // (BackgroundResolver.startColdPotion).
-        for (const [selfId, count] of Object.entries(result.debug?.drunkPotions || {})) {
-            const stock = inventory[String(selfId)];
-            if (!stock || Number(stock.amount || 0) <= 0) continue;
-            inventory[String(selfId)] = { ...stock, amount: Math.max(0, Number(stock.amount) - Number(count || 0)) };
-            if (consumeFacts) Consumption.fact(consumeFacts, selfId, Number(stock.amount),
-                inventory[String(selfId)].amount, 1);
+        const drunk = Object.entries(result.debug?.drunkPotions || {}).filter(([selfId]) => Number(inventory[String(selfId)]?.amount || 0) > 0)
+            .map(([selfId, count]) => ({ selfId: Number(selfId), count: Number(count || 0) }));
+        if (drunk.length) {
+            const before = inventory;
+            inventory = RoundLoot.removeFrom(inventory, drunk);
+            if (consumeFacts) for (const { selfId } of drunk) Consumption.fact(consumeFacts, selfId,
+                Number(before[String(selfId)].amount), inventory[String(selfId)].amount, 1);
         }
 
         if (consumeFacts) Consumption.attach(result, consumeFacts);
