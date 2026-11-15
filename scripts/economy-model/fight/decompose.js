@@ -4,14 +4,12 @@
 // through the module objects the cold resolver calls (BackgroundResolver.resolveSolo
 // per step, BotEncounterReadiness at each fight's start, ColdClassPolicy.select
 // per bot action, RestPolicy.needsRest), so the fight is the game's code,
-// unchanged. Per hunt: the wall clock split into fight, walk, rest sat after
-// the fight, rest extensions, death recovery, idle and the overlap of a round's
-// combat with the next step (the resolver starts a rest at the round's start,
-// not at its fight's end); the rest reasons; HP and MP at each fight's start;
-// the bot's actions and skills per kill; potions in fight and at rest; the
-// start HP of each fatal fight. A second hunt with the rest moved to the
-// fight's end (this script's loop only) shows how much the overlap moves rest
-// and kills. Next to it the mean-path fight (expected values through the
+// unchanged. Per hunt: the wall clock split into fight, walk, rest, death
+// recovery and other (a round's combat lies in the interval before its
+// timestamp, the one the resolver budgets it from); the rest reasons; HP and MP
+// at each fight's start; the bot's actions and skills per kill; potions in
+// fight and at rest; the start HP of each fatal fight. Next to it the
+// mean-path fight (expected values through the
 // game's class policy, hit and mob action rules) from the rested line and from
 // the measured start vitals names the term that carries the error. Offline only.
 //   node scripts/economy-model/fight/decompose.js --rows <est rows json> --catalogue <catalogue json>
@@ -65,60 +63,58 @@ function creationKit(classId) {
 
 const hpOrMp = need => need.hp < RP.THRESHOLDS.solo.hp ? 'hp' : 'mp';
 
-// One hunt (Generator.hunt's arguments) watched step by step. moveRest: the
-// rest of a round starts at its combat's end and regenerates only while sat.
-function watchHunt({ spot, line, level, form, hours, classId, kit, moveRest = false }) {
+// One hunt (Generator.hunt's arguments) watched step by step. A round's combat
+// is budgeted from the interval before its timestamp (its elapsedMs, the bot's
+// clock to the round), so that interval splits into the round's fight, walk and
+// other (the budget less the combat, below zero where the fight ran past it).
+// A gap after a resting step is rest; after a death, or the revive that ends it,
+// death recovery; a gap that ends at a step with no fight is other. The parts
+// tile the clock from the first round's budget (before the hunt's start) to the
+// last gap a round credited: their sum is the hunt's time + edgeMs.before -
+// edgeMs.tail, the tail being the gap after the last step that the next round,
+// past the hunt's end, would have taken as its budget.
+function watchHunt({ spot, line, level, form, hours, classId, kit }) {
     const end = START + hours * 3600000;
     const real = { resolveSolo: BR.resolveSolo, atVitals: ER.atVitals, evaluate: ER.evaluate, needsRest: RP.needsRest, select: CCPol.select,
         diagnostics: PopulationConfig.developerDiagnostics };
-    let rec = null, prev = null, mark = null, stepNeed = null, shift = 0;
-    const fresh = () => ({ parts: { fight: 0, walk: 0, rest: 0, restExt: 0, death: 0, idle: 0, overlap: 0 }, restInCombat: 0,
+    let rec = null, prev = null, mark = null, stepNeed = null;
+    const fresh = () => ({ parts: { fight: 0, walk: 0, rest: 0, death: 0, other: 0 }, edgeMs: { before: 0, tail: 0 },
         reportedRest: 0, restReasons: {}, marks: [], seen: { profiles: null, view: null, fp: null } });
-    const close = next => {
+    // The gap after the previous step up to the next one (nextKind null: the hunt's end).
+    const close = (next, nextKind) => {
         const d = Math.min(next, end) - prev.t, parts = rec.parts;
-        if (prev.kind === 'hunt') {
-            const inCombat = Math.min(prev.c, d), rem = d - inCombat;
-            parts.walk += prev.walk;
-            parts.fight += prev.c - prev.walk;
-            parts.overlap += prev.c - inCombat;
-            if (prev.resting) {
-                parts.rest += rem;
-                rec.restInCombat += inCombat;
-                rec.reportedRest += Math.max(0, prev.restUntil - prev.t);
-                const why = rec.restReasons[prev.reason] ||= { n: 0, ms: 0, asked: 0 };
-                why.n += 1; why.ms += rem; why.asked += Math.max(0, prev.restUntil - prev.t - (moveRest ? prev.c : 0));
-            } else {
-                parts.idle += rem;
-                // A rest the round set without sitting down (the builder's sums count it as rest).
-                rec.reportedRest += Math.max(0, prev.restUntil - prev.t);
-            }
-        } else if (prev.kind === 'rest') parts.restExt += d;
-        else if (prev.kind === 'dead') parts.death += d;
+        if (prev.kind === 'dead' || prev.died) parts.death += d;
         else if (prev.resting) {
             parts.rest += d;
-            const why = rec.restReasons[prev.reason] ||= { n: 0, ms: 0, asked: 0 };
-            why.n += 1; why.ms += d; why.asked += d;
-        } else parts.idle += d;
+            if (prev.kind !== 'rest') {
+                const why = rec.restReasons[prev.reason] ||= { n: 0, ms: 0, asked: 0 };
+                why.n += 1; why.ms += d; why.asked += prev.kind === 'hunt' ? Math.max(0, prev.restUntil - prev.t) : d;
+            }
+        } else if (nextKind === 'hunt') return; // the next round's budget, split by that round
+        else if (nextKind) parts.other += d;
+        else rec.edgeMs.tail += d;
     };
     BR.resolveSolo = options => {
-        if (options.timestamp === START) { rec = fresh(); prev = null; mark = null; shift = 0; Diagnostics.reset(); }
-        else if (prev) close(options.timestamp);
+        if (options.timestamp === START) { rec = fresh(); prev = null; mark = null; Diagnostics.reset(); }
         const state = options.state, dead = state.activity === 'dead' || Number(state.vitals?.hp) <= 0;
         const kind0 = dead ? 'dead' : state.activity === 'resting' ? 'rest' : null;
-        if (kind0 === 'rest' && shift > 0) options = { ...options, elapsedMs: Math.max(0, options.elapsedMs - shift) };
-        shift = 0;
         stepNeed = null;
         const marksBefore = rec.marks.length, fleesBefore = fleeCount();
-        let result = real.resolveSolo(options);
+        const result = real.resolveSolo(options);
         const debug = result.debug || {}, patch = result.patch || {};
         const kind = kind0 || (Number.isFinite(debug.combatMs) ? 'hunt' : 'other');
         const resting = patch.activity === 'resting';
-        let restUntil = Number(patch.stats?.restUntil) || 0;
-        const c = kind === 'hunt' ? Number(debug.combatMs) : 0;
-        if (moveRest && kind === 'hunt' && resting && c > 0) {
-            restUntil += c;
-            shift = c;
-            result = { ...result, patch: { ...patch, stats: { ...patch.stats, restUntil } }, nextResolveAt: restUntil };
+        const restUntil = Number(patch.stats?.restUntil) || 0;
+        const c = kind === 'hunt' ? Number(debug.combatMs) : 0, walk = Number(debug.walkedMs) || 0;
+        if (prev) close(options.timestamp, kind);
+        if (kind === 'hunt') {
+            const parts = rec.parts;
+            parts.walk += walk;
+            parts.fight += c - walk;
+            parts.other += options.elapsedMs - c;
+            if (!prev) rec.edgeMs.before += options.elapsedMs;
+            // The rest the round set, sat or not (the builder's sums count it as rest).
+            rec.reportedRest += Math.max(0, restUntil - options.timestamp);
         }
         if (debug.died && rec.marks.length) rec.marks[rec.marks.length - 1].died = true;
         let reason = debug.reason || 'other';
@@ -130,7 +126,7 @@ function watchHunt({ spot, line, level, form, hours, classId, kit, moveRest = fa
             else if (stepNeed) reason = `after_${hpOrMp(stepNeed)}`;
             else reason = patch.stats?.lastReason || 'other';
         }
-        prev = { t: options.timestamp, kind, c, walk: Number(debug.walkedMs) || 0, resting, restUntil, reason };
+        prev = { t: options.timestamp, kind, died: debug.died === true, resting, restUntil, reason };
         return result;
     };
     ER.atVitals = (profiles, hp, mp, pet) => {
@@ -142,8 +138,8 @@ function watchHunt({ spot, line, level, form, hours, classId, kit, moveRest = fa
     };
     ER.evaluate = (remaining, target, attacksOf) => {
         const verdict = real.evaluate(remaining, target, attacksOf);
-        rec.seen.view ||= target;
-        if (mark && mark.ready === null) mark.ready = verdict.ready;
+        // A fight's own readiness read (the builder also reads the matchup before the hunt's first step).
+        if (mark && mark.ready === null) { mark.ready = verdict.ready; rec.seen.view ||= target; }
         return verdict;
     };
     RP.needsRest = (subject, hpRatio, mpRatio, options) => {
@@ -166,7 +162,7 @@ function watchHunt({ spot, line, level, form, hours, classId, kit, moveRest = fa
     PopulationConfig.developerDiagnostics = true;
     try {
         const sum = Generator.hunt(spot, line, level, form, hours, undefined, kit, classId);
-        if (prev) close(end);
+        if (prev) close(end, null);
         const counts = Diagnostics.metrics().counts || {};
         rec.restPotions = Number(counts['cold_fight:potion:rest'] || 0);
         return { sum, rec };
@@ -189,8 +185,7 @@ const mean = values => values.length ? values.reduce((a, b) => a + b, 0) / value
 const pct = (values, p) => { if (!values.length) return null; const s = [...values].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
 // A watched hunt per kill: the cell the builder writes, the wall parts (s per
-// kill; fight + walk + rest + restExt + death + idle - overlap = the hunt's
-// time), rest reasons, start vitals, rotation, potions and fatal fights.
+// kill; their sum in ms is the hunt's time + edgeMs.before - edgeMs.tail), rest reasons, start vitals, rotation, potions and fatal fights.
 function summarize({ sum, rec }, hours) {
     const mobs = sum.mobs, perKill = ms => mobs > 0 ? ms / 1000 / mobs : null;
     const fights = rec.marks.filter(m => m.actions > 0);
@@ -200,7 +195,7 @@ function summarize({ sum, rec }, hours) {
     return {
         cell: HuntTable.cellOf(sum, hours), mobs, deaths: sum.deaths, kills: sum.mobs / hours,
         wall: Object.fromEntries(Object.entries(rec.parts).map(([k, ms]) => [k, perKill(ms)])),
-        wallMs: { ...rec.parts }, restInCombat: perKill(rec.restInCombat), reportedRestMs: rec.reportedRest,
+        wallMs: { ...rec.parts }, edgeMs: { ...rec.edgeMs }, reportedRestMs: rec.reportedRest,
         restReasons: Object.fromEntries(Object.entries(rec.restReasons).map(([k, r]) => [k, { n: r.n, sat: perKill(r.ms), asked: perKill(r.asked) }])),
         startHp: mean(fights.map(m => m.hp / m.maxHp)), startMp: mean(fights.map(m => m.mp / Math.max(1, m.maxMp))),
         fights: fights.length, actionsPerKill: mobs > 0 ? actions / mobs : null, castsPerKill: mobs > 0 ? casts / mobs : null,
@@ -236,13 +231,12 @@ function meanPathFight(p, view, fp, hp, mp) {
 }
 
 // The terms per cell (s per kill unless named a count): what the mean path
-// misses from the rested line and from the measured start vitals, what the
-// rest overlap moves; the largest seconds term is named, counts are flagged.
-function terms(asIs, moved) {
+// misses from the rested line and from the measured start vitals; the largest
+// seconds term is named, counts are flagged.
+function terms(asIs) {
     const seen = asIs.seen, p = seen.profiles?.find(q => q.servitor !== true);
-    const out = { simFight: asIs.cell[2], restAsRead: asIs.cell[3], restSat: asIs.wall.rest + asIs.wall.restExt,
-        restMoved: moved.wall.rest + moved.wall.restExt, killsAsIs: asIs.kills, killsMoved: moved.kills,
-        deathsAsIs: asIs.mobs > 0 ? asIs.deaths / asIs.mobs : null, deathsMoved: moved.mobs > 0 ? moved.deaths / moved.mobs : null };
+    const out = { simFight: asIs.cell[2], restAsRead: asIs.cell[3], restSat: asIs.wall.rest,
+        deaths: asIs.mobs > 0 ? asIs.deaths / asIs.mobs : null };
     if (p && seen.view && seen.fp && asIs.mobs > 0) {
         const line = RP.restedLine(null);
         out.meanRested = meanPathFight(p, seen.view, seen.fp, p.maxHp * line.hp, p.maxMp * line.mp);
@@ -253,7 +247,6 @@ function terms(asIs, moved) {
         seconds.mpAtStart = Math.abs(out.meanAtStart.fight - out.meanRested.fight);
         seconds.rotation = Math.abs(out.simFight - out.meanAtStart.fight);
     }
-    if (out.restAsRead != null) seconds.restOverlap = Math.abs(out.restMoved - out.restAsRead);
     out.seconds = seconds;
     const named = Object.entries(seconds).sort((a, b) => b[1] - a[1])[0];
     out.named = [named ? named[0] : 'none'];
@@ -262,13 +255,12 @@ function terms(asIs, moved) {
     return out;
 }
 
-// One cell: the as-is hunt, the hunt with the rest moved, their terms.
+// One cell: the watched hunt and its terms.
 function decompose({ spot, selfId, line, level, form, hours = 2, classId = Generator.classFor(line, level) }) {
     const hunted = selfId ? speciesSpot(spot, Number(selfId)) : spot, kit = creationKit(classId);
     const asIs = summarize(watchHunt({ spot: hunted, line, level, form, hours, classId, kit }), hours);
-    const moved = summarize(watchHunt({ spot: hunted, line, level, form, hours, classId, kit, moveRest: true }), hours);
-    const out = { asIs, moved, terms: terms(asIs, moved) };
-    delete asIs.seen; delete moved.seen;
+    const out = { asIs, terms: terms(asIs) };
+    delete asIs.seen;
     return out;
 }
 
@@ -316,14 +308,14 @@ function report(out) {
         const q = (values, p) => f(pct(values.filter(v => v != null), p));
         const same = g.filter(o => o.build && o.asIs.cell.every((v, i) => v === o.build[i])).length;
         console.log(`${kind} cells ${g.length} (as-is cell equal to the build's: ${same}); largest term: ${JSON.stringify(named)}; potions ${flag('potions')}, gap heals ${flag('gapHeals')}`);
-        for (const name of ['mpAtStart', 'rotation', 'restOverlap']) {
+        for (const name of ['mpAtStart', 'rotation']) {
             const v = g.map(o => o.terms.seconds[name]);
             console.log(`  ${name} s/kill p50 ${q(v, 0.5)} p90 ${q(v, 0.9)}`);
         }
         console.log(`  fight |err| mean path rested p50 ${q(g.map(o => rel(o.terms.meanRested?.fight, o.terms.simFight)), 0.5)} at start ${q(g.map(o => rel(o.terms.meanAtStart?.fight, o.terms.simFight)), 0.5)} estimate ${q(g.map(o => rel(o.estimate, o.terms.simFight)), 0.5)}; mean path cut without a kill: rested ${g.filter(o => o.terms.meanRested && o.terms.meanRested.fight == null).length}, at start ${g.filter(o => o.terms.meanAtStart && o.terms.meanAtStart.fight == null).length}`);
         console.log(`  start MP p50 ${q(g.map(o => o.asIs.startMp), 0.5)}, casts/kill sim p50 ${q(g.map(o => o.asIs.castsPerKill), 0.5)} mean path ${q(g.map(o => o.terms.meanAtStart?.castsPerKill), 0.5)}`);
-        console.log(`  rest s/kill as read p50 ${q(g.map(o => o.terms.restAsRead), 0.5)}, sat as-is ${q(g.map(o => o.terms.restSat), 0.5)}, moved ${q(g.map(o => o.terms.restMoved), 0.5)}; kills/h moved/as-is p50 ${q(g.map(o => o.terms.killsMoved / o.terms.killsAsIs), 0.5)} p10 ${q(g.map(o => o.terms.killsMoved / o.terms.killsAsIs), 0.1)}`);
-        console.log(`  deaths/kill as-is p90 ${q(g.map(o => o.terms.deathsAsIs), 0.9)} moved ${q(g.map(o => o.terms.deathsMoved), 0.9)}; fatal fight start HP mean ${f(mean(g.flatMap(o => o.asIs.fatal.map(d => d.hp))))}`);
+        console.log(`  rest s/kill as read p50 ${q(g.map(o => o.terms.restAsRead), 0.5)}, sat ${q(g.map(o => o.terms.restSat), 0.5)}`);
+        console.log(`  deaths/kill p90 ${q(g.map(o => o.terms.deaths), 0.9)}; fatal fight start HP mean ${f(mean(g.flatMap(o => o.asIs.fatal.map(d => d.hp))))}`);
         const reasons = {};
         for (const o of g) for (const [k, r] of Object.entries(o.asIs.restReasons)) reasons[k] = (reasons[k] || 0) + r.n;
         console.log(`  rest reasons (rounds): ${JSON.stringify(reasons)}`);
