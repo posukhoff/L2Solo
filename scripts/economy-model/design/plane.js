@@ -28,6 +28,7 @@
 const Engine = require('../engine');
 const Today = require('../today');
 const SurvivalFloor = require('../../../src/GameServer/Bot/Population/SurvivalFloor');
+const BagClearing = require('../../../src/GameServer/Bot/Economy/BagClearing');
 const Attention = require('./attention');
 const Catalog = require('./catalog');
 const Needs = require('./needs');
@@ -89,14 +90,16 @@ function heldSpot(view, main, valueOf) {
 // kit, its shots and its bag): a stack takes one slot, a piece of gear one
 // each. bags: the line's { slots, maxLoad }.
 function fullOf(view, bags, counts) {
-    let slots = 0, load = 0;
-    for (const [id, count] of counts) {
-        if (!(count > 0)) continue;
-        const item = view.items[id];
-        slots += Engine.isGear(item) ? count : count >= 1 ? 1 : 0;
-        load += item?.weight ? count * item.weight : 0;
-    }
-    return SurvivalFloor.evaluate({ slots, slotLimit: bags.slots, load, maxLoad: bags.maxLoad }) !== null;
+    let load = 0;
+    for (const [id, count] of counts) if (count > 0) load += view.items[id]?.weight ? count * view.items[id].weight : 0;
+    return SurvivalFloor.evaluate({ slots: slotsOf(view, counts), slotLimit: bags.slots, load, maxLoad: bags.maxLoad }) !== null;
+}
+
+// The slots counts { id: count } take: a stack one, a piece of gear one each.
+function slotsOf(view, counts) {
+    let slots = 0;
+    for (const [id, count] of counts) if (count > 0) slots += Engine.isGear(view.items[id]) ? count : count >= 1 ? 1 : 0;
+    return slots;
 }
 
 function carried(main) {
@@ -184,6 +187,25 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
         return Value.hourValue(view, at, form, factorsOf(at), personas.get(main.id), { wayBackHours: Engine.backHoursOf(view, at.spot, townOf(view, at)) });
     };
     const holdSpot = main => heldSpot(view, main, candidateValue);
+    // The bag's clearing at its fact (BagClearing, the game's rule at bag_full): its rows at the NPC's
+    // buy price (the trip's sale), the hour's money at its spot row in the form it hunts (adena and the
+    // drop at the NPC's price, at its kit's kills), the walk back from the spot's town (the game's
+    // WalkBack leg) and the slots the row fills an hour (a stack at most one, a piece of gear each:
+    // our reading of the game's spot-table stacks). It stands when the cleared bag is no longer full;
+    // else the bag goes to town. { bag, clear } or null.
+    const clearedBag = (main, bags) => {
+        const row = Engine.spotRowOf(view, main), factors = factorsOf(main);
+        if (!row || !factors) return null;
+        const { hunted } = huntedOf(main), kills = factors[hunted]?.kills ?? 1, hour = Engine.rowItems(view, main, row, hunted);
+        const rows = Object.entries(main.bag).filter(([, count]) => count > 0).map(([id, count]) => ({ selfId: Number(id), count,
+            slots: Engine.isGear(view.items[id]) ? count : 1, value: count * (view.items[id]?.npcBuy || 0) }));
+        const clear = BagClearing.choose(rows, { hourValue: hour.npc * kills, tripHours: Engine.backHoursOf(view, row.spotId, townOf(view, main)),
+            slots: slotsOf(view, carried(main)), slotsPerHour: hour.items.reduce((sum, item) => sum + (item.stack ? Math.min(1, item.rate) : item.rate), 0) * kills });
+        if (!clear) return null;
+        const bag = { ...main.bag };
+        for (const item of clear.items) delete bag[item.selfId];
+        return fullOf(view, bags, carried({ ...main, bag })) ? null : { bag, clear };
+    };
 
     return {
         sinks: [],
@@ -193,6 +215,8 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             ledger.counters.stuckNoBareHour = 0;
             ledger.counters.fullBagHuntHours = 0;
             ledger.counters.fullBagLostDrop = 0;
+            ledger.counters.bagClears = 0;
+            ledger.counters.bagClearValue = 0;
             const states = new Map();
             // The run report's tallies (each class by the level at the event's start): wall hours from a clock of
             // the level each main holds since an hour; road hours (the walk out, to town and back); trips by the facts in
@@ -327,6 +351,13 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     ledger.counters.fullBagLostDrop += Math.round(delta.lostDrop);
                     if (FACTS.out(main, delta)) state = queueFact(state, 'out', main, main.since);
                     const bags = view.bags?.[main.line], full = bags ? fullOf(view, bags, carried(main)) : false;
+                    const cleared = FACTS.bag(state.full, full) ? clearedBag(main, bags) : null;
+                    if (cleared) {
+                        ledger.counters.bagClears++;
+                        ledger.counters.bagClearValue += cleared.clear.value;
+                        put(main, { ...state, full: false });
+                        return cleared.bag;
+                    }
                     if (FACTS.bag(state.full, full)) state = queueFact(state, 'bag', main, main.since);
                     put(main, { ...state, full });
                 },
