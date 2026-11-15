@@ -283,9 +283,17 @@ try {
     const refused = Resolver.resolveSolo({ state: worn, spot: easy, elapsedMs: 0, timestamp: at, rng: () => 0.5 });
     assert.strictEqual(refused.patch.stats.lastReason, 'solo_recovery_needed');
     const restUntil = refused.patch.stats.restUntil;
-    // It sits down where the fight was refused: after its walk to the mob (stood, a round of
+    // It sits down where the fight was refused: after its walk to the mob (moving, a round of
     // no budget walks past its timestamp), not at the round's end.
-    const refusedAt = Resolver.applyStandingRegen(worn, worn.vitals, refused.debug.combatMs, at);
+    assert.strictEqual(refused.debug.combatMs, refused.debug.walkedMs, 'fixture: the round before the refusal is its walk');
+    const walked = (state, walkedMs) => {
+        const moving = invoke('GameServer/Bot/Population/ColdRest').coldRestRegenPerTick(state,
+            { profile: invoke('GameServer/Bot/Population/ColdCombatProfile').fightProfile(state, at), moving: true, timestamp: at });
+        const ticks = walkedMs / invoke('GameServer/Formulas').REGEN_TICK_MS;
+        return { ...state.vitals, hp: Math.min(state.vitals.maxHp, state.vitals.hp + moving.hp * ticks),
+            mp: Math.min(state.vitals.maxMp, state.vitals.mp + moving.mp * ticks) };
+    };
+    const refusedAt = walked(worn, refused.debug.walkedMs);
     assert.strictEqual(restUntil - at, Math.ceil(refused.debug.combatMs
         + Resolver.estimateRestMs(worn, refusedAt, { line: RestPolicy.THRESHOLDS.rested })),
         'the rest lasts to the rested line from the moment the bot sat');
@@ -308,8 +316,9 @@ try {
     const reckless = { ...hurt, persona: { traits: { caution: 0 } }, vitals: { ...hurt.vitals, hp: 551, mp: 932 } };
     const topped = Resolver.resolveSolo({ state: reckless, spot: easy, elapsedMs: 0, timestamp: at, rng: () => 0.5 });
     assert.strictEqual(topped.patch.stats.lastReason, 'solo_recovery_needed');
+    assert.strictEqual(topped.debug.combatMs, topped.debug.walkedMs, 'fixture: the round before the refusal is its walk');
     assert.strictEqual(topped.patch.stats.restUntil - at, Math.ceil(topped.debug.combatMs + Resolver.estimateRestMs(reckless,
-        Resolver.applyStandingRegen(reckless, reckless.vitals, topped.debug.combatMs, at), { requireMana: true })),
+        walked(reckless, topped.debug.walkedMs), { requireMana: true })),
         'a bot refused at its rested line rests to a full bar, not to the line again');
     Cold.npcForSpot = () => ({ ...target, level: 25, selfId: 156, accur: 100, evasion: 0, critical: 0 });
     const inCombat = { ...hurt, stats: { ...hurt.stats, pveEncounter: Encounter.save(null,

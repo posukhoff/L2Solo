@@ -2858,18 +2858,19 @@ const BackgroundResolver = {
             stats: { ...(state.stats || {}), restUntil: null, pveEncounter: continuing },
             spotId: spot.id
         };
-        // C4 regeneration goes on while the bot walks, fights and stands (x1.1,
-        // its standing passives), its pet's with it (petRegen): accrued up to at
-        // before each read of its vitals.
+        // C4 regeneration goes on while the bot fights and stands (x1.1, its standing
+        // passives) and walks (x0.7), its pet's with it (petRegen): accrued up to at
+        // before each read of its vitals, a walk's span at the moving rate.
         const standing = coldRestRegenPerTick(state, { profile: roundProfile, standing: true, timestamp: roundStart });
+        const moving = coldRestRegenPerTick(state, { profile: roundProfile, moving: true, timestamp: roundStart });
         let regenAt = roundStart, seatedMs = 0;
-        const accrue = () => {
+        const accrue = (rate = standing) => {
             const ms = at - regenAt;
             regenAt = at;
             if (!(ms > 0)) return;
             const ticks = ms / Formulas.REGEN_TICK_MS;
-            patch.vitals.hp = Math.min(patch.vitals.maxHp, patch.vitals.hp + standing.hp * ticks);
-            patch.vitals.mp = Math.min(patch.vitals.maxMp, patch.vitals.mp + standing.mp * ticks);
+            patch.vitals.hp = Math.min(patch.vitals.maxHp, patch.vitals.hp + rate.hp * ticks);
+            patch.vitals.mp = Math.min(patch.vitals.maxMp, patch.vitals.mp + rate.mp * ticks);
             patch.stats = petRegen({ ...state, stats: patch.stats }, ms, roundProfile).stats;
         };
         // A rest inside the round (RestPolicy.restOver's need, read at the sit): the bot
@@ -2974,9 +2975,11 @@ const BackgroundResolver = {
                 // Then the walk to the mob. A walk past the round's end
                 // engages the mob still (the opening action, at least 1 ms of
                 // fight): its fight goes on in the next round.
+                accrue();
                 combatMs += walkMs;
                 at += walkMs;
                 walkedMs += walkMs;
+                accrue(moving);
             }
             accrue();
             const fightState = {
@@ -3119,7 +3122,7 @@ const BackgroundResolver = {
                 const runMs = Math.round(result.runMs || 0);
                 combatMs += runMs;
                 at += runMs;
-                accrue();
+                accrue(moving);
                 events.push({
                     type: 'rest',
                     summary: `${state.name || 'Bot'} sat down to recover near ${spot.name}`,
