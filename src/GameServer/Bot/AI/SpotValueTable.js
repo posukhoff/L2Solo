@@ -847,8 +847,9 @@ function computeValue(t, rates, spotId, role, level, shots, skill = roleSpoilLev
 
 // One kill of the reference bot (the role's class in the author's kit) at the
 // spot for the role at the level, the hunt cycle model's input (HuntCycle):
-// fight and rest seconds (the parts of the kill's one time budget), the mob's damage before heals (taken; spellTaken
-// its part from spells, 0 in a table before the column), the HP and
+// fight and rest seconds (the parts of the kill's one time budget), the
+// mob's damage before heals (taken; spellTaken its part from spells, 0 in a
+// table before the column), the HP and
 // MP it ends short (hpLost, mpLost), deaths, money (adena and loot at the NPC
 // buy-back), shots and potions per kill, all at the bot's level gap (the
 // curves; HP lost follows taken, MP lost the fight); kph the kills per hour
