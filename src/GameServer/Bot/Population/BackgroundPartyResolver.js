@@ -513,12 +513,14 @@ const BackgroundPartyResolver = {
         // timestamp runs to its end (doneAt, the members' next clock). A raid's slices
         // stay at the step's timestamp: the shared boss's leases are stamped by it.
         let at = round ? round.start : timestamp;
-        // C4 regeneration goes on while the members walk, fight and stand (x1.1, their
-        // standing passives), from their credited clock: accrued up to at before each
-        // read of their vitals, one rate per member per round. A dead member does not.
+        // C4 regeneration goes on while the members fight and stand (x1.1, their
+        // standing passives) and walk (x0.7), from their credited clock: accrued up to
+        // at before each read of their vitals, a walk's span at the moving rate; one
+        // pair of rates per member per round. A dead member does not.
         const standing = new Map(round ? members.map((state) => {
             const profile = ColdCombatProfile.fightProfile(state, round.start);
-            return [state.characterId, { profile, rate: coldRestRegenPerTick(state, { profile, standing: true, timestamp: round.start }) }];
+            return [state.characterId, { profile, rate: coldRestRegenPerTick(state, { profile, standing: true, timestamp: round.start }),
+                moving: coldRestRegenPerTick(state, { profile, moving: true, timestamp: round.start }) }];
         }) : []);
         let regenAt = timestamp - Math.max(0, elapsedMs);
         let combatMembers = members.map((state) => {
@@ -528,7 +530,7 @@ const BackgroundPartyResolver = {
                     mp: Math.max(0, Number(state.vitals?.mp ?? profile.maxMp)), maxMp: profile.maxMp }
                 : pending ? { ...state.vitals } : BackgroundResolver.applyStandingRegen(state, state.vitals, elapsedMs, timestamp) };
         });
-        const accrue = () => {
+        const accrue = (walking = false) => {
             const ms = at - regenAt;
             if (!round || !(ms > 0)) return;
             regenAt = at;
@@ -536,7 +538,7 @@ const BackgroundPartyResolver = {
             combatMembers = combatMembers.map((member) => {
                 const hp = Number(member.vitals?.hp || 0);
                 if (!(hp > 0)) return member;
-                const { rate } = standing.get(member.characterId);
+                const rate = standing.get(member.characterId)[walking ? 'moving' : 'rate'];
                 return { ...member, vitals: { ...member.vitals, hp: Math.min(member.vitals.maxHp, hp + rate.hp * ticks),
                     mp: Math.min(member.vitals.maxMp, Number(member.vitals.mp || 0) + rate.mp * ticks) } };
             });
@@ -563,8 +565,9 @@ const BackgroundPartyResolver = {
             if (round && !pending && mobsKilled + 1 > round.shareMobs) break;
             const walkMs = round && !pending ? round.walkMs : 0;
             // The walk to the mob first: the fight starts at its end.
-            at += walkMs;
             accrue();
+            at += walkMs;
+            accrue(true);
             const encounter = BackgroundResolver.resolvePartyFight({
                 members: combatMembers,
                 spot,

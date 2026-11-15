@@ -217,8 +217,14 @@ try {
     const refused = BackgroundResolver.resolveSolo({ state: tired, spot: field, elapsedMs: 30_000, timestamp: at, rng: () => 0.5 });
     assert.strictEqual(refused.patch.stats.lastReason, 'solo_recovery_needed');
     assert.strictEqual(refused.debug.attemptedFights, 0);
-    // It stood (walked) only until the refusal: its standing regen runs that long, no longer.
-    const refusedAt = BackgroundResolver.applyStandingRegen(tired, tired.vitals, refused.debug.combatMs, at);
+    // It walked only until the refusal: its regen runs that long at the moving rate
+    // (C4 x0.7, the hot rule's), no longer.
+    assert.strictEqual(refused.debug.combatMs, refused.debug.walkedMs, 'fixture: the round before the refusal is its walk');
+    const movingRate = ColdRest.coldRestRegenPerTick(tired, { profile: caster, moving: true, timestamp: at });
+    assert(Math.abs(movingRate.hp / ColdRest.coldRestRegenPerTick(tired, { profile: caster, standing: true, timestamp: at }).hp - 0.7 / 1.1) < 1e-9,
+        'a walk regenerates at the moving rate, not the standing one');
+    const refusedAt = { ...tired.vitals, hp: Math.min(tired.vitals.maxHp, tired.vitals.hp + movingRate.hp * refused.debug.walkedMs / tick),
+        mp: Math.min(tired.vitals.maxMp, tired.vitals.mp + movingRate.mp * refused.debug.walkedMs / tick) };
     const refusedNeed = BackgroundResolver.estimateRestMs(tired, refusedAt, line);
     assert.strictEqual(refused.patch.stats.restUntil, Math.ceil(at - 30_000 + refused.debug.combatMs + refusedNeed),
         'a refused fight\'s rest starts at the refusal, inside the interval the round credits');
