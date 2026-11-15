@@ -195,10 +195,10 @@ jobs:
 
   # The economy model's own hunt table (scripts/economy-model/hunt-table.js):
   # two rounds of hunts, the species and then the whole-spot check that reads
-  # the species cells, each split in 12 shares. A stage's parts come back as
+  # the species cells, each split in 20 shares. A stage's parts come back as
   # artifacts and the next stage resumes from them.
   model-species:
-    name: Model hunts, species (${{ matrix.shard }}/12)
+    name: Model hunts, species (${{ matrix.shard }}/20)
     needs: plan
     if: needs.plan.outputs.model == 'true'
     runs-on: ubuntu-latest
@@ -206,7 +206,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -218,7 +218,7 @@ jobs:
           path: data/Geodata
           key: geodata-${{ hashFiles('scripts/geodata-release.json') }}
       - run: npm run geodata
-      - run: node scripts/economy-model/hunt-table.js --levels 1-19 --children 4 --shard ${{ matrix.shard }}/12 --out model/hunt.json
+      - run: node scripts/economy-model/hunt-table.js --levels 1-19 --children 4 --shard ${{ matrix.shard }}/20 --out model/hunt.json
       - uses: actions/upload-artifact@v4
         with:
           name: model-species-${{ matrix.shard }}
@@ -226,14 +226,14 @@ jobs:
           retention-days: 3
 
   model-check:
-    name: Model hunts, check (${{ matrix.shard }}/12)
+    name: Model hunts, check (${{ matrix.shard }}/20)
     needs: [plan, model-species]
     runs-on: ubuntu-latest
     timeout-minutes: 150
     strategy:
       fail-fast: true
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -250,7 +250,7 @@ jobs:
           pattern: model-species-*
           path: model/hunt.json.parts
           merge-multiple: true
-      - run: node scripts/economy-model/hunt-table.js --levels 1-19 --children 4 --shard ${{ matrix.shard }}/12 --out model/hunt.json
+      - run: node scripts/economy-model/hunt-table.js --levels 1-19 --children 4 --shard ${{ matrix.shard }}/20 --out model/hunt.json
       - uses: actions/upload-artifact@v4
         with:
           name: model-check-${{ matrix.shard }}
