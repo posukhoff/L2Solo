@@ -277,9 +277,11 @@ try {
         assert.strictEqual(dry.debug.shotActions, 4, 'the round fires its four shots');
         assert(dry.debug.wins < stocked.debug.wins && dry.doneAt < at,
             `the round ends at the fight that spends its last shot (${dry.debug.wins} wins, ${stocked.debug.wins} with shots to spare)`);
+        assert.deepEqual([dry.debug.ended, stocked.debug.ended], ['shots_out', null], 'the round names the crossing it ended at');
         const filling = BackgroundResolver.resolveSolo({ state: swords(78), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
         assert.strictEqual(filling.debug.wins, 2, `the round ends at the kill whose drop fills the bag's 80 slots (${filling.debug.wins} wins)`);
         assert(filling.doneAt < at, `at that fight's end, before the round's bound (${at - filling.doneAt} ms before)`);
+        assert.strictEqual(filling.debug.ended, 'bag_full');
         assert.strictEqual(filling.patch.activity, 'hunting');
         assert.strictEqual(filling.materialize.items.length, 2, 'both drops fit');
         // Two swords a kill into a bag one slot short of full: each drop stays on the ground
@@ -300,6 +302,7 @@ try {
         const up = BackgroundResolver.resolveSolo({ state: levelling, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
         assert.strictEqual(up.debug.wins, 1, `the round ends at the kill that gains a level (${up.debug.wins} wins)`);
         assert(up.doneAt < at && up.patch.activity === 'hunting', 'at that fight\'s end, still hunting');
+        assert.strictEqual(up.debug.ended, 'level');
     } finally { Rewards.roll = originalRoll; }
     // The same rule near a player (PickupCapacity.check on a body's bag): a full bag takes
     // no new slot, a stack it holds still grows.
