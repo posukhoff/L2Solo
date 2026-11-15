@@ -12,6 +12,10 @@
 //        [--catalogue file]   (a saved { spots, profiles } catalogue, --out required; default: built now, geodata required)
 // The hunts' results go to <out>.parts/ as they come, by stamp: a build run
 // again on the same tree skips the hunts already there.
+// Split over machines (the fork's tables workflow):
+//        [--shard i/N]   runs the i-th of N shares (every N-th hunt of the round's
+//                        list) of the first round not complete, then stops: no table
+//        [--join]        runs no hunt: the table from the parts, a hunt without a result is an error
 require('../../src/Global');
 const childProcess = require('child_process');
 const crypto = require('crypto');
@@ -303,7 +307,8 @@ function prepareParts(parts, meta, log) {
 
 const quantile = (values, q) => values.length ? [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(q * values.length))] : null;
 
-async function build({ from, to, hours = 2, children = 7, spots: onlySpots = null, keys: onlyKeys = null, catalogue = null, out = null, log = console.log }) {
+async function build({ from, to, hours = 2, children = 7, spots: onlySpots = null, keys: onlyKeys = null, catalogue = null, out = null,
+    shard = null, join = false, log = console.log }) {
     if ((onlySpots || onlyKeys || catalogue) && !out) throw new Error('a pick of spots or keys, or a given catalogue, is not the table: name its --out');
     const limit = LIMITS.KILL_DEATH_LIMIT.value;
     const started = Date.now(), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hunt-table-'));
@@ -321,9 +326,17 @@ async function build({ from, to, hours = 2, children = 7, spots: onlySpots = nul
         const before = stamp(), file = out || path.join(ROOT, 'tmp/economy-model/hunt', `hunt-${from}-${to}-${before}.json`), parts = `${file}.parts`;
         prepareParts(parts, { stamp: before, hours, catalogue: catalogue ? crypto.createHash('sha256').update(fs.readFileSync(catalogue)).digest('hex') : 'geodata' }, log);
         log(`levels ${from}-${to}: bodies ${Object.keys(bodies).length}, spots ${Object.keys(spots).length}, hunts ${tasks.length} on ${children} children, stamp ${before}`);
+        // A shard's parts are named by its number: two machines can share a pid.
         const hunted = async (list, round) => {
-            const first = doneResults(parts, before), todo = list.filter(task => !first.done.has(task.k));
-            log(`round ${round}: ${list.length - todo.length} hunts already in ${path.relative(ROOT, parts)} (${first.cut} cut lines), ${todo.length} to run`);
+            const first = doneResults(parts, before), missing = list.filter(task => !first.done.has(task.k)).length;
+            const todo = list.filter((task, index) => !first.done.has(task.k) && (!shard || index % shard.n === shard.i - 1));
+            log(`round ${round}: ${list.length - missing} hunts already in ${path.relative(ROOT, parts)} (${first.cut} cut lines), ${todo.length} to run`
+                + (shard ? ` (share ${shard.i}/${shard.n})` : ''));
+            if (shard && missing) {
+                if (todo.length) await runChildren({ dir, tasks: todo, children, catalogueFile, hours, parts, prefix: `${before}-${round}-s${shard.i}` });
+                return null;
+            }
+            if (join && missing) throw new Error(`hunt table round ${round}: ${missing} hunts without a result (--join runs none)`);
             if (todo.length) await runChildren({ dir, tasks: todo, children, catalogueFile, hours, parts, prefix: `${before}-${round}-${process.pid}` });
             const { done } = doneResults(parts, before), results = list.map(task => done.get(task.k));
             if (results.some(result => !result)) throw new Error(`hunt table round ${round}: ${results.filter(result => !result).length} hunts without a result`);
@@ -335,13 +348,16 @@ async function build({ from, to, hours = 2, children = 7, spots: onlySpots = nul
             return results;
         };
         const results = await hunted(tasks, 'species'), cells = {};
+        if (!results) return { file: null };
         results.forEach((result, index) => {
             const task = tasks[index];
             const held = ((cells[task.body] ||= {})[task.spotId] ||= {})[task.selfId] ||= [null, null];
             held[task.form] = result.cell;
         });
         const wholeTasks = checkTasks({ cells, spots, hunters, limit });
-        const wholeResults = await hunted(wholeTasks, 'check'), whole = wholeResults.map((result, index) => ({ task: wholeTasks[index], cell: result.cell }));
+        const wholeResults = await hunted(wholeTasks, 'check');
+        if (shard) return { file: null };
+        const whole = wholeResults.map((result, index) => ({ task: wholeTasks[index], cell: result.cell }));
         const after = stamp();
         if (after !== before) throw new Error(`the combat inputs changed during the build (stamp ${before} -> ${after}): not written`);
         const table = { stamp: before, range: [from, to], window: WINDOW, hours, restRule: REST_RULE, point: { fields: POINT_FIELDS },
@@ -403,8 +419,10 @@ if (require.main === module) {
     }
     const [from, to] = String(Boot.option(argv, 'levels', '1-19')).split('-').map(Number);
     const list = name => Boot.option(argv, name, null)?.split(',') || null;
+    const [i, n] = String(Boot.option(argv, 'shard', '')).split('/').map(Number);
     build({ from, to: to || from, hours: Number(Boot.option(argv, 'hours', 2)), children: Number(Boot.option(argv, 'children', 7)),
-        spots: list('spots'), keys: list('keys'), catalogue: Boot.option(argv, 'catalogue', null), out: Boot.option(argv, 'out', null) })
+        spots: list('spots'), keys: list('keys'), catalogue: Boot.option(argv, 'catalogue', null), out: Boot.option(argv, 'out', null),
+        shard: n ? { i, n } : null, join: argv.includes('--join') })
         .catch(error => { console.error(error.stack || error); process.exit(1); });
 }
 

@@ -99,6 +99,24 @@ const options = { from: 1, to: 1, hours: 1, children: 1, spots: [GREMLIN_SPOT], 
         assert(lines.some(line => /were made under other inputs: cleared/.test(line)), 'the parts of other hours are cleared');
         assert(lines.some(line => /round species: 0 hunts already/.test(line)), 'none of them is reused');
         assert.equal(longer.table.hours, 2);
+
+        // Split over machines: each share hunts its every n-th hunt and writes no
+        // table; the join hunts nothing, refuses while a share is missing, and
+        // gives the table the one machine built.
+        const split = { ...options, out: path.join(dir, 'split.json') };
+        const first = await HuntTable.build({ ...split, shard: { i: 1, n: 2 } });
+        assert.equal(first.file, null, 'a share writes no table');
+        assert(!fs.existsSync(split.out), 'no table file from a share');
+        await assert.rejects(HuntTable.build({ ...split, join: true }), /round species: 1 hunts without a result/);
+        assert(!fs.existsSync(split.out), 'no table file from a refused join');
+        await HuntTable.build({ ...split, shard: { i: 2, n: 2 } });
+        const shares = fs.readdirSync(`${split.out}.parts`).filter(name => name.endsWith('.jsonl'));
+        assert.deepEqual(shares.map(name => name.replace(/^[0-9a-f]{12}-/, '')).sort(), ['species-s1-0.jsonl', 'species-s2-0.jsonl'],
+            'a share\'s parts are named by its number, not the pid (two machines can share one)');
+        lines.length = 0;
+        const joined = await run({ ...split, join: true });
+        assert(lines.some(line => /round species: 2 hunts already .* 0 to run/.test(line)), 'the join runs no hunt');
+        assert.deepEqual(joined.table, table, 'the joined table is the one machine\'s');
         console.log('test_economy_model_hunt_table: ok');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
