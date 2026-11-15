@@ -195,7 +195,13 @@ async function run() {
     const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
     Economy.configure({ spots: [], knowledgeEnabled: false });
     state = await seed(9543, 1000000, { classId: 1, marketReturn: { loc: { locX: 12000, locY: 90000, locZ: -3000 } } });
-    state = { ...state, level: 33 };
+    // A level whose income row needs potions and whose best experience row none:
+    // the spot-use shapes below read both, whatever levels the table gives them.
+    const SpotTable = invoke('GameServer/Bot/AI/SpotValueTable'), Efficiency = invoke('GameServer/Bot/AI/BotHuntEfficiency');
+    const level = Array.from({ length: 31 }, (_, at) => 20 + at).find(at => Efficiency.incomeRow({ ...state, level: at })?.potions > 0
+        && !(SpotTable.best(SpotTable.roleFor({ ...state, level: at }), at, true).potions > 0));
+    assert(level, 'fixture: a level whose income row needs potions and whose experience row none');
+    state = { ...state, level };
     const packet = Economy.forState(state).statsPacket;
     // Its earning answer carries the spot's kit use, as the worker's decision publishes it.
     state = await Life.upsertState(require('./helpers/ratedKit')({ ...state, stats: { ...state.stats, ...packet } }), 'basket_fixture');
