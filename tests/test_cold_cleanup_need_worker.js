@@ -145,12 +145,14 @@ async function step(states, { project = state => state } = {}) {
     // The step that decided them destroys them at once, through its resolve on either thread: the far
     // step's commit carries the bag without them, and no trip.
     const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
+    // The stacks a bag holds (an emptied stack stays at amount 0 for the physical sync).
+    const stacks = bag => Object.keys(bag).filter(key => bag[key].amount > 0).map(Number).sort();
     const trained = { classId: 0, classProgressionLevel: 40, classProgressionClassId: 0 };
     // The worker's round projection (no write, the class projected) with the step's decision packet.
     const decided = { persist: false, projectClassProgression: true, statsPacket: { bagClear: cleared.bagClear }, statsPacketBeforeResolve: true };
     const destroyed = (await step([bot(511, { inventory: loot, stats: trained })], { project: (state, stepResult) =>
         LifeState.prepareResolve(state, stepResult, decided) })).get(511);
-    assert.deepStrictEqual(Object.keys(destroyed.nextState.inventory).map(Number).sort(),
+    assert.deepStrictEqual(stacks(destroyed.nextState.inventory),
         Object.keys(loot).map(Number).filter(id => !cheapIds.includes(id)).sort(), 'the cleared slots leave the bag');
     assert.deepStrictEqual(destroyed.removedItemIds.sort(), cheapIds, 'the commit names the destroyed stacks');
     assert.strictEqual(destroyed.nextState.stats.bagClear, null, 'the clearing is spent');
@@ -159,7 +161,7 @@ async function step(states, { project = state => state } = {}) {
     // Main's resolve of a far step the worker decided (PopulationService: applyResolve, the same resolve
     // with the step's packet; its write and training left out here) destroys them in that step too.
     const mainResolved = await LifeState.prepareResolve(bot(513, { inventory: loot, stats: trained }), result({ timestamp: 3000 }), decided);
-    assert.deepStrictEqual(Object.keys(mainResolved.inventory).map(Number).sort(),
+    assert.deepStrictEqual(stacks(mainResolved.inventory),
         Object.keys(loot).map(Number).filter(id => !cheapIds.includes(id)).sort(), 'main\'s resolve destroys the cleared slots');
     assert.strictEqual(mainResolved.stats.bagClear, null, 'and spends the clearing');
     // A bag of valuable loot (no row below theta) goes to town, nothing destroyed.

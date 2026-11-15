@@ -3670,7 +3670,7 @@ const BotLifeState = {
         const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
         const Arrows = require('../../Inventory/ArrowStock');
         const reserved = Disposition.reservedEquipmentAmounts(state);
-        const inventory = { ...(state.inventory || {}) };
+        let inventory = { ...(state.inventory || {}) };
         let payout = 0;
         const sold = [];
         candidates.forEach((candidate) => {
@@ -3693,9 +3693,8 @@ const BotLifeState = {
             );
             const price = Math.max(0, Number(candidate.npcPrice || 0));
             if (!selfId || !Number.isFinite(amount) || !Number.isFinite(price) || amount <= 0 || price <= 0) return;
-            const removed = instances ? new Set(instances.slice(0, amount)) : null;
-            inventory[String(selfId)] = { ...existing, amount: Number(existing.amount) - amount,
-                ...(removed ? { instances: existing.instances.filter(instance => !removed.has(instance)) } : {}) };
+            inventory = RoundLoot.removeFrom(inventory, [{ selfId, enchant: candidate.enchant, count: amount,
+                objectIds: selectedIds && [...selectedIds] }]);
             payout += amount * price;
             sold.push([selfId, amount, price]);
         });
