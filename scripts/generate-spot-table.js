@@ -856,6 +856,21 @@ function packRow(row) {
     return row ? ROW_FIELDS.map((field) => field === 'mix' || field === 'gate' || field === 'gateShare' ? row[field] : round(row[field])) : null;
 }
 
+// The rows whose fight + rest per kill outgrow their hour per kill (3600 / kph):
+// a reader's idle (HuntCycle's hour: 3600 / kph - fight - rest) would clamp at 0
+// and charge fewer kills an hour than the row states. Within the rows' rounding
+// (round: 4 digits, at most 5e-4 of each value): a bot that never idles fills
+// its hour exactly, and its rounded fight + rest may pass it by that much.
+const ROUNDING = 1e-3;
+function outgrown(table) {
+    const field = Object.fromEntries(table.rowFields.map((name, index) => [name, index]));
+    return table.rows.flatMap((rows, s) => rows.flatMap((row, index) => {
+        if (!row || row[field.fight] + row[field.rest] <= 3600 / row[field.kph] * (1 + ROUNDING)) return [];
+        const role = table.roles[Math.floor(index / table.shots.length)], shots = table.shots[index % table.shots.length];
+        return [`${table.spots[s][0]} ${role} shots ${shots}: ${round(row[field.fight] + row[field.rest])} s over ${round(3600 / row[field.kph])} s`];
+    }));
+}
+
 // Per role and band: for each gap the sum over the band's curve spots of the
 // value at that gap over their sum at REF_GAP, on the spots that hunt at both
 // (deaths per kill as the mean difference instead: a spot without deaths at
@@ -1127,6 +1142,8 @@ async function main() {
             kitSurface
         };
         if (table.rows.length !== table.spots.length) throw new Error('rows and spots differ');
+        const over = outgrown(table);
+        if (over.length) throw new Error(`${over.length} rows outgrow their hour per kill: ${over.slice(0, 20).join('; ')}`);
         fs.mkdirSync(path.dirname(options.out), { recursive: true });
         const text = `${JSON.stringify(table)}\n`;
         fs.writeFileSync(options.out, text);
@@ -1150,4 +1167,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { hunt, perKill, countNewStacks, runPool, phaseResults, tasksHash, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor, lineClassFor, botFor };
+module.exports = { hunt, perKill, ROUNDING, countNewStacks, runPool, phaseResults, tasksHash, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor, lineClassFor, botFor };
