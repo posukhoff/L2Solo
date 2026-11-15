@@ -138,8 +138,8 @@ function watchHunt({ spot, line, level, form, hours, classId, kit }) {
     };
     ER.evaluate = (remaining, target, attacksOf) => {
         const verdict = real.evaluate(remaining, target, attacksOf);
-        rec.seen.view ||= target;
-        if (mark && mark.ready === null) mark.ready = verdict.ready;
+        // A fight's own readiness read (the builder also reads the matchup before the hunt's first step).
+        if (mark && mark.ready === null) { mark.ready = verdict.ready; rec.seen.view ||= target; }
         return verdict;
     };
     RP.needsRest = (subject, hpRatio, mpRatio, options) => {
