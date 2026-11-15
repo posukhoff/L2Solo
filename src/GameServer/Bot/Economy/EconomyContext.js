@@ -906,13 +906,13 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         expectedDeathHours: positive(bestTable?.deaths) * deathHours,
         karmaHours: Valuation.karmaHours(state, { ...hunt, lostGearHours, deathsPerHour: positive(bestTable?.deaths) }) };
 }
-// The bag's two answers at its need (bag_full): Q1, which slots it destroys
-// (BagClearing over ItemDisposition's sale rows, the trip being the walk back from the
-// held spot), and Q2, leave the field (PartyMarketBreak.cleanupDecision). Q2 is asked of
-// the bag Q1 cleared, and Q1 stands only when that bag then needs no trip: a trip sells
-// those rows for their worth. Q1 is asked only when Q2 says trip (a solo bot's bag at its
-// need). { cleanupDue, bagClear }: bagClear { items, freed, value } is executed at once by
-// the step or body that lands it (ColdSimulationKernel, HuntingState).
+// The bag's two answers at its need (bag_full): which slots it destroys (BagClearing over
+// ItemDisposition's sale rows, the trip being the walk back from the held spot), and
+// whether it leaves the field (PartyMarketBreak.cleanupDecision), asked of the bag the
+// clearing left. The clearing stands only when that bag then needs no trip: a trip sells
+// those rows for their worth. The clearing is asked only when the bag's need says trip (a
+// solo bot's bag). { cleanupDue, bagClear }: bagClear { items, freed, value } is executed at
+// once by the step or body that lands it (ColdSimulationKernel, HuntingState).
 function bagDecisions(state, base, deps, now) {
     const Break = invoke('GameServer/Bot/Population/PartyMarketBreak');
     const cleanupDue = Break.cleanupDecision(state, now);
