@@ -257,6 +257,7 @@ jobs:
           path: |
             model/hunt.json.parts/*-check-s${{ matrix.shard }}-*.jsonl
             model/hunt.json.parts/meta.json
+          if-no-files-found: error
           retention-days: 3
 
   model-table:
