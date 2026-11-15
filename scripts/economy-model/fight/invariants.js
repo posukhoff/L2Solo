@@ -239,9 +239,11 @@ function checkTable(table, { rounding }) {
                     if (!Number.isFinite(kills) || kills < 0) return flag('numbers.invalid', `kills ${kills}`);
                     if (kills === 0) return;
                     if (!Number.isFinite(deaths) || deaths < 0) flag('numbers.invalid', `deaths ${deaths}`);
-                    const hour = 3600 / kills, parts = cell[at.fight] + cell[at.rest] + cell[at.other] + cell[at.walk];
+                    const hour = 3600 / kills, partList = [cell[at.fight], cell[at.rest], cell[at.other], cell[at.walk]], parts = partList.reduce((a, b) => a + b, 0);
+                    // round() keeps 4 significant digits (error up to 5e-4 of the value): each part and the hour carry that.
+                    const tolerance = 5e-4 * (hour + partList.reduce((a, b) => a + Math.abs(b), 0));
                     if (cell[at.other] < -rounding * hour) flag('cell.otherNegative', `other ${cell[at.other]} s of ${hour} s a kill`);
-                    if (!(Math.abs(parts - hour) <= rounding * hour)) flag('cell.untiled', `fight + rest + other + walk ${parts} s, the hour per kill ${hour} s`);
+                    if (!(Math.abs(parts - hour) <= tolerance)) flag('cell.untiled', `fight + rest + other + walk ${parts} s, the hour per kill ${hour} s`);
                 });
             }
         }

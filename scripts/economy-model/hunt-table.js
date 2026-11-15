@@ -65,12 +65,11 @@ const round = value => value === 0 ? 0 : Number(value.toPrecision(4));
 // last round or rest ended), the span its fight and rest were counted in, so
 // the parts tile the hour per kill.
 function cellOf(sum) {
-    const mobs = sum.mobs;
-    if (!(mobs > 0)) return [0, ...FIELDS.slice(1).map(() => null)];
-    const seconds = ms => round(ms / 1000 / mobs);
-    return [round(mobs / (sum.spanMs / 3600000)), round(sum.deaths / mobs), seconds(sum.fightMs - sum.walkMs), seconds(sum.restMs),
-        seconds(sum.spanMs - sum.fightMs - sum.restMs), seconds(sum.walkMs), round(sum.exp / mobs),
-        round(sum.shots / mobs), round(sum.potions / mobs), round(sum.pullMobs / sum.pulls)];
+    const per = Generator.perKill(sum);
+    if (!per) return [0, ...FIELDS.slice(1).map(() => null)];
+    const k = sum.mobs, walk = sum.walkMs / 1000 / k;
+    return [round(per.kph), round(per.deaths), round(per.fight - walk), round(per.rest), round(sum.spanMs / 1000 / k - per.fight - per.rest),
+        round(walk), round(per.exp), round(per.shots), round(per.potions), round(sum.pullMobs / sum.pulls)];
 }
 
 // The spot's species: selfId -> { level, count, production (mobs an hour, null without a production table) }.
