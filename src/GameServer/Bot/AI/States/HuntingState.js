@@ -804,12 +804,7 @@ module.exports = {
             session.plan = 'resting';
             return;
         }
-        // The bag's town trip a build decided (stats.cleanupDue, EconomyContext: one rule with
-        // the far bot's), held until it starts (a trip deferred by a fight waits in
-        // pendingTownTrip) or the live bag no longer needs it (its fact, PartyMarketBreak.bagFact).
-        // Like the loot sell trip below and the cold sale visit: the trip starts the sale
-        // retry, so a bag that sold nothing heavy hunts on at penalty 1.
-        // The build's clearing of the full bag (stats.bagClear) replaces that trip: its slots are
+        // The build's clearing of a full bag (stats.bagClear, EconomyContext.bagDecisions) replaces its town trip: its slots are
         // destroyed now and the bot hunts on (counted bag_clear:hot beside the trips).
         const bagClear = isSoloHunter(session) ? DecisionEvents.statsFor(session).bagClear : null;
         if (bagClear) {
@@ -817,6 +812,11 @@ module.exports = {
             require('../../Situations').note('bag_clear:hot');
             DecisionEvents.replaceStats(session, { ...DecisionEvents.statsFor(session), bagClear: null });
         }
+        // The bag's town trip a build decided (stats.cleanupDue, EconomyContext: one rule with
+        // the far bot's), held until it starts (a trip deferred by a fight waits in
+        // pendingTownTrip) or the live bag no longer needs it (its fact, PartyMarketBreak.bagFact).
+        // Like the loot sell trip below and the cold sale visit: the trip starts the sale
+        // retry, so a bag that sold nothing heavy hunts on at penalty 1.
         const cleanupDue = isSoloHunter(session) ? DecisionEvents.statsFor(session).cleanupDue : null;
         if (cleanupDue) {
             const bag = MarketListingPolicy.actorState(session);
