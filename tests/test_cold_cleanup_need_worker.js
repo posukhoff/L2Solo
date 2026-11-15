@@ -35,7 +35,7 @@ async function step(states, { project = state => state } = {}) {
         spotOf: value => spots.get(Number(value?.characterId)) || null,
         resolveSolo: result,
         planLifecycle: async () => ({}),
-        projectResolve: state => ({ state: project(state) }),
+        projectResolve: async (state, stepResult) => ({ state: await project(state, stepResult) }),
         emit: (type, payload) => {
             if (type === 'proposal_batch') for (const proposal of payload.proposals) sent.set(proposal.characterId, proposal);
         }
@@ -142,14 +142,26 @@ async function step(states, { project = state => state } = {}) {
     assert.strictEqual(cleared.bagClear.freed, 30);
     const cheapIds = Disposition.clearingRows(looter).filter(row => row.value < worth[30]).map(row => row.selfId).sort();
     assert.deepStrictEqual(cleared.bagClear.items.map(item => item.selfId).sort(), cheapIds, 'only the cheap rows are cleared');
-    // The far step destroys them at once: its commit carries the bag without them, and no trip.
-    const destroyed = (await step([bot(511, { inventory: loot, stats: { classId: 0, bagClear: cleared.bagClear } })])).get(511);
+    // The step that decided them destroys them at once, through its resolve on either thread: the far
+    // step's commit carries the bag without them, and no trip.
+    const LifeState = invoke('GameServer/Bot/Population/BotLifeState');
+    const trained = { classId: 0, classProgressionLevel: 40, classProgressionClassId: 0 };
+    // The worker's round projection (no write, the class projected) with the step's decision packet.
+    const decided = { persist: false, projectClassProgression: true, statsPacket: { bagClear: cleared.bagClear }, statsPacketBeforeResolve: true };
+    const destroyed = (await step([bot(511, { inventory: loot, stats: trained })], { project: (state, stepResult) =>
+        LifeState.prepareResolve(state, stepResult, decided) })).get(511);
     assert.deepStrictEqual(Object.keys(destroyed.nextState.inventory).map(Number).sort(),
         Object.keys(loot).map(Number).filter(id => !cheapIds.includes(id)).sort(), 'the cleared slots leave the bag');
     assert.deepStrictEqual(destroyed.removedItemIds.sort(), cheapIds, 'the commit names the destroyed stacks');
     assert.strictEqual(destroyed.nextState.stats.bagClear, null, 'the clearing is spent');
     assert.strictEqual(destroyed.cleanupNeed, undefined, 'no trip starts');
     assert.strictEqual(destroyed.nextState.activity, 'hunting', 'the bot hunts on');
+    // Main's resolve of a far step the worker decided (PopulationService: applyResolve, the same resolve
+    // with the step's packet; its write and training left out here) destroys them in that step too.
+    const mainResolved = await LifeState.prepareResolve(bot(513, { inventory: loot, stats: trained }), result({ timestamp: 3000 }), decided);
+    assert.deepStrictEqual(Object.keys(mainResolved.inventory).map(Number).sort(),
+        Object.keys(loot).map(Number).filter(id => !cheapIds.includes(id)).sort(), 'main\'s resolve destroys the cleared slots');
+    assert.strictEqual(mainResolved.stats.bagClear, null, 'and spends the clearing');
     // A bag of valuable loot (no row below theta) goes to town, nothing destroyed.
     const valuable = answer(looter, { ...hunt(30), hourAdena: worth[0] / 2 * 45 / tripHours });
     assert.strictEqual(valuable.cleanupDue?.reason, 'inventory_half_full');
