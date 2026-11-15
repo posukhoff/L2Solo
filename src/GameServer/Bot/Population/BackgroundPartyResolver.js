@@ -525,7 +525,9 @@ const BackgroundPartyResolver = {
         const huntRates = round ? ratesById : new Map();
         // Each living member stood from its own clock to the round's start (one whose
         // clock is earlier waited for the latest); a raid's to the step's timestamp.
-        // A raid fight under way holds its members' vitals.
+        // Within the step's credited time: a wait cut from it (ColdCompetitionWait) is
+        // not hunted. A raid fight under way holds its members' vitals.
+        const creditedFrom = timestamp - Math.max(0, elapsedMs);
         let combatMembers = members.map((state) => {
             if (helperRecoveries.has(state.characterId)) return { ...state, vitals: { ...state.vitals, hp: 0 } };
             if (raid && pending) return { ...state, vitals: { ...state.vitals } };
@@ -533,7 +535,7 @@ const BackgroundPartyResolver = {
             const vitals = { hp: Math.max(0, Number(state.vitals?.hp ?? profile.maxHp)), maxHp: profile.maxHp,
                 mp: Math.max(0, Number(state.vitals?.mp ?? profile.maxMp)), maxMp: profile.maxMp };
             if (!(vitals.hp > 0)) return { ...state, vitals };
-            return { ...state, ...ColdClock.regen({ vitals, stats: state.stats }, clock.at - ColdClock.since(state, timestamp), standing, profile) };
+            return { ...state, ...ColdClock.regen({ vitals, stats: state.stats }, clock.at - Math.max(creditedFrom, ColdClock.since(state, timestamp)), standing, profile) };
         });
         // Raid preparation casts its own buffs; an ordinary hunt casts them between fights.
         const huntBuffs = raid || pending ? null : BackgroundResolver.castHuntPartyBuffs(combatMembers, clock.at);
