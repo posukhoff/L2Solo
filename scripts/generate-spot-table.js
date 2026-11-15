@@ -489,10 +489,13 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
             sum.loot += simulation.HuntEfficiency.lootValue(gained.items || []);
             sum.stacks += countNewStacks(gained.items || [], seen, simulation.items);
             sum.potions += Number(debug.potionsUsed || 0);
-            // The bots' records count a cycle's combat and the rest it calls for.
+            // The bots' records count a cycle's combat and the rest it calls for, a rest
+            // step's extension of it too (a dead bot's step rests it to its respawn: death time).
+            const restMs = state.activity === 'dead' ? 0 : Math.max(0, Number(patch.stats?.restUntil || t) - t);
+            sum.busyMs += restMs;
+            sum.restMs += restMs;
             if (Number.isFinite(debug.combatMs)) {
-                const restMs = Math.max(0, Number(patch.stats?.restUntil || t) - t);
-                sum.busyMs += Number(debug.combatMs) + restMs;
+                sum.busyMs += Number(debug.combatMs);
                 sum.fightMs += Number(debug.combatMs);
                 // Its parts the bots' records do not split: the walk to the mobs, own buffs and heals.
                 sum.walkMs += Number(debug.walkedMs || 0);
@@ -508,7 +511,6 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
                 sum.petTaken += Number(debug.petTaken || 0);
                 sum.summonUses += Number(debug.summonUses || 0);
                 sum.summonDeaths += Number(debug.summonDeaths || 0);
-                sum.restMs += restMs;
                 sum.taken += Number(debug.damageTaken || 0);
                 sum.spellTaken += Number(debug.spellTaken || 0);
                 sum.hpLost += Math.max(0, Number(state.vitals?.hp) - Number(patch.vitals?.hp ?? state.vitals?.hp));

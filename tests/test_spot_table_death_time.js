@@ -12,8 +12,9 @@ const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
 const FIGHT_MS = 30000;
 // The fight is the edge: a won kill every 30 s, or a death on the fight
 // named; every other step (the respawn, the rest after it) is the author's.
-function simulation(dieOn) {
-    const calls = { fights: 0, respawns: [], downMs: 0 };
+// restOn: the fight that leaves the bot at 1 HP with a rest the author's rest step extends.
+function simulation(dieOn, restOn = 0) {
+    const calls = { fights: 0, respawns: [], downMs: 0, restedMs: 0 };
     return { calls, sim: {
         items: invoke('GameServer/DataCache').items,
         BotGear: invoke('GameServer/Bot/AI/BotGear'),
@@ -27,6 +28,9 @@ function simulation(dieOn) {
                     const result = BR.resolveSolo(args);
                     if (result.debug?.respawnDelayMs) calls.respawns.push(result.debug.respawnDelayMs);
                     calls.downMs += result.nextResolveAt - args.timestamp;
+                    if (args.state.activity === 'resting' && result.patch.activity === 'resting') {
+                        calls.restedMs += result.patch.stats.restUntil - args.timestamp;
+                    }
                     return result;
                 }
                 calls.fights += 1;
@@ -34,6 +38,10 @@ function simulation(dieOn) {
                 if (calls.fights === dieOn) {
                     return { patch: { activity: 'dead', vitals: { hp: 0 } }, materialize: {},
                         debug: { died: true, wins: 0, mobsKilled: 0, combatMs: FIGHT_MS }, nextResolveAt: t };
+                }
+                if (calls.fights === restOn) {
+                    return { patch: { activity: 'resting', vitals: { hp: 1 }, stats: { ...args.state.stats, restUntil: t + 1000 } },
+                        materialize: { exp: 100 }, debug: { wins: 1, mobsKilled: 1, combatMs: FIGHT_MS }, nextResolveAt: t + 1000 };
                 }
                 return { patch: {}, materialize: { exp: 100 },
                     debug: { wins: 1, mobsKilled: 1, combatMs: FIGHT_MS }, nextResolveAt: t };
@@ -57,6 +65,14 @@ assert(deadly.calls.downMs >= respawnMs);
 const lost = calm.kills - died.kills;
 assert.equal(lost, 1 + Math.ceil(deadly.calls.downMs / FIGHT_MS), `kills lost to the death: ${lost} (down ${deadly.calls.downMs} ms)`);
 assert.equal(died.exp, died.kills * 100, 'the exp is the kills\' (the loss is the reader\'s)');
+
+// A rest the author's rest step extends is rest in the row, each extension with it
+// (the fight's own rest runs from its step: its 30 s and the 1 s after).
+const tired = simulation(0, 2);
+const rested = Generator.hunt(spot, 'dps', 20, 0, hours, tired.sim);
+assert(tired.calls.restedMs > 0, 'the rest step extends the 1 s rest');
+assert.equal(rested.restMs, FIGHT_MS + 1000 + tired.calls.restedMs, 'the row\'s rest holds the fight\'s rest and every extension of it');
+assert.equal(rested.busyMs, rested.fightMs + rested.restMs, 'and its busy time with it');
 
 // T141: the row's potions are what a bot of that level carries. A bot that
 // drinks one bottle a fight from its bag: at 0 deaths its stock has no worth
