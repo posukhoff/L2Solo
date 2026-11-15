@@ -411,7 +411,12 @@ function summary({ table, whole, results, limit, log }) {
     return check;
 }
 
+// The hunts read the game clock (GameTime.isNight) at fixed timestamps, and
+// the game day counts from local midnight: every build, its children too, runs
+// in UTC (as the tables workflow), so a table is one in every zone and its
+// stamp needs no zone (a library caller keeps its own).
 if (require.main === module) {
+    process.env.TZ = 'UTC';
     const argv = process.argv.slice(2);
     if (argv[0] === 'child') {
         runChild(argv.slice(1));

@@ -6,6 +6,7 @@
 // time); and the builder refuses to build when the lift no longer reaches the
 // fight (a table built then would measure the gate).
 const assert = require('node:assert/strict');
+const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -14,6 +15,9 @@ const Generator = require('../scripts/generate-spot-table');
 const HuntTable = require('../scripts/economy-model/hunt-table');
 
 const GREMLIN_SPOT = '-12_43';
+// A dark elf fighter at level 15 hunts differently by night; a 2 h hunt from
+// the builder's start holds 60 night minutes in UTC and 6 in Europe/Kiev.
+const NIGHT_SPOT = '-2_1';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hunt-table-test-'));
 const catalogue = path.join(dir, 'catalogue.json');
 const built = Generator.buildCatalogue();
@@ -117,6 +121,19 @@ const options = { from: 1, to: 1, hours: 1, children: 1, spots: [GREMLIN_SPOT], 
         const joined = await run({ ...split, join: true });
         assert(lines.some(line => /round species: 2 hunts already .* 0 to run/.test(line)), 'the join runs no hunt');
         assert.deepEqual(joined.table, table, 'the joined table is the one machine\'s');
+
+        // A build is one in every zone: the game day counts from local midnight,
+        // so the builder runs in UTC, and a laptop build equals the fork's.
+        const zoned = zone => new Promise((resolve, reject) => {
+            const out = path.join(dir, `zone-${zone.replace('/', '-')}.json`);
+            const child = childProcess.spawn(process.execPath, [path.join(__dirname, '../scripts/economy-model/hunt-table.js'), '--levels', '15-15',
+                '--keys', Generator.botFor('34', 15), '--spots', NIGHT_SPOT, '--children', '1', '--catalogue', catalogue, '--out', out],
+            { env: { ...process.env, TZ: zone }, stdio: ['ignore', 'ignore', 'inherit'] });
+            child.on('exit', code => code === 0 ? resolve(JSON.parse(fs.readFileSync(out, 'utf8')).cells) : reject(new Error(`build in ${zone} exited ${code}`)));
+        });
+        const [utc, kiev] = await Promise.all([zoned('UTC'), zoned('Europe/Kiev')]);
+        assert(Object.keys(utc).length > 0, 'the night body has cells');
+        assert.deepEqual(kiev, utc, 'a build in Europe/Kiev gives the cells of a build in UTC');
         console.log('test_economy_model_hunt_table: ok');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
