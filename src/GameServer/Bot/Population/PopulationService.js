@@ -1,7 +1,7 @@
 const FailureLog = require('../../../FailureLog');
 const PartyMarketBreak = require('./PartyMarketBreak');
 const Situations = require('../Situations');
-const { stepElapsedMs } = require('./ColdSoloWindow');
+const ColdClock = require('./ColdClock');
 const { WorkerCommandAdmissionRefusal, checkWorkerCommandAdmission } = require('./WorkerCommandAdmission');
 const { PartyAdmission, limit: partyLimit, priority: admissionPriority } = require('./PartyAdmission');
 // A roster the party bound refuses is counted (situations party:cap:hit): a reservation, a
@@ -2637,7 +2637,7 @@ const PopulationService = {
             && !!inventoryCleanupGoal(state);
         const cleanupState = precomputedResult ? null : inventoryCleanupTravelState(state, startedAt);
         if (cleanupState) return this.resolveColdCleanupTravel(state, cleanupState, startedAt);
-        const elapsedMs = stepElapsedMs(state, startedAt);
+        const elapsedMs = ColdClock.elapsedMs(state, startedAt);
         // These transitions have no planning, market search, or inventory work
         // between their persisted deadline and the next state change.
         if (cleanupAfterFight || state.activity === 'traveling'
@@ -2727,10 +2727,11 @@ const PopulationService = {
         const karmaPolicy = invoke('GameServer/Bot/Population/ColdKarmaPolicy');
         const karmaPlan = karmaPolicy.active(state) ? karmaPolicy.plan(state, SpotProfiles.ensure(), startedAt) : null;
         if (karmaPlan && !joinedBackgroundParty(state)) {
+            const timestamp = ColdClock.stepAt(state, startedAt);
             const result = BackgroundResolver.resolveSolo({ state: karmaPlan.plannedState,
                 spot: karmaPlan.spot, spotHunters: SpotProfiles.spotHunters(karmaPlan.spot),
-                targetNpcId: karmaPlan.targetNpcId, timestamp: startedAt,
-                elapsedMs: stepElapsedMs(state, startedAt) });
+                targetNpcId: karmaPlan.targetNpcId, timestamp,
+                elapsedMs: ColdClock.elapsedMs(state, timestamp) });
             return LifeState.applyResolve(karmaPlan.plannedState, result, options)
                 .then(saved => ({ ok: !!saved, state: saved || state, debug: result.debug }));
         }
