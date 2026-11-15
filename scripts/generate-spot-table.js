@@ -499,7 +499,7 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
             // The bots' records count a cycle's combat and the rest it calls for, a rest
             // step's extension of it too (a dead bot's step rests it to its respawn: death time):
             // the round's seated time and its rest from the round's last action on (doneAt).
-            const from = Math.max(t, Math.ceil(Number(result.doneAt) || 0));
+            const from = Clock.doneAt(result) ?? t;
             const restEnd = Math.max(from, Number(patch.stats?.restUntil) || 0);
             const restMs = state.activity === 'dead' ? 0 : Number(debug.seatedMs || 0) + restEnd - from;
             sum.busyMs += restMs;
