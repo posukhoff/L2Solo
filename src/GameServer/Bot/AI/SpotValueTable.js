@@ -731,14 +731,14 @@ function killGapFactor(t, row, level, spotLevel, mask = ALL_SPECIES) {
 // of the gap walks to its own. The level curve (measured: the row's
 // kills at the gap) moves the rest of a kill's time (combat splits that
 // time into fight and rest); a walk to a mob takes the same time at any
-// level. Without a gate, the kills as measured.
-function walked(t, row, refGap, gate, measured) {
-    const reference = gate && gateAt(t, row, refGap);
-    if (!reference || !(measured > 0) || !(gate.cap > 0) || !(reference.cap > 0)) return measured;
+// level. refWalk, gapWalk: the walk to one mob at the reference and at the
+// gap (seconds), both 0 without the two gates: the kills as measured.
+function walked(t, row, refWalk, gapWalk, measured) {
+    if (!(measured > 0)) return measured;
     const kph = row[t.f.kph];
     // Seconds per mob besides the walk, at the reference, then at the gap.
-    const rest = Math.max(0, 3600 / kph - 3600 / reference.cap) * kph / measured;
-    return 3600 / (rest + 3600 / gate.cap);
+    const rest = Math.max(0, 3600 / kph - refWalk) * kph / measured;
+    return 3600 / (rest + gapWalk);
 }
 
 // The mobs per hour a row's kills may reach: its cap at the bot's gap (gate),
@@ -789,10 +789,16 @@ function combat(t, s, r, level, shots) {
     // fight longer than that time lengthens the kill. A table before the
     // cycle columns reads no fight and no idle: the level curve's kills. The
     // rows' 4-digit rounding can leave a row's idle a hair below 0: it is 0.
+    // The fight holds the walk to its mob: the fight curve moves the fight
+    // besides the walk, and the gap's walk replaces the reference's, as in
+    // the kills (walked).
+    const reference = gate && gateAt(t, row, refGap);
+    const walks = reference && gate.cap > 0 && reference.cap > 0;
+    const refWalk = walks ? 3600 / reference.cap : 0, gapWalk = walks ? 3600 / gate.cap : 0;
     const fightRatio = t.f.fight < 0 ? 1 : ratio(curve.fight, t.gaps, refGap, gap);
-    const fight = t.f.fight < 0 ? 0 : row[t.f.fight] * fightRatio;
+    const fight = t.f.fight < 0 ? 0 : Math.max(0, row[t.f.fight] - refWalk) * fightRatio + gapWalk;
     const idle = t.f.fight < 0 ? 0 : Math.max(0, 3600 / row[t.f.kph] - row[t.f.fight] - row[t.f.rest]);
-    const busy = Math.max(fight, 3600 / walked(t, row, refGap, gate, measured) - idle);
+    const busy = Math.max(fight, 3600 / walked(t, row, refWalk, gapWalk, measured) - idle);
     const kills = Math.min(3600 / (busy + idle), cap);
     if (!(kills > 0)) return null;
     return { row, curve, gap, refGap, kills, cap, production, gate, mask, fight, rest: busy - fight, busy, fightRatio,
