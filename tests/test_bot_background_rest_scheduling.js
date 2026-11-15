@@ -122,7 +122,7 @@ combatRestParty = BackgroundPartyResolver.resolve({
 assert(observedCombat.result.timedOut && !observedCombat.result.won,
     'the original bounded encounter times out before the monster is defeated');
 assert(observedCombat.result.debug.remainingHp > 0, 'the timed-out target is still alive');
-assert.strictEqual(observedCombat.input.timestamp, timestamp, 'the encounter retains the original time');
+assert(observedCombat.input.timestamp > timestamp - 10_000, 'the encounter starts after its walk from the round\'s start');
 assert.strictEqual(observedCombat.input.spot, combatSpot, 'the authored ordinary target is used unchanged');
 assert.strictEqual(observedCombat.result.debug.mobSelfId, combatNpc.selfId);
 assert.strictEqual(combatRestParty.debug.spotId, combatSpot.id);
@@ -141,7 +141,8 @@ const killedParty = BackgroundPartyResolver.resolve({
     members: combatMembers,
     spot: combatSpot,
     elapsedMs: 10_000,
-    timestamp: timestamp + 10_000,
+    // The members' clock: the step's timestamp or the cut fight's walk past it.
+    timestamp: combatRestParty.memberResults[0].result.doneAt + 10_000,
     rng: () => 0
 });
 assert.strictEqual(killedParty.debug.wins, 1, 'the pending mob falls, and the party takes no next one');
@@ -239,6 +240,67 @@ try {
         BackgroundResolver.resolveRest({ ...drained, activity: 'resting' }, 60_000, at, { requireMana: true }).patch.vitals.mp,
         'the floor\'s rest is seated over the interval since the last round');
     assert(floored.patch.vitals.mp > 20, 'it regenerates there');
+
+    // A party round runs on the same clock: from the members' credited hunt, each
+    // fight at its own moment (after its walk), the rest from its last fight's end.
+    const nuker = { ...caster, skills: [{ ...caster.skills[0], reuse: 3000 }] };
+    Cold.profileFor = Cold.fightProfile = () => ({ ...nuker });
+    const pair = (mp, hp = hunter.vitals.hp) => [85, 86].map((characterId, k) => ({ ...hunter, characterId, activity: 'grouped',
+        vitals: { ...hunter.vitals, mp, hp }, party: { role: k ? 'dps' : 'tank' }, stats: { ...hunter.stats, role: k ? 'dps' : 'tank' } }));
+    const partyFights = (members, elapsedMs) => {
+        const seen = [];
+        BackgroundResolver.resolvePartyFight = function (options) {
+            const result = nativeFight.call(this, { ...options, partyProfiles: null });
+            seen.push({ at: options.timestamp, members: options.members, result,
+                foughtMs: Math.max(Number(result.debug?.durationMs || 0), result.won
+                    ? Math.max(0, ...result.members.map(member => Number(member.readyAt) || 0)) : 0) });
+            return result;
+        };
+        try {
+            return { seen, party: BackgroundPartyResolver.resolve({ party: { partyId: 'clock', cohesion: 0.7, risk: 0.2,
+                roleCoverage: { dps: 2 }, stats: {} }, members, spot: field, elapsedMs, timestamp: at, rng: () => 0.5 }) };
+        } finally { BackgroundResolver.resolvePartyFight = nativeFight; }
+    };
+    const hunt = partyFights(pair(932), 120_000);
+    assert(hunt.seen.length >= 2, `the party fights more than once in its round (${hunt.seen.length})`);
+    assert(hunt.seen[0].at > at - 120_000 && hunt.seen[0].at < at, 'its first fight starts after its walk from the round\'s start');
+    for (let k = 1; k < hunt.seen.length; k++) {
+        const before = hunt.seen[k - 1];
+        assert(hunt.seen[k].at >= before.at + before.foughtMs, `fight ${k + 1} starts after fight ${k} ends`);
+        for (const member of hunt.seen[k].members) {
+            const cast = Number(member.stats?.coldCombat?.cooldowns?.[1230]) - 3000;
+            if (!(cast > 0)) continue;
+            assert(cast >= hunt.seen[0].at && cast <= before.at + before.foughtMs,
+                `fight ${k + 1} reads the reuse of a cast inside the fights before it (${cast - before.at} ms after fight ${k}'s start)`);
+        }
+    }
+    // A worn party sits at its last fight's end, to its slowest member's rest from there.
+    const worn2 = partyFights(pair(120), 30_000);
+    const rest = worn2.party.partyPatch.stats.restUntil;
+    assert(rest > at, 'the worn party rests past its round');
+    const last = worn2.seen[worn2.seen.length - 1];
+    const sitAt2 = last.at + last.foughtMs;
+    assert(sitAt2 < at, `it sits at its last fight's end, inside the round (${at - sitAt2} ms before its end)`);
+    const standing = ColdRest.coldRestRegenPerTick(hunter, { profile: nuker, standing: true, timestamp: at - 30_000 });
+    const need = Math.max(...last.result.members.map(({ state, vitals }) => {
+        const atSit = { ...vitals, mp: Math.min(vitals.maxMp, vitals.mp + standing.mp * last.foughtMs / tick),
+            hp: Math.min(vitals.maxHp, vitals.hp + standing.hp * last.foughtMs / tick) };
+        return BackgroundResolver.resolveRest({ ...state, vitals: atSit }, 0, sitAt2, { party: true }).patch.stats.restUntil;
+    }));
+    assert(Math.abs(rest - need) <= 1, `the party rest ends at its last fight's end + the rest it needs (${rest - need} ms off)`);
+    assert(worn2.party.memberResults.every(({ result }) => result.doneAt === at), 'its members\' clock is the round\'s end');
+    // The same rest inside a longer round ends in it: the party stands up at its
+    // locked line and hunts on.
+    // (a small HP bar: its rest from the trigger to the line fits in a round)
+    const small = { ...nuker, maxHp: 150 };
+    Cold.profileFor = Cold.fightProfile = () => ({ ...small });
+    const longer2 = partyFights(pair(932, 15).map(member => ({ ...member, vitals: { ...member.vitals, maxHp: 150 } })), 135_000);
+    const after = longer2.seen.findIndex((fight, k) => k > 0 && fight.at > longer2.seen[k - 1].at + longer2.seen[k - 1].foughtMs + 5000);
+    assert(after > 0, 'a fight follows the party\'s rest in the round');
+    for (const member of longer2.seen[after].members) {
+        assert(RestPolicy.restOver(member.vitals, { mana: ColdRest.requiresManaRecovery(member), party: true }),
+            `it stood up at its line (MP ${member.vitals.mp})`);
+    }
 } finally {
     Cold.profileFor = originalProfile;
     Cold.fightProfile = originalFightProfile;

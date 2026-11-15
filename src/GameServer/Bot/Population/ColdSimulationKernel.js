@@ -2169,8 +2169,11 @@ class ColdSimulationKernel {
             }
 
             if (!this.resolveParty) throw new Error('party_resolver_unavailable');
-            // A member that held for an event (livedClock) lived its wait.
-            const lastResolvedAt = Math.min(...run.members.map((member) => livedClock(member, startedAt) || startedAt - 60000));
+            // The round starts no earlier than its members' clocks (a round's last
+            // action may end past its step). A member that held for an event
+            // (livedClock) lived its wait.
+            const roundAt = Math.ceil(Math.max(startedAt, ...run.members.map(ownClock)));
+            const lastResolvedAt = Math.min(...run.members.map((member) => livedClock(member, roundAt) || roundAt - 60000));
             const resolveOptions = {
                 episodeId: stepProposalId(run.party.leaderId, run.startedAt),
                 assessRelationship: this.interactionMemory.assess.bind(this.interactionMemory),
@@ -2181,9 +2184,9 @@ class ColdSimulationKernel {
                 spotHunters: this.spotHunters(run.spot),
                 targetNpcId: run.targetNpcId,
                 lastFight: fightHoldsTrip,
-                elapsedMs: Math.max(1000, startedAt - lastResolvedAt),
+                elapsedMs: Math.max(1000, roundAt - lastResolvedAt),
                 rng: deterministicRandom(run.members[0] || {}),
-                timestamp: startedAt
+                timestamp: roundAt
             };
             const raids = require('./ColdRaidEncounter');
             const raid = !meetingPending && run.spot?.raidBoss === true;
