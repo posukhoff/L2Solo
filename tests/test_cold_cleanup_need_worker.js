@@ -202,6 +202,32 @@ async function step(states, { project = state => state } = {}) {
     assert.strictEqual(Economy.bagDecisions({ ...keeper, inventory: Object.fromEntries(protectedIds.map(id => [id, kept[id]])) },
         { ...hunt(30), hourAdena: 1e12 }, { spots }, 3000).bagClear, null, 'a bag of protected slots clears nothing');
 
+    // The deciding build's baseline is the bag its clearing leaves: the cleared slots are destroyed with
+    // its answer, so loot that brings the bag back to its count raises bag_full again (the next decision).
+    invoke('GameServer/Bot/Economy/PersonalWarehouseIndex').useRowSource(() => null, () => true);
+    invoke('GameServer/Bot/Population/RecomputeGeneration').configure({ code: '1'.repeat(40), config: '2'.repeat(64) });
+    const board = new (invoke('GameServer/AfkTrade/BoardIndex').BoardIndex)();
+    Economy.configure({ board: () => board, spots: () => spots });
+    invoke('GameServer/Bot/Population/PopulationConfig').knowledgeErrorsEnabled = false;
+    // Tattoos at a worth of 1 each are the cheap slots; the materials are worth far more than a slot's share.
+    const tattoos = Data.items.filter(item => item.template.kind === 'Other.Tattoo').slice(0, 60)
+        .map(item => [item.selfId, { selfId: item.selfId, name: item.template.name, kind: item.template.kind, stackable: false, amount: 1 }]);
+    const cheapBag = { ...Object.fromEntries(Object.entries(loot).slice(0, 15)), ...Object.fromEntries(tattoos.slice(0, 30)) };
+    const now = Date.now();
+    // Hunting on the spot of its level farthest from town (a trip worth saving).
+    const WalkBack = invoke('GameServer/Bot/Economy/WalkBack');
+    const far = spots.filter(spot => spot.minLevel <= 40 && spot.maxLevel >= 40)
+        .reduce((best, spot) => WalkBack.hours(spot.id, {}, spots) > WalkBack.hours(best.id, {}, spots) ? spot : best);
+    const hunter = bot(514, { adena: 50000, inventory: cheapBag, updatedAt: now, spotId: far.id,
+        stats: { classId: 0, exp: Data.experience[39], earning: { spotId: far.id } }, timing: {} });
+    const built = Economy.forState(hunter, { timestamp: now, memoryIdentity: 'fixture-memory', sourceReady: true, caller: 'step' }).statsPacket;
+    assert(built.bagClear && !built.cleanupDue, 'the build clears the cheap slots instead of a trip');
+    const huntsOn = Break.applyClear({ ...hunter, stats: { ...hunter.stats, ...built } });
+    assert.strictEqual(Break.bagFact(huntsOn), 0, 'the cleared bag is below its count');
+    const refilled = { ...huntsOn, inventory: { ...huntsOn.inventory, ...Object.fromEntries(tattoos) }, updatedAt: now + 1 };
+    assert.strictEqual(Break.bagFact(refilled), 1, 'fixture: the loot brings the bag back to its count');
+    assert(Situations.detect(huntsOn, refilled).includes('bag_full'), 'the refill to the count after a clear raises bag_full');
+
     console.log('Cold worker cleanup need checks passed');
 })().catch((error) => {
     console.error(error);

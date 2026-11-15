@@ -912,7 +912,8 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
 // clearing left. The clearing stands only when that bag then needs no trip: a trip sells
 // those rows for their worth. The clearing is asked only when the bag's need says trip (a
 // solo bot's bag). { cleanupDue, bagClear }: bagClear { items, freed, value } is executed at
-// once by the step or body that lands it (BotLifeState.prepareResolve, HuntingState).
+// once by the step or body that lands it (BotLifeState.prepareResolve, HuntingState);
+// cleared: the bot's state with that bag, the build's baseline (the next count is a rise).
 function bagDecisions(state, base, deps, now) {
     const Break = invoke('GameServer/Bot/Population/PartyMarketBreak');
     const cleanupDue = Break.cleanupDecision(state, now);
@@ -922,7 +923,7 @@ function bagDecisions(state, base, deps, now) {
         hourValue: base.hourAdena, tripHours: WalkBack.hours(base.bestSpotId, state, deps.spots || SpotService.spots),
         slots: Disposition.inventorySlotCount(state), slotsPerHour: base.bagStacks });
     const cleared = clear && { ...state, inventory: invoke('GameServer/Bot/Population/RoundLoot').removeFrom(state.inventory, clear.items) };
-    return clear && !Break.cleanupDecision(cleared, now) ? { cleanupDue: null, bagClear: clear } : { cleanupDue, bagClear: null };
+    return clear && !Break.cleanupDecision(cleared, now) ? { cleanupDue: null, bagClear: clear, cleared } : { cleanupDue, bagClear: null };
 }
 // A kept foundation: the plan's pieces, its kit rates read over the live bag
 // and wallet (kitReader).
@@ -1378,10 +1379,13 @@ function buildForState(state, deps) {
         if (planned && !context.plannedBudget && Network.rootItem(wish.key) === planned) context.plannedBudget = cumulative;
         if (wish.key === network.activity?.rootKey && wish.funded) context.leafBudget = cumulative;
     }
-    // The build's facts for its baseline: the request's when they were read
-    // over this state itself (no held leaf's field activity in between).
-    context.statsPacket.wishSections = Sections.snapshot(state, context, { buyOrderEscrow: deps.buyOrderEscrow },
-        current === state ? facts : requestFacts(state, deps));
+    // The build's facts for its baseline, read over the state it leaves: the bag its clearing
+    // left when one stands (its slots are destroyed with this answer, so the bag's next count
+    // is a rise, bag_full), else this state, with the request's facts when they were read
+    // over it (no held leaf's field activity in between).
+    const decidedState = bag?.cleared || state;
+    context.statsPacket.wishSections = Sections.snapshot(decidedState, context, { buyOrderEscrow: deps.buyOrderEscrow },
+        current === decidedState ? facts : requestFacts(decidedState, deps));
     building = false;
 
     if (diagnostic) {
