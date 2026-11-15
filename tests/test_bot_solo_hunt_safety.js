@@ -283,8 +283,11 @@ try {
     const refused = Resolver.resolveSolo({ state: worn, spot: easy, elapsedMs: 0, timestamp: at, rng: () => 0.5 });
     assert.strictEqual(refused.patch.stats.lastReason, 'solo_recovery_needed');
     const restUntil = refused.patch.stats.restUntil;
-    assert.strictEqual(restUntil - at, Resolver.estimateRestMs(worn, worn.vitals, { line: RestPolicy.THRESHOLDS.rested }),
-        'the rest lasts to the rested line');
+    // It sits down where the fight was refused: after its walk to the mob (a round of no
+    // budget walks past its timestamp), not at the round's end.
+    assert.strictEqual(restUntil - at, Math.ceil(refused.debug.combatMs
+        + Resolver.estimateRestMs(worn, worn.vitals, { line: RestPolicy.THRESHOLDS.rested })),
+        'the rest lasts to the rested line from the moment the bot sat');
     const sat = { ...worn, activity: 'resting', vitals: refused.patch.vitals, timing: { lastResolvedAt: at },
         stats: { ...worn.stats, ...refused.patch.stats } };
     const early = Resolver.resolveRest(sat, (restUntil - at) / 2, at + (restUntil - at) / 2);
@@ -304,7 +307,8 @@ try {
     const reckless = { ...hurt, persona: { traits: { caution: 0 } }, vitals: { ...hurt.vitals, hp: 551, mp: 932 } };
     const topped = Resolver.resolveSolo({ state: reckless, spot: easy, elapsedMs: 0, timestamp: at, rng: () => 0.5 });
     assert.strictEqual(topped.patch.stats.lastReason, 'solo_recovery_needed');
-    assert.strictEqual(topped.patch.stats.restUntil - at, Resolver.estimateRestMs(reckless, reckless.vitals, { requireMana: true }),
+    assert.strictEqual(topped.patch.stats.restUntil - at, Math.ceil(topped.debug.combatMs
+        + Resolver.estimateRestMs(reckless, reckless.vitals, { requireMana: true })),
         'a bot refused at its rested line rests to a full bar, not to the line again');
     Cold.npcForSpot = () => ({ ...target, level: 25, selfId: 156, accur: 100, evasion: 0, critical: 0 });
     const inCombat = { ...hurt, stats: { ...hurt.stats, pveEncounter: Encounter.save(null,

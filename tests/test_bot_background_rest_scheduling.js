@@ -158,6 +158,57 @@ assert.strictEqual(BackgroundResolver.needsRest({ stats: { classId: 5 } }, {
 }, { party: true, hpThreshold: 0.3, mpThreshold: 0.18 }), true,
     'an empty-MP tank must still trigger party recovery because Hate is part of its primary job');
 
+// A cold solo round credits the interval before its timestamp: the bot sits down at its
+// fight's end inside it, as a hot bot sits between fights, not at the round's end.
+const Cold = invoke('GameServer/Bot/Population/ColdCombatProfile');
+const RestPolicy = invoke('GameServer/Bot/AI/RestPolicy');
+const originalProfile = Cold.profileFor, originalFightProfile = Cold.fightProfile, originalNpc = Cold.npcForSpot;
+try {
+    const caster = { classId: 12, level: 29, role: 'mage', maxHp: 592, maxMp: 932,
+        pDef: 243, pAtk: 96, mAtk: 162, castSpd: 194, atkSpd: 263, weaponMask: 8,
+        equipment: { weaponKind: 'Weapon.Blunt' }, accur: 100, evasion: 0, critical: 0, effects: [],
+        skills: [{ selfId: 1230, level: 1, spell: true, passive: false, power: 51, mp: 35, hitTime: 4000 }] };
+    Cold.profileFor = Cold.fightProfile = () => ({ ...caster });
+    Cold.npcForSpot = () => ({ maxHp: 500, pAtk: 60, atkSpd: 253, pDef: 100, mDef: 70, basePDef: 100, baseMDef: 70,
+        vulnerabilities: {}, level: 25, selfId: 156, accur: 100, evasion: 0, critical: 0 });
+    const field = { id: 'field', name: 'field', minLevel: 25, maxLevel: 25, avgLevel: 25, density: 8, tags: [],
+        tagsAuthoritative: true, center: { locX: 50000, locY: 150000, locZ: -3000 },
+        npcEntries: [{ selfId: 156, count: 8 }], levelCounts: { 25: 8 } };
+    const hunter = { characterId: 85, level: 29, exp: 0, sp: 0, adena: 0, phase: 'cold', activity: 'hunting', spotId: 'field',
+        inventory: {}, loc: {}, timing: {}, vitals: { hp: 592, maxHp: 592, mp: 300, maxMp: 932 },
+        stats: { classId: 12, classProgressionClassId: 12, classProgressionLevel: 29, deaths: 0 } };
+    const at = 1_800_000_000_000, budget = 120_000, line = { line: RestPolicy.THRESHOLDS.rested };
+
+    const worn = BackgroundResolver.resolveSolo({ state: hunter, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+    assert.strictEqual(worn.patch.activity, 'resting', 'the fights wear the caster down to a rest');
+    assert(worn.debug.combatMs < budget / 2, `its last fight ends well before the round's end (${worn.debug.combatMs} ms)`);
+    // The vitals the last fight left (the rest event reads them at the fight's end).
+    const sat = worn.events.find(event => event.type === 'rest').meta;
+    const fightEnd = { hp: sat.hpPct * caster.maxHp, maxHp: caster.maxHp, mp: sat.mpPct * caster.maxMp, maxMp: caster.maxMp };
+    const need = BackgroundResolver.estimateRestMs(hunter, fightEnd, line);
+    const restUntil = worn.patch.stats.restUntil;
+    assert(Math.abs(restUntil - Math.ceil(at - budget + worn.debug.combatMs + need)) <= 1,
+        `the rest ends at the fight's end + the rest it needs (${restUntil - at} ms after the round), not ${Math.ceil(need)} ms after the round`);
+    assert(worn.patch.vitals.mp > fightEnd.mp, 'at the round\'s end it has rested seated since its fight');
+    const rested = BackgroundResolver.resolveRest({ ...hunter, activity: 'resting', vitals: worn.patch.vitals,
+        stats: { ...hunter.stats, ...worn.patch.stats } }, restUntil - at, restUntil);
+    assert.strictEqual(rested.patch.activity, 'hunting', 'at its deadline the bot stands at its rested line, the rest not extended');
+
+    // A fight refused (the bot cannot take the mob at its HP) seats it where it was refused.
+    const tired = { ...hunter, vitals: { ...hunter.vitals, hp: 150 } };
+    const refused = BackgroundResolver.resolveSolo({ state: tired, spot: field, elapsedMs: 30_000, timestamp: at, rng: () => 0.5 });
+    assert.strictEqual(refused.patch.stats.lastReason, 'solo_recovery_needed');
+    assert.strictEqual(refused.debug.attemptedFights, 0);
+    const refusedAt = BackgroundResolver.applyStandingRegen(tired, tired.vitals, 30_000, at);
+    assert.strictEqual(refused.patch.stats.restUntil,
+        Math.ceil(at - 30_000 + refused.debug.combatMs + BackgroundResolver.estimateRestMs(tired, refusedAt, line)),
+        'a refused fight\'s rest starts at the refusal, inside the interval the round credits');
+} finally {
+    Cold.profileFor = originalProfile;
+    Cold.fightProfile = originalFightProfile;
+    Cold.npcForSpot = originalNpc;
+}
+
 console.log('Bot background rest scheduling checks passed');
 
 } finally {

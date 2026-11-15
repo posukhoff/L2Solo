@@ -2900,6 +2900,26 @@ const BackgroundResolver = {
             if (Diagnostics.active()) Diagnostics.count('cold_fight', 'potion', 'rest', drank.count);
             return drank.ms;
         };
+        // The round credits the interval before its timestamp (combatBudgetMs):
+        // the bot sits down at its fight's end inside it, as a hot bot sits
+        // between fights (HuntingState), not at the round's end. The rest's part
+        // before the timestamp regenerates seated here (seatedRegen, the rest
+        // step's rule); a rest over by then leaves the bot hunting at it.
+        const roundStart = timestamp - combatBudgetMs;
+        const sitDown = (sitAt, needMs) => {
+            const restEnd = sitAt + needMs;
+            const seatedMs = Math.min(restEnd, timestamp) - sitAt;
+            if (seatedMs > 0) {
+                const seated = seatedRegen({ ...state, vitals: patch.vitals, inventory: patch.inventory || state.inventory,
+                    stats: patch.stats }, patch.vitals, seatedMs, timestamp);
+                patch.vitals = seated.vitals;
+                patch.stats = seated.stats;
+            }
+            if (restEnd > timestamp) {
+                patch.activity = 'resting';
+                patch.stats.restUntil = Math.ceil(restEnd);
+            }
+        };
 
         for (let i = 0; i < fights && !noPrey; i++) {
             // The first fight starts in any round (its readiness may send the bot to rest).
@@ -2942,10 +2962,10 @@ const BackgroundResolver = {
                 patch.stats.lastReason = result.reason;
                 noPrey = result.reason === NO_PREY;
                 if (result.needsRest) {
-                    patch.activity = 'resting';
                     const drinkMs = drinkToRest(roundProfile, true, coldPetView(roundProfile, patch.stats.coldCombat?.summon, patch.vitals,
                         patch.stats.coldCombat?.cooldowns, timestamp + combatMs));
-                    patch.stats.restUntil = Math.ceil(timestamp + Math.max(soloRestMs(fightState, patch.vitals, { refused: true }), drinkMs));
+                    // It sits down where the fight was refused.
+                    sitDown(roundStart + combatMs, Math.max(soloRestMs(fightState, patch.vitals, { refused: true }), drinkMs));
                     events.push({ type: 'rest', weight: 2,
                         summary: `${state.name || 'Bot'} sat down before another fight near ${spot.name}`,
                         meta: { spotId: spot.id, reason: result.reason } });
@@ -3061,12 +3081,9 @@ const BackgroundResolver = {
             if (resting) {
                 // cold_fight:pet:rest: a rest its pet sent it to (the live read).
                 if (Diagnostics.active() && !RestPolicy.petRested(petView)) Diagnostics.count('cold_fight', 'pet', 'rest');
-                patch.activity = 'resting';
-                patch.stats = {
-                    ...(patch.stats || state.stats || {}),
-                    restUntil: Math.ceil(timestamp + Math.round(result.runMs || 0) + Math.max(soloRestMs(fightState, patch.vitals), drinkMs,
-                        RestPolicy.petRested(petView) ? 0 : petRestMs(fightProfile, summonLeft, patch.vitals, timestamp + combatMs)))
-                };
+                // It sits down at the fight's end, after its run when it fled.
+                sitDown(roundStart + combatMs + Math.round(result.runMs || 0), Math.max(soloRestMs(fightState, patch.vitals), drinkMs,
+                    RestPolicy.petRested(petView) ? 0 : petRestMs(fightProfile, summonLeft, patch.vitals, timestamp + combatMs)));
                 events.push({
                     type: 'rest',
                     summary: `${state.name || 'Bot'} sat down to recover near ${spot.name}`,
