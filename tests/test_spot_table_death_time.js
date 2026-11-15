@@ -13,9 +13,11 @@ const FIGHT_MS = 30000;
 // The fight is the edge: a won kill every 30 s, or a death on the fight
 // named; every other step (the respawn, the rest after it) is the author's.
 // restOn: the fight that leaves the bot at 1 HP with a rest the author's rest step extends.
+// The hunt runs twice (the use pass, then the row): onPass counts the row's fights afresh.
 function simulation(dieOn, restOn = 0) {
-    const calls = { fights: 0, respawns: [], downMs: 0, restedMs: 0 };
-    return { calls, sim: {
+    const fresh = () => ({ fights: 0, respawns: [], downMs: 0, restedMs: 0 });
+    const calls = fresh();
+    return { calls, onPass: () => Object.assign(calls, fresh()), sim: {
         items: invoke('GameServer/DataCache').items,
         BotGear: invoke('GameServer/Bot/AI/BotGear'),
         CCP: invoke('GameServer/Bot/Population/ColdCombatProfile'),
@@ -52,8 +54,8 @@ function simulation(dieOn, restOn = 0) {
 const spot = { id: 'fixture', center: { locX: 0, locY: 0, locZ: 0 }, density: 1 };
 const hours = 0.25;
 const safe = simulation(0), deadly = simulation(3);
-const calm = Generator.hunt(spot, 'dps', 20, 0, hours, safe.sim);
-const died = Generator.hunt(spot, 'dps', 20, 0, hours, deadly.sim);
+const calm = Generator.hunt(spot, 'dps', 20, 0, hours, safe.sim, null, undefined, safe.onPass);
+const died = Generator.hunt(spot, 'dps', 20, 0, hours, deadly.sim, null, undefined, deadly.onPass);
 assert.equal(calm.deaths, 0);
 assert.equal(died.deaths, 1, 'the death is counted once');
 assert.equal(deadly.calls.respawns.length, 1, 'the author\'s respawn ran');
@@ -69,7 +71,7 @@ assert.equal(died.exp, died.kills * 100, 'the exp is the kills\' (the loss is th
 // A rest the author's rest step extends is rest in the row, each extension with it
 // (the fight's own rest runs from its step: its 30 s and the 1 s after).
 const tired = simulation(0, 2);
-const rested = Generator.hunt(spot, 'dps', 20, 0, hours, tired.sim);
+const rested = Generator.hunt(spot, 'dps', 20, 0, hours, tired.sim, null, undefined, tired.onPass);
 assert(tired.calls.restedMs > 0, 'the rest step extends the 1 s rest');
 assert.equal(rested.restMs, FIGHT_MS + 1000 + tired.calls.restedMs, 'the row\'s rest holds the fight\'s rest and every extension of it');
 assert.equal(rested.busyMs, rested.fightMs + rested.restMs, 'and its busy time with it');
@@ -80,7 +82,7 @@ assert.equal(rested.busyMs, rested.fightMs + rested.restMs, 'and its busy time w
 // a row with deaths gives the stock worth, the bot buys the outing's use.
 function drinker(dieAfter = Infinity) {
     let fights = 0;
-    return {
+    return { onPass: () => { fights = 0; }, sim: {
         items: invoke('GameServer/DataCache').items,
         BotGear: invoke('GameServer/Bot/AI/BotGear'),
         CCP: invoke('GameServer/Bot/Population/ColdCombatProfile'),
@@ -98,10 +100,11 @@ function drinker(dieAfter = Infinity) {
                 return { patch: { inventory, ...(died ? { activity: 'hunting' } : {}) }, materialize: { exp: 1 },
                     debug: { wins: 1, mobsKilled: 1, combatMs: 60000, potionsUsed: drinks, died }, nextResolveAt: timestamp + 60000 };
             } }
-    };
+    } };
 }
-const lean = Generator.hunt(spot, 'dps', 20, 0, 2, drinker());
+const huntOf = ({ sim, onPass }) => Generator.hunt(spot, 'dps', 20, 0, 2, sim, null, undefined, onPass);
+const lean = huntOf(drinker());
 assert.equal(lean.potions, 60, 'a 0-death row wants 60 bottles an hour and carries one hour\'s use for its two hours');
-const dying = Generator.hunt(spot, 'dps', 20, 0, 2, drinker(5));
+const dying = huntOf(drinker(5));
 assert.equal(dying.potions, 120, 'a row with deaths carries the outing\'s use: a bottle every fight');
 console.log('PASS spot table death time');
