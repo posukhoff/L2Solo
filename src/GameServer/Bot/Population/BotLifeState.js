@@ -3063,6 +3063,9 @@ const BotLifeState = {
             Object.assign(nextState.stats, advised?.stats, economy.statsPacket);
             if (typeof options.onEconomy === 'function') options.onEconomy(economy, nextState);
         } else if (options.statsPacket && !beforeResolvePacket) Object.assign(nextState.stats, options.statsPacket);
+        // The slots the step's build chose to destroy (stats.bagClear) leave the bag in the step
+        // that decided them, on either thread: its commit or main's write carries the bag without them.
+        if (nextState.stats.bagClear) Object.assign(nextState, invoke('GameServer/Bot/Population/PartyMarketBreak').applyClear(nextState));
         const knownProfileLevel = Number(nextState.stats?.classProgressionLevel || 0);
         const knownProfileClassId = Number(nextState.stats?.classProgressionClassId ?? nextState.stats?.classId);
         const currentClassId = Number(nextState.stats?.classId || 0);

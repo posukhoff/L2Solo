@@ -2483,8 +2483,7 @@ class ColdSimulationKernel {
                 ? await this.projectResolve(round.state, round.result, round.timestamp, lifecyclePlan, startedAt, round.projected || null)
                 : null;
             if (!this.resolverSourceCurrent(source)) return;
-            // The slots the step's build chose to destroy leave the bag in this step (its commit carries them).
-            const projectedState = PartyMarketBreak.applyClear(projection?.state || projection);
+            const projectedState = projection?.state || projection;
             this.countHuntStep(first, round);
             // The cleanup trip a build decided (stats.cleanupDue, EconomyContext: its bag must go
             // to town), held until it starts: once the bot is free after the fight, over a trip

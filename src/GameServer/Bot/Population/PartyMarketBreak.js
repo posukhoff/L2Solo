@@ -37,8 +37,9 @@ function bagNeed(state, now) {
     return fact === 2 ? floorNeed(SurvivalFloor.bagFloor(state)) : fact === 1 ? countNeed(state, now) : null;
 }
 // A cold step's execution of the slots its build chose to destroy (stats.bagClear,
-// EconomyContext.bagDecisions): the bag without them, the answer spent. The far kernel
-// applies it to the step's projection, so its commit carries the destroyed stacks.
+// EconomyContext.bagDecisions): the bag without them, the answer spent. The step's resolve
+// (BotLifeState.prepareResolve) applies it on either thread, so the step's commit or main's
+// write carries the destroyed stacks.
 // Counted (bag_clear:cold) beside the bag's trips.
 function applyClear(state) {
     const clear = state?.stats?.bagClear;
