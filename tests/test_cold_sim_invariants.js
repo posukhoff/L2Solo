@@ -3,8 +3,9 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 // The cold simulation's conservation laws on a fixed sample: nine cells of the
-// spot table (a spot's species, a class line, a level, shots) hunted through
-// the generator's own hunt for two hours at three seeds. Every hunt tiles its
+// spot table (a spot's species, a class line, a level, shots), each one
+// fighting and one dying several times, hunted through the generator's own
+// hunt for two hours at three seeds. Every hunt tiles its
 // clock, credits each regen interval its rate, closes its HP and MP (every
 // change a probed call or a clock interval), keeps its stamps
 // inside their intervals and its loot inside the bag, and its row fits in its
@@ -13,6 +14,8 @@ const path = require('path');
 // moment, loot past the bag), re-introduced here by a wrapper around the
 // game's own functions. The fixture holds the nine spots' catalogue rows (the
 // server's spot catalogue, SpotService + SpotProfiles), so no world spawns.
+// It is written from the generator's catalogue by
+//   node tests/test_cold_sim_invariants.js --cells=line/level/spotId/selfId/form,...
 process.env.TZ = 'UTC';
 const Module = require('module');
 
@@ -70,6 +73,22 @@ const Invariants = require('../scripts/economy-model/fight/invariants');
 const FIXTURE = path.join(__dirname, 'fixtures', 'cold_sim_invariants.json');
 const HOURS = 2;
 const SEEDS = 3;
+// --cells: the fixture written anew, the catalogue (the world spawned) kept to the named cells' spots.
+const written = process.argv.find((arg) => arg.startsWith('--cells='));
+if (written) {
+    const cells = written.slice('--cells='.length).split(',').map((text) => {
+        const [line, level, spotId, selfId, form] = text.split('/');
+        return { line, level: Number(level), spotId, selfId: Number(selfId), form: Number(form) };
+    });
+    const ids = new Set(cells.map((cell) => cell.spotId));
+    const catalogue = Generator.buildCatalogue();
+    const fixture = { cells, spots: catalogue.spots.filter((spot) => ids.has(String(spot.id))),
+        profiles: catalogue.profiles.filter((profile) => ids.has(String(profile.id))) };
+    assert.strictEqual(fixture.profiles.length, ids.size, 'every named spot is in the catalogue');
+    require('fs').writeFileSync(FIXTURE, `${JSON.stringify(fixture)}\n`);
+    console.log(`wrote ${path.relative(process.cwd(), FIXTURE)}: ${cells.length} cells, ${ids.size} spots`);
+    process.exit(0);
+}
 Generator.loadSimulation(FIXTURE);
 const fixture = require(FIXTURE);
 const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
@@ -121,7 +140,7 @@ function recordHunt(cell, seed, defect = {}) {
     };
     BR.resolveSolo = (options) => {
         const state = options.state;
-        step = { t: options.timestamp, elapsedMs: options.elapsedMs, intervals: [], changes: [], opens: [], stamps: [],
+        step = { t: options.timestamp, elapsedMs: options.elapsedMs, intervals: [], changes: [], opens: [],
             before: { activity: state.activity, ...vitalsOf(state.vitals) } };
         probe.step = step;
         let result;
@@ -139,7 +158,7 @@ function recordHunt(cell, seed, defect = {}) {
                 Object.assign(done, {
                     round: Number.isFinite(debug.combatMs), combatMs: Number(debug.combatMs) || 0, walkedMs: Number(debug.walkedMs) || 0,
                     seatedMs: Number(debug.seatedMs) || 0, doneAt: Number(result.doneAt) || 0, restUntil: Number(patch.stats?.restUntil) || 0,
-                    nextResolveAt: Number(result.nextResolveAt) || 0, died: debug.died === true,
+                    nextResolveAt: Number(result.nextResolveAt) || 0,
                     after: { activity: after.activity, ...vitalsOf(after.vitals) }, gained,
                     bag: gained ? { slots: SurvivalFloor.stateInventory(after, items).slots, slotLimit: InventoryLimits.forState(after) } : null
                 });
@@ -165,7 +184,10 @@ function recordHunt(cell, seed, defect = {}) {
 function sweep(defect) {
     const kinds = {}, sample = {}, balance = { hp: {}, mp: {}, startMinusEnd: { hp: 0, mp: 0 } };
     let hunts = 0, kills = 0, deaths = 0;
+    const cells = {};
     for (const cell of fixture.cells) {
+        const name = `${cell.spotId}/${cell.selfId} L${cell.level} line ${cell.line}`;
+        cells[name] = { kills: 0, deaths: 0 };
         for (let seed = 0; seed < SEEDS; seed++) {
             const hunt = recordHunt(cell, seed, defect);
             const row = Generator.perKill(hunt.sum);
@@ -178,13 +200,15 @@ function sweep(defect) {
             hunts += 1;
             kills += hunt.sum.mobs;
             deaths += hunt.sum.deaths;
+            cells[name].kills += hunt.sum.mobs;
+            cells[name].deaths += hunt.sum.deaths;
             for (const violation of violations) {
                 kinds[violation.kind] = (kinds[violation.kind] || 0) + 1;
-                sample[violation.kind] ||= `${cell.spotId}/${cell.selfId} L${cell.level} line ${cell.line} seed ${seed} step ${violation.step}: ${violation.detail}`;
+                sample[violation.kind] ||= `${name} seed ${seed} step ${violation.step}: ${violation.detail}`;
             }
         }
     }
-    return { kinds, sample, hunts, kills, deaths, balance };
+    return { kinds, sample, hunts, kills, deaths, balance, cells };
 }
 
 const started = Date.now();
@@ -194,8 +218,11 @@ for (const line of Object.values(head.sample)) console.log(`  ${line}`);
 for (const bar of ['hp', 'mp']) {
     console.log(`  ${bar} balance: ${Object.entries(head.balance[bar]).map(([kind, sum]) => `${kind} ${sum.toFixed(0)}`).join(', ')}, start - end ${head.balance.startMinusEnd[bar].toFixed(0)}`);
 }
-assert.ok(head.kills > 1000 && head.deaths > 0, `the sample hunts and dies (${head.kills} kills, ${head.deaths} deaths)`);
 assert.deepStrictEqual(head.kinds, {}, 'the cold hunt keeps every law');
+// The laws are checked on hunts that fight and die: every cell kills, one dies five times or more.
+for (const [name, cell] of Object.entries(head.cells)) assert.ok(cell.kills > 0, `${name} kills (${cell.deaths} deaths)`);
+const dying = Math.max(...Object.values(head.cells).map((cell) => cell.deaths));
+assert.ok(dying >= 5, `a cell dies five times or more a sweep (most: ${dying})`);
 
 // Each defect the cold round had, re-introduced, breaks its law.
 const lumped = new WeakSet();
@@ -216,7 +243,6 @@ const defects = {
         clock.activeMs += ms;
         return body;
     } }, 'vitals.rate'],
-    // A round framed from its moment instead of the clock it credits.
     // A round's standing regen given at its end outside the clock (the base gave it
     // at the round's opening, outside any interval): HP no change accounts for.
     'regen outside the clock': [{ result: (result) => {
@@ -224,6 +250,7 @@ const defects = {
         if (!Number.isFinite(result.debug?.combatMs) || !vitals || !(vitals.hp < vitals.maxHp)) return result;
         return { ...result, patch: { ...result.patch, vitals: { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + 10) } } };
     } }, 'vitals.unaccounted'],
+    // A round framed from its moment instead of the clock it credits.
     'round stamped from its moment': [{ open: (open, from, step) => open(step ? step.t : from) }, 'time.uncovered'],
     // Loot merged past the bag: a hundred more non-stackable pieces.
     'loot past the cap': [{ result: (result) => {

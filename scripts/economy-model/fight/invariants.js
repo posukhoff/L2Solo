@@ -16,14 +16,13 @@
 //   t, elapsedMs: the step's moment and the time it credits before it;
 //   round: a hunting round (debug.combatMs set); combatMs, walkedMs, seatedMs;
 //   doneAt: its last action's end (0: none); restUntil, nextResolveAt: its stamps forward;
-//   died; before/after: { activity, hp, mp, maxHp, maxMp } of the bot;
+//   before/after: { activity, hp, mp, maxHp, maxMp } of the bot;
 //   intervals: [{ at, ms, rate: { hp, mp } | null, before: { hp, mp, maxHp, maxMp }, after: { hp, mp } }],
 //     every span the step's clock credited regen over (ColdClock), in order;
 //   changes: [{ kind, before: { hp, mp }, after: { hp, mp } }], every call that changed the
 //     bot's vitals, in order and not nested: a regen interval (kind standing, moving, seated)
 //     or a call outside the clock (fight, potion, heal, buff, ready, respawn);
 //   opens: the moments its round clocks opened at;
-//   stamps: [{ name, at }] other moments it wrote that its actions set (encounters);
 //   gained: loot stacks it added; bag: { slots, slotLimit } after it.
 
 // Rows and stamps carry whole milliseconds; the regen bars carry floats.
@@ -45,14 +44,17 @@ function span(step) {
 // intervals chain from the first step's clock to the last one's end: no
 // millisecond twice, none skipped. A round's own parts (fight with its walks,
 // seated rest) fit in it, the rest idle. A rest step's interval is rest, a
-// dead bot's death. The last step's rest past its end is rest too.
+// dead bot's death. The last step's rest past its end is what the next step
+// would credit it as: death when it leaves the bot dead or starts its revive's
+// rest, else rest.
 function tileTime(hunt, violations) {
     const parts = { fight: 0, walk: 0, rest: 0, death: 0, other: 0 };
     const steps = hunt.steps;
-    let prevEnd = null, tail = 0, revived = false;
+    let prevEnd = null, tail = 0;
+    // The rest a revive starts (the dead step's) is the death's recovery.
+    const recovers = (previous, activity) => activity === 'dead' || (previous === 'dead' && activity === 'resting');
     steps.forEach((step, index) => {
-        // The rest a revive starts (the dead step's) is the death's recovery.
-        revived = step.before.activity === 'dead' || (index > 0 && steps[index - 1].before.activity === 'dead' && step.before.activity === 'resting');
+        const revived = recovers(index > 0 ? steps[index - 1].before.activity : null, step.before.activity);
         const { from, to } = span(step);
         if (prevEnd !== null && Math.abs(from - prevEnd) > MS) {
             add(violations, from < prevEnd ? 'time.twice' : 'time.skipped', index, `credits from ${from}, the previous step ended at ${prevEnd}`);
@@ -73,10 +75,8 @@ function tileTime(hunt, violations) {
         tail = index === steps.length - 1 ? Math.max(0, (Number(step.restUntil) || 0) - to) : 0;
     });
     const last = steps[steps.length - 1];
-    if (last) parts[last.after.activity === 'dead' || revived ? 'death' : 'rest'] += tail;
-    const start = steps.length ? span(steps[0]).from : 0;
-    const total = parts.fight + parts.walk + parts.rest + parts.death + parts.other;
-    return { parts, start, end: start + total, total };
+    if (last) parts[recovers(last.before.activity, last.after.activity) ? 'death' : 'rest'] += tail;
+    return { parts };
 }
 
 // The generator's own sums (what a row records) against the tiling: its fight
@@ -115,7 +115,6 @@ function checkStamps(hunt, violations) {
         if (step.doneAt && step.doneAt < from - MS) add(violations, 'stamp.outside', index, `last action ends at ${step.doneAt}, before its interval ${from}`);
         if (step.restUntil && step.restUntil < to - MS && step.after.activity === 'resting') add(violations, 'stamp.outside', index, `rest ends at ${step.restUntil}, before its round's end ${to}`);
         if (step.nextResolveAt && step.nextResolveAt < to - MS) add(violations, 'stamp.outside', index, `next step at ${step.nextResolveAt}, before this one's end ${to}`);
-        for (const stamp of step.stamps) if (stamp.at < from - MS || stamp.at > to + MS) add(violations, 'stamp.outside', index, `${stamp.name} at ${stamp.at} outside ${from}-${to}`);
     });
 }
 

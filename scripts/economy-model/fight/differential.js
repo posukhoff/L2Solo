@@ -2,8 +2,9 @@
 // Two trees of the game on the same cells and seeds: each hunts every cell
 // through its own generator (Generator.hunt, the table's row hunt) and the
 // table lists kills, deaths per kill and rest per kill side by side, flagging
-// each delta past the simulation's noise floor (kills 4.2 %, rest 6.2 %,
-// deaths per kill 0.010 absolute: the p90 spread of one cell over seeds).
+// each delta past the simulation's noise floor: the p90 spread of a cell's
+// hunt over seeds, measured on the generator's hunt (kills 4.2 %, rest per kill
+// 6.2 %, deaths per kill 0.010 absolute).
 // node scripts/economy-model/fight/differential.js <old tree> <new tree> [--seeds 10] [--hours 2] [--cells <catalogue>]
 // cells: a catalogue with { cells, spots, profiles } (default: the invariant test's fixture).
 const path = require('path');
