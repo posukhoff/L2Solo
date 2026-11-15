@@ -18,8 +18,9 @@ const Supply = require('../scripts/economy-model/design/supply');
 const SHOT = 1835, DROP = 200;
 const out = [{ kind: 'out', who: 7, at: 3 }], bag = [{ kind: 'bag', who: 7, at: 3 }], town = [{ kind: 'town', who: 7, at: 4 }];
 // A level-1 bot out of its 200-shot target in the field, its spot's town selling the shots at 7.
-const field = (over = {}) => ({ place: 'hunt', town: null, spotTown: 'TownA', need: { id: SHOT, perHour: 100, target: 200, held: 0, short: 200 },
-    surplus: [], npcBuy: { [DROP]: 5, [SHOT]: 2 }, wallet: 2000, roadMoney: 0, toHours: 0.1, backHours: 0.1,
+// Its bag fills 2 h after the visit (need.hours, the formula's horizon).
+const field = (over = {}) => ({ place: 'hunt', town: null, spotTown: 'TownA', need: { id: SHOT, perHour: 100, hours: 2, target: 200, held: 0, short: 200 },
+    surplus: [], npcBuy: { [DROP]: 5, [SHOT]: 2 }, wallet: 2000, roadMoney: 0, toHours: 0.1, backHours: 0.1, horizon: 2,
     offers: { town: 'TownA', price: 7 }, fightsBare: true, variant: 'table',
     value: { hour: 0.8, bare: 0.2, withoutDrop: 0.7, bagHoursBare: 2, outHours: 2, M: 25000, moneyWeight: 0.5 }, ...over });
 const inTown = over => field({ place: 'town', town: 'TownA', ...over });
@@ -115,15 +116,29 @@ assert.deepEqual(brief(Supply.supplyChoice(out, formula({ value: { ...standingFu
 // The same road where the bare hour keeps 0.6 of it and the bag fills in an hour: it stays.
 assert.deepEqual(brief(Supply.supplyChoice(out, formula({ ...longRoad, value: { ...zeroBare, bare: zeroBare.hour * 0.6, bagHoursBare: 1 } }))).map(a => a.kind), ['stay']);
 
-// Needs: an outing's target of the shots it fires; it spares its bag, the shots it does not fire and those above target.
+// Needs: the game's stock rule on the shots it fires (ConsumableTarget): its use over the hours to a full bag after the
+// sale plus a tenth; it spares its bag, the shots it does not fire and those above target.
+// slotsIn2: its slots fill in 2 h, nothing weighs (massless shots, no drop load).
+const slotsIn2 = { slotHours: 2, freeLoad: 1000, loadPerHour: 0, mass: 0 };
 const holder = { shots: { [SHOT]: 250, 1463: 5 }, bag: { [DROP]: 4 } };
-assert.deepEqual(Needs.consumable(holder, { id: SHOT, perHour: 99.5 }), { id: SHOT, perHour: 99.5, target: 199, held: 250, short: -51 });
-assert.equal(Needs.consumable(holder, null), null);
-assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 })), [[DROP, 4], [1463, 5], [SHOT, 50]]);
-assert.deepEqual(Needs.surplus({ shots: { [SHOT]: 120 }, bag: {} }, Needs.consumable({ shots: { [SHOT]: 120 } }, { id: SHOT, perHour: 100 })), []);
+assert.deepEqual(Needs.consumable(holder, { id: SHOT, perHour: 99.5 }, slotsIn2), { id: SHOT, perHour: 99.5, hours: 2, target: 219, held: 250, short: -31 });
+assert.equal(Needs.consumable(holder, null, slotsIn2), null);
+assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 }, slotsIn2)), [[DROP, 4], [1463, 5], [SHOT, 30]]);
+assert.deepEqual(Needs.surplus({ shots: { [SHOT]: 120 }, bag: {} }, Needs.consumable({ shots: { [SHOT]: 120 } }, { id: SHOT, perHour: 100 }, slotsIn2)), []);
+// The drop's load sets the hours: 100 load an hour beside shots of mass 4 in 1000 free load, 1000 / (100 + 440) h, not the slots' 10.
+const dropBound = Needs.consumable({ shots: {}, bag: {} }, { id: SHOT, perHour: 100 }, { slotHours: 10, freeLoad: 1000, loadPerHour: 100, mass: 4 });
+assert.ok(Math.abs(dropBound.hours - 1000 / 540) < 1e-9);
+assert.equal(dropBound.target, 204);
+// The stock's own weight sets the hours: mass 5 in 1100 free load, no drop load: 2 h, 220 shots weighing the 1100.
+assert.deepEqual(Needs.consumable({ shots: {}, bag: {} }, { id: SHOT, perHour: 100 }, { slotHours: 10, freeLoad: 1100, loadPerHour: 0, mass: 5 }),
+    { id: SHOT, perHour: 100, hours: 2, target: 220, held: 0, short: 220 });
+// No load left below the first weight step: no hours, it keeps the line (an hour's use).
+assert.equal(Needs.consumable({ shots: {}, bag: {} }, { id: SHOT, perHour: 100 }, { slotHours: 10, freeLoad: 0, loadPerHour: 0, mass: 5 }).target, 100);
+// Nothing bounds the stock (no slot forecast, nothing weighs): a model bug, not a world state.
+assert.throws(() => Needs.consumable(holder, { id: SHOT, perHour: 100 }, { slotHours: Infinity, freeLoad: 1000, loadPerHour: 0, mass: 0 }), /no bag fact bounds/);
 // The beginner shots that charge the shot it fires count as held of it; they are never spare (no sale, trade or drop).
 const starterHolder = { shots: { 5789: 150, [SHOT]: 20 }, bag: {} };
-assert.deepEqual(Needs.consumable(starterHolder, { id: SHOT, perHour: 100, beginner: 5789 }), { id: SHOT, perHour: 100, target: 200, held: 170, short: 30 });
+assert.deepEqual(Needs.consumable(starterHolder, { id: SHOT, perHour: 100, beginner: 5789 }, slotsIn2), { id: SHOT, perHour: 100, hours: 2, target: 220, held: 170, short: 50 });
 assert.deepEqual(Needs.surplus(starterHolder, null), [[SHOT, 20]], 'the beginner shots are never surplus');
 
 // Attention: a stock run out on the road waits and is heard on arrival in one chain with the town fact.

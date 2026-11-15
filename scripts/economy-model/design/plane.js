@@ -32,6 +32,7 @@ const BagClearing = require('../../../src/GameServer/Bot/Economy/BagClearing');
 const Attention = require('./attention');
 const Catalog = require('./catalog');
 const Needs = require('./needs');
+const ConsumableTarget = require('../../../src/GameServer/Bot/Economy/ConsumableTarget');
 const Value = require('./value');
 const Supply = require('./supply');
 const HuntRows = require('../rules/hunt-rows');
@@ -224,7 +225,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             // and their hours; the other variant's answers that differ; each main's bare hunting hours until its
             // first purchase of shots.
             const blank = () => ({ wallHours: 0, roadHours: 0, consumableTrips: 0, bagTrips: 0, bothTrips: 0, emptyTrips: 0, stuckEpisodes: {}, stuckHours: 0, stuckHoursByReason: {},
-                stuckUnmeasuredEpisodes: 0, stuckUnmeasuredHours: 0 });
+                stuckUnmeasuredEpisodes: 0, stuckUnmeasuredHours: 0, needDecisions: 0, needHours: 0, needBinds: { slots: 0, dropLoad: 0, stockLoad: 0 } });
             const tally = { low: blank(), high: blank() };
             const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
             const bareFirst = new Map(), differs = new Map(), shadowed = { decisions: 0 };
@@ -242,14 +243,37 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             const queueFact = (state, kind, main, at) => ({ ...state, account: Attention.push(state.account, { kind, who: main.id, at }) });
             const placed = (state, place) => ({ ...state, account: { ...state.account, place } });
 
+            // The stock rule's inputs at the held spot (fill), on the bag the town chain leaves (it sells every drop) in the
+            // form it hunts on the stock (its shots form when it fires, else bare): the slot forecast (hoursToFull with the
+            // weight test off, one stack of the shot it fires held), the drop's load an hour, the load left below the first
+            // weight step after the worn kit and the shots it keeps but does not size, and the fired shot's mass.
+            const fillOf = (main, row, firing) => {
+                const bags = bagsOf(main), kills = hunter.kills(main), form = firing ? Engine.firedOf(view, main, firing).form : 'bare';
+                const weight = id => view.items[id]?.weight || 0;
+                const shots = firing ? { ...main.shots, [firing.id]: Math.max(1, main.shots[firing.id] || 0) } : main.shots;
+                const slotHours = hoursToFull(view, { ...bags, maxLoad: Infinity }, { ...main, shots, bag: {} }, row, [{ form, kills: kills[form], hours: Infinity }]);
+                const loadPerHour = Engine.rowItems(view, main, row, form).items.reduce((sum, item) => sum + item.rate * item.weight, 0) * kills[form];
+                let kept = 0;
+                for (const id of Object.values(main.kit)) if (id) kept += weight(id);
+                for (const [id, count] of Object.entries(main.shots)) if (!firing || (Number(id) !== firing.id && Number(id) !== firing.beginner)) kept += count * weight(id);
+                return { slotHours, loadPerHour, freeLoad: bags.maxLoad * SurvivalFloor.FIRST_WEIGHT_STEP - kept, mass: firing ? weight(firing.id) : 0 };
+            };
+            // Which term set the need's hours: the slots, the drop's load, or the stock's own weight (the load term
+            // would have bound with no drop load).
+            const bindOf = (fill, need) => {
+                if (need.hours >= fill.slotHours) return 'slots';
+                const stockOnly = ConsumableTarget.bagHours({ ...fill, loadPerHour: 0, stock: [{ use: need.perHour, mass: fill.mass }] });
+                return stockOnly < fill.slotHours ? 'stockLoad' : 'dropLoad';
+            };
             // The supply decision's state on the main where it stands (place, the town it is in).
             const supplyState = (main, row, place, town, spotTown) => {
-                const firing = hunter.firing(main), need = Needs.consumable(main, firing), surplus = Needs.surplus(main, need);
+                const firing = hunter.firing(main), fill = fillOf(main, row, firing), need = Needs.consumable(main, firing, fill), surplus = Needs.surplus(main, need);
+                const horizon = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
                 const npcBuy = Object.fromEntries(surplus.map(([id]) => [id, view.items[id]?.npcBuy || 0]));
                 // The NPC of the held spot's town that sells its shots (every starter town's does).
                 const offer = need ? (view.offers.get(need.id) || []).find(each => each.town === spotTown && each.channel === 'npc_buy') : null;
                 const toHours = Engine.toHoursOf(view, row.spotId), backHours = Engine.backHoursOf(view, row.spotId, spotTown);
-                return { place, town, spotTown, need, surplus, npcBuy, wallet: main.money, roadMoney: 0, toHours, backHours,
+                return { place, town, spotTown, need, fill, horizon, surplus, npcBuy, wallet: main.money, roadMoney: 0, toHours, backHours,
                     offers: offer ? { town: offer.town, price: offer.price } : null, fightsBare: Engine.rowIn(row, 'bare').kills > 0, variant };
             };
             // The same with the formula's hour values (the table variant never reads them).
@@ -270,7 +294,15 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                 const row = Engine.spotRowOf(view, main), spotTown = townOf(view, main);
                 if (!chain.length || !Catalog.woken(chain).includes('supply') || !row || !spotTown) return { state: next, actions: [], row, spotTown, chain, need: null };
                 const deciding = decisionState(main, row, account.place, town, spotTown, state.full);
-                if (account.place === 'town') return { state: next, actions: Supply.supplyChoice(chain, deciding), row, spotTown, chain, need: deciding.need };
+                if (account.place === 'town') {
+                    if (deciding.need) {
+                        const book = tally[classOf(main.level)];
+                        book.needDecisions++;
+                        book.needHours += deciding.need.hours;
+                        book.needBinds[bindOf(deciding.fill, deciding.need)]++;
+                    }
+                    return { state: next, actions: Supply.supplyChoice(chain, deciding), row, spotTown, chain, need: deciding.need };
+                }
                 const seen = Supply.shadow(chain, deciding);
                 shadowed.decisions++;
                 if (seen.differ) {
