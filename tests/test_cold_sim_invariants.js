@@ -5,7 +5,8 @@ const path = require('path');
 // The cold simulation's conservation laws on a fixed sample: nine cells of the
 // spot table (a spot's species, a class line, a level, shots) hunted through
 // the generator's own hunt for two hours at three seeds. Every hunt tiles its
-// clock, credits each regen interval its rate, closes its HP, keeps its stamps
+// clock, credits each regen interval its rate, closes its HP and MP (every
+// change a probed call or a clock interval), keeps its stamps
 // inside their intervals and its loot inside the bag, and its row fits in its
 // hour per kill. The same laws fail on each defect the cold round had
 // (time counted twice, regen as one capped lump, a round framed from its
@@ -13,6 +14,55 @@ const path = require('path');
 // game's own functions. The fixture holds the nine spots' catalogue rows (the
 // server's spot catalogue, SpotService + SpotProfiles), so no world spawns.
 process.env.TZ = 'UTC';
+const Module = require('module');
+
+// Every function of the cold resolver that changes a bot's HP or MP outside
+// the clock (ColdClock's regen), probed by the vitals it was handed and the
+// vitals it left. The resolver calls them by name, so they are wrapped where
+// they are declared: its source gets one line at the end that rebinds each
+// name to its wrapper (a missing name throws at load). Calls inside a probed
+// call are part of it (depth). kind: the change's name in the balance.
+const vitalsOf = (vitals) => ({ hp: Number(vitals.hp), mp: Number(vitals.mp), maxHp: Number(vitals.maxHp), maxMp: Number(vitals.maxMp) });
+const PROBED = {
+    // A fight returns the HP and MP it left (a scan or a fight not taken returns none).
+    resolveFight: { kind: 'fight', before: (options) => vitalsOf(options.state.vitals),
+        after: (result) => (result && !result.avoided && Number.isFinite(result.hp) ? { hp: result.hp, mp: result.mp } : null) },
+    // The bottles and the gap heals change the vitals they are handed in place.
+    coldRestPotions: { kind: 'potion', before: (profile, vitals) => vitalsOf(vitals), after: (result, profile, vitals) => vitalsOf(vitals) },
+    coldHealBetweenFights: { kind: 'heal', before: (profile, vitals) => vitalsOf(vitals), after: (result, profile, vitals) => vitalsOf(vitals) },
+    // The buffs' and the readiness' casts spend the round's MP in place.
+    applySoloBuffs: { kind: 'buff', before: (patch) => vitalsOf(patch.vitals), after: (result, patch) => vitalsOf(patch.vitals) },
+    getReady: { kind: 'ready', before: (state, patch) => vitalsOf(patch.vitals), after: (result, state, patch) => vitalsOf(patch.vitals) },
+    // The town restart returns the vitals it revives with.
+    resolveDeathRecovery: { kind: 'respawn', before: (state) => vitalsOf(state.vitals),
+        after: (result, state) => (result?.patch?.vitals ? vitalsOf({ ...state.vitals, ...result.patch.vitals }) : null) }
+};
+const probe = { depth: 0, step: null };
+const RESOLVER = path.resolve(__dirname, '..', 'src', 'GameServer', 'Bot', 'Population', 'BackgroundResolver.js');
+global.__coldSimProbe = (name, fn) => {
+    const read = PROBED[name];
+    return function probed(...args) {
+        const top = probe.depth === 0 && probe.step;
+        const before = top ? read.before(...args) : null;
+        probe.depth += 1;
+        let result;
+        try {
+            result = fn.apply(this, args);
+        } finally {
+            probe.depth -= 1;
+        }
+        const after = top ? read.after(result, ...args) : null;
+        if (after) top.changes.push({ kind: read.kind, before, after });
+        return result;
+    };
+};
+const compile = Module.prototype._compile;
+Module.prototype._compile = function (content, filename) {
+    if (path.resolve(filename) !== RESOLVER) return compile.call(this, content, filename);
+    const rebind = Object.keys(PROBED).map((name) => `${name} = global.__coldSimProbe('${name}', ${name});`).join(' ');
+    return compile.call(this, `${content}\n${rebind}\n`, filename);
+};
+
 const Generator = require('../scripts/generate-spot-table');
 const Decompose = require('../scripts/economy-model/fight/decompose');
 const Invariants = require('../scripts/economy-model/fight/invariants');
@@ -31,8 +81,6 @@ const Formulas = invoke('GameServer/Formulas');
 const items = invoke('GameServer/DataCache').items;
 const profiles = new Map(fixture.profiles.map((profile) => [String(profile.id), profile]));
 
-const vitalsOf = (vitals) => ({ hp: Number(vitals.hp), mp: Number(vitals.mp), maxHp: Number(vitals.maxHp), maxMp: Number(vitals.maxMp) });
-
 // One hunt recorded step by step at the generator's seam (BackgroundResolver.resolveSolo)
 // and the clock's (ColdClock: every span a step credits regen over). defect: wrappers
 // that re-introduce a defect ({ open, advance, result }).
@@ -40,6 +88,12 @@ function recordHunt(cell, seed, defect = {}) {
     const real = { resolveSolo: BR.resolveSolo, open: ColdClock.open, advance: ColdClock.advance, sit: ColdClock.sit, seated: ColdClock.seated };
     const steps = [];
     let step = null;
+    // A regen interval is rate-checked at any depth; it is a change of the
+    // step's vitals only outside a probed call (inside one it is that call's).
+    const credit = (on, interval, kind) => {
+        on.intervals.push(interval);
+        if (probe.depth === 0) on.changes.push({ kind, before: interval.before, after: interval.after });
+    };
     ColdClock.open = (from) => {
         const clock = defect.open ? defect.open(real.open, from, step) : real.open(from);
         if (step) step.opens.push(clock.at);
@@ -48,7 +102,7 @@ function recordHunt(cell, seed, defect = {}) {
     ColdClock.advance = (clock, body, ms, posture, rates) => {
         const at = clock.at, before = vitalsOf(body.vitals);
         const after = defect.advance ? defect.advance(real.advance, clock, body, ms, posture, rates, step) : real.advance(clock, body, ms, posture, rates);
-        if (step) step.intervals.push({ at, ms, rate: posture === 'moving' ? rates.moving : rates.standing, before, after: vitalsOf(after.vitals) });
+        if (step) credit(step, { at, ms, rate: posture === 'moving' ? rates.moving : rates.standing, before, after: vitalsOf(after.vitals) }, posture);
         return after;
     };
     ColdClock.sit = (clock, body, needMs, bound, state, rates, options = {}) => {
@@ -56,19 +110,20 @@ function recordHunt(cell, seed, defect = {}) {
         const rate = ColdRest.restRegenPerTick({ ...state, vitals: body.vitals, stats: body.stats }, before.maxHp - before.hp, before.maxMp - before.mp,
             { profile: rates.profile, timestamp: at, ...options });
         const result = real.sit(clock, body, needMs, bound, state, rates, options);
-        if (step) step.intervals.push({ at, ms: clock.seatedMs - sat0, rate, before, after: vitalsOf(result.body.vitals) });
+        if (step) credit(step, { at, ms: clock.seatedMs - sat0, rate, before, after: vitalsOf(result.body.vitals) }, 'seated');
         return result;
     };
     // The rest step passes its moment: it sits the span before it.
     ColdClock.seated = (state, body, ms, at, profile, options) => {
         const result = real.seated(state, body, ms, at, profile, options);
-        if (step) step.intervals.push({ at: at - ms, ms, rate: result.regen, before: vitalsOf(body.vitals), after: vitalsOf(result.vitals) });
+        if (step) credit(step, { at: at - ms, ms, rate: result.regen, before: vitalsOf(body.vitals), after: vitalsOf(result.vitals) }, 'seated');
         return result;
     };
     BR.resolveSolo = (options) => {
         const state = options.state;
-        step = { t: options.timestamp, elapsedMs: options.elapsedMs, intervals: [], opens: [], stamps: [],
+        step = { t: options.timestamp, elapsedMs: options.elapsedMs, intervals: [], changes: [], opens: [], stamps: [],
             before: { activity: state.activity, ...vitalsOf(state.vitals) } };
+        probe.step = step;
         let result;
         try {
             result = real.resolveSolo(options);
@@ -76,6 +131,7 @@ function recordHunt(cell, seed, defect = {}) {
         } finally {
             const done = step;
             step = null;
+            probe.step = null;
             if (result) {
                 const debug = result.debug || {}, patch = result.patch || {};
                 const after = { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) }, inventory: patch.inventory || state.inventory };
@@ -83,8 +139,7 @@ function recordHunt(cell, seed, defect = {}) {
                 Object.assign(done, {
                     round: Number.isFinite(debug.combatMs), combatMs: Number(debug.combatMs) || 0, walkedMs: Number(debug.walkedMs) || 0,
                     seatedMs: Number(debug.seatedMs) || 0, doneAt: Number(result.doneAt) || 0, restUntil: Number(patch.stats?.restUntil) || 0,
-                    nextResolveAt: Number(result.nextResolveAt) || 0, died: debug.died === true, taken: Number(debug.damageTaken) || 0,
-                    potionsUsed: Number(debug.potionsUsed) || 0, heals: Number(debug.heals) || 0, gapHeals: Number(debug.gapHeals) || 0,
+                    nextResolveAt: Number(result.nextResolveAt) || 0, died: debug.died === true,
                     after: { activity: after.activity, ...vitalsOf(after.vitals) }, gained,
                     bag: gained ? { slots: SurvivalFloor.stateInventory(after, items).slots, slotLimit: InventoryLimits.forState(after) } : null
                 });
@@ -108,13 +163,18 @@ function recordHunt(cell, seed, defect = {}) {
 
 // Every cell at every seed under one defect: the violations by kind and a sample of each.
 function sweep(defect) {
-    const kinds = {}, sample = {};
+    const kinds = {}, sample = {}, balance = { hp: {}, mp: {}, startMinusEnd: { hp: 0, mp: 0 } };
     let hunts = 0, kills = 0, deaths = 0;
     for (const cell of fixture.cells) {
         for (let seed = 0; seed < SEEDS; seed++) {
             const hunt = recordHunt(cell, seed, defect);
             const row = Generator.perKill(hunt.sum);
-            const { violations } = Invariants.checkHunt(hunt, { row, tickMs: Formulas.REGEN_TICK_MS, rounding: Generator.ROUNDING });
+            const checked = Invariants.checkHunt(hunt, { row, tickMs: Formulas.REGEN_TICK_MS, rounding: Generator.ROUNDING });
+            const violations = checked.violations;
+            for (const bar of ['hp', 'mp']) {
+                for (const [kind, sum] of Object.entries(checked.balance[bar])) balance[bar][kind] = (balance[bar][kind] || 0) + sum;
+                if (checked.balance.start) balance.startMinusEnd[bar] += checked.balance.start[bar] - checked.balance.end[bar];
+            }
             hunts += 1;
             kills += hunt.sum.mobs;
             deaths += hunt.sum.deaths;
@@ -124,13 +184,16 @@ function sweep(defect) {
             }
         }
     }
-    return { kinds, sample, hunts, kills, deaths };
+    return { kinds, sample, hunts, kills, deaths, balance };
 }
 
 const started = Date.now();
 const head = sweep();
 console.log(`head: ${head.hunts} hunts, ${head.kills} kills, ${head.deaths} deaths, violations ${JSON.stringify(head.kinds)}`);
 for (const line of Object.values(head.sample)) console.log(`  ${line}`);
+for (const bar of ['hp', 'mp']) {
+    console.log(`  ${bar} balance: ${Object.entries(head.balance[bar]).map(([kind, sum]) => `${kind} ${sum.toFixed(0)}`).join(', ')}, start - end ${head.balance.startMinusEnd[bar].toFixed(0)}`);
+}
 assert.ok(head.kills > 1000 && head.deaths > 0, `the sample hunts and dies (${head.kills} kills, ${head.deaths} deaths)`);
 assert.deepStrictEqual(head.kinds, {}, 'the cold hunt keeps every law');
 
@@ -154,6 +217,13 @@ const defects = {
         return body;
     } }, 'vitals.rate'],
     // A round framed from its moment instead of the clock it credits.
+    // A round's standing regen given at its end outside the clock (the base gave it
+    // at the round's opening, outside any interval): HP no change accounts for.
+    'regen outside the clock': [{ result: (result) => {
+        const vitals = result.patch?.vitals;
+        if (!Number.isFinite(result.debug?.combatMs) || !vitals || !(vitals.hp < vitals.maxHp)) return result;
+        return { ...result, patch: { ...result.patch, vitals: { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + 10) } } };
+    } }, 'vitals.unaccounted'],
     'round stamped from its moment': [{ open: (open, from, step) => open(step ? step.t : from) }, 'time.uncovered'],
     // Loot merged past the bag: a hundred more non-stackable pieces.
     'loot past the cap': [{ result: (result) => {

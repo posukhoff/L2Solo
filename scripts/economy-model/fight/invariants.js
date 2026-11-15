@@ -17,9 +17,11 @@
 //   round: a hunting round (debug.combatMs set); combatMs, walkedMs, seatedMs;
 //   doneAt: its last action's end (0: none); restUntil, nextResolveAt: its stamps forward;
 //   died; before/after: { activity, hp, mp, maxHp, maxMp } of the bot;
-//   taken: the HP the bot's fights took (debug.damageTaken); potionsUsed, heals, gapHeals;
 //   intervals: [{ at, ms, rate: { hp, mp } | null, before: { hp, mp, maxHp, maxMp }, after: { hp, mp } }],
 //     every span the step's clock credited regen over (ColdClock), in order;
+//   changes: [{ kind, before: { hp, mp }, after: { hp, mp } }], every call that changed the
+//     bot's vitals, in order and not nested: a regen interval (kind standing, moving, seated)
+//     or a call outside the clock (fight, potion, heal, buff, ready, respawn);
 //   opens: the moments its round clocks opened at;
 //   stamps: [{ name, at }] other moments it wrote that its actions set (encounters);
 //   gained: loot stacks it added; bag: { slots, slotLimit } after it.
@@ -27,6 +29,8 @@
 // Rows and stamps carry whole milliseconds; the regen bars carry floats.
 const MS = 1;
 const VITALS_EPS = 1e-6;
+// The HP and MP a balance may miss by: float sums over a hunt's changes.
+const BALANCE_EPS = 1e-6;
 
 const add = (violations, kind, step, detail) => violations.push({ kind, step, detail });
 
@@ -116,14 +120,11 @@ function checkStamps(hunt, violations) {
 }
 
 // Each regen interval credits its rate times its length, capped by the bar,
-// no more and no less. Returns the hunt's regen and the HP its fights took.
+// no more and no less.
 function checkVitals(hunt, violations, tickMs) {
-    const totals = { regenHp: 0, regenMp: 0, taken: 0 };
     hunt.steps.forEach((step, index) => {
         for (const interval of step.intervals) {
             const got = { hp: interval.after.hp - interval.before.hp, mp: interval.after.mp - interval.before.mp };
-            totals.regenHp += got.hp;
-            totals.regenMp += got.mp;
             if (!interval.rate) continue;
             for (const bar of ['hp', 'mp']) {
                 const max = bar === 'hp' ? interval.before.maxHp : interval.before.maxMp;
@@ -133,9 +134,55 @@ function checkVitals(hunt, violations, tickMs) {
                 }
             }
         }
-        totals.taken += Number(step.taken) || 0;
     });
-    return totals;
+}
+
+const differs = (a, b) => Math.abs(a.hp - b.hp) > BALANCE_EPS || Math.abs(a.mp - b.mp) > BALANCE_EPS;
+
+// HP and MP move only by the changes a step records: each change starts from
+// the vitals the previous one left, or from the vitals it was handed when the
+// step dropped its result (a dead bot's body is not worn; a living bot that
+// drops one loses it); the step ends at the last one's. Steps follow one
+// another's vitals. So a hunt's HP lost to its fights and casts equals its
+// regen (standing, moving, seated), bottles, heals and respawns plus its start
+// minus its end. Returns that balance per kind: { hp: { kind: sum }, mp, start, end },
+// a move no change accounts for under the kind unaccounted.
+function checkBalance(hunt, violations) {
+    const balance = { hp: {}, mp: {}, start: null, end: null };
+    const credit = (change) => {
+        for (const bar of ['hp', 'mp']) balance[bar][change.kind] = (balance[bar][change.kind] || 0) + change.after[bar] - change.before[bar];
+    };
+    let previous = null;
+    hunt.steps.forEach((step, index) => {
+        if (previous && differs(step.before, previous.after)) {
+            credit({ kind: 'unaccounted', before: previous.after, after: step.before });
+            add(violations, 'vitals.between', index, `starts at ${step.before.hp} HP ${step.before.mp} MP, the previous step left ${previous.after.hp} HP ${previous.after.mp} MP`);
+        }
+        let held = step.before, pending = null;
+        // The vitals the next probe sees settle the pending change: worn, dropped or neither.
+        const settle = (seen, what) => {
+            if (pending && !differs(seen, pending.after)) credit(pending);
+            else if (pending && !differs(seen, pending.before)) {
+                if (step.after.activity !== 'dead') add(violations, 'vitals.dropped', index, `${pending.kind} of ${pending.after.hp - pending.before.hp} HP ${pending.after.mp - pending.before.mp} MP not worn`);
+            } else {
+                // Taken as worn, the rest of the move is the balance's unaccounted.
+                if (pending) credit(pending);
+                const from = pending ? pending.after : held;
+                credit({ kind: 'unaccounted', before: from, after: seen });
+                add(violations, 'vitals.unaccounted', index, `${what} sees ${seen.hp} HP ${seen.mp} MP, ${pending ? `the ${pending.kind} left` : 'the step began at'} ${from.hp} HP ${from.mp} MP`);
+            }
+            held = seen;
+        };
+        for (const change of step.changes) {
+            if (pending || differs(change.before, held)) settle(change.before, change.kind);
+            pending = change;
+        }
+        if (pending || differs(step.after, held)) settle(step.after, 'the step\'s end');
+        if (index === 0) balance.start = { hp: step.before.hp, mp: step.before.mp };
+        balance.end = { hp: step.after.hp, mp: step.after.mp };
+        previous = step;
+    });
+    return balance;
 }
 
 // Loot never takes the bag past its slots.
@@ -162,17 +209,18 @@ function checkNumbers(row, violations) {
 }
 
 // Every law on one hunt. row: the generator's row of it (Generator.perKill),
-// null when it killed nothing. Returns { violations, parts, other, vitals }.
+// null when it killed nothing. Returns { violations, parts, other, balance }.
 function checkHunt(hunt, { row = null, tickMs, rounding }) {
     const violations = [];
     const tiled = tileTime(hunt, violations);
     const generator = generatorTime(hunt, tiled, violations, rounding);
     checkStamps(hunt, violations);
-    const vitals = checkVitals(hunt, violations, tickMs);
+    checkVitals(hunt, violations, tickMs);
+    const balance = checkBalance(hunt, violations);
     checkLoot(hunt, violations);
     checkNumbers(row, violations);
     if (row && overHour(row, rounding)) add(violations, 'row.overHour', -1, `fight ${row.fight} + rest ${row.rest} s past ${3600 / row.kph} s`);
-    return { violations, parts: tiled.parts, other: generator?.other ?? null, vitals };
+    return { violations, parts: tiled.parts, other: generator?.other ?? null, balance };
 }
 
 module.exports = { checkHunt, overHour };
