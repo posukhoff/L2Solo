@@ -464,7 +464,8 @@ function heap() {
 //     huntShare the band's share of wall time spent hunting
 //   firing(main), kills(main)  the shot a main fires as it hunts and its worn kit's kills (hunt's)
 //   full(main)  (optional) whether its bag is at the game's full rule: it hunts with no item drop (hunt's; none: never full)
-//   hunt(main, delta)  told each committed hunt, the delta with its spotHours and wayHours
+//   hunt(main, delta)  told each committed hunt, the delta with its spotHours and wayHours; it answers the main's bag
+//             when the hunt's bag fact cleared it (its slots destroyed: BagClearing), else nothing
 //   visit(main, now, { outingHours, died })  { main, delta, afterHours }: afterHours, the hours after
 //             the arrival before it hunts again (its onward stops and its way back to the spot)
 //   levelUp(main, now)  the main after a level read
@@ -586,8 +587,8 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
         const moved = { ...main, counter: main.counter + 1, since: Math.max(now, main.since) };
         const { main: next, delta } = hunt(moved, view, spotHours * share, randomFor(main), hooks.firing(main), hooks.kills(main), hooks.full ? hooks.full(main) : false);
         Ledger.recordHunt(ledger, next, delta);
-        hooks.hunt(next, { ...delta, spotHours, wayHours });
-        return next;
+        const bag = hooks.hunt(next, { ...delta, spotHours, wayHours });
+        return bag ? { ...next, bag } : next;
     };
 
     // Hunts a main to now, replaces it by change(main), schedules its level and death and asks the arrival rule
