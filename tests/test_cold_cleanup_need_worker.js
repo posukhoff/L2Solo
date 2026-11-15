@@ -193,6 +193,10 @@ async function step(states, { project = state => state } = {}) {
         [potion]: { selfId: potion, name: Template(potion).template.name, kind: Template(potion).template.kind, stackable: true, amount: 5 },
         736: { selfId: 736, name: Template(736).template.name, kind: Template(736).template.kind, stackable: true, amount: 1 },
         5789: { selfId: 5789, name: Template(5789).template.name, kind: Template(5789).template.kind, stackable: true, amount: 100 } };
+    // A row counts the slots the destroy frees, the copies it takes (unworn, named): a piece whose only
+    // listed copy is worn, its second copy not yet listed, frees none.
+    const wornOnly = { [sword.selfId]: { ...kept[sword.selfId], amount: 2 } };
+    assert.deepStrictEqual(Disposition.clearingRows(bot(515, { inventory: wornOnly })), [], 'a worn copy frees no slot');
     const reservedMaterial = 1864;
     const keeper = bot(513, { inventory: kept, stats: { classId: 0, craftHold: [['craft:test', [[reservedMaterial, 1]]]] } });
     const all = answer(keeper, { ...hunt(30), hourAdena: worth[44] * 1000 * 51 / tripHours });
