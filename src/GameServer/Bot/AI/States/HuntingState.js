@@ -156,7 +156,8 @@ function sellTripDue(session, bot) {
 // The slots a build chose to destroy at the full bag (stats.bagClear, EconomyContext.bagDecisions),
 // destroyed from the live bag as a player destroys an item (Network/Request/TrashItem: Backpack.deleteItem):
 // unworn copies of each row's kind and enchant, its named copies when it names them, up to its count.
-// A copy the live bag no longer holds is skipped (the body's bag moved since the build read it).
+// A copy the live bag no longer holds is skipped (the body's bag moved since the build read it),
+// counted: the decision is then executed only in part (ai.bag_clear_missing).
 function destroySlots(session, bot, items) {
     for (const row of items || []) {
         const named = row.objectIds?.length ? new Set(row.objectIds.map(Number)) : null;
@@ -170,6 +171,7 @@ function destroySlots(session, bot, items) {
             bot.backpack.deleteItem(session, item.fetchId(), amount);
             count -= amount;
         }
+        if (count > 0) FailureLog.note('ai.bag_clear_missing', new Error(`bag clear of ${row.selfId}+${row.enchant || 0}: ${count} not in the bag`));
     }
 }
 
