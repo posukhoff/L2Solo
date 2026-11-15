@@ -2936,6 +2936,14 @@ const BotLifeState = {
             stats: { ...(state.stats || {}), ...(result.patch?.stats || {}) }
         }, inventory);
         const nextActivity = result.patch?.activity || state.activity;
+        const vitals = { ...(state.vitals || {}), ...(result.patch?.vitals || {}) };
+        // C4: a level up fills HP and MP to the new level's maxima (hot LevelUp's fillupVitals);
+        // a level a far round gained is applied here, after it. A dead body stays at none.
+        if (level > Number(state.level || 1) && nextActivity !== 'dead') {
+            const profile = ColdCombatProfile.fightProfile({ ...state, level, inventory: equippedInventory,
+                stats: { ...(state.stats || {}), ...(result.patch?.stats || {}) } }, timestamp);
+            Object.assign(vitals, { hp: profile.maxHp, maxHp: profile.maxHp, mp: profile.maxMp, maxMp: profile.maxMp });
+        }
         const nextState = {
             ...state,
             level,
@@ -2950,10 +2958,7 @@ const BotLifeState = {
                 ...(state.loc || {}),
                 ...(result.patch?.loc || {})
             },
-            vitals: {
-                ...(state.vitals || {}),
-                ...(result.patch?.vitals || {})
-            },
+            vitals,
             timing: {
                 ...(state.timing || {}),
                 ...(state.timing?.lastHotAt == null ? {} : { lastHotAt: Math.ceil(state.timing.lastHotAt) }),
