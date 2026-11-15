@@ -106,16 +106,20 @@ function watchHunt({ spot, line, level, form, hours, classId, kit }) {
         const resting = patch.activity === 'resting';
         const restUntil = Number(patch.stats?.restUntil) || 0;
         const c = kind === 'hunt' ? Number(debug.combatMs) : 0, walk = Number(debug.walkedMs) || 0;
+        // A round runs from its budget's start to its last action's end (doneAt); the seated
+        // part of a rest inside it is rest.
+        const from = Math.max(options.timestamp, Math.ceil(Number(result.doneAt) || 0)), seated = Number(debug.seatedMs) || 0;
         if (prev) close(options.timestamp, kind);
         if (kind === 'hunt') {
             const parts = rec.parts;
             parts.walk += walk;
             parts.fight += c - walk;
-            parts.other += options.elapsedMs - c;
+            parts.rest += seated;
+            parts.other += from - (options.timestamp - options.elapsedMs) - c - seated;
             if (!prev) rec.edgeMs.before += options.elapsedMs;
-            // The rest the round set, sat or not (the builder's sums count it as rest).
-            rec.reportedRest += Math.max(0, restUntil - options.timestamp);
         }
+        // The rest the builder's sums count: every step's but a dead bot's, sat or not.
+        if (state.activity !== 'dead') rec.reportedRest += seated + Math.max(0, restUntil - from);
         if (debug.died && rec.marks.length) rec.marks[rec.marks.length - 1].died = true;
         let reason = debug.reason || 'other';
         if (kind === 'hunt' && resting) {
@@ -126,7 +130,7 @@ function watchHunt({ spot, line, level, form, hours, classId, kit }) {
             else if (stepNeed) reason = `after_${hpOrMp(stepNeed)}`;
             else reason = patch.stats?.lastReason || 'other';
         }
-        prev = { t: options.timestamp, kind, died: debug.died === true, resting, restUntil, reason };
+        prev = { t: from, kind, died: debug.died === true, resting, restUntil, reason };
         return result;
     };
     ER.atVitals = (profiles, hp, mp, pet) => {

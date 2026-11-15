@@ -2,7 +2,7 @@ const { isDeepStrictEqual } = require('node:util');
 const PveEncounter = require('./ColdPveEncounter');
 const ColdEconomyPlan = require('./ColdEconomyPlan');
 const ColdSoloWindow = require('./ColdSoloWindow');
-const { ownClock, livedClock, stepElapsedMs } = ColdSoloWindow;
+const ColdClock = require('./ColdClock');
 const DiagnosticConfig = require('./PopulationConfig');
 const CharacterStateSources = require('../../World/CharacterStateSources');
 const SparseNumericStorage = require('./SparseNumericStorage');
@@ -1681,9 +1681,10 @@ class ColdSimulationKernel {
         const id = Number(characterId);
         const current = this.states.get(id);
         if (!this.currentCommand(id, attempt)) return;
-        const timestamp = this.now();
+        // At the bot's clock when that lies ahead: a command woken inside a round's
+        // run-past goes on from its end, it lives that time once.
+        const { timestamp, elapsedMs } = ColdClock.step(current.state, this.now());
         try {
-            const elapsedMs = stepElapsedMs(current.state, timestamp);
             const raidPreparing = require('./RaidSupplyPolicy').held(current.state, timestamp);
             const hallVisit = !raidPreparing && mainVisit(current.state, this);
             const guide = !hallVisit && !raidPreparing && guideRound(current.state, timestamp);
@@ -2169,8 +2170,10 @@ class ColdSimulationKernel {
             }
 
             if (!this.resolveParty) throw new Error('party_resolver_unavailable');
-            // A member that held for an event (livedClock) lived its wait.
-            const lastResolvedAt = Math.min(...run.members.map((member) => livedClock(member, startedAt) || startedAt - 60000));
+            // The round starts no earlier than its members' clocks (a round's last
+            // action may end past its step) and credits the time since the earliest
+            // member's (a member that held for an event lived its wait).
+            const roundAt = Math.max(...run.members.map(member => ColdClock.step(member, startedAt).timestamp));
             const resolveOptions = {
                 episodeId: stepProposalId(run.party.leaderId, run.startedAt),
                 assessRelationship: this.interactionMemory.assess.bind(this.interactionMemory),
@@ -2181,9 +2184,9 @@ class ColdSimulationKernel {
                 spotHunters: this.spotHunters(run.spot),
                 targetNpcId: run.targetNpcId,
                 lastFight: fightHoldsTrip,
-                elapsedMs: Math.max(1000, startedAt - lastResolvedAt),
+                elapsedMs: Math.max(...run.members.map(member => ColdClock.step(member, roundAt).elapsedMs)),
                 rng: deterministicRandom(run.members[0] || {}),
-                timestamp: startedAt
+                timestamp: roundAt
             };
             const raids = require('./ColdRaidEncounter');
             const raid = !meetingPending && run.spot?.raidBoss === true;
@@ -2437,8 +2440,7 @@ class ColdSimulationKernel {
             // the stats can hold a fraction, and every clock of the step comes from here.
             // Never before the bot's own clock: a step woken inside a hunt window
             // goes on from its end, it lives that time once.
-            const timestamp = Math.ceil(Math.max(startedAt, active.dueAt || 0, ownClock(active.state)));
-            const elapsedMs = stepElapsedMs(active.state, timestamp);
+            const { timestamp, elapsedMs } = ColdClock.step(active.state, Math.max(startedAt, active.dueAt || 0));
             const raidPreparing = require('./RaidSupplyPolicy').held(active.state, timestamp);
             const guide = !raidPreparing && guideRound(active.state, timestamp);
             const lifecyclePlan = !raidPreparing && !guide && this.planLifecycle
@@ -2556,10 +2558,10 @@ class ColdSimulationKernel {
         };
         add(first.result);
         for (;;) {
-            // huntedThrough (ColdSoloWindow): the round's start, the end of the credited hunt
-            // when it is the last; a round's own clock (lastResolvedAt) is the same.
+            // huntedThrough (ColdSoloWindow): the end of the round's last action, the end of the
+            // credited hunt when it is the last; a round's own clock (lastResolvedAt) is the same.
             const stamped = { ...round.result, patch: { ...round.result.patch,
-                stats: { ...round.result.patch?.stats, huntedThrough: round.timestamp } } };
+                stats: { ...round.result.patch?.stats, huntedThrough: Math.max(round.timestamp, Math.ceil(Number(round.result.doneAt) || 0)) } } };
             // A round's projection is its own turn, as its fight is (resolveStep: phases).
             await nextTurn();
             if (!this.resolverSourceCurrent(source)) return null;
@@ -2581,8 +2583,8 @@ class ColdSimulationKernel {
             }
             await nextTurn();
             if (!this.resolverSourceCurrent(source)) return null;
-            const timestamp = Math.ceil(Number(after.timing.nextResolveAt));
-            const result = await this.resolveSolo({ ...roundOptions, state: after, elapsedMs: stepElapsedMs(after, timestamp),
+            const { timestamp, elapsedMs } = ColdClock.step(after, Number(after.timing.nextResolveAt));
+            const result = await this.resolveSolo({ ...roundOptions, state: after, elapsedMs,
                 rng: deterministicRandom(after), timestamp });
             if (!this.resolverSourceCurrent(source)) return null;
             add(result);

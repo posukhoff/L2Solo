@@ -46,7 +46,7 @@ async function hunter(overrides = {}) {
 // The step's decision: hold the hunt, as a held card does. `plan` overrides it.
 // windowed: false, a kernel without the worker's window readers: a round a step.
 // ends: a round that ends the window as its held leaf's check would (none by default).
-function world({ windowed = true, plan = null, ends = () => false, ground = spot, leaf = {}, stock = () => null, onRound = () => {} }) {
+function world({ windowed = true, plan = null, ends = () => false, ground = spot, leaf = {}, stock = () => null, onRound = () => {}, onSolo = () => {} }) {
     const clock = { at: 0 };
     const proposals = [];
     const activity = { activity: 'hunting', spotId: spot.id, ...leaf };
@@ -56,7 +56,7 @@ function world({ windowed = true, plan = null, ends = () => false, ground = spot
         { timestamp, writtenAt, persist: false, projectClassProgression: true, statsPacket: {}, statsPacketBeforeResolve: true });
     const kernel = new ColdSimulationKernel({
         now: () => clock.at, flushTargetMs: FLUSH_MS,
-        resolveSolo: options => Resolver.resolveSolo(options),
+        resolveSolo: options => { const result = Resolver.resolveSolo(options); onSolo(options, result); return result; },
         spotOf: () => ground,
         planLifecycle: ({ state }) => plan ? plan(state, held(state)) : held(state),
         // ready: the window's projection of its last round, the step's own (the worker's contract).
@@ -128,8 +128,29 @@ const roundsOf = state => state.stats.stepCount;
     }
 
     {
-        // A rest ends the window at the round that sat down.
-        const { kernel, step } = world({});
+        // A round's action begun before its timestamp runs to its end: the next round
+        // starts there (its timestamp - its elapsed), never before it (no time credited
+        // twice, no stamp moved back), and the window credits through its last round's
+        // last action.
+        const rounds = [];
+        const { kernel, step } = world({ ground: fieldOf(6), onSolo: (options, result) => rounds.push({
+            start: options.timestamp - options.elapsedMs, timestamp: options.timestamp, doneAt: result.doneAt }) });
+        kernel.upsert({ state: await hunter() });
+        const { state } = await step();
+        assert(rounds.length >= 2 && rounds.slice(0, -1).some(round => round.doneAt > round.timestamp),
+            'fixture: a round\'s last action runs past its timestamp');
+        for (let k = 1; k < rounds.length; k++) {
+            assert.strictEqual(rounds[k].start, Math.ceil(rounds[k - 1].doneAt), `round ${k + 1} starts at round ${k}'s last action's end`);
+        }
+        const last = rounds[rounds.length - 1];
+        assert.strictEqual(state.stats.huntedThrough, Math.max(last.timestamp, Math.ceil(last.doneAt)),
+            'the window credits through its last round\'s last action');
+    }
+
+    {
+        // A rest ends the window at the round that sat down (a level-16 field: a rest
+        // that runs past the round's end; one that ends inside it hunts on).
+        const { kernel, step } = world({ ground: fieldOf(16) });
         kernel.upsert({ state: await hunter() });
         const { state } = await step();
         assert.equal(state.activity, 'resting', 'the fights wore the bot out');
@@ -225,7 +246,9 @@ const roundsOf = state => state.stats.stepCount;
         for (const lastResolvedAt of [window.timing.lastResolvedAt, at - 1000]) {
             kernel.upsert({ state: { ...window, timing: { lastResolvedAt, nextResolveAt: at }, simulation: { revision: revision += 10 } } });
             const { state: woken } = await step(at);
-            assert.equal(woken.timing.lastResolvedAt, end, 'the bot\'s clock never runs back');
+            // The round starts at the clock's end and credits nothing before it; its
+            // first action may end a moment past it.
+            assert(woken.timing.lastResolvedAt >= end, `the bot's clock never runs back (${woken.timing.lastResolvedAt - end} ms past it)`);
             assert.equal(roundsOf(woken), roundsOf(window) + 1, 'a wake earns one round, no window');
         }
     }

@@ -454,7 +454,7 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
     const rng = mulberry(seed);
     const random = Math.random;
     Math.random = mulberry(seed ^ 0x9e3779b9);
-    const sum = { kills: 0, mobs: 0, busyMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
+    const sum = { kills: 0, mobs: 0, busyMs: 0, spanMs: 0, deaths: 0, exp: 0, sp: 0, adena: 0, loot: 0, shots: 0, potions: 0, stacks: 0,
         fightMs: 0, walkMs: 0, buffCasts: 0, heals: 0, actions: 0, shotActions: 0, skillUses: 0, pulls: 0, pullMobs: 0, gapHeals: 0, petHeals: 0, petTaken: 0, summonUses: 0, summonDeaths: 0, restMs: 0, taken: 0, spellTaken: 0, hpLost: 0, mpLost: 0, mix: {}, density: 0, runSpd: 0 };
     try {
         const made = newBot(classId, level, shots, simulation, kit, lineClassFor(role));
@@ -469,14 +469,21 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
         sum.reach = made.reach;
         sum.area = spot.spawnArea;
         const target = atSpot(spot);
-        let t = START;
         const end = START + hours * 3600000;
         const outingMs = invoke('GameServer/Bot/Economy/TownVisitInterval').targetHours() * 3600000;
         let nextVisit = START + outingMs;
-        let elapsed = 60000;
-        while (t < end) {
+        // The bot's clock, a live cold bot's (ColdClock): each step resolves where
+        // the clock puts it and credits the time since the bot's last action (a
+        // fresh bot's first step: its first minute). The row's kills and busy
+        // share that one span: from the first step's start to the last time counted.
+        const Clock = invoke('GameServer/Bot/Population/ColdClock');
+        const started = Clock.since(state, START);
+        let through = started;
+        let due = START;
+        while (due < end) {
+            const { timestamp: t, elapsedMs } = Clock.step(state, due);
             if (t >= nextVisit) { restock(state.inventory); nextVisit += outingMs; }
-            const result = simulation.BR.resolveSolo({ state, spot: target, elapsedMs: elapsed, timestamp: t, rng });
+            const result = simulation.BR.resolveSolo({ state, spot: target, elapsedMs, timestamp: t, rng });
             const gained = result.materialize || {};
             const debug = result.debug || {};
             const patch = result.patch || {};
@@ -489,10 +496,16 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
             sum.loot += simulation.HuntEfficiency.lootValue(gained.items || []);
             sum.stacks += countNewStacks(gained.items || [], seen, simulation.items);
             sum.potions += Number(debug.potionsUsed || 0);
-            // The bots' records count a cycle's combat and the rest it calls for.
+            // The bots' records count a cycle's combat and the rest it calls for, a rest
+            // step's extension of it too (a dead bot's step rests it to its respawn: death time):
+            // the round's seated time and its rest from the round's last action on (doneAt).
+            const from = Math.max(t, Math.ceil(Number(result.doneAt) || 0));
+            const restEnd = Math.max(from, Number(patch.stats?.restUntil) || 0);
+            const restMs = state.activity === 'dead' ? 0 : Number(debug.seatedMs || 0) + restEnd - from;
+            sum.busyMs += restMs;
+            sum.restMs += restMs;
             if (Number.isFinite(debug.combatMs)) {
-                const restMs = Math.max(0, Number(patch.stats?.restUntil || t) - t);
-                sum.busyMs += Number(debug.combatMs) + restMs;
+                sum.busyMs += Number(debug.combatMs);
                 sum.fightMs += Number(debug.combatMs);
                 // Its parts the bots' records do not split: the walk to the mobs, own buffs and heals.
                 sum.walkMs += Number(debug.walkedMs || 0);
@@ -508,23 +521,24 @@ function huntOn(potions, spot, role, level, shots, hours, simulation, kit, class
                 sum.petTaken += Number(debug.petTaken || 0);
                 sum.summonUses += Number(debug.summonUses || 0);
                 sum.summonDeaths += Number(debug.summonDeaths || 0);
-                sum.restMs += restMs;
                 sum.taken += Number(debug.damageTaken || 0);
                 sum.spellTaken += Number(debug.spellTaken || 0);
                 sum.hpLost += Math.max(0, Number(state.vitals?.hp) - Number(patch.vitals?.hp ?? state.vitals?.hp));
                 sum.mpLost += Math.max(0, Number(state.vitals?.mp) - Number(patch.vitals?.mp ?? state.vitals?.mp));
             }
             const inventory = patch.inventory || state.inventory;
+            // The commit's clock (BotLifeState): where the round's last action ended.
             state = { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) },
-                stats: { ...(patch.stats || state.stats), classId }, inventory };
+                stats: { ...(patch.stats || state.stats), classId }, inventory,
+                timing: { ...state.timing, lastResolvedAt: from } };
+            through = Math.max(through, restEnd);
             if (debug.died || patch.activity === 'dead') sum.deaths += 1;
             if (!['hunting', 'resting', 'dead'].includes(state.activity)) {
                 throw new Error(`spot ${spot.id} ${role} L${level}: unexpected activity ${state.activity}`);
             }
-            const next = Math.max(t + 1000, Number(result.nextResolveAt) || t + 30000);
-            elapsed = next - t;
-            t = next;
+            due = Number(result.nextResolveAt) || t + 30000;
         }
+        sum.spanMs = through - started;
         if (made.shotId) sum.shots = 1e9 - Number(state.inventory[String(made.shotId)]?.amount || 0);
     } finally {
         Math.random = random;
@@ -547,10 +561,12 @@ function killMix(mix, mobs) {
         .flatMap(([selfId, count]) => [Number(selfId), Math.round(count / mobs * 1000) / 1000]);
 }
 
-function perKill(sum, hours) {
+// A hunt's numbers per kill; kph over the span its busy time was counted in
+// (huntOn's spanMs), so a row's fight + rest fit in its hour per kill.
+function perKill(sum) {
     if (sum.kills <= 0 || sum.mobs <= 0) return null;
     const k = sum.mobs, pull = sum.mobs / sum.kills;
-    return { pull, cap: fightCap(sum.density, sum.runSpd || undefined, sum.area || undefined, sum.reach) * pull, mix: killMix(sum.mix, k), kph: k / hours, busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
+    return { pull, cap: fightCap(sum.density, sum.runSpd || undefined, sum.area || undefined, sum.reach) * pull, mix: killMix(sum.mix, k), kph: k / (sum.spanMs / 3600000), busy: sum.busyMs / 1000 / k, deaths: sum.deaths / k, exp: sum.exp / k, sp: sum.sp / k,
         adena: sum.adena / k, loot: sum.loot / k, shots: sum.shots / k, potions: sum.potions / k, stacks: sum.stacks / k,
         fight: sum.fightMs / 1000 / k, rest: sum.restMs / 1000 / k, taken: sum.taken / k, spellTaken: sum.spellTaken / k, hpLost: sum.hpLost / k,
         mpLost: sum.mpLost / k };
@@ -637,7 +653,7 @@ function lineRow(spot, role, level, shots, hours, once) {
     }
     if (minGap === null) return null;
     const refLevel = Math.min(MAX_LEVEL, level + Math.max(REF_GAP, minGap));
-    const measured = once(`hunt|${at(refLevel)}`, () => perKill(hunt(spot, role, refLevel, shots, hours), hours));
+    const measured = once(`hunt|${at(refLevel)}`, () => perKill(hunt(spot, role, refLevel, shots, hours)));
     if (!measured) return null;
     // A spoiler keeps its own loot (poolRowLoot).
     const spoils = invoke('GameServer/Bot/Economy/SpotRewardExpectation')
@@ -656,7 +672,7 @@ function curveTask({ spotId, role, gap, hours }) {
     const level = Number(spot.avgLevel) + gap;
     if (level < 1 || level > MAX_LEVEL) return null;
     if (!canHunt(spot, role, level, 1)) return null;
-    return perKill(hunt(spot, role, level, 1, hours), hours);
+    return perKill(hunt(spot, role, level, 1, hours));
 }
 
 // ---------------------------------------------------------------- kit surface
@@ -719,7 +735,7 @@ function kitTask({ spotId, role, level, kit, hours }) {
     const [mobAccur, mobEvasion] = spotMob(spot);
     const features = HuntCycle.kitFeatures(numbers, reference, { mobAccur, mobEvasion },
         invoke('GameServer/Bot/AI/BotRoles').usesCasterWeaponCombat({ classId, stats: { classId } }));
-    return { features, measured: perKill(hunt(spot, role, level, 1, hours, sim, dress, classId), hours) };
+    return { features, measured: perKill(hunt(spot, role, level, 1, hours, sim, dress, classId)) };
 }
 
 // The kit surface of a line's band: least squares, no intercept (the
@@ -838,6 +854,21 @@ function poolRowLoot(rows) {
 
 function packRow(row) {
     return row ? ROW_FIELDS.map((field) => field === 'mix' || field === 'gate' || field === 'gateShare' ? row[field] : round(row[field])) : null;
+}
+
+// The rows whose fight + rest per kill outgrow their hour per kill (3600 / kph):
+// a reader's idle (HuntCycle's hour: 3600 / kph - fight - rest) would clamp at 0
+// and charge fewer kills an hour than the row states. Within the rows' rounding
+// (round: 4 digits, at most 5e-4 of each value): a bot that never idles fills
+// its hour exactly, and its rounded fight + rest may pass it by that much.
+const ROUNDING = 1e-3;
+function outgrown(table) {
+    const field = Object.fromEntries(table.rowFields.map((name, index) => [name, index]));
+    return table.rows.flatMap((rows, s) => rows.flatMap((row, index) => {
+        if (!row || row[field.fight] + row[field.rest] <= 3600 / row[field.kph] * (1 + ROUNDING)) return [];
+        const role = table.roles[Math.floor(index / table.shots.length)], shots = table.shots[index % table.shots.length];
+        return [`${table.spots[s][0]} ${role} shots ${shots}: ${round(row[field.fight] + row[field.rest])} s over ${round(3600 / row[field.kph])} s`];
+    }));
 }
 
 // Per role and band: for each gap the sum over the band's curve spots of the
@@ -1111,6 +1142,8 @@ async function main() {
             kitSurface
         };
         if (table.rows.length !== table.spots.length) throw new Error('rows and spots differ');
+        const over = outgrown(table);
+        if (over.length) throw new Error(`${over.length} rows outgrow their hour per kill: ${over.slice(0, 20).join('; ')}`);
         fs.mkdirSync(path.dirname(options.out), { recursive: true });
         const text = `${JSON.stringify(table)}\n`;
         fs.writeFileSync(options.out, text);
@@ -1134,4 +1167,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { hunt, perKill, countNewStacks, runPool, phaseResults, tasksHash, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor, lineClassFor, botFor };
+module.exports = { hunt, perKill, ROUNDING, countNewStacks, runPool, phaseResults, tasksHash, mergeStacks, buildCatalogue, rewardCatalog, loadSimulation, classFor, lineClassFor, botFor };

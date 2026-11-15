@@ -57,9 +57,8 @@ function restProfile(state, classId, level, timestamp) {
     return profile;
 }
 
-// One regeneration tick, seated (C4 x1.5) or standing still (options.standing:
-// x1.1, Formulas.java calcHpRegen/calcMpRegen; Automation.fetchRegenStateMultiplier
-// hot). options.stats: the kit's effective { con, men } (a kit profile,
+// One regeneration tick, seated, standing still (options.standing) or moving
+// (options.moving): Formulas.regenStateMultiplier, the hot rule's. options.stats: the kit's effective { con, men } (a kit profile,
 // HuntCycle); unset, the profile's, else the class template's base stats.
 // options.profile: the bot's cold profile (its passives, buffs and kit).
 function coldRestRegenPerTick(state, options = {}) {
@@ -69,11 +68,11 @@ function coldRestRegenPerTick(state, options = {}) {
     const profile = options.profile || restProfile(state, classId, level, timestamp);
     const baseStats = options.stats || (profile.men && profile.con ? profile : null)
         || (ClassProgression.firstClassRow(DataCache.classTemplates || [], classId) || {}).base || {};
-    const seated = options.standing !== true;
+    const seated = options.standing !== true && options.moving !== true;
     const terms = regenTerms(profile, seated, timestamp);
     const hpBase = Number(DataCache.revitalize?.hp?.[level]) || 0;
     const mpBase = Number(DataCache.revitalize?.mp?.[level]) || 0;
-    const stateMul = seated ? 1.5 : 1.1;
+    const stateMul = Formulas.regenStateMultiplier({ seated, moving: options.moving === true });
     const hp = ((hpBase * Formulas.calcLevelMod(level) * Formulas.calcBaseMod.CON(Number(baseStats.con) || 1) * terms.regHp)
         + terms.regHpAdd) * stateMul;
     const mp = ((mpBase * Formulas.calcLevelMod(level) * Formulas.calcBaseMod.MEN(Number(baseStats.men) || 1) * terms.regMp)
