@@ -325,6 +325,35 @@ try {
         assert(RestPolicy.restOver(member.vitals, { mana: ColdRest.requiresManaRecovery(member), party: true }),
             `it stood up at its line (MP ${member.vitals.mp})`);
     }
+    // A party round starts at its latest member's clock: the member whose clock is
+    // earlier stood until then (regenerating), and no fight starts before it.
+    Cold.profileFor = Cold.fightProfile = () => ({ ...nuker });
+    const clocked = pair(932, 100).map((member, k) => ({ ...member, timing: { lastResolvedAt: at - (k ? 5_000 : 30_000) } }));
+    const late = partyFights(clocked, 30_000);
+    assert(late.seen[0].at >= at - 5_000, `its first fight starts at or after its latest member's clock (${at - late.seen[0].at} ms before the step)`);
+    const hpAt = (fight, id) => fight.members.find(member => Number(member.characterId) === id).vitals.hp;
+    const stood = ColdRest.coldRestRegenPerTick(clocked[0], { profile: nuker, standing: true, timestamp: at - 5_000 }).hp * 25_000 / tick;
+    assert(Math.abs(hpAt(late.seen[0], 85) - hpAt(late.seen[0], 86) - stood) < 1e-6,
+        `the earlier member stood 25 s more (${hpAt(late.seen[0], 85) - hpAt(late.seen[0], 86)} HP vs ${stood})`);
+    // A party summoner's pet regenerates between fights, as a solo one's (its revHp per regen tick).
+    const pet = { active: true, npcId: 1, hp: 700, maxHp: 1000, revHp: 10, pDef: 1, expiresAt: at + 3_600_000 };
+    const summoners = pair(932).map(member => ({ ...member,
+        stats: { ...member.stats, coldCombat: { ...(member.stats.coldCombat || {}), summon: { ...pet } } } }));
+    const scripted = [];
+    BackgroundResolver.resolvePartyFight = (options) => {
+        scripted.push({ at: options.timestamp, members: options.members });
+        return { won: true, encounter: null, help: [], debug: { durationMs: 5_000, actions: 1, killsPaid: 1 },
+            members: options.members.map(state => ({ state, vitals: { ...state.vitals }, profile: { effects: [] }, cooldowns: {}, readyAt: 0 })) };
+    };
+    try {
+        BackgroundPartyResolver.resolve({ party: { partyId: 'pet-clock', cohesion: 0.7, risk: 0.2, roleCoverage: { dps: 2 }, stats: {} },
+            members: summoners, spot: field, elapsedMs: 60_000, timestamp: at, rng: () => 0.5 });
+    } finally { BackgroundResolver.resolvePartyFight = nativeFight; }
+    assert(scripted.length >= 2, `the summoners fight more than once (${scripted.length})`);
+    const petHp = (fight) => fight.members[0].stats.coldCombat.summon.hp;
+    const petExpected = Math.min(pet.maxHp, petHp(scripted[0]) + pet.revHp * (scripted[1].at - scripted[0].at) / tick);
+    assert(Math.abs(petHp(scripted[1]) - petExpected) < 1e-6,
+        `the pet regenerates between the fights (${petHp(scripted[1])} vs ${petExpected})`);
 } finally {
     Cold.profileFor = originalProfile;
     Cold.fightProfile = originalFightProfile;
