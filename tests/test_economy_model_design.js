@@ -166,15 +166,19 @@ assert.throws(() => Attention.push(twice, { kind: 'rumour', who: 7, at: 1 }), /n
 // The design plane on the engine, one town and a fixture world: line 9 hunts s1 (adena and drop with shots, nothing
 // bare), line 10 hunts s3 (exp only: no adena, no drop, nothing bare). Both spots' town is TownA: 0.2 h to it, 0.3 h back.
 const Plane = require('../scripts/economy-model/design/plane');
+// The fixture weights: the drop weighs 2, the no-grade Soulshot 4 (its datapack weight), Spiritshot 5; a bag of 2840 turns
+// overweight at 1420 (the first weight step). At a row that drops 5 DROP and fires 30 shots an hour the stock rule's hours
+// to a full bag are 1420 / (5 x 2 + 30 x 4 x 1.1) = 10 h, its target 30 x 10 x 1.1 = 330 shots.
+const ITEMS = { [DROP]: { kind: 'Other.Material', npcBuy: 5, weight: 2 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2, weight: 4 } }, LOAD = 2840;
 const quiet = row('s3', 100, 0, { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 }, dropLoot: 0, loot: 0 });
 // Line 10's other candidate, s2, is worth less to it than s3 (nothing bare either).
 const dull = row('s2', 10, 100, { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } });
 const world = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] }, 10: { 1: [] } },
     hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 10: { 1: { classId: 10, shotId: SHOT, best: quiet, top: [quiet, dull] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's3@1': { town: 'TownA', drop: {}, spoil: {} } },
-    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    items: ITEMS,
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 }, 10: { slots: 80, maxLoad: 1e6 } } });
+    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD }, 10: { slots: 80, maxLoad: LOAD } } });
 const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, exp: 0, money: 0, spot: null, shots: {}, held: [], worn: {},
     persona: { primaryDrive: 'progression', traits: { caution: 0.5, commitment: 0.5 } }, ...over });
 // The kit's factors (the reference kit's: 1), deaths times dies.
@@ -202,9 +206,10 @@ const BEGINNER = 5789, taught = { ...world, shotFamilies: { grades: ['NONE'], id
 }
 // Both variants from one simulate call, only the variant changed.
 for (const supply of ['table', 'formula']) {
-    // a fresh bot that runs out of shots walks to its spot's town, buys up to its target, sells its drop, walks back:
-    // born with its 60-shot target (30 an hour, two hours) and no adena, it walks out 0.3 h, hunts 2 h, walks 0.2 h to town,
-    // sells its drop, buys 60 shots and walks 0.3 h back; by 3 h it has hunted 2 + 0.2 hours (road hours = to + back).
+    // a fresh bot that runs out of shots walks to its spot's town, sells its drop, buys toward its target, walks back:
+    // born with 60 shots (two hours at 30 an hour) and no adena, it walks out 0.3 h, hunts 2 h (its bag fills in 10 h, so
+    // the shots end first), walks 0.2 h to town, sells its drop, buys what the money pays of its 330-shot target (7 a shot)
+    // and walks 0.3 h back; by 3 h it has hunted 2 + 0.2 hours (road hours = to + back).
     const { result, visits } = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 3);
     assert.deepEqual(visits.map(visit => [visit.info.born === true, visit.delta.towns[0], close(visit.afterHours, 0.3)]), [[true, 'TownA', true], [false, 'TownA', true]], supply);
     const trip = visits[1];
@@ -212,8 +217,10 @@ for (const supply of ['table', 'formula']) {
     assert.equal(trip.before.shots[SHOT], 0);
     assert.ok(trip.before.bag[DROP] > 0 && !trip.main.bag[DROP], `${supply}: it sells its drop at the NPC`);
     assert.equal(trip.delta.flows.npcSales, trip.before.bag[DROP] * 5);
-    assert.equal(trip.main.shots[SHOT], 60, `${supply}: it buys up to its outing's target`);
-    assert.equal(trip.main.money, trip.before.money + trip.delta.flows.npcSales - 60 * 7);
+    const wallet = trip.before.money + trip.delta.flows.npcSales, bought = trip.main.shots[SHOT];
+    assert.ok(bought > 60 && bought < 330, `${supply}: it buys more than its old two hours, short of its target (${bought})`);
+    assert.equal(bought, Math.floor(wallet / 7), `${supply}: it buys what its money pays toward its 330-shot target`);
+    assert.equal(trip.main.money, wallet - bought * 7);
     assert.ok(close(result.huntHours.ownSpot + result.huntHours.bestSpot, 2.2), `${supply}: hunted ${result.huntHours.ownSpot + result.huntHours.bestSpot} h`);
     assert.equal(result.money.closureGap, 0);
     // a fresh bot born with 45 beginner shots and none bought hunts with them first (1.5 h at 30 an hour), never sells
@@ -240,9 +247,9 @@ const richer = row('s2', 300, 400);
 const growth = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
     hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: richer, top: [richer, near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
-    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    items: ITEMS,
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
 for (const supply of ['table', 'formula']) {
     const grown = run(freshBot(9, { shots: { [SHOT]: 600 } }), supply, 1, 0, growth);
     assert.ok(grown.result.progress.stageBands.all.levelUps >= 1, `${supply}: it reached level 2`);
@@ -261,9 +268,9 @@ for (const [variant, top1] of [['s2 has a level-1 row', [rich1, s2at1]], ['s2 ha
     const regions = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
         hours: { 9: { 1: { classId: 9, shotId: SHOT, best: rich1, top: top1 }, 2: { classId: 9, shotId: SHOT, best: s2at2, top: [s2at2] } } },
         yields: { 's1@1': drops, 's2@1': dropsB, 's2@2': dropsB },
-        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        items: ITEMS,
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }, { town: 'TownB', price: 7 }] } }, deathExp: [15, 30],
-        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3, TownB: 0.9 }, s2: { TownB: 0.3, TownA: 0.9 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3, TownB: 0.9 }, s2: { TownB: 0.3, TownA: 0.9 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
     for (const supply of ['table', 'formula']) {
         const fell = run(freshBot(9, { level: 2, exp: 55, money: 1000, shots: { [SHOT]: 600 } }), supply, 3, 40, regions);
         const death = fell.visits.find(visit => visit.info.died);
@@ -272,15 +279,20 @@ for (const [variant, top1] of [['s2 has a level-1 row', [rich1, s2at1]], ['s2 ha
     }
 }
 
-// A bot with no shots, no adena and a bag that fills: it hunts bare at a row that kills bare, and the formula goes to town for the shots
-// (with no shot to run out there is no out fact, the outing's hours stand in for it); the same as the table.
+// A bot with no shots, no adena and a bag of one slot that fills: it hunts bare at a row that kills bare, and the table goes to town
+// for the shots at the bag fact. The formula stays: a one-slot bag holds the shots or the drop, so the hours to a full bag after
+// the visit are 0 (the stock rule's slot forecast) and the trip buys no hunting hour.
 const bare = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } }, hours: { 9: { 1: { classId: 9, shotId: SHOT, best: far, top: [far] } } },
-    yields: { 's2@1': drops }, items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    yields: { 's2@1': drops }, items: ITEMS,
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-    tripHours: { to: { s2: 0.02 }, back: { s2: { TownA: 0.03 } } }, bags: { 9: { slots: 1, maxLoad: 1e6 } } });
+    tripHours: { to: { s2: 0.02 }, back: { s2: { TownA: 0.03 } } }, bags: { 9: { slots: 1, maxLoad: LOAD } } });
 for (const supply of ['table', 'formula']) {
     const filled = run(freshBot(9), supply, 3, 0, bare);
     const trip = filled.visits.find(visit => !visit.info.born);
+    if (supply === 'formula') {
+        assert.equal(trip, undefined, 'formula: no trip that gains no hour before the bag is full again');
+        continue;
+    }
     assert.ok(trip && trip.before.bag[DROP] > 0, `${supply}: it goes to town when its bag is full with no shots`);
     assert.ok(trip.main.shots[SHOT] > 0, `${supply}: it buys shots with what its drop sold for`);
 }
@@ -327,9 +339,9 @@ const farBare2 = row('s3', 150, 100, { shotless: { kills: 10, exp: 60, adena: 40
 const stepWorld = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
     hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: near, bareBest: farBare2, top: [near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
-    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    items: ITEMS,
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
 for (const supply of ['table', 'formula']) {
     const levelled = [], made = Plane.plane({ view: stepWorld, kitHours: kitAt(0), variant: supply, accounts: [freshBot(9)] });
     const seen = { ...made, start: context => {
@@ -349,9 +361,9 @@ const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, ex
     shotFamilies: { grades: ['NONE'], ids: [[1835], [2509]] },
     hours: { 9: { 1: { classId: 9, shotId: 2509, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: shotAtTwo, best: near, bareBest: farBare2, top: [near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
-    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, 1835: { kind: 'Other.Shot', npcBuy: 2 }, 2509: { kind: 'Other.Shot', npcBuy: 2 } },
+    items: { ...ITEMS, 2509: { kind: 'Other.Shot', npcBuy: 2, weight: 5 } },
     npcOffers: { preset: { 1835: [{ town: 'TownA', price: 7 }], 2509: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+    tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
 {
     const changed = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(1835));
     assert.ok(changed.result.progress.stageBands.all.levelUps >= 1, 'it reached level 2');
@@ -380,9 +392,9 @@ const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, ex
     const keen = row('sE', 200, 20), rich = row('sM', 50, 300);
     const choice = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
         hours: { 9: { 1: { classId: 9, shotId: SHOT, best: rich, top: [rich, keen] } } }, yields: { 'sE@1': drops, 'sM@1': drops },
-        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        items: ITEMS,
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-        tripHours: { to: { sE: 0.2, sM: 0.2 }, back: { sE: { TownA: 0.3 }, sM: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+        tripHours: { to: { sE: 0.2, sM: 0.2 }, back: { sE: { TownA: 0.3 }, sM: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
     const levelling = { primaryDrive: 'progression', traits: { caution: 1 } }, earning = { primaryDrive: 'wealth', traits: { caution: 0 } };
     assert.deepEqual([Value.moneyWeight(levelling), Value.moneyWeight(earning)].map(weight => weight.toFixed(3)), ['0.333', '0.667']);
     for (const supply of ['table', 'formula']) {
@@ -400,9 +412,9 @@ const levelWorld = (first, last, price = 7, road = { to: 0.2, back: 0.3 }) => {
     return Engine.viewOf({ header: { levels: [1, last] }, exp: Array.from({ length: last }, (_, at) => at * 50), kits: { 9: per(() => []) },
         hours: { 9: per(() => ({ classId: 9, shotId: SHOT, best: near, top: [near, far] })) },
         yields: Object.fromEntries(levels.flatMap(level => [[`s1@${level}`, drops], [`s2@${level}`, drops]])),
-        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        items: ITEMS,
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price }] } }, deathExp: Array(last).fill(15),
-        tripHours: { to: { s1: road.to, s2: road.to }, back: { s1: { TownA: road.back }, s2: { TownA: road.back } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+        tripHours: { to: { s1: road.to, s2: road.to }, back: { s1: { TownA: road.back }, s2: { TownA: road.back } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
 };
 for (const supply of ['table', 'formula']) {
     // a trip that buys its shots is not empty: the born walk 0.3 h, the walk to town 0.2 h and the walk back 0.3 h are the road
@@ -430,7 +442,9 @@ for (const supply of ['table', 'formula']) {
 for (const supply of ['table', 'formula']) {
     const bagOnly = run(freshBot(9), supply, 0.5, 0, bare).result.design.levels.low;
     assert.deepEqual([bagOnly.consumableTrips, bagOnly.bothTrips, bagOnly.emptyTrips], [0, 0, 0], `${supply}: no out fact, so no consumable trip`);
-    assert.ok(bagOnly.bagTrips >= 1, `${supply}: the full bag sends it to town (${bagOnly.bagTrips} bag trips)`);
+    // the formula stays at it (the one-slot bag above: no hour to gain)
+    if (supply === 'table') assert.ok(bagOnly.bagTrips >= 1, `table: the full bag sends it to town (${bagOnly.bagTrips} bag trips)`);
+    else assert.equal(bagOnly.bagTrips, 0, 'formula: no trip that gains no hour');
     const needed = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 3, 0, levelWorld(1, 3)).result.design.levels.low;
     assert.deepEqual([needed.consumableTrips, needed.bagTrips, needed.bothTrips], [1, 0, 0], `${supply}: the out fact is a consumable trip only`);
 }
@@ -458,9 +472,9 @@ for (const supply of ['table', 'formula']) {
 const noRow = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [], 2: [] }, 11: { 1: [] } },
     hours: { 9: { 2: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 11: { 1: { classId: 11, shotId: SHOT, best: near, top: [near, far] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
-    items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+    items: ITEMS,
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 }, 11: { slots: 80, maxLoad: 1e6 } } });
+    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD }, 11: { slots: 80, maxLoad: LOAD } } });
 for (const supply of ['table', 'formula']) {
     const accounts = [freshBot(9, { id: 1 }), freshBot(11, { id: 2, shots: { [SHOT]: 60 } })];
     const { design, counters } = Engine.simulate({ view: noRow, accounts, bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3,
@@ -502,10 +516,16 @@ for (const supply of ['table', 'formula']) {
 }
 
 // A bag that filled goes to town (the table variant at once), sells its drop there and takes drop again after the visit: the
-// drops grow past what it held at the visit, and it never hunted with the bag full.
-const roomy = { ...bare, bags: { 9: { slots: 2, maxLoad: 1e6 } } };
+// drops grow past what it held at the visit, and it never hunted with the bag full. Two slots: the shots' stack and the first
+// drop fill it, so a visit gives 0.2 h before the next fill (the stock rule's slot forecast) and the formula, which weighs those
+// hours against the road, stays.
+const roomy = { ...bare, bags: { 9: { slots: 2, maxLoad: LOAD } } };
 for (const supply of ['table', 'formula']) {
     const trips = run(freshBot(9, { shots: { [SHOT]: 40 } }), supply, 6, 0, roomy), visits = trips.visits.filter(visit => !visit.info.born);
+    if (supply === 'formula') {
+        assert.ok(visits.length === 0 && trips.result.counters.fullBagHuntHours > 0, 'formula: 0.2 h of drop buy less than the road: it hunts on full');
+        continue;
+    }
     assert.ok(visits.length >= 2 && !visits[0].main.bag[DROP], `${supply}: it visits town and leaves with its bag emptied`);
     assert.ok(trips.result.drops.byItem[DROP] > visits[0].before.bag[DROP], `${supply}: it takes drop again after the visit`);
     if (supply === 'table') assert.ok(trips.result.counters.fullBagHuntHours < 1e-9, 'the table variant goes at the fill: no hour hunted full');
@@ -536,9 +556,9 @@ for (const supply of ['table', 'formula']) {
             12: { 1: { classId: 10, shotId: SPIRIT, best: gameRow, top: [gameRow] } } },
         speciesYields: { [`${GREMLIN}@1@0`]: { drop: { 57: 4, [DROP]: 0.1 }, spoil: {} }, [`${DEADLY}@1@0`]: { drop: { 57: 9 }, spoil: {} } },
         yields: { '-12_43@1': { town: 'TownA', drop: { 57: 4, [DROP]: 0.1 }, spoil: {} }, 's1@2': drops },
-        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SPIRIT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        items: { [DROP]: ITEMS[DROP], [SPIRIT]: { kind: 'Other.Shot', npcBuy: 2, weight: 5 } },
         npcOffers: { preset: { [SPIRIT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-        tripHours: { to: { '-12_43': 0.2 }, back: { '-12_43': { TownA: 0.3 } } }, bags: { 51: { slots: 80, maxLoad: 1e6 }, 12: { slots: 80, maxLoad: 1e6 } } };
+        tripHours: { to: { '-12_43': 0.2 }, back: { '-12_43': { TownA: 0.3 } } }, bags: { 51: { slots: 80, maxLoad: LOAD }, 12: { slots: 80, maxLoad: LOAD } } };
     const read = (over = {}) => Run.tableHours({ snapshot, file, name: 'test table', lines: ['51', '12'], keyOf: line => (line === '51' ? '49' : '10'),
         spoilLevelOf: () => 0, gapFactor: () => 1, ...over });
     assert.throws(() => read({ file: { ...file, stamp: 'other' } }), /hunt table test table: stamp other, but the snapshot was built with hunt-1-1-abc\.json \(stamp abc\)/, 'another table stamp is refused by name');
@@ -600,9 +620,9 @@ for (const supply of ['table', 'formula']) {
     const bestOut = row('s1', 400, 800), safe = row('s2', 60, 100), deadly = row('s1', 400, 800, { deaths: 200 });
     const outside = (best, top) => Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
         hours: { 9: { 1: { classId: 9, shotId: SHOT, best, top } } }, yields: { 's1@1': drops, 's2@1': drops },
-        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        items: ITEMS,
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
-        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
     for (const supply of ['table', 'formula']) {
         const held = best => run(freshBot(9, { shots: { [SHOT]: 600 } }), supply, 1, 1, outside(best, [safe])).visits[0].main.spot;
         assert.equal(held(bestOut), 's1', `${supply}: the best outside top is held when it is worth most`);
