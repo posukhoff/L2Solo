@@ -39,10 +39,14 @@ const MAX_ACTIONS = 400;
 // A drunk bottle holds the bot's next action this long (the cold fight's potion turn).
 const POTION_MS = 250;
 // The pull's HP left in this many equal bins; one pick's hit as this many
-// equal-mass atoms of this many seeded draws of the game's roll.
+// equal-mass atoms of this many seeded draws of the game's roll. Measured on
+// 170 cells of the 1-19 hunt table against the replayed game fight: from 4096
+// draws to 1024 the time per kill and the damage per engagement move by under
+// 0.002 at the median, to 512 (32 atoms) the time moves by 0.009. The draws
+// are most of the cost: about 8 ms per engagement at 1024, 24 ms at 4096.
 const HP_BINS = 256;
 const HIT_ATOMS = 64;
-const HIT_DRAWS = 4096;
+const HIT_DRAWS = 1024;
 // The fight ends when the chance the pull still lives falls below DEAD; one
 // still alive above CUT at MAX_ACTIONS is cut.
 const DEAD = 1e-5;
