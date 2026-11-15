@@ -10,7 +10,8 @@
 // while on the road; 'town' only in town.
 //
 //   born  a new character stands in its first town;
-//   out   a consumable it fires ran out (held became 0);
+//   out   a consumable it fires ran out (held became 0): a hunt spent the last of it, or a level changed the shot it
+//         fires to one it holds none of;
 //   bag   its bag reached the full rule (slots or weight);
 //   town  it arrived in a town (also after a death's respawn);
 //   died  it died: heard at once, it decides nothing by itself (the respawn

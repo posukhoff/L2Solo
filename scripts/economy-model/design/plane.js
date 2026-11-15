@@ -45,6 +45,9 @@ const FACTS = Object.freeze({
     born: visitInfo => visitInfo.born === true,
     // The hunt spent the last of the shots it fires.
     out: (main, delta) => delta.shotId > 0 && delta.shotsUsed > 0 && !(main.shots[delta.shotId] > 0),
+    // A level changed the shot it fires to one it holds none of while it held what it fired before (the orc mystic's
+    // class at 20 fires Soulshots; its Spiritshots for Beginners charge none of them): the same run-out as a hunt's, heard as out.
+    outAtLevel: (heldBefore, heldNow, fires) => fires && heldBefore > 0 && heldNow === 0,
     // The bag reached the full rule now and was not full before.
     bag: (wasFull, full) => !wasFull && full,
     // It arrived in a town (a trip's end, a birth or a respawn).
@@ -63,9 +66,16 @@ const townOf = (view, main) => Engine.townOfRow(view, Engine.spotRowOf(view, mai
 // the table reader's best, above them the game's own answer for a line hunting without shots, SpotValueTable.best with
 // shots off, often another spot than the one a gate closes).
 // A snapshot with no bareBest row holds the best row.
-function heldSpot(view, main) {
+// What it holds of the shot its hour fires at its level: the weapon's grade, the beginner shots that charge it count;
+// 0 where its hour fires none.
+function heldFired(view, main) {
     const hour = Engine.hourOf(view, main), shot = hour?.shotId ? Engine.shotOf(view, main, hour) : 0;
-    const row = shot && Engine.heldOf(main, { id: shot, beginner: Engine.beginnerOf(view, shot) }) > 0 ? hour.best : hour?.bareBest || hour?.best;
+    return shot ? Engine.heldOf(main, { id: shot, beginner: Engine.beginnerOf(view, shot) }) : 0;
+}
+
+function heldSpot(view, main) {
+    const hour = Engine.hourOf(view, main);
+    const row = heldFired(view, main) > 0 ? hour.best : hour?.bareBest || hour?.best;
     return row ? String(row.spotId) : null;
 }
 
@@ -348,7 +358,12 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     const clock = clocks.get(main.index);
                     tally[classOf(clock.level)].wallHours += now - clock.at;
                     clocks.set(main.index, { level: main.level, at: now });
-                    return main.spot ? main : { ...main, spot: heldSpot(view, main) };
+                    const next = main.spot ? main : { ...main, spot: heldSpot(view, main) };
+                    const firing = hunter.firing(next);
+                    if (FACTS.outAtLevel(heldFired(view, { ...next, level: clock.level }), firing ? Engine.heldOf(next, firing) : 0, !!firing)) {
+                        put(next, queueFact(stateOf(next), 'out', next, now));
+                    }
+                    return next;
                 },
                 event(event) { throw new Error(`an event of an unknown kind: ${event.kind}`); },
                 hour: () => 0,
