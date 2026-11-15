@@ -2903,15 +2903,17 @@ const BackgroundResolver = {
             return kept;
         };
         // The round ends at the end of a won fight that gained a level (its profile, rates and
-        // walk are one level's; C4 applies a level at once) or crossed a situation the bot
-        // hears now (Situations.roundCrossing, on its running state: the bag, the supply, the
-        // kills, the wallet). Each part is read again only when a fight moved its input.
+        // walk are one level's; C4 applies a level at the kill that reaches it, its stats and
+        // full HP/MP at once: L2J C4 PcStat.addLevel, the hot LevelUp) or crossed a situation
+        // the bot hears now (Situations.roundCrossing, on its running state: the bag, the
+        // supply, the kills, the wallet). Each part is read again only when a fight moved its
+        // input. Returns what ended it ('level' or the situation's name), null to go on.
         const level = Number(state.level || 1);
         const nextLevelExp = Number(DataCache.experience?.[level]);
         let start = null, facts = null, marks = null;
         const roundEnds = () => {
             if (Number(state.exp || 0) + materialize.exp >= nextLevelExp && ProgressionCap.levelForExperience(
-                ProgressionCap.applyAward(state.exp, materialize.exp).totalExp, level) > level) return true;
+                ProgressionCap.applyAward(state.exp, materialize.exp).totalExp, level) > level) return 'level';
             const Situations = invoke('GameServer/Bot/Situations');
             start ||= Situations.roundFacts(state);
             const now = { spent: shotActions + potionsUsed, items: materialize.items.length, adena: materialize.adena };
@@ -2922,10 +2924,10 @@ const BackgroundResolver = {
             facts = Situations.roundFacts({ ...state, inventory: moved.supply || moved.bag ? held() : state.inventory,
                 adena: Number(state.adena || 0) + materialize.adena + adenaItems,
                 stats: { ...(state.stats || {}), fightsWon: Number(state.stats?.fightsWon || 0) + wins } }, facts || start, moved);
-            return !!Situations.roundCrossing(state.stats, start, facts);
+            return Situations.roundCrossing(state.stats, start, facts);
         };
-        // The step's bound, or the end of the fight a round ends at.
-        let bound = timestamp;
+        // The step's bound, or the end of the fight a round ends at (ended: what ended it there).
+        let bound = timestamp, ended = null;
         // The bottles that save rest (coldRestPotions) go into the round's
         // counts; returns the ms they run for.
         const drinkToRest = (profile, resting, pet) => {
@@ -3099,7 +3101,8 @@ const BackgroundResolver = {
                 petHeals += healed.petCasts;
                 skillUses += healed.casts + healed.petCasts;
             }
-            if (result.won && roundEnds()) {
+            if (result.won) ended = roundEnds();
+            if (ended) {
                 bound = clock.at;
                 break;
             }
@@ -3221,6 +3224,7 @@ const BackgroundResolver = {
                 seatedMs: clock.seatedMs,
                 fights: completedFights,
                 attemptedFights,
+                ended,
                 pendingFight: !!patch.stats.pveEncounter,
                 wins,
                 died,
