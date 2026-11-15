@@ -212,22 +212,21 @@ try {
         assert.strictEqual(up.patch.activity, 'hunting', `at its deadline the bot stands up at its line (MP ${mp}: ${up.patch.vitals.mp})`);
     }
 
-    // A fight refused (the bot cannot take the mob at its HP) seats it where it was refused.
+    // A fight refused (the bot cannot take the mob at its HP) seats it where it stands: it
+    // reads its readiness before its walk (as hot at its target scan), so no walk comes first.
     const tired = { ...hunter, vitals: { ...hunter.vitals, hp: 150 } };
     const refused = BackgroundResolver.resolveSolo({ state: tired, spot: field, elapsedMs: 30_000, timestamp: at, rng: () => 0.5 });
     assert.strictEqual(refused.patch.stats.lastReason, 'solo_recovery_needed');
     assert.strictEqual(refused.debug.attemptedFights, 0);
-    // It walked only until the refusal: its regen runs that long at the moving rate
-    // (C4 x0.7, the hot rule's), no longer.
-    assert.strictEqual(refused.debug.combatMs, refused.debug.walkedMs, 'fixture: the round before the refusal is its walk');
+    assert.strictEqual(refused.debug.walkedMs, 0, 'below its line the bot sits before it walks');
+    assert.strictEqual(refused.debug.combatMs, 0, 'fixture: nothing comes before the refusal');
+    // A walk regenerates at the moving rate (C4 x0.7, the hot rule's).
     const movingRate = ColdRest.coldRestRegenPerTick(tired, { profile: caster, moving: true, timestamp: at });
     assert(Math.abs(movingRate.hp / ColdRest.coldRestRegenPerTick(tired, { profile: caster, standing: true, timestamp: at }).hp - 0.7 / 1.1) < 1e-9,
         'a walk regenerates at the moving rate, not the standing one');
-    const refusedAt = { ...tired.vitals, hp: Math.min(tired.vitals.maxHp, tired.vitals.hp + movingRate.hp * refused.debug.walkedMs / tick),
-        mp: Math.min(tired.vitals.maxMp, tired.vitals.mp + movingRate.mp * refused.debug.walkedMs / tick) };
-    const refusedNeed = BackgroundResolver.estimateRestMs(tired, refusedAt, line);
-    assert.strictEqual(refused.patch.stats.restUntil, Math.ceil(at - 30_000 + refused.debug.combatMs + refusedNeed),
-        'a refused fight\'s rest starts at the refusal, inside the interval the round credits');
+    const refusedNeed = BackgroundResolver.estimateRestMs(tired, tired.vitals, line);
+    assert.strictEqual(refused.patch.stats.restUntil, Math.ceil(at - 30_000 + refusedNeed),
+        'a refused fight\'s rest starts at the round\'s start, where the bot stands');
 
     // The same rest inside a longer round ends in it: the bot stands up at its rested
     // line and hunts on in the same round.
@@ -236,6 +235,8 @@ try {
     assert(longer.debug.seatedMs >= refusedNeed, `it sat for the rest it needed first (${longer.debug.seatedMs} ms)`);
     assert(longer.events.findIndex(event => event.type === 'rest') < longer.events.findIndex(event => event.type === 'hunt'),
         'the rest came before the fights');
+    assert.strictEqual(longer.debug.walkedMs, worn.debug.walkedMs / worn.debug.attemptedFights * longer.debug.attemptedFights,
+        'after the rest it walks once to each mob: one walk per mob');
 
     // MP under every cast (the survival floor) is what the last round left: the bot sat
     // down there, so the interval before the step is a seated rest.
