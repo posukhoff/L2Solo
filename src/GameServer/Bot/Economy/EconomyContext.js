@@ -899,10 +899,31 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     const scrollHours = () => rates.scrollHours ??= scrollHoursFor(state, deps.spots, bestSpotId, bag.scrolls < 1);
     return { tableRole, hunt, hourAdena, refillReserve: reserve, kitCost, rates,
         lostGearHours, bestSpotId, deathHours, bestTable, stock, scrollHours,
+        // The slots the spot's loot fills per hour (its hunt table): the bag's clearing floor.
+        bagStacks: Number(spotTable?.stacks) || 0,
         earning: income.earning,
         riskWeight: Valuation.riskWeight(state, persona),
         expectedDeathHours: positive(bestTable?.deaths) * deathHours,
         karmaHours: Valuation.karmaHours(state, { ...hunt, lostGearHours, deathsPerHour: positive(bestTable?.deaths) }) };
+}
+// The bag's two answers at its need (bag_full): which slots it destroys (BagClearing over
+// ItemDisposition's sale rows, the trip being the walk back from the held spot), and
+// whether it leaves the field (PartyMarketBreak.cleanupDecision), asked of the bag the
+// clearing left. The clearing stands only when that bag then needs no trip: a trip sells
+// those rows for their worth. The clearing is asked only when the bag's need says trip (a
+// solo bot's bag). { cleanupDue, bagClear }: bagClear { items, freed, value } is executed at
+// once by the step or body that lands it (BotLifeState.prepareResolve, HuntingState);
+// cleared: the bot's state with that bag, the build's baseline (the next count is a rise).
+function bagDecisions(state, base, deps, now) {
+    const Break = invoke('GameServer/Bot/Population/PartyMarketBreak');
+    const cleanupDue = Break.cleanupDecision(state, now);
+    if (!cleanupDue) return { cleanupDue, bagClear: null };
+    const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+    const clear = invoke('GameServer/Bot/Economy/BagClearing').choose(Disposition.clearingRows(state), {
+        hourValue: base.hourAdena, tripHours: WalkBack.hours(base.bestSpotId, state, deps.spots || SpotService.spots),
+        slots: Disposition.inventorySlotCount(state), slotsPerHour: base.bagStacks });
+    const cleared = clear && { ...state, inventory: invoke('GameServer/Bot/Population/RoundLoot').removeFrom(state.inventory, clear.items) };
+    return clear && !Break.cleanupDecision(cleared, now) ? { cleanupDue: null, bagClear: clear, cleared } : { cleanupDue, bagClear: null };
 }
 // A kept foundation: the plan's pieces, its kit rates read over the live bag
 // and wallet (kitReader).
@@ -913,7 +934,7 @@ function foundationFromPlan(state, plan, deps, price) {
     const scrollHours = () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId, false);
     return { hunt: plan.hunt, hourAdena: plan.hourAdena, refillReserve: reserve,
         rates: plan.rates, stock, kitCost, scrollHours, lostGearHours: plan.lostGearHours, bestSpotId: plan.bestSpotId,
-        earning: plan.earning,
+        bagStacks: plan.bagStacks, earning: plan.earning,
         deathHours: plan.deathHours, riskWeight: plan.riskWeight,
         expectedDeathHours: plan.expectedDeathHours, karmaHours: plan.karmaHours };
 }
@@ -1339,11 +1360,13 @@ function buildForState(state, deps) {
     // Temporary: until the town visit's sell stop (an unload root) owns the bag's trip.
     // A reader's build takes no decision of the bot's: it clears nothing (counted).
     if (!decide) Situations.note(`build:reader:${deps.caller || 'economy_context'}`);
+    const bag = decide ? bagDecisions(state, base, deps, Number(context.timestamp) || Date.now()) : null;
     const decided = !decide ? {} : { ...(earningDecided ? { earning: base.earning } : {}),
-        cleanupDue: invoke('GameServer/Bot/Population/PartyMarketBreak').cleanupDecision(state, Number(context.timestamp) || Date.now()),
+        cleanupDue: bag.cleanupDue, bagClear: bag.bagClear,
         woken: Situations.decided(state.stats, earningDecided ? ['earning_spot', 'build'] : 'build', { caller: deps.caller || 'economy_context',
             subject: state.characterId, answer: !Trace.on() ? null : { earning_spot: [base.earning?.spotId ?? 'none', state.stats?.earning?.spotId ?? 'none'],
-                build: [network.activity?.key || network.focus?.[0], held?.plan.network?.activity?.key || held?.plan.network?.focus?.[0]] } }) };
+                build: [network.activity?.key || network.focus?.[0], held?.plan.network?.activity?.key || held?.plan.network?.focus?.[0]],
+                bag: bag.bagClear ? ['clear', bag.bagClear.freed, bag.bagClear.value] : [bag.cleanupDue?.reason || 'none'] } }) };
     // The money queue's cumulative costs (its money thresholds, Sections.snapshot): the
     // focus's and the gear plan's market piece's (goal_affordable:focus), the held leaf's
     // funded row's (out_of_money).
@@ -1356,10 +1379,13 @@ function buildForState(state, deps) {
         if (planned && !context.plannedBudget && Network.rootItem(wish.key) === planned) context.plannedBudget = cumulative;
         if (wish.key === network.activity?.rootKey && wish.funded) context.leafBudget = cumulative;
     }
-    // The build's facts for its baseline: the request's when they were read
-    // over this state itself (no held leaf's field activity in between).
-    context.statsPacket.wishSections = Sections.snapshot(state, context, { buyOrderEscrow: deps.buyOrderEscrow },
-        current === state ? facts : requestFacts(state, deps));
+    // The build's facts for its baseline, read over the state it leaves: the bag its clearing
+    // left when one stands (its slots are destroyed with this answer, so the bag's next count
+    // is a rise, bag_full), else this state, with the request's facts when they were read
+    // over it (no held leaf's field activity in between).
+    const decidedState = bag?.cleared || state;
+    context.statsPacket.wishSections = Sections.snapshot(decidedState, context, { buyOrderEscrow: deps.buyOrderEscrow },
+        current === decidedState ? facts : requestFacts(decidedState, deps));
     building = false;
 
     if (diagnostic) {
@@ -1517,7 +1543,7 @@ function planOf(context, base, { key, tripHour, projection = null, knowledgeEnab
         if (node.key.startsWith('stock:') && !stockRoots.has(node.key)) stockRoots.set(node.key, node.object?.itemId);
     return { pending: !projection, key, actorKey: context.actorKey, timestamp: context.timestamp,
         gearThreatMask: context.gearThreatMask, persona: context.persona, hunt: context.hunt,
-        riskWeight: context.riskWeight, bestSpotId: context.bestSpotId, earning: base.earning,
+        riskWeight: context.riskWeight, bestSpotId: context.bestSpotId, earning: base.earning, bagStacks: base.bagStacks,
         deathHours: context.deathHours,
         lostGearHours: context.lostGearHours, karmaHours: context.karmaHours, expectedDeathHours: context.expectedDeathHours,
         refillReserve: context.refillReserve, rates: base.rates, hourAdena: context.hourAdena,
@@ -1904,5 +1930,5 @@ function reset() {
 }
 function size() { return { context: cache.size, engine: engine.cache.size, groups: groups.size }; }
 
-module.exports = { visitStopsLeft, decideEarning, quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
+module.exports = { visitStopsLeft, decideEarning, bagDecisions, quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
     heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, proofIdentity, restartEventProof, restoreEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, kitRates, keptKit, visitStock, keptTargets, saleKitPublished, shotDemand, stateForActor, bodyPlace, preparedRouteRows, RETAIN_LIMIT, leafCheck, leafOutcome, refillReserve, forgetContext, forget, reset, configure, registerProvider };
