@@ -255,6 +255,40 @@ try {
     assert.strictEqual(longer.debug.walkedMs, worn.debug.walkedMs / worn.debug.attemptedFights * longer.debug.attemptedFights,
         'after the rest it walks once to each mob: one walk per mob');
 
+    // A round ends at the end of the fight that crosses a situation the bot hears now (its
+    // step decides at once): the kill whose drop fills the bag. A drop past the bag's slot
+    // limit stays on the ground (C4 pickup). Each kill drops one Short Sword (a slot each).
+    const Rewards = invoke('GameServer/Bot/Population/ColdKillRewards'), originalRoll = Rewards.roll;
+    let dropped = 1, paid = 0;
+    Rewards.roll = options => ({ ...originalRoll(options), adena: paid, loot: [{ drops: [{ selfId: 1, name: 'Short Sword', amount: dropped }], spoil: [] }] });
+    try {
+        const swords = amount => ({ ...hunter, exp: Number(invoke('GameServer/DataCache').experience[28]), vitals: { ...hunter.vitals, mp: 932 },
+            inventory: { 1: { selfId: 1, name: 'Short Sword', amount, stackable: false } } });
+        const filling = BackgroundResolver.resolveSolo({ state: swords(78), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        assert.strictEqual(filling.debug.wins, 2, `the round ends at the kill whose drop fills the bag's 80 slots (${filling.debug.wins} wins)`);
+        assert(filling.doneAt < at, `at that fight's end, before the round's bound (${at - filling.doneAt} ms before)`);
+        assert.strictEqual(filling.patch.activity, 'hunting');
+        assert.strictEqual(filling.materialize.items.length, 2, 'both drops fit');
+        // Two swords a kill into a bag one slot short of full: each drop stays on the ground
+        // (the bag does not move: the round hunts on).
+        dropped = 2;
+        const full = BackgroundResolver.resolveSolo({ state: swords(79), spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        dropped = 1;
+        assert(full.debug.wins > 2, `fixture: the round hunts on (${full.debug.wins} wins)`);
+        assert.strictEqual(full.materialize.items.length, 0, `no drop past the bag's slots (${full.materialize.items.length} kept)`);
+        // A raise standing when the round began (the goal in reach, not taken yet) ends no round.
+        paid = 10;
+        const standing = BackgroundResolver.resolveSolo({ state: { ...swords(0), inventory: {}, adena: 100,
+            stats: { ...hunter.stats, wishSections: { affordAt: { at: 50, kind: 'focus' } } } }, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        paid = 0;
+        assert(standing.debug.wins > 2 && standing.materialize.adena > 0, `a raise standing at the round's start does not end it (${standing.debug.wins} wins)`);
+        // A level gained ends the round at its kill (its profile is one level's).
+        const levelling = { ...swords(0), inventory: {}, exp: Number(invoke('GameServer/DataCache').experience[29]) - 1 };
+        const up = BackgroundResolver.resolveSolo({ state: levelling, spot: field, elapsedMs: budget, timestamp: at, rng: () => 0.5 });
+        assert.strictEqual(up.debug.wins, 1, `the round ends at the kill that gains a level (${up.debug.wins} wins)`);
+        assert(up.doneAt < at && up.patch.activity === 'hunting', 'at that fight\'s end, still hunting');
+    } finally { Rewards.roll = originalRoll; }
+
     // MP under every cast (the survival floor) is what the last round left: the bot sat
     // down there, so the interval before the step is a seated rest.
     const drained = { ...hunter, vitals: { ...hunter.vitals, mp: 20 } };
