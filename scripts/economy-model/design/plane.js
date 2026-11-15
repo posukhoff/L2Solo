@@ -17,7 +17,7 @@
 //   death    the respawn town (the held spot's town) runs the same chain.
 // The held spot is the bot's best row at the level in the form it can hunt,
 // by its own hour value (heldSpot), taken at its birth, the end of each town
-// chain and a level where its held row is gone. Called
+// chain and each new level. Called
 // by the engine (the only module of the design that touches the engine
 // contract); pure on the view and the main except the account
 // queues it holds by main index.
@@ -70,8 +70,7 @@ function heldFired(view, main) {
 }
 
 // The held spot: the bot's best row at the level in the form it can hunt (HuntRows.best), taken at its birth, at the end
-// of each town chain and at a level where its held row is gone, and held between (the engine keeps it while its row
-// exists at the level). Its candidates: its line's rows it hunts with shots (the game's best and the top) when it holds the shots it fires (the
+// of each town chain and at each new level, and held between. Its candidates: its line's rows it hunts with shots (the game's best and the top) when it holds the shots it fires (the
 // weapon's grade; the beginner shots that charge them count: Engine.heldOf), else those it hunts without them (bareTop
 // at the levels of the model's hunting table; above them the game's rows, its bare answer bareBest and the shots candidates); none
 // bare, it holds its best row with shots. Ranked by valueOf(main, row, form): its hour value there.
@@ -402,7 +401,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     const clock = clocks.get(main.index);
                     tally[classOf(clock.level)].wallHours += now - clock.at;
                     clocks.set(main.index, { level: main.level, at: now });
-                    const next = main.spot ? main : { ...main, spot: holdSpot(main) };
+                    const next = { ...main, spot: holdSpot(main) };
                     const firing = hunter.firing(next);
                     if (FACTS.outAtLevel(heldFired(view, { ...next, level: clock.level }), heldFired(view, next), !!firing)) {
                         put(next, queueFact(stateOf(next), 'out', next, now));
