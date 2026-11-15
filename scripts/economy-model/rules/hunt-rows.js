@@ -144,17 +144,13 @@ function lineRows({ file, key, level, point, limit = LIMITS.KILL_DEATH_LIMIT.val
 
 // The hour a row gives in a form: the row itself firing shots, its shotless bare.
 const inForm = (row, form) => form === 'bare' ? { ...row, ...row.shotless } : row;
-const MEASURES = Object.freeze({
-    // Adena and the items at the NPC's buy price an hour.
-    income: hour => hour.adena + hour.loot
-});
 
-// The line's one best spot and its candidates in a form, by one measure: the
-// rows it hunts in that form ranked by the measure, best first. The same
+// A bot's one best spot and its candidates in a form: the rows it hunts in
+// that form ranked by valueOf(row), the bot's hour value there (the design's
+// value.hourValue with its persona's weights, passed in), best first. The same
 // answer serves the row a bot holds and the spots it ranks.
-function best(rows, measure, form) {
-    const value = MEASURES[measure];
-    const top = rows.filter(row => inForm(row, form).kills > 0).map(row => ({ row, value: value(inForm(row, form)) }))
+function best(rows, form, valueOf) {
+    const top = rows.filter(row => inForm(row, form).kills > 0).map(row => ({ row, value: valueOf(row) }))
         .sort((a, b) => b.value - a.value).map(held => held.row);
     return { best: top[0] || null, top };
 }

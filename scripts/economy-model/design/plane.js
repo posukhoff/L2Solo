@@ -15,8 +15,9 @@
 //   arrival  the town chain: sell to the NPC, buy to the outing's target,
 //            walk back (the visit's afterHours);
 //   death    the respawn town (the held spot's town) runs the same chain.
-// The held spot is the line's best row at the level in the form the bot can
-// hunt (heldSpot), taken at its birth and the end of each town chain. Called
+// The held spot is the bot's best row at the level in the form it can hunt,
+// by its own hour value (heldSpot), taken at its birth, the end of each town
+// chain and a level where its held row is gone. Called
 // by the engine (the only module of the design that touches the engine
 // contract); pure on the view and the main except the account
 // queues it holds by main index.
@@ -32,6 +33,7 @@ const Catalog = require('./catalog');
 const Needs = require('./needs');
 const Value = require('./value');
 const Supply = require('./supply');
+const HuntRows = require('../rules/hunt-rows');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
 const LOW_LEVEL_LAST = 19;
@@ -59,13 +61,6 @@ const FACTS = Object.freeze({
 // The held spot's town (the spot card's town at the level), null without one.
 const townOf = (view, main) => Engine.townOfRow(view, Engine.spotRowOf(view, main), main.level);
 
-// The held spot: its line's best row at the level in the form the bot can hunt, taken at its birth and at the end of each
-// town chain and held between (the engine keeps it while its row exists at the level): the best row with shots when it
-// holds the shots it fires (the weapon's grade; the beginner shots that charge them count: Engine.heldOf), else the
-// best row without them (bareBest: its line's one best in the bare form; at the levels of the model's hunting table
-// the table reader's best, above them the game's own answer for a line hunting without shots, SpotValueTable.best with
-// shots off, often another spot than the one a gate closes).
-// A snapshot with no bareBest row holds the best row.
 // What it holds of the shot its hour fires at its level: the weapon's grade, the beginner shots that charge it count;
 // 0 where its hour fires none.
 function heldFired(view, main) {
@@ -73,9 +68,18 @@ function heldFired(view, main) {
     return shot ? Engine.heldOf(main, { id: shot, beginner: Engine.beginnerOf(view, shot) }) : 0;
 }
 
-function heldSpot(view, main) {
+// The held spot: the bot's best row at the level in the form it can hunt (HuntRows.best), taken at its birth, at the end
+// of each town chain and at a level where its held row is gone, and held between (the engine keeps it while its row
+// exists at the level). Its candidates: its line's rows it hunts with shots (top) when it holds the shots it fires (the
+// weapon's grade; the beginner shots that charge them count: Engine.heldOf), else those it hunts without them (bareTop
+// at the levels of the model's hunting table; above them the game's rows, its bare answer bareBest and the top); none
+// bare, it holds its best row with shots. Ranked by valueOf(main, row, form): its hour value there.
+function heldSpot(view, main, valueOf) {
     const hour = Engine.hourOf(view, main);
-    const row = heldFired(view, main) > 0 ? hour.best : hour?.bareBest || hour?.best;
+    if (!hour) return null;
+    const ranked = form => HuntRows.best(form === 'shots' ? hour.top || [] : hour.bareTop || [hour.bareBest, ...hour.top || []].filter(Boolean), form,
+        row => valueOf(main, row, form)).best;
+    const row = heldFired(view, main) > 0 ? ranked('shots') : ranked('bare') || ranked('shots');
     return row ? String(row.spotId) : null;
 }
 
@@ -172,6 +176,13 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
         const fired = Engine.firedOf(view, main, hunter.firing(main));
         return { ...fired, hunted: fired.held > 0 && fired.perHour > 0 ? fired.form : 'bare' };
     };
+    // The main's hour value at a candidate row in a form: its persona's weights, the worn kit's factors at that spot and
+    // the way back from that spot's respawn town (value.hourValue, the one valuation).
+    const candidateValue = (main, row, form) => {
+        const at = { ...main, spot: String(row.spotId) };
+        return Value.hourValue(view, at, form, factorsOf(at), personas.get(main.id), { wayBackHours: Engine.backHoursOf(view, at.spot, townOf(view, at)) });
+    };
+    const holdSpot = main => heldSpot(view, main, candidateValue);
 
     return {
         sinks: [],
@@ -322,7 +333,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     let state = stateOf(main), at = main;
                     const trip = state.account.place === 'road' ? state.trip : null;
                     if (FACTS.born(visitInfo)) {
-                        at = { ...main, spot: heldSpot(view, main) };
+                        at = { ...main, spot: holdSpot(main) };
                         state = queueFact(state, 'born', at, now);
                     }
                     if (FACTS.died(visitInfo)) state = queueFact(state, 'died', at, now);
@@ -335,8 +346,8 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     const { state: heard, actions, row } = decide(at, state, town);
                     const chain = executed(at, actions, town, row ? Engine.backHoursOf(view, row.spotId, town) : 0);
                     // The chain's end takes the held spot again (the shots it bought) and it walks back to that spot.
-                    const held = { ...chain.main, spot: heldSpot(view, chain.main) }, heldRow = Engine.spotRowOf(view, held);
-                    const done = { ...chain, main: held, afterHours: chain.afterHours > 0 && heldRow ? Engine.backHoursOf(view, heldRow.spotId, town) : chain.afterHours };
+                    const back = { ...chain.main, spot: holdSpot(chain.main) }, heldRow = Engine.spotRowOf(view, back);
+                    const done = { ...chain, main: back, afterHours: chain.afterHours > 0 && heldRow ? Engine.backHoursOf(view, heldRow.spotId, town) : chain.afterHours };
                     // It walks back and hunts again from the visit's end.
                     put(done.main, { ...placed(heard, 'hunt'), trip: null, full: fullOf(view, bagsOf(done.main), carried(done.main)) });
                     // The report: the trip that ends here (its road, whether it bought its need) and the road back.
@@ -358,7 +369,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     const clock = clocks.get(main.index);
                     tally[classOf(clock.level)].wallHours += now - clock.at;
                     clocks.set(main.index, { level: main.level, at: now });
-                    const next = main.spot ? main : { ...main, spot: heldSpot(view, main) };
+                    const next = main.spot ? main : { ...main, spot: holdSpot(main) };
                     const firing = hunter.firing(next);
                     if (FACTS.outAtLevel(heldFired(view, { ...next, level: clock.level }), heldFired(view, next), !!firing)) {
                         put(next, queueFact(stateOf(next), 'out', next, now));

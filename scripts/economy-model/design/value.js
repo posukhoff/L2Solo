@@ -9,7 +9,8 @@
 // rows with shots (static spot-table data). The weights come from the persona
 // alone (the game's powerWeight, without the wallet: a value held between
 // decisions would go stale with every purchase if it moved with money).
-// Read only by the formula variant of supply; pure on the view and plain data.
+// Read by the formula variant of supply and by the held spot's ranking of its
+// candidates (plane.js); pure on the view and plain data.
 const Engine = require('../engine');
 const EconomicValuation = require('../../../src/GameServer/Bot/Economy/EconomicValuation');
 const LIMITS = require('./limits');
