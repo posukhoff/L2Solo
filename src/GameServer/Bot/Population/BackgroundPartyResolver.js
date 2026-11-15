@@ -67,8 +67,8 @@ function memberVitals(state) {
 // step's credited hunt and at most PARTY_RESOLVE_MAX_MS of it; its profiles are
 // the members' at it.
 function partyRound({ party, members, spot, elapsedMs, spotHunters, timestamp }) {
-    const start = Math.min(timestamp, Math.max(timestamp - Math.min(Math.max(0, elapsedMs), PARTY_RESOLVE_MAX_MS),
-        ...members.filter((state) => !(Number(state.vitals?.hp) <= 0)).map((state) => ColdClock.since(state, timestamp))));
+    const start = Math.max(timestamp - Math.min(Math.max(0, elapsedMs), PARTY_RESOLVE_MAX_MS),
+        ...members.filter((state) => !(Number(state.vitals?.hp) <= 0)).map((state) => ColdClock.since(state, timestamp)));
     const budgetMs = timestamp - start;
     const profiles = TargetMatchup.stateProfiles(members[0], { capacityStates: members, buffed: true, timestamp: start });
     const admitted = TargetMatchup.spotShares(profiles, spot, { soloSafety: true });
