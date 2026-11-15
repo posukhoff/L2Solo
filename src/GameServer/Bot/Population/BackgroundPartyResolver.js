@@ -89,10 +89,10 @@ function partyRound({ party, members, spot, elapsedMs, spotHunters, timestamp })
         shareMobs: share === null ? Infinity : share * members.length + carry };
 }
 
-// kills: the mobs the round killed, every mob of a won pull one. bags: each member's
-// running bag at the round's end (by index; none: its state's): a drop it cannot pick
-// up (RoundLoot.keep, the C4 pickup rule) stays on the ground (refused: how many).
-function distributeRewards({ members, spot, kills: killCount, defeatedNpcIds = [], overhitContexts = [], rng, timestamp, bags = [] }) {
+// kills: the mobs the round killed, every mob of a won pull one. items: the drops each
+// member rolled, before the party's loot rule hands them out; limit and maxLoad: its
+// bag's slots and carrying load, the C4 pickup rule's (RoundLoot.keep).
+function distributeRewards({ members, spot, kills: killCount, defeatedNpcIds = [], overhitContexts = [], rng, timestamp }) {
     const rates = ProgressionRates.profile();
     const levels = members.map((state) => Number(state.level || 1));
     const profiles = members.map((state) => ColdCombatProfile.fightProfile(state, timestamp));
@@ -126,16 +126,15 @@ function distributeRewards({ members, spot, kills: killCount, defeatedNpcIds = [
         if (drops.length) loot[owner].push(...drops);
         if (spoilerIndex >= 0) loot[spoilerIndex].push(...spoil.map(item => ({ ...item, partySpoil: true })));
     });
-    const picked = loot.map((items, index) => items.length ? RoundLoot.keep(bags[index] || members[index].inventory, items,
-        InventoryLimits.forState(members[index], profiles[index]), profiles[index].maxLoad) : { kept: items, refused: 0 });
 
     return members.map((state, index) => ({
         state,
         exp: memberProgression[index].exp,
         sp: memberProgression[index].sp,
         adena: adenaPerMember + (index < adenaRemainder ? 1 : 0),
-        items: picked[index].kept,
-        refused: picked[index].refused
+        items: loot[index],
+        limit: InventoryLimits.forState(state, profiles[index]),
+        maxLoad: profiles[index].maxLoad
     }));
 }
 
@@ -715,11 +714,7 @@ const BackgroundPartyResolver = {
         const doneAt = ColdClock.end(clock, bound);
         if (!restUntil) combatMembers = ColdClock.advanceAll(clock, combatMembers, doneAt - clock.at, 'standing', huntRates);
 
-        const rewards = distributeRewards({ members, spot, kills: mobsKilled, defeatedNpcIds, overhitContexts, rng, timestamp,
-            bags: combatMembers.map((member) => member.inventory) });
-        // cold_fight:loot:refused: the drops left on the ground at a full bag, as the solo round's.
-        const refused = rewards.reduce((sum, reward) => sum + reward.refused, 0);
-        if (refused > 0 && Diagnostics.active()) Diagnostics.count('cold_fight', 'loot', 'refused', refused);
+        const rewards = distributeRewards({ members, spot, kills: mobsKilled, defeatedNpcIds, overhitContexts, rng, timestamp });
         const memberResults = [];
         const events = [];
         let deaths = 0;
@@ -840,8 +835,15 @@ const BackgroundPartyResolver = {
             });
         });
 
+        // A drop goes only to a member whose running bag takes it (RoundLoot.keep, the C4 pickup rule).
+        const pickup = { bags: combatMembers.map((member) => member.inventory), takes: (state, bag, item) => {
+            const { limit, maxLoad } = rewards[members.indexOf(state)];
+            return RoundLoot.keep(bag, [item], limit, maxLoad).refused === 0;
+        } };
         const lootDistribution = PartyAgreement.allocate(memberResults, party.stats?.agreement,
-            { rng, needScore: PartyGoalPolicy.itemNeed }) || PartyLootAllocator.transferGearDrops(memberResults);
+            { rng, needScore: PartyGoalPolicy.itemNeed, ...pickup }) || PartyLootAllocator.transferGearDrops(memberResults, pickup);
+        // cold_fight:loot:refused: the drops left on the ground at a full bag, as the solo round's.
+        if (lootDistribution.refused > 0 && Diagnostics.active()) Diagnostics.count('cold_fight', 'loot', 'refused', lootDistribution.refused);
         let distributedMemberResults = lootDistribution.memberResults;
         let partyRestUntil = null;
 

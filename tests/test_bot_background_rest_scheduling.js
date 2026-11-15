@@ -454,6 +454,27 @@ try {
     const swordsKept = crowded.memberResults.reduce((sum, { result }) => sum + result.materialize.items.filter(item => Number(item.selfId) === 1).length, 0);
     assert(crowded.memberResults[0].result.debug.wins > 1, `fixture: the party kills (${crowded.memberResults[0].result.debug.wins} wins)`);
     assert.strictEqual(swordsKept, 0, `no party drop past a member's bag slots (${swordsKept} kept)`);
+    // A party sharing its loot in turn hands a drop only to a member whose bag takes it, and
+    // one its full rolling member cannot take passes on to a member who can (C4
+    // L2Party.getCheckedNextLooter): every sword a kill rolls, by either member, goes to the
+    // first (empty) but one the second, one slot short of its 80, takes.
+    for (const owner of [0, 1]) {
+        let rolled = 0, turned;
+        Rolls.roll = options => {
+            rolled += options.kills.length;
+            return { ...nativeRoll(options), adena: 0,
+                loot: options.kills.map(() => ({ drops: [{ selfId: 1, name: 'Short Sword', amount: 1 }], owner, spoil: [] })) };
+        };
+        try {
+            turned = BackgroundPartyResolver.resolve({ party: { partyId: 'turns', cohesion: 0.7, risk: 0.2, roleCoverage: { dps: 2 },
+                stats: { agreement: { mode: 'turn', spoil: 'spoiler', cursor: 0 } } },
+            members: pair(932).map((member, k) => k ? { ...member, inventory: { 1: { selfId: 1, name: 'Short Sword', amount: 79, stackable: false } } } : member),
+            spot: field, elapsedMs: 120_000, timestamp: at, rng: () => 0.5 });
+        } finally { Rolls.roll = nativeRoll; }
+        const swordsTo = turned.memberResults.map(({ result }) => result.materialize.items.filter(item => Number(item.selfId) === 1).length);
+        assert(rolled > 2, `fixture: the party kills (${rolled} swords rolled)`);
+        assert.deepEqual(swordsTo, [rolled - 1, 1], `a drop member ${owner} rolls goes to a member whose bag takes it (${swordsTo} of ${rolled})`);
+    }
 } finally {
     Cold.profileFor = originalProfile;
     Cold.fightProfile = originalFightProfile;

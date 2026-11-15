@@ -72,7 +72,12 @@ function addProjectedItem(state, item, projected) {
     projected.set(Number(state.characterId), inventory);
 }
 
-function transferGearDrops(memberResults = []) {
+// A party with no agreement: each member keeps its own drops (C4 finders keepers:
+// L2PcInstance.doPickupItem checks the picker's own capacity), a drop its bag does not
+// take (takes(state, bag, item), the C4 pickup rule on bags[index], its running bag;
+// none: its state's) stays on the ground (refused: how many), and a gear drop passes
+// to the member it upgrades most among those whose bag takes it.
+function transferGearDrops(memberResults = [], { bags = [], takes = () => true } = {}) {
     const copies = memberResults.map((entry) => ({
         ...entry,
         result: {
@@ -85,22 +90,33 @@ function transferGearDrops(memberResults = []) {
         }
     }));
     const projected = new Map(copies.map(({ state }) => [Number(state.characterId), { ...(state.inventory || {}) }]));
+    const held = new Map(copies.map(({ state }, index) => [Number(state.characterId), { ...(bags[index] || state.inventory || {}) }]));
+    const fits = (state, item) => takes(state, held.get(Number(state.characterId)), item);
     const transfers = [];
+    let refused = 0;
 
     const originalDrops = copies.flatMap((source) => (
         source.result.materialize.items.map((item) => ({ source, item }))
     ));
     originalDrops.forEach(({ source, item }) => {
         const sourceItems = source.result.materialize.items;
-        if (!equipmentDrop(item)) return;
-        const recipient = copies
+        const recipient = equipmentDrop(item) ? copies
             .map((entry) => ({ entry, score: recipientScore(entry.state, item, projected) }))
-            .filter((candidate) => Number.isFinite(candidate.score))
+            .filter((candidate) => Number.isFinite(candidate.score) && fits(candidate.entry.state, item))
             .sort((left, right) => right.score - left.score
-                || Number(left.entry.state.characterId) - Number(right.entry.state.characterId))[0]?.entry;
-        if (!recipient) return;
+                || Number(left.entry.state.characterId) - Number(right.entry.state.characterId))[0]?.entry : null;
+        if (!recipient) {
+            if (fits(source.state, item)) addProjectedItem(source.state, item, held);
+            else {
+                const at = sourceItems.indexOf(item);
+                if (at >= 0) sourceItems.splice(at, 1);
+                refused += 1;
+            }
+            return;
+        }
 
         addProjectedItem(recipient.state, item, projected);
+        addProjectedItem(recipient.state, item, held);
         if (Number(recipient.state.characterId) === Number(source.state.characterId)) return;
         const index = sourceItems.indexOf(item);
         if (index >= 0) sourceItems.splice(index, 1);
@@ -116,7 +132,7 @@ function transferGearDrops(memberResults = []) {
         });
     });
 
-    return { memberResults: copies, transfers };
+    return { memberResults: copies, transfers, refused };
 }
 
 module.exports = { equipmentDrop, recipientScore, transferGearDrops };
