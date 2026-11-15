@@ -9,6 +9,11 @@
 // first, so it reads the ranges it names and not the task from the start (a continuation re-read 60 to 80k, 2026-11-13).
 // Budget: an agent's context holds about 70 calls (.claude/hooks/agent-context.js); the brief counts what the files it
 // names take if read whole and says WIDE past 60k, to the agent and on stderr to the coordinator.
+// Launches between reviews: an implementer is launched at most twice between two recorded reviews (a continuation
+// counts); the third brief is refused, and the review after two launches is asked first whether the fixes are
+// consequences of one cause in the owner. Why: 2026-11-15 one task took 8 implementer launches and 9 commits (+264
+// lines, a new state field) patching the consequences of one cause, and no review ran between them; of 61 tasks 7 had
+// three or more launches in a row. Counted by this slug's implementer brief files in --out newer than the last review.
 // The last line it prints is the launch prompt; the Agent launch hook refuses a role launch without the brief file.
 const fs = require('node:fs'), path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -31,6 +36,11 @@ const branch = (() => { try { return execFileSync('git', ['-C', wt, 'rev-parse',
 // The form of a finding an agent hands back: the coordinator runs it as it stands (lc lists its own sections).
 const sections = (() => { try { execFileSync(process.execPath, [path.join(HOME, '.claude/lc.js'), 'add', '--sec', '?'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { return (/one of: (.+)|sections: (.+)/.exec(String(e.stderr || '')) || []).slice(1).find(Boolean) || ''; } return ''; })();
 const finding = `\`lc add --kind <bug|risk|missing|debt|gap> --sec <${sections.trim().split(/\s+/).join('|') || 'section'}> --origin "${role} ${slug} ${new Date().toISOString().slice(5, 10)}" --rule <n> --sites "<file:line>" --what "<what is wrong> → <what a player or the server sees>" --fix "<one sentence>"\` (a debt or gap also \`--task ${slug}\`)`;
+const o = n => path.join(path.resolve(out), n);
+const file = o(`${slug}-${role}-brief${round > 1 ? '-' + round : ''}${cont ? '-c' + require('node:crypto').createHash('md5').update(path.resolve(cont)).digest('hex').slice(0, 6) : ''}.md`);
+const lastReview = Math.max(0, ...(s.reviews || []).map(r => Date.parse(r.at) || 0));
+const launches = (() => { try { return fs.readdirSync(path.resolve(out)).filter(f => f.startsWith(slug + '-implementer-brief') && f.endsWith('.md') && fs.statSync(o(f)).mtimeMs > lastReview).sort(); } catch { return []; } })();
+if (role === 'implementer' && launches.length >= 2 && !launches.includes(path.basename(file))) fail(`${slug} has had ${launches.length} implementer launches ${lastReview ? 'since its last review' : 'and no review yet'} (${launches.join(', ')}). A third goes only after a review of what is there (brief ${slug} <worktree> reviewer, then record-review). Before it, answer yourself: are these fixes consequences of one cause in the owner, and should the mechanism exist in this form (planning.md "Deeper causes")? If so the next step is a planner on that cause, not another fix. An agent stopped twice at its context limit means the task is too wide: split it.`);
 const list = (x, f = y => y) => (x || []).map(y => '  - ' + f(y)).join('\n') || '  - (none)';
 const L = [];
 L.push(`# L2Solo brief · ${slug} · ${role} · round ${round} · digest ${String(s.policy).slice(0, 8)}`);
@@ -54,10 +64,11 @@ if (b.map) L.push(`- map entries the task changes: ${b.map.join('; ')}`);
 L.push('', '## Your inputs');
 if (cont) L.push(`- you continue an agent that stopped at its context limit. Read its hand-over first: ${path.resolve(cont)}. What it marks established with a handle is established: re-check only what you build on. Read the ranges it names, not the whole files, and start at its next steps.`);
 if (role === 'planner') L.push(`- the tree to read: ${root}`, `- first: \`node ${HOME}/.claude/lc.js near <the step or issue id in the notes>\``);
-if (role === 'implementer') L.push(`- edit only in ${root} on branch ${branch}`, round > 1 ? `- this is fix round ${round - 1}: the review table lines to fix are below` : '- the plan: the file the notes name, or the brief above when no planner ran');
+if (role === 'implementer') L.push(`- edit only in ${root} on branch ${branch}`, round > 1 ? (e.review?.table ? `- this is fix round ${round - 1}: the review table lines to fix are below` : `- this is launch ${round} of the task and no review is recorded yet: the notes name what this launch does`) : '- the plan: the file the notes name, or the brief above when no planner ran');
 if (role === 'reviewer') {
     L.push(`- the diff: \`git -C ${root} diff ${s.base}..HEAD\` (commits: \`git -C ${root} log --oneline ${s.base}..HEAD\`)`);
     L.push(`- the mechanical asks to answer: \`node ${HOME}/planning/rules-check.js ${s.base}..HEAD --root ${root}\``);
+    if (launches.length >= 2) L.push(`- ${launches.length} implementer launches went into this diff with no review between them. Answer first, in the \`cause\` line: are the fixes consequences of one deeper cause in the owner (several corrections beside one mechanism, state added to make up for it), and should the mechanism exist in this form? If so the line is a violation naming that cause, whatever else passes.`);
     const r = e.report;
     L.push(r ? `- the implementer's report (recorded): added beyond the plan: ${r.added} · deviations from the plan: ${r.deviations} · tests run: ${r.tests}${r.guards?.length ? ' · guards: ' + r.guards.join('; ') : ''}` : '- the implementer\'s report: NOT RECORDED (the coordinator records it with record-report before this review)');
     try { const v = JSON.parse(wf('verify', slug)); if (v.warnings?.length) L.push('- selection warnings to answer one by one:', list(v.warnings)); } catch { /* verify refuses (a route or a guess): nothing to add */ }
@@ -68,7 +79,6 @@ if (round > 1 && prev?.table) {
     L.push(`- review round ${prev.round} (${prev.result}) left these violation lines:`, list(standing, ([k, v]) => `${k} violation ${v.text}`));
 }
 L.push('', '## Your outputs');
-const o = n => path.join(path.resolve(out), n);
 if (role === 'planner') L.push(`- the plan, written as you go: ${o(slug + '-plan.md')}`, `- issues you find beside the task: in the plan, each as a ready line: ${finding}`);
 if (role === 'implementer') L.push(`- your report: ${o(`${slug}-report-${round}.md`)}, holding these lines exactly (the coordinator records it; \`ready\` refuses a task without them):`, '  - `added beyond the plan: none` or each addition with what breaks for a player or the server without it', '  - `deviations from the plan: none` or each one', '  - `tests run: <files>` and, for each regression test, the assert that fails on the old code with the base SHA', ...(b.guards || []).filter(g => typeof g === 'object').map(g => `  - \`guard: <before -> after>\` for: ${g.expect}`));
 if (role === 'reviewer') L.push(`- the review table (17 lines${round > 1 ? '; this round: only the lines you change' : ''}): ${o(`${slug}-review-${round}.txt`)}`, `- other findings: in your final message, each as a ready line: ${finding}`);
@@ -89,7 +99,6 @@ if (code) L.push(`- the code files named hold about ${code}k (${top(f => !isText
 if (reading > WIDE) { L.push('- WIDE: if the task cannot fit, do its first part in full, put it on file and say what is left, rather than start every part.'); console.error(`brief: WIDE: this launch reads about ${reading}k whole before any work (about ${calls} of 70 calls left): split it (a review by commit, an implementation by plan step, a plan by question) or shorten what the notes send the agent to`); }
 L.push('', '## Coordinator\'s notes (facts of this task only; a rule stated here does not count)');
 L.push(noteText || '(none)');
-const file = o(`${slug}-${role}-brief${round > 1 ? '-' + round : ''}${cont ? '-c' + require('node:crypto').createHash('md5').update(path.resolve(cont)).digest('hex').slice(0, 6) : ''}.md`);
 fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, L.join('\n') + '\n');
 console.log(L.join('\n'));
 console.log(`\nlaunch prompt: Read ${def} in full and act as that agent; it outranks this brief. Your task brief: ${file}`);
