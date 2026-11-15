@@ -3,8 +3,9 @@
 // built hunt table, from the start states the table's hunt fought from and the
 // pulls it rolled, its time per kill and damage per engagement are those of
 // the game's fight replayed from the same starts (admitted cells within 3 % at
-// the median and 8 % at p90, close cells within 6 % and 15 %), and the second
-// moment of the damage within the range the death tail reads. The sample is
+// the median and 8 % at p90), and the second moment of the damage within the
+// range the death tail reads. Close cells carry no bound here: the matchup
+// fights on to the kill while the game's fight stops at the bot's death. The sample is
 // frozen with the tree stamp it was replayed on: a change of the combat code
 // asks for it to be replayed (scripts/economy-model/fight/engagements.js --fixture).
 // A skill's reuse carries into the next engagement, a pull of two hits as the
@@ -55,8 +56,8 @@ try {
     }
     const b = Engagements.bounds(cells, 'fm');
     const show = JSON.stringify(b);
-    assert(b.admitted.cells >= 12 && b.close.cells >= 4, `the sample holds admitted and close cells (${show})`);
-    for (const [kind, p50, p90] of [['admitted', 0.03, 0.08], ['close', 0.06, 0.15]]) {
+    assert(b.admitted.cells >= 12, `the sample holds admitted cells (${show})`);
+    for (const [kind, p50, p90] of [['admitted', 0.03, 0.08]]) {
         const s = b[kind];
         assert(s.b1.p50 <= p50 && s.b1.p90 <= p90, `${kind}: time per kill within ${p50} / ${p90} of the game's fight (${JSON.stringify(s.b1)})`);
         assert(s.b2.cells === 0 || (s.b2.p50 <= p50 && s.b2.p90 <= p90), `${kind}: damage per engagement within ${p50} / ${p90} (${JSON.stringify(s.b2)})`);
@@ -80,7 +81,7 @@ try {
     }
     const one = run(rested, 1), two = run(rested, 2);
     const pack = Pull.pullView(Matchup.oneMob(seen.view), 2, 0).pack;
-    const perAction = view => CMA.actionMix(view, { profile: p }, 0).perAction;
+    const perAction = view => CMA.actionMix(view, { profile: seen.fp, state: null }, at).perAction;
     assert(Math.abs(two.taken.mean / two.mobActions - pack * perAction(Matchup.oneMob(seen.view))) <= 1e-6 * two.taken.mean,
         `${c.k}: a pull of two hits as the game's pack of ${pack} mobs per action`);
     assert(two.ms > one.ms * 1.5, `${c.k}: two mobs take longer to kill than one (${two.ms} vs ${one.ms})`);
