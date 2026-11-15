@@ -193,23 +193,33 @@ function soloRestMs(state, vitals, { refused = false } = {}) {
     return estimateRestMs(state, vitals, { line: RestPolicy.restedLine(persona) });
 }
 
+// A rest's regeneration over ms from at: seated, or standing when that refills
+// the rest faster (restRegenPerTick); the pet rests with it (petRegen). One rule
+// for the rest step and a rest inside a hunt round. profile: the bot's at at.
+// Returns { vitals, state (its stats carry the pet), regen }.
+function seatedRegen(state, vitals, ms, at, profile, options = {}) {
+    const regen = restRegenPerTick(state, vitals.maxHp - vitals.hp, vitals.maxMp - vitals.mp, { profile, timestamp: at, ...options });
+    const ticks = Math.max(0, Number(ms) || 0) / Formulas.REGEN_TICK_MS;
+    return {
+        vitals: { ...vitals, hp: Math.min(vitals.maxHp, vitals.hp + regen.hp * ticks), mp: Math.min(vitals.maxMp, vitals.mp + regen.mp * ticks) },
+        state: petRegen(state, ms, profile),
+        regen
+    };
+}
+
 function resolveRest(state, elapsedMs, timestamp, options = {}) {
     const combat = botCombatStats(state, timestamp);
-    const vitals = {
+    const seated = seatedRegen(state, {
         hp: Math.max(0, Number(state.vitals?.hp || 0)),
         maxHp: combat.maxHp,
         mp: Math.max(0, Number(state.vitals?.mp || 0)),
         maxMp: combat.maxMp
-    };
-    // Seated, or standing when that refills the rest faster.
-    const regen = restRegenPerTick(state, vitals.maxHp - vitals.hp, vitals.maxMp - vitals.mp, { profile: combat, timestamp, ...options });
-    const ticks = Math.max(0, Number(elapsedMs) || 0) / Formulas.REGEN_TICK_MS;
-    vitals.hp = Math.min(vitals.maxHp, vitals.hp + regen.hp * ticks);
-    vitals.mp = Math.min(vitals.maxMp, vitals.mp + regen.mp * ticks);
+    }, elapsedMs, timestamp, combat, options);
+    const { vitals, regen } = seated;
 
     const requireMana = requiresManaRecovery(state, options);
     // The pet rests too (RestPolicy.petRested): one its owner cannot heal waits to be whole.
-    const rested = petRegen(state, elapsedMs, combat);
+    const rested = seated.state;
     const summon = rested.stats?.coldCombat?.summon;
     const petView = coldPetView(combat, summon, vitals, rested.stats?.coldCombat?.cooldowns, timestamp);
     const petReady = RestPolicy.petRested(petView);
