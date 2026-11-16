@@ -773,9 +773,10 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
             maxLoad: invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(state, timestamp).maxLoad,
             saleLimit: Disposition.soloSaleSlotLimit(state), sold });
         // C4 consumables all weigh something, so the load bounds the hours;
-        // weightless ones with no slot forecast would not: hold the line.
+        // weightless ones with no slot forecast would not: hold the line. A
+        // kit that uses nothing has no target, so its unbounded hours are no failure.
         if (Number.isFinite(hours)) bagHours = hours;
-        else FailureLog.note('economy.kit:consumable_target_unbounded', new Error(`no bag bound for shot ${shotItemId} potion ${potionItemId}`));
+        else if (shotUse > 0 || potionUse + potionRest.use > 0) FailureLog.note('economy.kit:consumable_target_unbounded', new Error(`no bag bound for shot ${shotItemId} potion ${potionItemId}`));
     }
     // The kit's rates (kitReader; published as stats.kitRates): what stock()
     // and kitCost() read over the live bag, so a kept plan, a later view and
