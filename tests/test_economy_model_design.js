@@ -166,13 +166,14 @@ const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, 
 const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1, stats: { spotUnstated: 0 } });
 // One run through the plane, its visits seen as the engine calls them.
 function run(account, supply, hours, dies = 0, view = world) {
-    const visits = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account] });
+    const visits = [], levels = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account] });
     const seen = { ...made, start: context => {
         const hooks = made.start(context);
-        return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ now, info, before: main, ...done }); return done; } };
+        return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ now, info, before: main, ...done }); return done; },
+            levelUp: (main, now) => { const done = hooks.levelUp(main, now); levels.push({ now, before: main, main: done }); return done; } };
     } };
     const result = Engine.simulate({ view, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours, seed: 3, plane: seen });
-    return { result, visits };
+    return { result, visits, levels };
 }
 const close = (a, b) => Math.abs(a - b) < 1e-6;
 // The world with SHOT as the no-grade Soulshot: Soulshots for Beginners (5789) charge it.
@@ -219,9 +220,10 @@ for (const supply of ['table', 'formula']) {
     assert.equal(death.main.money - death.before.money, death.delta.flows.npcSales + death.delta.flows.npcBuys, `${supply}: only the town chain moves money`);
 }
 
-// A held spot stays through a level while its row exists there (the line's best at the new level is another spot).
+// A held spot is re-taken at every new level: its row still exists there, but the spot worth most at the new level is another one.
+const richer = row('s2', 300, 400);
 const growth = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
-    hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: far, top: [far, near] } } },
+    hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: richer, top: [richer, near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
     items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
@@ -229,7 +231,30 @@ const growth = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: {
 for (const supply of ['table', 'formula']) {
     const grown = run(freshBot(9, { shots: { [SHOT]: 600 } }), supply, 1, 0, growth);
     assert.ok(grown.result.progress.stageBands.all.levelUps >= 1, `${supply}: it reached level 2`);
-    assert.equal(grown.result.counters.leftOwnSpot, 0, `${supply}: it keeps the spot it holds through the level`);
+    assert.equal(grown.result.counters.leftOwnSpot, 0, `${supply}: the held row still exists at level 2`);
+    const levelled = grown.levels.find(level => level.main.level === 2);
+    assert.deepEqual([levelled.before.spot, levelled.main.spot], ['s1', 's2'], `${supply}: it holds the spot worth most at the new level`);
+}
+
+// A death that drops a level respawns in the town of the spot it died at (C4: the region town of the death place), not in the
+// town of the spot re-taken at the lower level: born at level 2 just past its start, it holds s2 (TownB) and dies there (40x the
+// row's deaths); the loss takes it to level 1, where s1 (TownA) is worth most, whether s2 has a level-1 row or not.
+const bareNone = { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } };
+const rich1 = row('s1', 300, 400, bareNone), s2at1 = row('s2', 60, 100, bareNone), s2at2 = row('s2', 100, 200, { ...bareNone, deaths: 0.1 });
+const dropsB = { ...drops, town: 'TownB' };
+for (const [variant, top1] of [['s2 has a level-1 row', [rich1, s2at1]], ['s2 has no level-1 row', [rich1]]]) {
+    const regions = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+        hours: { 9: { 1: { classId: 9, shotId: SHOT, best: rich1, top: top1 }, 2: { classId: 9, shotId: SHOT, best: s2at2, top: [s2at2] } } },
+        yields: { 's1@1': drops, 's2@1': dropsB, 's2@2': dropsB },
+        items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }, { town: 'TownB', price: 7 }] } }, deathExp: [15, 30],
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3, TownB: 0.9 }, s2: { TownB: 0.3, TownA: 0.9 } } }, bags: { 9: { slots: 80, maxLoad: 1e6 } } });
+    for (const supply of ['table', 'formula']) {
+        const fell = run(freshBot(9, { level: 2, exp: 55, money: 1000, shots: { [SHOT]: 600 } }), supply, 3, 40, regions);
+        const death = fell.visits.find(visit => visit.info.died);
+        assert.ok(death && death.before.level === 1, `${supply}, ${variant}: it dies and drops to level 1`);
+        assert.equal(death.delta.towns[0], 'TownB', `${supply}, ${variant}: it respawns in the town of the spot it died at`);
+    }
 }
 
 // A bot with no shots, no adena and a bag that fills: it hunts bare at a row that kills bare, and the formula goes to town for the shots
