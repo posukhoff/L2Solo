@@ -10,7 +10,6 @@ const Providers = invoke('GameServer/Bot/Economy/WishProviders');
 const Table = invoke('GameServer/Bot/AI/SpotValueTable');
 const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const Valuation = invoke('GameServer/Bot/Economy/EconomicValuation');
-const Events = invoke('GameServer/Bot/AI/DecisionEvents');
 const ConsumableTarget = require('../src/GameServer/Bot/Economy/ConsumableTarget');
 const Walk = require('../src/GameServer/Bot/Economy/WalkBack');
 const Trip = invoke('GameServer/Bot/Population/ColdTrip');
