@@ -5,15 +5,17 @@ const Economy = invoke('GameServer/Bot/Economy/EconomyContext');
 const Table = invoke('GameServer/Bot/AI/SpotValueTable');
 const Hunt = invoke('GameServer/Bot/AI/BotHuntEfficiency');
 const saved = { value: Table.value, best: Table.best, hunt: Hunt.huntIncome, incomeRow: Hunt.incomeRow };
-let stacks = 10, rowPresent = true, spotPresent = true, potions = 2, income = 100000;
-// Bag filler no sale takes (a quest item): it stays in the bag the kit's outing starts with.
-const kept = amount => ({ selfId: 1, amount, stackable: false, kind: 'Other.Quest' });
+let stacks = 10, load = 0, rowPresent = true, spotPresent = true, potions = 2, income = 100000;
+// Bag filler no sale takes (a weightless quest item): it stays in the bag the kit's outing starts with.
+const kept = amount => ({ selfId: 687, amount, stackable: false, kind: 'Other.Quest' });
+// The stock is sized for the hours to a full bag whatever the bot's past visits: a visit history
+// left in a saved row (the old visit interval) is read by nothing.
 const fixture = { characterId: 91819, level: 30, phase: 'hot', activity: 'hunting',
     stats: { classId: 1, visitEvery: [22, 24] }, party: { partyId: 1 }, vitals: { hp: 1000, mp: 1000 }, loc: {},
     inventory: { 1: kept(39),
         1061: { selfId: 1061, amount: 1, stackable: true } } };
 Hunt.huntIncome = () => ({ spotId: spotPresent ? 'stack-fixture' : null, perHour: income, expPerHour: 1000000 });
-const row = withShots => ({ exp: withShots ? 1e6 : 5e5, shots: 1000, potions, deaths: .1, stacks });
+const row = withShots => ({ exp: withShots ? 1e6 : 5e5, shots: 1000, potions, deaths: .1, stacks, load });
 Table.value = (id, role, level, withShots) => rowPresent ? row(withShots) : null;
 // ShotStock.usePolicy weighs the best row with shots against the best without.
 Table.best = (role, level, withShots) => row(withShots);
@@ -45,32 +47,50 @@ try {
     income = 100000; potions = 0;
     assert.equal(target({ ...fixture, inventory: {} }), 8, 'zero-use kit reserves no slots');
     potions = 2;
-    assert.equal(target({ ...fixture, inventory: { 1: kept(80) } }), .5,
-        'zero free room still clamps to half an hour');
-    stacks = 0; assert.equal(target(), 24, 'no new slots -> cap24h');
-    stacks = null; assert.equal(target(), 24, 'missing table preserves the learned duration');
-    stacks = 10; rowPresent = false; assert.equal(target(), 24, 'missing best-spot row preserves history despite generic fallback table');
-    rowPresent = true; spotPresent = false; assert.equal(target(), 24, 'no best spot preserves history');
-    spotPresent = true; stacks = 1000; assert.equal(target(), .5, 'full bag interval clamps to half an hour');
-    assert.equal(target({ ...fixture, stats: { ...fixture.stats, visitEvery: [22, 4] } }), .5,
-        'an observed long interval cannot exceed an earlier known physical return');
-    stacks = 10; assert.equal(target({ ...fixture, stats: { classId: 53, visitEvery: [22, 24] } }), 6, 'native dwarf class uses100-slot bag');
+    assert.equal(target({ ...fixture, inventory: { 1: kept(80) } }), 0,
+        'zero free room: no hours to a full bag, the kit holds its line (old: clamped to half an hour)');
+    assert.equal(Economy.basics({ ...fixture, inventory: { 1: kept(80) } }, { spots: [] }).stock('potions').target, 2,
+        'the line: one hour of use');
+    // No new slots an hour: the first weight step bounds the hours. maxLoad 109232.7 (class 1, level 30):
+    // 54616 below the step; the bot with no weapon fires no shots: (54616 - 5, a bottle's room) /
+    // (2 bottles x 5 x 1.1) = 4964.6 h; with its sword, 1000 Soulshot D (mass 3) an hour weigh too.
+    stacks = 0; assert.equal(target(), 4964.6, 'no new slots -> the stock\'s own weight bounds the hours (old: 24 h cap)');
+    assert.equal(target(emptyKit), 16, 'the shots\' weight: (54616 - 3 - 5 - its 1500 sword) / (3300 + 11) = 16.04 h');
+    stacks = null; assert.equal(target(), 1, 'a row without a bag forecast holds the line (old: the learned 24 h)');
+    stacks = 10; rowPresent = false; assert.equal(target(), 4, 'missing best-spot row: the row the use is priced on forecasts the bag');
+    rowPresent = true; spotPresent = false; assert.equal(target(), 4, 'no best spot: the priced row forecasts the bag');
+    spotPresent = true; stacks = 1000; assert.equal(target(), 0, '40 free slots at 1000 new slots/h: under a tenth of an hour');
+    stacks = 10;
+    for (const visitEvery of [[22, 4], [22, 1], [22, 24], undefined]) {
+        assert.equal(target({ ...fixture, stats: { ...fixture.stats, visitEvery } }), 4, `a past visit interval ${visitEvery} has no effect`);
+    }
+    assert.equal(target({ ...fixture, stats: { classId: 53, visitEvery: [22, 24] } }), 6, 'native dwarf class uses100-slot bag');
     assert.equal(target({ ...fixture, inventory: { 1864: { selfId: 1864, amount: 40, stackable: true, kind: 'Other.Quest' } } }), 7.8,
         'a kept stack occupies one slot and its absent potion reserves one');
     assert.equal(target({ ...fixture, inventory: { 1864: { selfId: 1864, amount: 40, stackable: true } } }), 7.9,
         'a party member\'s loot leaves with its sale: the outing after it has the full bag less the planned potion');
-    assert.equal(target({ ...fixture, stats: { classId: 1 }, inventory: {} }), 2,
-        'an empty bag without history never sets the outing to its full capacity');
-    assert.equal(target({ ...fixture, stats: { classId: 1, visitEvery: [22, 1] }, inventory: {} }), 1,
-        'an empty bag preserves the learned shorter outing');
+    assert.equal(target({ ...fixture, stats: { classId: 1 }, inventory: {} }), 7.9,
+        'an empty bag sizes the kit for its full bag (old: a bot without history stocked 2 h)');
+    assert.equal(target({ ...fixture, stats: { classId: 1, visitEvery: [22, 1] }, inventory: {} }), 7.9,
+        'a bot that visited every hour stocks the same full bag (old: 1 h)');
+    // The drop's weight: 20000 load an hour fills the 54611 left beside the bottles in
+    // 54611 / (20000 + 11) = 2.73 h, before the 7.9 h the slots allow.
+    load = 20000;
+    assert.equal(target({ ...fixture, inventory: {} }), 2.7, 'a heavy drop shortens the hours to the first weight step');
+    const heavy = Economy.basics({ ...fixture, inventory: {} }, { spots: [] }).stock('potions');
+    assert.equal(heavy.target, 6, 'ceil(2 x 2.7 x 1.1)');
+    assert(heavy.target * 5 + 2.7 * 20000 < 54616, 'the stock and the drop until the visit stay under the first weight step');
+    // A heavy kept item leaves less load to fill: 10 Short Swords (16000) no sale takes.
+    assert.equal(target({ ...fixture, inventory: { 1: { selfId: 1, amount: 10, stackable: false, kind: 'Other.Quest' } } }), 1.9,
+        'what the bag keeps weighs on the hours: (54616 - 16000 - 5) / 20011');
+    load = 0;
     const solo = { ...fixture, party: null, inventory: { 1: { selfId: 1, amount: 19, stackable: false },
         1061: { selfId: 1061, amount: 1, stackable: true } } };
     assert.equal(target(solo), 3.9, 'solo loot: the outing after the sale ends at the 40-slot sale threshold, '
         + 'the bag it leaves holds the potion: 39 free / 10 slots per hour');
-    assert.equal(target({ ...solo, stats: { ...solo.stats, visitEvery: [22, 8] } }), 3.9,
-        'learned eight hours yields to the earlier executable sale');
-    assert.equal(target({ ...solo, stats: { ...solo.stats, visitEvery: [22, 1] } }), 1,
-        'a learned earlier visit remains earlier than the bag sale');
+    for (const visitEvery of [[22, 8], [22, 1]]) {
+        assert.equal(target({ ...solo, stats: { ...solo.stats, visitEvery } }), 3.9, `solo: a past interval ${visitEvery} has no effect`);
+    }
     assert.equal(target({ ...solo, phase: 'cold' }), target(solo), 'hot and cold use the identical stock horizon');
     assert.equal(target({ ...solo, partyId: 2 }), 7.9, 'standalone party membership retains the full-bag bound');
     // 829e4442 removed the generated-bot sale level cutoff: a level 9 bot
@@ -81,7 +101,8 @@ try {
     // The sale retry: the last visit tried these goods and nothing new came since.
     const tried = { items: Object.keys(solo.inventory).map(Number), buyers: null };
     assert.equal(target({ ...solo, stats: { ...solo.stats, marketSellSeen: tried } }), 6,
-        'blocked sale does not claim an executable half-full return, and what it could not place stays in the bag');
+        'blocked sale does not claim an executable half-full return, and what it could not place stays in the bag '
+        + '(its 30400 load leaves 2201 h of bottles)');
     const protectedLoot = { ...solo, inventory: { 1864: { selfId: 1864, amount: 1, stackable: true } },
         stats: { ...solo.stats, equipmentPlan: { status: 'active', strategy: 'craft', materials: [{ selfId: 1864, amount: 1 }] } } };
     assert.equal(target(protectedLoot), 7.8, 'reserved craft input cannot justify an early sale');
@@ -93,12 +114,9 @@ try {
     assert.equal(target(ownKitOnly), 7.7, 'own usable consumable surplus never shortens its own forecast');
     stacks = 0;
     // A bag at the sale threshold goes to town now; its kit is for the outing after the sale, which fills
-    // nothing with zero new slots/hour (before: half an hour, the loot carried in counted as the next outing's).
+    // no slots with zero new slots/hour: the stock's own weight bounds it (the swords leave with the sale).
     assert.equal(target({ ...solo, inventory: { 1: { selfId: 1, amount: 39, stackable: false },
-        1061: solo.inventory[1061] } }), 24, 'a bag at the sale threshold plans the outing after the sale');
-    rowPresent = false;
-    assert.equal(target({ ...solo, stats: { ...solo.stats, visitEvery: [22, 8] } }), 8,
-        'an absent table cannot cap learned eight hours without an earlier known return');
+        1061: solo.inventory[1061] } }), 4964.6, 'a bag at the sale threshold plans the outing after the sale');
     rowPresent = true; stacks = 10;
     const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
     // The sale list reads the kit's targets once (the build's rates over the
@@ -113,18 +131,21 @@ try {
     // A level-30 bot's death costs its exp (EconomicValuation.deathHours; a
     // table row's deaths carry no respawn wait since T126, so a bot with no
     // exp to lose and no walk back has a free death and no survival utility).
-    potions = 2.25; stacks = 0;
+    // The bag's 79 free slots at 158, 79, 39.5 and 19.75 new slots an hour: .5, 1, 2 and 4 hours.
+    potions = 2.25;
     const level30Exp = invoke('GameServer/DataCache').experience[29];
     for (const phase of ['hot', 'cold']) for (const hours of [.5, 1, 2, 4]) {
+        stacks = 79 / hours;
         for (const held of [0, 1, 2, 3, 8, 10]) {
-            const state = { ...fixture, phase, stats: { ...fixture.stats, visitEvery: [22, hours], exp: level30Exp },
+            const state = { ...fixture, phase, stats: { ...fixture.stats, exp: level30Exp },
                 inventory: { 1061: { selfId: 1061, amount: held, stackable: true } } };
             const stock = Economy.basics(state, { spots: [] }).stock('potions');
             assert.equal(stock.usePerHour, 2.25, 'native fractional table forecast reaches the stock rule');
             const purchase = stock.survivalMissing + stock.missing;
             assert(Number.isSafeInteger(purchase), `${phase}: whole potion purchase with ${held} held`);
-            const expected = Math.max(0, Math.max(3, Math.ceil(2.25 * hours)) - held);
-            assert.equal(purchase, expected, `${phase}: fill the greater of outing stock and survival stock once`);
+            // A full bag's use plus the reserve: ceil(2.25 x hours x 1.1) = 2, 3, 5, 10.
+            const expected = Math.max(0, Math.max(3, { .5: 2, 1: 3, 2: 5, 4: 10 }[hours]) - held);
+            assert.equal(purchase, expected, `${phase}: fill the greater of the bag's stock and survival stock once`);
             assert.equal(stock.survivalTarget, Math.min(3, stock.target));
             assert.equal(stock.needed, held < stock.survivalTarget);
             assert.equal(stock.benefitHours, stock.missing * stock.benefitPerUnit,

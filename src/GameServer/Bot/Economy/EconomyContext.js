@@ -49,6 +49,8 @@ const TravelRoutes = invoke('GameServer/Bot/Travel/TravelRoutes');
 const GearProgression = invoke('GameServer/Bot/AI/PersonalGearProgression');
 const RestPotion = invoke('GameServer/Bot/AI/RestPotion');
 const HealingPotionStock = invoke('GameServer/Bot/AI/HealingPotionStock');
+const ConsumableTarget = require('./ConsumableTarget');
+const BeginnerShots = require('../../Items/C4BeginnerShots');
 const TradeIntent = require('./TradeIntent');
 const Trace = require('../DecisionTrace');
 // The bound of an event proof's packed and wire forms.
@@ -598,10 +600,10 @@ function ratesNow(rates, state, bag, price) {
 }
 // The one kit rule, hot and cold, worker and main: stock(kind),
 // kitCost(id) and the survival reserve over the build's rates (kitRates: use
-// per hour, benefit per unit, outing hours; StatsPacket.kitRates publishes
-// them) and the live bag, wallet and prices. A kind's target is an outing's
-// use for a kind worth carrying, never less than one hour of use (its
-// line); shots that cannot be restocked keep what the bag holds; the rest
+// per hour, benefit per unit, the hours to a full bag; StatsPacket.kitRates
+// publishes them) and the live bag, wallet and prices. A kind's target is a
+// full bag's use plus the reserve (ConsumableTarget) for a kind worth
+// carrying, never less than one hour of use (its line); shots that cannot be restocked keep what the bag holds; the rest
 // bottles only as many as the wallet buys above the reserve. rates null (no
 // build has rated the kit yet): the bag is held as it is, nothing is bought
 // and the reserve is empty. Prices go through the caller's price reader, so
@@ -642,12 +644,12 @@ function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates
     };
     const kit = [base('shots'), base('potions')];
     // The survival reserve: the kit's missing survival units at their list price.
-    const hours = held ? 0 : positive(rates.outingHours);
-    // The outing refill: the units one outing uses of a kind worth restocking,
+    const hours = held ? 0 : positive(rates.bagHours);
+    // The refill: a full bag's use plus the reserve of a kind worth restocking,
     // never under its line (the bot's usual purchase). The reserve holds it at
     // the NPC list price whatever the bag holds now, so gear never takes the next
     // kit's money; a town counter spends of it what the bag misses.
-    const refill = row => row.canRestock ? Math.max(row.line, Math.ceil(row.use * hours)) : 0;
+    const refill = row => row.canRestock ? Math.max(row.line, ConsumableTarget.target(row.use, hours)) : 0;
     const reserve = kit.reduce((sum, row) => sum + refill(row) * row.survivalPrice, 0);
     const stock = kind => {
         if (kind === 'scrolls') {
@@ -660,10 +662,11 @@ function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates
                 benefitPerUnit, benefitHours: missing * benefitPerUnit, needed: false };
         }
         const row = kit[kind === 'shots' ? 0 : 1], { itemId, current, use, restUse, line } = row;
-        // The rest bottles (RestPotion.stockUse) beside the survival use: an
-        // outing's, at most what the wallet buys above the reserve.
+        // The rest bottles (RestPotion.stockUse) beside the survival use: a
+        // full bag's, at most what the wallet buys above the reserve.
         const restCap = restUse > 0 ? current + Math.floor(Math.max(0, positive(wallet) - reserve) / Math.max(1, price(itemId))) : 0;
-        const wanted = Math.max(line, Math.ceil(use * hours), Math.min(Math.ceil((use + restUse) * hours), restCap));
+        const wanted = Math.max(line, ConsumableTarget.target(use, hours),
+            Math.min(ConsumableTarget.target(use + restUse, hours), restCap));
         // Useful owned stock need not justify expensive replacement stock.
         const target = held ? current : row.canRestock ? wanted : Math.min(current, wanted);
         const missing = Math.max(0, target - Math.max(current, row.survivalTarget));
@@ -835,9 +838,12 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
     const potionRest = spotTable && Hunt.situationOf(state, deps.mode) === 'solo'
         ? RestPotion.stockUse(state, { row: Table.cycle(bestSpotId, tableRole, state.level, shots),
             potion, hour: hourAdena, timestamp }) : { use: 0, hours: 0 };
-    let bagHours = 2;
-    const hasBagForecast = spotTable?.stacks !== null && spotTable?.stacks !== undefined;
-    if (hasBagForecast) {
+    // The kit's hours: the hunting hours to a full bag after the visit's sale
+    // (ConsumableTarget.bagHours), the slots or the first weight step, read on
+    // the row the use is priced on. A row with no bag forecast holds the line
+    // (one hour of use).
+    let bagHours = 1;
+    if (bestTable?.stacks !== null && bestTable?.stacks !== undefined) {
         const Data = DataCache;
         const race = state.stats?.race ?? (Data.classTemplates == null ? undefined : ClassProgression.firstClassRow(Data.classTemplates, state.stats?.classId || 0))?.template?.race;
         // ARCH-NOTE: size the bag interval on the bag after its
@@ -853,7 +859,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         // A solo seller's next outing ends at the half-full sale while it holds
         // loot to sell; stock cannot be its own reason for an earlier visit, so
         // the whole usable kit is kept while reading the loot.
-        let slotLimit = Floor.inventoryLimit(race), sold = 0;
+        let slotLimit = Floor.inventoryLimit(race), sold = { slots: 0, load: 0 };
         const keptAmounts = { [shotItemId]: positive(state.inventory?.[shotItemId]?.amount),
             ...HealingPotionStock.keptAmounts(state, { targetAmount: Infinity }),
             736: positive(state.inventory?.[736]?.amount) };
@@ -864,15 +870,26 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
             if (saleLimit !== null) slotLimit = Math.min(slotLimit, saleLimit);
             sold = Disposition.saleSlots(state, Disposition.saleCandidates(state, { ...sale, unlimited: true }));
         }
-        const free = Math.max(0, slotLimit - (Floor.stateInventory(state, Data.items).slots - sold) - plannedSlots);
-        bagHours = free === 0 ? 0 : spotTable.stacks > 0 ? free / spotTable.stacks : 24;
+        const held = Floor.stateInventory(state, Data.items);
+        const free = Math.max(0, slotLimit - (held.slots - sold.slots) - plannedSlots);
+        // The load left under the first weight step after the sale, the shots
+        // and potions being sized not counted (their weight is the rule's).
+        const mass = selfId => positive(ItemIndex.find(Data.items, Number(selfId))?.template?.mass);
+        const beginnerId = shotPlan.kind ? BeginnerShots.selfIdFor(shotPlan.kind, shotPlan.rank) : null;
+        const kitLoad = positive(state.inventory?.[shotItemId]?.amount) * mass(shotItemId)
+            + (beginnerId ? beginnerCurrent * mass(beginnerId) : 0)
+            + positive(state.inventory?.[potionItemId]?.amount) * mass(potionItemId);
+        const maxLoad = invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(state, timestamp).maxLoad;
+        const freeLoad = Floor.loadLimit(maxLoad) - (held.load - sold.load - kitLoad);
+        const hours = ConsumableTarget.bagHours({
+            slotHours: free === 0 ? 0 : bestTable.stacks > 0 ? free / bestTable.stacks : Infinity,
+            freeLoad, loadPerHour: positive(bestTable.load),
+            stock: [{ use: shotUse, mass: mass(shotItemId) }, { use: potionUse + potionRest.use, mass: mass(potionItemId) }] });
+        // C4 consumables all weigh something, so the load bounds the hours;
+        // weightless ones with no slot forecast would not: hold the line.
+        if (Number.isFinite(hours)) bagHours = hours;
+        else FailureLog.note('economy.kit:consumable_target_unbounded', new Error(`no bag bound for shot ${shotItemId} potion ${potionItemId}`));
     }
-    const Visits = invoke('GameServer/Bot/Economy/TownVisitInterval');
-    // Bag space bounds a planned outing; it never chooses its duration.
-    // Keep the existing initial estimate until actual town visits teach one.
-    const targetHours = hasBagForecast
-        ? Math.min(Visits.targetHours(state.stats), Visits.targetHours({}, bagHours))
-        : Visits.targetHours(state.stats);
     // The kit's rates (kitReader; published as stats.kitRates): what stock()
     // and kitCost() read over the live bag, so a kept plan, a later view and
     // main answer them later without this build scope. policy: the auto-shot
@@ -887,7 +904,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         shotsCanRestock: shotPolicy.purchaseUsePerHour > 0, shotBenefit: shotPolicy.rawUse > 0 ? shotBenefit / shotPolicy.rawUse : 0,
         potionId: Number(potionItemId), potionUse: use.potionsPerHour, potionRestUse: potionRest.use,
         potionBenefit: allPotionUse > 0 ? (positive(bestTable?.deaths) * deathHours + positive(potionRest.hours)) / allPotionUse : 0,
-        scrollHours: undefined, outingHours: targetHours }),
+        scrollHours: undefined, bagHours }),
         policy: { ownedUsePerHour: shotPolicy.usePerHour, beginnerUsePerHour: shotPolicy.beginnerUsePerHour,
             paidUsePerHour: shotPolicy.paidUsePerHour } };
     const bag = kitBag(state, { plan: shotPlan, potion, beginner: beginnerCurrent, hour: hourAdena });

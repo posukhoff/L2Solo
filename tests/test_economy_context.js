@@ -130,7 +130,8 @@ async function run() {
         return state;
     }
     // T43 table: shots no longer pay for a D-grade Warrior (L20-40, low loot); a C-grade Gladiator at 46 buys them.
-    const warrior = equippedFixture(1300, 2, 46, 100000);
+    // The wallet holds more than the kit's full bag of shots (8686 at 4.7 h, about 125.5k).
+    const warrior = equippedFixture(1300, 2, 46, 200000);
     warrior.stats.persona = { ...warrior.stats.persona, understanding: .5 };
     const kitDeps = { knowledgeEnabled: true };
     const warriorContext = Economy.forState(warrior, kitDeps);
@@ -189,7 +190,7 @@ async function run() {
     assert(Math.abs(gladiator.hourAdena - Hunt.netIncome(Table.value(gladiatorHunt.spotId, 'dps', 50, true),
         Hunt.consumablePrices(gladiator.state))) < 1);
     assert.equal(gladiator.moneyPrice, 1 / gladiator.hourAdena);
-    // The reserve is the next outing's refill whatever the bag holds: a bag with
+    // The reserve is a full bag's refill whatever the bag holds: a bag with
     // its refill owes the counter nothing, yet gear never takes the refill's money.
     const warriorPotions = warriorContext.stock('potions');
     const stocked = { ...warrior, inventory: { ...warrior.inventory,
@@ -257,7 +258,7 @@ async function run() {
             clan: { ...published, stats: { ...published.stats, clanId: 0 } },
             party: { ...published, party: { partyId: 'bgp_x_18', role: 'dd', leaderId: 17 } },
             skill: with_({ coldCombat: { classId: 1, skillSource: 'database', skills: [{ selfId: 3, level: 1 }] } }),
-            craft: with_({ dwarvenCraftLevel: 1 }), demand: with_({ clanMaterialDemand: { 1864: 10 } }), rhythm: with_({ visitEvery: 7 })
+            craft: with_({ dwarvenCraftLevel: 1 }), demand: with_({ clanMaterialDemand: { 1864: 10 } })
         };
         for (const [name, state] of Object.entries(moved)) assert.equal(read(state), held.plan, `a ${name} move is read, not judged`);
         assert.notEqual(Economy.forState(moved.clan, { timestamp: T, caller: 'step' }).plan, held.plan, 'the woken build decides anew');
@@ -680,7 +681,9 @@ async function run() {
         // T43 table: shots no longer pay for this NG Warrior (low loot); the shot stock is read on a C-grade Gladiator at 46 that buys them.
         const base = equippedFixture(1301, 2, 46, 50), context = Economy.forState(base);
         const stock = context.stock('shots');
-        assert(stock.usePerHour > 0 && stock.target === Math.ceil(stock.usePerHour * stock.targetHours));
+        // A full bag's use plus the reserve, never under one hour of use (ConsumableTarget).
+        assert(stock.usePerHour > 0 && stock.target === Math.max(Math.ceil(stock.usePerHour),
+            invoke('GameServer/Bot/Economy/ConsumableTarget').target(stock.usePerHour, stock.targetHours)));
         const Shot = invoke('GameServer/Inventory/ShotStock');
         // Main reads the rates this build publishes over the same bag.
         const rated = { ...base, stats: { ...base.stats, kitRates: context.statsPacket.kitRates,
