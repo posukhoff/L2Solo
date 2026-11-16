@@ -15,8 +15,8 @@
 //   price in the town it stands in or goes to }), wallet (adena), roadMoney (the fare back to the held spot;
 //   walking: 0), toHours, backHours (the trip's legs), horizon (the hunting
 //   hours to a full bag after the visit: need.hours, or with no need the same
-//   rule with no stock), offers ({ town, price }:
-//   the nearest NPC selling need.id, null when none), fightsBare (its held
+//   rule with no stock), offers ({ town, price, channel }:
+//   the seller of need.id in the town it stands in, else the one the fewest fare away, null when none), fightsBare (its held
 //   row's hour without shots kills anything), variant,
 //   value (formula only: { hour, bare, withoutDrop: hour values of its shots
 //   form, its bare form and its hunted form with a full bag; bagFull: its bag is full now; bagHoursBare:
@@ -69,7 +69,7 @@ const MAKERS = Object.freeze({
         const offer = state.offers;
         if (!offer || offer.town !== state.town) return [];
         const count = affordable(state, offer, state.wallet);
-        return count > 0 ? [act('buy', { id: state.need.id, count, price: offer.price }, row)] : [];
+        return count > 0 ? [act('buy', { id: state.need.id, count, price: offer.price, channel: offer.channel }, row)] : [];
     },
     back: (state, row) => [act('back', {}, row)]
 });

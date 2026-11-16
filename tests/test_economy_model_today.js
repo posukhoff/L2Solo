@@ -61,12 +61,19 @@ assert.equal(Today.visit({ ...main, bag: {}, money: 100000 }, view, { outingHour
 assert.equal(delta.flows.fixedSellers, -20 * 500);
 assert.equal(after.money, 40000 + 50 - 10000);
 assert.deepEqual(after.bag, {});
+// A main buys its shots in the town it stands in when that town sells them, though TownB sells them cheaper at a
+// 0 fare; with no seller in its town it hops to TownB (the 0 fare still a hop) and buys there.
+for (const [sell, towns, price] of [[{ TownA: { 1463: 600 }, TownB: { 1463: 500 } }, ['TownA'], 600], [{ TownB: { 1463: 500 } }, ['TownA', 'TownB'], 500]]) {
+    const free = Engine.viewOf({ ...snapshot, fares: { TownA: { TownA: 0, TownB: 0 }, TownB: { TownA: 0, TownB: 0 } } }, { market: { buy: market.buy, sell } });
+    const { delta: seen } = Today.visit({ ...main, bag: {}, money: 100000 }, free, { outingHours: 0.5, firing: Today.hunter(free).firing(main) });
+    assert.deepEqual([seen.towns, seen.shotsBoughtFixed > 0, seen.flows.fixedSellers], [towns, true, -price * seen.shotsBoughtFixed], `shots bought in ${towns.at(-1)} at ${price}`);
+}
 // A beginner stack (Soulshots for Beginners charge the no-grade 1463 here) is
 // never sold and counts as held of the shot it charges: the restock buys only
-// what the line lacks over it.
+// what the line lacks over it. It fires the no-grade shot with the no-grade Squire's Sword in hand (no weapon fires none).
 {
-    const taught = { ...view, shotFamilies: { grades: ['NONE'], ids: [[1463]] } };
-    const starter = { ...main, bag: {}, money: 100000, shots: { 5789: 15 } };
+    const taught = { ...view, items: { ...view.items, 2369: { kind: 'Weapon.Sword', grade: 'NONE', ref: 0, npcBuy: 0 } }, shotFamilies: { grades: ['NONE'], ids: [[1463]] } };
+    const starter = { ...main, weapon: 2369, bag: {}, money: 100000, shots: { 5789: 15 } };
     const firing = Today.hunter(taught).firing(starter);
     const { main: kept, delta: seen } = Today.visit(starter, taught, { outingHours: 0.5, firing });
     assert.deepEqual([firing.beginner, kept.shots[5789], seen.shotsSoldNpc, seen.unsold], [5789, 15, 0, 0], 'the beginner stack stays');

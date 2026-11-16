@@ -122,13 +122,19 @@ assert.deepEqual(brief(Supply.supplyChoice(out, formula({ value: { ...standingFu
 assert.deepEqual(brief(Supply.supplyChoice(out, formula({ ...longRoad, value: { ...zeroBare, bare: zeroBare.hour * 0.6, bagHoursBare: 1 } }))).map(a => a.kind), ['stay']);
 
 // Needs: the game's stock rule on the shots it fires (ConsumableTarget): its use over the hours to a full bag after the
-// sale plus a tenth; it spares its bag, the shots it does not fire and those above target.
+// sale plus a tenth; it spares its bag and the shots it does not fire; the shots it fires are kept whole (the game's
+// ShotStock.keptAmounts: the target bounds purchases).
 // slotsIn2: its slots fill in 2 h, nothing weighs (massless shots, no drop load).
 const slotsIn2 = { slotHours: 2, freeLoad: 1000, loadPerHour: 0, mass: 0 };
 const holder = { shots: { [SHOT]: 250, 1463: 5 }, bag: { [DROP]: 4 } };
 assert.deepEqual(Needs.consumable(holder, { id: SHOT, perHour: 99.5 }, slotsIn2), { id: SHOT, perHour: 99.5, hours: 2, target: 219, held: 250, short: -31 });
 assert.equal(Needs.consumable(holder, null, slotsIn2), null);
-assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 }, slotsIn2)), [[DROP, 4], [1463, 5], [SHOT, 30]]);
+assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 }, slotsIn2)), [[DROP, 4], [1463, 5]]);
+// 500 fired shots over a 120 target: none spare; 300 of another grade (the weapon fires SHOT): all 300 spare.
+const overTarget = { shots: { [SHOT]: 500 }, bag: {} };
+assert.deepEqual(Needs.surplus(overTarget, { ...Needs.consumable(overTarget, { id: SHOT, perHour: 100 }, slotsIn2), target: 120 }), [], 'the fired shots above the target are kept');
+const olderGrade = { shots: { 1463: 300 }, bag: {} };
+assert.deepEqual(Needs.surplus(olderGrade, Needs.consumable(olderGrade, { id: SHOT, perHour: 100 }, slotsIn2)), [[1463, 300]], 'a grade it does not fire is spare');
 assert.deepEqual(Needs.surplus({ shots: { [SHOT]: 120 }, bag: {} }, Needs.consumable({ shots: { [SHOT]: 120 } }, { id: SHOT, perHour: 100 }, slotsIn2)), []);
 // The drop's load sets the hours: 100 load an hour beside shots of mass 4 in 1000 free load (one shot kept free for the
 // whole count), 996 / (100 + 440) h, not the slots' 10.
@@ -191,8 +197,8 @@ const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, 
 // The kit's factors (the reference kit's: 1), deaths times dies.
 const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1, stats: { spotUnstated: 0 } });
 // One run through the plane, its visits seen as the engine calls them.
-function run(account, supply, hours, dies = 0, view = world) {
-    const visits = [], levels = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account] });
+function run(account, supply, hours, dies = 0, view = world, gear = null) {
+    const visits = [], levels = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account], gear });
     const seen = { ...made, start: context => {
         const hooks = made.start(context);
         return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ now, info, before: main, ...done }); return done; },
@@ -202,11 +208,13 @@ function run(account, supply, hours, dies = 0, view = world) {
     return { result, visits, levels };
 }
 const close = (a, b) => Math.abs(a - b) < 1e-6;
-// The world with SHOT as the no-grade Soulshot: Soulshots for Beginners (5789) charge it.
-const BEGINNER = 5789, taught = { ...world, shotFamilies: { grades: ['NONE'], ids: [[SHOT]] } };
+// The world with SHOT as the no-grade Soulshot: Soulshots for Beginners (5789) charge it; a bot fires it with the
+// no-grade Squire's Sword in hand (a bot with no weapon fires no shot), weightless here so the load above stays.
+const BEGINNER = 5789, SWORD = 2369, armed = { worn: { 7: SWORD } }, swordItem = { kind: 'Weapon.Sword', grade: 'NONE', npcBuy: 0, weight: 0 };
+const taught = { ...world, items: { ...world.items, [SWORD]: swordItem }, shotFamilies: { grades: ['NONE'], ids: [[SHOT]] } };
 // Holding both, a hunt fires the beginner shots first, then the bought ones.
 {
-    const both = Engine.mainOf(freshBot(9, { shots: { [BEGINNER]: 20, [SHOT]: 60 } }), 0, taught, [['all', 1]]);
+    const both = Engine.mainOf(freshBot(9, { ...armed, shots: { [BEGINNER]: 20, [SHOT]: 60 } }), 0, taught, [['all', 1]]);
     const firing = { id: SHOT, perHour: 30, beginner: Engine.beginnerOf(taught, SHOT) };
     assert.deepEqual(Engine.hunt(both, taught, 0.5, () => 0.5, firing).main.shots, { [BEGINNER]: 5, [SHOT]: 60 }, 'half an hour spends beginner shots only');
     assert.deepEqual(Engine.hunt(both, taught, 1, () => 0.5, firing).main.shots, { [BEGINNER]: 0, [SHOT]: 50 }, 'an hour spends the beginner shots, then 10 bought');
@@ -232,7 +240,7 @@ for (const supply of ['table', 'formula']) {
     assert.equal(result.money.closureGap, 0);
     // a fresh bot born with 45 beginner shots and none bought hunts with them first (1.5 h at 30 an hour), never sells
     // them, and only when they run out walks to town and buys no-grade shots with what its drop sold for.
-    const starter = run(freshBot(9, { shots: { [BEGINNER]: 45 } }), supply, 3, 0, taught);
+    const starter = run(freshBot(9, { ...armed, shots: { [BEGINNER]: 45 } }), supply, 3, 0, taught);
     const restock = starter.visits[1];
     assert.ok(restock && close(restock.now, 0.3 + 1.5 + 0.2), `${supply}: it hunts its beginner shots first and walks to town when they run out (${restock?.now})`);
     assert.deepEqual([restock.before.shots[BEGINNER], restock.main.shots[SHOT] > 0], [0, true], `${supply}: it buys its no-grade shots once the beginner shots are spent`);
@@ -438,32 +446,32 @@ for (const supply of ['table', 'formula']) {
 }
 
 // A level that changes the shot it fires to one it holds none of is the run-out the hunt raises when it spends the last shot: line 9
-// fires the no-grade Spiritshot 2509 at level 1 (Spiritshots for Beginners 5790 charge it, 600 held) and the no-grade Soulshot 1835 at
+// (Squire's Sword in hand) fires the no-grade Spiritshot 2509 at level 1 (Spiritshots for Beginners 5790 charge it, 600 held) and the no-grade Soulshot 1835 at
 // level 2 (5789 charges it, none held). Rooms are roomy so no bag fact comes in the run.
 const classWorld = (shotAtTwo) => viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
     shotFamilies: { grades: ['NONE'], ids: [[1835], [2509]] },
     hours: { 9: { 1: { classId: 9, shotId: 2509, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: shotAtTwo, best: near, bareBest: farBare2, top: [near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
-    items: { ...ITEMS, 2509: { kind: 'Other.Shot', npcBuy: 2, weight: 5 } },
+    items: { ...ITEMS, 2509: { kind: 'Other.Shot', npcBuy: 2, weight: 5 }, [SWORD]: swordItem },
     npcOffers: { preset: { 1835: [{ town: 'TownA', price: 7 }], 2509: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
     tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
 {
-    const changed = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(1835));
+    const changed = run(freshBot(9, { ...armed, shots: { 5790: 600 } }), 'table', 4, 0, classWorld(1835));
     assert.ok(changed.result.progress.stageBands.all.levelUps >= 1, 'it reached level 2');
     const trip = changed.visits.find(visit => !visit.info.born && visit.before.level >= 2);
     // a. at level 2 it holds none of the Soulshot it now fires: it goes to town and buys it (old code: no fact, no visit)
     assert.ok(trip && trip.delta.shotsBoughtNpc > 0 && trip.main.shots[1835] > 0, 'the level that changed its shot sends it to town to buy the new shot');
     assert.equal(changed.result.design.bareBeforeFirstBuy[0].bought, 1, 'its first buy is counted');
     // b. a level that keeps the shot (still 2509, 600 held) sends it nowhere
-    const kept = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(2509));
+    const kept = run(freshBot(9, { ...armed, shots: { 5790: 600 } }), 'table', 4, 0, classWorld(2509));
     assert.ok(kept.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(kept.visits.filter(visit => !visit.info.born).length, 0, 'a level that keeps the shot sends it nowhere');
     // c. a level whose row fires no shot sends it nowhere (nothing to buy)
-    const none = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(0));
+    const none = run(freshBot(9, { ...armed, shots: { 5790: 600 } }), 'table', 4, 0, classWorld(0));
     assert.ok(none.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(none.visits.filter(visit => !visit.info.born).length, 0, 'a level that fires no shot sends it nowhere');
     // d. it held none of the shot before the level: the level is no run-out (it hunts bare, adena 1 buys nothing at birth)
-    const bareBefore = run(freshBot(9, { shots: {}, money: 1 }), 'table', 4, 0, classWorld(1835));
+    const bareBefore = run(freshBot(9, { ...armed, shots: {}, money: 1 }), 'table', 4, 0, classWorld(1835));
     assert.ok(bareBefore.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(bareBefore.visits.filter(visit => !visit.info.born).length, 0, 'a main that held none before the level goes nowhere at it');
 }
@@ -722,6 +730,119 @@ for (const supply of ['table', 'formula']) {
         assert.equal(held(bestOut), 's1', `${supply}: the best outside top is held when it is worth most`);
         assert.equal(held(deadly), 's2', `${supply}: a best that kills its bot loses to the safe top row`);
     }
+}
+
+// The town chain buys gear after its sales and decides its supply again on what the gear left: a bot born in TownA
+// with the no-grade sword, 3000 no-grade shots and 1M adena, where a stub gear rule sells a D sword (100k) to a wallet
+// that pays it above the reserve: it wears the D sword, sells the 3000 no-grade shots (spare now: its weapon fires the
+// D shot) and buys D shots toward its target, all in the same chain. A stub that buys nothing leaves the chain as it is
+// without a gear rule (the same main and delta at every visit of a bot born with 60 shots that walks to town for more).
+{
+    const DSWORD = 2499, DSHOT = 1463;
+    const graded = viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+        hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } } }, yields: { 's1@1': drops, 's2@1': drops },
+        items: { ...ITEMS, [DSHOT]: { kind: 'Other.Shot', npcBuy: 5, weight: 4 }, [SWORD]: swordItem, [DSWORD]: { kind: 'Weapon.Sword', grade: 'D', npcBuy: 0, weight: 0 } },
+        shotFamilies: { grades: ['NONE', 'D'], ids: [[SHOT, DSHOT]] },
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }], [DSHOT]: [{ town: 'TownA', price: 20 }] } }, deathExp: [15, 30],
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
+    const dSword = { next: (main, town, reserve) =>
+        (main.weapon === SWORD && main.money - reserve >= 100000 ? { selfId: DSWORD, slot: 7, price: 100000, weapon: true, town: 'TownA', fare: 0 } : null) };
+    const bot = () => freshBot(9, { ...armed, money: 1000000, shots: { [SHOT]: 3000 } });
+    for (const supply of ['table', 'formula']) {
+        const born = run(bot(), supply, 1, 0, graded, dSword).visits[0];
+        assert.equal(born.main.weapon, DSWORD, `${supply}: it wears the D sword bought at the visit`);
+        assert.deepEqual([born.main.kit[7], born.delta.gearBought], [DSWORD, 1]);
+        assert.equal(born.delta.shotsSoldNpc, 3000, `${supply}: the no-grade shots are spare after the swap and sold`);
+        assert.ok(!born.main.shots[SHOT] && born.main.shots[DSHOT] > 0, `${supply}: it buys the D shots its new weapon fires in the same chain`);
+        assert.equal(born.main.money, 1000000 + 3000 * 2 - 100000 - born.main.shots[DSHOT] * 20, `${supply}: money = before + sales - weapon - D shots`);
+        // The gear spends only what is above the stock target at the town price: a wallet that pays the sword only
+        // without that reserve keeps its no-grade sword and buys its shots.
+        const short = run(freshBot(9, { ...armed, money: 100100, shots: { [SHOT]: 60 } }), supply, 1, 0, graded, dSword).visits[0];
+        assert.deepEqual([short.main.weapon, short.delta.gearBought, short.main.shots[SHOT] > 60], [SWORD, 0, true],
+            `${supply}: the reserve keeps the shot money from the sword`);
+        const none = { next: () => null };
+        const poor = () => freshBot(9, { ...armed, shots: { [SHOT]: 60 } });
+        const plain = run(poor(), supply, 6, 0, graded), stub = run(poor(), supply, 6, 0, graded, none);
+        const seen = visits => visits.map(visit => ({ now: visit.now, main: visit.main, delta: visit.delta, afterHours: visit.afterHours }));
+        assert.ok(plain.visits.length > 1, `${supply}: the control run visits a town after its birth`);
+        assert.deepEqual(seen(stub.visits), seen(plain.visits), `${supply}: a gear rule that buys nothing leaves every chain as it is`);
+    }
+}
+
+// One onward hop per town chain, by gatekeeper: TownA's NPC sells only no-grade shots; the D shots are sold only by a
+// configured city store in TownB (a fixed seller, 500 each), 3000 away; the walk back from TownB is 0.9 h (0.3 from
+// TownA). A gear rule that sells a D sword in TownB takes the bot there: it pays the fare, wears the sword, sells its
+// no-grade shots (spare now), buys D shots from the store, all booked, and walks back from TownB; a second piece sold
+// in TownC is not bought (one hop). A bot that already holds the D sword and buys no gear goes to TownB for its shots
+// when the wallet pays the fare and one shot, else it stays in TownA and buys none. At a 0 fare to TownB it buys the
+// D shots in TownA when TownA sells them, though TownB sells them cheaper; with none in TownA it hops to TownB.
+{
+    const DSWORD = 2499, DSHOT = 1463, DSHIRT = 391;
+    const hopSnapshot = { spotAvgLevel: AVG_LEVEL, header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+        hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } } }, yields: { 's1@1': drops, 's2@1': drops },
+        items: { ...ITEMS, [DSHOT]: { kind: 'Other.Shot', npcBuy: 5, weight: 4 }, [SWORD]: swordItem, [DSWORD]: { kind: 'Weapon.Sword', grade: 'D', npcBuy: 0, weight: 0 },
+            [DSHIRT]: { kind: 'Armor.Leather', grade: 'D', npcBuy: 0, weight: 0 } },
+        shotFamilies: { grades: ['NONE', 'D'], ids: [[SHOT, DSHOT]] },
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }, { town: 'TownB', price: 7 }] } }, deathExp: [15, 30],
+        fares: { TownA: { TownB: 3000, TownC: 5000 }, TownB: { TownA: 3000, TownC: 4000 }, TownC: { TownA: 5000, TownB: 4000 } },
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3, TownB: 0.9, TownC: 1.2 }, s2: { TownA: 0.3, TownB: 0.9, TownC: 1.2 } } },
+        bags: { 9: { slots: 80, maxLoad: LOAD } } };
+    const hopWorld = Engine.viewOf(hopSnapshot, { market: { sell: { TownB: { [DSHOT]: 500 } } } });
+    const freeOf = sell => Engine.viewOf({ ...hopSnapshot, fares: { TownA: { TownB: 0 }, TownB: { TownA: 0 } } }, { market: { sell } });
+    const swordInB = { next: (main, town, reserve) => (main.weapon === SWORD && main.money - reserve >= 103000
+        ? { selfId: DSWORD, slot: 7, price: 100000, weapon: true, town: 'TownB', fare: 3000 }
+        : main.weapon === DSWORD && !main.kit[10] ? { selfId: DSHIRT, slot: 10, price: 1000, weapon: false, town: 'TownC', fare: town === 'TownC' ? 0 : 4000 } : null) };
+    for (const supply of ['table', 'formula']) {
+        const born = run(freshBot(9, { ...armed, money: 1000000, shots: { [SHOT]: 3000 } }), supply, 1, 0, hopWorld, swordInB).visits[0];
+        const bought = born.main.shots[DSHOT];
+        assert.deepEqual([born.delta.towns, born.delta.flows.fares, born.main.weapon, born.delta.gearBought], [['TownA', 'TownB'], -3000, DSWORD, 1],
+            `${supply}: one hop to the sword's town, the fare paid, the sword worn`);
+        assert.ok(!born.main.kit[10], `${supply}: the piece sold in a third town is not bought`);
+        assert.equal(born.delta.shotsSoldNpc, 3000, `${supply}: the no-grade shots are spare after the swap and sold`);
+        assert.ok(bought > 0 && born.delta.shotsBoughtFixed === bought && !born.delta.shotsBoughtNpc, `${supply}: the D shots are bought from the store in TownB (${bought})`);
+        assert.deepEqual([born.delta.flows.fixedSellers, born.delta.flows.npcBuys], [-500 * bought, -100000], `${supply}: booked as a fixed seller's sale at its price`);
+        assert.equal(born.main.money, 1000000 + 3000 * 2 - 100000 - 3000 - 500 * bought, `${supply}: money = before + sales - weapon - fare - D shots`);
+        assert.ok(close(born.afterHours, 0.9), `${supply}: it walks back from TownB (${born.afterHours})`);
+        const none = { next: () => null };
+        const shooter = run(freshBot(9, { worn: { 7: DSWORD }, money: 1000000 }), supply, 1, 0, hopWorld, none).visits[0];
+        assert.deepEqual([shooter.delta.towns, shooter.delta.flows.fares, shooter.main.shots[DSHOT] > 0, shooter.delta.shotsBoughtFixed === shooter.main.shots[DSHOT]],
+            [['TownA', 'TownB'], -3000, true, true], `${supply}: a D-sword bot goes to TownB for its shots`);
+        assert.ok(close(shooter.afterHours, 0.9), `${supply}: and walks back from there`);
+        const poor = run(freshBot(9, { worn: { 7: DSWORD }, money: 3400 }), supply, 1, 0, hopWorld, none).visits[0];
+        assert.deepEqual([poor.delta.towns, poor.delta.flows.fares, poor.main.shots[DSHOT] || 0], [['TownA'], 0, 0], `${supply}: a wallet short of the fare and one shot stays`);
+        for (const [sell, towns, price] of [[{ TownA: { [DSHOT]: 600 }, TownB: { [DSHOT]: 500 } }, ['TownA'], 600], [{ TownB: { [DSHOT]: 500 } }, ['TownA', 'TownB'], 500]]) {
+            const near = run(freshBot(9, { worn: { 7: DSWORD }, money: 1000000 }), supply, 1, 0, freeOf(sell), none).visits[0], held = near.main.shots[DSHOT] || 0;
+            assert.deepEqual([near.delta.towns, near.delta.flows.fares, held > 0, near.delta.shotsBoughtFixed === held, near.delta.flows.fixedSellers], [towns, 0, true, true, -price * held],
+                `${supply}: at a 0 fare the D shots are bought in ${towns.at(-1)} at ${price}`);
+        }
+    }
+}
+
+// The gear step is the game's NPC gear rule (staticNpcUpgradePlan through gear.js): line 9 at level 20 (an archer there)
+// wearing the no-grade Squire's Sword in a town that sells a D bow (1,214,267) and a D leather shirt (185,851): with
+// 300k it buys the shirt (an unfunded weapon does not block armour); with 2M and 100k kept the bow, worn in its own
+// two-handed slot; with 1M kept the bow is not funded (the wallet above the reserve), the shirt is. The rule reads the
+// NPCs of every town: in Orc Village, which sells neither, the answer is the shirt of the town the fewest fare away
+// (Gludin, 3000), funded only when the wallet above the reserve pays the price and the fare; a town with no route to a
+// seller gives nothing.
+{
+    const Boot = require('../scripts/economy-model/boot');
+    Boot.boot('x50');
+    const Gear = require('../scripts/economy-model/gear');
+    const BOW = 274, SHIRT = 391;
+    const shop = { offers: new Map([[BOW, [{ town: 'Giran', price: 1214267, channel: 'npc_buy' }]],
+        [SHIRT, [{ town: 'Gludin', price: 185851, channel: 'npc_buy' }, { town: 'Giran', price: 185851, channel: 'npc_buy' }]]]),
+        items: { [BOW]: { kind: 'Weapon.Bow', grade: 'D' }, [SHIRT]: { kind: 'Armor.Leather', grade: 'D' } },
+        fares: { 'Orc Village': { Gludin: 3000, Giran: 11000 }, Gludio: { Gludin: null, Giran: null } } };
+    const gear = Gear.npcGear({ snapshot: { gearLadder: { slots: {} } }, view: shop });
+    const archer = money => ({ line: 9, level: 20, money, kit: { 7: SWORD }, weapon: SWORD });
+    assert.deepEqual(gear.next(archer(300000), 'Giran', 0), { selfId: SHIRT, slot: 10, price: 185851, weapon: false, town: 'Giran', fare: 0 }, 'the affordable armour before the unfunded weapon');
+    assert.deepEqual(gear.next(archer(2000000), 'Giran', 100000), { selfId: BOW, slot: 14, price: 1214267, weapon: true, town: 'Giran', fare: 0 }, 'the D weapon when the wallet pays it');
+    assert.equal(gear.next(archer(2000000), 'Giran', 1000000).selfId, SHIRT, 'the reserve kept holds the weapon back');
+    assert.deepEqual(gear.next(archer(300000), 'Orc Village', 0), { selfId: SHIRT, slot: 10, price: 185851, weapon: false, town: 'Gludin', fare: 3000 },
+        'in a village that sells no D piece: the D shirt of the town the fewest fare away');
+    assert.equal(gear.next(archer(188000), 'Orc Village', 0), null, 'the fare is paid from the same wallet: price and fare above it, not funded');
+    assert.equal(gear.next(archer(2000000), 'Gludio', 0), null, 'a town with no route to a seller gives nothing');
 }
 
 console.log('economy model design: ok');
