@@ -774,10 +774,11 @@ for (const supply of ['table', 'formula']) {
 // TownA). A gear rule that sells a D sword in TownB takes the bot there: it pays the fare, wears the sword, sells its
 // no-grade shots (spare now), buys D shots from the store, all booked, and walks back from TownB; a second piece sold
 // in TownC is not bought (one hop). A bot that already holds the D sword and buys no gear goes to TownB for its shots
-// when the wallet pays the fare and one shot, else it stays in TownA and buys none.
+// when the wallet pays the fare and one shot, else it stays in TownA and buys none. At a 0 fare to TownB it buys the
+// D shots in TownA when TownA sells them, though TownB sells them cheaper; with none in TownA it hops to TownB.
 {
     const DSWORD = 2499, DSHOT = 1463, DSHIRT = 391;
-    const hopWorld = Engine.viewOf({ spotAvgLevel: AVG_LEVEL, header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+    const hopSnapshot = { spotAvgLevel: AVG_LEVEL, header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
         hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } } }, yields: { 's1@1': drops, 's2@1': drops },
         items: { ...ITEMS, [DSHOT]: { kind: 'Other.Shot', npcBuy: 5, weight: 4 }, [SWORD]: swordItem, [DSWORD]: { kind: 'Weapon.Sword', grade: 'D', npcBuy: 0, weight: 0 },
             [DSHIRT]: { kind: 'Armor.Leather', grade: 'D', npcBuy: 0, weight: 0 } },
@@ -785,7 +786,9 @@ for (const supply of ['table', 'formula']) {
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }, { town: 'TownB', price: 7 }] } }, deathExp: [15, 30],
         fares: { TownA: { TownB: 3000, TownC: 5000 }, TownB: { TownA: 3000, TownC: 4000 }, TownC: { TownA: 5000, TownB: 4000 } },
         tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3, TownB: 0.9, TownC: 1.2 }, s2: { TownA: 0.3, TownB: 0.9, TownC: 1.2 } } },
-        bags: { 9: { slots: 80, maxLoad: LOAD } } }, { market: { sell: { TownB: { [DSHOT]: 500 } } } });
+        bags: { 9: { slots: 80, maxLoad: LOAD } } };
+    const hopWorld = Engine.viewOf(hopSnapshot, { market: { sell: { TownB: { [DSHOT]: 500 } } } });
+    const freeOf = sell => Engine.viewOf({ ...hopSnapshot, fares: { TownA: { TownB: 0 }, TownB: { TownA: 0 } } }, { market: { sell } });
     const swordInB = { next: (main, town, reserve) => (main.weapon === SWORD && main.money - reserve >= 103000
         ? { selfId: DSWORD, slot: 7, price: 100000, weapon: true, town: 'TownB', fare: 3000 }
         : main.weapon === DSWORD && !main.kit[10] ? { selfId: DSHIRT, slot: 10, price: 1000, weapon: false, town: 'TownC', fare: town === 'TownC' ? 0 : 4000 } : null) };
@@ -807,6 +810,11 @@ for (const supply of ['table', 'formula']) {
         assert.ok(close(shooter.afterHours, 0.9), `${supply}: and walks back from there`);
         const poor = run(freshBot(9, { worn: { 7: DSWORD }, money: 3400 }), supply, 1, 0, hopWorld, none).visits[0];
         assert.deepEqual([poor.delta.towns, poor.delta.flows.fares, poor.main.shots[DSHOT] || 0], [['TownA'], 0, 0], `${supply}: a wallet short of the fare and one shot stays`);
+        for (const [sell, towns, price] of [[{ TownA: { [DSHOT]: 600 }, TownB: { [DSHOT]: 500 } }, ['TownA'], 600], [{ TownB: { [DSHOT]: 500 } }, ['TownA', 'TownB'], 500]]) {
+            const near = run(freshBot(9, { worn: { 7: DSWORD }, money: 1000000 }), supply, 1, 0, freeOf(sell), none).visits[0], held = near.main.shots[DSHOT] || 0;
+            assert.deepEqual([near.delta.towns, near.delta.flows.fares, held > 0, near.delta.shotsBoughtFixed === held, near.delta.flows.fixedSellers], [towns, 0, true, true, -price * held],
+                `${supply}: at a 0 fare the D shots are bought in ${towns.at(-1)} at ${price}`);
+        }
     }
 }
 

@@ -88,12 +88,14 @@ assert.equal(first.flows.totals.npcBuys, -3000);
 assert.equal(first.gear.boughtNpcUnits, 1);
 assert.ok(first.gear.toNpcUnits >= 1, 'the replaced piece goes to the NPC');
 assert.deepEqual(first.visits.towns.map(row => row.town).sort(), ['TownA', 'TownB']);
-// The seller is the first offer by its price plus the fare to its town (the game's offer order): TownB's
-// 3000 and its 5000 fare beat TownA's own 9000, not TownA's 7000.
-for (const [here, town, fare] of [[9000, 'TownB', 5000], [7000, 'TownA', 0]]) {
-    const priced = Engine.viewOf({ ...snapshot, npcOffers: { preset: { 101: [{ town: 'TownA', price: here }, { town: 'TownB', price: 3000 }] }, x1: {} } });
-    const seller = Engine.sellerOf(priced, 101, 'TownA');
-    assert.deepEqual([seller.town, seller.fare], [town, fare], `TownA at ${here}: bought in ${town}`);
+// The seller is the town the main stands in when it sells the piece, at any price: TownA's own 9000 beats TownB's
+// 3000, with a 5000 fare and with none. With no offer in TownA it is TownB's, and a 0 fare to it is still a hop.
+for (const fare of [5000, 0]) {
+    const fares = { TownA: { TownA: 0, TownB: fare }, TownB: { TownA: fare, TownB: 0 } };
+    const priced = Engine.viewOf({ ...snapshot, fares, npcOffers: { preset: { 101: [{ town: 'TownA', price: 9000 }, { town: 'TownB', price: 3000 }] }, x1: {} } });
+    assert.deepEqual([Engine.sellerOf(priced, 101, 'TownA').town, Engine.hopSeller(priced, [101], 'TownA', 1e6)], ['TownA', null], `fare ${fare}: bought in TownA`);
+    const elsewhere = Engine.viewOf({ ...snapshot, fares });
+    assert.deepEqual(Engine.hopSeller(elsewhere, [101], 'TownA', 1e6), { town: 'TownB', price: 3000, channel: 'npc_buy', fare }, `fare ${fare}: a hop to TownB`);
 }
 // Loot goes to the NPC at its buy price; nobody sells the hour's shots, so the restock stays open.
 assert.ok(first.flows.totals.npcSales >= 500, 'the old piece and the materials sold');

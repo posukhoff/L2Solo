@@ -379,29 +379,32 @@ function hunt(main, view, huntHours, random, firing = null, kills = null, full =
     return { main: { ...main, exp, level: levelOf(view, exp, main.level), money: main.money + flows.huntCold, bag, shots }, delta };
 }
 
-// Where the main standing in `town` buys an item: the first of the view's
-// offers (the NPC lists and the configured stores) in the game's one offer
-// order (OfferOrder.best: the price plus the trip to the offer's town, here
-// the gatekeeper fare, nothing in town; at the same cost a store before an
-// NPC). With no town, no trip: the cheapest offer. Null when no town sells it
-// or no route leads to one that does. { town, price, channel, fare }.
+// Where the main standing in `town` buys an item, as a human buys (our choice;
+// travel time never counts): in its own town when that town sells it, the
+// best of that town's offers (the NPC lists and the configured stores) in the
+// game's one offer order (OfferOrder.best: the cheapest, at the same price a
+// store before an NPC); else the first of the other towns' offers in that
+// order with the gatekeeper fare to the offer's town as the trip cost (money
+// only). With no town, no trip: the cheapest offer. Null when no town sells
+// it or no route leads to one that does. { town, price, channel, fare }.
 function sellerOf(view, id, town = null) {
     const rows = view.offers.get(Number(id));
     if (!rows) return null;
     const fareOf = at => (town === null || at === town ? 0 : view.fares[town]?.[at]);
-    const offers = rows.filter(row => fareOf(row.town) !== null && fareOf(row.town) !== undefined)
-        .map(row => ({ ...row, sourceType: row.channel === 'npc_buy' ? 'npc' : 'store' }));
+    const reached = rows.filter(row => fareOf(row.town) !== null && fareOf(row.town) !== undefined);
+    const here = town === null ? [] : reached.filter(row => row.town === town);
+    const offers = (here.length ? here : reached).map(row => ({ ...row, sourceType: row.channel === 'npc_buy' ? 'npc' : 'store' }));
     const best = OfferOrder.best(offers, { cost: fareOf });
     return best ? { town: best.town, price: best.price, channel: best.channel, fare: fareOf(best.town) } : null;
 }
 
 // The one onward hop of a town visit (a gatekeeper teleport): to the seller
-// (sellerOf) of the first of `ids` whose seller is in another town, when the
-// wallet pays its fare and one unit; else null.
+// (sellerOf) of the first of `ids` whose seller is in another town (its fare
+// may be 0), when the wallet pays its fare and one unit; else null.
 function hopSeller(view, ids, town, money) {
     for (const id of ids) {
         const seller = sellerOf(view, id, town);
-        if (seller && seller.fare > 0) return money >= seller.fare + seller.price ? seller : null;
+        if (seller && seller.town !== town) return money >= seller.fare + seller.price ? seller : null;
     }
     return null;
 }

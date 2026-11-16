@@ -17,8 +17,9 @@ const KitHours = require('./kit-hours');
 // npcGear({ snapshot, view }) -> { next(main, town, reserve) }: the piece the
 // game's rule buys next for the main standing in town, among the NPCs of every
 // town (the game's gear errand reads all towns' NPC offers): its seller is the
-// first by price plus the fare to its town (Engine.sellerOf: the game's offer
-// order; only NPCs sell gear, the configured stores sell shots). Funded now
+// NPC of the town it stands in when that town sells the piece, else the first
+// of the other towns by price plus the fare to its town (Engine.sellerOf; only
+// NPCs sell gear, the configured stores sell shots). Funded now
 // from the adena above reserve, the fare to the seller's town included (our
 // choice: the teleport is paid from the same wallet), or null:
 // { selfId, slot, price, weapon, town, fare }. The answer reads the wallet, so
@@ -42,7 +43,7 @@ function npcGear({ snapshot, view }) {
                 .map(([slot, selfId]) => ({ slot: Number(slot), selfId: Number(selfId) }));
             const state = { ...body, adena: main.money, inventory: { ...KitHours.inventoryOf(pieces), 57: { selfId: 57, amount: main.money } },
                 stats: { ...body.stats, money: StatsPacket.money({ hourAdena: 0, moneyPrice: 0, refillReserve: Math.round(reserve), firstUnfundedPrice: 0 }) } };
-            // The NPC that sells the piece: the first by landed price (the price and the fare).
+            // The NPC that sells the piece: this town's, else the first elsewhere by price and fare.
             const sellers = new Map();
             const findNpcOffer = target => {
                 const seller = Engine.sellerOf(view, target.selfId, town);
