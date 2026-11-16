@@ -32,7 +32,8 @@
 //   died          a plane with deaths (plane.deaths === true; needs the snapshot's deathExp): the main dies
 //                 over its hunting hours at its row's deaths per hour, loses the death exp of its level
 //                 (levels down when it crosses the level's start), and the plane's visit runs at once as
-//                 in the respawn town, called with died: true; the way back is the visit's afterHours.
+//                 in the respawn town, called with died: true and town: the town of the row it died at; the way
+//                 back is the visit's afterHours.
 //                 It never dies after it has left for town.
 //   born          a plane with born: true: each main's one visit at hour 0 (called with born: true), before any
 //                 hunting; its way back is the visit's afterHours.
@@ -466,7 +467,7 @@ function heap() {
 //   full(main)  (optional) whether its bag is at the game's full rule: it hunts with no item drop (hunt's; none: never full)
 //   hunt(main, delta)  told each committed hunt, the delta with its spotHours and wayHours; it answers the main's bag
 //             when the hunt's bag fact cleared it (its slots destroyed: BagClearing), else nothing
-//   visit(main, now, { outingHours, died })  { main, delta, afterHours }: afterHours, the hours after
+//   visit(main, now, { outingHours, died, town })  { main, delta, afterHours }: afterHours, the hours after
 //             the arrival before it hunts again (its onward stops and its way back to the spot)
 //   levelUp(main, now)  the main after a level read
 //   event(event)  an event the plane pushed (any kind but the run's own); it throws on a kind it does not own
@@ -653,10 +654,12 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
             if (pendingDeath.get(event.who) !== event.at) continue; // replaced by a later schedule
             pendingDeath.set(event.who, null);
         }
-        let main = event.kind === 'arrived_town' ? huntTo(mains[event.who], event.at, departs) : huntTo(mains[event.who], event.at);
+        let main = event.kind === 'arrived_town' ? huntTo(mains[event.who], event.at, departs) : huntTo(mains[event.who], event.at), respawn = null;
         if (event.kind === 'died') {
             // The loss, the level it leaves (down: from level 1), then the respawn town's visit; the arrival
-            // it had pending is void, and its hours back are the visit's afterHours (not hunted).
+            // it had pending is void, and its hours back are the visit's afterHours (not hunted). The respawn
+            // town is the town of the row it died at, read before a lost level moves its spot.
+            respawn = townOfRow(view, spotRowOf(view, main), main.level);
             const lost = Math.min(main.exp, view.deathExp[main.level - 1]);
             const exp = main.exp - lost, level = levelOf(view, exp, 1);
             ledger.counters.deaths++;
@@ -683,7 +686,7 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
             // The restock covers an outing as long as the one just ended: its hours at the spot, from
             // the end of its last visit to the hour it left (lastVisit: the hour that visit ended).
             const outingHours = ((departs ?? event.at) - main.lastVisit) * rateOf(main.band).huntShare;
-            const { main: after, delta, afterHours = 0 } = hooks.visit(main, event.at, event.kind === 'died' ? { outingHours, died: true } : { outingHours });
+            const { main: after, delta, afterHours = 0 } = hooks.visit(main, event.at, event.kind === 'died' ? { outingHours, died: true, town: respawn } : { outingHours });
             Ledger.recordVisit(ledger, after, delta);
             // Its onward stops and its way back are not hunted: it hunts again from their end.
             main = { ...after, lastVisit: event.at + afterHours, since: event.at + afterHours };

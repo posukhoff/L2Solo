@@ -14,7 +14,7 @@
 //            action (it hunts on);
 //   arrival  the town chain: sell to the NPC, buy to the outing's target,
 //            walk back (the visit's afterHours);
-//   death    the respawn town (the held spot's town) runs the same chain.
+//   death    the respawn town (the town of the row it died at) runs the same chain.
 // The held spot is the bot's best row at the level in the form it can hunt,
 // by its own hour value (heldSpot), taken at its birth, the end of each town
 // chain and each new level. Called
@@ -369,7 +369,9 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                         state = queueFact(state, 'born', at, now);
                     }
                     if (FACTS.died(visitInfo)) state = queueFact(state, 'died', at, now);
-                    const town = townOf(view, at);
+                    // A death's chain runs in the respawn town the engine names (where it died); any other visit's
+                    // in the held spot's town.
+                    const town = FACTS.died(visitInfo) ? visitInfo.town : townOf(view, at);
                     if (!FACTS.town(town)) {
                         put(at, placed(state, 'hunt'));
                         return { main: at, delta: { ...executed(at, [], null, 0).delta, towns: [], noTown: 1 } };
