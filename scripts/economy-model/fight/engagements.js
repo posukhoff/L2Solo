@@ -229,7 +229,14 @@ function measureCell(c, spotProfile, { states, seeds }) {
             }
         });
     } finally { Math.random = random; CCPol.select = select; }
-    const fm = replays.map(r => matchupAt(seen, plain[r[0]], r[1]));
+    // The matchup once per start state and pull (its answer is a function of
+    // the two within the cell), counted once per replay of them.
+    const once = new Map();
+    const fm = replays.map(([si, k]) => {
+        const key = `${si}|${k}`;
+        if (!once.has(key)) once.set(key, matchupAt(seen, plain[si], k));
+        return once.get(key);
+    });
     for (const start of plain) delete start.holder;
     return { k: c.k, key: c.key, level: c.level, spotId: c.spotId, selfId: c.selfId, form: c.form, line, classId: c.classId, kind: c.kind,
         cell: c.cell, huntCell: asIs.cell, same: asIs.cell.every((v, i) => v === c.cell[i]), maxHp: owner?.maxHp ?? null, maxMp: owner?.maxMp ?? null,
