@@ -287,12 +287,17 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                 if (!(hour.deaths > 0) && !(ahead.worstFrom[main.level + 1] > 0)) {
                     return { spotId: at.spot, value, avgLevel, members: [{ deathsByLevel: [], reachLevel: main.level, outingHours: 0 }] };
                 }
-                const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);
-                const outingHours = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
-                const reached = Engine.levelOf(view, main.exp + Engine.huntExp(at, hour, outingHours * factors[form].kills), main.level);
-                const reachLevel = Math.min(reached, ahead.last), deathsByLevel = { [main.level]: (hour.deaths || 0) * deaths };
-                for (let level = main.level + 1; level <= reachLevel; level++) deathsByLevel[level] = ahead.byLevel[level] * deaths;
-                return { spotId: at.spot, value, avgLevel, members: [{ deathsByLevel, reachLevel, outingHours }] };
+                // members is read lazily, once: OutingSpot reads the outing facts only of the candidates it checks.
+                let members = null;
+                const factsOf = () => {
+                    const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);
+                    const outingHours = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
+                    const reached = Engine.levelOf(view, main.exp + Engine.huntExp(at, hour, outingHours * factors[form].kills), main.level);
+                    const reachLevel = Math.min(reached, ahead.last), deathsByLevel = { [main.level]: (hour.deaths || 0) * deaths };
+                    for (let level = main.level + 1; level <= reachLevel; level++) deathsByLevel[level] = ahead.byLevel[level] * deaths;
+                    return [{ deathsByLevel, reachLevel, outingHours }];
+                };
+                return { spotId: at.spot, value, avgLevel, get members() { return members || (members = factsOf()); } };
             };
             // A spot's deaths an hour by level in a form (its rows' at the reference kit, 0 at a level without its row), the
             // worst from a level to its last row and that last level, per (line, spot, form): the rows are static, built once.

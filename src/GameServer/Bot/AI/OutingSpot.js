@@ -52,7 +52,8 @@ const minMaxer = persona => !!persona && persona.primaryDrive === 'progression' 
 
 // { held: spotId | null, candidates, members, minMax, bound } -> { spotId, reason, refusedUnsafe }.
 // reason: 'kept' | 'first' | 'unfit:<why>' | 'minmax' | 'fallback:outleveled' | 'fallback:least_risk' | 'none';
-// refusedUnsafe: the candidates refused as unsafe. No spot fits: a player hunts the safest he has, he never stops
+// refusedUnsafe: the unsafe candidates worth more than the choice (the scan goes in value order, richest first, and stops at
+// the first that fits, so a candidate poorer than the choice is never read; with no fit, every unsafe one). No spot fits: a player hunts the safest he has, he never stops
 // playing: the best safe one out of his gap, else the one with the least expected deaths (the worst member's), ties by
 // value. None only without candidates.
 function choose({ held = null, candidates, members, minMax = false, bound }) {
@@ -60,10 +61,10 @@ function choose({ held = null, candidates, members, minMax = false, bound }) {
     const heldWhy = held === null ? null : unfit(own, members, bound);
     if (held !== null && heldWhy === null && !minMax) return { spotId: String(held), reason: 'kept', refusedUnsafe: 0 };
     let best = null, refusedUnsafe = 0;
-    for (const candidate of candidates) {
+    for (const candidate of [...candidates].sort((a, b) => b.value - a.value)) {
         const why = unfit(candidate, members, bound);
         if (why === 'unsafe') refusedUnsafe++;
-        if (why === null && (!best || candidate.value > best.value)) best = candidate;
+        if (why === null) { best = candidate; break; }
     }
     if (!best) {
         if (!candidates.length) return { spotId: null, reason: 'none', refusedUnsafe };

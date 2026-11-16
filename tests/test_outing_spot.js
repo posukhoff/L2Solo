@@ -45,6 +45,10 @@ assert.deepEqual(OutingSpot.choose({ held: null, candidates: [spot('x', 3, 20, 0
 // None in the gap: the best safe outleveled one, before an unsafe one in the gap.
 assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [spot('a', 1, 20, 0), spot('o', 2, 19, 0), spot('u', 5, 26, 0.5)], members: solo(26), bound: BOUND }),
     { spotId: 'o', reason: 'fallback:outleveled', refusedUnsafe: 1 });
+// The scan stops at the best fitting: a richer unsafe one is refused, a poorer candidate's facts are never read.
+const poorer = { spotId: 'z', value: 0.5, avgLevel: 20, get members() { throw new Error('read the members of a candidate poorer than the choice'); } };
+assert.deepEqual(OutingSpot.choose({ held: null, candidates: [poorer, spot('y', 1, 20, 0.08), spot('x', 3, 20, 0.12)], members: solo(20), bound: BOUND }),
+    { spotId: 'y', reason: 'first', refusedUnsafe: 1 });
 // No candidates: none.
 assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [], members: solo(20), bound: BOUND }),
     { spotId: null, reason: 'none', refusedUnsafe: 0 });
