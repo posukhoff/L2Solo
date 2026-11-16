@@ -305,9 +305,12 @@ try {
                 let result; do { result = it.next(); } while (!result.done);
                 return result.value;
             };
-            assert.equal(run(pausedRoot).buyAds?.[0]?.[0], 4113,
+            // A wallet that pays the bid above the bot's kit reserve (its stock's refill for the
+            // hours to a full bag): an unaffordable order is not protected.
+            const funded = { ...pausedRoot, adena: invoke('GameServer/Bot/Economy/EconomyContext').refillReserve(pausedRoot) + 100000 };
+            assert.equal(run(funded).buyAds?.[0]?.[0], 4113,
                 'a temporary pricing failure carries the still-needed standing piece bid');
-            assert.deepEqual(run({ ...pausedRoot, inventory: { ...pausedRoot.inventory, 4113: item(4113, 2) } }).buyAds, [],
+            assert.deepEqual(run({ ...funded, inventory: { ...funded.inventory, 4113: item(4113, 2) } }).buyAds, [],
                 'the same bid may retire after the required pieces arrive');
         } finally {
             [Listing.traderContext, Listing.evaluate, Needs.evaluate, BuyAds.linesFor, BuyAds.goalMoney, Town.chooseTown] = saved;
