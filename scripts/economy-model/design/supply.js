@@ -13,14 +13,15 @@
 //   the field), spotTown (the held spot's town), need (needs.consumable or
 //   null), surplus ([[id, count]], needs.surplus), npcBuy ({ id: the NPC's buy
 //   price in the town it stands in or goes to }), wallet (adena), roadMoney (the fare back to the held spot;
-//   walking: 0), toHours, backHours (the trip's legs), offers ({ town, price }:
+//   walking: 0), toHours, backHours (the trip's legs), horizon (the hunting
+//   hours to a full bag after the visit: need.hours, or with no need the same
+//   rule with no stock), offers ({ town, price }:
 //   the nearest NPC selling need.id, null when none), fightsBare (its held
 //   row's hour without shots kills anything), variant,
 //   value (formula only: { hour, bare, withoutDrop: hour values of its shots
 //   form, its bare form and its hunted form with a full bag; bagFull: its bag is full now; bagHoursBare:
 //   hours to its bag's fact hunting bare; outHours: hours to its shots' end;
 //   M: the line's best NPC income an hour; moneyWeight }) }
-const LIMITS = require('./limits');
 const ROWS = require('./supply-rows');
 
 // The closed set of actions a supply answer is made of. equip has no maker
@@ -127,12 +128,12 @@ function table(facts, state, rows = ROWS) {
 }
 
 // The formula variant. In the field: stay is worth 0; going prevents the loss
-// of the hours until the next fact on which it would go anyway (at most an
-// outing): out of shots, the hours to its bag's fact hunting bare at the
+// of the hours until the next fact on which it would go anyway (at most the
+// hours to a full bag after the visit, state.horizon: the stock rule's H): out of shots, the hours to its bag's fact hunting bare at the
 // bare hour's shortfall, scaled by the share of the target the trip buys
 // (with its wallet and what its surplus sells for there first, as in town);
 // its bag full, the hours to its shots' end at the drop's share of the hour;
-// both at once, the outing's hours of each. Its price: the road's hours at
+// both at once, those hours of each. Its price: the road's hours at
 // its own hour's value and the adena it spends at the money weight. Going
 // wins when it prevents more than it costs; a stay gives the table's reason
 // (stayReason). In town the
@@ -144,7 +145,7 @@ function formula(facts, state) {
     // A bag already full (its fact heard earlier and declined) stands with an out fact as both at once.
     const bag = kinds.has('bag') || (out && state.value.bagFull === true);
     if (!out && !bag) return [];
-    const value = state.value, horizon = LIMITS.OUTING_HOURS.value, offer = state.offers;
+    const value = state.value, horizon = state.horizon, offer = state.offers;
     const units = out && state.need && state.need.short > 0 && offer ? affordable(state, offer, state.wallet + saleOf(state)) : 0;
     const share = out && state.need && state.need.short > 0 ? units / state.need.short : 0;
     const outLoss = out ? Math.min(bag ? horizon : value.bagHoursBare, horizon) * (value.hour - value.bare) * share : 0;
