@@ -27,14 +27,17 @@ function consumable(main, firing, fill) {
 }
 
 // [[id, count]] the bot can spare: every bag item (its drop and the creation
-// items it does not wear), every shot it does not fire, and the shots it
-// fires above their target; never a restricted item (the beginner shots: no
-// sale, trade or drop, BeginnerShots.isRestricted).
+// items it does not wear) and every shot it does not fire (an older grade
+// after a weapon change, another kind); never a restricted item (the beginner
+// shots: no sale, trade or drop, BeginnerShots.isRestricted). The shot the
+// held weapon fires is kept whole: the target bounds purchases, not what it
+// keeps (the game's ShotStock.keptAmounts: personal ammunition stays usable
+// when the hunt forecast or the bag interval shrinks).
 function surplus(main, need) {
     const out = new Map();
     const add = (id, count) => { if (count > 0 && !BeginnerShots.isRestricted(id)) out.set(Number(id), (out.get(Number(id)) || 0) + count); };
     for (const [id, count] of Object.entries(main.bag)) add(id, count);
-    for (const [id, count] of Object.entries(main.shots)) add(id, need && Number(id) === need.id ? count - need.target : count);
+    for (const [id, count] of Object.entries(main.shots)) if (!need || Number(id) !== need.id) add(id, count);
     return [...out];
 }
 

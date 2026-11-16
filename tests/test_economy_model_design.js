@@ -122,13 +122,19 @@ assert.deepEqual(brief(Supply.supplyChoice(out, formula({ value: { ...standingFu
 assert.deepEqual(brief(Supply.supplyChoice(out, formula({ ...longRoad, value: { ...zeroBare, bare: zeroBare.hour * 0.6, bagHoursBare: 1 } }))).map(a => a.kind), ['stay']);
 
 // Needs: the game's stock rule on the shots it fires (ConsumableTarget): its use over the hours to a full bag after the
-// sale plus a tenth; it spares its bag, the shots it does not fire and those above target.
+// sale plus a tenth; it spares its bag and the shots it does not fire; the shots it fires are kept whole (the game's
+// ShotStock.keptAmounts: the target bounds purchases).
 // slotsIn2: its slots fill in 2 h, nothing weighs (massless shots, no drop load).
 const slotsIn2 = { slotHours: 2, freeLoad: 1000, loadPerHour: 0, mass: 0 };
 const holder = { shots: { [SHOT]: 250, 1463: 5 }, bag: { [DROP]: 4 } };
 assert.deepEqual(Needs.consumable(holder, { id: SHOT, perHour: 99.5 }, slotsIn2), { id: SHOT, perHour: 99.5, hours: 2, target: 219, held: 250, short: -31 });
 assert.equal(Needs.consumable(holder, null, slotsIn2), null);
-assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 }, slotsIn2)), [[DROP, 4], [1463, 5], [SHOT, 30]]);
+assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 }, slotsIn2)), [[DROP, 4], [1463, 5]]);
+// 500 fired shots over a 120 target: none spare; 300 of another grade (the weapon fires SHOT): all 300 spare.
+const overTarget = { shots: { [SHOT]: 500 }, bag: {} };
+assert.deepEqual(Needs.surplus(overTarget, { ...Needs.consumable(overTarget, { id: SHOT, perHour: 100 }, slotsIn2), target: 120 }), [], 'the fired shots above the target are kept');
+const olderGrade = { shots: { 1463: 300 }, bag: {} };
+assert.deepEqual(Needs.surplus(olderGrade, Needs.consumable(olderGrade, { id: SHOT, perHour: 100 }, slotsIn2)), [[1463, 300]], 'a grade it does not fire is spare');
 assert.deepEqual(Needs.surplus({ shots: { [SHOT]: 120 }, bag: {} }, Needs.consumable({ shots: { [SHOT]: 120 } }, { id: SHOT, perHour: 100 }, slotsIn2)), []);
 // The drop's load sets the hours: 100 load an hour beside shots of mass 4 in 1000 free load (one shot kept free for the
 // whole count), 996 / (100 + 440) h, not the slots' 10.
