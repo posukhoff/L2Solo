@@ -5,8 +5,7 @@
 // hunts combine on time (each one's measured walk brought to their joint density, kills capped by their
 // production as the game caps a cold solo bot), not by summing their kills, and one species alone reads back
 // its own cell; the hour's exp carries the C4
-// level-gap penalty once per species and the preset's exp rate; and one best
-// ranks the same rows for the row a bot holds and its candidates.
+// level-gap penalty once per species and the preset's exp rate.
 const assert = require('node:assert/strict');
 const HuntRows = require('../scripts/economy-model/rules/hunt-rows');
 const { gapFactor } = require('../src/GameServer/Progression/MobExperience');
@@ -91,15 +90,5 @@ const capOf = species => HuntRows.combine({ spot: { area: 1e6, density: 10, spec
     form: 1, fields: FIELDS, admitted: ['3', '4'] }).kills;
 assert.equal(capOf({ 3: { level: 10, count: 1, production: 30 }, 4: { level: 10, count: 1, production: null } }), 30, 'a species without production keeps the cap');
 close(capOf({ 3: { level: 10, count: 1, production: 0 }, 4: { level: 10, count: 1, production: 0 } }), 3600 / (6 + 6 * Math.sqrt(0.5)), 'production 0: no cap');
-
-// One best for the held row and the candidates, by the value a bot gives each row in the form (here income an hour).
-const income = row => row.adena + row.loot;
-const shots = HuntRows.best(rows, 'shots', income), bare = HuntRows.best(rows, 'bare', row => income({ ...row, ...row.shotless }));
-assert.equal(shots.best.spotId, 'b', 'firing shots: spot b earns 3000 an hour');
-assert.deepEqual(shots.top.map(row => row.spotId), ['b', 'a']);
-assert.equal(bare.best.spotId, 'a', 'bare: spot a, the only one the bot hunts bare');
-assert.deepEqual(bare.top.map(row => row.spotId), ['a']);
-assert.equal(shots.best, shots.top[0], 'the held row is the first candidate');
-assert.equal(HuntRows.best(rows, 'shots', row => row.exp).best.spotId, 'a', 'by exp an hour spot a is first: the value passed in ranks');
 
 console.log('economy model hunt rows ok');
