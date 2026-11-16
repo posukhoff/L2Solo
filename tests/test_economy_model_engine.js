@@ -88,6 +88,13 @@ assert.equal(first.flows.totals.npcBuys, -3000);
 assert.equal(first.gear.boughtNpcUnits, 1);
 assert.ok(first.gear.toNpcUnits >= 1, 'the replaced piece goes to the NPC');
 assert.deepEqual(first.visits.towns.map(row => row.town).sort(), ['TownA', 'TownB']);
+// The seller is the first offer by its price plus the fare to its town (the game's offer order): TownB's
+// 3000 and its 5000 fare beat TownA's own 9000, not TownA's 7000.
+for (const [here, town, fare] of [[9000, 'TownB', 5000], [7000, 'TownA', 0]]) {
+    const priced = Engine.viewOf({ ...snapshot, npcOffers: { preset: { 101: [{ town: 'TownA', price: here }, { town: 'TownB', price: 3000 }] }, x1: {} } });
+    const seller = Engine.sellerOf(priced, 101, 'TownA');
+    assert.deepEqual([seller.town, seller.fare], [town, fare], `TownA at ${here}: bought in ${town}`);
+}
 // Loot goes to the NPC at its buy price; nobody sells the hour's shots, so the restock stays open.
 assert.ok(first.flows.totals.npcSales >= 500, 'the old piece and the materials sold');
 assert.ok(first.counters.missingShots >= 1);

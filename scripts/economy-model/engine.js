@@ -55,6 +55,7 @@
 const { hash, mulberry } = require('../hunt-tables/common');
 const PartyRewardMath = require('../../src/GameServer/Actor/PartyRewardMath');
 const BeginnerShots = require('../../src/GameServer/Items/C4BeginnerShots');
+const OfferOrder = require('../../src/GameServer/Bot/Economy/OfferOrder');
 const Ledger = require('./ledger');
 const { npcBuyValue } = require('./rules/hunt-rows');
 
@@ -378,25 +379,36 @@ function hunt(main, view, huntHours, random, firing = null, kills = null, full =
     return { main: { ...main, exp, level: levelOf(view, exp, main.level), money: main.money + flows.huntCold, bag, shots }, delta };
 }
 
-// Where the main can buy an item: the offer in town, else the town with a
-// seller the fewest fare away (null when no town sells it or no route leads there).
-function sellerOf(view, id, town) {
+// Where the main standing in `town` buys an item: the first of the view's
+// offers (the NPC lists and the configured stores) in the game's one offer
+// order (OfferOrder.best: the price plus the trip to the offer's town, here
+// the gatekeeper fare, nothing in town; at the same cost a store before an
+// NPC). With no town, no trip: the cheapest offer. Null when no town sells it
+// or no route leads to one that does. { town, price, channel, fare }.
+function sellerOf(view, id, town = null) {
     const rows = view.offers.get(Number(id));
     if (!rows) return null;
-    const here = rows.find(row => row.town === town);
-    if (here) return { ...here, fare: 0 };
-    let best = null;
-    for (const row of rows) {
-        const fare = view.fares[town]?.[row.town];
-        if (fare === null || fare === undefined) continue;
-        if (!best || fare < best.fare || (fare === best.fare && row.price < best.price)) best = { ...row, fare };
-    }
-    return best;
+    const fareOf = at => (town === null || at === town ? 0 : view.fares[town]?.[at]);
+    const offers = rows.filter(row => fareOf(row.town) !== null && fareOf(row.town) !== undefined)
+        .map(row => ({ ...row, sourceType: row.channel === 'npc_buy' ? 'npc' : 'store' }));
+    const best = OfferOrder.best(offers, { cost: fareOf });
+    return best ? { town: best.town, price: best.price, channel: best.channel, fare: fareOf(best.town) } : null;
 }
 
-// The one onward hop of a town visit, by gatekeeper to a seller's town (a
-// sellerOf answer): its fare paid from the wallet and booked, the town added
-// to the visit's towns. Returns the adena left.
+// The one onward hop of a town visit (a gatekeeper teleport): to the seller
+// (sellerOf) of the first of `ids` whose seller is in another town, when the
+// wallet pays its fare and one unit; else null.
+function hopSeller(view, ids, town, money) {
+    for (const id of ids) {
+        const seller = sellerOf(view, id, town);
+        if (seller && seller.fare > 0) return money >= seller.fare + seller.price ? seller : null;
+    }
+    return null;
+}
+
+// The hop's booking (a hopSeller answer, or a gear piece's seller): its fare
+// paid from the wallet and booked, the town added to the visit's towns.
+// Returns the adena left.
 function hopTo(seller, money, delta) {
     delta.flows.fares -= seller.fare;
     delta.towns.push(seller.town);
@@ -716,5 +728,5 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: money }), ...added };
 }
 
-module.exports = { HAND_SLOTS, beginnerOf, heldOf, townOfRow, viewOf, hunt, shotsPerHour, sellerOf, hopTo, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf, levelOf,
+module.exports = { HAND_SLOTS, beginnerOf, heldOf, townOfRow, viewOf, hunt, shotsPerHour, sellerOf, hopSeller, hopTo, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf, levelOf,
     killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf, firedOf };

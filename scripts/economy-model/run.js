@@ -210,8 +210,9 @@ function modeOf(argv, snapshot, cohort) {
         // The design's sellers: the NPC shops and the configured city stores' shot lines (the game's D+ shot source
         // where no crafter sells: its NPCs sell no graded shot); no fixed buyer.
         const view = Engine.viewOf({ ...snapshot, hours: table.hours }, { market: { sell: Today.marketOf(snapshot).sell } }), anchor = {};
-        // The design is an NPC world: the shot's first price is the NPC's cheapest sell price (as today's anchor is its cheapest fixed line).
-        for (const [id, rows] of view.offers) anchor[id] = rows.find(row => row.channel === 'npc_buy')?.price;
+        // The shot's first price is its cheapest offer of the design's sellers (Engine.sellerOf with no trip): the NPC's
+        // for a no-grade shot, the configured store's for a graded one, so a graded kit reads its own shots factor.
+        for (const id of view.offers.keys()) anchor[id] = Engine.sellerOf(view, id).price;
         const kitHours = KitHours.gameKitHours({ snapshot, anchor });
         kitHours.warm();
         // The gear a main buys in a town chain: the game's NPC gear rule.

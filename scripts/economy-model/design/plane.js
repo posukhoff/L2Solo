@@ -356,8 +356,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 const firing = hunter.firing(main), fill = fillOf(main, row, firing), need = Needs.consumable(main, firing, fill), surplus = Needs.surplus(main, need);
                 const horizon = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
                 const npcBuy = Object.fromEntries(surplus.map(([id]) => [id, view.items[id]?.npcBuy || 0]));
-                // Who sells its shots: the seller in the town it stands in (in the field the held spot's town), else the
-                // town the fewest fare away; an NPC sells the no-grade shots in every town, the configured city stores the graded ones.
+                // Who sells its shots: the first offer by price plus the fare from the town it stands in (in the field the
+                // held spot's town; Engine.sellerOf); an NPC sells the no-grade shots in every town, the configured city stores the graded ones.
                 const offer = need ? Engine.sellerOf(view, need.id, place === 'town' ? town : spotTown) : null;
                 const toHours = Engine.toHoursOf(view, row.spotId), backHours = Engine.backHoursOf(view, row.spotId, spotTown);
                 return { place, town, spotTown, need, fill, horizon, surplus, npcBuy, wallet: main.money, roadMoney: 0, toHours, backHours,
@@ -431,8 +431,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             // or hopped, the supply decision again on that state where it stands (the older grade is spare now, the
             // new weapon's shots its need), else the first decision's other actions. One onward hop per chain (a
             // gatekeeper teleport, as a human takes): to a funded piece sold in another town, where the gear step goes
-            // on (a piece sold in a third town ends it); else, after the gear step, to the nearest seller of the shots
-            // it needs when this town sells none and the wallet pays the fare and one unit. It walks back from where
+            // on (a piece sold in a third town ends it); else, after the gear step, to the seller of the shots it needs
+            // when the best offer is in another town and the wallet pays the fare and one unit (Engine.hopSeller). It walks back from where
             // it ends. The chain's answer names that town.
             const townChain = (main, decided, town, spotTown, full) => {
                 const { actions, row, chain: facts } = decided, backOf = at => (row ? Engine.backHoursOf(view, row.spotId, at) : 0);
@@ -456,8 +456,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 }
                 if (!hopped) {
                     const { need } = supplyState(next, row, 'town', at, spotTown);
-                    const seller = need && need.short > 0 ? Engine.sellerOf(view, need.id, at) : null;
-                    if (seller && seller.fare > 0 && next.money >= seller.fare + seller.price) hop(seller);
+                    const seller = need && need.short > 0 ? Engine.hopSeller(view, [need.id], at, next.money) : null;
+                    if (seller) hop(seller);
                 }
                 if (next === sold.main) return { ...executed(next, actions.filter(action => action.kind !== 'sell'), at, backOf(at), sold.delta), town: at };
                 const soldBefore = sold.delta.shotsSoldNpc;
