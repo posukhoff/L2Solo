@@ -257,6 +257,61 @@ for (const [name, cell] of Object.entries(head.cells)) {
 const respawns = Object.values(head.cells).reduce((n, cell) => n + cell.respawnWaits.length, 0);
 assert.ok(respawns >= 5, `the restart is checked on five deaths or more (${respawns})`);
 
+// A party's death: two reference bots of line 2 at level 10 hunt 23_-29 on its
+// species 330 together through the party round for two hours, each member
+// committed as the lifecycle commits it (its clock at its result's doneAt), the
+// party stepped at its due. A dead member restarts 90 s after its death too,
+// never 90 s after the party's next ordinary step.
+function partyRespawnWaits() {
+    const BPR = invoke('GameServer/Bot/Population/BackgroundPartyResolver');
+    const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
+    const BotGear = invoke('GameServer/Bot/AI/BotGear');
+    const CCP = invoke('GameServer/Bot/Population/ColdCombatProfile');
+    const START = 1_750_000_000_000;
+    const spot = Decompose.speciesSpot(profiles.get('23_-29'), 330);
+    const classId = Generator.classFor('2', 10);
+    const member = (characterId) => {
+        const state = HuntCycle.referenceState(classId, 10, { gear: BotGear, profile: CCP, line: Generator.lineClassFor('2') });
+        const { maxHp, maxMp } = CCP.profileFor(state, START);
+        return { ...state, characterId, partyId: 'invariants', phase: 'cold', activity: 'grouped', spotId: spot.id, loc: { ...spot.center },
+            vitals: { hp: maxHp, maxHp, mp: maxMp, maxMp } };
+    };
+    let members = [member(1), member(2)];
+    let party = { partyId: 'invariants', leaderId: 1, spotId: spot.id, cohesion: 1, risk: 0, roleCoverage: {}, stats: {} };
+    // One seeded draw for the round and the rules it calls (Math.random), as the generator's hunt.
+    let seed = 7;
+    const rng = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const random = Math.random;
+    Math.random = rng;
+    const diedAt = new Map(), waits = [];
+    try {
+        for (let due = START; due < START + HOURS * 3600000;) {
+            const { timestamp, elapsedMs } = ColdClock.step(members[0], due);
+            const step = BPR.resolve({ party, members, spot, elapsedMs, timestamp, rng, spotHunters: 2 });
+            const results = new Map(step.memberResults.map(({ state, result }) => [state.characterId, result]));
+            members = members.map((state) => {
+                const result = results.get(state.characterId), patch = result.patch || {};
+                const hp = Number(patch.vitals?.hp ?? state.vitals.hp);
+                if (state.vitals.hp > 0 && hp <= 0) diedAt.set(state.characterId, ColdClock.doneAt(result) ?? timestamp);
+                if (state.vitals.hp <= 0 && hp > 0) waits.push(patch.stats.restUntil - diedAt.get(state.characterId));
+                return { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) }, stats: patch.stats || state.stats,
+                    inventory: patch.inventory || state.inventory, timing: { ...state.timing, lastResolvedAt: ColdClock.doneAt(result) ?? timestamp } };
+            });
+            party = { ...party, ...step.partyPatch, stats: { ...party.stats, ...(step.partyPatch?.stats || {}) } };
+            assert.notStrictEqual(party.status, 'dissolved', `the party hunts on (${party.stats.partyBreakReason})`);
+            due = Math.max(timestamp + 1, Number(step.nextResolveAt) || timestamp + 30000);
+        }
+    } finally {
+        Math.random = random;
+    }
+    return waits;
+}
+const partyWaits = partyRespawnWaits();
+assert.ok(partyWaits.length >= 5, `the party restart is checked on five deaths or more (${partyWaits.length})`);
+assert.deepStrictEqual(partyWaits.filter((ms) => Math.abs(ms - RESPAWN_MS) > 1).map((ms) => Math.round(ms / 1000)), [],
+    `a dead party member restarts ${RESPAWN_MS / 1000} s after its death (waits in s)`);
+console.log(`party: ${partyWaits.length} restarts, each ${RESPAWN_MS / 1000} s after the death`);
+
 // Each defect the cold round had, re-introduced, breaks its law.
 const lumped = new WeakSet();
 const defects = {
