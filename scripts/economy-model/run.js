@@ -47,10 +47,10 @@ const LEFT_OUT = Object.freeze([
 
 // What the design mode leaves out (its own list: the fresh world is solo, in an NPC world, and travel is events).
 const LEFT_OUT_DESIGN = Object.freeze([
-    'a solo bot in an NPC world: no market, no fixed buyers, no party, no twin acting, no bot-to-bot trade or crafting',
+    'a solo bot in an NPC world: no market, no fixed buyers, no party, no twin acting, no bot-to-bot trade or crafting; the configured city stores sell their shots (the graded shots\' only seller)',
     'potions, enchanting, augments, henna, quests, clans, the player, sessions, entry and retirement (a closed cohort of new characters)',
-    'a main buys only the shots it fires, at the NPC of its held spot\'s town (a town without the seller is an empty trip); its gear is its creation kit',
-    'the held spot is its line\'s best row at its level (no occupation, no travel to other spots); the walk is the town\'s tripHours both ways, not the Scroll of Escape or a fare',
+    'a main buys only the shots it fires and its gear by the game\'s NPC gear rule (staticNpcUpgradePlan, every town\'s NPCs), in a town chain of its held spot\'s town with one gatekeeper hop to a seller elsewhere (a piece first, else its shots); no gear from craft, drop or the market',
+    'the held spot is its line\'s best row at its level (no occupation, no travel to other spots); the walk is the town\'s tripHours both ways (back from the hop\'s town after a hop), not the Scroll of Escape',
     'per-kill item yields at the kill mix beyond the spot row\'s drop and spoil loot (Engine.killMixCorrection)'
 ]);
 
@@ -133,7 +133,7 @@ function printDesign(design) {
         + `returns ${percent(spot.returnShare)}, A-B-A ${percent(spot.abaShare)}, minMaxers ${spot.minMaxers}/${spot.mains} mains`);
     const gear = design.gear, grades = counts => `{${Object.entries(counts).map(([grade, n]) => `${grade} ${n}`).join(', ')}}`;
     console.log(`GEAR STEP weapon swaps ${gear.weaponSwaps} (${gear.swapsPerMain === null ? '-' : gear.swapsPerMain.toFixed(2)} per main), adena spent on gear ${gear.spent}, `
-        + `shots sold in a chain that swapped the weapon ${gear.shotsSoldAtSwap}; weapons at the end by grade ${grades(gear.endWeapons)}; shot units held of a grade the weapon cannot fire ${grades(gear.heldOtherGrade)}`);
+        + `shots sold in a chain that swapped the weapon ${gear.shotsSoldAtSwap}; hops ${gear.hops}, their fares ${gear.hopFares}; weapons at the end by grade ${grades(gear.endWeapons)}; shot units held of a grade the weapon cannot fire ${grades(gear.heldOtherGrade)}`);
     console.log(`  level distribution at the end: ${Object.entries(design.levelDistribution).sort((a, b) => a[0] - b[0]).map(([level, n]) => `${level}:${n}`).join(' ')}`);
 }
 
@@ -207,7 +207,9 @@ function modeOf(argv, snapshot, cohort) {
         const variant = Boot.option(argv, 'supply', null);
         if (!variant) throw new Error('design mode needs --supply table|formula (the supply variant is named)');
         const table = designTable(argv, snapshot, cohort.accounts);
-        const view = Engine.viewOf({ ...snapshot, hours: table.hours }), anchor = {};
+        // The design's sellers: the NPC shops and the configured city stores' shot lines (the game's D+ shot source
+        // where no crafter sells: its NPCs sell no graded shot); no fixed buyer.
+        const view = Engine.viewOf({ ...snapshot, hours: table.hours }, { market: { sell: Today.marketOf(snapshot).sell } }), anchor = {};
         // The design is an NPC world: the shot's first price is the NPC's cheapest sell price (as today's anchor is its cheapest fixed line).
         for (const [id, rows] of view.offers) anchor[id] = rows.find(row => row.channel === 'npc_buy')?.price;
         const kitHours = KitHours.gameKitHours({ snapshot, anchor });

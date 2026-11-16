@@ -394,6 +394,15 @@ function sellerOf(view, id, town) {
     return best;
 }
 
+// The one onward hop of a town visit, by gatekeeper to a seller's town (a
+// sellerOf answer): its fare paid from the wallet and booked, the town added
+// to the visit's towns. Returns the adena left.
+function hopTo(seller, money, delta) {
+    delta.flows.fares -= seller.fare;
+    delta.towns.push(seller.town);
+    return money - seller.fare;
+}
+
 // The engine's opening state of an account record (cohort.js): its line's
 // kit of the level, each piece it holds, and in each slot still empty the
 // piece it wears there; a worn hand piece (HAND_SLOTS: a one-handed weapon in
@@ -707,5 +716,5 @@ function simulate({ view, accounts, bands, rates, hours, seed = 1, plane, onProg
     return { ...Ledger.build(ledger, { mains, hours, events, inputs, held: money }), ...added };
 }
 
-module.exports = { HAND_SLOTS, beginnerOf, heldOf, townOfRow, viewOf, hunt, shotsPerHour, sellerOf, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf, levelOf,
+module.exports = { HAND_SLOTS, beginnerOf, heldOf, townOfRow, viewOf, hunt, shotsPerHour, sellerOf, hopTo, emptyFlows, mainOf, simulate, wholeCount, spotRowOf, huntExp, hourOf, shotOf, levelOf,
     killMixCorrection, adenaFactor, yieldRows, formOf, rowIn, isGear, isWeapon, expAt, rowItems, tripLeg, toHoursOf, backHoursOf, firedOf };

@@ -229,6 +229,9 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             ledger.counters.weaponSwaps = 0;
             ledger.counters.gearSpent = 0;
             ledger.counters.shotsSoldAtSwap = 0;
+            // The chains' onward hops (one at most per chain: to a piece's seller, else to its shots' seller) and their fares.
+            ledger.counters.hops = 0;
+            ledger.counters.hopFares = 0;
             const states = new Map();
             // The run report's tallies (each class by the level at the event's start): wall hours from a clock of
             // the level each main holds since an hour; road hours (the walk out, to town and back); trips by the facts in
@@ -353,11 +356,12 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 const firing = hunter.firing(main), fill = fillOf(main, row, firing), need = Needs.consumable(main, firing, fill), surplus = Needs.surplus(main, need);
                 const horizon = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
                 const npcBuy = Object.fromEntries(surplus.map(([id]) => [id, view.items[id]?.npcBuy || 0]));
-                // The NPC of the held spot's town that sells its shots (every starter town's does).
-                const offer = need ? (view.offers.get(need.id) || []).find(each => each.town === spotTown && each.channel === 'npc_buy') : null;
+                // Who sells its shots: the seller in the town it stands in (in the field the held spot's town), else the
+                // town the fewest fare away; an NPC sells the no-grade shots in every town, the configured city stores the graded ones.
+                const offer = need ? Engine.sellerOf(view, need.id, place === 'town' ? town : spotTown) : null;
                 const toHours = Engine.toHoursOf(view, row.spotId), backHours = Engine.backHoursOf(view, row.spotId, spotTown);
                 return { place, town, spotTown, need, fill, horizon, surplus, npcBuy, wallet: main.money, roadMoney: 0, toHours, backHours,
-                    offers: offer ? { town: offer.town, price: offer.price } : null, fightsBare: Engine.rowIn(row, 'bare').kills > 0, variant };
+                    offers: offer ? { town: offer.town, price: offer.price, channel: offer.channel } : null, fightsBare: Engine.rowIn(row, 'bare').kills > 0, variant };
             };
             // The same with the formula's hour values (the table variant never reads them).
             // A field decision also runs the other variant (the shadow), so its state carries the hour values too.
@@ -423,26 +427,43 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 return need && offers ? need.target * offers.price : 0;
             };
             // The town chain: the supply decision's sales; then the gear the game's NPC rule buys with what the
-            // wallet holds above the reserve, piece by piece on the state the last purchase left; when it bought any,
-            // the supply decision again on that state (the older grade is spare now, the new weapon's shots its need),
-            // else the first decision's other actions.
+            // wallet holds above the reserve, piece by piece on the state the last purchase left; when it bought any
+            // or hopped, the supply decision again on that state where it stands (the older grade is spare now, the
+            // new weapon's shots its need), else the first decision's other actions. One onward hop per chain (a
+            // gatekeeper teleport, as a human takes): to a funded piece sold in another town, where the gear step goes
+            // on (a piece sold in a third town ends it); else, after the gear step, to the nearest seller of the shots
+            // it needs when this town sells none and the wallet pays the fare and one unit. It walks back from where
+            // it ends. The chain's answer names that town.
             const townChain = (main, decided, town, spotTown, full) => {
-                const { actions, row, chain: facts } = decided, backHours = row ? Engine.backHoursOf(view, row.spotId, town) : 0;
-                if (!gear || !decided.decided) return executed(main, actions, town, backHours);
-                const sold = executed(main, actions.filter(action => action.kind === 'sell'), town, backHours);
-                let next = sold.main, swapped = false;
+                const { actions, row, chain: facts } = decided, backOf = at => (row ? Engine.backHoursOf(view, row.spotId, at) : 0);
+                if (!gear || !decided.decided) return { ...executed(main, actions, town, backOf(town)), town };
+                const sold = executed(main, actions.filter(action => action.kind === 'sell'), town, backOf(town));
+                let next = sold.main, swapped = false, at = town, hopped = false;
+                const hop = seller => {
+                    next = { ...next, money: Engine.hopTo(seller, next.money, sold.delta) };
+                    at = seller.town;
+                    hopped = true;
+                    ledger.counters.hops++;
+                    ledger.counters.hopFares += seller.fare;
+                };
                 for (let piece = 0; piece < KIT_SLOTS; piece++) {
-                    const buy = gear.next(next, town, reserveOf(next, row, town, spotTown));
-                    if (!buy) break;
+                    const buy = gear.next(next, at, reserveOf(next, row, at, spotTown));
+                    if (!buy || (buy.town !== at && hopped)) break;
+                    if (buy.town !== at) hop(buy);
                     next = EXECUTORS.gear(next, { kind: 'gear', id: buy.selfId, slot: buy.slot, price: buy.price }, sold.delta, view);
                     ledger.counters.gearSpent += buy.price;
                     if (buy.weapon) { ledger.counters.weaponSwaps++; swapped = true; }
                 }
-                if (next === sold.main) return executed(next, actions.filter(action => action.kind !== 'sell'), town, backHours, sold.delta);
+                if (!hopped) {
+                    const { need } = supplyState(next, row, 'town', at, spotTown);
+                    const seller = need && need.short > 0 ? Engine.sellerOf(view, need.id, at) : null;
+                    if (seller && seller.fare > 0 && next.money >= seller.fare + seller.price) hop(seller);
+                }
+                if (next === sold.main) return { ...executed(next, actions.filter(action => action.kind !== 'sell'), at, backOf(at), sold.delta), town: at };
                 const soldBefore = sold.delta.shotsSoldNpc;
-                const again = executed(next, Supply.supplyChoice(facts, decisionState(next, row, 'town', town, spotTown, full)), town, backHours, sold.delta);
+                const again = executed(next, Supply.supplyChoice(facts, decisionState(next, row, 'town', at, spotTown, full)), at, backOf(at), sold.delta);
                 if (swapped) ledger.counters.shotsSoldAtSwap += again.delta.shotsSoldNpc - soldBefore;
-                return again;
+                return { ...again, town: at };
             };
 
             return {
@@ -525,7 +546,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     // The chain's end is an outing's start: the held spot is kept or re-picked (on the shots it bought; the
                     // purchases were sized on the spot it held, the next visit sizes on a new one) and it walks back to it.
                     const back = { ...chain.main, spot: holdSpot(chain.main, chain.main.spot === null ? null : String(chain.main.spot)) }, heldRow = Engine.spotRowOf(view, back);
-                    const done = { ...chain, main: back, afterHours: chain.afterHours > 0 && heldRow ? Engine.backHoursOf(view, heldRow.spotId, town) : chain.afterHours };
+                    const done = { ...chain, main: back, afterHours: chain.afterHours > 0 && heldRow ? Engine.backHoursOf(view, heldRow.spotId, chain.town) : chain.afterHours };
                     // It walks back and hunts again from the visit's end.
                     put(done.main, { ...placed(heard, 'hunt'), trip: null, full: fullOf(view, bagsOf(done.main), carried(done.main)) });
                     // The report: the trip that ends here (its road, whether it bought its need) and the road back.
@@ -536,11 +557,11 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                         if (trip.bag && trip.out) book.bothTrips++;
                         if (trip.out) {
                             book.consumableTrips++;
-                            if (!(chain.delta.shotsBoughtNpc > 0)) book.emptyTrips++;
+                            if (!(chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0)) book.emptyTrips++;
                         }
                     }
                     tally[classOf(done.main.level)].roadHours += done.afterHours;
-                    if (chain.delta.shotsBoughtNpc > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
+                    if (chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
                     return done;
                 },
                 levelUp(main, now) {
@@ -618,7 +639,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     return { design: { variant, levels, spotChoice: spotReport, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
                         spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution,
                         gear: { weaponSwaps: ledger.counters.weaponSwaps, swapsPerMain: mains.length ? ledger.counters.weaponSwaps / mains.length : null,
-                            spent: ledger.counters.gearSpent, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, endWeapons: weapons, heldOtherGrade: otherGrade } } };
+                            spent: ledger.counters.gearSpent, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, hops: ledger.counters.hops, hopFares: ledger.counters.hopFares,
+                            endWeapons: weapons, heldOtherGrade: otherGrade } } };
                 }
             };
         }
@@ -640,11 +662,10 @@ const EXECUTORS = Object.freeze({
         if (Engine.isGear(view.items[action.id])) delta.gearToNpc += action.count;
         return { ...main, bag, shots, money: main.money + value };
     },
-    // Buy from the NPC at its price.
+    // Buy from its seller at its price: the NPC, or a configured city store (a fixed seller).
     buy(main, action, delta) {
         const cost = action.count * action.price;
-        delta.flows.npcBuys -= cost;
-        delta.shotsBoughtNpc += action.count;
+        if (action.channel === 'fixed_wts') { delta.flows.fixedSellers -= cost; delta.shotsBoughtFixed += action.count; } else { delta.flows.npcBuys -= cost; delta.shotsBoughtNpc += action.count; }
         return { ...main, shots: { ...main.shots, [action.id]: (main.shots[action.id] || 0) + action.count }, money: main.money - cost };
     },
     // Buy a piece of gear from the NPC at its price and wear it in its slot: what it cannot be worn with (the

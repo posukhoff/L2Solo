@@ -161,10 +161,8 @@ function visit(main, view, context = {}) {
     // One onward hop: to the nearest seller of the first errand still open.
     const first = open.map(errand => ({ errand, seller: Engine.sellerOf(view, errand.id, town) })).find(row => row.seller && row.seller.fare > 0);
     if (first && money >= first.seller.fare + first.seller.price) {
-        money -= first.seller.fare;
-        flows.fares -= first.seller.fare;
+        money = Engine.hopTo(first.seller, money, delta);
         const there = first.seller.town;
-        delta.towns.push(there);
         open = open.filter(errand => {
             const seller = Engine.sellerOf(view, errand.id, there);
             return !(seller?.fare === 0 && buy(errand, seller));
