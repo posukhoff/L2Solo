@@ -31,6 +31,7 @@ const Decompose = require('./decompose');
 const Matchup = require('../rules/fight-matchup');
 
 const CCPol = invoke('GameServer/Bot/Population/ColdClassPolicy');
+const CCP = invoke('GameServer/Bot/Population/ColdCombatProfile');
 const Potions = invoke('GameServer/Bot/AI/HealingPotionStock');
 const PveEncounter = require('../../../src/GameServer/Bot/Population/ColdPveEncounter');
 
@@ -181,11 +182,15 @@ function spread(starts, n) {
 }
 
 // The model under test at one start state and pull: the matchup (fight-matchup)
-// from the replay's own start state, pull and area share.
+// from the replay's own start state, pull and area share, on a fight profile
+// built from the replay's state at its start, as the game builds one per fight
+// (BackgroundResolver botCombatStats): the stat views ColdCombatProfile keeps
+// per profile object then read this engagement's buffs at its time.
 function matchupAt(seen, start, k) {
     const p = seen.profiles?.find(q => q.servitor !== true);
-    if (!p || !seen.view || !seen.fp) return null;
-    const m = Matchup.engagement({ profile: p, fp: seen.fp, mob: seen.view, k, start, bag: start.bag, holder: start.holder,
+    if (!p || !seen.view || !start.holder) return null;
+    const fp = CCP.fightProfile(start.holder, start.at);
+    const m = Matchup.engagement({ profile: p, fp, mob: seen.view, k, start, bag: start.bag, holder: start.holder,
         areaShare: Matchup.areaShareAt(seen.profiles, start.hp, start.mp, seen.view) });
     return m.cut ? { cut: true } : { k, ms: m.ms, taken: m.taken.mean, square: m.taken.square, actions: m.botActions,
         casts: Object.values(m.casts).reduce((a, n) => a + n, 0), potions: m.potions };
@@ -389,5 +394,5 @@ function main(argv) {
     }
 }
 
-module.exports = { heldOut, kindOf, sampleCells, huntStarts, measureCell, matchupAt, reference, alongside, bounds, main };
+module.exports = { heldOut, kindOf, sampleCells, huntStarts, spread, measureCell, matchupAt, reference, alongside, bounds, main };
 if (require.main === module) main(process.argv.slice(2));

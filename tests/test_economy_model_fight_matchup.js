@@ -41,11 +41,13 @@ try {
             const spot = built.profiles.find(one => String(one.id) === String(c.spotId));
             assert(spot, `the catalogue has the spot ${c.spotId}`);
             const { watched, starts } = Engagements.huntStarts(c, spot);
-            const seen = Decompose.summarize(watched, 2).seen, holder = starts[0]?.state;
-            assert(holder && seen.view, `${c.k}: the table's hunt fights`);
+            // The states the sample was replayed from, each with its own bot state.
+            const seen = Decompose.summarize(watched, 2).seen, picked = Engagements.spread(starts, c.states.length);
+            assert(picked.length === c.states.length && seen.view, `${c.k}: the table's hunt fights from the sample's starts`);
             const perReplay = [];
             for (const [si, k, n] of c.ran) {
-                const m = Engagements.matchupAt(seen, { ...c.states[si], holder }, k);
+                assert.equal(picked[si].timestamp, c.states[si].at, `${c.k}: start ${si} is the sample's`);
+                const m = Engagements.matchupAt(seen, { ...c.states[si], holder: picked[si].state }, k);
                 for (let i = 0; i < n; i++) perReplay.push(m);
             }
             cells.push({ k: c.k, kind: c.kind, maxHp: c.maxHp, R: c.R, fm: Engagements.alongside(perReplay) });
