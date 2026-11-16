@@ -36,9 +36,12 @@ function assertTiles(name, asIs, hours) {
 function watchedDecompose(args) {
     const real = BR.resolveSolo, steps = [];
     BR.resolveSolo = options => {
-        if (steps.length && options.timestamp <= steps[steps.length - 1].t) steps.length = 0;
+        // A step never resolves before the bot's clock (where the last round ended): one that does starts the next hunt.
+        if (steps.length && options.timestamp < steps[steps.length - 1].end) steps.length = 0;
         const result = real(options), state = options.state;
-        steps.push({ t: options.timestamp, death: state.activity === 'dead' || Number(state.vitals?.hp) <= 0 || result.debug?.died === true });
+        // A round ends at its last action (doneAt): a dying round at the death, a revive at the death it restarts from.
+        const end = Number(result.doneAt) > 0 ? Math.ceil(Number(result.doneAt)) : options.timestamp;
+        steps.push({ t: options.timestamp, end, death: state.activity === 'dead' || Number(state.vitals?.hp) <= 0 || result.debug?.died === true });
         return result;
     };
     try { return { out: Decompose.decompose(args), steps }; } finally { BR.resolveSolo = real; }
@@ -76,7 +79,7 @@ try {
         assert(died.asIs.deaths > 0, `the L5 mystic dies at ${DYING_SPOT} (${died.asIs.deaths})`);
         assertTiles('dying', died.asIs, dyingHours);
         const end = steps[0].t + dyingHours * 3600000;
-        const recovery = steps.reduce((ms, step, i) => ms + (step.death ? Math.min(steps[i + 1]?.t ?? end, end) - step.t : 0), 0);
+        const recovery = steps.reduce((ms, step, i) => ms + (step.death ? Math.min(steps[i + 1]?.t ?? end, end) - step.end : 0), 0);
         assert(Math.abs(died.asIs.wallMs.death - recovery) < 1e-3, `death is the gaps after the dying rounds and the revives (${died.asIs.wallMs.death} vs ${recovery})`);
     } finally {
         Lift.lift(false);
