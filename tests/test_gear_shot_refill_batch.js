@@ -31,9 +31,10 @@ board.put({ id: 1, ownerId: 990127, storeType: 1, kind: 'shop', town: 'Giran',
     lines: [{ lineId: 1, selfId: 1464, count: 2000, enchant: 0, price: 20 }] });
 board.put({ id: 2, ownerId: 990128, storeType: 1, kind: 'shop', town: 'Giran',
     lines: [{ lineId: 2, selfId: 420, count: 1, enchant: 0, price: 700000 }] });
-// 20 new loot stacks an hour fill the 30 slots its gear leaves of the solo
-// bot's 40-slot half bag (it turns back there) in 1.5 h: the shot stock is
-// that bag's use plus the reserve, ceil(100 x 1.5 x 1.1) = 165.
+// 20 new loot stacks an hour fill the 29 slots its gear and the scroll the
+// visit buys leave of the solo bot's 40-slot half bag (it turns back there) in
+// 1.45 h, held to a tenth below: 1.4 h. The shot stock is that bag's use plus
+// the reserve, ceil(100 x 1.4 x 1.1) = 154.
 const row = shots => ({ exp: shots ? 1000000 : 500000, shots: 100, potions: 0, deaths: 0, stacks: 20 });
 Table.value = (_id, _role, _level, shots) => row(shots);
 // The shot benefit compares the best rows with and without shots (ShotStock.usePolicy).
@@ -44,14 +45,14 @@ const deps = { timestamp, spots: [], board, npcOffersFor: () => [],
 try {
     assert(Progression.assess(state).required, 'the Tyrant still needs its C-grade legs');
     const before = Economy.forState(state, deps), stock = before.stock('shots');
-    assert.equal(stock.survivalTarget, 100); assert.equal(stock.target, 165);
+    assert.equal(stock.survivalTarget, 100); assert.equal(stock.target, 154);
     assert.equal(before.network.activity.rootKey, 'stock:shots');
-    assert.equal(before.network.activity.amount, 155,
+    assert.equal(before.network.activity.amount, 144,
         'one available market lot fills the full bag\'s stock instead of only the missing survival tranche');
     const decision = invoke('GameServer/Bot/Population/ColdEconomyDecision').capture(before, state);
     const goal = invoke('GameServer/Bot/Goals/NeedsEvaluator').evaluate(state, { now: timestamp, errand: null,
         economy: { ...before, network: { ...before.network, activity: decision.activity } } })[0];
-    assert.equal(goal.target.amount, 155, 'the larger native order survives worker transport and goal creation');
+    assert.equal(goal.target.amount, 144, 'the larger native order survives worker transport and goal creation');
     for (const held of [100, 400]) {
         const filled = { ...state, inventory: { ...inventory, 1464: { ...inventory[1464], amount: held } },
             stats: { ...state.stats, ...before.statsPacket } };
