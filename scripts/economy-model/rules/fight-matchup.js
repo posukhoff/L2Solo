@@ -39,14 +39,22 @@ const MAX_ACTIONS = 400;
 // A drunk bottle holds the bot's next action this long (the cold fight's potion turn).
 const POTION_MS = 250;
 // The pull's HP left in this many equal bins; one pick's hit as this many
-// equal-mass atoms of this many seeded draws of the game's roll. Measured on
-// 170 cells of the 1-19 hunt table against the replayed game fight: from 4096
-// draws to 1024 the time per kill and the damage per engagement move by under
-// 0.002 at the median, to 512 (32 atoms) the time moves by 0.009. The draws
-// are most of the cost: about 8 ms per engagement at 1024, 24 ms at 4096.
+// equal-mass atoms of this many seeded draws of the game's roll, the draws
+// stratified (STRATA). Measured on the 120 admitted cells of the 1-19 hunt
+// table against the replayed game fight: from 1024 stratified draws (64
+// atoms) down to 128 the time per kill and the damage per engagement move by
+// at most 0.001 at the median; at 32 atoms the time moves by 0.003. About
+// 1.8 ms per engagement at 128 draws, 5.7 ms at 1024.
 const HP_BINS = 256;
 const HIT_ATOMS = 64;
-const HIT_DRAWS = 1024;
+const HIT_DRAWS = 128;
+// The first uniforms of one hit (hit or land, crit, spread) are stratified:
+// draw i's k-th uniform is the i-th of a shuffled column of one value per
+// equal stratum of [0, 1), so the draws cover each outcome in proportion. A
+// hit takes up to five (a lethal strike's rolls); the ones past STRATA come
+// straight from the stream (stratifying five measured the same on the 120
+// cells).
+const STRATA = 3;
 // The fight ends when the chance the pull still lives falls below DEAD; one
 // still alive above CUT at MAX_ACTIONS is cut.
 const DEAD = 1e-5;
@@ -71,16 +79,32 @@ function areaShareAt(profiles, hp, mp, mob) {
 }
 
 // One pick's hit on one mob as HIT_ATOMS equal-mass atoms (ascending) of the
-// game's own roll, drawn from a stream seeded by the pick. Cached per pick
-// within one engagement: its other inputs (the fighter's profile and state,
-// the mob, the engagement's start time, the shot) are fixed there.
+// game's own roll, drawn from a stream seeded by the pick and stratified per
+// uniform (STRATA). Cached per pick within one engagement: its other inputs
+// (the fighter's profile and state, the mob, the engagement's start time, the
+// shot) are fixed there.
 function hitAtoms(cache, fighter, selected, one, at, shot) {
     const key = selected?.skill ? `${selected.skill.selfId}|${selected.magic}|${selected.power}` : 'w';
     let atoms = cache.get(key);
     if (atoms) return atoms;
     const rng = TendencyRoll.seeded(key), loaded = CCP.actionShot(shot, selected?.skill || null) || null;
+    const columns = Array.from({ length: STRATA }, () => {
+        const column = new Float64Array(HIT_DRAWS);
+        for (let i = 0; i < HIT_DRAWS; i++) column[i] = (i + rng()) / HIT_DRAWS;
+        for (let i = HIT_DRAWS - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1)), v = column[i];
+            column[i] = column[j];
+            column[j] = v;
+        }
+        return column;
+    });
+    let i = 0, k = 0;
+    const stream = () => (k < STRATA ? columns[k++][i] : rng());
     const draws = new Float64Array(HIT_DRAWS);
-    for (let i = 0; i < HIT_DRAWS; i++) draws[i] = Math.max(0, BR.combat.attackDamage(fighter, selected, one, rng, { vsMob: true, at, shot: loaded }));
+    for (i = 0; i < HIT_DRAWS; i++) {
+        k = 0;
+        draws[i] = Math.max(0, BR.combat.attackDamage(fighter, selected, one, stream, { vsMob: true, at, shot: loaded }));
+    }
     draws.sort();
     atoms = new Float64Array(HIT_ATOMS);
     const per = HIT_DRAWS / HIT_ATOMS;
@@ -94,7 +118,9 @@ function hitAtoms(cache, fighter, selected, one, at, shot) {
 }
 
 // One engagement. profile: the bot's matchup profile (its shots); fp: its
-// fight profile (class policy, hits, delays; the defender the mob strikes);
+// fight profile (class policy, hits, delays; the defender the mob strikes),
+// one built for this engagement at its start as the game builds one per fight
+// (ColdCombatProfile keeps its stat views per profile object);
 // mob: the species (one mob or a view of it); k: the pull rolled; areaShare:
 // areaShareAt at the start; start: { hp, mp, at (the fight's timestamp),
 // cooldowns: { selfId: ms left }, potionLeft: ms a bottle still runs }; bag:
