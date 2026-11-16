@@ -11,7 +11,7 @@ const kept = amount => ({ selfId: 687, amount, stackable: false, kind: 'Other.Qu
 // The stock is sized for the hours to a full bag whatever the bot's past visits: a visit history
 // left in a saved row (the old visit interval) is read by nothing.
 const fixture = { characterId: 91819, level: 30, phase: 'hot', activity: 'hunting',
-    stats: { classId: 1, visitEvery: [22, 24] }, party: { partyId: 1 }, vitals: { hp: 1000, mp: 1000 }, loc: {},
+    stats: { classId: 1 }, party: { partyId: 1 }, vitals: { hp: 1000, mp: 1000 }, loc: {},
     inventory: { 1: kept(39),
         1061: { selfId: 1061, amount: 1, stackable: true } } };
 Hunt.huntIncome = () => ({ spotId: spotPresent ? 'stack-fixture' : null, perHour: income, expPerHour: 1000000 });

@@ -31,7 +31,7 @@ function record(ownerId, selfId, price, count) {
 }
 const bot = (reason, stats = {}) => ({ characterId: 731410, name: 'E314Buyer', level: 20, adena: 100000,
     inventory: {}, phase: 'cold', activity: 'shopping', currentRegion: 'Giran',
-    stats: { classId: 0, money: [100, 0, 1000, 0], playedHours: 10, visitEvery: [8, 4], ...stats,
+    stats: { classId: 0, money: [100, 0, 1000, 0], playedHours: 10, ...stats,
         townVisit: { town: 'Giran', startedAt: Date.now() - 60000, reason } } });
 
 (async () => {
