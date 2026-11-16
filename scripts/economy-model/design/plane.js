@@ -98,16 +98,19 @@ function candidateRows(view, main, held) {
 // first weight penalty) on counts { id: count } of what it carries (the worn
 // kit, its shots and its bag): a stack takes one slot, a piece of gear one
 // each. bags: the line's { slots, maxLoad }.
-function fullOf(view, bags, counts) {
-    let load = 0;
-    for (const [id, count] of counts) if (count > 0) load += view.items[id]?.weight ? count * view.items[id].weight : 0;
-    return SurvivalFloor.evaluate({ slots: slotsOf(view, counts), slotLimit: bags.slots, load, maxLoad: bags.maxLoad }) !== null;
+function fullOf(view, bags, counts, held = { load: 0, slots: 0 }) {
+    let load = held.load;
+    for (const [id, count] of counts) if (count > 0) load += loadOf(view, id, count);
+    return SurvivalFloor.evaluate({ slots: held.slots + slotsOf(view, counts), slotLimit: bags.slots, load, maxLoad: bags.maxLoad }) !== null;
 }
+
+const loadOf = (view, id, count) => (view.items[id]?.weight ? count * view.items[id].weight : 0);
+const slotOf = (view, id, count) => (Engine.isGear(view.items[id]) ? count : count >= 1 ? 1 : 0);
 
 // The slots counts { id: count } take: a stack one, a piece of gear one each.
 function slotsOf(view, counts) {
     let slots = 0;
-    for (const [id, count] of counts) if (count > 0) slots += Engine.isGear(view.items[id]) ? count : count >= 1 ? 1 : 0;
+    for (const [id, count] of counts) if (count > 0) slots += slotOf(view, id, count);
     return slots;
 }
 
@@ -133,20 +136,24 @@ function hoursToFull(view, bags, main, row, phases) {
         }
     });
     const end = phases[0].hours;
+    // What it holds of the items the hunt adds none of weighs and takes the same at every hour: summed once.
+    const still = { load: 0, slots: 0 };
+    for (const [id, count] of held) if (count > 0 && !rates.has(id)) { still.load += loadOf(view, id, count); still.slots += slotOf(view, id, count); }
     const countsAt = hours => {
-        const counts = new Map(held);
+        const counts = new Map();
         for (const [id, [first, then]] of rates) {
             const mean = first * Math.min(hours, end) + (then > 0 ? then * Math.max(0, hours - end) : 0);
-            counts.set(id, (counts.get(id) || 0) + mean);
+            counts.set(id, (held.get(id) || 0) + mean);
         }
         return counts;
     };
-    if (!fullOf(view, bags, countsAt(Infinity))) return Infinity;
+    const fullAt = hours => fullOf(view, bags, countsAt(hours), still);
+    if (!fullAt(Infinity)) return Infinity;
     let low = 0, high = 1;
-    while (!fullOf(view, bags, countsAt(high))) { low = high; high *= 2; }
+    while (!fullAt(high)) { low = high; high *= 2; }
     for (let step = 0; step < 50; step++) {
         const mid = (low + high) / 2;
-        if (fullOf(view, bags, countsAt(mid))) high = mid; else low = mid;
+        if (fullAt(mid)) high = mid; else low = mid;
     }
     return high;
 }
