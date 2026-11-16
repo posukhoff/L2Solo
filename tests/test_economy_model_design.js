@@ -291,6 +291,21 @@ for (const supply of ['table', 'formula']) {
     // A min-maxer takes the spot worth most at the chain end, not at the level.
     assert.deepEqual(spotsOf(3, MIN_MAXER), ['s1', 's1', 's2'], `${supply}: a min-maxer re-picks at the chain end`);
 }
+// The same climb where s1 leaves the top at level 7 but stays in its range (the level's others) and s2, the top, is out of
+// the gap (mean mob level 1): s1 is still a candidate, kept through the chain end and taken by a bot born at level 7; no
+// hour is hunted at the line's best by default.
+{
+    const inRange = climb(3), level7 = { classId: 9, shotId: SHOT, best: richer, top: [richer], others: [near] };
+    const leftTop = { ...inRange, hours: { 9: { ...inRange.hours[9], 7: level7 } }, spotAvgLevel: { s1: 3, s2: 1 } };
+    for (const supply of ['table', 'formula']) {
+        const climbed = run(climber(), supply, 2, 0, leftTop), chainEnd = climbed.visits.find(visit => !visit.info.born);
+        assert.ok(chainEnd && chainEnd.before.level === 7, `${supply}: its town chain ends at level 7`);
+        assert.deepEqual([climbed.visits[0].main.spot, chainEnd.main.spot], ['s1', 's1'], `${supply}: the held spot out of the top is kept while it fits`);
+        const born = run(freshBot(9, { level: 7, exp: 300, shots: { [SHOT]: 30 } }), supply, 2, 0, leftTop);
+        assert.equal(born.visits[0].main.spot, 's1', `${supply}: born at level 7 it takes the fitting spot out of the top`);
+        for (const each of [climbed, born]) assert.equal(each.result.huntHours.bestSpot, 0, `${supply}: no hour at the line's best by default`);
+    }
+}
 // A spot worth more whose expected deaths over the outing exceed the bound (0.05 an hour over an outing of hours to a full
 // bag) is never held, though its death price is far below its value lead; the safe spot is.
 {
