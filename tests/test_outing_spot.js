@@ -20,11 +20,11 @@ const solo = level => [{ level }];
 const own = spot('a', 1, 20, 0), richer = spot('b', 2, 22, 0);
 assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [own, richer], members: solo(24), bound: BOUND }),
     { spotId: 'a', reason: 'kept', refusedUnsafe: 0 });
-// The level gap: 5 levels above the spot's mobs fits, 6 does not (MobExperience.gapFactor).
-assert.equal(OutingSpot.unfit(spot('a', 1, 20, 0), solo(25), BOUND), null);
-assert.equal(OutingSpot.unfit(spot('a', 1, 20, 0), solo(26), BOUND), 'level_gap');
+// The level gap: 7 levels above the spot's mobs fits (69 % of their exp), 8 does not (MobExperience.gapFactor).
+assert.equal(OutingSpot.unfit(spot('a', 1, 20, 0), solo(27), BOUND), null);
+assert.equal(OutingSpot.unfit(spot('a', 1, 20, 0), solo(28), BOUND), 'level_gap');
 assert.equal(OutingSpot.unfit(spot('a', 1, 30, 0), solo(10), BOUND), null, 'stronger mobs are the safety\'s side, not the gap\'s');
-assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [own, richer], members: solo(26), bound: BOUND }),
+assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [own, richer], members: solo(28), bound: BOUND }),
     { spotId: 'b', reason: 'unfit:level_gap', refusedUnsafe: 0 });
 // Safety: expected deaths over the outing 0.12 refused, 0.08 and 0.1 taken (the bound is inclusive).
 assert.equal(OutingSpot.unfit(spot('s', 1, 20, 0.12), solo(20), BOUND), 'unsafe');
@@ -43,7 +43,7 @@ assert.deepEqual(OutingSpot.choose({ held: null, candidates: [spot('x', 3, 20, 0
 assert.deepEqual(OutingSpot.choose({ held: null, candidates: [spot('x', 3, 20, 0.5), spot('y', 1, 20, 0.2)], members: solo(20), bound: BOUND }),
     { spotId: 'y', reason: 'fallback:least_risk', refusedUnsafe: 2 });
 // None in the gap: the best safe outleveled one, before an unsafe one in the gap.
-assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [spot('a', 1, 20, 0), spot('o', 2, 19, 0), spot('u', 5, 26, 0.5)], members: solo(26), bound: BOUND }),
+assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [spot('a', 1, 20, 0), spot('o', 2, 19, 0), spot('u', 5, 26, 0.5)], members: solo(28), bound: BOUND }),
     { spotId: 'o', reason: 'fallback:outleveled', refusedUnsafe: 1 });
 // The scan stops at the best fitting: a richer unsafe one is refused, a poorer candidate's facts are never read.
 const poorer = { spotId: 'z', value: 0.5, avgLevel: 20, get members() { throw new Error('read the members of a candidate poorer than the choice'); } };
@@ -61,7 +61,8 @@ assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [own, richer, spot('
 const pair = [{ level: 20 }, { level: 24 }];
 assert.equal(OutingSpot.unfit(spot('p', 1, 20, 0, 0), pair, BOUND), null);
 assert.equal(OutingSpot.unfit(spot('p', 1, 20, 0, 0.2), pair, BOUND), 'unsafe');
-assert.equal(OutingSpot.unfit(spot('p', 1, 18, 0, 0), pair, BOUND), 'level_gap');
+assert.equal(OutingSpot.unfit(spot('p', 1, 17, 0, 0), pair, BOUND), null);
+assert.equal(OutingSpot.unfit(spot('p', 1, 16, 0, 0), pair, BOUND), 'level_gap');
 // The min-maxer persona: progression and high ambition.
 assert.equal(OutingSpot.minMaxer({ primaryDrive: 'progression', traits: { ambition: 0.85 } }), true);
 assert.equal(OutingSpot.minMaxer({ primaryDrive: 'progression', traits: { ambition: 0.84 } }), false);

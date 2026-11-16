@@ -11,9 +11,11 @@
 // choice is to call it too).
 //
 // A spot fits a group when, for every member:
-// - level gap: the member is at most 5 levels above the spot's mobs, where C4
-//   gives the full exp (MobExperience.gapFactor; L2JLisvus L2Attackable.java:
-//   1743-1749). Our reading for a spot of several species: the spot's mean mob
+// - level gap: the member is at most 7 levels above the spot's mobs. C4 gives
+//   the full exp up to 5 levels and (5/6)^(gap-5) past it (MobExperience.gapFactor;
+//   L2JLisvus L2Attackable.java:1743-1749), so at 7 the mobs still give 69 % of
+//   their exp. Ours: a player stays at a spot while its mobs give about 70 % of
+//   their exp. Our reading for a spot of several species: the spot's mean mob
 //   level (avgLevel), not each species. Mobs too strong are the safety's side.
 // - safety: the member's expected deaths over the outing are at most the bound
 //   (inclusive): its deaths an hour at the spot, in the form it hunts, at the
@@ -23,6 +25,9 @@
 //   The deaths by level and the level reached are facts of the hunt, the
 //   caller's. The bound is ours and the caller's limit row.
 const MobExperience = require('../../Progression/MobExperience');
+
+// Ours: the most levels a member is above a spot's mobs while they still give about 70 % of their exp.
+const MAX_FIT_GAP = 7;
 
 // members: [{ level }]; candidate: { spotId, value, avgLevel, members: [{ deathsByLevel, reachLevel, outingHours }] }
 // (members' order): deathsByLevel[level], the deaths an hour there (none read as 0); reachLevel, the last level the outing reaches.
@@ -41,7 +46,7 @@ function checkedBound(bound) {
 function unfit(candidate, members, bound) {
     checkedBound(bound);
     if (!candidate) return 'no_row';
-    if (members.some(member => MobExperience.gapFactor(member.level - candidate.avgLevel) < 1)) return 'level_gap';
+    if (members.some(member => MobExperience.gapFactor(member.level - candidate.avgLevel) < MobExperience.gapFactor(MAX_FIT_GAP))) return 'level_gap';
     if (candidate.members.some((member, at) => outingDeaths(member, members[at].level) > bound)) return 'unsafe';
     return null;
 }

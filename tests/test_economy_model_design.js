@@ -292,19 +292,19 @@ for (const supply of ['table', 'formula']) {
         assert.ok(levelled && chainEnd && chainEnd.now > levelled.now, `${supply}: it reaches level 7 before its town chain`);
         return [climbed.visits[0].main.spot, levelled.main.spot, chainEnd.main.spot];
     };
-    // Past the gap (level 7 is 6 above s1's mobs) it keeps s1 until its town chain ends and takes s2 there, not at the level.
-    assert.deepEqual(spotsOf(1), ['s1', 's1', 's2'], `${supply}: out of the gap it moves at the next chain end`);
+    // Past the gap (level 7 is 8 above s1's mobs, mean level -1) it keeps s1 until its town chain ends and takes s2 there, not at the level.
+    assert.deepEqual(spotsOf(-1), ['s1', 's1', 's2'], `${supply}: out of the gap it moves at the next chain end`);
     // Within the gap (s1's mobs at 3) it keeps s1 through the chain end, although s2 is worth more.
     assert.deepEqual(spotsOf(3), ['s1', 's1', 's1'], `${supply}: a spot that fits is kept at the chain end`);
     // A min-maxer takes the spot worth most at the chain end, not at the level.
     assert.deepEqual(spotsOf(3, MIN_MAXER), ['s1', 's1', 's2'], `${supply}: a min-maxer re-picks at the chain end`);
 }
 // The same climb where s1 leaves the top at level 7 but stays in its range (the level's others) and s2, the top, is out of
-// the gap (mean mob level 1): s1 is still a candidate, kept through the chain end and taken by a bot born at level 7; no
+// the gap (mean mob level -1): s1 is still a candidate, kept through the chain end and taken by a bot born at level 7; no
 // hour is hunted at the line's best by default.
 {
     const inRange = climb(3), level7 = { classId: 9, shotId: SHOT, best: richer, top: [richer], others: [near] };
-    const leftTop = { ...inRange, hours: { 9: { ...inRange.hours[9], 7: level7 } }, spotAvgLevel: { s1: 3, s2: 1 } };
+    const leftTop = { ...inRange, hours: { 9: { ...inRange.hours[9], 7: level7 } }, spotAvgLevel: { s1: 3, s2: -1 } };
     for (const supply of ['table', 'formula']) {
         const climbed = run(climber(), supply, 2, 0, leftTop), chainEnd = climbed.visits.find(visit => !visit.info.born);
         assert.ok(chainEnd && chainEnd.before.level === 7, `${supply}: its town chain ends at level 7`);
