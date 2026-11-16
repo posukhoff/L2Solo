@@ -199,7 +199,10 @@ try {
 // pickup rule refuses every drop; the slots are counted on the loot as rolled
 // all the same: 40 - the piece - the planned bottles = 38 free / 4 an hour =
 // 9.5 h, before the weight step ((9999 - 2 - 5) / (20 x 5 x 1.1) = 90.8 h).
-function stockFixture() {
+// A spot of Vrykolakas (lvl 15) kills 20 an hour at the kill mix's expected
+// drop weight of 52.76 a kill (SpotRewardExpectation, the datapack's drop
+// list): the load bounds the hours first, 9992 / (20 x 52.76 + 110) = 8.58 h.
+function stockRow(spot, killedNpcs) {
     require('../src/Global');
     const Data = invoke('GameServer/DataCache'); Data.init();
     const RoundLoot = invoke('GameServer/Bot/Population/RoundLoot');
@@ -221,14 +224,18 @@ function stockFixture() {
                 const loot = [{ selfId: kinds[offered++], amount: 1 }, { selfId: kinds[offered++], amount: 1 }];
                 const inventory = { ...state.inventory, 1060: { ...state.inventory['1060'], amount: potions - used } };
                 const { kept } = RoundLoot.keep(inventory, loot, 80, 20000);
-                return { materialize: { items: kept }, debug: { wins: 10, mobsKilled: 10, combatMs: 1000, potionsUsed: used },
+                return { materialize: { items: kept }, debug: { wins: 10, mobsKilled: 10, killedNpcs, combatMs: 1000, potionsUsed: used },
                     patch: { inventory: RoundLoot.addTo(inventory, kept) }, nextResolveAt: timestamp + 1800000 };
             } } };
     let pass = null;
-    Generator.hunt({ id: 'stock', center: {}, density: 1 }, 'dps', 20, false, 12, simulation, null, undefined, name => {
+    Generator.hunt(spot, 'dps', 20, false, 12, simulation, null, undefined, name => {
         pass = name; seen.length = 0; offered = 0;
     });
     assert.strictEqual(pass, 'row');
+    return seen;
+}
+function stockFixture() {
+    const seen = stockRow({ id: 'stock', center: {}, density: 1 }, {});
     const start = seen[0].timestamp;
     assert.strictEqual(seen[0].potions, 209, 'the row sets out with a full bag\'s use plus the reserve: 20 x 9.5 x 1.1 (old: 40, two hours\' use)');
     // Restocked at 9.5 h, not every two hours, and the visit sells the drops.
@@ -236,5 +243,11 @@ function stockFixture() {
     assert.deepStrictEqual(restocks.map(step => (step.timestamp - start) / 3600000), [9.5], 'the stock is restocked as the bag would be full');
     assert.strictEqual(restocks[0].drops, 0, 'the visit sold the drops: the outing after it starts with an empty bag');
     assert.strictEqual(seen[seen.indexOf(restocks[0]) - 1].drops, 36, 'the round before the visit set out with 18 rounds of drops; its own fill the 38 free slots');
+    // The drop's weight: the row restocks at the load bound, before the slots fill.
+    const heavy = stockRow({ id: 'stock-drop', center: {}, density: 1, npcEntries: [{ selfId: 398, count: 1 }] }, { 398: 10 });
+    assert.strictEqual(heavy[0].potions, 189, 'the stock is a full bag\'s use by the drop\'s weight: 20 x 8.58 x 1.1 (the slots alone: 209)');
+    const heavyRestocks = heavy.filter((step, index) => index > 0 && step.potions > heavy[index - 1].potions - 10);
+    assert.deepStrictEqual(heavyRestocks.map(step => (step.timestamp - heavy[0].timestamp) / 3600000), [9],
+        'the stock is restocked as the drop\'s weight reaches the first weight step (8.58 h), before the slots fill (9.5 h)');
 }
 stockFixture();
