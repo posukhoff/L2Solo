@@ -203,7 +203,7 @@ const BackgroundPartyResolver = {
         const memberResults = members.map(state => {
             let result;
             if (state.activity === 'dead' || state.vitals.hp <= 0) {
-                result = BackgroundResolver.resolveDeathRecovery(state, timestamp);
+                result = BackgroundResolver.resolveDeathRecovery(state, timestamp, timestamp - ColdClock.step(state, timestamp).elapsedMs);
             } else if (state.activity === 'resting') {
                 result = BackgroundResolver.resolveRest(state, ColdClock.step(state, timestamp).elapsedMs, timestamp);
                 if (!state.stats?.tradeMeeting && result.patch?.activity === 'hunting')
@@ -308,7 +308,7 @@ const BackgroundPartyResolver = {
         // delay. Neither standing regeneration nor the next PvE fight revives it.
         if (!raidCombatActive && members.some(s => s.vitals.hp <= 0)) {
             const memberResults = members.map(state => ({ state, result: state.vitals.hp <= 0
-                ? BackgroundResolver.resolveDeathRecovery(state, timestamp)
+                ? BackgroundResolver.resolveDeathRecovery(state, timestamp, timestamp - ColdClock.step(state, timestamp).elapsedMs)
                 : { patch: {}, events: [], materialize: { exp: 0, sp: 0, adena: 0, items: [] }, nextResolveAt: timestamp + 1000 } }));
             const nextResolveAt = Math.max(...memberResults.map(r => r.result.nextResolveAt));
             for (const { state, result } of memberResults) {
@@ -694,6 +694,8 @@ const BackgroundPartyResolver = {
             }
             else if (!pending) losses += 1;
             if (encounter.won && round) ended = linesCrossed(encounter.members);
+            // A member's death ends the hunt round there too: its respawn is due at once.
+            if (round && !ended && combatMembers.some((member) => Number(member.vitals?.hp || 0) <= 0)) ended = 'death';
             if (ended) {
                 bound = clock.at;
                 break;
