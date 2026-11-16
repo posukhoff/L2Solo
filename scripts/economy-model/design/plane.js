@@ -256,14 +256,12 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                 let kept = 0;
                 for (const id of Object.values(main.kit)) if (id) kept += weight(id);
                 for (const [id, count] of Object.entries(main.shots)) if (!firing || (Number(id) !== firing.id && Number(id) !== firing.beginner)) kept += count * weight(id);
-                return { slotHours, loadPerHour, freeLoad: bags.maxLoad * SurvivalFloor.FIRST_WEIGHT_STEP - kept, mass: firing ? weight(firing.id) : 0 };
+                return { slotHours, loadPerHour, freeLoad: SurvivalFloor.loadLimit(bags.maxLoad) - kept, mass: firing ? weight(firing.id) : 0 };
             };
-            // Which term set the need's hours: the slots, the drop's load, or the stock's own weight (the load term
-            // would have bound with no drop load).
+            // Which term set the need's hours: the slots, else the larger load an hour of the drop's and the stock's own.
             const bindOf = (fill, need) => {
                 if (need.hours >= fill.slotHours) return 'slots';
-                const stockOnly = ConsumableTarget.bagHours({ ...fill, loadPerHour: 0, stock: [{ use: need.perHour, mass: fill.mass }] });
-                return stockOnly < fill.slotHours ? 'stockLoad' : 'dropLoad';
+                return need.perHour * fill.mass * (1 + ConsumableTarget.RESERVE) > fill.loadPerHour ? 'stockLoad' : 'dropLoad';
             };
             // The supply decision's state on the main where it stands (place, the town it is in).
             const supplyState = (main, row, place, town, spotTown) => {

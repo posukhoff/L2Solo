@@ -53,7 +53,7 @@ function loadLimit(value) {
     const maximum = typeof value?.fetchMaxLoad === 'function' ? value.fetchMaxLoad() : value?.maxLoad > 0 ? value.maxLoad
         : invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(value).maxLoad;
     // Below the first weight step (SurvivalFloor requires this module: read when called).
-    return maximum > 0 ? Math.ceil(maximum * invoke('GameServer/Bot/Population/SurvivalFloor').FIRST_WEIGHT_STEP) - 1 : 0;
+    return invoke('GameServer/Bot/Population/SurvivalFloor').loadLimit(maximum);
 }
 
 function totalLoad(value) {

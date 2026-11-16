@@ -125,13 +125,15 @@ assert.deepEqual(Needs.consumable(holder, { id: SHOT, perHour: 99.5 }, slotsIn2)
 assert.equal(Needs.consumable(holder, null, slotsIn2), null);
 assert.deepEqual(Needs.surplus(holder, Needs.consumable(holder, { id: SHOT, perHour: 100 }, slotsIn2)), [[DROP, 4], [1463, 5], [SHOT, 30]]);
 assert.deepEqual(Needs.surplus({ shots: { [SHOT]: 120 }, bag: {} }, Needs.consumable({ shots: { [SHOT]: 120 } }, { id: SHOT, perHour: 100 }, slotsIn2)), []);
-// The drop's load sets the hours: 100 load an hour beside shots of mass 4 in 1000 free load, 1000 / (100 + 440) h, not the slots' 10.
+// The drop's load sets the hours: 100 load an hour beside shots of mass 4 in 1000 free load (one shot kept free for the
+// whole count), 996 / (100 + 440) h, not the slots' 10.
 const dropBound = Needs.consumable({ shots: {}, bag: {} }, { id: SHOT, perHour: 100 }, { slotHours: 10, freeLoad: 1000, loadPerHour: 100, mass: 4 });
-assert.ok(Math.abs(dropBound.hours - 1000 / 540) < 1e-9);
-assert.equal(dropBound.target, 204);
-// The stock's own weight sets the hours: mass 5 in 1100 free load, no drop load: 2 h, 220 shots weighing the 1100.
-assert.deepEqual(Needs.consumable({ shots: {}, bag: {} }, { id: SHOT, perHour: 100 }, { slotHours: 10, freeLoad: 1100, loadPerHour: 0, mass: 5 }),
-    { id: SHOT, perHour: 100, hours: 2, target: 220, held: 0, short: 220 });
+assert.ok(Math.abs(dropBound.hours - 996 / 540) < 1e-9);
+assert.equal(dropBound.target, 203);
+// The stock's own weight sets the hours: mass 5 in 1100 free load, no drop load: 1095 / 550 h, 219 shots weighing 1095.
+const stockBound = Needs.consumable({ shots: {}, bag: {} }, { id: SHOT, perHour: 100 }, { slotHours: 10, freeLoad: 1100, loadPerHour: 0, mass: 5 });
+assert.ok(Math.abs(stockBound.hours - 1095 / 550) < 1e-9);
+assert.deepEqual([stockBound.target, stockBound.short], [219, 219]);
 // No load left below the first weight step: no hours, it keeps the line (an hour's use).
 assert.equal(Needs.consumable({ shots: {}, bag: {} }, { id: SHOT, perHour: 100 }, { slotHours: 10, freeLoad: 0, loadPerHour: 0, mass: 5 }).target, 100);
 // Nothing bounds the stock (no slot forecast, nothing weighs): a model bug, not a world state.

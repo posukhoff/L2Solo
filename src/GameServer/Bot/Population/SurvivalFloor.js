@@ -18,6 +18,12 @@ function weightPenalty(load, maximum) {
     return share >= 1 ? 4 : share >= 0.8 ? 3 : share >= 2 / 3 ? 2 : share >= FIRST_WEIGHT_STEP ? 1 : 0;
 }
 
+// The most a bag may weigh and stay below the first weight step (whole load
+// units; 0 without a limit): what a bot keeps below the penalty fits under it.
+function loadLimit(maximum) {
+    return maximum > 0 ? Math.ceil(maximum * FIRST_WEIGHT_STEP) - 1 : 0;
+}
+
 function evaluate({ dead = false, hp, mp, manaRequired = false, castCosts = [], slots = 0,
     slotLimit = 80, load = 0, maxLoad = 0 } = {}) {
     if (dead || (Number.isFinite(Number(hp)) && Number(hp) <= 0)) return { reason: 'dead', action: 'revive' };
@@ -178,4 +184,4 @@ function forActor(actor, state = null, timestamp = Date.now()) {
     () => actorRetryHolds(actor, state));
 }
 
-module.exports = { evaluate, forState, bagFor, bagFloor, forActor, bagMarks, stateInventory, inventoryLimit, weightPenalty, FIRST_WEIGHT_STEP };
+module.exports = { evaluate, forState, bagFor, bagFloor, forActor, bagMarks, stateInventory, inventoryLimit, weightPenalty, loadLimit, FIRST_WEIGHT_STEP };
