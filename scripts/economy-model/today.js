@@ -21,7 +21,7 @@ const BeginnerShots = require('../../src/GameServer/Items/C4BeginnerShots');
 const KitHours = require('./kit-hours');
 const { STAGE_BANDS } = require('../economy/ledger-rules');
 
-// Today's shot restock (EconomyContext.kitReader, ShotStock.restockPlan):
+// Today's shot restock (KitRule.kitReader, ShotStock.restockPlan):
 // below one hunting hour of use a bot buys up to an outing's use, never
 // under one hour.
 const SHOT_LINE_HOURS = 1;

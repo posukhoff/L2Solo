@@ -1,10 +1,8 @@
 'use strict';
 const FailureLog = require('../../../FailureLog');
-const ClassProgression = invoke('GameServer/ClassProgression');
 const DataCache = invoke('GameServer/DataCache');
 const Knowledge = require('../AI/KnowledgeLearning');
 const Crystallization = require('./BotCrystallization');
-const Floor = require('../Population/SurvivalFloor');
 
 const GearThreat = require('./GearThreat');
 
@@ -49,7 +47,7 @@ const TravelRoutes = invoke('GameServer/Bot/Travel/TravelRoutes');
 const GearProgression = invoke('GameServer/Bot/AI/PersonalGearProgression');
 const RestPotion = invoke('GameServer/Bot/AI/RestPotion');
 const HealingPotionStock = invoke('GameServer/Bot/AI/HealingPotionStock');
-const ConsumableTarget = require('./ConsumableTarget');
+const KitRule = require('./KitRule');
 const BeginnerShots = require('../../Items/C4BeginnerShots');
 const TradeIntent = require('./TradeIntent');
 const Trace = require('../DecisionTrace');
@@ -598,96 +596,6 @@ function ratesNow(rates, state, bag, price) {
     if (bag.potionId !== rates.potionId) now = { ...now, potionId: bag.potionId, potionRestUse: 0 };
     return now;
 }
-// The one kit rule, hot and cold, worker and main: stock(kind),
-// kitCost(id) and the survival reserve over the build's rates (kitRates: use
-// per hour, benefit per unit, the hours to a full bag; StatsPacket.kitRates
-// publishes them) and the live bag, wallet and prices. A kind's target is a
-// full bag's use plus the reserve (ConsumableTarget) for a kind worth
-// carrying, never less than one hour of use (its line); shots that cannot be restocked keep what the bag holds; the rest
-// bottles only as many as the wallet buys above the reserve. rates null (no
-// build has rated the kit yet): the bag is held as it is, nothing is bought
-// and the reserve is empty. Prices go through the caller's price reader, so
-// each read joins the review's inputs. scrollHours: the hours a Scroll of
-// Escape saves, read only when a scroll is priced (a build solves its route
-// lazily). The scroll is no survival item: one is carried
-// per outing when the walk it saves is worth more than it costs at the bot's
-// hour, none in towns karma closes; a broke bot walks. It is no part of the
-// reserve; a purchase pays it from money the queue does not hold (ScrollStock).
-// One per outing is our rule, not C4.
-// The survival kit is priced at the NPC's list price (StaticMerchantPricing.
-// botNpcListPrice, kept per item), not the bot's estimate: the reserve holds
-// that, and a restock's survival tranche spends that share (kitCost) at any
-// counter; a town's tax above it, as any optional unit, is paid from the
-// money above the reserve at its stock wish's rank (PurchaseFunding.
-// stockAllowance, quoteScale). The estimate where no NPC sells the item.
-function survivalPrice(id, price) {
-    const list = Number(invoke('GameServer/Bot/Economy/StaticMerchantPricing').botNpcListPrice(id));
-    return Number.isFinite(list) && list > 0 ? list : price(id);
-}
-function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates?.scrollHours)) {
-    const held = !rates;
-    // Shots are used while the bag holds some or a restock pays (ShotStock.usePolicy).
-    const base = kind => {
-        const shots = kind === 'shots';
-        const itemId = shots ? bag.shotId : bag.potionId, current = shots ? bag.shots : bag.potions;
-        const canRestock = !held && (shots ? rates.shotsCanRestock : true);
-        const use = held ? 0 : !shots ? positive(rates.potionUse)
-            : (current > 0 ? rates.shotsPay : canRestock) ? positive(rates.shotUse) : 0;
-        const restUse = held || shots ? 0 : positive(rates.potionRestUse);
-        const line = Math.ceil(use);
-        // Forecast consumption may be fractional; both purchase tranches use
-        // the same whole-unit survival stock so their sum remains executable.
-        const survivalTarget = held ? current : canRestock ? line : Math.min(current, line);
-        return { shots, itemId, current, canRestock, use, restUse, line, survivalTarget,
-            survivalMissing: Math.max(0, survivalTarget - current), survivalPrice: survivalPrice(itemId, price),
-            benefitPerUnit: use + restUse > 0 ? positive(shots ? rates.shotBenefit : rates.potionBenefit) : 0 };
-    };
-    const kit = [base('shots'), base('potions')];
-    // The survival reserve: the kit's missing survival units at their list price.
-    const hours = held ? 0 : positive(rates.bagHours);
-    // The refill: a full bag's use plus the reserve of a kind worth restocking,
-    // never under its line (the bot's usual purchase). The reserve holds it at
-    // the NPC list price whatever the bag holds now, so gear never takes the next
-    // kit's money; a town counter spends of it what the bag misses.
-    const refill = row => row.canRestock ? Math.max(row.line, ConsumableTarget.target(row.use, hours)) : 0;
-    const reserve = kit.reduce((sum, row) => sum + refill(row) * row.survivalPrice, 0);
-    const stock = kind => {
-        if (kind === 'scrolls') {
-            const current = bag.scrolls, unitPrice = price(736);
-            const target = held ? current : bag.closed ? 0 : current >= 1 || scrollHours() * bag.hour > unitPrice ? 1 : 0;
-            const missing = Math.max(0, target - current);
-            const benefitPerUnit = current < target ? scrollHours() : 0;
-            return { itemId: 736, usePerHour: 0, current, hours: Infinity, targetHours: hours, target,
-                survivalTarget: 0, survivalMissing: 0, missing, unitPrice, survivalPrice: survivalPrice(736, price),
-                benefitPerUnit, benefitHours: missing * benefitPerUnit, needed: false };
-        }
-        const row = kit[kind === 'shots' ? 0 : 1], { itemId, current, use, restUse, line } = row;
-        // The rest bottles (RestPotion.stockUse) beside the survival use: a
-        // full bag's, at most what the wallet buys above the reserve.
-        const restCap = restUse > 0 ? current + Math.floor(Math.max(0, positive(wallet) - reserve) / Math.max(1, price(itemId))) : 0;
-        const wanted = Math.max(line, ConsumableTarget.target(use, hours),
-            Math.min(ConsumableTarget.target(use + restUse, hours), restCap));
-        // Useful owned stock need not justify expensive replacement stock.
-        const target = held ? current : row.canRestock ? wanted : Math.min(current, wanted);
-        const missing = Math.max(0, target - Math.max(current, row.survivalTarget));
-        // needed: a zero use has a zero survival target.
-        return { itemId, ...(row.shots ? { beginnerCurrent: bag.beginner } : {}), current, line, refill: refill(row),
-            target, survivalTarget: row.survivalTarget, missing, survivalMissing: row.survivalMissing, unitPrice: price(itemId),
-            survivalPrice: row.survivalPrice, needed: current < row.survivalTarget,
-            usePerHour: use, ...(row.shots && rates?.policy ? rates.policy : {}), hours: use > 0 ? current / use : Infinity,
-            targetHours: hours, benefitPerUnit: row.benefitPerUnit, benefitHours: missing * row.benefitPerUnit };
-    };
-    // The kit's survival tranche: without a quote the reserve's own share
-    // (its list price); with a known executable quote its whole missing units
-    // at that quote, once (PurchaseFunding.survivalTranche: the counter counts
-    // the share beside the queue's money and never refuses the kit itself).
-    const kitCost = (id, unitPrice = null) => {
-        const quoted = Number.isFinite(unitPrice) && unitPrice > 0;
-        return kit.filter(row => row.itemId === Number(id)).reduce((sum, row) => sum
-            + Math.max(0, refill(row) - row.current) * (quoted ? unitPrice : row.survivalPrice), 0);
-    };
-    return { stock, kitCost, reserve };
-}
 // The bot's hour, death and karma prices and its stock of shots and potions:
 // the part of a review that needs no wish network. forState builds on it and
 // basics() returns it alone, so a reader that wants only these never builds
@@ -839,52 +747,31 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         ? RestPotion.stockUse(state, { row: Table.cycle(bestSpotId, tableRole, state.level, shots),
             potion, hour: hourAdena, timestamp }) : { use: 0, hours: 0 };
     // The kit's hours: the hunting hours to a full bag after the visit's sale
-    // (ConsumableTarget.bagHours), the slots or the first weight step, read on
+    // (KitRule.bagHours), the slots or the first weight step, read on
     // the row the use is priced on. A row with no bag forecast holds the line
     // (one hour of use).
     let bagHours = 1;
     if (bestTable?.stacks !== null && bestTable?.stacks !== undefined) {
-        const Data = DataCache;
-        const race = state.stats?.race ?? (Data.classTemplates == null ? undefined : ClassProgression.firstClassRow(Data.classTemplates, state.stats?.classId || 0))?.template?.race;
-        // ARCH-NOTE: size the bag interval on the bag after its
-        // planned kit stacks exist. Otherwise an empty shot/potion row uses
-        // no slot, its refill uses one, and the shorter interval immediately
-        // sells part of that refill back to the NPC. Existing stacks retain
-        // the exact physical free-slot formula; zero-use stock reserves none.
-        const plannedSlots = Number(shotUse > 0 && !positive(state.inventory?.[shotItemId]?.amount) && !beginnerCurrent)
-            + Number(potionUse + potionRest.use > 0 && !positive(state.inventory?.[potionItemId]?.amount));
         // The kit is bought for the outing after the visit's sale: its bag is
         // the one the sale leaves (the loot carried in is no part of it), so a
         // bot arriving with a full bag of loot does not plan a half-hour outing.
-        // A solo seller's next outing ends at the half-full sale while it holds
-        // loot to sell; stock cannot be its own reason for an earlier visit, so
-        // the whole usable kit is kept while reading the loot.
-        let slotLimit = Floor.inventoryLimit(race), sold = { slots: 0, load: 0 };
+        // A solo seller's outing ends at the half-full sale (the bag fact's own
+        // condition, before and after its sale alike); stock cannot be its own
+        // reason for an earlier visit, so the whole usable kit is kept while
+        // reading the loot.
+        let sold = { slots: 0, load: 0 };
         const keptAmounts = { [shotItemId]: positive(state.inventory?.[shotItemId]?.amount),
             ...HealingPotionStock.keptAmounts(state, { targetAmount: Infinity }),
             736: positive(state.inventory?.[736]?.amount) };
         // The cheap presence check first; the whole sale list (its slots) only for a bag that holds loot.
         const sale = { keptAmounts, preparedReservations: deps.saleReservations };
-        if (Disposition.saleCandidates(state, { ...sale, presenceOnly: true })) {
-            const saleLimit = Disposition.soloSaleSlotLimit(state);
-            if (saleLimit !== null) slotLimit = Math.min(slotLimit, saleLimit);
+        if (Disposition.saleCandidates(state, { ...sale, presenceOnly: true }))
             sold = Disposition.saleSlots(state, Disposition.saleCandidates(state, { ...sale, unlimited: true }));
-        }
-        const held = Floor.stateInventory(state, Data.items);
-        const free = Math.max(0, slotLimit - (held.slots - sold.slots) - plannedSlots);
-        // The load left under the first weight step after the sale, the shots
-        // and potions being sized not counted (their weight is the rule's).
-        const mass = selfId => positive(ItemIndex.find(Data.items, Number(selfId))?.template?.mass);
-        const beginnerId = shotPlan.kind ? BeginnerShots.selfIdFor(shotPlan.kind, shotPlan.rank) : null;
-        const kitLoad = positive(state.inventory?.[shotItemId]?.amount) * mass(shotItemId)
-            + (beginnerId ? beginnerCurrent * mass(beginnerId) : 0)
-            + positive(state.inventory?.[potionItemId]?.amount) * mass(potionItemId);
-        const maxLoad = invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(state, timestamp).maxLoad;
-        const freeLoad = Floor.loadLimit(maxLoad) - (held.load - sold.load - kitLoad);
-        const hours = ConsumableTarget.bagHours({
-            slotHours: free === 0 ? 0 : bestTable.stacks > 0 ? free / bestTable.stacks : Infinity,
-            freeLoad, loadPerHour: positive(bestTable.load),
-            stock: [{ use: shotUse, mass: mass(shotItemId) }, { use: potionUse + potionRest.use, mass: mass(potionItemId) }] });
+        const hours = KitRule.bagHours(state, { row: { stacks: bestTable.stacks, load: bestTable.load },
+            kit: { shotItemId, potionItemId, beginnerId: shotPlan.kind ? BeginnerShots.selfIdFor(shotPlan.kind, shotPlan.rank) : null,
+                beginnerCurrent, shotUse, potionUse: potionUse + potionRest.use },
+            maxLoad: invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(state, timestamp).maxLoad,
+            saleLimit: Disposition.soloSaleSlotLimit(state), sold });
         // C4 consumables all weigh something, so the load bounds the hours;
         // weightless ones with no slot forecast would not: hold the line.
         if (Number.isFinite(hours)) bagHours = hours;
@@ -908,7 +795,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         policy: { ownedUsePerHour: shotPolicy.usePerHour, beginnerUsePerHour: shotPolicy.beginnerUsePerHour,
             paidUsePerHour: shotPolicy.paidUsePerHour } };
     const bag = kitBag(state, { plan: shotPlan, potion, beginner: beginnerCurrent, hour: hourAdena });
-    const { stock, kitCost, reserve } = kitReader(rates, bag, Funding.budget(state), price,
+    const { stock, kitCost, reserve } = KitRule.kitReader(rates, bag, Funding.budget(state), price,
         () => rates.scrollHours ??= scrollHoursFor(state, deps.spots, bestSpotId));
     // The published scroll hours (StatsPacket.kitRates): the build's own answer,
     // else the catalogue spot's cached one; a bot with no scroll solves its
@@ -946,7 +833,7 @@ function bagDecisions(state, base, deps, now) {
 // and wallet (kitReader).
 function foundationFromPlan(state, plan, deps, price) {
     const bag = kitBag(state, { hour: plan.hourAdena });
-    const { stock, kitCost, reserve } = kitReader(ratesNow(plan.rates, state, bag, price), bag, Funding.budget(state), price,
+    const { stock, kitCost, reserve } = KitRule.kitReader(ratesNow(plan.rates, state, bag, price), bag, Funding.budget(state), price,
         () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
     const scrollHours = () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId, false);
     return { hunt: plan.hunt, hourAdena: plan.hourAdena, refillReserve: reserve,
@@ -1654,7 +1541,7 @@ function view(state, plan, deps, built = {}) {
     let kit = built.kit;
     if (!kit) {
         const bag = kitBag(state, { hour: plan.hourAdena });
-        const read = kitReader(ratesNow(plan.rates, state, bag, price), bag, Funding.budget(state), price,
+        const read = KitRule.kitReader(ratesNow(plan.rates, state, bag, price), bag, Funding.budget(state), price,
             () => plan.rates.scrollHours ??= scrollHoursFor(state, deps.spots, plan.bestSpotId));
         kit = { stock: read.stock, kitCost: read.kitCost, refillReserve: read.reserve };
     }
@@ -1784,7 +1671,7 @@ function keptKit(state = {}, deps = {}, options = {}) {
     const price = !quote ? own : id => { const local = Number(quote(id)); return local > 0 ? local : own(id); };
     const bag = kitBag(state);
     const rates = options.rates !== undefined ? options.rates : ratesOf(state);
-    const { stock, kitCost, reserve } = kitReader(ratesNow(rates, state, bag, price), bag, Funding.budget(state), price);
+    const { stock, kitCost, reserve } = KitRule.kitReader(ratesNow(rates, state, bag, price), bag, Funding.budget(state), price);
     return { stock, kitCost, refillReserve: reserve, price };
 }
 // A restock's stock row of a kind: its amounts from the visit's kit (kit: at the
@@ -1800,7 +1687,7 @@ function visitStock(context, kit, kind) {
 const NO_PRICE = () => 0;
 function keptTargets(state = {}) {
     const bag = kitBag(state);
-    const { stock } = kitReader(ratesNow(ratesOf(state), state, bag, NO_PRICE), bag, Infinity, NO_PRICE);
+    const { stock } = KitRule.kitReader(ratesNow(ratesOf(state), state, bag, NO_PRICE), bag, Infinity, NO_PRICE);
     return { potions: stock('potions'), shots: stock('shots') };
 }
 // Whether the sale keeps the rated kit (keptTargets reads its rates, not the
@@ -1948,4 +1835,4 @@ function reset() {
 function size() { return { context: cache.size, engine: engine.cache.size, groups: groups.size }; }
 
 module.exports = { visitStopsLeft, decideEarning, bagDecisions, quietGearBuildCount: () => quietGearBuilds, buildDoors: () => ({ ...doors, ...Agenda.counts() }), countDoor,
-    heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, proofIdentity, restartEventProof, restoreEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitReader, kitBag, kitRates, keptKit, visitStock, keptTargets, saleKitPublished, shotDemand, stateForActor, bodyPlace, preparedRouteRows, RETAIN_LIMIT, leafCheck, leafOutcome, refillReserve, forgetContext, forget, reset, configure, registerProvider };
+    heldBuild: (state, deps = {}) => cache.has(actorKeyOf(state, deps)), earningDue, linkStats, FIELD_ACTIVITIES, captureEventProof, proofIdentity, restartEventProof, restoreEventProof, size, forState, forGroup, forgetGroup, basics, personal, stockReader, kitBag, kitRates, keptKit, visitStock, keptTargets, saleKitPublished, shotDemand, stateForActor, bodyPlace, preparedRouteRows, RETAIN_LIMIT, leafCheck, leafOutcome, refillReserve, forgetContext, forget, reset, configure, registerProvider };

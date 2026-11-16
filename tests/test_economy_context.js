@@ -165,7 +165,10 @@ async function run() {
     assert.equal(reserve, warriorContext.kitCost(warriorStock.itemId)
         + warriorContext.kitCost(warriorContext.stock('potions').itemId) + warriorContext.kitCost(736));
     const escapeBag = amount => ({ ...warrior, inventory: { ...warrior.inventory, 736: { selfId: 736, amount } } });
-    assert.equal(Economy.basics(escapeBag(1), kitDeps).refillReserve, reserve - warriorContext.kitCost(736));
+    // A carried scroll leaves the reserve (it takes a bag slot, so the kit's full bag is read on the bag holding it).
+    const oneScroll = Economy.basics(escapeBag(1), kitDeps);
+    assert.equal(oneScroll.kitCost(736), 0);
+    assert.equal(oneScroll.refillReserve, oneScroll.kitCost(warriorStock.itemId) + oneScroll.kitCost(warriorContext.stock('potions').itemId));
     assert.equal(Economy.basics(escapeBag(2), kitDeps).refillReserve, Economy.basics(escapeBag(1), kitDeps).refillReserve);
     // One hour of the table's shot use (T43).
     assert(warriorContext.purchaseBudget(warriorStock.itemId) >= Math.floor(warriorStock.usePerHour) * warriorStock.unitPrice);

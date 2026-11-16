@@ -105,13 +105,15 @@ try {
         + '(its 30400 load leaves 2201 h of bottles)');
     const protectedLoot = { ...solo, inventory: { 1864: { selfId: 1864, amount: 1, stackable: true } },
         stats: { ...solo.stats, equipmentPlan: { status: 'active', strategy: 'craft', materials: [{ selfId: 1864, amount: 1 }] } } };
-    assert.equal(target(protectedLoot), 7.8, 'reserved craft input cannot justify an early sale');
+    assert.equal(target(protectedLoot), 3.8, 'reserved craft input cannot justify an early sale, and the solo bot still '
+        + 'turns back at its 40-slot half bag: 40 - the kept stack - the planned potion (old: 7.8 on the whole bag)');
     assert.equal(target({ ...solo, inventory: { 1864: { selfId: 1864, amount: 1, stackable: true } } }), 3.9,
         'free material leaves with the sale; the planned potion occupies one of 40 sale slots');
     const ownKitOnly = { ...solo, inventory: { 126: { selfId: 126, amount: 1, equipped: true,
         equippedCount: 1, slot: 7, stackable: false }, 1463: { selfId: 1463, amount: 1000000, stackable: true },
         1061: { selfId: 1061, amount: 1000000, stackable: true } } };
-    assert.equal(target(ownKitOnly), 7.7, 'own usable consumable surplus never shortens its own forecast');
+    assert.equal(target(ownKitOnly), 3.7, 'own usable consumable surplus never shortens its own forecast: '
+        + '40 half-bag slots - sword, shots, potion (old: 7.7 on the whole bag)');
     stacks = 0;
     // A bag at the sale threshold goes to town now; its kit is for the outing after the sale, which fills
     // no slots with zero new slots/hour: the stock's own weight bounds it (the swords leave with the sale).
