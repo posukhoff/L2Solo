@@ -84,6 +84,7 @@ const NOTES = Object.freeze([
     'An hour row\'s blessed holds the same spot\'s hour for the same line and level firing Blessed Spiritshots (SpotValueTable.value with shots 2); only a line the spot table measures firing them there (a spiritshot class) has it, and the row itself is the hour firing its plain shot.',
     'tradeTowns is the game\'s trade town of a lot (MarketTownPolicy): grade[item] the market grade of each graded item, none[spotId] the no-grade market nearest the spot card\'s centre, d the D markets (a bot picks among them), higher the town of a lot with C and above.',
     'arrowIds is the arrow of each bow grade (ArrowStock.BY_RANK).',
+    'spotAvgLevel[spotId] is the spot card\'s mean mob level (data/Bots/hunt/spots.json avgLevel, the game\'s SpotService count-weighted mean): the level the outing spot rule\'s level gap reads.',
     'fallbacks names what the snapshot filled in: noMarketToC the spots with no no-grade market near their centre (tradeTowns.none holds the C town).',
     'huntTable (with --hunt): the model\'s hunting table (hunt-table.js) the snapshot pairs with, by its file name, stamp, level range and spot set (ids, sorted); a design run reads that file and refuses one of another stamp, range or spot set. speciesYields["<selfId>@<level>@<spoil level>"] is one species\' per-kill yields at the preset (spotYields over that species alone) for a killer of the level, for every species of the table\'s spots at each level of its range and every line\'s Spoil level there; yields holds every such spot at those levels.',
     'gearLadder.lines[line] holds per level band the gear table\'s ladder rungs of the band\'s grade and below (rungs[group], best first), the band\'s middle level and grade, its best spot and scale (the design\'s money per kill over today\'s there: a kit\'s hunt hour, read through kit-hours.js at the middle level, times scale is in the design\'s money); gearLadder.slots holds each rung\'s own slot.'
@@ -138,6 +139,13 @@ function rewardSpots() {
     const towns = new Map(table.spots.map(row => [String(row[0]), row[townAt]]));
     return new Map(readJson('data/Bots/spot-reward-npcs.json').rows.map(([id, entries, adenaMin, adenaMax]) => [String(id),
         { id, npcEntries: entries.map(([selfId, count]) => ({ selfId, count })), rewards: { adenaMin, adenaMax }, town: towns.get(String(id)) ?? null }]));
+}
+
+// spotId -> the spot card's mean mob level (the card's avgLevel), the level
+// gap's spot level in the outing spot rule.
+function spotAvgLevels() {
+    const table = Load.spotCards(), at = table.spotFields.indexOf('avgLevel');
+    return Object.fromEntries(table.spots.map(row => [String(row[0]), row[at]]));
 }
 
 // The NPCs a bot kills at a spot and the reward each gives, as the spot
@@ -342,7 +350,7 @@ function staticInputs(owners, spots) {
     const lucky = [{ selfId: 194 }], deathExp = [];
     for (let level = LEVELS[0]; level <= LEVELS[1]; level++) deathExp.push(DeathExperience.calculateLoss({ level, exp: Number.MAX_SAFE_INTEGER, skills: lucky }).expLost);
     return { recipes, stores, exp: [...Data.experience], deathExp, twins, rewards, compositions, quests, fares: gatekeeperFares(), shotFamilies: shotFamilies(),
-        races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), ...tripHours(spots) };
+        races: lineRaces(Data), arrowIds: { ...invoke('GameServer/Inventory/ArrowStock').BY_RANK }, crystalIds: { ...owners.Enchant.CRYSTAL_IDS }, luxuryOptions: luxuryOptions(owners), spotAvgLevel: spotAvgLevels(), ...tripHours(spots) };
 }
 
 // A crafter twin at a level: its seated MP per hour, Create Item level and

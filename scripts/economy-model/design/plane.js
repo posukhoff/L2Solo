@@ -15,9 +15,10 @@
 //   arrival  the town chain: sell to the NPC, buy to the outing's target,
 //            walk back (the visit's afterHours);
 //   death    the respawn town (the town of the row it died at) runs the same chain.
-// The held spot is the bot's best row at the level in the form it can hunt,
-// by its own hour value (heldSpot), taken at its birth, the end of each town
-// chain and each new level. Called
+// The held spot is the outing spot rule's (OutingSpot): taken at its birth and
+// the end of each town chain (an outing's start), kept while it fits, re-picked
+// among the spots that fit when it stops fitting (or by a min-maxer persona);
+// a new level never moves it unless the spot has no row at that level. Called
 // by the engine (the only module of the design that touches the engine
 // contract); pure on the view and the main except the account
 // queues it holds by main index.
@@ -35,13 +36,16 @@ const Needs = require('./needs');
 const ConsumableTarget = require('../../../src/GameServer/Bot/Economy/ConsumableTarget');
 const Value = require('./value');
 const Supply = require('./supply');
-const HuntRows = require('../rules/hunt-rows');
+const LIMITS = require('./limits');
+const OutingSpot = require('../../../src/GameServer/Bot/AI/OutingSpot');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
 const LOW_LEVEL_LAST = 19;
 // The stuck reason of a main whose level has no spot row for its line.
 const NO_SPOT_ROW = 'no_spot_row';
 const classOf = level => (level <= LOW_LEVEL_LAST ? 'low' : 'high');
+// The level bands the spot choice report holds stints by (the level a spot was taken at).
+const bandOf = level => (level <= 9 ? '1-9' : level <= 19 ? '10-19' : level <= 39 ? '20-39' : '40+');
 
 // The facts the plane raises, each a test on what just happened.
 const FACTS = Object.freeze({
@@ -70,19 +74,22 @@ function heldFired(view, main) {
     return shot ? Engine.heldOf(main, { id: shot, beginner: Engine.beginnerOf(view, shot) }) : 0;
 }
 
-// The held spot: the bot's best row at the level in the form it can hunt (HuntRows.best), taken at its birth, at the end
-// of each town chain and at each new level, and held between. Its candidates: its line's rows it hunts with shots (the game's best and the top) when it holds the shots it fires (the
-// weapon's grade; the beginner shots that charge them count: Engine.heldOf), else those it hunts without them (bareTop
-// at the levels of the model's hunting table; above them the game's rows, its bare answer bareBest and the shots candidates); none
-// bare, it holds its best row with shots. Ranked by valueOf(main, row, form): its hour value there.
-function heldSpot(view, main, valueOf) {
+// The rows the held spot is chosen among and the form it hunts them in: its line's rows it hunts with shots (the game's
+// best and the top) when it holds the shots it fires (the weapon's grade; the beginner shots that charge them count:
+// Engine.heldOf), else those it hunts without them (bareTop at the levels of the model's hunting table; above them the
+// game's rows, its bare answer bareBest and the shots candidates); none bare, the shots rows. The held spot's own row
+// joins them while it has one at the level (a spot of its top at an earlier level). Only rows it kills in that form.
+// { form, rows } or null without an hour.
+function candidateRows(view, main, held) {
     const hour = Engine.hourOf(view, main);
     if (!hour) return null;
-    const shotsRows = [hour.best, ...hour.top || []].filter((row, at, rows) => row && rows.findIndex(other => other && String(other.spotId) === String(row.spotId)) === at);
-    const ranked = form => HuntRows.best(form === 'shots' ? shotsRows : hour.bareTop || [hour.bareBest, ...shotsRows].filter(Boolean), form,
-        row => valueOf(main, row, form)).best;
-    const row = heldFired(view, main) > 0 ? ranked('shots') : ranked('bare') || ranked('shots');
-    return row ? String(row.spotId) : null;
+    const own = held === null ? null : Engine.spotRowOf(view, { ...main, spot: held, occupied: null });
+    const unique = rows => rows.filter((row, at) => row && rows.findIndex(other => other && String(other.spotId) === String(row.spotId)) === at);
+    const killed = (rows, form) => unique(rows).filter(row => Engine.rowIn(row, form).kills > 0);
+    const withOwn = (rows, form) => killed([...rows, own && String(own.spotId) === held ? own : null], form);
+    const shotsRows = [hour.best, ...hour.top || []], bareRows = hour.bareTop || [hour.bareBest, ...shotsRows];
+    const form = heldFired(view, main) > 0 || !killed(bareRows, 'bare').length ? 'shots' : 'bare';
+    return { form, rows: withOwn(form === 'shots' ? shotsRows : bareRows, form) };
 }
 
 // The game's inventory full rule (SurvivalFloor.evaluate: its slots or the
@@ -180,13 +187,6 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
         const fired = Engine.firedOf(view, main, hunter.firing(main));
         return { ...fired, hunted: fired.held > 0 && fired.perHour > 0 ? fired.form : 'bare' };
     };
-    // The main's hour value at a candidate row in a form: its persona's weights, the worn kit's factors at that spot and
-    // the way back from that spot's respawn town (value.hourValue, the one valuation).
-    const candidateValue = (main, row, form) => {
-        const at = { ...main, spot: String(row.spotId) };
-        return Value.hourValue(view, at, form, factorsOf(at), personas.get(main.id), { wayBackHours: Engine.backHoursOf(view, at.spot, townOf(view, at)) });
-    };
-    const holdSpot = main => heldSpot(view, main, candidateValue);
     // The bag's clearing at its fact (BagClearing, the game's rule at bag_full): its rows at the NPC's
     // buy price (the trip's sale), the hour's money at its spot row in the form it hunts (adena and the
     // drop at the NPC's price, at its kit's kills), the walk back from the spot's town (the game's
@@ -229,6 +229,12 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             const tally = { low: blank(), high: blank() };
             const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
             const bareFirst = new Map(), differs = new Map(), shadowed = { decisions: 0 };
+            // The held spot's answers (by reason), the unsafe candidates refused, the changes heard at a new level other
+            // than a spot with no row there (midFarm: must stay 0), and per main its stint on a spot (the level it took it
+            // at, the spots it left, the one before) for the levels held, the returns and the A-B-A returns.
+            const spotChoice = { first: 0, kept: 0, unfit: { level_gap: 0, unsafe: 0, no_row: 0 }, minmax: 0, none: 0, refusedUnsafe: 0, midFarm: 0,
+                levelUps: 0, changes: 0, returns: 0, aba: 0, held: [] };
+            const stints = new Map();
             // A stuck episode ends: its hours go to the class of the level it began at.
             const unstuck = (state, now) => {
                 if (!state.stuck) return state;
@@ -263,6 +269,41 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                 if (need.hours >= fill.slotHours) return 'slots';
                 return need.perHour * fill.mass * (1 + ConsumableTarget.RESERVE) > fill.loadPerHour ? 'stockLoad' : 'dropLoad';
             };
+            // The held spot at an outing's start (OutingSpot.choose): held, the spot it holds (null at its birth). A candidate is
+            // a row in the form it hunts there: its hour value (no road), the spot card's mean mob level, its deaths an hour at
+            // the worn kit and the outing's horizon there (the supply rule's: the need's hours, else the hours to a full bag).
+            // A held spot that fits is checked alone (no ranking). The run report's spotChoice counts each answer and the
+            // stints it ends.
+            const candidateOf = (main, row, form) => {
+                const at = { ...main, spot: String(row.spotId) }, factors = factorsOf(at), avgLevel = view.spotAvgLevel?.[at.spot];
+                if (!Number.isFinite(avgLevel)) throw new Error(`no mean mob level for spot ${at.spot} in the snapshot (spotAvgLevel)`);
+                const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);
+                const outingHours = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
+                return { spotId: at.spot, value: Value.hourValue(view, at, form, factors, personas.get(main.id)), avgLevel,
+                    members: [{ deathsPerHour: (Engine.rowIn(row, form).deaths || 0) * factors[form].deaths, outingHours }] };
+            };
+            const holdSpot = (main, held) => {
+                const pool = candidateRows(view, main, held);
+                if (!pool) return null;
+                const ask = { held, members: [{ level: main.level }], minMax: OutingSpot.minMaxer(personas.get(main.id)), bound: LIMITS.SAFE_OUTING_DEATHS.value };
+                const ownRow = held === null || ask.minMax ? null : pool.rows.find(row => String(row.spotId) === held);
+                let picked = ownRow ? OutingSpot.choose({ ...ask, candidates: [candidateOf(main, ownRow, pool.form)] }) : null;
+                if (picked?.reason !== 'kept') picked = OutingSpot.choose({ ...ask, candidates: pool.rows.map(row => candidateOf(main, row, pool.form)) });
+                const [reason, why] = picked.reason.split(':');
+                if (why) spotChoice.unfit[why]++; else spotChoice[reason]++;
+                spotChoice.refusedUnsafe += picked.refusedUnsafe;
+                const stint = stints.get(main.index) || { spot: null, takenAt: main.level, left: new Set(), prev: null, started: false };
+                if (!stint.started) stints.set(main.index, { ...stint, spot: picked.spotId, takenAt: main.level, started: true });
+                else if (picked.spotId !== stint.spot) {
+                    spotChoice.changes++;
+                    if (stint.spot !== null) spotChoice.held.push({ band: bandOf(stint.takenAt), levels: main.level - stint.takenAt });
+                    const left = stint.spot !== null ? new Set([...stint.left, stint.spot]) : stint.left;
+                    if (picked.spotId !== null && left.has(picked.spotId)) { spotChoice.returns++; if (picked.spotId === stint.prev) spotChoice.aba++; }
+                    stints.set(main.index, { spot: picked.spotId, takenAt: main.level, left, prev: stint.spot, started: true });
+                }
+                return picked.spotId;
+            };
+
             // The supply decision's state on the main where it stands (place, the town it is in).
             const supplyState = (main, row, place, town, spotTown) => {
                 const firing = hunter.firing(main), fill = fillOf(main, row, firing), need = Needs.consumable(main, firing, fill), surplus = Needs.surplus(main, need);
@@ -279,9 +320,10 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             const decisionState = (main, row, place, town, spotTown, bagFull) => {
                 const state = supplyState(main, row, place, town, spotTown);
                 if (variant !== 'formula' && place === 'town') return state;
-                const factors = factorsOf(main), persona = personas.get(main.id), way = { wayBackHours: state.backHours };
+                const factors = factorsOf(main), persona = personas.get(main.id);
                 const { form, held, lasts, hunted } = huntedOf(main), kills = hunter.kills(main);
-                const valueOf = (at, withoutDrop = false) => Value.hourValue(view, main, at, factors, persona, { ...way, withoutDrop });
+                // The formula's hour is the hour's value less the price of its deaths (the way back from the held spot's town).
+                const valueOf = (at, withoutDrop = false) => Value.hourValue(view, main, at, factors, persona, { withoutDrop }) - Value.deathCost(view, main, at, factors, state.backHours);
                 return { ...state, value: { bagFull, hour: valueOf(form), bare: valueOf('bare'), withoutDrop: valueOf(hunted, true),
                     bagHoursBare: hoursToFull(view, bagsOf(main), main, row, [{ form: 'bare', kills: kills.bare, hours: Infinity }]),
                     outHours: held > 0 ? lasts : Infinity, M: Value.bestOf(view, main).npc, moneyWeight: Value.moneyWeight(persona) } };
@@ -395,7 +437,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     let state = stateOf(main), at = main;
                     const trip = state.account.place === 'road' ? state.trip : null;
                     if (FACTS.born(visitInfo)) {
-                        at = { ...main, spot: holdSpot(main) };
+                        at = { ...main, spot: holdSpot(main, null) };
                         state = queueFact(state, 'born', at, now);
                     }
                     if (FACTS.died(visitInfo)) state = queueFact(state, 'died', at, now);
@@ -409,8 +451,9 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     state = queueFact(placed(state, 'town'), 'town', at, now);
                     const { state: heard, actions, row } = decide(at, state, town);
                     const chain = executed(at, actions, town, row ? Engine.backHoursOf(view, row.spotId, town) : 0);
-                    // The chain's end takes the held spot again (the shots it bought) and it walks back to that spot.
-                    const back = { ...chain.main, spot: holdSpot(chain.main) }, heldRow = Engine.spotRowOf(view, back);
+                    // The chain's end is an outing's start: the held spot is kept or re-picked (on the shots it bought; the
+                    // purchases were sized on the spot it held, the next visit sizes on a new one) and it walks back to it.
+                    const back = { ...chain.main, spot: holdSpot(chain.main, chain.main.spot === null ? null : String(chain.main.spot)) }, heldRow = Engine.spotRowOf(view, back);
                     const done = { ...chain, main: back, afterHours: chain.afterHours > 0 && heldRow ? Engine.backHoursOf(view, heldRow.spotId, town) : chain.afterHours };
                     // It walks back and hunts again from the visit's end.
                     put(done.main, { ...placed(heard, 'hunt'), trip: null, full: fullOf(view, bagsOf(done.main), carried(done.main)) });
@@ -433,7 +476,12 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     const clock = clocks.get(main.index);
                     tally[classOf(clock.level)].wallHours += now - clock.at;
                     clocks.set(main.index, { level: main.level, at: now });
-                    const next = { ...main, spot: holdSpot(main) };
+                    // A new level keeps the held spot; only a spot with no row at this level (the engine's null) is left at once
+                    // (it cannot be hunted there).
+                    spotChoice.levelUps++;
+                    const before = stints.get(main.index)?.spot ?? null, forced = main.spot === null && before !== null;
+                    const next = forced ? { ...main, spot: holdSpot(main, before) } : main;
+                    if (!forced && (next.spot === null ? null : String(next.spot)) !== before) spotChoice.midFarm++;
                     const firing = hunter.firing(next);
                     if (FACTS.outAtLevel(heldFired(view, { ...next, level: clock.level }), heldFired(view, next), !!firing)) {
                         put(next, queueFact(stateOf(next), 'out', next, now));
@@ -474,7 +522,17 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                         meanHoursNeverBought: row.bots > row.bought ? row.neverHours / (row.bots - row.bought) : null }));
                     const differ = [...differs].map(([key, count]) => ({ row: JSON.parse(key)[0], reason: JSON.parse(key)[1], count }))
                         .sort((a, b) => b.count - a.count || (a.row + a.reason < b.row + b.reason ? -1 : 1));
-                    return { design: { variant, levels, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
+                    const quantile = (values, p) => { const sorted = [...values].sort((a, b) => a - b); return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : null; };
+                    const heldBy = band => { const levels = spotChoice.held.filter(each => band === 'all' || each.band === band).map(each => each.levels);
+                        return { stints: levels.length, p10: quantile(levels, 0.1), p50: quantile(levels, 0.5), p90: quantile(levels, 0.9) }; };
+                    const open = [...stints.values()].filter(stint => stint.spot !== null);
+                    const mains = ended.filter(main => !main.station), botHours = mains.length * hours;
+                    const counts = Object.fromEntries(Object.entries(spotChoice).filter(([key]) => key !== 'held'));
+                    const spotReport = { ...counts, botHours, changesPerBotHour: botHours > 0 ? spotChoice.changes / botHours : null,
+                        returnShare: spotChoice.changes ? spotChoice.returns / spotChoice.changes : null, abaShare: spotChoice.changes ? spotChoice.aba / spotChoice.changes : null,
+                        levelsHeld: Object.fromEntries(['all', '1-9', '10-19', '20-39', '40+'].map(band => [band, heldBy(band)])),
+                        openStints: open.length, minMaxers: mains.filter(main => OutingSpot.minMaxer(personas.get(main.id))).length, mains: mains.length };
+                    return { design: { variant, levels, spotChoice: spotReport, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
                         spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution } };
                 }
             };

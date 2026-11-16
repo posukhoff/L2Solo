@@ -96,7 +96,7 @@ function viewOf(snapshot, options = {}) {
         maxLevel: Math.min(snapshot.header.levels[1], snapshot.exp.length), fares: snapshot.fares || {},
         shotFamilies: snapshot.shotFamilies || null, offers, market, recipeGrade, yieldRows: new Map(), rowItems: new Map(),
         tripHours: snapshot.tripHours || null, deathExp: snapshot.deathExp || null, bags: snapshot.bags || null,
-        spotHours: snapshot.spotHours?.rows || null, spotLevels: snapshot.spotLevels || null,
+        spotHours: snapshot.spotHours?.rows || null, spotLevels: snapshot.spotLevels || null, spotAvgLevel: snapshot.spotAvgLevel || null,
         huntYields: (options.yields === 'design' ? snapshot.yieldsDesign : snapshot.yields) || null,
         blessedShots: new Set(snapshot.shotFamilies?.ids?.[BLESSED_FAMILY] || [])
     };
