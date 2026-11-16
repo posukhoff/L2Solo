@@ -12,6 +12,10 @@ const inventoryLimit = InventoryLimits.capacity;
 // penalty starts (C4 threshold not verified; the game sends no penalty yet).
 const FIRST_WEIGHT_STEP = 0.5;
 
+// A half-full bag sends a solo bot to sell, as a player would (our choice, the
+// sale trip's slots): the bag a solo hunter fills between two sales.
+const SOLO_BAG_SLOTS = 40;
+
 function weightPenalty(load, maximum) {
     if (!(maximum > 0)) return 0;
     const share = load / maximum;
@@ -184,4 +188,4 @@ function forActor(actor, state = null, timestamp = Date.now()) {
     () => actorRetryHolds(actor, state));
 }
 
-module.exports = { evaluate, forState, bagFor, bagFloor, forActor, bagMarks, stateInventory, inventoryLimit, weightPenalty, loadLimit, FIRST_WEIGHT_STEP };
+module.exports = { evaluate, forState, bagFor, bagFloor, forActor, bagMarks, stateInventory, inventoryLimit, weightPenalty, loadLimit, FIRST_WEIGHT_STEP, SOLO_BAG_SLOTS };

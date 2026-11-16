@@ -27,7 +27,7 @@ const NPC_SURPLUS_GEAR_MIN_SLOTS = 20;
 // A half-full bag sends the bot to sell, as a player would: on the cold path the forced
 // trip is the only thing that takes a hunting bot to town, and the thresholds above
 // alone stopped every sale for hours (live, 2026-10-03: 2,513 -> 21 static sales in 2 h).
-const HALF_FULL_CLEANUP_SLOTS = 40;
+const { SOLO_BAG_SLOTS } = require('../Population/SurvivalFloor');
 const CLAN_PROGRESSION_ITEM_IDS = new Set([1419]);
 const { rankOf } = invoke('GameServer/Bot/AI/GearGradeRule');
 const SHOT_PRODUCT_RANK = Object.freeze({
@@ -361,7 +361,7 @@ function saleRetryHolds(state) {
 }
 
 function soloSaleSlotLimit(state = {}, retry) {
-    return !(state.party?.partyId || state.partyId) && !(retry ?? saleRetryHolds(state)) ? HALF_FULL_CLEANUP_SLOTS : null;
+    return !(state.party?.partyId || state.partyId) && !(retry ?? saleRetryHolds(state)) ? SOLO_BAG_SLOTS : null;
 }
 
 // The cleanup thresholds, one rule for the bag fact's counts (cleanupCounted, over what
@@ -395,7 +395,7 @@ function cleanupCounted(state = {}) {
         if (lowGradeGear(kindFor(item, template), template?.etc?.rank, basePrice(item, template))) surplus += loose;
     }
     const over = cleanupThresholds({ slots, npcOnly, surplus });
-    return !(state.party?.partyId || state.partyId) && slots >= HALF_FULL_CLEANUP_SLOTS || over.npcOnly || over.surplus;
+    return !(state.party?.partyId || state.partyId) && slots >= SOLO_BAG_SLOTS || over.npcOnly || over.surplus;
 }
 
 function inventoryCleanupNeed(state = {}) {
