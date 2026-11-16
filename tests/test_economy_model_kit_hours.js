@@ -413,12 +413,12 @@ assert.throws(() => KitHours.gameKitHours({ snapshot }), /anchor .* required/);
 const wrongBest = { ...snapshot, gearLadder: { lines: { ...snapshot.gearLadder.lines, [fighter]: snapshot.gearLadder.lines[fighter].map(row => ({ ...row, best: '1' })) } } };
 assert.throws(() => KitHours.gameKitHours({ snapshot: wrongBest, anchor }).hour(fighter, 32, firstKit), new RegExp(`line ${fighter} band 1 .*best spot 1 in the snapshot`));
 
-// (14) The cell is chosen at the anchor price: at x1 a line 46 body at level 27
+// (14) The cell is chosen at the anchor price: at x1 a line 23 body at level 27
 // fires fewer shots at a spot that nets more once the shot costs its price.
 // Last: it boots x1.
 {
-    // A line whose cheapest-shot cell is not its best cell at free shots (line 8 at 27 once was; its cells move with the table).
-    const line = '46', level = 27, x1 = { header: { preset: 'x1' }, gearLadder: { lines: {} } };
+    // A line whose cheapest-shot cell is not its best cell at free shots (lines 8 and 46 at 27 once were; its cells move with the table).
+    const line = '23', level = 27, x1 = { header: { preset: 'x1' }, gearLadder: { lines: {} } };
     Boot.boot('x1');
     x1.gearLadder.lines[line] = [band(line, 25, 29, 1, false)];
     const classId = Table.roleClass(line, level);
@@ -472,11 +472,12 @@ for (const [line, level, spotId] of [[fighter, 32, '30_-30:f2'], [mage, 32, '4_2
 }
 // A weaker kit's factor differs from row to row (a long fight costs it more), as the game's reader's does.
 {
-    const weak = { 7: kitOf(mage, 39)[7] ?? kitOf(mage, 39)[14] }, at = ['17_21', '-6_34'].map(spotId => kitHours.spotFactors(mage, 39, weak, spotId));
+    const weak = { 7: kitOf(mage, 39)[7] ?? kitOf(mage, 39)[14] }, at = ['-7_32', '-6_34'].map(spotId => kitHours.spotFactors(mage, 39, weak, spotId));
     assert.ok(Math.abs(at[0].shots.kills - at[1].shots.kills) > 0.1, `one kit reads different factors at two rows: ${at[0].shots.kills} and ${at[1].shots.kills}`);
-    ['17_21', '-6_34'].forEach((spotId, i) => sameFactor(at[i].shots, gameFactor(mage, 39, weak, spotId, 'shots'), `the weak kit at ${spotId}`));
-    // Where the reference dies the weak kit's deaths are the game's load ratio times its kills, not its kills factor.
-    const row = Table.cycle('17_21', Table.roleFor(HuntCycle.referenceState(Table.roleClass(mage, 39), 39, { line: Number(mage) })), 39, true, {});
+    ['-7_32', '-6_34'].forEach((spotId, i) => sameFactor(at[i].shots, gameFactor(mage, 39, weak, spotId, 'shots'), `the weak kit at ${spotId}`));
+    // Where the reference dies the weak kit's deaths are the game's load ratio times its kills, not its kills factor
+    // (the row is one the reference dies at; 17_21 once was, its deaths move with the table).
+    const row = Table.cycle('-7_32', Table.roleFor(HuntCycle.referenceState(Table.roleClass(mage, 39), 39, { line: Number(mage) })), 39, true, {});
     assert.ok(row.deaths > 0, 'the reference dies at the row');
     assert.ok(at[0].shots.deaths > at[0].shots.kills * 2, `the weak kit dies more than its kills factor says: ${at[0].shots.deaths} against ${at[0].shots.kills}`);
 }
