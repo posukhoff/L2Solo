@@ -38,6 +38,7 @@ const Value = require('./value');
 const Supply = require('./supply');
 const LIMITS = require('./limits');
 const OutingSpot = require('../../../src/GameServer/Bot/AI/OutingSpot');
+const MobExperience = require('../../../src/GameServer/Progression/MobExperience');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
 const LOW_LEVEL_LAST = 19;
@@ -275,12 +276,22 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             // a row in the form it hunts there: its hour value (no road), the spot card's mean mob level, its deaths an hour at
             // the worn kit and the outing's horizon there (the supply rule's: the need's hours, else the hours to a full bag;
             // a row with no deaths needs none, its outing deaths are 0 at any horizon).
+            // Its deaths an hour are the worst of its rows over the levels it may hold the spot without a new choice: its
+            // level up to the last level the spot stays within the level gap (the full exp: mean mob level + 5), since the held spot is
+            // hunted across level-ups until the next situation and the spot rows are not monotone in level (a row deathless
+            // at one level may die a level up). A level with no row of the spot is skipped; the worn kit's factor is the
+            // start level's.
             // A held spot that fits is checked alone (no ranking). The run report's spotChoice counts each answer and the
             // stints it ends.
             const candidateOf = (main, row, form) => {
                 const at = { ...main, spot: String(row.spotId) }, factors = factorsOf(at), avgLevel = view.spotAvgLevel?.[at.spot];
                 if (!Number.isFinite(avgLevel)) throw new Error(`no mean mob level for spot ${at.spot} in the snapshot (spotAvgLevel)`);
-                const deathsPerHour = (Engine.rowIn(row, form).deaths || 0) * factors[form].deaths;
+                let worst = Engine.rowIn(row, form).deaths || 0;
+                for (let level = main.level + 1; MobExperience.gapFactor(level - avgLevel) >= 1; level++) {
+                    const ahead = Engine.spotRowOf(view, { ...at, level, occupied: null });
+                    if (ahead && String(ahead.spotId) === at.spot) worst = Math.max(worst, Engine.rowIn(ahead, form).deaths || 0);
+                }
+                const deathsPerHour = worst * factors[form].deaths;
                 let outingHours = 0;
                 if (deathsPerHour > 0) {
                     const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);

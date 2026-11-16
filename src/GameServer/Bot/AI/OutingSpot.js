@@ -16,7 +16,8 @@
 //   1743-1749). Our reading for a spot of several species: the spot's mean mob
 //   level (avgLevel), not each species. Mobs too strong are the safety's side.
 // - safety: the member's expected deaths over the outing (deaths an hour at the
-//   spot in the form it hunts, times the outing's hours) are at most the bound
+//   spot in the form it hunts at the worst level the outing may hold it, the
+//   caller's, times the outing's hours) are at most the bound
 //   (inclusive). The bound is ours and the caller's limit row.
 const MobExperience = require('../../Progression/MobExperience');
 
