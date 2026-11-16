@@ -769,20 +769,28 @@ for (const supply of ['table', 'formula']) {
 // The gear step is the game's NPC gear rule (staticNpcUpgradePlan through gear.js): line 9 at level 20 (an archer there)
 // wearing the no-grade Squire's Sword in a town that sells a D bow (1,214,267) and a D leather shirt (185,851): with
 // 300k it buys the shirt (an unfunded weapon does not block armour); with 2M and 100k kept the bow, worn in its own
-// two-handed slot; with 1M kept the bow is not funded (the wallet above the reserve), the shirt is.
+// two-handed slot; with 1M kept the bow is not funded (the wallet above the reserve), the shirt is. The rule reads the
+// NPCs of every town: in Orc Village, which sells neither, the answer is the shirt of the town the fewest fare away
+// (Gludin, 3000), funded only when the wallet above the reserve pays the price and the fare; a town with no route to a
+// seller gives nothing.
 {
     const Boot = require('../scripts/economy-model/boot');
     Boot.boot('x50');
     const Gear = require('../scripts/economy-model/gear');
     const BOW = 274, SHIRT = 391;
-    const shop = { offers: new Map([[BOW, [{ town: 'Giran', price: 1214267, channel: 'npc_buy' }]], [SHIRT, [{ town: 'Giran', price: 185851, channel: 'npc_buy' }]]]),
-        items: { [BOW]: { kind: 'Weapon.Bow', grade: 'D' }, [SHIRT]: { kind: 'Armor.Leather', grade: 'D' } } };
+    const shop = { offers: new Map([[BOW, [{ town: 'Giran', price: 1214267, channel: 'npc_buy' }]],
+        [SHIRT, [{ town: 'Gludin', price: 185851, channel: 'npc_buy' }, { town: 'Giran', price: 185851, channel: 'npc_buy' }]]]),
+        items: { [BOW]: { kind: 'Weapon.Bow', grade: 'D' }, [SHIRT]: { kind: 'Armor.Leather', grade: 'D' } },
+        fares: { 'Orc Village': { Gludin: 3000, Giran: 11000 }, Gludio: { Gludin: null, Giran: null } } };
     const gear = Gear.npcGear({ snapshot: { gearLadder: { slots: {} } }, view: shop });
     const archer = money => ({ line: 9, level: 20, money, kit: { 7: SWORD }, weapon: SWORD });
-    assert.deepEqual(gear.next(archer(300000), 'Giran', 0), { selfId: SHIRT, slot: 10, price: 185851, weapon: false }, 'the affordable armour before the unfunded weapon');
-    assert.deepEqual(gear.next(archer(2000000), 'Giran', 100000), { selfId: BOW, slot: 14, price: 1214267, weapon: true }, 'the D weapon when the wallet pays it');
+    assert.deepEqual(gear.next(archer(300000), 'Giran', 0), { selfId: SHIRT, slot: 10, price: 185851, weapon: false, town: 'Giran', fare: 0 }, 'the affordable armour before the unfunded weapon');
+    assert.deepEqual(gear.next(archer(2000000), 'Giran', 100000), { selfId: BOW, slot: 14, price: 1214267, weapon: true, town: 'Giran', fare: 0 }, 'the D weapon when the wallet pays it');
     assert.equal(gear.next(archer(2000000), 'Giran', 1000000).selfId, SHIRT, 'the reserve kept holds the weapon back');
-    assert.equal(gear.next(archer(2000000), 'Gludio', 0), null, 'a town that sells none of it gives nothing');
+    assert.deepEqual(gear.next(archer(300000), 'Orc Village', 0), { selfId: SHIRT, slot: 10, price: 185851, weapon: false, town: 'Gludin', fare: 3000 },
+        'in a village that sells no D piece: the D shirt of the town the fewest fare away');
+    assert.equal(gear.next(archer(188000), 'Orc Village', 0), null, 'the fare is paid from the same wallet: price and fare above it, not funded');
+    assert.equal(gear.next(archer(2000000), 'Gludio', 0), null, 'a town with no route to a seller gives nothing');
 }
 
 console.log('economy model design: ok');

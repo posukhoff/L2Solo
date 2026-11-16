@@ -15,33 +15,48 @@ const Engine = require('./engine');
 const KitHours = require('./kit-hours');
 
 // npcGear({ snapshot, view }) -> { next(main, town, reserve) }: the piece the
-// game's rule buys next for the main in town, funded now from the adena above
-// reserve, or null: { selfId, slot, price, weapon }. No cache: the answer
-// reads the wallet.
+// game's rule buys next for the main standing in town, among the NPCs of every
+// town (the game's gear errand reads all towns' NPC offers): its seller is the
+// town's NPC, else the NPC the fewest fare away (Engine.sellerOf). Funded now
+// from the adena above reserve, the fare to the seller's town included (our
+// choice: the teleport is paid from the same wallet), or null:
+// { selfId, slot, price, weapon, town, fare }. The answer reads the wallet, so
+// it is not cached; the line's reference body of a level is (it reads only the
+// class, level and line).
 function npcGear({ snapshot, view }) {
     const Table = invoke('GameServer/Bot/AI/SpotValueTable'), HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
     const Planner = invoke('GameServer/Bot/AI/GearAcquisitionPlanner'), PurchaseFunding = invoke('GameServer/Bot/Economy/PurchaseFunding');
     const StatsPacket = invoke('GameServer/Bot/Economy/StatsPacket');
     const Templates = invoke('GameServer/Item/ItemTemplateIndex'), DataCache = invoke('GameServer/DataCache');
+    const bodies = new Map();
+    const bodyOf = (classId, level, line) => {
+        const key = `${classId}:${level}:${line}`;
+        if (!bodies.has(key)) bodies.set(key, HuntCycle.referenceState(classId, level, { line }));
+        return bodies.get(key);
+    };
     return {
         next(main, town, reserve) {
-            const classId = Table.roleClass(main.line, main.level), body = HuntCycle.referenceState(classId, main.level, { line: Number(main.line) });
+            const classId = Table.roleClass(main.line, main.level), body = bodyOf(classId, main.level, Number(main.line));
             const pieces = Object.entries(KitHours.kitInHand(snapshot, main)).filter(([, selfId]) => selfId > 0)
                 .map(([slot, selfId]) => ({ slot: Number(slot), selfId: Number(selfId) }));
             const state = { ...body, adena: main.money, inventory: { ...KitHours.inventoryOf(pieces), 57: { selfId: 57, amount: main.money } },
                 stats: { ...body.stats, money: StatsPacket.money({ hourAdena: 0, moneyPrice: 0, refillReserve: Math.round(reserve), firstUnfundedPrice: 0 }) } };
-            // The NPC of this town that sells the piece, at its price.
+            // The NPC that sells the piece: this town's, else the one the fewest fare away (gear has NPC sellers only).
+            const sellers = new Map();
             const findNpcOffer = target => {
-                const row = (view.offers.get(Number(target.selfId)) || []).find(each => each.channel === 'npc_buy' && each.town === town);
-                return row ? { sourceType: 'npc', price: row.price, town } : null;
+                const seller = Engine.sellerOf(view, target.selfId, town);
+                if (!seller) return null;
+                sellers.set(Number(target.selfId), seller);
+                return { sourceType: 'npc', price: seller.price, town: seller.town };
             };
             const plan = Planner.staticNpcUpgradePlan(state, { findNpcOffer, buyOrderEscrow: 0 });
-            // Funded in the game's terms (npcPurchaseBudget): the price within the wallet above the reserve.
-            if (!plan?.market || !(Number(plan.market.price) <= PurchaseFunding.spendable(state, 0, { upperBound: true }))) return null;
+            // Funded in the game's terms (npcPurchaseBudget): the price, and here the fare, within the wallet above the reserve.
+            const seller = plan?.market ? sellers.get(Number(plan.target.selfId)) : null;
+            if (!seller || !(Number(plan.market.price) + seller.fare <= PurchaseFunding.spendable(state, 0, { upperBound: true }))) return null;
             // The plan names the weapon slot (7) for any weapon; a weapon is worn in its own slot (a two-handed one in 14).
             const selfId = Number(plan.target.selfId), weapon = Engine.isWeapon(view.items[selfId]);
             const slot = weapon ? Number(Templates.find(DataCache.items, selfId)?.etc?.slot || plan.target.slot) : Number(plan.target.slot);
-            return { selfId, slot, price: Number(plan.market.price), weapon };
+            return { selfId, slot, price: Number(plan.market.price), weapon, town: seller.town, fare: seller.fare };
         }
     };
 }
