@@ -168,8 +168,6 @@ const UNIT = Object.freeze({ kills: 1, shots: 1, deaths: 1 }), UNITS = Object.fr
 // level): the creation kit { slot: selfId }, the one kit point it measured }, or none;
 // gear: the game's NPC gear rule (gear.js npcGear: next(main, town, reserve) -> the
 // piece funded now or null), or none (no gear is bought).
-// The number of gear pieces one town chain can buy: the game's NPC kit slots.
-const KIT_SLOTS = 14;
 function plane({ view, kitHours, variant, accounts, table = null, gear = null }) {
     if (variant !== 'table' && variant !== 'formula') throw new Error(`no supply variant '${variant}' (table or formula)`);
     const personas = new Map(accounts.map(account => [account.id, account.persona || null]));
@@ -453,7 +451,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     ledger.counters.hops++;
                     ledger.counters.hopFares += seller.fare;
                 };
-                for (let piece = 0; piece < KIT_SLOTS; piece++) {
+                // The gear rule's own null ends it: each piece costs more than the NPC pays back for what it replaces.
+                for (;;) {
                     const buy = gear.next(next, at, reserveOf(next, row, at, spotTown));
                     if (!buy || (buy.town !== at && hopped)) break;
                     if (buy.town !== at) hop(buy);
