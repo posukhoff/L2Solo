@@ -38,8 +38,9 @@ function simulation(dieOn, restOn = 0) {
                 calls.fights += 1;
                 const t = args.timestamp + FIGHT_MS;
                 if (calls.fights === dieOn) {
+                    // A dying round ends at the death and its respawn step is due there.
                     return { patch: { activity: 'dead', vitals: { hp: 0 } }, materialize: {},
-                        debug: { died: true, wins: 0, mobsKilled: 0, combatMs: FIGHT_MS }, nextResolveAt: t };
+                        debug: { died: true, wins: 0, mobsKilled: 0, combatMs: FIGHT_MS }, doneAt: t, nextResolveAt: t };
                 }
                 if (calls.fights === restOn) {
                     return { patch: { activity: 'resting', vitals: { hp: 1 }, stats: { ...args.state.stats, restUntil: t + 1000 } },

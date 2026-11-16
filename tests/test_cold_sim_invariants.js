@@ -2,17 +2,20 @@
 const assert = require('node:assert/strict');
 const path = require('path');
 
-// The cold simulation's conservation laws on a fixed sample: nine cells of the
+// The cold simulation's conservation laws on a fixed sample: ten cells of the
 // spot table (a spot's species, a class line, a level, shots), each one
 // fighting and one dying several times, hunted through the generator's own
-// hunt for two hours at three seeds. Every hunt tiles its
+// hunt for two hours at three seeds. A dead bot restarts 90 s after its death,
+// never later, and no bot sits down at a whole HP and MP bar (the tenth cell
+// hunts with the model's lifted admission, which fights only at a whole bar
+// when the gate refuses). Every hunt tiles its
 // clock, credits each regen interval its rate, closes its HP and MP (every
 // change a probed call or a clock interval), keeps its stamps
 // inside their intervals and its loot inside the bag, and its row fits in its
 // hour per kill. The same laws fail on each defect the cold round had
 // (time counted twice, regen as one capped lump, a round framed from its
 // moment, loot past the bag), re-introduced here by a wrapper around the
-// game's own functions. The fixture holds the nine spots' catalogue rows (the
+// game's own functions. The fixture holds the ten spots' catalogue rows (the
 // server's spot catalogue, SpotService + SpotProfiles), so no world spawns.
 // It is written from the generator's catalogue by
 //   node tests/test_cold_sim_invariants.js --cells=line/level/spotId/selfId/form,...
@@ -69,10 +72,18 @@ Module.prototype._compile = function (content, filename) {
 const Generator = require('../scripts/generate-spot-table');
 const Decompose = require('../scripts/economy-model/fight/decompose');
 const Invariants = require('../scripts/economy-model/fight/invariants');
+const HuntLift = require('../scripts/economy-model/hunt-lift');
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'cold_sim_invariants.json');
 const HOURS = 2;
 const SEEDS = 3;
+// The cell hunted with the lifted admission: a class 18 bot at level 4, whose
+// bar is fractional (164.45 HP), at 4_3 on its species 3.
+const LIFTED = { line: '20', level: 4, spotId: '4_3', selfId: 3 };
+const lifted = (cell) => Object.keys(LIFTED).every((key) => cell[key] === LIFTED[key]);
+// The restart's wait after a death (EconomicValuation prices a death at it).
+const RESPAWN_MS = 90000;
+const wholeBar = (vitals) => vitals.hp >= vitals.maxHp && vitals.mp >= vitals.maxMp;
 // --cells: the fixture written anew, the catalogue (the world spawned) kept to the named cells' spots.
 const written = process.argv.find((arg) => arg.startsWith('--cells='));
 if (written) {
@@ -131,6 +142,8 @@ function recordHunt(cell, seed, defect = {}) {
         const rate = ColdRest.restRegenPerTick({ ...state, vitals: body.vitals, stats: body.stats }, before.maxHp - before.hp, before.maxMp - before.mp,
             { profile: rates.profile, timestamp: at, ...options });
         const result = real.sit(clock, body, needMs, bound, state, rates, options);
+        // A round's sit that begins at a whole bar (the rest step's span is a sit already begun).
+        if (step && clock.seatedMs > sat0 && wholeBar(before)) step.wholeBarSits = (step.wholeBarSits || 0) + 1;
         if (step) credit(step, { at, ms: clock.seatedMs - sat0, rate, before, after: vitalsOf(result.body.vitals) }, 'seated');
         return result;
     };
@@ -189,9 +202,20 @@ function sweep(defect) {
     const cells = {};
     for (const cell of fixture.cells) {
         const name = `${cell.spotId}/${cell.selfId} L${cell.level} line ${cell.line}`;
-        cells[name] = { kills: 0, deaths: 0 };
+        cells[name] = { kills: 0, deaths: 0, respawnWaits: [], wholeBarSits: 0 };
         for (let seed = 0; seed < SEEDS; seed++) {
-            const hunt = recordHunt(cell, seed, defect);
+            HuntLift.lift(lifted(cell));
+            let hunt;
+            try {
+                hunt = recordHunt(cell, seed, defect);
+            } finally {
+                HuntLift.lift(false);
+            }
+            // The respawn step's restart ends RESPAWN_MS after the dying round's end (the death).
+            hunt.steps.forEach((step, i) => {
+                if (step.before.activity === 'dead' && i > 0) cells[name].respawnWaits.push(step.restUntil - hunt.steps[i - 1].doneAt);
+                cells[name].wholeBarSits += step.wholeBarSits || 0;
+            });
             const row = Generator.perKill(hunt.sum);
             const checked = Invariants.checkHunt(hunt, { row, tickMs: Formulas.REGEN_TICK_MS, rounding: Generator.ROUNDING });
             const violations = checked.violations;
@@ -225,6 +249,68 @@ assert.deepStrictEqual(head.kinds, {}, 'the cold hunt keeps every law');
 for (const [name, cell] of Object.entries(head.cells)) assert.ok(cell.kills > 0, `${name} kills (${cell.deaths} deaths)`);
 const dying = Math.max(...Object.values(head.cells).map((cell) => cell.deaths));
 assert.ok(dying >= 5, `a cell dies five times or more a sweep (most: ${dying})`);
+for (const [name, cell] of Object.entries(head.cells)) {
+    const late = cell.respawnWaits.filter((ms) => Math.abs(ms - RESPAWN_MS) > 1);
+    assert.deepStrictEqual(late.map((ms) => Math.round(ms / 1000)), [], `${name}: a dead bot restarts ${RESPAWN_MS / 1000} s after its death (waits in s)`);
+    assert.strictEqual(cell.wholeBarSits, 0, `${name}: no bot sits down at a whole HP and MP bar`);
+}
+const respawns = Object.values(head.cells).reduce((n, cell) => n + cell.respawnWaits.length, 0);
+assert.ok(respawns >= 5, `the restart is checked on five deaths or more (${respawns})`);
+
+// A party's death: two reference bots of line 2 at level 10 hunt 23_-29 on its
+// species 330 together through the party round for two hours, each member
+// committed as the lifecycle commits it (its clock at its result's doneAt), the
+// party stepped at its due. A dead member restarts 90 s after its death too,
+// never 90 s after the party's next ordinary step.
+function partyRespawnWaits() {
+    const BPR = invoke('GameServer/Bot/Population/BackgroundPartyResolver');
+    const HuntCycle = invoke('GameServer/Bot/AI/HuntCycle');
+    const BotGear = invoke('GameServer/Bot/AI/BotGear');
+    const CCP = invoke('GameServer/Bot/Population/ColdCombatProfile');
+    const START = 1_750_000_000_000;
+    const spot = Decompose.speciesSpot(profiles.get('23_-29'), 330);
+    const classId = Generator.classFor('2', 10);
+    const member = (characterId) => {
+        const state = HuntCycle.referenceState(classId, 10, { gear: BotGear, profile: CCP, line: Generator.lineClassFor('2') });
+        const { maxHp, maxMp } = CCP.profileFor(state, START);
+        return { ...state, characterId, partyId: 'invariants', phase: 'cold', activity: 'grouped', spotId: spot.id, loc: { ...spot.center },
+            vitals: { hp: maxHp, maxHp, mp: maxMp, maxMp } };
+    };
+    let members = [member(1), member(2)];
+    let party = { partyId: 'invariants', leaderId: 1, spotId: spot.id, cohesion: 1, risk: 0, roleCoverage: {}, stats: {} };
+    // One seeded draw for the round and the rules it calls (Math.random), as the generator's hunt.
+    let seed = 7;
+    const rng = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const random = Math.random;
+    Math.random = rng;
+    const diedAt = new Map(), waits = [];
+    try {
+        for (let due = START; due < START + HOURS * 3600000;) {
+            const { timestamp, elapsedMs } = ColdClock.step(members[0], due);
+            const step = BPR.resolve({ party, members, spot, elapsedMs, timestamp, rng, spotHunters: 2 });
+            const results = new Map(step.memberResults.map(({ state, result }) => [state.characterId, result]));
+            members = members.map((state) => {
+                const result = results.get(state.characterId), patch = result.patch || {};
+                const hp = Number(patch.vitals?.hp ?? state.vitals.hp);
+                if (state.vitals.hp > 0 && hp <= 0) diedAt.set(state.characterId, ColdClock.doneAt(result) ?? timestamp);
+                if (state.vitals.hp <= 0 && hp > 0) waits.push(patch.stats.restUntil - diedAt.get(state.characterId));
+                return { ...state, ...patch, vitals: { ...state.vitals, ...(patch.vitals || {}) }, stats: patch.stats || state.stats,
+                    inventory: patch.inventory || state.inventory, timing: { ...state.timing, lastResolvedAt: ColdClock.doneAt(result) ?? timestamp } };
+            });
+            party = { ...party, ...step.partyPatch, stats: { ...party.stats, ...(step.partyPatch?.stats || {}) } };
+            assert.notStrictEqual(party.status, 'dissolved', `the party hunts on (${party.stats.partyBreakReason})`);
+            due = Math.max(timestamp + 1, Number(step.nextResolveAt) || timestamp + 30000);
+        }
+    } finally {
+        Math.random = random;
+    }
+    return waits;
+}
+const partyWaits = partyRespawnWaits();
+assert.ok(partyWaits.length >= 5, `the party restart is checked on five deaths or more (${partyWaits.length})`);
+assert.deepStrictEqual(partyWaits.filter((ms) => Math.abs(ms - RESPAWN_MS) > 1).map((ms) => Math.round(ms / 1000)), [],
+    `a dead party member restarts ${RESPAWN_MS / 1000} s after its death (waits in s)`);
+console.log(`party: ${partyWaits.length} restarts, each ${RESPAWN_MS / 1000} s after the death`);
 
 // Each defect the cold round had, re-introduced, breaks its law.
 const lumped = new WeakSet();

@@ -34,10 +34,11 @@ const BALANCE_EPS = 1e-6;
 const add = (violations, kind, step, detail) => violations.push({ kind, step, detail });
 
 // The step's credited interval: from the bot's clock (t - elapsed) to where
-// its last action ended, or its moment.
+// its last action ended (before its moment when a death or a crossing ended
+// the round there), or its moment: the lifecycle's clock rule.
 function span(step) {
     const from = step.t - step.elapsedMs;
-    return { from, to: Math.max(step.t, Math.ceil(Number(step.doneAt) || 0)) };
+    return { from, to: Number(step.doneAt) > 0 ? Math.ceil(Number(step.doneAt)) : step.t };
 }
 
 // Each step goes on from where the previous one ended, so the credited
