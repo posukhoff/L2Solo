@@ -307,8 +307,9 @@ for (const supply of ['table', 'formula']) {
     }
 }
 // The same climb where s2, worth more at level 6 and within the gap at 6 and 7 (mean mob level 7), is deathless at 6 but
-// dies 0.2 an hour at 7, and s1 (mean 3, nothing killed bare) is deathless at both, at the reference kit: the bot born at 6 holds s1 at birth,
-// at level 7 and at its chain end (a spot deadly at a later level of its gap is not held), and never dies.
+// dies 0.2 an hour at 7, and s1 (mean 3, nothing killed bare) is deathless at both, at the reference kit: the bot born at 6,
+// whose outing reaches level 7, holds s1 at birth, at level 7 and at its chain end (a spot deadly at a level the outing
+// reaches is not held), and never dies. Where level 7 is out of the outing's reach (its exp far above), s2 is taken at birth.
 {
     const inRange = climb(3), safe = row('s1', 100, 200, { shotless: near.shotless }), deadlyUp = row('s2', 300, 400, { deaths: 0.2 });
     const turns = { ...inRange, hours: { 9: { 6: { classId: 9, shotId: SHOT, best: richer, top: [richer, safe] }, 7: { classId: 9, shotId: SHOT, best: deadlyUp, top: [deadlyUp, safe] } } } };
@@ -318,6 +319,8 @@ for (const supply of ['table', 'formula']) {
         assert.ok(levelled && chainEnd && chainEnd.now > levelled.now, `${supply}: it reaches level 7 before its town chain`);
         assert.deepEqual([climbed.visits[0].main.spot, levelled.main.spot, chainEnd.main.spot], ['s1', 's1', 's1'], `${supply}: the spot deadly a level up is never held`);
         assert.equal(climbed.result.counters.deaths, 0, `${supply}: it never dies`);
+        const unreached = run(climber(), supply, 2, 1, { ...turns, exp: [0, 50, 100, 150, 200, 250, 1e6] });
+        assert.equal(unreached.visits[0].main.spot, 's2', `${supply}: deadly only past the levels the outing reaches, s2 is taken`);
     }
 }
 // A spot worth more whose expected deaths over the outing exceed the bound (0.05 an hour over an outing of hours to a full

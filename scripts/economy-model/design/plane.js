@@ -38,7 +38,6 @@ const Value = require('./value');
 const Supply = require('./supply');
 const LIMITS = require('./limits');
 const OutingSpot = require('../../../src/GameServer/Bot/AI/OutingSpot');
-const MobExperience = require('../../../src/GameServer/Progression/MobExperience');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
 const LOW_LEVEL_LAST = 19;
@@ -273,32 +272,44 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                 return need.perHour * fill.mass * (1 + ConsumableTarget.RESERVE) > fill.loadPerHour ? 'stockLoad' : 'dropLoad';
             };
             // The held spot at an outing's start (OutingSpot.choose): held, the spot it holds (null at its birth). A candidate is
-            // a row in the form it hunts there: its hour value (no road), the spot card's mean mob level, its deaths an hour at
-            // the worn kit and the outing's horizon there (the supply rule's: the need's hours, else the hours to a full bag;
-            // a row with no deaths needs none, its outing deaths are 0 at any horizon).
-            // Its deaths an hour are the worst of its rows over the levels it may hold the spot without a new choice: its
-            // level up to the last level the spot stays within the level gap (the full exp: mean mob level + 5), since the held spot is
-            // hunted across level-ups until the next situation and the spot rows are not monotone in level (a row deathless
-            // at one level may die a level up). A level with no row of the spot is skipped; the worn kit's factor is the
-            // start level's.
+            // a row in the form it hunts there: its hour value (no road), the spot card's mean mob level, and the outing's facts
+            // OutingSpot checks safety over: its deaths an hour at the worn kit at each level from its level to the level its exp
+            // an hour there reaches over the outing's horizon (the supply rule's: the need's hours, else the hours to a full bag),
+            // capped at the spot's last row (a level without the spot's row has none; the worn kit's factor is the start
+            // level's). A row with no deaths at its level or any later one needs no horizon: its outing deaths are 0.
             // A held spot that fits is checked alone (no ranking). The run report's spotChoice counts each answer and the
             // stints it ends.
             const candidateOf = (main, row, form) => {
                 const at = { ...main, spot: String(row.spotId) }, factors = factorsOf(at), avgLevel = view.spotAvgLevel?.[at.spot];
                 if (!Number.isFinite(avgLevel)) throw new Error(`no mean mob level for spot ${at.spot} in the snapshot (spotAvgLevel)`);
-                let worst = Engine.rowIn(row, form).deaths || 0;
-                for (let level = main.level + 1; MobExperience.gapFactor(level - avgLevel) >= 1; level++) {
-                    const ahead = Engine.spotRowOf(view, { ...at, level, occupied: null });
-                    if (ahead && String(ahead.spotId) === at.spot) worst = Math.max(worst, Engine.rowIn(ahead, form).deaths || 0);
+                const value = Value.hourValue(view, at, form, factors, personas.get(main.id)), hour = Engine.rowIn(row, form);
+                const ahead = deathsOf(main.line, at.spot, form), deaths = factors[form].deaths;
+                if (!(hour.deaths > 0) && !(ahead.worstFrom[main.level + 1] > 0)) {
+                    return { spotId: at.spot, value, avgLevel, members: [{ deathsByLevel: [], reachLevel: main.level, outingHours: 0 }] };
                 }
-                const deathsPerHour = worst * factors[form].deaths;
-                let outingHours = 0;
-                if (deathsPerHour > 0) {
-                    const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);
-                    outingHours = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
+                const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);
+                const outingHours = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
+                const reached = Engine.levelOf(view, main.exp + Engine.huntExp(at, hour, outingHours * factors[form].kills), main.level);
+                const reachLevel = Math.min(reached, ahead.last), deathsByLevel = { [main.level]: (hour.deaths || 0) * deaths };
+                for (let level = main.level + 1; level <= reachLevel; level++) deathsByLevel[level] = ahead.byLevel[level] * deaths;
+                return { spotId: at.spot, value, avgLevel, members: [{ deathsByLevel, reachLevel, outingHours }] };
+            };
+            // A spot's deaths an hour by level in a form (its rows' at the reference kit, 0 at a level without its row), the
+            // worst from a level to its last row and that last level, per (line, spot, form): the rows are static, built once.
+            const deathsIndex = new Map();
+            const deathsOf = (line, spot, form) => {
+                const key = `${line}|${spot}|${form}`;
+                if (deathsIndex.has(key)) return deathsIndex.get(key);
+                const byLevel = new Array(view.maxLevel + 2).fill(0), worstFrom = new Array(view.maxLevel + 2).fill(0);
+                let last = 0;
+                for (let level = 1; level <= view.maxLevel; level++) {
+                    const own = Engine.spotRowOf(view, { line, level, spot, occupied: null });
+                    if (own && String(own.spotId) === spot) { byLevel[level] = Engine.rowIn(own, form).deaths || 0; last = level; }
                 }
-                return { spotId: at.spot, value: Value.hourValue(view, at, form, factors, personas.get(main.id)), avgLevel,
-                    members: [{ deathsPerHour, outingHours }] };
+                for (let level = view.maxLevel; level >= 1; level--) worstFrom[level] = Math.max(byLevel[level], worstFrom[level + 1]);
+                const index = { byLevel, worstFrom, last };
+                deathsIndex.set(key, index);
+                return index;
             };
             const holdSpot = (main, held) => {
                 const pool = candidateRows(view, main, held);

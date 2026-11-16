@@ -15,14 +15,22 @@
 //   gives the full exp (MobExperience.gapFactor; L2JLisvus L2Attackable.java:
 //   1743-1749). Our reading for a spot of several species: the spot's mean mob
 //   level (avgLevel), not each species. Mobs too strong are the safety's side.
-// - safety: the member's expected deaths over the outing (deaths an hour at the
-//   spot in the form it hunts at the worst level the outing may hold it, the
-//   caller's, times the outing's hours) are at most the bound
-//   (inclusive). The bound is ours and the caller's limit row.
+// - safety: the member's expected deaths over the outing are at most the bound
+//   (inclusive): its deaths an hour at the spot, in the form it hunts, at the
+//   worst of the levels the outing reaches (from its level at the start to the
+//   level its exp reaches by the outing's end: an outing spans level-ups and a
+//   spot deathless at one level may kill a level up), times the outing's hours.
+//   The deaths by level and the level reached are facts of the hunt, the
+//   caller's. The bound is ours and the caller's limit row.
 const MobExperience = require('../../Progression/MobExperience');
 
-// members: [{ level }]; candidate: { spotId, value, avgLevel, members: [{ deathsPerHour, outingHours }] } (members' order).
-const outingDeaths = ({ deathsPerHour, outingHours }) => (deathsPerHour > 0 ? deathsPerHour * outingHours : 0);
+// members: [{ level }]; candidate: { spotId, value, avgLevel, members: [{ deathsByLevel, reachLevel, outingHours }] }
+// (members' order): deathsByLevel[level], the deaths an hour there (none read as 0); reachLevel, the last level the outing reaches.
+function outingDeaths({ deathsByLevel, reachLevel, outingHours }, level) {
+    let worst = 0;
+    for (let at = level; at <= reachLevel; at++) worst = Math.max(worst, deathsByLevel[at] || 0);
+    return worst > 0 ? worst * outingHours : 0;
+}
 
 function checkedBound(bound) {
     if (!Number.isFinite(bound) || bound < 0) throw new Error(`no safe outing deaths bound (got ${bound})`);
@@ -34,7 +42,7 @@ function unfit(candidate, members, bound) {
     checkedBound(bound);
     if (!candidate) return 'no_row';
     if (members.some(member => MobExperience.gapFactor(member.level - candidate.avgLevel) < 1)) return 'level_gap';
-    if (candidate.members.some(member => outingDeaths(member) > bound)) return 'unsafe';
+    if (candidate.members.some((member, at) => outingDeaths(member, members[at].level) > bound)) return 'unsafe';
     return null;
 }
 
@@ -59,7 +67,7 @@ function choose({ held = null, candidates, members, minMax = false, bound }) {
     }
     if (!best) {
         if (!candidates.length) return { spotId: null, reason: 'none', refusedUnsafe };
-        const deaths = candidate => Math.max(...candidate.members.map(outingDeaths));
+        const deaths = candidate => Math.max(...candidate.members.map((member, at) => outingDeaths(member, members[at].level)));
         for (const candidate of candidates) if (deaths(candidate) <= bound && (!best || candidate.value > best.value)) best = candidate;
         if (best) return { spotId: String(best.spotId), reason: 'fallback:outleveled', refusedUnsafe };
         for (const candidate of candidates) {

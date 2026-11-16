@@ -1,7 +1,8 @@
 'use strict';
 // Which spot a group hunts this outing: it keeps its spot while the spot fits
 // (no member more than 5 levels above the spot's mobs, C4's full exp, and every
-// member's expected deaths over the outing at most the bound, inclusive) even
+// member's expected deaths over the outing at most the bound, inclusive, at the
+// worst of the levels the outing reaches) even
 // when another spot is worth more; past the gap or over the bound it takes the
 // best spot that fits; no spot fits gives the best safe one out of the gap,
 // else the least deadly one (a player never stops playing), none only without
@@ -10,8 +11,9 @@ const assert = require('node:assert/strict');
 const OutingSpot = require('../src/GameServer/Bot/AI/OutingSpot');
 
 const BOUND = 0.1;
+// Deaths an hour the same at every level, an outing of one hour reaching any level.
 const spot = (spotId, value, avgLevel, ...deaths) => ({ spotId, value, avgLevel,
-    members: deaths.map(each => ({ deathsPerHour: each, outingHours: 1 })) });
+    members: deaths.map(each => ({ deathsByLevel: Array(100).fill(each), reachLevel: 99, outingHours: 1 })) });
 const solo = level => [{ level }];
 
 // Kept while it fits, though another is worth more.
@@ -28,8 +30,13 @@ assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [own, richer], membe
 assert.equal(OutingSpot.unfit(spot('s', 1, 20, 0.12), solo(20), BOUND), 'unsafe');
 assert.equal(OutingSpot.unfit(spot('s', 1, 20, 0.08), solo(20), BOUND), null);
 assert.equal(OutingSpot.unfit(spot('s', 1, 20, 0.1), solo(20), BOUND), null);
-assert.equal(OutingSpot.unfit({ spotId: 's', value: 1, avgLevel: 20, members: [{ deathsPerHour: 0.04, outingHours: 3 }] }, solo(20), BOUND), 'unsafe',
+assert.equal(OutingSpot.unfit({ spotId: 's', value: 1, avgLevel: 20, members: [{ deathsByLevel: { 20: 0.04 }, reachLevel: 20, outingHours: 3 }] }, solo(20), BOUND), 'unsafe',
     'deaths an hour times the outing\'s hours');
+// The levels the outing reaches: deathless at its start level but deadly a level up is unsafe when the outing reaches that
+// level, and fits when the outing ends before it.
+const deadlyUp = reachLevel => ({ spotId: 's', value: 1, avgLevel: 20, members: [{ deathsByLevel: { 20: 0, 21: 0.5 }, reachLevel, outingHours: 1 }] });
+assert.equal(OutingSpot.unfit(deadlyUp(21), solo(20), BOUND), 'unsafe', 'deadly at a level the outing reaches');
+assert.equal(OutingSpot.unfit(deadlyUp(20), solo(20), BOUND), null, 'deadly only past the levels the outing reaches');
 assert.deepEqual(OutingSpot.choose({ held: null, candidates: [spot('x', 3, 20, 0.12), spot('y', 1, 20, 0.08)], members: solo(20), bound: BOUND }),
     { spotId: 'y', reason: 'first', refusedUnsafe: 1 });
 // No safe candidate: the least deadly one, though another is worth more.
