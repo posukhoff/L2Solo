@@ -8,10 +8,9 @@
 // recovery and other (a round's combat lies in the interval before its
 // timestamp, the one the resolver budgets it from); the rest reasons; HP and MP
 // at each fight's start; the bot's actions and skills per kill; potions in
-// fight and at rest; the start HP of each fatal fight. Next to it the
-// mean-path fight (expected values through the
-// game's class policy, hit and mob action rules) from the rested line and from
-// the measured start vitals names the term that carries the error. Offline only.
+// fight and at rest; the start HP of each fatal fight. Next to it the fight
+// matchup (rules/fight-matchup) from the rested line and from the measured
+// start vitals names the term that carries the error. Offline only.
 //   node scripts/economy-model/fight/decompose.js --rows <est rows json> --catalogue <catalogue json>
 //        [--adm 40] [--close 20] [--hours 2] [--out <json>]
 require('../../../src/Global');
@@ -19,22 +18,17 @@ const fs = require('fs');
 const Generator = require('../../generate-spot-table');
 const HuntTable = require('../hunt-table');
 const Lift = require('../hunt-lift');
+const Matchup = require('../rules/fight-matchup');
 
 const BR = invoke('GameServer/Bot/Population/BackgroundResolver');
 const ColdClock = invoke('GameServer/Bot/Population/ColdClock');
 const ER = invoke('GameServer/Bot/AI/BotEncounterReadiness');
 const RP = invoke('GameServer/Bot/AI/RestPolicy');
 const CCPol = invoke('GameServer/Bot/Population/ColdClassPolicy');
-const CCP = invoke('GameServer/Bot/Population/ColdCombatProfile');
-const CMA = invoke('GameServer/Bot/Population/ColdMobAction');
-const TM = invoke('GameServer/Bot/AI/BotTargetMatchup');
-const Rules = invoke('GameServer/Skills/C4SkillRules');
 const Diagnostics = require('../../../src/GameServer/Bot/Economy/EconomyDiagnostics');
 const PopulationConfig = require('../../../src/GameServer/Bot/Population/PopulationConfig');
 
 const START = 1_750_000_000_000;
-// A mean-path fight stops here (no kill: the bot cannot hurt the mob).
-const MEAN_PATH_ACTIONS = 400;
 // A potion or gap-heal term is named when the hunt uses this many per kill.
 const COUNT_TERM = 0.1;
 
@@ -212,30 +206,17 @@ function summarize({ sum, rec }, hours) {
     };
 }
 
-// The fight on expected values from (hp, mp): bot actions by the game's class
-// policy with cooldowns and MP, expected hit, action delay; mob actions at their
-// mean per action and pace (ColdMobAction.actionMix).
-function meanPathFight(p, view, fp, hp, mp) {
-    const shot = p.shot || null, mix = CMA.actionMix(view, { profile: p }, 0);
-    let t = 0, botAt = 0, mobAt = CCP.openingMs(p, view), mobHp = view.maxHp, actions = 0, casts = 0;
-    const cooldowns = {};
-    while (mobHp > 0 && actions < MEAN_PATH_ACTIONS) {
-        if (botAt <= mobAt) {
-            actions += 1;
-            t = botAt;
-            const skill = CCPol.select(fp, { hp, mp, cooldowns, time: START + t, charges: 0, mob: view, mobHp })?.skill || null;
-            let dmg = TM.expectedHit(p, view, skill, shot);
-            if (skill && Number(view.pull) > 1 && Rules.hitsArea(Rules.resolveCached(skill))) dmg *= Number(view.pull);
-            if (skill) { mp = Math.max(0, mp - Number(skill.mp || 0)); cooldowns[skill.selfId] = START + t + Number(skill.reuse || 0); casts += 1; }
-            botAt += CCP.actionDelayMs(fp, skill, CCP.actionShot(shot, skill)?.spiritshot === true);
-            mobHp -= Math.max(0.01, dmg);
-        } else { t = mobAt; hp -= mix.perAction; mobAt += mix.actionMs; }
-    }
-    const pull = Math.max(1, Number(view.pull) || 1);
-    return { fight: mobHp > 0 ? null : Math.max(t, botAt) / 1000 / pull, castsPerKill: casts / pull, actionsPerKill: actions / pull };
+// The matchup's engagement on the readiness's usual view (its pull, the area
+// share at hp and mp), cooldowns fresh, per kill.
+function matchupFight(p, seen, hp, mp) {
+    const k = Math.max(1, Number(seen.view.pull) || 1);
+    const m = Matchup.engagement({ profile: p, fp: seen.fp, mob: seen.view, k, start: { hp, mp, at: START },
+        areaShare: Matchup.areaShareAt(seen.profiles, hp, mp, seen.view) });
+    return { fight: m.cut ? null : m.ms / 1000 / k, actionsPerKill: m.botActions / k,
+        castsPerKill: Object.values(m.casts).reduce((a, n) => a + n, 0) / k };
 }
 
-// The terms per cell (s per kill unless named a count): what the mean path
+// The terms per cell (s per kill unless named a count): what the matchup
 // misses from the rested line and from the measured start vitals; the largest
 // seconds term is named, counts are flagged.
 function terms(asIs) {
@@ -244,13 +225,13 @@ function terms(asIs) {
         deaths: asIs.mobs > 0 ? asIs.deaths / asIs.mobs : null };
     if (p && seen.view && seen.fp && asIs.mobs > 0) {
         const line = RP.restedLine(null);
-        out.meanRested = meanPathFight(p, seen.view, seen.fp, p.maxHp * line.hp, p.maxMp * line.mp);
-        out.meanAtStart = meanPathFight(p, seen.view, seen.fp, p.maxHp * asIs.startHp, p.maxMp * asIs.startMp);
+        out.matchupRested = matchupFight(p, seen, p.maxHp * line.hp, p.maxMp * line.mp);
+        out.matchupAtStart = matchupFight(p, seen, p.maxHp * asIs.startHp, p.maxMp * asIs.startMp);
     }
     const seconds = {};
-    if (out.meanRested?.fight != null && out.meanAtStart?.fight != null) {
-        seconds.mpAtStart = Math.abs(out.meanAtStart.fight - out.meanRested.fight);
-        seconds.rotation = Math.abs(out.simFight - out.meanAtStart.fight);
+    if (out.matchupRested?.fight != null && out.matchupAtStart?.fight != null) {
+        seconds.mpAtStart = Math.abs(out.matchupAtStart.fight - out.matchupRested.fight);
+        seconds.rotation = Math.abs(out.simFight - out.matchupAtStart.fight);
     }
     out.seconds = seconds;
     const named = Object.entries(seconds).sort((a, b) => b[1] - a[1])[0];
@@ -301,7 +282,7 @@ function main(argv) {
 
 function report(out) {
     const f = v => v == null ? '-' : Number(v).toFixed(3);
-    // A mean path cut at its action cap has no fight: counted apart, not read as an error.
+    // A matchup path cut at its action cap has no fight: counted apart, not read as an error.
     const rel = (a, b) => a != null && b > 0 ? Math.abs(a - b) / b : null;
     for (const kind of ['admitted', 'close']) {
         const g = out.filter(o => o.kind === kind && o.asIs.mobs > 0);
@@ -316,8 +297,8 @@ function report(out) {
             const v = g.map(o => o.terms.seconds[name]);
             console.log(`  ${name} s/kill p50 ${q(v, 0.5)} p90 ${q(v, 0.9)}`);
         }
-        console.log(`  fight |err| mean path rested p50 ${q(g.map(o => rel(o.terms.meanRested?.fight, o.terms.simFight)), 0.5)} at start ${q(g.map(o => rel(o.terms.meanAtStart?.fight, o.terms.simFight)), 0.5)} estimate ${q(g.map(o => rel(o.estimate, o.terms.simFight)), 0.5)}; mean path cut without a kill: rested ${g.filter(o => o.terms.meanRested && o.terms.meanRested.fight == null).length}, at start ${g.filter(o => o.terms.meanAtStart && o.terms.meanAtStart.fight == null).length}`);
-        console.log(`  start MP p50 ${q(g.map(o => o.asIs.startMp), 0.5)}, casts/kill sim p50 ${q(g.map(o => o.asIs.castsPerKill), 0.5)} mean path ${q(g.map(o => o.terms.meanAtStart?.castsPerKill), 0.5)}`);
+        console.log(`  fight |err| matchup rested p50 ${q(g.map(o => rel(o.terms.matchupRested?.fight, o.terms.simFight)), 0.5)} at start ${q(g.map(o => rel(o.terms.matchupAtStart?.fight, o.terms.simFight)), 0.5)} estimate ${q(g.map(o => rel(o.estimate, o.terms.simFight)), 0.5)}; matchup cut without a kill: rested ${g.filter(o => o.terms.matchupRested && o.terms.matchupRested.fight == null).length}, at start ${g.filter(o => o.terms.matchupAtStart && o.terms.matchupAtStart.fight == null).length}`);
+        console.log(`  start MP p50 ${q(g.map(o => o.asIs.startMp), 0.5)}, casts/kill sim p50 ${q(g.map(o => o.asIs.castsPerKill), 0.5)} matchup ${q(g.map(o => o.terms.matchupAtStart?.castsPerKill), 0.5)}`);
         console.log(`  rest s/kill as read p50 ${q(g.map(o => o.terms.restAsRead), 0.5)}, sat ${q(g.map(o => o.terms.restSat), 0.5)}`);
         console.log(`  deaths/kill p90 ${q(g.map(o => o.terms.deaths), 0.9)}; fatal fight start HP mean ${f(mean(g.flatMap(o => o.asIs.fatal.map(d => d.hp))))}`);
         const reasons = {};
@@ -326,5 +307,5 @@ function report(out) {
     }
 }
 
-module.exports = { decompose, watchHunt, summarize, meanPathFight, terms, main, speciesSpot, creationKit };
+module.exports = { decompose, watchHunt, summarize, terms, main, speciesSpot, creationKit };
 if (require.main === module) main(process.argv.slice(2));
