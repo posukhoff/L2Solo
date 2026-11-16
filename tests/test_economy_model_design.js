@@ -197,8 +197,8 @@ const freshBot = (line, over = {}) => ({ id: 1, station: false, line, level: 1, 
 // The kit's factors (the reference kit's: 1), deaths times dies.
 const kitAt = dies => ({ spotFactors: () => ({ bare: { kills: 1, shots: 1, deaths: dies }, shots: { kills: 1, shots: 1, deaths: dies }, blessed: { kills: 1, shots: 1, deaths: dies } }), shotScale: () => 1, stats: { spotUnstated: 0 } });
 // One run through the plane, its visits seen as the engine calls them.
-function run(account, supply, hours, dies = 0, view = world) {
-    const visits = [], levels = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account] });
+function run(account, supply, hours, dies = 0, view = world, gear = null) {
+    const visits = [], levels = [], made = Plane.plane({ view, kitHours: kitAt(dies), variant: supply, accounts: [account], gear });
     const seen = { ...made, start: context => {
         const hooks = made.start(context);
         return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ now, info, before: main, ...done }); return done; },
@@ -729,6 +729,40 @@ for (const supply of ['table', 'formula']) {
         const held = best => run(freshBot(9, { shots: { [SHOT]: 600 } }), supply, 1, 1, outside(best, [safe])).visits[0].main.spot;
         assert.equal(held(bestOut), 's1', `${supply}: the best outside top is held when it is worth most`);
         assert.equal(held(deadly), 's2', `${supply}: a best that kills its bot loses to the safe top row`);
+    }
+}
+
+// The town chain buys gear after its sales and decides its supply again on what the gear left: a bot born in TownA
+// with the no-grade sword, 3000 no-grade shots and 1M adena, where a stub gear rule sells a D sword (100k) to a wallet
+// that pays it above the reserve: it wears the D sword, sells the 3000 no-grade shots (spare now: its weapon fires the
+// D shot) and buys D shots toward its target, all in the same chain. A stub that buys nothing leaves the chain as it is
+// without a gear rule (the same main and delta at every visit of a bot born with 60 shots that walks to town for more).
+{
+    const DSWORD = 2499, DSHOT = 1463;
+    const graded = viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+        hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } } }, yields: { 's1@1': drops, 's2@1': drops },
+        items: { ...ITEMS, [DSHOT]: { kind: 'Other.Shot', npcBuy: 5, weight: 4 }, [SWORD]: swordItem, [DSWORD]: { kind: 'Weapon.Sword', grade: 'D', npcBuy: 0, weight: 0 } },
+        shotFamilies: { grades: ['NONE', 'D'], ids: [[SHOT, DSHOT]] },
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }], [DSHOT]: [{ town: 'TownA', price: 20 }] } }, deathExp: [15, 30],
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
+    const reserves = [];
+    const dSword = { next: (main, town, reserve) => { reserves.push(reserve);
+        return main.weapon === SWORD && main.money - reserve >= 100000 ? { selfId: DSWORD, slot: 7, price: 100000, weapon: true } : null; } };
+    const bot = () => freshBot(9, { ...armed, money: 1000000, shots: { [SHOT]: 3000 } });
+    for (const supply of ['table', 'formula']) {
+        const born = run(bot(), supply, 1, 0, graded, dSword).visits[0];
+        assert.equal(born.main.weapon, DSWORD, `${supply}: it wears the D sword bought at the visit`);
+        assert.deepEqual([born.main.kit[7], born.delta.gearBought], [DSWORD, 1]);
+        assert.equal(born.delta.shotsSoldNpc, 3000, `${supply}: the no-grade shots are spare after the swap and sold`);
+        assert.ok(!born.main.shots[SHOT] && born.main.shots[DSHOT] > 0, `${supply}: it buys the D shots its new weapon fires in the same chain`);
+        assert.equal(born.main.money, 1000000 + 3000 * 2 - 100000 - born.main.shots[DSHOT] * 20, `${supply}: money = before + sales - weapon - D shots`);
+        assert.ok(reserves[0] > 0, 'the reserve is the stock target at the town price');
+        const none = { next: () => null };
+        const poor = () => freshBot(9, { ...armed, shots: { [SHOT]: 60 } });
+        const plain = run(poor(), supply, 6, 0, graded), stub = run(poor(), supply, 6, 0, graded, none);
+        const seen = visits => visits.map(visit => ({ now: visit.now, main: visit.main, delta: visit.delta, afterHours: visit.afterHours }));
+        assert.ok(plain.visits.length > 1, `${supply}: the control run visits a town after its birth`);
+        assert.deepEqual(seen(stub.visits), seen(plain.visits), `${supply}: a gear rule that buys nothing leaves every chain as it is`);
     }
 }
 

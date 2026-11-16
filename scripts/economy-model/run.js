@@ -24,6 +24,7 @@ const Cohort = require('./cohort');
 const Engine = require('./engine');
 const Today = require('./today');
 const KitHours = require('./kit-hours');
+const Gear = require('./gear');
 const Plane = require('./design/plane');
 const DesignLimits = require('./design/limits');
 const Load = require('./load');
@@ -130,6 +131,9 @@ function printDesign(design) {
     console.log(`SPOT CHOICE first ${spot.first}, kept ${spot.kept}, unfit ${kinds(spot.unfit)}, minmax ${spot.minmax}, fallback ${kinds(spot.fallback)}, none ${spot.none}, `
         + `refusedUnsafe (unsafe candidates richer than the choice) ${spot.refusedUnsafe}, midFarm ${spot.midFarm}, changes per bot-hour ${spot.changesPerBotHour === null ? '-' : spot.changesPerBotHour.toFixed(3)}, levels held p50 ${spot.levelsHeld.all.p50 ?? '-'}, `
         + `returns ${percent(spot.returnShare)}, A-B-A ${percent(spot.abaShare)}, minMaxers ${spot.minMaxers}/${spot.mains} mains`);
+    const gear = design.gear, grades = counts => `{${Object.entries(counts).map(([grade, n]) => `${grade} ${n}`).join(', ')}}`;
+    console.log(`GEAR STEP weapon swaps ${gear.weaponSwaps} (${gear.swapsPerMain === null ? '-' : gear.swapsPerMain.toFixed(2)} per main), adena spent on gear ${gear.spent}, `
+        + `shots sold in a chain that swapped the weapon ${gear.shotsSoldAtSwap}; weapons at the end by grade ${grades(gear.endWeapons)}; shot units held of a grade the weapon cannot fire ${grades(gear.heldOtherGrade)}`);
     console.log(`  level distribution at the end: ${Object.entries(design.levelDistribution).sort((a, b) => a[0] - b[0]).map(([level, n]) => `${level}:${n}`).join(' ')}`);
 }
 
@@ -208,7 +212,9 @@ function modeOf(argv, snapshot, cohort) {
         for (const [id, rows] of view.offers) anchor[id] = rows.find(row => row.channel === 'npc_buy')?.price;
         const kitHours = KitHours.gameKitHours({ snapshot, anchor });
         kitHours.warm();
-        return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation } }) };
+        // The gear a main buys in a town chain: the game's NPC gear rule.
+        const gear = Gear.npcGear({ snapshot, view });
+        return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation }, gear }) };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
     const fitFile = Boot.option(argv, 'fit', Boot.option(argv, 'cohort', null));

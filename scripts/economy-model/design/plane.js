@@ -38,6 +38,7 @@ const Value = require('./value');
 const Supply = require('./supply');
 const LIMITS = require('./limits');
 const OutingSpot = require('../../../src/GameServer/Bot/AI/OutingSpot');
+const { slotsConflict } = require('../kit-hours');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
 const LOW_LEVEL_LAST = 19;
@@ -157,8 +158,12 @@ const UNIT = Object.freeze({ kills: 1, shots: 1, deaths: 1 }), UNITS = Object.fr
 // readers (spotFactors, shotScale); variant, the supply variant ('table' |
 // 'formula'); accounts, the run's account records (each main's persona);
 // table: the model's hunting table's levels { range: [from, to], creation(line,
-// level): the creation kit { slot: selfId }, the one kit point it measured }, or none.
-function plane({ view, kitHours, variant, accounts, table = null }) {
+// level): the creation kit { slot: selfId }, the one kit point it measured }, or none;
+// gear: the game's NPC gear rule (gear.js npcGear: next(main, town, reserve) -> the
+// piece funded now or null), or none (no gear is bought).
+// The number of gear pieces one town chain can buy: the game's NPC kit slots.
+const KIT_SLOTS = 14;
+function plane({ view, kitHours, variant, accounts, table = null, gear = null }) {
     if (variant !== 'table' && variant !== 'formula') throw new Error(`no supply variant '${variant}' (table or formula)`);
     const personas = new Map(accounts.map(account => [account.id, account.persona || null]));
     // At the table's levels a row is the hour of the kit point it measured: the creation kit reads it as it is
@@ -219,6 +224,11 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             ledger.counters.fullBagLostDrop = 0;
             ledger.counters.bagClears = 0;
             ledger.counters.bagClearValue = 0;
+            // The gear step: weapons bought (each one a swap of the weapon in hand), adena spent on gear, and the
+            // shots sold in a chain whose gear step changed the weapon (the older grade, spare after the swap).
+            ledger.counters.weaponSwaps = 0;
+            ledger.counters.gearSpent = 0;
+            ledger.counters.shotsSoldAtSwap = 0;
             const states = new Map();
             // The run report's tallies (each class by the level at the event's start): wall hours from a clock of
             // the level each main holds since an hour; road hours (the walk out, to town and back); trips by the facts in
@@ -366,7 +376,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             const decide = (main, state, town) => {
                 const { chain, account } = Attention.heard(state.account), next = { ...state, account };
                 const row = Engine.spotRowOf(view, main), spotTown = townOf(view, main);
-                if (!chain.length || !Catalog.woken(chain).includes('supply') || !row || !spotTown) return { state: next, actions: [], row, spotTown, chain, need: null };
+                if (!chain.length || !Catalog.woken(chain).includes('supply') || !row || !spotTown) return { state: next, actions: [], row, spotTown, chain, need: null, decided: false };
                 const deciding = decisionState(main, row, account.place, town, spotTown, state.full);
                 if (account.place === 'town') {
                     if (deciding.need) {
@@ -375,7 +385,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                         book.needHours += deciding.need.hours;
                         book.needBinds[bindOf(deciding.fill, deciding.need)]++;
                     }
-                    return { state: next, actions: Supply.supplyChoice(chain, deciding), row, spotTown, chain, need: deciding.need };
+                    return { state: next, actions: Supply.supplyChoice(chain, deciding), row, spotTown, chain, need: deciding.need, decided: true };
                 }
                 const seen = Supply.shadow(chain, deciding);
                 shadowed.decisions++;
@@ -383,7 +393,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     const key = JSON.stringify([seen.differ.row, seen.differ.reason]);
                     differs.set(key, (differs.get(key) || 0) + 1);
                 }
-                return { state: next, actions: seen.actions, row, spotTown, chain, need: deciding.need };
+                return { state: next, actions: seen.actions, row, spotTown, chain, need: deciding.need, decided: true };
             };
             // The hunting hours to its next fact: its shots' end, else its bag's fill (Infinity: none comes).
             const nextFactHours = (main, state) => {
@@ -395,17 +405,44 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                     [{ form, kills: kills[form], hours: held > 0 ? lasts : 0 }, { form: 'bare', kills: kills.bare, hours: Infinity }]);
                 return Math.min(out, bag);
             };
-            // The town chain's actions on the main: sales and purchases at the NPC, the walk back.
-            const executed = (main, actions, town, backHours) => {
-                const flows = Engine.emptyFlows();
-                const delta = { flows, towns: [town], gearToNpc: 0, gearBought: 0, shotsBoughtFixed: 0, shotsBoughtNpc: 0, shotsSoldNpc: 0,
+            // The town chain's actions on the main: sales and purchases at the NPC, the walk back (onto the
+            // delta of the chain's earlier part when one is given).
+            const executed = (main, actions, town, backHours, delta = null, afterHours = 0) => {
+                delta ||= { flows: Engine.emptyFlows(), towns: [town], gearToNpc: 0, gearBought: 0, shotsBoughtFixed: 0, shotsBoughtNpc: 0, shotsSoldNpc: 0,
                     unsold: 0, missingPieces: 0, missingShots: 0, noTown: 0 };
-                let next = main, afterHours = 0;
+                let next = main;
                 for (const action of actions) {
                     if (action.kind === 'back') afterHours = backHours;
                     else if (EXECUTORS[action.kind]) next = EXECUTORS[action.kind](next, action, delta, view);
                 }
                 return { main: next, delta, afterHours };
+            };
+            // The adena the main keeps from gear: its stock target of the shot it fires at the town's NPC price.
+            const reserveOf = (main, row, town, spotTown) => {
+                const { need, offers } = supplyState(main, row, 'town', town, spotTown);
+                return need && offers ? need.target * offers.price : 0;
+            };
+            // The town chain: the supply decision's sales; then the gear the game's NPC rule buys with what the
+            // wallet holds above the reserve, piece by piece on the state the last purchase left; when it bought any,
+            // the supply decision again on that state (the older grade is spare now, the new weapon's shots its need),
+            // else the first decision's other actions.
+            const townChain = (main, decided, town, spotTown, full) => {
+                const { actions, row, chain: facts } = decided, backHours = row ? Engine.backHoursOf(view, row.spotId, town) : 0;
+                if (!gear || !decided.decided) return executed(main, actions, town, backHours);
+                const sold = executed(main, actions.filter(action => action.kind === 'sell'), town, backHours);
+                let next = sold.main, swapped = false;
+                for (let piece = 0; piece < KIT_SLOTS; piece++) {
+                    const buy = gear.next(next, town, reserveOf(next, row, town, spotTown));
+                    if (!buy) break;
+                    next = EXECUTORS.gear(next, { kind: 'gear', id: buy.selfId, slot: buy.slot, price: buy.price }, sold.delta, view);
+                    ledger.counters.gearSpent += buy.price;
+                    if (buy.weapon) { ledger.counters.weaponSwaps++; swapped = true; }
+                }
+                if (next === sold.main) return executed(next, actions.filter(action => action.kind !== 'sell'), town, backHours, sold.delta);
+                const soldBefore = sold.delta.shotsSoldNpc;
+                const again = executed(next, Supply.supplyChoice(facts, decisionState(next, row, 'town', town, spotTown, full)), town, backHours, sold.delta);
+                if (swapped) ledger.counters.shotsSoldAtSwap += again.delta.shotsSoldNpc - soldBefore;
+                return again;
             };
 
             return {
@@ -483,8 +520,8 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                         return { main: at, delta: { ...executed(at, [], null, 0).delta, towns: [], noTown: 1 } };
                     }
                     state = queueFact(placed(state, 'town'), 'town', at, now);
-                    const { state: heard, actions, row } = decide(at, state, town);
-                    const chain = executed(at, actions, town, row ? Engine.backHoursOf(view, row.spotId, town) : 0);
+                    const decided = decide(at, state, town), heard = decided.state;
+                    const chain = townChain(at, decided, town, decided.spotTown, state.full);
                     // The chain's end is an outing's start: the held spot is kept or re-picked (on the shots it bought; the
                     // purchases were sized on the spot it held, the next visit sizes on a new one) and it walks back to it.
                     const back = { ...chain.main, spot: holdSpot(chain.main, chain.main.spot === null ? null : String(chain.main.spot)) }, heldRow = Engine.spotRowOf(view, back);
@@ -561,13 +598,27 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                         return { stints: levels.length, p10: quantile(levels, 0.1), p50: quantile(levels, 0.5), p90: quantile(levels, 0.9) }; };
                     const open = [...stints.values()].filter(stint => stint.spot !== null);
                     const mains = ended.filter(main => !main.station), botHours = mains.length * hours;
+                    // The gear at the end: each main's weapon by its grade, and the shot units it holds of a grade its
+                    // weapon cannot fire (a graded shot of another grade than the weapon's).
+                    const gradeOf = id => view.items[id]?.grade || 'NONE', families = view.shotFamilies;
+                    const weapons = {}, otherGrade = {};
+                    for (const main of mains) {
+                        weapons[gradeOf(main.weapon)] = (weapons[gradeOf(main.weapon)] || 0) + 1;
+                        for (const [id, count] of Object.entries(main.shots)) {
+                            const family = families?.ids.find(ids => ids.includes(Number(id)));
+                            const grade = family ? families.grades[family.indexOf(Number(id))] : null;
+                            if (grade && count > 0 && grade !== gradeOf(main.weapon)) otherGrade[grade] = (otherGrade[grade] || 0) + count;
+                        }
+                    }
                     const counts = Object.fromEntries(Object.entries(spotChoice).filter(([key]) => key !== 'held'));
                     const spotReport = { ...counts, botHours, changesPerBotHour: botHours > 0 ? spotChoice.changes / botHours : null,
                         returnShare: spotChoice.changes ? spotChoice.returns / spotChoice.changes : null, abaShare: spotChoice.changes ? spotChoice.aba / spotChoice.changes : null,
                         levelsHeld: Object.fromEntries(['all', '1-9', '10-19', '20-39', '40+'].map(band => [band, heldBy(band)])),
                         openStints: open.length, minMaxers: mains.filter(main => OutingSpot.minMaxer(personas.get(main.id))).length, mains: mains.length };
                     return { design: { variant, levels, spotChoice: spotReport, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
-                        spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution } };
+                        spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution,
+                        gear: { weaponSwaps: ledger.counters.weaponSwaps, swapsPerMain: mains.length ? ledger.counters.weaponSwaps / mains.length : null,
+                            spent: ledger.counters.gearSpent, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, endWeapons: weapons, heldOtherGrade: otherGrade } } };
                 }
             };
         }
@@ -595,6 +646,25 @@ const EXECUTORS = Object.freeze({
         delta.flows.npcBuys -= cost;
         delta.shotsBoughtNpc += action.count;
         return { ...main, shots: { ...main.shots, [action.id]: (main.shots[action.id] || 0) + action.count }, money: main.money - cost };
+    },
+    // Buy a piece of gear from the NPC at its price and wear it in its slot: what it cannot be worn with (the
+    // same slot; a two-handed weapon and the one-handed one or the shield; a full armour and the chest or legs)
+    // comes off and is sold to the NPC as spare. A weapon bought is the weapon in hand.
+    gear(main, action, delta, view) {
+        const kit = { ...main.kit };
+        let money = main.money - action.price;
+        delta.flows.npcBuys -= action.price;
+        delta.gearBought++;
+        for (const [slot, selfId] of Object.entries(kit)) {
+            if (!selfId || !slotsConflict(action.slot, Number(slot))) continue;
+            kit[slot] = 0;
+            const value = view.items[selfId]?.npcBuy || 0;
+            money += value;
+            delta.flows.npcSales += value;
+            delta.gearToNpc++;
+        }
+        kit[action.slot] = action.id;
+        return { ...main, kit, weapon: Engine.isWeapon(view.items[action.id]) ? action.id : main.weapon, money };
     },
     // Stay: it keeps hunting in the state it is in (without the shots); nothing moves.
     stay: main => main
