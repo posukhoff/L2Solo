@@ -37,13 +37,15 @@ function unfit(candidate, members, bound) {
     return null;
 }
 
-// A min-maxer persona: progression its drive and high ambition (the persona text cards' high trait, BotPersona.js: >= 0.62).
-const MIN_MAX_AMBITION = 0.62;
+// A min-maxer persona: progression its drive and ambition at the top (our cut: about one main in eight).
+const MIN_MAX_AMBITION = 0.85;
 const minMaxer = persona => !!persona && persona.primaryDrive === 'progression' && Number(persona.traits?.ambition) >= MIN_MAX_AMBITION;
 
 // { held: spotId | null, candidates, members, minMax, bound } -> { spotId, reason, refusedUnsafe }.
-// reason: 'kept' | 'first' | 'unfit:<why>' | 'minmax' | 'none'; refusedUnsafe: the candidates refused as unsafe.
-// No candidate fits: none (never the least deadly of the unsafe ones).
+// reason: 'kept' | 'first' | 'unfit:<why>' | 'minmax' | 'fallback:outleveled' | 'fallback:least_risk' | 'none';
+// refusedUnsafe: the candidates refused as unsafe. No spot fits: a player hunts the safest he has, he never stops
+// playing: the best safe one out of his gap, else the one with the least expected deaths (the worst member's), ties by
+// value. None only without candidates.
 function choose({ held = null, candidates, members, minMax = false, bound }) {
     const own = held === null ? null : candidates.find(candidate => String(candidate.spotId) === String(held)) || null;
     const heldWhy = held === null ? null : unfit(own, members, bound);
@@ -54,7 +56,16 @@ function choose({ held = null, candidates, members, minMax = false, bound }) {
         if (why === 'unsafe') refusedUnsafe++;
         if (why === null && (!best || candidate.value > best.value)) best = candidate;
     }
-    if (!best) return { spotId: null, reason: 'none', refusedUnsafe };
+    if (!best) {
+        if (!candidates.length) return { spotId: null, reason: 'none', refusedUnsafe };
+        const deaths = candidate => Math.max(...candidate.members.map(outingDeaths));
+        for (const candidate of candidates) if (deaths(candidate) <= bound && (!best || candidate.value > best.value)) best = candidate;
+        if (best) return { spotId: String(best.spotId), reason: 'fallback:outleveled', refusedUnsafe };
+        for (const candidate of candidates) {
+            if (!best || deaths(candidate) < deaths(best) || (deaths(candidate) === deaths(best) && candidate.value > best.value)) best = candidate;
+        }
+        return { spotId: String(best.spotId), reason: 'fallback:least_risk', refusedUnsafe };
+    }
     const reason = held === null ? 'first' : heldWhy !== null ? `unfit:${heldWhy}` : 'minmax';
     return { spotId: String(best.spotId), reason, refusedUnsafe };
 }

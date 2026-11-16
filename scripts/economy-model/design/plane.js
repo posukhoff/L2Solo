@@ -75,10 +75,11 @@ function heldFired(view, main) {
 }
 
 // The rows the held spot is chosen among and the form it hunts them in: its line's rows it hunts with shots (the game's
-// best and the top) when it holds the shots it fires (the weapon's grade; the beginner shots that charge them count:
-// Engine.heldOf), else those it hunts without them (bareTop at the levels of the model's hunting table; above them the
-// game's rows, its bare answer bareBest and the shots candidates); none bare, the shots rows. The held spot's own row
-// joins them while it has one at the level (a spot of its top at an earlier level). Only rows it kills in that form.
+// best, the top and the others: spots of its top at earlier levels still in their range, the scroll spots) when it holds
+// the shots it fires (the weapon's grade; the beginner shots that charge them count: Engine.heldOf), else those it hunts
+// without them (bareTop at the levels of the model's hunting table; above them the game's rows, its bare answer bareBest
+// and the shots candidates); none bare, the shots rows. The held spot's own row joins them while it has one at the
+// level. Only rows it kills in that form.
 // { form, rows } or null without an hour.
 function candidateRows(view, main, held) {
     const hour = Engine.hourOf(view, main);
@@ -87,7 +88,7 @@ function candidateRows(view, main, held) {
     const unique = rows => rows.filter((row, at) => row && rows.findIndex(other => other && String(other.spotId) === String(row.spotId)) === at);
     const killed = (rows, form) => unique(rows).filter(row => Engine.rowIn(row, form).kills > 0);
     const withOwn = (rows, form) => killed([...rows, own && String(own.spotId) === held ? own : null], form);
-    const shotsRows = [hour.best, ...hour.top || []], bareRows = hour.bareTop || [hour.bareBest, ...shotsRows];
+    const shotsRows = [hour.best, ...hour.top || [], ...hour.others || []], bareRows = hour.bareTop || [hour.bareBest, ...shotsRows];
     const form = heldFired(view, main) > 0 || !killed(bareRows, 'bare').length ? 'shots' : 'bare';
     return { form, rows: withOwn(form === 'shots' ? shotsRows : bareRows, form) };
 }
@@ -229,10 +230,11 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             const tally = { low: blank(), high: blank() };
             const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
             const bareFirst = new Map(), differs = new Map(), shadowed = { decisions: 0 };
-            // The held spot's answers (by reason), the unsafe candidates refused, the changes heard at a new level other
+            // The held spot's answers (by reason; fallback: no spot fit), the unsafe candidates refused, the changes heard at a new level other
             // than a spot with no row there (midFarm: must stay 0), and per main its stint on a spot (the level it took it
             // at, the spots it left, the one before) for the levels held, the returns and the A-B-A returns.
-            const spotChoice = { first: 0, kept: 0, unfit: { level_gap: 0, unsafe: 0, no_row: 0 }, minmax: 0, none: 0, refusedUnsafe: 0, midFarm: 0,
+            const spotChoice = { first: 0, kept: 0, unfit: { level_gap: 0, unsafe: 0, no_row: 0 }, minmax: 0,
+                fallback: { outleveled: 0, least_risk: 0 }, none: 0, refusedUnsafe: 0, midFarm: 0,
                 levelUps: 0, changes: 0, returns: 0, aba: 0, held: [] };
             const stints = new Map();
             // A stuck episode ends: its hours go to the class of the level it began at.
@@ -271,16 +273,21 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
             };
             // The held spot at an outing's start (OutingSpot.choose): held, the spot it holds (null at its birth). A candidate is
             // a row in the form it hunts there: its hour value (no road), the spot card's mean mob level, its deaths an hour at
-            // the worn kit and the outing's horizon there (the supply rule's: the need's hours, else the hours to a full bag).
+            // the worn kit and the outing's horizon there (the supply rule's: the need's hours, else the hours to a full bag;
+            // a row with no deaths needs none, its outing deaths are 0 at any horizon).
             // A held spot that fits is checked alone (no ranking). The run report's spotChoice counts each answer and the
             // stints it ends.
             const candidateOf = (main, row, form) => {
                 const at = { ...main, spot: String(row.spotId) }, factors = factorsOf(at), avgLevel = view.spotAvgLevel?.[at.spot];
                 if (!Number.isFinite(avgLevel)) throw new Error(`no mean mob level for spot ${at.spot} in the snapshot (spotAvgLevel)`);
-                const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);
-                const outingHours = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
+                const deathsPerHour = (Engine.rowIn(row, form).deaths || 0) * factors[form].deaths;
+                let outingHours = 0;
+                if (deathsPerHour > 0) {
+                    const firing = hunter.firing(at), fill = fillOf(at, row, firing), need = Needs.consumable(at, firing, fill);
+                    outingHours = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
+                }
                 return { spotId: at.spot, value: Value.hourValue(view, at, form, factors, personas.get(main.id)), avgLevel,
-                    members: [{ deathsPerHour: (Engine.rowIn(row, form).deaths || 0) * factors[form].deaths, outingHours }] };
+                    members: [{ deathsPerHour, outingHours }] };
             };
             const holdSpot = (main, held) => {
                 const pool = candidateRows(view, main, held);
@@ -290,7 +297,7 @@ function plane({ view, kitHours, variant, accounts, table = null }) {
                 let picked = ownRow ? OutingSpot.choose({ ...ask, candidates: [candidateOf(main, ownRow, pool.form)] }) : null;
                 if (picked?.reason !== 'kept') picked = OutingSpot.choose({ ...ask, candidates: pool.rows.map(row => candidateOf(main, row, pool.form)) });
                 const [reason, why] = picked.reason.split(':');
-                if (why) spotChoice.unfit[why]++; else spotChoice[reason]++;
+                if (why) spotChoice[reason][why]++; else spotChoice[reason]++;
                 spotChoice.refusedUnsafe += picked.refusedUnsafe;
                 const stint = stints.get(main.index) || { spot: null, takenAt: main.level, left: new Set(), prev: null, started: false };
                 if (!stint.started) stints.set(main.index, { ...stint, spot: picked.spotId, takenAt: main.level, started: true });

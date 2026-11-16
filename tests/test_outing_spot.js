@@ -3,8 +3,9 @@
 // (no member more than 5 levels above the spot's mobs, C4's full exp, and every
 // member's expected deaths over the outing at most the bound, inclusive) even
 // when another spot is worth more; past the gap or over the bound it takes the
-// best spot that fits; no spot fits gives none, never the least deadly unsafe
-// one; a min-maxer takes the best fitting spot at every outing's start.
+// best spot that fits; no spot fits gives the best safe one out of the gap,
+// else the least deadly one (a player never stops playing), none only without
+// candidates; a min-maxer takes the best fitting spot at every outing's start.
 const assert = require('node:assert/strict');
 const OutingSpot = require('../src/GameServer/Bot/AI/OutingSpot');
 
@@ -31,9 +32,15 @@ assert.equal(OutingSpot.unfit({ spotId: 's', value: 1, avgLevel: 20, members: [{
     'deaths an hour times the outing\'s hours');
 assert.deepEqual(OutingSpot.choose({ held: null, candidates: [spot('x', 3, 20, 0.12), spot('y', 1, 20, 0.08)], members: solo(20), bound: BOUND }),
     { spotId: 'y', reason: 'first', refusedUnsafe: 1 });
-// No safe candidate: none, not the least deadly one.
+// No safe candidate: the least deadly one, though another is worth more.
 assert.deepEqual(OutingSpot.choose({ held: null, candidates: [spot('x', 3, 20, 0.5), spot('y', 1, 20, 0.2)], members: solo(20), bound: BOUND }),
-    { spotId: null, reason: 'none', refusedUnsafe: 2 });
+    { spotId: 'y', reason: 'fallback:least_risk', refusedUnsafe: 2 });
+// None in the gap: the best safe outleveled one, before an unsafe one in the gap.
+assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [spot('a', 1, 20, 0), spot('o', 2, 19, 0), spot('u', 5, 26, 0.5)], members: solo(26), bound: BOUND }),
+    { spotId: 'o', reason: 'fallback:outleveled', refusedUnsafe: 1 });
+// No candidates: none.
+assert.deepEqual(OutingSpot.choose({ held: 'a', candidates: [], members: solo(20), bound: BOUND }),
+    { spotId: null, reason: 'none', refusedUnsafe: 0 });
 // A held spot that has no candidate (no row at this level or form) is left.
 assert.equal(OutingSpot.choose({ held: 'gone', candidates: [own], members: solo(20), bound: BOUND }).reason, 'unfit:no_row');
 // A min-maxer takes the best safe spot at every outing's start.
@@ -45,8 +52,8 @@ assert.equal(OutingSpot.unfit(spot('p', 1, 20, 0, 0), pair, BOUND), null);
 assert.equal(OutingSpot.unfit(spot('p', 1, 20, 0, 0.2), pair, BOUND), 'unsafe');
 assert.equal(OutingSpot.unfit(spot('p', 1, 18, 0, 0), pair, BOUND), 'level_gap');
 // The min-maxer persona: progression and high ambition.
-assert.equal(OutingSpot.minMaxer({ primaryDrive: 'progression', traits: { ambition: 0.62 } }), true);
-assert.equal(OutingSpot.minMaxer({ primaryDrive: 'progression', traits: { ambition: 0.61 } }), false);
+assert.equal(OutingSpot.minMaxer({ primaryDrive: 'progression', traits: { ambition: 0.85 } }), true);
+assert.equal(OutingSpot.minMaxer({ primaryDrive: 'progression', traits: { ambition: 0.84 } }), false);
 assert.equal(OutingSpot.minMaxer({ primaryDrive: 'wealth', traits: { ambition: 0.9 } }), false);
 assert.equal(OutingSpot.minMaxer(null), false);
 // The bound is the caller's: none given is refused.

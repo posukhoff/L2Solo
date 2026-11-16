@@ -276,7 +276,7 @@ const climb = s1Level => viewOf({ header: { levels: [1, 7] }, exp: [0, 50, 100, 
     tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } },
     spotAvgLevel: { s1: s1Level, s2: 7 } });
 const climber = persona => freshBot(9, { level: 6, exp: 250, shots: { [SHOT]: 30 }, ...(persona ? { persona } : {}) });
-const MIN_MAXER = { primaryDrive: 'progression', traits: { caution: 0.5, commitment: 0.5, ambition: 0.7 } };
+const MIN_MAXER = { primaryDrive: 'progression', traits: { caution: 0.5, commitment: 0.5, ambition: 0.9 } };
 for (const supply of ['table', 'formula']) {
     const spotsOf = (s1Level, persona) => {
         const climbed = run(climber(persona), supply, 2, 0, climb(s1Level));
@@ -348,9 +348,10 @@ for (const supply of ['table', 'formula']) {
 }
 
 // A bot stuck out of shots is counted once: its death and respawn visit change neither its shots, its money nor its bag.
-// Its bare hour carries no deaths of its own (the game spot table's shape), so it dies at the row's.
+// Its bare hour carries no deaths of its own (the game spot table's shape), so it dies at the row's. No spot is safe: it holds
+// the least deadly, s3.
 const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0 }, dropLoot: 0, loot: 0 });
-const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, { ...dull, deaths: 1 }] } } } };
+const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, { ...dull, deaths: 2 }] } } } };
 const stuckDying = run(freshBot(10, { shots: { [SHOT]: 20 } }), 'table', 10, 2, mortalWorld);
 assert.ok(stuckDying.visits.filter(visit => visit.info.died && visit.before.shots[SHOT] === 0).length >= 3, 'the stuck bot dies and respawns several times after it stands');
 assert.equal(stuckDying.result.counters.stuckNoBareHour, 1, 'stuck once for the one run-out');
@@ -641,8 +642,12 @@ for (const supply of ['table', 'formula']) {
         } }; } };
         const result = Engine.simulate({ view: tableView, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3, plane: seen });
         // Its choice: the gremlin spot kills it some 2 times an hour (0.048 and 0.02 a kill) over an outing of many hours, over
-        // the safe outing bound; firing spiritshots the human mystic dies none there and takes it.
-        assert.equal(chosen, line === '12' && spiritshots[SPIRIT] ? '-12_43' : null, `line ${line}: the gremlin spot is taken only where it is safe`);
+        // the safe outing bound, yet it is the only spot: the bot hunts it as the least deadly it has (it never stops playing);
+        // firing spiritshots the human mystic dies none there and takes it as its first fitting spot.
+        const safe = line === '12' && !!spiritshots[SPIRIT], answers = result.design.spotChoice;
+        assert.equal(chosen, '-12_43', `line ${line}: the only spot is held, safe or not`);
+        assert.deepEqual([answers.first, answers.fallback.least_risk > 0], safe ? [1, false] : [0, true],
+            `line ${line}: taken as fitting only where it is safe (first ${answers.first}, least risk ${answers.fallback.least_risk})`);
         const main = { ...visits[0].main, shots: {} }, hunted = Engine.hunt(main, tableView, 1, () => 0.5, null).delta;
         const kills = 3600 / (cell[2] + cell[3] + cell[4] + cell[5]);
         assert.ok(Math.abs(hunted.exp - kills * 29) < 1e-6, `line ${line} hunts bare at its cell's kills (${hunted.exp / 29} vs ${kills})`);
