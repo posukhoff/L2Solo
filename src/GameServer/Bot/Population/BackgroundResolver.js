@@ -320,13 +320,16 @@ function staleShopping(state) {
         && state.currentRegion !== 'Giran';
 }
 
-function resolveDeathRecovery(state, timestamp = Date.now()) {
+// diedAt: the death's moment; the restart runs from it, never from a later wake.
+function resolveDeathRecovery(state, timestamp = Date.now(), diedAt = timestamp) {
     const pvpRecovery = Number(state.stats?.coldPvp?.recoverUntil || 0);
     if (pvpRecovery > timestamp) return { patch: {}, events: [],
         materialize: { exp: 0, sp: 0, adena: 0, items: [] }, nextResolveAt: pvpRecovery,
         debug: { activity: 'dead', reason: 'pvp_recovery' } };
     const combat = botCombatStats(state, timestamp);
     const respawnDelayMs = pvpRecovery ? 1000 : 90000;
+    // A PvP death keeps its own timing (recoverUntil runs from that death).
+    const startAt = pvpRecovery ? timestamp : diedAt;
 
     // The town restart, as hot Revive: 70 % HP (Formulas.respawnHp), MP and
     // CP as death left them.
@@ -342,9 +345,9 @@ function resolveDeathRecovery(state, timestamp = Date.now()) {
             },
             stats: {
                 ...(state.stats || {}),
-                lastRespawnAt: timestamp,
+                lastRespawnAt: startAt,
                 ...(pvpRecovery ? { coldPvp: { ...state.stats.coldPvp, recoverUntil: 0, flagUntil: 0 } } : {}),
-                restUntil: timestamp + respawnDelayMs,
+                restUntil: startAt + respawnDelayMs,
                 coldCombat: {
                     ...(state.stats?.coldCombat || {}),
                     ...(pvpRecovery ? { effects: [] } : {}),
@@ -363,7 +366,9 @@ function resolveDeathRecovery(state, timestamp = Date.now()) {
             meta: { spotId: state.spotId || null }
         }],
         materialize: { exp: 0, sp: 0, adena: 0, items: [] },
-        nextResolveAt: timestamp + respawnDelayMs,
+        // The bot's clock stays at the death: the rest step credits the restart's whole wait.
+        doneAt: startAt,
+        nextResolveAt: startAt + respawnDelayMs,
         debug: { activity: 'respawning', respawnDelayMs }
     };
 }
@@ -1958,10 +1963,10 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
                     ...(mobFar > 0 ? { mobFar: Math.round(mobFar) } : {}) } : {})
             }) : null,
             died,
-            hp: Math.max(0, Math.round(vitals.hp)),
-            maxHp: Math.max(1, Math.round(vitals.maxHp)),
-            mp: Math.max(0, Math.round(vitals.mp)),
-            maxMp: Math.max(1, Math.round(vitals.maxMp)),
+            hp: Math.max(0, vitals.hp),
+            maxHp: vitals.maxHp,
+            mp: Math.max(0, vitals.mp),
+            maxMp: vitals.maxMp,
             exp: 0,
             sp: 0,
             adena: 0,
@@ -2008,10 +2013,10 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
         fled: !!flight && !died,
         runMs: flight?.runMs || 0,
         died,
-        hp: died ? 0 : Math.max(1, Math.round(vitals.hp)),
-        maxHp: Math.max(1, Math.round(vitals.maxHp)),
-        mp: Math.max(0, Math.round(vitals.mp)),
-        maxMp: Math.max(1, Math.round(vitals.maxMp)),
+        hp: died ? 0 : vitals.hp,
+        maxHp: vitals.maxHp,
+        mp: Math.max(0, vitals.mp),
+        maxMp: vitals.maxMp,
         exp: gained.exp,
         sp: gained.sp,
         adena: rewards.adena,
@@ -2706,7 +2711,7 @@ const BackgroundResolver = {
 
         const reportedHp = Number(state.vitals?.hp);
         if (state.activity === 'dead' || (Number.isFinite(reportedHp) && reportedHp <= 0)) {
-            return resolveDeathRecovery(state, timestamp);
+            return resolveDeathRecovery(state, timestamp, timestamp - elapsedMs);
         }
 
         if (state.activity === 'resting') {
@@ -3070,6 +3075,8 @@ const BackgroundResolver = {
                 });
                 // The fight's time passes; the dead regenerate nothing (its body is not worn).
                 ColdClock.advance(clock, body(), foughtMs, 'standing', roundRates);
+                // The round ends at the death, as a crossing ends it at its action.
+                bound = clock.at;
                 break;
             }
             // The fight's time, on its feet.
@@ -3204,7 +3211,8 @@ const BackgroundResolver = {
             soulCrystals,
             // The next round starts where this one's last action ended (BotLifeState.prepareResolve).
             doneAt,
-            nextResolveAt: patch.stats?.restUntil || doneAt + huntCycleDelayMs(rng()),
+            // A death is a situation: the respawn step is due at once.
+            nextResolveAt: died ? doneAt : patch.stats?.restUntil || doneAt + huntCycleDelayMs(rng()),
             debug: {
                 ...(noPrey ? { reason: NO_PREY, unhuntable } : {}),
                 elapsedMs,
