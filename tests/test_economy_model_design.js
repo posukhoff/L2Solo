@@ -745,9 +745,8 @@ for (const supply of ['table', 'formula']) {
         shotFamilies: { grades: ['NONE', 'D'], ids: [[SHOT, DSHOT]] },
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }], [DSHOT]: [{ town: 'TownA', price: 20 }] } }, deathExp: [15, 30],
         tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
-    const reserves = [];
-    const dSword = { next: (main, town, reserve) => { reserves.push(reserve);
-        return main.weapon === SWORD && main.money - reserve >= 100000 ? { selfId: DSWORD, slot: 7, price: 100000, weapon: true, town: 'TownA', fare: 0 } : null; } };
+    const dSword = { next: (main, town, reserve) =>
+        (main.weapon === SWORD && main.money - reserve >= 100000 ? { selfId: DSWORD, slot: 7, price: 100000, weapon: true, town: 'TownA', fare: 0 } : null) };
     const bot = () => freshBot(9, { ...armed, money: 1000000, shots: { [SHOT]: 3000 } });
     for (const supply of ['table', 'formula']) {
         const born = run(bot(), supply, 1, 0, graded, dSword).visits[0];
@@ -756,7 +755,11 @@ for (const supply of ['table', 'formula']) {
         assert.equal(born.delta.shotsSoldNpc, 3000, `${supply}: the no-grade shots are spare after the swap and sold`);
         assert.ok(!born.main.shots[SHOT] && born.main.shots[DSHOT] > 0, `${supply}: it buys the D shots its new weapon fires in the same chain`);
         assert.equal(born.main.money, 1000000 + 3000 * 2 - 100000 - born.main.shots[DSHOT] * 20, `${supply}: money = before + sales - weapon - D shots`);
-        assert.ok(reserves[0] > 0, 'the reserve is the stock target at the town price');
+        // The gear spends only what is above the stock target at the town price: a wallet that pays the sword only
+        // without that reserve keeps its no-grade sword and buys its shots.
+        const short = run(freshBot(9, { ...armed, money: 100100, shots: { [SHOT]: 60 } }), supply, 1, 0, graded, dSword).visits[0];
+        assert.deepEqual([short.main.weapon, short.delta.gearBought, short.main.shots[SHOT] > 60], [SWORD, 0, true],
+            `${supply}: the reserve keeps the shot money from the sword`);
         const none = { next: () => null };
         const poor = () => freshBot(9, { ...armed, shots: { [SHOT]: 60 } });
         const plain = run(poor(), supply, 6, 0, graded), stub = run(poor(), supply, 6, 0, graded, none);
