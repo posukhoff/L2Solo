@@ -63,10 +63,10 @@ assert.equal(after.money, 40000 + 50 - 10000);
 assert.deepEqual(after.bag, {});
 // A beginner stack (Soulshots for Beginners charge the no-grade 1463 here) is
 // never sold and counts as held of the shot it charges: the restock buys only
-// what the line lacks over it.
+// what the line lacks over it. It fires the no-grade shot with the no-grade Squire's Sword in hand (no weapon fires none).
 {
-    const taught = { ...view, shotFamilies: { grades: ['NONE'], ids: [[1463]] } };
-    const starter = { ...main, bag: {}, money: 100000, shots: { 5789: 15 } };
+    const taught = { ...view, items: { ...view.items, 2369: { kind: 'Weapon.Sword', grade: 'NONE', ref: 0, npcBuy: 0 } }, shotFamilies: { grades: ['NONE'], ids: [[1463]] } };
+    const starter = { ...main, weapon: 2369, bag: {}, money: 100000, shots: { 5789: 15 } };
     const firing = Today.hunter(taught).firing(starter);
     const { main: kept, delta: seen } = Today.visit(starter, taught, { outingHours: 0.5, firing });
     assert.deepEqual([firing.beginner, kept.shots[5789], seen.shotsSoldNpc, seen.unsold], [5789, 15, 0, 0], 'the beginner stack stays');
