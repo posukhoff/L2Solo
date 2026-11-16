@@ -288,13 +288,14 @@ const bare = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 
     yields: { 's2@1': drops }, items: ITEMS,
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
     tripHours: { to: { s2: 0.02 }, back: { s2: { TownA: 0.03 } } }, bags: { 9: { slots: 1, maxLoad: LOAD } } });
+// heavyBag: the same world where the slots never bind and a heavy drop (200 a unit, 1000 load an hour) fills the bag by weight
+// in about 1.4 h: the hours to a full bag after a visit are as many, so the formula's visit buys hunting hours.
+const heavyBag = { ...bare, items: { ...bare.items, [DROP]: { ...bare.items[DROP], weight: 200 } }, bags: { 9: { slots: 80, maxLoad: LOAD } } };
+assert.equal(run(freshBot(9), 'formula', 3, 0, bare).visits.find(visit => !visit.info.born), undefined,
+    'formula: no trip that gains no hour before the bag is full again');
 for (const supply of ['table', 'formula']) {
-    const filled = run(freshBot(9), supply, 3, 0, bare);
+    const filled = run(freshBot(9), supply, 3, 0, supply === 'table' ? bare : heavyBag);
     const trip = filled.visits.find(visit => !visit.info.born);
-    if (supply === 'formula') {
-        assert.equal(trip, undefined, 'formula: no trip that gains no hour before the bag is full again');
-        continue;
-    }
     assert.ok(trip && trip.before.bag[DROP] > 0, `${supply}: it goes to town when its bag is full with no shots`);
     assert.ok(trip.main.shots[SHOT] > 0, `${supply}: it buys shots with what its drop sold for`);
 }
@@ -442,11 +443,10 @@ for (const supply of ['table', 'formula']) {
 // A trip is counted by the facts in its chain: a bot hunting bare (no shot to run out, so no out fact; its need is short) with a
 // bag of one slot goes to town for its bag (`bare`: a bag trip, not a consumable trip, and not an empty trip however little it buys); a bot whose shots end goes for its need.
 for (const supply of ['table', 'formula']) {
-    const bagOnly = run(freshBot(9), supply, 0.5, 0, bare).result.design.levels.low;
+    const bagOnly = (supply === 'table' ? run(freshBot(9), supply, 0.5, 0, bare) : run(freshBot(9), supply, 3, 0, heavyBag)).result.design.levels.low;
     assert.deepEqual([bagOnly.consumableTrips, bagOnly.bothTrips, bagOnly.emptyTrips], [0, 0, 0], `${supply}: no out fact, so no consumable trip`);
-    // the formula stays at it (the one-slot bag above: no hour to gain)
-    if (supply === 'table') assert.ok(bagOnly.bagTrips >= 1, `table: the full bag sends it to town (${bagOnly.bagTrips} bag trips)`);
-    else assert.equal(bagOnly.bagTrips, 0, 'formula: no trip that gains no hour');
+    assert.ok(bagOnly.bagTrips >= 1, `${supply}: the full bag sends it to town (${bagOnly.bagTrips} bag trips)`);
+    if (supply === 'formula') assert.equal(run(freshBot(9), supply, 0.5, 0, bare).result.design.levels.low.bagTrips, 0, 'formula: no trip that gains no hour');
     const needed = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 3, 0, levelWorld(1, 3)).result.design.levels.low;
     assert.deepEqual([needed.consumableTrips, needed.bagTrips, needed.bothTrips], [1, 0, 0], `${supply}: the out fact is a consumable trip only`);
 }
@@ -520,14 +520,13 @@ for (const supply of ['table', 'formula']) {
 // A bag that filled goes to town (the table variant at once), sells its drop there and takes drop again after the visit: the
 // drops grow past what it held at the visit, and it never hunted with the bag full. Two slots: the shots' stack and the first
 // drop fill it, so a visit gives 0.2 h before the next fill (the stock rule's slot forecast) and the formula, which weighs those
-// hours against the road, stays.
+// hours against the road, stays; on the heavy bag (above) a visit buys hours and it goes.
 const roomy = { ...bare, bags: { 9: { slots: 2, maxLoad: LOAD } } };
+const stays = run(freshBot(9, { shots: { [SHOT]: 40 } }), 'formula', 6, 0, roomy);
+assert.ok(stays.visits.filter(visit => !visit.info.born).length === 0 && stays.result.counters.fullBagHuntHours > 0,
+    'formula: 0.2 h of drop buy less than the road: it hunts on full');
 for (const supply of ['table', 'formula']) {
-    const trips = run(freshBot(9, { shots: { [SHOT]: 40 } }), supply, 6, 0, roomy), visits = trips.visits.filter(visit => !visit.info.born);
-    if (supply === 'formula') {
-        assert.ok(visits.length === 0 && trips.result.counters.fullBagHuntHours > 0, 'formula: 0.2 h of drop buy less than the road: it hunts on full');
-        continue;
-    }
+    const trips = run(freshBot(9, { shots: { [SHOT]: 40 } }), supply, 6, 0, supply === 'table' ? roomy : heavyBag), visits = trips.visits.filter(visit => !visit.info.born);
     assert.ok(visits.length >= 2 && !visits[0].main.bag[DROP], `${supply}: it visits town and leaves with its bag emptied`);
     assert.ok(trips.result.drops.byItem[DROP] > visits[0].before.bag[DROP], `${supply}: it takes drop again after the visit`);
     if (supply === 'table') assert.ok(trips.result.counters.fullBagHuntHours < 1e-9, 'the table variant goes at the fill: no hour hunted full');
