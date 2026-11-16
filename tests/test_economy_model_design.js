@@ -208,11 +208,13 @@ function run(account, supply, hours, dies = 0, view = world) {
     return { result, visits, levels };
 }
 const close = (a, b) => Math.abs(a - b) < 1e-6;
-// The world with SHOT as the no-grade Soulshot: Soulshots for Beginners (5789) charge it.
-const BEGINNER = 5789, taught = { ...world, shotFamilies: { grades: ['NONE'], ids: [[SHOT]] } };
+// The world with SHOT as the no-grade Soulshot: Soulshots for Beginners (5789) charge it; a bot fires it with the
+// no-grade Squire's Sword in hand (a bot with no weapon fires no shot), weightless here so the load above stays.
+const BEGINNER = 5789, SWORD = 2369, armed = { worn: { 7: SWORD } }, swordItem = { kind: 'Weapon.Sword', grade: 'NONE', npcBuy: 0, weight: 0 };
+const taught = { ...world, items: { ...world.items, [SWORD]: swordItem }, shotFamilies: { grades: ['NONE'], ids: [[SHOT]] } };
 // Holding both, a hunt fires the beginner shots first, then the bought ones.
 {
-    const both = Engine.mainOf(freshBot(9, { shots: { [BEGINNER]: 20, [SHOT]: 60 } }), 0, taught, [['all', 1]]);
+    const both = Engine.mainOf(freshBot(9, { ...armed, shots: { [BEGINNER]: 20, [SHOT]: 60 } }), 0, taught, [['all', 1]]);
     const firing = { id: SHOT, perHour: 30, beginner: Engine.beginnerOf(taught, SHOT) };
     assert.deepEqual(Engine.hunt(both, taught, 0.5, () => 0.5, firing).main.shots, { [BEGINNER]: 5, [SHOT]: 60 }, 'half an hour spends beginner shots only');
     assert.deepEqual(Engine.hunt(both, taught, 1, () => 0.5, firing).main.shots, { [BEGINNER]: 0, [SHOT]: 50 }, 'an hour spends the beginner shots, then 10 bought');
@@ -238,7 +240,7 @@ for (const supply of ['table', 'formula']) {
     assert.equal(result.money.closureGap, 0);
     // a fresh bot born with 45 beginner shots and none bought hunts with them first (1.5 h at 30 an hour), never sells
     // them, and only when they run out walks to town and buys no-grade shots with what its drop sold for.
-    const starter = run(freshBot(9, { shots: { [BEGINNER]: 45 } }), supply, 3, 0, taught);
+    const starter = run(freshBot(9, { ...armed, shots: { [BEGINNER]: 45 } }), supply, 3, 0, taught);
     const restock = starter.visits[1];
     assert.ok(restock && close(restock.now, 0.3 + 1.5 + 0.2), `${supply}: it hunts its beginner shots first and walks to town when they run out (${restock?.now})`);
     assert.deepEqual([restock.before.shots[BEGINNER], restock.main.shots[SHOT] > 0], [0, true], `${supply}: it buys its no-grade shots once the beginner shots are spent`);
@@ -444,32 +446,32 @@ for (const supply of ['table', 'formula']) {
 }
 
 // A level that changes the shot it fires to one it holds none of is the run-out the hunt raises when it spends the last shot: line 9
-// fires the no-grade Spiritshot 2509 at level 1 (Spiritshots for Beginners 5790 charge it, 600 held) and the no-grade Soulshot 1835 at
+// (Squire's Sword in hand) fires the no-grade Spiritshot 2509 at level 1 (Spiritshots for Beginners 5790 charge it, 600 held) and the no-grade Soulshot 1835 at
 // level 2 (5789 charges it, none held). Rooms are roomy so no bag fact comes in the run.
 const classWorld = (shotAtTwo) => viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
     shotFamilies: { grades: ['NONE'], ids: [[1835], [2509]] },
     hours: { 9: { 1: { classId: 9, shotId: 2509, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: shotAtTwo, best: near, bareBest: farBare2, top: [near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
-    items: { ...ITEMS, 2509: { kind: 'Other.Shot', npcBuy: 2, weight: 5 } },
+    items: { ...ITEMS, 2509: { kind: 'Other.Shot', npcBuy: 2, weight: 5 }, [SWORD]: swordItem },
     npcOffers: { preset: { 1835: [{ town: 'TownA', price: 7 }], 2509: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
     tripHours: { to: { s1: 0.2, s2: 0.2, s3: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 }, s3: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
 {
-    const changed = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(1835));
+    const changed = run(freshBot(9, { ...armed, shots: { 5790: 600 } }), 'table', 4, 0, classWorld(1835));
     assert.ok(changed.result.progress.stageBands.all.levelUps >= 1, 'it reached level 2');
     const trip = changed.visits.find(visit => !visit.info.born && visit.before.level >= 2);
     // a. at level 2 it holds none of the Soulshot it now fires: it goes to town and buys it (old code: no fact, no visit)
     assert.ok(trip && trip.delta.shotsBoughtNpc > 0 && trip.main.shots[1835] > 0, 'the level that changed its shot sends it to town to buy the new shot');
     assert.equal(changed.result.design.bareBeforeFirstBuy[0].bought, 1, 'its first buy is counted');
     // b. a level that keeps the shot (still 2509, 600 held) sends it nowhere
-    const kept = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(2509));
+    const kept = run(freshBot(9, { ...armed, shots: { 5790: 600 } }), 'table', 4, 0, classWorld(2509));
     assert.ok(kept.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(kept.visits.filter(visit => !visit.info.born).length, 0, 'a level that keeps the shot sends it nowhere');
     // c. a level whose row fires no shot sends it nowhere (nothing to buy)
-    const none = run(freshBot(9, { shots: { 5790: 600 } }), 'table', 4, 0, classWorld(0));
+    const none = run(freshBot(9, { ...armed, shots: { 5790: 600 } }), 'table', 4, 0, classWorld(0));
     assert.ok(none.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(none.visits.filter(visit => !visit.info.born).length, 0, 'a level that fires no shot sends it nowhere');
     // d. it held none of the shot before the level: the level is no run-out (it hunts bare, adena 1 buys nothing at birth)
-    const bareBefore = run(freshBot(9, { shots: {}, money: 1 }), 'table', 4, 0, classWorld(1835));
+    const bareBefore = run(freshBot(9, { ...armed, shots: {}, money: 1 }), 'table', 4, 0, classWorld(1835));
     assert.ok(bareBefore.result.progress.stageBands.all.levelUps >= 1, 'control: it reached level 2');
     assert.equal(bareBefore.visits.filter(visit => !visit.info.born).length, 0, 'a main that held none before the level goes nowhere at it');
 }

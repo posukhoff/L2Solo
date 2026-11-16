@@ -162,12 +162,17 @@ function huntExp(main, row, hours) {
 }
 
 // The shot a main fires: the hour's kind of shot at the grade of the weapon
-// in its hand (C4: the shot's grade is the weapon's), the hour's shot when
-// it holds no weapon the snapshot grades.
+// in its hand (C4: a weapon fires only the shots of its grade); none without
+// a weapon. The held weapon is the one grade source: a weapon the snapshot
+// does not grade is a model bug (every NPC weapon is in the snapshot's
+// items). A snapshot without shot grades fires the hour's shot as named.
 function shotOf(view, main, hour) {
     const family = view.shotFamilies?.ids.find(ids => ids.includes(hour.shotId));
-    const at = family ? view.shotFamilies.grades.indexOf(view.items[main.weapon]?.grade) : -1;
-    return at >= 0 ? family[at] : hour.shotId;
+    if (!family) return hour.shotId;
+    if (!main.weapon) return 0;
+    const at = view.shotFamilies.grades.indexOf(view.items[main.weapon]?.grade);
+    if (at < 0) throw new Error(`weapon ${main.weapon} has no shot grade in the snapshot`);
+    return family[at];
 }
 
 // The beginner shot that charges a shot's skill, 0 for none: the game's rule

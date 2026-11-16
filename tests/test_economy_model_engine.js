@@ -144,6 +144,11 @@ assert.equal(Engine.hunt(plain, view, 1, () => 0.5, Today.hunter(view).firing(pl
 const armed = { ...plain, weapon: 101, shots: {} };
 assert.deepEqual(Today.errands(armed, view, { outingHours: 0.5, firing: Today.hunter(view).firing(armed) }).find(errand => errand.kind === 'shots'),
     { kind: 'shots', id: 1463, amount: 20 }, 'D shots, one hour of use');
+// The weapon in hand is the one grade source: the D sword fires the D shot of the hour's kind, the no-grade sword the
+// no-grade one, no weapon none; a held weapon the snapshot does not grade is a model bug.
+const hourAt = Engine.hourOf(view, plain);
+assert.deepEqual([armed, plain, { ...plain, weapon: 0 }].map(main => Engine.shotOf(view, main, hourAt)), [1463, 1835, 0]);
+assert.throws(() => Engine.shotOf(view, { ...plain, weapon: 999 }, hourAt), /no shot grade/);
 
 // A spot's spoils (written at the highest Spoil level of any line there)
 // reach only a row with spoil loot, at that loot.
