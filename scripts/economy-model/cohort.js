@@ -2,7 +2,7 @@
 
 // The accounts a model run starts from, as plain records the engine reads:
 // { id, station, classId, line, level, exp, money, spot, shots: { selfId: count },
-//   held: [selfId], worn: { slot: selfId }, persona: { primaryDrive, traits: { caution, commitment } } | null (the game's persona shape),
+//   held: [selfId], worn: { slot: selfId }, persona: { primaryDrive, traits: { caution, commitment, ambition } } | null (the game's persona shape),
 //   warehouse: { selfId: count }, twins: [] | [crafter, shop seller, shop buyer] };
 // spot is the spot the bot stood at in the save (null without one).
 // seedAccount (the one seeder of every cohort) gives an account whose main is
@@ -131,7 +131,7 @@ function seedAccount(account, persona, holdings, snapshot) {
     const warehouse = { ...holdings.warehouse };
     const qualifies = persona && !account.station && (persona.primaryDrive === 'wealth' || persona.traits.commitment >= HIGH_TRAIT)
         && (TWIN_SHARE >= 1 || mulberry(hash(`twin:${account.id}`))() < TWIN_SHARE);
-    const base = { ...account, persona: persona ? { primaryDrive: persona.primaryDrive, traits: { caution: persona.traits.caution, commitment: persona.traits.commitment } } : null, warehouse, twins: [] };
+    const base = { ...account, persona: persona ? { primaryDrive: persona.primaryDrive, traits: { caution: persona.traits.caution, commitment: persona.traits.commitment, ambition: persona.traits.ambition } } : null, warehouse, twins: [] };
     if (!qualifies) return base;
     const level = Math.min(account.level, Math.max(...Object.keys(snapshot.twins).map(Number)));
     const twin = snapshot.twins[level], held = scroll => (holdings.bag[scroll] || 0) + (holdings.warehouse[scroll] || 0) > 0;
@@ -158,7 +158,7 @@ function fromSave(file, snapshot) {
         if (!byOwner.has(row.characterId)) byOwner.set(row.characterId, []);
         byOwner.get(row.characterId).push(row);
     }
-    for (const row of personas) { const traits = JSON.parse(row.traitsJson || '{}'); personaOf.set(row.characterId, { primaryDrive: row.primaryDrive, traits: { caution: traits.caution === undefined ? undefined : Number(traits.caution), commitment: Number(traits.commitment) } }); }
+    for (const row of personas) { const traits = JSON.parse(row.traitsJson || '{}'); personaOf.set(row.characterId, { primaryDrive: row.primaryDrive, traits: { caution: traits.caution === undefined ? undefined : Number(traits.caution), commitment: Number(traits.commitment), ambition: traits.ambition === undefined ? undefined : Number(traits.ambition) } }); }
     for (const row of warehouse) {
         if (!vaultOf.has(row.characterId)) vaultOf.set(row.characterId, {});
         vaultOf.get(row.characterId)[row.selfId] = (vaultOf.get(row.characterId)[row.selfId] || 0) + Number(row.amount);

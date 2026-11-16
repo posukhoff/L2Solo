@@ -17,9 +17,10 @@ const LIMITS = Object.freeze({
     // Trips that bought none of the need they went for, as a share of consumable trips.
     EMPTY_TRIP_SHARE: row({ value: 0.05, source: 'ours: the design\'s acceptance bound',
         readBy: 'run report', hit: 'empty trips / consumable trips at levels 1-19 printed beside it' }),
-    // The weight of a death's price in an hour's value.
-    RISK_WEIGHT: row({ value: 1, source: 'ours; C4 not checked',
-        readBy: 'value.hourValue', hit: 'none: a weight, not a bound' }),
+    // A spot is safe for an outing when the expected deaths over the outing (deaths an hour in the form hunted, at the
+    // worn kit, times the outing's horizon) are at most this many (inclusive).
+    SAFE_OUTING_DEATHS: row({ value: 0.1, source: 'ours: the maintainer\'s bound, about 9 outings in 10 without a death',
+        readBy: 'OutingSpot (the held spot, plane.js)', hit: 'unsafe candidates worth more than the choice (all of them when none fits), counted spotChoice.refusedUnsafe in the run report' }),
     // A species is hunted (the hunt table's reader) when a kill costs at most this many deaths.
     KILL_DEATH_LIMIT: row({ value: 0.05, source: 'ours: a C4 player leaves a mob that kills him more than once in twenty kills',
         readBy: 'hunt table reader (admission); hunt-table.js (prints, check spots)', hit: 'cells over it counted by the hunt table build' }),

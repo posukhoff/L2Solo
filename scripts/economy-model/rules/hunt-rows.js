@@ -142,17 +142,4 @@ function lineRows({ file, key, level, point, limit = LIMITS.KILL_DEATH_LIMIT.val
     return { rows, cannot };
 }
 
-// The hour a row gives in a form: the row itself firing shots, its shotless bare.
-const inForm = (row, form) => form === 'bare' ? { ...row, ...row.shotless } : row;
-
-// A bot's one best spot and its candidates in a form: the rows it hunts in
-// that form ranked by valueOf(row), the bot's hour value there (the design's
-// value.hourValue with its persona's weights, passed in), best first. The same
-// answer serves the row a bot holds and the spots it ranks.
-function best(rows, form, valueOf) {
-    const top = rows.filter(row => inForm(row, form).kills > 0).map(row => ({ row, value: valueOf(row) }))
-        .sort((a, b) => b.value - a.value).map(held => held.row);
-    return { best: top[0] || null, top };
-}
-
-module.exports = { admitted, combine, spotHour, lineRows, best, npcBuyValue, SHOTLESS_FIELDS };
+module.exports = { admitted, combine, spotHour, lineRows, npcBuyValue, SHOTLESS_FIELDS };

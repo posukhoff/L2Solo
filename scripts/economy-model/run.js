@@ -126,6 +126,10 @@ function printDesign(design) {
     console.log(`  bare hunting hours before the first purchase of shots, per line (bots; bought; mean hours of those that bought; never bought, their mean bare hours so far):`);
     for (const row of design.bareBeforeFirstBuy) console.log(`    line ${pad(row.line, 4)} ${pad(row.bots, 5)} ${pad(row.bought, 5)} ${pad(number(row.meanHoursBeforeFirstBuy), 8)} ${pad(row.neverBought, 5)} ${pad(number(row.meanHoursNeverBought), 8)}`);
     console.log(`  spotUnstated ${design.spotUnstated}; off the hunting table's grid (a main at a level wearing another kit than the measured one) ${design.offGrid}`);
+    const spot = design.spotChoice, kinds = counts => `{${Object.entries(counts).map(([kind, n]) => `${kind} ${n}`).join(', ')}}`;
+    console.log(`SPOT CHOICE first ${spot.first}, kept ${spot.kept}, unfit ${kinds(spot.unfit)}, minmax ${spot.minmax}, fallback ${kinds(spot.fallback)}, none ${spot.none}, `
+        + `refusedUnsafe (unsafe candidates richer than the choice) ${spot.refusedUnsafe}, midFarm ${spot.midFarm}, changes per bot-hour ${spot.changesPerBotHour === null ? '-' : spot.changesPerBotHour.toFixed(3)}, levels held p50 ${spot.levelsHeld.all.p50 ?? '-'}, `
+        + `returns ${percent(spot.returnShare)}, A-B-A ${percent(spot.abaShare)}, minMaxers ${spot.minMaxers}/${spot.mains} mains`);
     console.log(`  level distribution at the end: ${Object.entries(design.levelDistribution).sort((a, b) => a[0] - b[0]).map(([level, n]) => `${level}:${n}`).join(' ')}`);
 }
 

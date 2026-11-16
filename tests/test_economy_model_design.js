@@ -16,6 +16,9 @@ const Value = require('../scripts/economy-model/design/value');
 const Supply = require('../scripts/economy-model/design/supply');
 
 const SHOT = 1835, DROP = 200;
+// The fixtures' spots' mean mob level (the outing spot rule's level gap): level 1, within the gap of every level they reach.
+const AVG_LEVEL = { s1: 1, s2: 1, s3: 1, sE: 1, sM: 1, '-12_43': 1, cut: 1 };
+const viewOf = snapshot => Engine.viewOf({ spotAvgLevel: AVG_LEVEL, ...snapshot });
 const out = [{ kind: 'out', who: 7, at: 3 }], bag = [{ kind: 'bag', who: 7, at: 3 }], town = [{ kind: 'town', who: 7, at: 4 }];
 // A level-1 bot out of its 200-shot target in the field, its spot's town selling the shots at 7.
 // Its bag fills 2 h after the visit (need.hours, the formula's horizon).
@@ -86,24 +89,26 @@ assert.equal(Supply.shadow(out, field()).differ, null);
 const row = (spotId, exp, adena, extra = {}) => ({ spotId, kills: 10, exp, adena, shots: 30, dropLoot: 50, spoilLoot: 0, loot: 50, potions: 0, busyShare: 1, deaths: 0, ...extra });
 const near = row('s1', 100, 200, { deaths: 0.1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } }), far = row('s2', 60, 100);
 const drops = { town: 'TownA', drop: { 57: 10, [DROP]: 0.5 }, spoil: {} };
-const view = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 100], hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } } },
+const view = viewOf({ header: { levels: [1, 2] }, exp: [0, 100], hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } } },
     kits: { 9: { 1: [] } }, yields: { 's1@1': drops, 's2@1': drops }, items: { [DROP]: { kind: 'Other.Material', npcBuy: 5 }, [SHOT]: { kind: 'Other.Shot', npcBuy: 2 } },
     npcOffers: { preset: {} }, deathExp: [15, 30] });
 const main = { line: 9, level: 1, spot: null, shots: {}, bag: {} };
 const kit = deaths => ({ bare: { kills: 1, deaths }, shots: { kills: 1, deaths }, blessed: { kills: 1, deaths } });
 const persona = { primaryDrive: 'progression', traits: { caution: 0 } };
-// Exp 100 of the best 100 and income 250 (200 adena + 50 drop) of the best 250, half each; a death costs 15 exp of 100
-// and the way back from its respawn town (0.3 h), no respawn wait (the row's death rate holds it).
-const way = { wayBackHours: 0.3 };
+// Exp 100 of the best 100 and income 250 (200 adena + 50 drop) of the best 250, half each; no road and no deaths in it.
+assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona) - (100 / 100 * 0.5 + 0.5)) < 1e-9);
+assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, { withoutDrop: true }) - (100 / 100 * 0.5 + 200 / 250 * 0.5)) < 1e-9);
+assert.equal(Value.hourValue(view, main, 'shots', kit(1), persona), Value.hourValue(view, main, 'shots', kit(2), persona), 'the kit\'s deaths do not move the hour');
+assert.equal(Value.hourValue(view, main, 'bare', kit(1), persona), 0);
+// The formula's death price: a death costs 15 exp of 100 and the way back from its respawn town (0.3 h), no respawn
+// wait (the row's death rate holds it); the worn kit's death factor scales it.
 const risk = 0.1 * (0.3 + 15 / 100);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, way) - (100 / 100 * 0.5 + 0.5 - risk)) < 1e-9);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, { ...way, withoutDrop: true }) - (100 / 100 * 0.5 + 200 / 250 * 0.5 - risk)) < 1e-9);
-assert.ok(Math.abs(Value.hourValue(view, main, 'shots', kit(1), persona, way) - Value.hourValue(view, main, 'shots', kit(2), persona, way) - risk) < 1e-9);
-assert.equal(Value.hourValue(view, main, 'bare', kit(1), persona, way), 0);
+assert.ok(Math.abs(Value.deathCost(view, main, 'shots', kit(1), 0.3) - risk) < 1e-9);
+assert.ok(Math.abs(Value.deathCost(view, main, 'shots', kit(2), 0.3) - 2 * risk) < 1e-9);
 // A wealth-driven, cautious-free persona weighs money above exp.
 assert.ok(Value.moneyWeight({ primaryDrive: 'wealth', traits: { caution: 0 } }) > Value.moneyWeight(persona));
-const hourOf = form => Value.hourValue(view, main, form, kit(1), persona, way);
-assert.throws(() => Value.hourValue(view, main, 'shots', kit(1), persona, {}), /no trip hours for the way back/);
+const hourOf = form => Value.hourValue(view, main, form, kit(1), persona) - Value.deathCost(view, main, form, kit(1), 0.3);
+assert.throws(() => Value.deathCost(view, main, 'shots', kit(1), undefined), /no trip hours for the way back/);
 const zeroBare = { hour: hourOf('shots'), bare: hourOf('bare'), withoutDrop: 0, bagHoursBare: Infinity, outHours: 0, M: Value.bestOf(view, main).npc, moneyWeight: Value.moneyWeight(persona) };
 // Shots at a tenth of an adena against the view's best income of 250 an hour.
 const longRoad = { toHours: 0.4, backHours: 0.4, offers: { town: 'TownA', price: 0.1 } };
@@ -175,7 +180,7 @@ const ITEMS = { [DROP]: { kind: 'Other.Material', npcBuy: 5, weight: 2 }, [SHOT]
 const quiet = row('s3', 100, 0, { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 }, dropLoot: 0, loot: 0 });
 // Line 10's other candidate, s2, is worth less to it than s3 (nothing bare either).
 const dull = row('s2', 10, 100, { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } });
-const world = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] }, 10: { 1: [] } },
+const world = viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] }, 10: { 1: [] } },
     hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 10: { 1: { classId: 10, shotId: SHOT, best: quiet, top: [quiet, dull] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's3@1': { town: 'TownA', drop: {}, spoil: {} } },
     items: ITEMS,
@@ -244,9 +249,10 @@ for (const supply of ['table', 'formula']) {
     assert.equal(death.main.money - death.before.money, death.delta.flows.npcSales + death.delta.flows.npcBuys, `${supply}: only the town chain moves money`);
 }
 
-// A held spot is re-taken at every new level: its row still exists there, but the spot worth most at the new level is another one.
+// A held spot that still fits at a new level is kept, although its row is no longer the one worth most there: s1's mobs
+// (mean level 1) stay within C4's gap of level 2.
 const richer = row('s2', 300, 400);
-const growth = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+const growth = viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
     hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: richer, top: [richer, near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
     items: ITEMS,
@@ -257,17 +263,90 @@ for (const supply of ['table', 'formula']) {
     assert.ok(grown.result.progress.stageBands.all.levelUps >= 1, `${supply}: it reached level 2`);
     assert.equal(grown.result.counters.leftOwnSpot, 0, `${supply}: the held row still exists at level 2`);
     const levelled = grown.levels.find(level => level.main.level === 2);
-    assert.deepEqual([levelled.before.spot, levelled.main.spot], ['s1', 's2'], `${supply}: it holds the spot worth most at the new level`);
+    assert.deepEqual([levelled.before.spot, levelled.main.spot], ['s1', 's1'], `${supply}: it keeps the spot that still fits at the new level`);
+}
+// climb: line 9 at levels 6 and 7 (level 7 at 300 exp); s1 (mean mob level s1Level) is the best at 6, s2 (mean 7) worth
+// more at 7. A bot born at level 6 with 30 shots walks out 0.3 h, reaches level 7 after half an hour (100 exp an hour),
+// runs out of shots at 1.3 h and its town chain ends at 1.5 h.
+const climb = s1Level => viewOf({ header: { levels: [1, 7] }, exp: [0, 50, 100, 150, 200, 250, 300], kits: { 9: { 6: [], 7: [] } },
+    hours: { 9: { 6: { classId: 9, shotId: SHOT, best: near, top: [near, far] }, 7: { classId: 9, shotId: SHOT, best: richer, top: [richer, near] } } },
+    yields: { 's1@6': drops, 's2@6': drops, 's1@7': drops, 's2@7': drops },
+    items: ITEMS,
+    npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: Array(7).fill(15),
+    tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } },
+    spotAvgLevel: { s1: s1Level, s2: 7 } });
+const climber = persona => freshBot(9, { level: 6, exp: 250, shots: { [SHOT]: 30 }, ...(persona ? { persona } : {}) });
+const MIN_MAXER = { primaryDrive: 'progression', traits: { caution: 0.5, commitment: 0.5, ambition: 0.9 } };
+for (const supply of ['table', 'formula']) {
+    const spotsOf = (s1Level, persona) => {
+        const climbed = run(climber(persona), supply, 2, 0, climb(s1Level));
+        const levelled = climbed.levels.find(level => level.main.level === 7), chainEnd = climbed.visits.find(visit => !visit.info.born);
+        assert.ok(levelled && chainEnd && chainEnd.now > levelled.now, `${supply}: it reaches level 7 before its town chain`);
+        return [climbed.visits[0].main.spot, levelled.main.spot, chainEnd.main.spot];
+    };
+    // Past the gap (level 7 is 6 above s1's mobs) it keeps s1 until its town chain ends and takes s2 there, not at the level.
+    assert.deepEqual(spotsOf(1), ['s1', 's1', 's2'], `${supply}: out of the gap it moves at the next chain end`);
+    // Within the gap (s1's mobs at 3) it keeps s1 through the chain end, although s2 is worth more.
+    assert.deepEqual(spotsOf(3), ['s1', 's1', 's1'], `${supply}: a spot that fits is kept at the chain end`);
+    // A min-maxer takes the spot worth most at the chain end, not at the level.
+    assert.deepEqual(spotsOf(3, MIN_MAXER), ['s1', 's1', 's2'], `${supply}: a min-maxer re-picks at the chain end`);
+}
+// The same climb where s1 leaves the top at level 7 but stays in its range (the level's others) and s2, the top, is out of
+// the gap (mean mob level 1): s1 is still a candidate, kept through the chain end and taken by a bot born at level 7; no
+// hour is hunted at the line's best by default.
+{
+    const inRange = climb(3), level7 = { classId: 9, shotId: SHOT, best: richer, top: [richer], others: [near] };
+    const leftTop = { ...inRange, hours: { 9: { ...inRange.hours[9], 7: level7 } }, spotAvgLevel: { s1: 3, s2: 1 } };
+    for (const supply of ['table', 'formula']) {
+        const climbed = run(climber(), supply, 2, 0, leftTop), chainEnd = climbed.visits.find(visit => !visit.info.born);
+        assert.ok(chainEnd && chainEnd.before.level === 7, `${supply}: its town chain ends at level 7`);
+        assert.deepEqual([climbed.visits[0].main.spot, chainEnd.main.spot], ['s1', 's1'], `${supply}: the held spot out of the top is kept while it fits`);
+        const born = run(freshBot(9, { level: 7, exp: 300, shots: { [SHOT]: 30 } }), supply, 2, 0, leftTop);
+        assert.equal(born.visits[0].main.spot, 's1', `${supply}: born at level 7 it takes the fitting spot out of the top`);
+        for (const each of [climbed, born]) assert.equal(each.result.huntHours.bestSpot, 0, `${supply}: no hour at the line's best by default`);
+    }
+}
+// The same climb where s2, worth more at level 6 and within the gap at 6 and 7 (mean mob level 7), is deathless at 6 but
+// dies 0.2 an hour at 7, and s1 (mean 3, nothing killed bare) is deathless at both, at the reference kit: the bot born at 6,
+// whose outing reaches level 7, holds s1 at birth, at level 7 and at its chain end (a spot deadly at a level the outing
+// reaches is not held), and never dies. Where level 7 is out of the outing's reach (its exp far above), s2 is taken at birth.
+{
+    const inRange = climb(3), safe = row('s1', 100, 200, { shotless: near.shotless }), deadlyUp = row('s2', 300, 400, { deaths: 0.2 });
+    const turns = { ...inRange, hours: { 9: { 6: { classId: 9, shotId: SHOT, best: richer, top: [richer, safe] }, 7: { classId: 9, shotId: SHOT, best: deadlyUp, top: [deadlyUp, safe] } } } };
+    for (const supply of ['table', 'formula']) {
+        const climbed = run(climber(), supply, 2, 1, turns);
+        const levelled = climbed.levels.find(level => level.main.level === 7), chainEnd = climbed.visits.find(visit => !visit.info.born);
+        assert.ok(levelled && chainEnd && chainEnd.now > levelled.now, `${supply}: it reaches level 7 before its town chain`);
+        assert.deepEqual([climbed.visits[0].main.spot, levelled.main.spot, chainEnd.main.spot], ['s1', 's1', 's1'], `${supply}: the spot deadly a level up is never held`);
+        assert.equal(climbed.result.counters.deaths, 0, `${supply}: it never dies`);
+        const unreached = run(climber(), supply, 2, 1, { ...turns, exp: [0, 50, 100, 150, 200, 250, 1e6] });
+        assert.equal(unreached.visits[0].main.spot, 's2', `${supply}: deadly only past the levels the outing reaches, s2 is taken`);
+    }
+}
+// A spot worth more whose expected deaths over the outing exceed the bound (0.05 an hour over an outing of hours to a full
+// bag) is never held, though its death price is far below its value lead; the safe spot is.
+{
+    const safe = row('s1', 100, 200), risky = row('s2', 300, 400, { deaths: 0.05 });
+    const danger = viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+        hours: { 9: { 1: { classId: 9, shotId: SHOT, best: risky, top: [risky, safe] } } },
+        yields: { 's1@1': drops, 's2@1': drops }, items: ITEMS,
+        npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
+        tripHours: { to: { s1: 0.2, s2: 0.2 }, back: { s1: { TownA: 0.3 }, s2: { TownA: 0.3 } } }, bags: { 9: { slots: 80, maxLoad: LOAD } } });
+    for (const supply of ['table', 'formula']) {
+        const held = run(freshBot(9, { shots: { [SHOT]: 60 } }), supply, 3, 1, danger);
+        assert.ok(held.visits.length >= (supply === 'table' ? 2 : 1), `${supply}: born (the table variant also back from a town chain)`);
+        assert.ok(held.visits.every(visit => visit.main.spot === 's1'), `${supply}: the unsafe spot is never held (${held.visits.map(visit => visit.main.spot)})`);
+    }
 }
 
 // A death that drops a level respawns in the town of the spot it died at (C4: the region town of the death place), not in the
-// town of the spot re-taken at the lower level: born at level 2 just past its start, it holds s2 (TownB) and dies there (40x the
+// town of the spot it takes at the lower level: born at level 2 just past its start, it holds s2 (TownB) and dies there (40x the
 // row's deaths); the loss takes it to level 1, where s1 (TownA) is worth most, whether s2 has a level-1 row or not.
 const bareNone = { shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0, deaths: 0 } };
 const rich1 = row('s1', 300, 400, bareNone), s2at1 = row('s2', 60, 100, bareNone), s2at2 = row('s2', 100, 200, { ...bareNone, deaths: 0.1 });
 const dropsB = { ...drops, town: 'TownB' };
 for (const [variant, top1] of [['s2 has a level-1 row', [rich1, s2at1]], ['s2 has no level-1 row', [rich1]]]) {
-    const regions = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+    const regions = viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
         hours: { 9: { 1: { classId: 9, shotId: SHOT, best: rich1, top: top1 }, 2: { classId: 9, shotId: SHOT, best: s2at2, top: [s2at2] } } },
         yields: { 's1@1': drops, 's2@1': dropsB, 's2@2': dropsB },
         items: ITEMS,
@@ -284,7 +363,7 @@ for (const [variant, top1] of [['s2 has a level-1 row', [rich1, s2at1]], ['s2 ha
 // A bot with no shots, no adena and a bag of one slot that fills: it hunts bare at a row that kills bare, and the table goes to town
 // for the shots at the bag fact. The formula stays: a one-slot bag holds the shots or the drop, so the hours to a full bag after
 // the visit are 0 (the stock rule's slot forecast) and the trip buys no hunting hour.
-const bare = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } }, hours: { 9: { 1: { classId: 9, shotId: SHOT, best: far, top: [far] } } },
+const bare = viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } }, hours: { 9: { 1: { classId: 9, shotId: SHOT, best: far, top: [far] } } },
     yields: { 's2@1': drops }, items: ITEMS,
     npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
     tripHours: { to: { s2: 0.02 }, back: { s2: { TownA: 0.03 } } }, bags: { 9: { slots: 1, maxLoad: LOAD } } });
@@ -301,9 +380,10 @@ for (const supply of ['table', 'formula']) {
 }
 
 // A bot stuck out of shots is counted once: its death and respawn visit change neither its shots, its money nor its bag.
-// Its bare hour carries no deaths of its own (the game spot table's shape), so it dies at the row's.
+// Its bare hour carries no deaths of its own (the game spot table's shape), so it dies at the row's. No spot is safe: it holds
+// the least deadly, s3.
 const mortal = row('s3', 100, 0, { deaths: 1, shotless: { kills: 0, exp: 0, adena: 0, dropLoot: 0, loot: 0 }, dropLoot: 0, loot: 0 });
-const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, { ...dull, deaths: 1 }] } } } };
+const mortalWorld = { ...world, hours: { ...world.hours, 10: { 1: { classId: 10, shotId: SHOT, best: mortal, top: [mortal, { ...dull, deaths: 2 }] } } } };
 const stuckDying = run(freshBot(10, { shots: { [SHOT]: 20 } }), 'table', 10, 2, mortalWorld);
 assert.ok(stuckDying.visits.filter(visit => visit.info.died && visit.before.shots[SHOT] === 0).length >= 3, 'the stuck bot dies and respawns several times after it stands');
 assert.equal(stuckDying.result.counters.stuckNoBareHour, 1, 'stuck once for the one run-out');
@@ -319,9 +399,9 @@ for (const supply of ['table', 'formula']) {
 }
 assert.equal(Supply.stuck({ ...field({ wallet: 0, fightsBare: false }), need: { ...field().need, held: 5 } }), false, 'a bot that holds shots is not stuck');
 
-// The held spot is the bot's best row in the form it can hunt: line 9's best row s1 kills nothing without shots, its
-// bare best is s2. A bot born holding none of its shots holds s2 and hunts there bare; after the town chain that bought shots
-// it holds s1 (the chain's end takes the held spot again).
+// The held spot is taken in the form it can hunt: line 9's best row s1 kills nothing without shots, its bare best is s2.
+// A bot born holding none of its shots takes s2 and hunts there bare; after the town chain that bought shots it keeps s2,
+// which still fits (it hunts there with shots), although s1 is worth more with shots.
 // bareBest is an hour row of the shape the extract writes: the spot's hour with shots at the top level (shots 30), the bare reading in shotless.
 const farBare = row('s2', 60, 100, { shotless: { kills: 10, exp: 60, adena: 40, dropLoot: 20, loot: 20, deaths: 0 } });
 const bareWorld = { ...world, tripHours: { to: { ...world.tripHours.to, s2: 0.2 }, back: { ...world.tripHours.back, s2: { TownA: 0.3 } } }, hours: { ...world.hours, 9: { 1: { classId: 9, shotId: SHOT, best: near, bareBest: farBare, top: [near, far] } } } };
@@ -333,13 +413,13 @@ for (const supply of ['table', 'formula']) {
     const funded = run(freshBot(9, { money: 5000 }), supply, 4, 0, bareWorld);
     assert.equal(funded.visits[0].before.spot, null);
     assert.ok(funded.visits[0].main.shots[SHOT] > 0, `${supply}: the birth chain buys its shots`);
-    assert.equal(funded.visits[0].main.spot, 's1', `${supply}: after the chain that bought shots it holds the shots best`);
+    assert.equal(funded.visits[0].main.spot, 's2', `${supply}: after the chain that bought shots it keeps the spot that fits`);
 }
 
 // At a level where the held bare best has no row the bot takes the new level's bare best (the form it can hunt now), not the line's
 // best row with shots: line 9 holds s2 bare at level 1; at level 2 its rows are s1 (kills nothing bare) and the bare best s3.
 const farBare2 = row('s3', 150, 100, { shotless: { kills: 10, exp: 60, adena: 40, dropLoot: 20, loot: 20, deaths: 0 } });
-const stepWorld = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+const stepWorld = viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
     hours: { 9: { 1: { classId: 9, shotId: SHOT, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: SHOT, best: near, bareBest: farBare2, top: [near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
     items: ITEMS,
@@ -360,7 +440,7 @@ for (const supply of ['table', 'formula']) {
 // A level that changes the shot it fires to one it holds none of is the run-out the hunt raises when it spends the last shot: line 9
 // fires the no-grade Spiritshot 2509 at level 1 (Spiritshots for Beginners 5790 charge it, 600 held) and the no-grade Soulshot 1835 at
 // level 2 (5789 charges it, none held). Rooms are roomy so no bag fact comes in the run.
-const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
+const classWorld = (shotAtTwo) => viewOf({ header: { levels: [1, 2] }, exp: [0, 50], kits: { 9: { 1: [], 2: [] } },
     shotFamilies: { grades: ['NONE'], ids: [[1835], [2509]] },
     hours: { 9: { 1: { classId: 9, shotId: 2509, best: near, bareBest: farBare, top: [near, far] }, 2: { classId: 9, shotId: shotAtTwo, best: near, bareBest: farBare2, top: [near] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops, 's3@2': drops },
@@ -388,12 +468,12 @@ const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, ex
     assert.equal(bareBefore.visits.filter(visit => !visit.info.born).length, 0, 'a main that held none before the level goes nowhere at it');
 }
 
-// The held spot is the one worth most to the bot by its persona's weights (exp against money, less its death risk), not
+// The first held spot is the one worth most to the bot by its persona's weights (exp against money), not
 // the most income: line 9 at level 1 has sE (exp 200, 20 adena an hour) and sM (exp 50, 300 adena; the line's best by
 // income). A bot driven by progression and cautious (money weight 1/3) holds sE; one driven by wealth (2/3) holds sM.
 {
     const keen = row('sE', 200, 20), rich = row('sM', 50, 300);
-    const choice = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+    const choice = viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
         hours: { 9: { 1: { classId: 9, shotId: SHOT, best: rich, top: [rich, keen] } } }, yields: { 'sE@1': drops, 'sM@1': drops },
         items: ITEMS,
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
@@ -412,7 +492,7 @@ const classWorld = (shotAtTwo) => Engine.viewOf({ header: { levels: [1, 2] }, ex
 // sold at price, the road to town and back as given.
 const levelWorld = (first, last, price = 7, road = { to: 0.2, back: 0.3 }) => {
     const levels = Array.from({ length: last - first + 1 }, (_, at) => first + at), per = fill => Object.fromEntries(levels.map(level => [level, fill(level)]));
-    return Engine.viewOf({ header: { levels: [1, last] }, exp: Array.from({ length: last }, (_, at) => at * 50), kits: { 9: per(() => []) },
+    return viewOf({ header: { levels: [1, last] }, exp: Array.from({ length: last }, (_, at) => at * 50), kits: { 9: per(() => []) },
         hours: { 9: per(() => ({ classId: 9, shotId: SHOT, best: near, top: [near, far] })) },
         yields: Object.fromEntries(levels.flatMap(level => [[`s1@${level}`, drops], [`s2@${level}`, drops]])),
         items: ITEMS,
@@ -471,7 +551,7 @@ for (const supply of ['table', 'formula']) {
 
 // A main whose level has no spot row for its line stands: one stuck episode with its own reason and its hours, and the road share
 // is over the wall hours of the mains that hold a row (line 9 has rows from level 2 only; line 11 hunts and walks to town).
-const noRow = Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [], 2: [] }, 11: { 1: [] } },
+const noRow = viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [], 2: [] }, 11: { 1: [] } },
     hours: { 9: { 2: { classId: 9, shotId: SHOT, best: near, top: [near, far] } }, 11: { 1: { classId: 11, shotId: SHOT, best: near, top: [near, far] } } },
     yields: { 's1@1': drops, 's2@1': drops, 's1@2': drops, 's2@2': drops },
     items: ITEMS,
@@ -575,7 +655,7 @@ for (const supply of ['table', 'formula']) {
     assert.deepEqual([orcHour.top.map(held => held.spotId), orcHour.bareTop.map(held => held.spotId)], [['-12_43'], ['-12_43']], 'the candidates per form: the cut spot is none');
     assert.deepEqual(humanHour.bareTop.map(held => held.spotId), ['-12_43']);
     assert.equal(orcHour.best, undefined, 'no line-wide best: each bot ranks the candidates by its own hour value');
-    const tableView = Engine.viewOf({ ...snapshot, hours: table.hours });
+    const tableView = viewOf({ ...snapshot, hours: table.hours });
     // The game's kit readers: no factor at the table's levels, and the game's shot scale has no row there (null).
     const kitsOf = { spotFactors: () => assert.fail('the table\'s levels read no game kit factor'), shotScale: () => null, stats: { spotUnstated: 0 } };
     const creation = { range: [1, 1], creation: () => ({}) };
@@ -583,10 +663,23 @@ for (const supply of ['table', 'formula']) {
     for (const [line, cell, spiritshots] of [['51', orc, { [SPIRIT]: 100 }], ['12', humanBare, {}], ['12', humanBare, { [SPIRIT]: 1000 }]]) {
         const account = freshBot(line, { shots: spiritshots }), visits = [];
         const made = Plane.plane({ view: tableView, kitHours: kitsOf, variant: 'table', accounts: [account], table: creation });
-        let held = null;
-        const seen = { ...made, start: context => { const hooks = held = made.start(context); return { ...hooks, visit: (main, now, info) => { const done = hooks.visit(main, now, info); visits.push({ ...done, died: info.died === true }); return done; } }; } };
+        // The bot is placed at the gremlin spot whatever the held spot's choice answers (its hunt and deaths are read here;
+        // the choice's first answer is kept in chosen).
+        let held = null, chosen;
+        const seen = { ...made, start: context => { const hooks = held = made.start(context); return { ...hooks, visit: (main, now, info) => {
+            const done = hooks.visit(main, now, info), placed = { ...done, main: { ...done.main, spot: '-12_43' } };
+            if (chosen === undefined) chosen = done.main.spot;
+            visits.push({ ...placed, died: info.died === true });
+            return placed;
+        } }; } };
         const result = Engine.simulate({ view: tableView, accounts: [account], bands: [['all', 1]], rates: { default: { huntShare: 1 } }, hours: 3, seed: 3, plane: seen });
-        assert.equal(visits[0].main.spot, '-12_43', `line ${line} holds the gremlin spot`);
+        // Its choice: the gremlin spot kills it some 2 times an hour (0.048 and 0.02 a kill) over an outing of many hours, over
+        // the safe outing bound, yet it is the only spot: the bot hunts it as the least deadly it has (it never stops playing);
+        // firing spiritshots the human mystic dies none there and takes it as its first fitting spot.
+        const safe = line === '12' && !!spiritshots[SPIRIT], answers = result.design.spotChoice;
+        assert.equal(chosen, '-12_43', `line ${line}: the only spot is held, safe or not`);
+        assert.deepEqual([answers.first, answers.fallback.least_risk > 0], safe ? [1, false] : [0, true],
+            `line ${line}: taken as fitting only where it is safe (first ${answers.first}, least risk ${answers.fallback.least_risk})`);
         const main = { ...visits[0].main, shots: {} }, hunted = Engine.hunt(main, tableView, 1, () => 0.5, null).delta;
         const kills = 3600 / (cell[2] + cell[3] + cell[4] + cell[5]);
         assert.ok(Math.abs(hunted.exp - kills * 29) < 1e-6, `line ${line} hunts bare at its cell's kills (${hunted.exp / 29} vs ${kills})`);
@@ -604,7 +697,7 @@ for (const supply of ['table', 'formula']) {
     assert.equal(humanHour.bareTop[0].deaths, 0, 'the shots hour its own (none)');
     // The creation kit is the measured point: a main wearing exactly it (non-empty) is on the grid, one wearing another piece is counted off it.
     {
-        const worn = Engine.viewOf({ ...snapshot, hours: table.hours, kits: { 51: { 1: [{ slot: 6, selfId: 1001 }] }, 12: { 1: [] } }, items: { ...snapshot.items, 1001: { kind: 'Armor.Chest', npcBuy: 1 } } });
+        const worn = viewOf({ ...snapshot, hours: table.hours, kits: { 51: { 1: [{ slot: 6, selfId: 1001 }] }, 12: { 1: [] } }, items: { ...snapshot.items, 1001: { kind: 'Armor.Chest', npcBuy: 1 } } });
         const offGrid = measured => {
             const account = freshBot('51', { held: [1001] });
             const made = Plane.plane({ view: worn, kitHours: kitsOf, variant: 'table', accounts: [account], table: { range: [1, 1], creation: () => measured } });
@@ -619,7 +712,7 @@ for (const supply of ['table', 'formula']) {
 // highest, and a best that kills its bot loses to a safe top row under the risk term.
 {
     const bestOut = row('s1', 400, 800), safe = row('s2', 60, 100), deadly = row('s1', 400, 800, { deaths: 200 });
-    const outside = (best, top) => Engine.viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
+    const outside = (best, top) => viewOf({ header: { levels: [1, 2] }, exp: [0, 1e9], kits: { 9: { 1: [] } },
         hours: { 9: { 1: { classId: 9, shotId: SHOT, best, top } } }, yields: { 's1@1': drops, 's2@1': drops },
         items: ITEMS,
         npcOffers: { preset: { [SHOT]: [{ town: 'TownA', price: 7 }] } }, deathExp: [15, 30],
