@@ -455,8 +455,7 @@ function hunt(spot, role, level, shots, hours, simulation = sim, kit = null, cla
     const bagHours = KitRule.bagHours({ ...made.bot, stats: { ...made.bot.stats, classId }, inventory: gear }, {
         row: { stacks: use.stacks / hours, load: use.mobs / hours * loadPerKill },
         kit: { shotItemId, potionItemId, shotUse, potionUse },
-        maxLoad: simulation.CCP.profileFor(made.bot, START).maxLoad,
-        saleLimit: invoke('GameServer/Bot/Population/SurvivalFloor').SOLO_BAG_SLOTS });
+        maxLoad: simulation.CCP.profileFor(made.bot, START).maxLoad });
     // Nothing bounds the hours (weightless kit, no new slots): the line, one
     // hour's use restocked every hour, as the game holds it.
     const restockHours = Number.isFinite(bagHours) ? bagHours : 1;

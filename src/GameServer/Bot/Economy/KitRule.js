@@ -13,6 +13,7 @@ const ConsumableTarget = require('./ConsumableTarget');
 
 const positive = value => Math.max(0, Number(value) || 0);
 const NOTHING_SOLD = Object.freeze({ slots: 0, load: 0 });
+const SCROLL_OF_ESCAPE = 736;
 
 // The one kit rule, hot and cold, worker and main: stock(kind),
 // kitCost(id) and the survival reserve over the build's rates (kitRates: use
@@ -107,14 +108,15 @@ function kitReader(rates, bag, wallet, price, scrollHours = () => positive(rates
 // The hunting hours to a full bag after the visit's sale (ConsumableTarget.
 // bagHours): the free slots over the row's new stacks an hour, or the load left
 // under the first weight step over the row's drop load an hour and the stock's
-// own weight. state: the bot's bag before the visit (race, inventory); row:
-// { stacks, load } an hour; kit: { shotItemId, potionItemId, beginnerId,
-// beginnerCurrent, shotUse, potionUse } (potionUse with the rest bottles);
-// maxLoad: the bot's; saleLimit: the slots the bot turns back at (a solo
-// bot's half bag) or null for the whole bag; sold: { slots, load } the visit's
-// sale empties. Infinity when nothing bounds the hours.
-function bagHours(state, { row, kit, maxLoad, saleLimit = null, sold = NOTHING_SOLD }) {
+// own weight. state: the bot's bag before the visit (race, inventory, party,
+// the last sale visit's unplaced kinds); row: { stacks, load } an hour; kit:
+// { shotItemId, potionItemId, beginnerId, beginnerCurrent, shotUse, potionUse }
+// (potionUse with the rest bottles); maxLoad: the bot's; sold: { slots, load }
+// the visit's sale empties (never a kind the last visit could not place).
+// Infinity when nothing bounds the hours.
+function bagHours(state, { row, kit, maxLoad, sold = NOTHING_SOLD }) {
     const Data = invoke('GameServer/DataCache');
+    const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
     const race = state.stats?.race ?? (Data.classTemplates == null ? undefined : ClassProgression.firstClassRow(Data.classTemplates, state.stats?.classId || 0))?.template?.race;
     const { shotItemId, potionItemId, beginnerId = null, beginnerCurrent = 0, shotUse, potionUse } = kit;
     const amount = selfId => positive(state.inventory?.[selfId]?.amount);
@@ -123,18 +125,30 @@ function bagHours(state, { row, kit, maxLoad, saleLimit = null, sold = NOTHING_S
     // no slot, its refill uses one, and the shorter interval immediately
     // sells part of that refill back to the NPC. Existing stacks retain
     // the exact physical free-slot formula; zero-use stock reserves none.
+    // The Scroll of Escape the same visit buys (kitReader stock('scrolls'))
+    // takes its slot and weight too, so a bag with or without its scroll
+    // forecasts the same hours.
+    const scrollMissing = !amount(SCROLL_OF_ESCAPE);
     const plannedSlots = Number(shotUse > 0 && !amount(shotItemId) && !beginnerCurrent)
-        + Number(potionUse > 0 && !amount(potionItemId));
-    const slotLimit = Math.min(Floor.inventoryLimit(race), saleLimit ?? Infinity);
+        + Number(potionUse > 0 && !amount(potionItemId)) + Number(scrollMissing);
     const held = Floor.stateInventory(state, Data.items);
-    const free = Math.max(0, slotLimit - (held.slots - sold.slots) - plannedSlots);
+    // The whole bag; a solo bot also turns back at the half bag, counted as
+    // the trip rule counts it (ItemDisposition.inventoryCleanupNeed: the goods
+    // the last sale visit did not try, a held fact of that visit). A party
+    // member sells from the field and uses the whole bag.
+    const wholeFree = Floor.inventoryLimit(race) - (held.slots - sold.slots) - plannedSlots;
+    const tried = Array.isArray(state.stats?.marketSellSeen?.items) ? new Set(state.stats.marketSellSeen.items.map(Number)) : null;
+    const solo = !(state.party?.partyId || state.partyId);
+    const halfFree = solo ? Floor.SOLO_BAG_SLOTS - (Disposition.inventorySlotCount(state, tried) - sold.slots) - plannedSlots : Infinity;
+    const free = Math.max(0, Math.min(wholeFree, halfFree));
     // The load left under the first weight step after the sale, the shots
-    // and potions being sized not counted (their weight is the rule's).
+    // and potions being sized not counted (their weight is the rule's), the
+    // scroll to be bought counted.
     const mass = selfId => positive(ItemIndex.find(Data.items, Number(selfId))?.template?.mass);
     const kitLoad = amount(shotItemId) * mass(shotItemId)
         + (beginnerId ? beginnerCurrent * mass(beginnerId) : 0)
         + amount(potionItemId) * mass(potionItemId);
-    const freeLoad = Floor.loadLimit(maxLoad) - (held.load - sold.load - kitLoad);
+    const freeLoad = Floor.loadLimit(maxLoad) - (held.load - sold.load - kitLoad) - (scrollMissing ? mass(SCROLL_OF_ESCAPE) : 0);
     return ConsumableTarget.bagHours({
         slotHours: free === 0 ? 0 : row.stacks > 0 ? free / row.stacks : Infinity,
         freeLoad, loadPerHour: positive(row.load),

@@ -237,17 +237,17 @@ function stockRow(spot, killedNpcs) {
 function stockFixture() {
     const seen = stockRow({ id: 'stock', center: {}, density: 1 }, {});
     const start = seen[0].timestamp;
-    assert.strictEqual(seen[0].potions, 209, 'the row sets out with a full bag\'s use plus the reserve: 20 x 9.5 x 1.1 (old: 40, two hours\' use)');
-    // Restocked at 9.5 h, not every two hours, and the visit sells the drops.
+    assert.strictEqual(seen[0].potions, 204, 'the row sets out with a full bag\'s use plus the reserve: 20 x 9.25 x 1.1, the bag less the scroll the visit buys (old: 40, two hours\' use)');
+    // Restocked at the round that fills the bag (9.5 h), not every two hours, and the visit sells the drops.
     const restocks = seen.filter((step, index) => index > 0 && step.potions > seen[index - 1].potions - 10);
     assert.deepStrictEqual(restocks.map(step => (step.timestamp - start) / 3600000), [9.5], 'the stock is restocked as the bag would be full');
     assert.strictEqual(restocks[0].drops, 0, 'the visit sold the drops: the outing after it starts with an empty bag');
     assert.strictEqual(seen[seen.indexOf(restocks[0]) - 1].drops, 36, 'the round before the visit set out with 18 rounds of drops; its own fill the 38 free slots');
     // The drop's weight: the row restocks at the load bound, before the slots fill.
     const heavy = stockRow({ id: 'stock-drop', center: {}, density: 1, npcEntries: [{ selfId: 398, count: 1 }] }, { 398: 10 });
-    assert.strictEqual(heavy[0].potions, 189, 'the stock is a full bag\'s use by the drop\'s weight: 20 x 8.58 x 1.1 (the slots alone: 209)');
+    assert.strictEqual(heavy[0].potions, 187, 'the stock is a full bag\'s use by the drop\'s weight less the scroll\'s: 20 x 8.5 x 1.1 (the slots alone: 204)');
     const heavyRestocks = heavy.filter((step, index) => index > 0 && step.potions > heavy[index - 1].potions - 10);
-    assert.deepStrictEqual(heavyRestocks.map(step => (step.timestamp - heavy[0].timestamp) / 3600000), [9],
-        'the stock is restocked as the drop\'s weight reaches the first weight step (8.58 h), before the slots fill (9.5 h)');
+    assert.deepStrictEqual(heavyRestocks.map(step => (step.timestamp - heavy[0].timestamp) / 3600000), [8.5],
+        'the stock is restocked as the drop\'s weight reaches the first weight step (8.5 h), before the slots fill (9.25 h)');
 }
 stockFixture();

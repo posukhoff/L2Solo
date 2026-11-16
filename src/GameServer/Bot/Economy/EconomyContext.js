@@ -755,8 +755,8 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         // The kit is bought for the outing after the visit's sale: its bag is
         // the one the sale leaves (the loot carried in is no part of it), so a
         // bot arriving with a full bag of loot does not plan a half-hour outing.
-        // A solo seller's outing ends at the half-full sale (the bag fact's own
-        // condition, before and after its sale alike); stock cannot be its own
+        // A solo seller's outing ends at the half bag of the goods the last
+        // visit did not try (KitRule.bagHours, the trip rule's count); stock cannot be its own
         // reason for an earlier visit, so the whole usable kit is kept while
         // reading the loot.
         let sold = { slots: 0, load: 0 };
@@ -770,8 +770,7 @@ function foundation(state, deps, persona, timestamp, price, keepRoute = null) {
         const hours = KitRule.bagHours(state, { row: { stacks: bestTable.stacks, load: bestTable.load },
             kit: { shotItemId, potionItemId, beginnerId: shotPlan.kind ? BeginnerShots.selfIdFor(shotPlan.kind, shotPlan.rank) : null,
                 beginnerCurrent, shotUse, potionUse: potionUse + potionRest.use },
-            maxLoad: invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(state, timestamp).maxLoad,
-            saleLimit: Disposition.soloSaleSlotLimit(state), sold });
+            maxLoad: invoke('GameServer/Bot/Population/ColdCombatProfile').profileFor(state, timestamp).maxLoad, sold });
         // C4 consumables all weigh something, so the load bounds the hours;
         // weightless ones with no slot forecast would not: hold the line. A
         // kit that uses nothing has no target, so its unbounded hours are no failure.
