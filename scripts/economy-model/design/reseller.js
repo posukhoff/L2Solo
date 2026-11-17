@@ -38,9 +38,10 @@
 // Crafter modes (maintainer 481, ours): a crafter line's gnome is a merchant by default: it does not hunt, stays in the
 // town of the visit it turned merchant at and serves that town only, and stocks the goods from its own money (its wallet:
 // its money and the margin held for it; the goods are bought as they sell, so the wallet gates the offer: no credit).
-// At an hour's close, a merchant goes hunting when at least HUNT_WHEN of the non-gnome mains whose level lies in its top
-// unlocked tier's span (the tier's unlock level to the next tier's minus one: the mains that buy that tier now) wear a
-// weapon of that tier or better, and hunts until its level unlocks its next tier; at its next visit it is a merchant
+// At an hour's close, a merchant goes hunting when at least HUNT_WHEN of the non-gnome mains whose level lies in the span of
+// its top unlocked (grade, tier) step on the spoiler ladder (SPOILER_FROM's tiers, the C4 grade bands: the step's level to
+// the next step's minus one, the mains that wear that tier now; its own unlock levels lead the bands) wear a weapon of that
+// tier or better, and hunts until its level unlocks its next tier; at its next visit it is a merchant
 // again. A crafter whose wallet cannot cover the wholesale of the cheapest C+ gear piece it unlocks (no stock, no
 // business; one that unlocks none stays) hunts too, from that close or the visit it would turn merchant, until a visit
 // finds its wallet covers it or its level unlocks its next tier. Before its first unlock it hunts. A crafter's
@@ -126,6 +127,24 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     // The level a gnome line unlocks a trade good at (0 for any other item), cached per (line, id).
     const recipeLevel = new Map((recipes || []).map(recipe => [Number(recipe.productId), Number(recipe.level)]));
     const tiers = tiersOf(view, ladders), maxLevel = view.maxLevel || 80;
+    // A line's grade bands from its grades' first levels: each grade up to the next grade's first level minus one.
+    const toOfFrom = from => grade => Math.min(maxLevel, ...GRADES.slice(GRADES.indexOf(grade) + 1).map(next => from[next] - 1));
+    // The tier ladder: each grade's tiers at their unlock levels, lowest first.
+    const ladderOf = from => {
+        const toOf = toOfFrom(from), ladder = [];
+        for (const grade of GRADES) {
+            const first = from[grade], to = toOf(grade);
+            if (!Number.isFinite(first) || to < first) continue;
+            for (let tier = 0; tier < TIERS; tier++) ladder.push({ level: first + Math.round(tier * (to + 1 - first) / TIERS), grade, tier });
+        }
+        return ladder.sort((a, b) => a.level - b.level || GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade] || a.tier - b.tier);
+    };
+    // The levels of a (grade, tier) step on the spoiler ladder: [its level, the next step's level - 1] (null: no such step).
+    const spoilerLadder = ladderOf(SPOILER_FROM);
+    const spoilerSpan = (grade, tier) => {
+        const at = spoilerLadder.findIndex(step => step.grade === grade && step.tier === tier);
+        return at < 0 ? null : [spoilerLadder[at].level, (spoilerLadder[at + 1]?.level ?? maxLevel + 1) - 1];
+    };
     const plans = new Map([...lines].map(line => {
         const craft = craftLevels[line] || [], crafter = craft.some(level => level > 1);
         const reach = need => { for (let level = 1; level <= maxLevel; level++) if ((craft[level] || 0) >= need) return level; return Infinity; };
@@ -136,16 +155,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         const gearNeed = lowest('gear'), shotNeed = lowest('shot');
         const from = crafter ? Object.fromEntries(GRADES.map(grade => [grade, reach(gearNeed[grade])])) : SPOILER_FROM;
         const shotFrom = crafter ? Object.fromEntries(GRADES.map(grade => [grade, reach(shotNeed[grade])])) : SPOILER_FROM;
-        const toOf = grade => Math.min(maxLevel, ...GRADES.slice(GRADES.indexOf(grade) + 1).map(next => from[next] - 1));
-        // The tier ladder: each grade's tiers at their unlock levels, lowest first.
-        const ladder = [];
-        for (const grade of GRADES) {
-            const first = from[grade], to = toOf(grade);
-            if (!Number.isFinite(first) || to < first) continue;
-            for (let tier = 0; tier < TIERS; tier++) ladder.push({ level: first + Math.round(tier * (to + 1 - first) / TIERS), grade, tier });
-        }
-        ladder.sort((a, b) => a.level - b.level || GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade] || a.tier - b.tier);
-        return [line, { crafter, from, shotFrom, toOf, reach, ladder, cache: new Map() }];
+        return [line, { crafter, from, shotFrom, toOf: toOfFrom(from), reach, ladder: ladderOf(from), cache: new Map() }];
     }));
     const unlockLevel = (line, id) => {
         const plan = plans.get(String(line));
@@ -397,7 +407,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             return this.crafters(at);
         },
         // The crafters' modes at an hour's close: its hours by mode, and the merchants that go hunting (their indexes): a
-        // wallet short of its cheapest piece, or the non-gnome mains of its top tier's level span wearing that tier or better.
+        // wallet short of its cheapest piece, or the non-gnome mains of its top tier's spoiler-ladder span wearing that tier or better.
         crafters(at) {
             let ranks = null;
             const rankOf = (grade, tier) => (GRADE_ORDER[grade] ?? 0) * TIERS + tier;
@@ -447,8 +457,8 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                         ranks.get(other.level).push(rankOf(gradeOfItem(other.weapon), tiers.get(other.weapon) ?? 0));
                     }
                 }
-                const need = rankOf(top.grade, top.tier), span = [];
-                for (let level = top.level; level < next.level; level++) span.push(...(ranks.get(level) || []));
+                const need = rankOf(top.grade, top.tier), span = [], [low, high] = spoilerSpan(top.grade, top.tier) || [1, 0];
+                for (let level = low; level <= high; level++) span.push(...(ranks.get(level) || []));
                 if (span.length && span.filter(rank => rank >= need).length >= HUNT_WHEN * span.length) {
                     modes.set(index, { mode: 'hunt', until: next.level });
                     crafterStats.switches++;
