@@ -34,6 +34,13 @@
 // allowance kept at most STOCK_HOURS hours' worth. A town's gnome offer of a piece stands while its gnomes' allowance
 // holds a whole piece; a sale draws its pieces from them. A want no gnome in reach sells is the gear market's demand, so demand above the
 // cap moves the price up.
+// Crafter modes (maintainer 481, ours): a crafter line's gnome is a merchant by default: it does not hunt, stays in the
+// town of the visit it turned merchant at and serves that town only, and stocks the goods from its own money (its wallet:
+// its money and the margin held for it; the goods are bought as they sell, so the wallet gates the offer: no credit).
+// At an hour's close, a merchant goes hunting when at least HUNT_WHEN of the non-gnome mains in the level band of the
+// grade it sells (C4's grade levels, SPOILER_FROM) wear a weapon of its top unlocked tier or better, and hunts until its
+// level unlocks its next tier; at its next visit it is a merchant again. Before its first unlock it hunts. A crafter's
+// tiers unlock on the tier ladder (each grade's TIERS levels from its first gear recipe's level to the next grade's).
 // A gnome's own gear (a piece it wears) costs it the market price, not the wholesale (maintainer, ours).
 // Shop time (maintainer, ours): a gnome spends part of its hours tending its shop instead of hunting, SHOP.base plus
 // SHOP.busy x its load: its served turnover of the last closed hour (each town it serves: the town's gnome sales at the
@@ -47,6 +54,7 @@ const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
 const SHOP = Object.freeze({ base: 0.3, busy: 0.2 });
+const HUNT_WHEN = 0.7;
 const SPOILER_FROM = Object.freeze({ D: 20, C: 40, B: 52, A: 61, S: 76 }), GRADES = ['D', 'C', 'B', 'A', 'S'], TIERS = 4;
 const SHOT_MAINS_PER_GNOME = Number(process.env.GNOME_SHOT_MAINS || 4), GEAR_WEAPONS_PER_GNOME = Number(process.env.GNOME_GEAR_WEAPONS || 0.3);
 const GEAR_PIECES_PER_GNOME = Number(process.env.GNOME_GEAR_PIECES || 0.5);
@@ -105,7 +113,15 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         const from = crafter ? Object.fromEntries(GRADES.map(grade => [grade, reach(gearNeed[grade])])) : SPOILER_FROM;
         const shotFrom = crafter ? Object.fromEntries(GRADES.map(grade => [grade, reach(shotNeed[grade])])) : SPOILER_FROM;
         const toOf = grade => Math.min(maxLevel, ...GRADES.slice(GRADES.indexOf(grade) + 1).map(next => from[next] - 1));
-        return [line, { crafter, from, shotFrom, toOf, reach, cache: new Map() }];
+        // The tier ladder: each grade's tiers at their unlock levels, lowest first.
+        const ladder = [];
+        for (const grade of GRADES) {
+            const first = from[grade], to = toOf(grade);
+            if (!Number.isFinite(first) || to < first) continue;
+            for (let tier = 0; tier < TIERS; tier++) ladder.push({ level: first + Math.round(tier * (to + 1 - first) / TIERS), grade, tier });
+        }
+        ladder.sort((a, b) => a.level - b.level || GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade] || a.tier - b.tier);
+        return [line, { crafter, from, shotFrom, toOf, reach, ladder, cache: new Map() }];
     }));
     const unlockLevel = (line, id) => {
         const plan = plans.get(String(line));
@@ -122,6 +138,11 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         return plan.cache.get(id);
     };
     const unlocks = (line, level, id) => level >= unlockLevel(line, id);
+    // A line's top unlocked tier at a level and its next one (null: none).
+    const topTier = (line, level) => plans.get(String(line)).ladder.filter(step => step.level <= level).pop() || null;
+    const nextTier = (line, level) => plans.get(String(line)).ladder.find(step => step.level > level) || null;
+    const isCrafter = main => plans.get(String(main.line))?.crafter === true;
+    const modes = new Map(), merchant = index => modes.get(index)?.mode === 'merchant';
 
     const isGnome = main => lines.has(String(main.line));
     const mult = new Map(), keyOf = (kind, grade, town) => (kind === 'shot' ? `shot|${grade}|${town}` : `${kind}|${grade}`);
@@ -129,25 +150,32 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     const bids = new Map(), bidOf = town => bids.get(town) ?? BID.start;
     const stock = Object.fromEntries(Object.entries(SCROLLS_PER_HOUR).map(([grade, n]) => [grade, n]));
     const townsOf = new Map(), latest = new Map(), pending = new Map(), pool = new Map(), shops = new Map(), allowance = new Map(), townAllowance = new Map();
-    let served = null, tops = null;
+    let served = null, tops = null, merchants = null;
     const servedTowns = () => {
         if (served) return served;
         served = new Map();
         townAllowance.clear();
         tops = new Map();
+        merchants = new Map();
         for (const [index, towns] of townsOf) for (const town of towns) {
-            if (!served.has(town)) { served.set(town, []); tops.set(town, new Map()); }
+            if (!served.has(town)) { served.set(town, []); tops.set(town, new Map()); merchants.set(town, []); }
             served.get(town).push(index);
+            if (merchant(index)) { merchants.get(town).push(index); continue; }
             const { line, level } = latest.get(index), top = tops.get(town);
             top.set(line, Math.max(top.get(line) || 0, level));
         }
         return served;
     };
-    // Does a gnome serving the town unlock the item (its highest level per gnome line there)?
+    const wallet = index => (latest.get(index)?.money || 0) + (pending.get(index) || 0);
+    // Does a gnome serving the town unlock the item (its highest level per gnome line there; a merchant also needs the
+    // item's wholesale in its wallet)?
     const unlockedIn = (town, id) => {
         servedTowns();
         for (const [line, level] of tops.get(town) || []) if (unlocks(line, level, id)) return true;
-        return false;
+        const sellers = merchants.get(town) || [];
+        if (!sellers.length) return false;
+        const what = kindOf(id), wholesale = priceAt(id, wholesaleMult(multOf(keyOf(what.kind, what.grade, town))));
+        return sellers.some(index => { const row = latest.get(index); return unlocks(row.line, row.level, id) && wallet(index) >= wholesale; });
     };
     // The gear allowance of a town's gnomes (cached until a sale, an hour's close or a change of the towns served).
     const allowanceIn = town => {
@@ -167,7 +195,8 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     const gearWholesale = id => priceAt(id, wholesaleMult(multOf(keyOf('gear', gradeOfItem(id)))));
     // The hour's books: demand and supply by market key, the margin by town.
     let hour = { demand: new Map(), offered: new Map(), sold: new Map(), stock: { ...stock } };
-    const stats = { shotUnits: { gnome: 0, valve: 0, own: 0 }, gearPieces: { gnome: 0, valve: 0, own: 0 }, scrolls: { supplied: 0, bought: 0, refused: 0, dropUsed: 0 },
+    const crafterStats = { merchantHours: 0, huntHours: 0, levels: {}, switches: 0 };
+    const stats = { crafter: crafterStats, shotUnits: { gnome: 0, valve: 0, own: 0 }, gearPieces: { gnome: 0, valve: 0, own: 0 }, scrolls: { supplied: 0, bought: 0, refused: 0, dropUsed: 0 },
         gearWait: { started: 0, ended: [], open: new Map() }, margin: 0, spread: 0, hiddenSpend: { gnomeWholesale: 0, valve: 0, gnomeOwn: 0 }, credited: 0, index: {}, money: {}, shotsPerHour, shop: { reads: 0, sum: 0 }, gearWanted: 0 };
     const add = (map, key, value) => map.set(key, (map.get(key) || 0) + value);
     const priceAt = (id, m) => Math.round(ref.get(id) * m);
@@ -208,11 +237,25 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         // A main heard at a hook: its money (the KPI's snapshots, a gnome's wallet for the supply); a gnome's towns.
         seen(main, towns = null) {
             const before = latest.get(main.index);
-            latest.set(main.index, { money: main.money, level: main.level, gnome: isGnome(main), line: String(main.line) });
+            latest.set(main.index, { money: main.money, level: main.level, gnome: isGnome(main), line: String(main.line), weapon: main.weapon });
             if (towns && isGnome(main)) { townsOf.set(main.index, [...new Set(towns.filter(Boolean))]); served = null; }
             else if (isGnome(main) && before && before.level !== main.level && townsOf.has(main.index)) served = null;
         },
         unlockLevel,
+        isCrafter,
+        merchant,
+        // A crafter's mode at its visit (birth included): hunting until its level reaches the tier it hunts for, else a
+        // merchant; before its first unlock it hunts for it. null for any other main.
+        modeAt(main) {
+            if (!isCrafter(main)) return null;
+            const held = modes.get(main.index);
+            if (held?.mode === 'merchant' || (held?.mode === 'hunt' && main.level < held.until)) return held.mode;
+            const first = !topTier(main.line, main.level) ? nextTier(main.line, main.level) : null;
+            modes.set(main.index, first ? { mode: 'hunt', until: first.level } : { mode: 'merchant', until: null });
+            if (held) crafterStats.switches++;
+            served = null;
+            return modes.get(main.index).mode;
+        },
         // A gnome's share of its hours spent tending its shop (SHOP), from the last closed hour.
         shopShare(index) { const share = shops.get(index) ?? SHOP.base; stats.shop.reads++; stats.shop.sum += share; return share; },
         // The gnome bid for a main's material sale in a town, or null (a gnome main, no gnome there, not a material).
@@ -304,6 +347,42 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             for (const [grade, n] of Object.entries(SCROLLS_PER_HOUR)) { stock[grade] = Math.min(STOCK_HOURS * n, stock[grade] + n); stats.scrolls.supplied += n; }
             hour = { demand: new Map(), offered: new Map(), sold: new Map(), stock: { ...stock } };
             if (at === 20 || at === 50 || at === 100) this.snapshot(at);
+            return this.crafters(at);
+        },
+        // The crafters' modes at an hour's close: its hours by mode, and the merchants that go hunting (their indexes): the
+        // non-gnome mains of the band of the grade a merchant sells wearing a weapon of its top tier or better.
+        crafters(at) {
+            let ranks = null;
+            const rankOf = (grade, tier) => (GRADE_ORDER[grade] ?? 0) * TIERS + tier;
+            const bandOf = level => GRADES.filter(grade => SPOILER_FROM[grade] <= level).pop() || null;
+            const released = [];
+            for (const [index, held] of modes) {
+                crafterStats[held.mode === 'merchant' ? 'merchantHours' : 'huntHours']++;
+                if (held.mode !== 'merchant') continue;
+                const row = latest.get(index), top = topTier(row.line, row.level), next = nextTier(row.line, row.level);
+                if (!top || !next) continue;
+                if (!ranks) {
+                    ranks = new Map();
+                    for (const other of latest.values()) {
+                        const band = other.gnome ? null : bandOf(other.level);
+                        if (!band) continue;
+                        if (!ranks.has(band)) ranks.set(band, []);
+                        ranks.get(band).push(rankOf(gradeOfItem(other.weapon), tiers.get(other.weapon) ?? 0));
+                    }
+                }
+                const band = ranks.get(top.grade) || [], need = rankOf(top.grade, top.tier);
+                if (band.length && band.filter(rank => rank >= need).length >= HUNT_WHEN * band.length) {
+                    modes.set(index, { mode: 'hunt', until: next.level });
+                    crafterStats.switches++;
+                    served = null;
+                    released.push(index);
+                }
+            }
+            if (at === 10 || at === 50 || at === 100) {
+                const levels = [...modes.keys()].map(index => latest.get(index).level).sort((a, b) => a - b);
+                crafterStats.levels[at] = levels.length ? levels[Math.floor(levels.length / 2)] : null;
+            }
+            return released;
         },
         // The KPI at an hour: the price index per grade (shots: the mean over the towns priced) and the money per main by band.
         snapshot(at) {

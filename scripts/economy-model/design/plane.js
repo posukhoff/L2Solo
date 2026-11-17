@@ -46,6 +46,8 @@ const { slotsConflict } = require('../kit-hours');
 const LOW_LEVEL_LAST = 19;
 // The stuck reason of a main whose level has no spot row for its line.
 const NO_SPOT_ROW = 'no_spot_row';
+// A merchant crafter's stay in town past any run's end (the trade's close releases it to hunt).
+const MERCHANT_STAY = 1e6;
 const classOf = level => (level <= LOW_LEVEL_LAST ? 'low' : 'high');
 // The level bands the spot choice report holds stints by (the level a spot was taken at).
 const bandOf = level => (level <= 9 ? '1-9' : level <= 19 ? '10-19' : level <= 39 ? '20-39' : '40+');
@@ -228,7 +230,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
         sinks: [],
         deaths: true,
         born: true,
-        start({ ledger, mains, seed }) {
+        start({ ledger, mains, seed, commit }) {
             ledger.counters.stuckNoBareHour = 0;
             ledger.counters.fullBagHuntHours = 0;
             ledger.counters.fullBagLostDrop = 0;
@@ -652,15 +654,18 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                             if (!(chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0)) book.emptyTrips++;
                         }
                     }
-                    tally[classOf(done.main.level)].roadHours += done.afterHours;
-                    if (market) market.seen(done.main, [chain.town, townOf(view, done.main)]);
+                    // A crafter that is a merchant now stays in the chain's town (the trade releases it to hunt): no way back.
+                    const merchant = market && market.modeAt(done.main) === 'merchant';
+                    if (!merchant) tally[classOf(done.main.level)].roadHours += done.afterHours;
+                    if (market) market.seen(done.main, merchant ? [chain.town] : [chain.town, townOf(view, done.main)]);
                     gradeTick(done.main, now);
                     const crossed = crossings.get(main.index);
                     if (crossed && wornGradeOf(done.main) >= crossed.grade) { crossHours.push(now - crossed.at); crossings.delete(main.index); }
                     if (chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
                     // A gnome tends its shop in town before it walks back (the trade's shopShare, read here): its shop share of the
                     // hours it hunted and tended since the last visit, the outing's hunting hours x share / (1 - share). Not road hours.
-                    const shop = market && market.isGnome(done.main) ? market.shopShare(main.index) : 0;
+                    if (merchant) return { ...done, afterHours: MERCHANT_STAY };
+                    const shop = market && market.isGnome(done.main) && !market.isCrafter(done.main) ? market.shopShare(main.index) : 0;
                     if (shop > 0 && visitInfo.outingHours > 0) return { ...done, afterHours: done.afterHours + visitInfo.outingHours * shop / (1 - shop) };
                     return done;
                 },
@@ -688,7 +693,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                 event(event) { throw new Error(`an event of an unknown kind: ${event.kind}`); },
                 hour: at => {
                     if (!market) return 0;
-                    market.close(at);
+                    // A merchant the trade sends hunting leaves its town now with the margin held for it.
+                    for (const index of market.close(at)) commit(index, at, main => ({ ...main, money: main.money + market.credit(index), since: at, lastVisit: at }), 'visit');
                     return market.held();
                 },
                 finish(hours, ended) {
@@ -699,7 +705,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                         unstuck(state, hours);
                         if (state.trip) tally[classOf(state.trip.level)].roadHours += hours - state.trip.at;
                     }
-                    for (const main of ended) if (main.since > hours) tally[classOf(main.level)].roadHours -= main.since - hours;
+                    for (const main of ended) if (main.since > hours && !(market && market.merchant(main.index))) tally[classOf(main.level)].roadHours -= main.since - hours;
                     for (const main of ended) if (!main.station) gradeTick(main, hours);
                     const levels = {}, lines = new Map(), distribution = {};
                     for (const [name, book] of Object.entries(tally)) {

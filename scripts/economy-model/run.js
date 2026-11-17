@@ -181,6 +181,9 @@ function printKpi(out) {
         + `gnome margin ${M(trade.margin)} (credited ${M(trade.credited)}), material spread ${M(trade.spread)}; hidden-store spend ${M(trade.hiddenSpend.gnomeWholesale + trade.hiddenSpend.valve + trade.hiddenSpend.gnomeOwn)} `
         + `(wholesale to gnomes ${M(trade.hiddenSpend.gnomeWholesale)}, valve ${M(trade.hiddenSpend.valve)}, gnomes' own ${M(trade.hiddenSpend.gnomeOwn)}); `
         + `scrolls supplied ${s.supplied}, bought ${s.bought}, refused (no stock) ${s.refused}, drops used ${s.dropUsed}`);
+    const c = trade.crafter, at = row => Object.entries(row || {}).map(([hour, v]) => `h${hour} ${v}`).join(' ');
+    console.log(`KPI crafter: level p50 ${at(c.levels)}; hours merchant ${share(c.merchantHours, c.huntHours)} (merchant ${c.merchantHours}, hunt ${c.huntHours}, switches ${c.switches})`
+        + (c.wallet ? `; wallet/target p50 ${at(c.wallet)}; bid x NPC p50 ${at(c.bid)}; margin mult p50 ${at(c.margin)}` : ''));
     console.log(`KPI market price index (x ref) ${index}; capacity: shots per main-hour ${Object.entries(trade.shotsPerHour || {}).map(([g, v]) => `${g} ${v.toFixed(0)}`).join(' ')}`);
 }
 
