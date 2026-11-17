@@ -4,7 +4,8 @@
 // graded shots at an NPC; here the hidden store stands for the dwarf craft and resale a C4 server runs on).
 // Gnomes are the mains of the dwarf lines (spoilers and crafters). Only they buy D+ shots, C+ gear and the weapon
 // enchant scrolls from the hidden store (the configured stores' fixed_wts lines), at the wholesale price: share x
-// the market price, never below the store's price (ref). Every other main buys those goods from a gnome at the
+// the market price (no floor at the store's price: a gnome keeps 1 - share of the market even at its ref x1 floor;
+// decision 490). Every other main buys those goods from a gnome at the
 // market price in a town with gnome supply (a gnome whose last town chain or held spot is that town); without one
 // where it stands it buys from the cheapest seller in reach: a gnome town by its fare, or for D+ shots only the
 // hidden store at the safety valve (2 x ref); C+ gear and scrolls without a gnome in reach wait (decision 468). The gnome keeps market - wholesale per unit: the town's margin of an
@@ -251,7 +252,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         gearWait: { started: 0, ended: [], open: new Map() }, margin: 0, spread: 0, hiddenSpend: { gnomeWholesale: 0, valve: 0, gnomeOwn: 0 }, credited: 0, index: {}, money: {}, shotsPerHour, shop: { reads: 0, sum: 0 }, gearWanted: 0 };
     const add = (map, key, value) => map.set(key, (map.get(key) || 0) + value);
     const priceAt = (id, m) => Math.round(ref.get(id) * m);
-    const wholesaleMult = m => Math.max(1, share * m);
+    const wholesaleMult = m => share * m;
 
     // The offers a main reads (a view for Engine.sellerOf): the trade's goods re-priced for a gnome (gnome: { line,
     // level }: the hidden store's rows of what its level unlocks) or another main (null: the gnome rows of the towns
