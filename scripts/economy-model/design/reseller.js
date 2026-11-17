@@ -41,6 +41,13 @@
 // grade it sells (C4's grade levels, SPOILER_FROM) wear a weapon of its top unlocked tier or better, and hunts until its
 // level unlocks its next tier; at its next visit it is a merchant again. Before its first unlock it hunts. A crafter's
 // tiers unlock on the tier ladder (each grade's TIERS levels from its first gear recipe's level to the next grade's).
+// Crafter wallet thermostat (maintainer 482, ours): each crafter holds a material bid (x the NPC buy-back, BID.low to
+// BID.high: the fixed buyer's 0.75 x the item price) and a margin share (0 to 1 of the market price over the wholesale).
+// At each hour's close, its wallet over its target (THERMO.wallet x the median wallet of the non-gnome mains within
+// THERMO.levels of its level, plus its stock cost: STOCK_HOURS of its piece allowance at its top tier grade's mean weapon
+// wholesale) raises the bid and lowers the share THERMO.step; under it, the reverse. A town's gnome price is the
+// wholesale plus the lowest share of the crafters serving it (1 without one) of the margin; its bid the highest of the
+// town's bid and its crafters' bids.
 // A gnome's own gear (a piece it wears) costs it the market price, not the wholesale (maintainer, ours).
 // Shop time (maintainer, ours): a gnome spends part of its hours tending its shop instead of hunting, SHOP.base plus
 // SHOP.busy x its load: its served turnover of the last closed hour (each town it serves: the town's gnome sales at the
@@ -55,6 +62,7 @@ const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
 const SHOP = Object.freeze({ base: 0.3, busy: 0.2 });
 const HUNT_WHEN = 0.7;
+const THERMO = Object.freeze({ wallet: Number(process.env.CRAFTER_WALLET || 1.2), levels: 2, step: 1.05 });
 const SPOILER_FROM = Object.freeze({ D: 20, C: 40, B: 52, A: 61, S: 76 }), GRADES = ['D', 'C', 'B', 'A', 'S'], TIERS = 4;
 const SHOT_MAINS_PER_GNOME = Number(process.env.GNOME_SHOT_MAINS || 4), GEAR_WEAPONS_PER_GNOME = Number(process.env.GNOME_GEAR_WEAPONS || 0.3);
 const GEAR_PIECES_PER_GNOME = Number(process.env.GNOME_GEAR_PIECES || 0.5);
@@ -95,6 +103,11 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     }
     const cWeapons = [...ref].filter(([id]) => kindOf(id).kind === 'gear' && kindOf(id).grade === 'C' && Engine.isWeapon(view.items[id])).map(([, price]) => price);
     const cWeaponRef = cWeapons.length ? cWeapons.reduce((a, b) => a + b, 0) / cWeapons.length : 0;
+    // The mean hidden-store price of each grade's weapons (a crafter's stock cost).
+    const weaponRefs = new Map(GRADES.map(grade => {
+        const prices = [...ref].filter(([id]) => kindOf(id).kind === 'gear' && kindOf(id).grade === grade && Engine.isWeapon(view.items[id])).map(([, price]) => price);
+        return [grade, prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : 0];
+    }));
     // The materials of the recipes of the goods the trade covers.
     const materials = new Set();
     for (const recipe of recipes || []) if (kindOf(Number(recipe.productId))) for (const m of recipe.materials) materials.add(Number(m.selfId));
@@ -150,16 +163,22 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     const bids = new Map(), bidOf = town => bids.get(town) ?? BID.start;
     const stock = Object.fromEntries(Object.entries(SCROLLS_PER_HOUR).map(([grade, n]) => [grade, n]));
     const townsOf = new Map(), latest = new Map(), pending = new Map(), pool = new Map(), shops = new Map(), allowance = new Map(), townAllowance = new Map();
-    let served = null, tops = null, merchants = null;
+    let served = null, tops = null, merchants = null, townThermo = null;
+    const thermo = new Map(), thermoOf = index => thermo.get(index) || { bid: BID.start, share: 1 };
     const servedTowns = () => {
         if (served) return served;
         served = new Map();
         townAllowance.clear();
         tops = new Map();
         merchants = new Map();
+        townThermo = new Map();
         for (const [index, towns] of townsOf) for (const town of towns) {
             if (!served.has(town)) { served.set(town, []); tops.set(town, new Map()); merchants.set(town, []); }
             served.get(town).push(index);
+            if (modes.has(index)) {
+                const own = thermoOf(index), held = townThermo.get(town) || { bid: 0, share: 1 };
+                townThermo.set(town, { bid: Math.max(held.bid, own.bid), share: Math.min(held.share, own.share) });
+            }
             if (merchant(index)) { merchants.get(town).push(index); continue; }
             const { line, level } = latest.get(index), top = tops.get(town);
             top.set(line, Math.max(top.get(line) || 0, level));
@@ -217,7 +236,10 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             return [...others, ...hidden.get(id).map(row => ({ ...row, price: priceAt(id, own(multOf(keyOf(what.kind, what.grade, row.town)))) }))];
         }
         const towns = [...servedTowns().keys()].filter(town => unlockedIn(town, id) && (what.kind !== 'gear' || allowanceIn(town) >= 1));
-        const gnomeRows = towns.map(town => ({ town, price: priceAt(id, multOf(keyOf(what.kind, what.grade, town))), channel: 'gnome' }));
+        const gnomeRows = towns.map(town => {
+            const m = multOf(keyOf(what.kind, what.grade, town)), cut = townThermo.get(town)?.share ?? 1;
+            return { town, price: priceAt(id, wholesaleMult(m) + cut * (m - wholesaleMult(m))), channel: 'gnome' };
+        });
         const valve = what.kind !== 'shot' ? [] : hidden.get(id).filter(row => !towns.includes(row.town)).map(row => ({ ...row, price: Math.round(ref.get(id) * VALVE) }));
         return [...others, ...gnomeRows, ...valve];
     };
@@ -261,7 +283,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         // The gnome bid for a main's material sale in a town, or null (a gnome main, no gnome there, not a material).
         bid(main, town, id) {
             if (isGnome(main) || !town || !materials.has(Number(id)) || !servedTowns().has(town)) return null;
-            return Math.round((view.items[id]?.npcBuy || 0) * bidOf(town));
+            return Math.round((view.items[id]?.npcBuy || 0) * Math.max(bidOf(town), townThermo.get(town)?.bid || 0));
         },
         // A sale to the gnome (an executed NPC sale re-booked): the seller got count x bid; the fixed buyer pays the
         // faucet, the spread goes to the town's margin.
@@ -356,6 +378,29 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             const rankOf = (grade, tier) => (GRADE_ORDER[grade] ?? 0) * TIERS + tier;
             const bandOf = level => GRADES.filter(grade => SPOILER_FROM[grade] <= level).pop() || null;
             const released = [];
+            // The thermostat: the non-gnome wallets by level, each crafter's target and step.
+            const byLevel = new Map();
+            for (const [index, row] of latest) if (!row.gnome) { if (!byLevel.has(row.level)) byLevel.set(row.level, []); byLevel.get(row.level).push(wallet(index)); }
+            const ratios = [];
+            for (const index of modes.keys()) {
+                const row = latest.get(index), near = [];
+                for (let level = row.level - THERMO.levels; level <= row.level + THERMO.levels; level++) near.push(...(byLevel.get(level) || []));
+                near.sort((a, b) => a - b);
+                const top = topTier(row.line, row.level), weapons = top ? weaponRefs.get(top.grade) : null;
+                const stockCost = weapons ? weapons * wholesaleMult(multOf(keyOf('gear', top.grade))) * STOCK_HOURS * GEAR_PIECES_PER_GNOME : 0;
+                const target = THERMO.wallet * (near.length ? near[Math.floor(near.length / 2)] : 0) + stockCost, own = thermoOf(index), rich = wallet(index) > target;
+                thermo.set(index, rich ? { bid: Math.min(BID.high, own.bid * THERMO.step), share: Math.max(0, own.share / THERMO.step) }
+                    : { bid: Math.max(BID.low, own.bid / THERMO.step), share: Math.min(1, own.share * THERMO.step) });
+                ratios.push(target > 0 ? wallet(index) / target : 0);
+            }
+            served = null;
+            if (at === 10 || at === 50 || at === 100) {
+                const p50 = values => { const v = [...values].sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
+                const fix = v => (v === null ? '-' : v.toFixed(2));
+                (crafterStats.wallet ||= {})[at] = fix(p50(ratios));
+                (crafterStats.bid ||= {})[at] = fix(p50([...thermo.values()].map(t => t.bid)));
+                (crafterStats.margin ||= {})[at] = fix(p50([...thermo.values()].map(t => t.share)));
+            }
             for (const [index, held] of modes) {
                 crafterStats[held.mode === 'merchant' ? 'merchantHours' : 'huntHours']++;
                 if (held.mode !== 'merchant') continue;
