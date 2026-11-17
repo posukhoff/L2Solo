@@ -42,8 +42,9 @@
 // At an hour's close, a merchant goes hunting when at least HUNT_WHEN of the non-gnome mains whose level lies in the span of
 // its top unlocked (grade, tier) step on the spoiler ladder (SPOILER_FROM's tiers, the C4 grade bands: the step's level to
 // the next step's minus one, the mains that wear that tier now; its own unlock levels lead the bands) wear a weapon of that
-// tier or better, and hunts until its level unlocks its next tier; at its next visit it is a merchant
-// again. A crafter whose wallet cannot cover the wholesale of the cheapest C+ gear piece it unlocks (no stock, no
+// tier or better, or when IDLE_HOURS hours in a row as a merchant passed in which its town sold no piece of its top tier
+// (decision 490: a band's entry levels may never reach HUNT_WHEN), and hunts until its level unlocks its next tier; at
+// its next visit it is a merchant again. A crafter whose wallet cannot cover the wholesale of the cheapest C+ gear piece it unlocks (no stock, no
 // business; one that unlocks none stays) hunts too, from that close or the visit it would turn merchant, until a visit
 // finds its wallet covers it or its level unlocks its next tier. Before its first unlock it hunts. A crafter's
 // tiers unlock on the tier ladder (each grade's TIERS levels from its first gear recipe's level to the next grade's).
@@ -70,7 +71,7 @@ const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
 const SHOP = Object.freeze({ base: 0.3, busy: 0.2 }), SPOILER_SHOP = process.env.GNOME_SPOILER_SHOP ? Number(process.env.GNOME_SPOILER_SHOP) : null;
-const HUNT_WHEN = 0.7;
+const HUNT_WHEN = 0.7, IDLE_HOURS = 6;
 const THERMO = Object.freeze({ wallet: Number(process.env.CRAFTER_WALLET || 1.2), levels: 2, step: 1.05 });
 const SPOILER_FROM = Object.freeze({ D: 20, C: 40, B: 52, A: 61, S: 76 }), GRADES = ['D', 'C', 'B', 'A', 'S'], GEAR_GRADES = ['C', 'B', 'A', 'S'], TIERS = 4;
 const SHOT_MAINS_PER_GNOME = Number(process.env.GNOME_SHOT_MAINS || 4), GEAR_WEAPONS_PER_GNOME = Number(process.env.GNOME_GEAR_WEAPONS || 0.3);
@@ -188,6 +189,8 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         return !ids.length || ids.some(id => money >= gearWholesale(id));
     };
     const modes = new Map(), merchant = index => modes.get(index)?.mode === 'merchant';
+    // The merchants whose town sold a piece of their top tier in the open hour.
+    const topSold = new Set();
 
     const isGnome = main => lines.has(String(main.line));
     const mult = new Map(), keyOf = (kind, grade, town) => (kind === 'shot' ? `shot|${grade}|${town}` : `${kind}|${grade}`);
@@ -338,7 +341,13 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 add(hour.sold, town, entry.count * entry.price);
                 stats.hiddenSpend.gnomeWholesale += entry.count * wholesale;
                 add(hour.demand, keyOf(what.kind, what.grade, town), entry.count * (what.kind === 'gear' ? wholesale : 1));
-                if (what.kind === 'gear') draw(town, what.grade, entry.count);
+                if (what.kind === 'gear') {
+                    draw(town, what.grade, entry.count);
+                    for (const index of merchants.get(town) || []) {
+                        const row = latest.get(index), top = topTier(row.line, row.level);
+                        if (top && top.grade === what.grade && top.tier === (tiers.get(entry.id) ?? 0)) topSold.add(index);
+                    }
+                }
                 if (what.kind === 'shot') stats.shotUnits.gnome += entry.count; else if (what.kind === 'gear') stats.gearPieces.gnome += entry.count;
                 else { stats.scrolls.bought += entry.count; stock[what.grade] -= entry.count; }
             }
@@ -441,6 +450,8 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 crafterStats[held.mode === 'merchant' ? 'merchantHours' : 'huntHours']++;
                 if (held.mode !== 'merchant') continue;
                 const row = latest.get(index), top = topTier(row.line, row.level), next = nextTier(row.line, row.level);
+                const idle = topSold.has(index) ? 0 : (held.idle || 0) + 1;
+                modes.set(index, { ...held, idle });
                 if (!stocked(row.line, row.level, wallet(index))) {
                     modes.set(index, { mode: 'hunt', until: next ? next.level : Infinity, broke: true });
                     crafterStats.switches++;
@@ -461,13 +472,16 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 }
                 const need = rankOf(top.grade, top.tier), span = [], [low, high] = spoilerSpan(top.grade, top.tier) || [1, 0];
                 for (let level = low; level <= high; level++) span.push(...(ranks.get(level) || []));
-                if (span.length && span.filter(rank => rank >= need).length >= HUNT_WHEN * span.length) {
+                const worn = span.length && span.filter(rank => rank >= need).length >= HUNT_WHEN * span.length;
+                if (worn || idle >= IDLE_HOURS) {
                     modes.set(index, { mode: 'hunt', until: next.level });
+                    if (!worn) crafterStats.idle = (crafterStats.idle || 0) + 1;
                     crafterStats.switches++;
                     served = null;
                     released.push(index);
                 }
             }
+            topSold.clear();
             if (at === 10 || at === 50 || at === 100) {
                 const levels = [...modes.keys()].map(index => latest.get(index).level).sort((a, b) => a - b);
                 crafterStats.levels[at] = levels.length ? levels[Math.floor(levels.length / 2)] : null;
