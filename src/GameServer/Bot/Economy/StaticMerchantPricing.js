@@ -21,17 +21,14 @@ function basePrice(selfId) {
     return Number(ItemTemplateIndex.find(DataCache.items, selfId)?.template?.price || 0);
 }
 
-// A line priced on the NPC scale (npcRate: the gear reserve) follows NPC prices
-// across presets; others scale with a quarter of the Adena rate (our choice,
-// econ decision 449: at the full rate a store shot cost 50x its datapack price
-// at x50 and the shot spend outran a C bot's hunt income; a quarter keeps the
-// store a plausible seller beside the buy lines' same quarter).
-const SELL_BASE_SHARE = 0.25;
+// A configured store sells at the datapack price, x1 at every preset (the
+// maintainer's rule, econ decision 450: shop prices do not follow the server's
+// adena rate). The gear reserve (npcRate) sells at npcRate x the datapack price.
 function configuredPrice(line) {
     if (line.price !== undefined) return Number(line.price);
     const base = basePrice(line.selfId);
-    if (line.npcRate !== undefined) return NpcShopPriceScale.price(base * line.npcRate, ProgressionRates.profile().multiplier);
-    return BotEconomyPricing.scalePrice(base > 0 ? base * (line.priceRate ?? 1) * SELL_BASE_SHARE : 1);
+    if (line.npcRate !== undefined) return Math.max(1, Math.round(base * line.npcRate));
+    return Math.max(1, Math.round(base > 0 ? base * (line.priceRate ?? 1) : 1));
 }
 
 // What a fixed buy line pays, one price for a bot and a player. Our choice,
