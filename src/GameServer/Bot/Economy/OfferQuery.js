@@ -14,12 +14,13 @@ const GearMarks = require('../AI/GearMarks');
 let Claims = null;
 
 // Whether a bot may buy from a source at all: an NPC shop only for an item the
-// production rule leaves to NPCs, a configured city merchant only for its shots.
-// fixed: the offer is a configured merchant's (a live private store says so by
-// its name, MarketOpportunity.botCanBuy).
+// production rule leaves to NPCs, a configured city merchant only for its shots
+// and its reserve gear lines (ProductionPolicy.allowsFixed reads the line's
+// `reserve`). fixed: the offer is a configured merchant's (a live private store
+// says so by its name, MarketOpportunity.botCanBuy).
 function sourceAllowed(offer, fixed = offer.sourceType === 'configured_store' || offer.sellerKind === 'fixed') {
     if (offer.sourceType === 'npc' && !Production.allowsNpcShot(offer.selfId)) return false;
-    return !fixed || Production.allowsFixedShot(offer.selfId);
+    return !fixed || Production.allowsFixed(offer);
 }
 // The units of a sell line a buyer may take: a board line's count less what other
 // bots' trips claim (BoardClaims.unclaimed), another source's count.

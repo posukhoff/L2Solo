@@ -50,9 +50,11 @@ function refreshStorePrices(store, actor = null) {
 
 // Native C4 store windows cannot quote a price wider than their D field.
 // Keep the exact price for HTML and execution; omitted native rows have no quote.
+// The gear reserve lines sell bots only: the player's window (and so his
+// purchase, which buys only quoted rows) leaves them out.
 function nativeStoreItems(store) {
     const WireD = invoke('Packet/WireD');
-    return (store?.items || []).filter(item => WireD.isRepresentable(item.price));
+    return (store?.items || []).filter(item => item.reserve !== true && WireD.isRepresentable(item.price));
 }
 
 // The retained static-buyer route until 3.6 is only for bot materials.
@@ -161,6 +163,7 @@ function normalizeStoreItems(storeCfg, { staticStore = false } = {}) {
         selfId: item.selfId,
         price: pricing ? pricing.priceFor(storeCfg, item) : item.price ?? ratedPrice(item.selfId, item.priceRate ?? 1),
         count: item.count ?? 1,
+        ...(pricing && item.reserve === true ? { reserve: true } : {}),
         ...(pricing ? { [staticPriceSource]: { store: storeCfg, line: item } } : {})
     })).filter((item) => !staticStore || item.price > 0);
 }
@@ -384,8 +387,7 @@ async function buyFromStore(actor, store, selfId, qty, options = {}) {
                 throw new Error("Item is not available.");
             }
             if (storeItem[staticPriceSource] && isBotActor(actor)
-                && (!invoke('GameServer/Inventory/ShotStock').SHOT_IDS.includes(Number(selfId))
-                    || !require('./Economy/ProductionPolicy').allowsFixedShot(selfId))) {
+                && !require('./Economy/ProductionPolicy').allowsFixed(storeItem[staticPriceSource].line)) {
                 throw new Error('Static merchant item is unavailable to bots.');
             }
             const unitPrice = storeItemPrice(store, storeItem, actor);

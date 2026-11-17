@@ -23,8 +23,9 @@ const templates = new Map(DataCache.items.map((item) => [item.selfId, item]));
 const normalize = (store) => TradeService.normalizeStoreItems(store, { staticStore: true });
 const botLines = store => store.items.map(line => ({ selfId: line.selfId, count: line.count ?? 1,
     price: Pricing.botPriceFor(store, line) })).filter(line => line.price > 0);
-// The 189 sell lines (shots, resources, gear): moving the buy line price
-// must not change any sell price a bot or a player pays on an empty board.
+// The 189 sell lines (shots, resources, gear; the bot-only reserve gear lines
+// are left out and pinned below): moving the buy line price must not change
+// any sell price a bot or a player pays on an empty board.
 const baselineSellPrices = {
     1: 'd2267fbdc81292e79ef67d3f34215a22edb32bcde1a4657427b6d14b86296a63',
     10: '1141fb310c2c178197d0a32e18c8a09b5f3da1b7abca0750e38e7a1a0cffe0fb',
@@ -48,10 +49,10 @@ async function run() {
         ProgressionRates.profile = () => ({ adena: rate, multiplier: rate });
         const sellStores = Object.entries(Configs).filter(([, store]) => store.storeType !== 3);
         assert.strictEqual(sha(sellStores.flatMap(([name, store]) => (
-            store.items.map(line => [name, line.selfId, Pricing.botPriceFor(store, line)])))),
+            store.items.filter(line => line.reserve !== true).map(line => [name, line.selfId, Pricing.botPriceFor(store, line)])))),
         baselineSellPrices[rate], `every bot sell price matches the baseline at x${rate}`);
         assert.strictEqual(sha(sellStores.flatMap(([name, store]) => (
-            normalize(store).map(line => [name, line.selfId, line.price])))),
+            normalize(store).filter(line => line.reserve !== true).map(line => [name, line.selfId, line.price])))),
         baselineSellPrices[rate], `every player sell price on an empty board matches the baseline at x${rate}`);
         const cheapest = new Map();
         const addOffer = (id, price) => cheapest.set(id, Math.min(cheapest.get(id) ?? Infinity, price));

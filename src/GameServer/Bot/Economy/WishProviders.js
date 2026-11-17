@@ -408,7 +408,7 @@ function buildProjection(state, ctx, deps) {
     // it is noted too).
     const offerBoard = ctx.board || deps.board;
     const offerRefs = id => ({ npc: need('./ProductionPolicy').allowsNpcShot(id) ? deps.npcOffersFor?.(id) || null : null,
-        fixed: need('./ProductionPolicy').allowsFixedShot(id) ? need('./FixedShotOffers').offers(id) : null });
+        fixed: need('./FixedShotOffers').offers(id) });
     const arrowRoom = id => need('../../Inventory/ArrowStock').admitted(state, id, Infinity);
     // An item's offer as a first ask reads it now (reader: the build's, else a
     // check's that notes no read).

@@ -237,8 +237,8 @@ function buyOffer(state, offer, options = {}) {
 }
 
 // What sells an item at a fixed price in each town: the NPC shops and the
-// configured reserve shot merchants (their stock never runs out for a cold bot, as
-// the author's cold NPC restock had it).
+// configured reserve (the city stores' shots and reserve gear lines: their stock
+// never runs out for a cold bot, as the author's cold NPC restock had it).
 function staticOffers(selfId) {
     return [...MarketOpportunity.npcOffersAll(selfId),
         ...MarketOpportunity.fixedStoreOffers(selfId)];
