@@ -26,11 +26,14 @@ function bestOf(view, main) {
     if (!bests.has(view)) bests.set(view, new Map());
     const held = bests.get(view), key = `${main.line}@${main.level}`;
     if (held.has(key)) return held.get(key);
-    const top = view.hours[main.line]?.[main.level]?.top || [];
+    // Past the hunting table's last row with shots (its range end), the
+    // nearest lower level's best stands in (a stub for long runs).
     const out = { exp: 0, npc: 0 };
-    for (const row of top) {
-        out.exp = Math.max(out.exp, row.exp);
-        out.npc = Math.max(out.npc, Engine.rowItems(view, main, row, 'shots').npc);
+    for (let level = main.level; level >= 1 && !(out.exp > 0 && out.npc > 0); level--) {
+        for (const row of view.hours[main.line]?.[level]?.top || []) {
+            out.exp = Math.max(out.exp, row.exp);
+            out.npc = Math.max(out.npc, Engine.rowItems(view, { ...main, level }, row, 'shots').npc);
+        }
     }
     if (!(out.exp > 0) || !(out.npc > 0)) throw new Error(`no best hour with shots for line ${main.line} at level ${main.level}`);
     held.set(key, out);
