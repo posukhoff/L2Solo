@@ -424,7 +424,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             // The thermostat: the non-gnome wallets by level, each gnome's target and step (the KPI's p50s: crafters).
             const byLevel = new Map();
             for (const [index, row] of latest) if (!row.gnome) { if (!byLevel.has(row.level)) byLevel.set(row.level, []); byLevel.get(row.level).push(wallet(index)); }
-            const ratios = [];
+            const ratios = [], spoilerRatios = [];
             for (const [index, row] of latest) {
                 if (!row.gnome) continue;
                 const near = [];
@@ -435,7 +435,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 const target = THERMO.wallet * (near.length ? near[Math.floor(near.length / 2)] : 0) + stockCost, own = thermoOf(index), rich = wallet(index) > target;
                 thermo.set(index, rich ? { bid: Math.min(BID.high, own.bid * THERMO.step), share: Math.max(0, own.share / THERMO.step) }
                     : { bid: Math.max(BID.low, own.bid / THERMO.step), share: Math.min(1, own.share * THERMO.step) });
-                if (modes.has(index)) ratios.push(target > 0 ? wallet(index) / target : 0);
+                (modes.has(index) ? ratios : spoilerRatios).push(target > 0 ? wallet(index) / target : 0);
             }
             served = null;
             if (at === 10 || at === 50 || at === 100) {
@@ -445,6 +445,8 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 const crafterThermo = [...modes.keys()].map(thermoOf);
                 (crafterStats.bid ||= {})[at] = fix(p50(crafterThermo.map(t => t.bid)));
                 (crafterStats.margin ||= {})[at] = fix(p50(crafterThermo.map(t => t.share)));
+                (crafterStats.spoilerWallet ||= {})[at] = fix(p50(spoilerRatios));
+                (crafterStats.spoilerMargin ||= {})[at] = fix(p50([...latest].filter(([index, row]) => row.gnome && !modes.has(index)).map(([index]) => thermoOf(index).share)));
             }
             for (const [index, held] of modes) {
                 crafterStats[held.mode === 'merchant' ? 'merchantHours' : 'huntHours']++;
