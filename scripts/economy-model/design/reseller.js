@@ -110,6 +110,9 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     }
     const cWeapons = [...ref].filter(([id]) => kindOf(id).kind === 'gear' && kindOf(id).grade === 'C' && Engine.isWeapon(view.items[id])).map(([, price]) => price);
     const cWeaponRef = cWeapons.length ? cWeapons.reduce((a, b) => a + b, 0) / cWeapons.length : 0;
+    // The same mean at the configured store price (GNOME_REF_C apart): the materials' turnover is not a gear price.
+    const cStore = [...hidden].filter(([id]) => kindOf(id).kind === 'gear' && kindOf(id).grade === 'C' && Engine.isWeapon(view.items[id])).map(([, rows]) => Math.min(...rows.map(row => row.price)));
+    const cWeaponStore = cStore.length ? cStore.reduce((a, b) => a + b, 0) / cStore.length : 0;
     // The mean hidden-store price of each grade's weapons (a crafter's stock cost).
     const weaponRefs = new Map(GRADES.map(grade => {
         const prices = [...ref].filter(([id]) => kindOf(id).kind === 'gear' && kindOf(id).grade === grade && Engine.isWeapon(view.items[id])).map(([, price]) => price);
@@ -359,7 +362,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 pool.set(town, amount - each * gnomes.length);
             }
             // The materials a town's gnomes take in an hour: the same turnover, GEAR_WEAPONS_PER_GNOME C weapons' value each.
-            const materialCapacity = town => (towns.get(town)?.length || 0) * GEAR_WEAPONS_PER_GNOME * cWeaponRef;
+            const materialCapacity = town => (towns.get(town)?.length || 0) * GEAR_WEAPONS_PER_GNOME * cWeaponStore;
             const gearCapacity = townsOf.size * GEAR_WEAPONS_PER_GNOME * cWeaponRef * wholesaleMult(multOf(keyOf('gear', 'C')));
             // Each gnome's gear allowance in pieces: an hour's worth more, at most STOCK_HOURS hours' worth.
             for (const index of townsOf.keys()) allowance.set(index, Math.min(STOCK_HOURS * GEAR_PIECES_PER_GNOME, (allowance.get(index) || 0) + GEAR_PIECES_PER_GNOME));
