@@ -29,10 +29,10 @@
 // over the grade's level range (C 40-51: 40, 43, 46, 49). A buyer sees a gnome's offer of a piece in a town only when a
 // gnome serving that town unlocks it: else it buys a lower kit piece that one sells or waits (gear, scrolls), or buys
 // the shots at the safety valve.
-// Gear purchase cap (maintainer, ours): each gnome buys C+ gear for resale from the hidden store up to an allowance, the
-// wholesale value of GEAR_WEAPONS_PER_GNOME mean C weapons per hour (its own worn gear apart), unused allowance kept at
-// most STOCK_HOURS hours' worth. A town's gnome offer of a piece stands while its gnomes' allowance covers the piece's
-// wholesale; a sale draws it from them. A want no gnome in reach sells is the gear market's demand, so demand above the
+// Gear purchase cap (maintainer, ours): each gnome buys C+ gear for resale from the hidden store up to an allowance in
+// pieces of any grade, GEAR_PIECES_PER_GNOME an hour (its own worn gear apart; shots and scrolls uncapped), unused
+// allowance kept at most STOCK_HOURS hours' worth. A town's gnome offer of a piece stands while its gnomes' allowance
+// holds a whole piece; a sale draws its pieces from them. A want no gnome in reach sells is the gear market's demand, so demand above the
 // cap moves the price up.
 // A gnome's own gear (a piece it wears) costs it the market price, not the wholesale (maintainer, ours).
 // Shop time (maintainer, ours): a gnome spends part of its hours tending its shop instead of hunting, SHOP.base plus
@@ -49,6 +49,7 @@ const STOCK_HOURS = 2;
 const SHOP = Object.freeze({ base: 0.3, busy: 0.2 });
 const SPOILER_FROM = Object.freeze({ D: 20, C: 40, B: 52, A: 61, S: 76 }), GRADES = ['D', 'C', 'B', 'A', 'S'], TIERS = 4;
 const SHOT_MAINS_PER_GNOME = Number(process.env.GNOME_SHOT_MAINS || 4), GEAR_WEAPONS_PER_GNOME = Number(process.env.GNOME_GEAR_WEAPONS || 0.3);
+const GEAR_PIECES_PER_GNOME = Number(process.env.GNOME_GEAR_PIECES || 0.5);
 
 // The tier of each graded piece on the gear table's ladders (ladders: snapshot.gearLadder.lines, each line's bands with
 // rungs { group: [selfId] } best first; the last band holds every grade): id -> 0..TIERS-1, the highest it takes.
@@ -153,7 +154,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         if (!townAllowance.has(town)) townAllowance.set(town, (servedTowns().get(town) || []).reduce((sum, index) => sum + (allowance.get(index) || 0), 0));
         return townAllowance.get(town);
     };
-    // A gnome gear sale in a town draws its wholesale value from the town's gnomes' allowance, in their order.
+    // A gnome gear sale in a town draws its pieces from the town's gnomes' allowance, in their order.
     const draw = (town, value) => {
         for (const index of servedTowns().get(town) || []) {
             if (value <= 0) break;
@@ -186,7 +187,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             const own = m => (what.kind === 'gear' ? m : wholesaleMult(m));
             return [...others, ...hidden.get(id).map(row => ({ ...row, price: priceAt(id, own(multOf(keyOf(what.kind, what.grade, row.town)))) }))];
         }
-        const towns = [...servedTowns().keys()].filter(town => unlockedIn(town, id) && (what.kind !== 'gear' || allowanceIn(town) >= gearWholesale(id)));
+        const towns = [...servedTowns().keys()].filter(town => unlockedIn(town, id) && (what.kind !== 'gear' || allowanceIn(town) >= 1));
         const gnomeRows = towns.map(town => ({ town, price: priceAt(id, multOf(keyOf(what.kind, what.grade, town))), channel: 'gnome' }));
         const valve = what.kind !== 'shot' ? [] : hidden.get(id).filter(row => !towns.includes(row.town)).map(row => ({ ...row, price: Math.round(ref.get(id) * VALVE) }));
         return [...others, ...gnomeRows, ...valve];
@@ -240,7 +241,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 add(hour.sold, town, entry.count * entry.price);
                 stats.hiddenSpend.gnomeWholesale += entry.count * wholesale;
                 add(hour.demand, keyOf(what.kind, what.grade, town), entry.count * (what.kind === 'gear' ? wholesale : 1));
-                if (what.kind === 'gear') draw(town, entry.count * wholesale);
+                if (what.kind === 'gear') draw(town, entry.count);
                 if (what.kind === 'shot') stats.shotUnits.gnome += entry.count; else if (what.kind === 'gear') stats.gearPieces.gnome += entry.count;
                 else { stats.scrolls.bought += entry.count; stock[what.grade] -= entry.count; }
             }
@@ -278,9 +279,8 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             // The materials a town's gnomes take in an hour: the same turnover, GEAR_WEAPONS_PER_GNOME C weapons' value each.
             const materialCapacity = town => (towns.get(town)?.length || 0) * GEAR_WEAPONS_PER_GNOME * cWeaponRef;
             const gearCapacity = townsOf.size * GEAR_WEAPONS_PER_GNOME * cWeaponRef * wholesaleMult(multOf(keyOf('gear', 'C')));
-            // Each gnome's gear allowance: an hour's worth more, at most STOCK_HOURS hours' worth.
-            const perGnome = GEAR_WEAPONS_PER_GNOME * cWeaponRef * wholesaleMult(multOf(keyOf('gear', 'C')));
-            for (const index of townsOf.keys()) allowance.set(index, Math.min(STOCK_HOURS * perGnome, (allowance.get(index) || 0) + perGnome));
+            // Each gnome's gear allowance in pieces: an hour's worth more, at most STOCK_HOURS hours' worth.
+            for (const index of townsOf.keys()) allowance.set(index, Math.min(STOCK_HOURS * GEAR_PIECES_PER_GNOME, (allowance.get(index) || 0) + GEAR_PIECES_PER_GNOME));
             townAllowance.clear();
             const shotCapacity = (grade, town) => (towns.get(town)?.length || 0) * SHOT_MAINS_PER_GNOME * (shotsPerHour[grade] || 0);
             const keys = new Set([...mult.keys(), ...hour.demand.keys()]);
