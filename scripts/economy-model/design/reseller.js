@@ -101,7 +101,9 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     const hidden = new Map(), ref = new Map();
     for (const [id, rows] of view.offers) {
         const own = rows.filter(row => row.channel === 'fixed_wts');
-        if (own.length && kindOf(id)) { hidden.set(id, own); ref.set(id, Math.min(...own.map(row => row.price))); }
+        // GNOME_REF_<grade> scales a grade's gear store price (the tuning lever on the reserve price; default 1).
+        const what = kindOf(id), scale = what?.kind === 'gear' ? Number(process.env[`GNOME_REF_${what.grade}`] || 1) : 1;
+        if (own.length && what) { hidden.set(id, own); ref.set(id, Math.round(scale * Math.min(...own.map(row => row.price)))); }
     }
     const cWeapons = [...ref].filter(([id]) => kindOf(id).kind === 'gear' && kindOf(id).grade === 'C' && Engine.isWeapon(view.items[id])).map(([, price]) => price);
     const cWeaponRef = cWeapons.length ? cWeapons.reduce((a, b) => a + b, 0) / cWeapons.length : 0;
