@@ -37,9 +37,12 @@
 // Crafter modes (maintainer 481, ours): a crafter line's gnome is a merchant by default: it does not hunt, stays in the
 // town of the visit it turned merchant at and serves that town only, and stocks the goods from its own money (its wallet:
 // its money and the margin held for it; the goods are bought as they sell, so the wallet gates the offer: no credit).
-// At an hour's close, a merchant goes hunting when at least HUNT_WHEN of the non-gnome mains in the level band of the
-// grade it sells (C4's grade levels, SPOILER_FROM) wear a weapon of its top unlocked tier or better, and hunts until its
-// level unlocks its next tier; at its next visit it is a merchant again. Before its first unlock it hunts. A crafter's
+// At an hour's close, a merchant goes hunting when at least HUNT_WHEN of the non-gnome mains whose level lies in its top
+// unlocked tier's span (the tier's unlock level to the next tier's minus one: the mains that buy that tier now) wear a
+// weapon of that tier or better, and hunts until its level unlocks its next tier; at its next visit it is a merchant
+// again. A crafter whose wallet cannot cover the wholesale of the cheapest C+ gear piece it unlocks (no stock, no
+// business; one that unlocks none stays) hunts too, from that close or the visit it would turn merchant, until a visit
+// finds its wallet covers it or its level unlocks its next tier. Before its first unlock it hunts. A crafter's
 // tiers unlock on the tier ladder (each grade's TIERS levels from its first gear recipe's level to the next grade's).
 // Crafter wallet thermostat (maintainer 482, ours): each crafter holds a material bid (x the NPC buy-back, BID.low to
 // BID.high: the fixed buyer's 0.75 x the item price) and a margin share (0 to 1 of the market price over the wholesale).
@@ -159,6 +162,15 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     const topTier = (line, level) => plans.get(String(line)).ladder.filter(step => step.level <= level).pop() || null;
     const nextTier = (line, level) => plans.get(String(line)).ladder.find(step => step.level > level) || null;
     const isCrafter = main => plans.get(String(main.line))?.crafter === true;
+    // The C+ gear pieces a line unlocks at a level (cached per (line, level)); a wallet covers its stock when it holds the
+    // wholesale of the cheapest of them at today's price (true when it unlocks none).
+    const gearIds = [...ref.keys()].filter(id => kindOf(id).kind === 'gear'), unlockedGear = new Map();
+    const stocked = (line, level, money) => {
+        const key = `${line}|${level}`;
+        if (!unlockedGear.has(key)) unlockedGear.set(key, gearIds.filter(id => unlocks(line, level, id)));
+        const ids = unlockedGear.get(key);
+        return !ids.length || ids.some(id => money >= gearWholesale(id));
+    };
     const modes = new Map(), merchant = index => modes.get(index)?.mode === 'merchant';
 
     const isGnome = main => lines.has(String(main.line));
@@ -274,10 +286,11 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         // merchant; before its first unlock it hunts for it. null for any other main.
         modeAt(main) {
             if (!isCrafter(main)) return null;
-            const held = modes.get(main.index);
-            if (held?.mode === 'merchant' || (held?.mode === 'hunt' && main.level < held.until)) return held.mode;
+            const held = modes.get(main.index), money = main.money + (pending.get(main.index) || 0);
+            if (held?.mode === 'merchant' || (held?.mode === 'hunt' && main.level < held.until && !(held.broke && stocked(main.line, main.level, money)))) return held.mode;
             const first = !topTier(main.line, main.level) ? nextTier(main.line, main.level) : null;
-            modes.set(main.index, first ? { mode: 'hunt', until: first.level } : { mode: 'merchant', until: null });
+            const broke = !first && !stocked(main.line, main.level, money);
+            modes.set(main.index, first ? { mode: 'hunt', until: first.level } : broke ? { mode: 'hunt', until: nextTier(main.line, main.level)?.level ?? Infinity, broke: true } : { mode: 'merchant', until: null });
             if (held) crafterStats.switches++;
             served = null;
             return modes.get(main.index).mode;
@@ -375,12 +388,11 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             if (at === 20 || at === 50 || at === 100) this.snapshot(at);
             return this.crafters(at);
         },
-        // The crafters' modes at an hour's close: its hours by mode, and the merchants that go hunting (their indexes): the
-        // non-gnome mains of the band of the grade a merchant sells wearing a weapon of its top tier or better.
+        // The crafters' modes at an hour's close: its hours by mode, and the merchants that go hunting (their indexes): a
+        // wallet short of its cheapest piece, or the non-gnome mains of its top tier's level span wearing that tier or better.
         crafters(at) {
             let ranks = null;
             const rankOf = (grade, tier) => (GRADE_ORDER[grade] ?? 0) * TIERS + tier;
-            const bandOf = level => GRADES.filter(grade => SPOILER_FROM[grade] <= level).pop() || null;
             const released = [];
             // The thermostat: the non-gnome wallets by level, each crafter's target and step.
             const byLevel = new Map();
@@ -409,18 +421,27 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 crafterStats[held.mode === 'merchant' ? 'merchantHours' : 'huntHours']++;
                 if (held.mode !== 'merchant') continue;
                 const row = latest.get(index), top = topTier(row.line, row.level), next = nextTier(row.line, row.level);
+                if (!stocked(row.line, row.level, wallet(index))) {
+                    modes.set(index, { mode: 'hunt', until: next ? next.level : Infinity, broke: true });
+                    crafterStats.switches++;
+                    crafterStats.broke = (crafterStats.broke || 0) + 1;
+                    served = null;
+                    released.push(index);
+                    continue;
+                }
                 if (!top || !next) continue;
+                // The non-gnome mains' weapon ranks by level (once per close).
                 if (!ranks) {
                     ranks = new Map();
                     for (const other of latest.values()) {
-                        const band = other.gnome ? null : bandOf(other.level);
-                        if (!band) continue;
-                        if (!ranks.has(band)) ranks.set(band, []);
-                        ranks.get(band).push(rankOf(gradeOfItem(other.weapon), tiers.get(other.weapon) ?? 0));
+                        if (other.gnome) continue;
+                        if (!ranks.has(other.level)) ranks.set(other.level, []);
+                        ranks.get(other.level).push(rankOf(gradeOfItem(other.weapon), tiers.get(other.weapon) ?? 0));
                     }
                 }
-                const band = ranks.get(top.grade) || [], need = rankOf(top.grade, top.tier);
-                if (band.length && band.filter(rank => rank >= need).length >= HUNT_WHEN * band.length) {
+                const need = rankOf(top.grade, top.tier), span = [];
+                for (let level = top.level; level < next.level; level++) span.push(...(ranks.get(level) || []));
+                if (span.length && span.filter(rank => rank >= need).length >= HUNT_WHEN * span.length) {
                     modes.set(index, { mode: 'hunt', until: next.level });
                     crafterStats.switches++;
                     served = null;
