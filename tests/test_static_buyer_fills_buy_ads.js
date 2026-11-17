@@ -26,7 +26,7 @@ const PrivateSell = invoke('GameServer/Network/Request/PrivateStoreSell');
 const ITEM = 1867;
 // The fixed buyer's explicit line price, under the bot bids below: a player and a bot
 // are paid it when no bid is higher.
-const LINE_PRICE = 75;
+const LINE_PRICE = 70;
 let sequence = 0;
 const previousUser = World.user;
 
