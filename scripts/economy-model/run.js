@@ -26,11 +26,14 @@ const Today = require('./today');
 const KitHours = require('./kit-hours');
 const Gear = require('./gear');
 const Plane = require('./design/plane');
+const Reseller = require('./design/reseller');
 const DesignLimits = require('./design/limits');
 const Load = require('./load');
 const HuntRows = require('./rules/hunt-rows');
 // The stage bands are the real ledger's (grade bands, D split at 30), so both ledgers group alike.
 const { STAGE_BANDS } = require('../economy/ledger-rules');
+// The dwarf fighter's class: the gnome trade's lines pass through it.
+const DWARF_FIGHTER = 53;
 
 // What version 1 of the model leaves out; each number it prints omits these.
 const LEFT_OUT = Object.freeze([
@@ -151,6 +154,23 @@ function printKpi(out) {
         + `money per main ${marks}; growth last half ${growth === null ? '-' : `${(growth * 100).toFixed(2)} %/h`}; shots used ${(out.shots.usedShareOfWanted * 100).toFixed(1)} %; `
         + `deaths per 1000 bot-h ${kpi.deathsPer1000?.toFixed(1) ?? '-'}; reserve buys ${grades(out.design.gear.reserveBought)}; D weapon at 40+ ${kpi.dAt40}; `
         + `enchant scrolls ${enchant.scrolls}, succeeded ${enchant.succeeded}, failed (weapon broken) ${enchant.failed}, spent ${(enchant.spent / 1e6).toFixed(0)}M`);
+    const trade = out.design.reseller;
+    if (!trade) return;
+    const M = value => `${(value / 1e6).toFixed(0)}M`, share = (a, b) => (a + b > 0 ? `${(a / (a + b) * 100).toFixed(1)} %` : '-');
+    const money = Object.entries(trade.money).map(([hour, bands]) => `h${hour} ` + Object.entries(bands).sort().map(([band, { gnome, other }]) => {
+        const g = gnome[1] ? gnome[0] / gnome[1] : 0, o = other[1] ? other[0] / other[1] : 0;
+        return `${band} ${(g / 1e6).toFixed(1)}M/${(o / 1e6).toFixed(1)}M x${o > 0 ? (g / o).toFixed(2) : '-'} (${gnome[1]}/${other[1]})`;
+    }).join(', ')).join('; ');
+    const index = Object.entries(trade.index).map(([hour, row]) => `h${hour} ` + Object.entries(row).sort().map(([name, m]) => `${name} ${m.toFixed(2)}`).join(' ')).join('; ');
+    const ended = trade.gearWait.ended, q = p => { const v = [...ended].sort((a, b) => a - b); return v.length ? v[Math.min(v.length - 1, Math.floor(p * v.length))].toFixed(1) : '-'; };
+    const s = trade.scrolls;
+    console.log(`KPI gnome money per main gnome/other by band ${money}`);
+    console.log(`KPI gnome trade: D+ shot units via gnome ${share(trade.shotUnits.gnome, trade.shotUnits.valve)} (gnome ${trade.shotUnits.gnome}, valve ${trade.shotUnits.valve}, gnomes' own ${trade.shotUnits.own}); `
+        + `C+ gear pieces via gnome ${trade.gearPieces.gnome}, gnomes' own ${trade.gearPieces.own}, valve ${trade.gearPieces.valve}; gear waits for no gnome in reach ${trade.gearWait.started} (ended ${ended.length} p50 ${q(0.5)} h p90 ${q(0.9)} h, open ${trade.gearWait.open.size}); `
+        + `gnome margin ${M(trade.margin)} (credited ${M(trade.credited)}), material spread ${M(trade.spread)}; hidden-store spend ${M(trade.hiddenSpend.gnomeWholesale + trade.hiddenSpend.valve + trade.hiddenSpend.gnomeOwn)} `
+        + `(wholesale to gnomes ${M(trade.hiddenSpend.gnomeWholesale)}, valve ${M(trade.hiddenSpend.valve)}, gnomes' own ${M(trade.hiddenSpend.gnomeOwn)}); `
+        + `scrolls supplied ${s.supplied}, bought ${s.bought}, refused (no stock) ${s.refused}, drops used ${s.dropUsed}`);
+    console.log(`KPI market price index (x ref) ${index}`);
 }
 
 function printFooter(design = false) {
@@ -246,7 +266,12 @@ function modeOf(argv, snapshot, cohort) {
         // The weapon enchant stub (the money sink) tries first in the chain.
         const personas = new Map(cohort.accounts.map(account => [account.id, account.persona || null]));
         const gear = { ...Gear.npcGear({ snapshot, view }), kitReserve: Gear.kitReserve({ snapshot, view }), enchant: Gear.weaponEnchant({ view, personas }) };
-        return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation }, gear }) };
+        // The gnome trade stub (--gnome-share: the wholesale share of the market price; none: off). Gnomes: the lines
+        // of the dwarf fighter's class (53) at some level.
+        const share = Boot.option(argv, 'gnome-share', null);
+        const gnomeLines = Object.entries(snapshot.hours).filter(([, byLevel]) => Object.values(byLevel).some(hour => hour?.classId === DWARF_FIGHTER)).map(([line]) => line);
+        const trade = share === null ? null : Reseller.market({ view, gnomeLines, share: Number(share), scrolls: Gear.weaponScrolls(), recipes: snapshot.recipes });
+        return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation }, gear, market: trade }) };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
     const fitFile = Boot.option(argv, 'fit', Boot.option(argv, 'cohort', null));
@@ -266,7 +291,7 @@ function printFit(basis) {
 }
 
 // The options main reads (the header names them): any other --name is refused by name.
-const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'supply', 'json']);
+const OPTIONS = Object.freeze(['preset', 'snapshot', 'hours', 'seed', 'cohort', 'accounts', 'levels', 'mode', 'fit', 'hunt-share', 'visits', 'supply', 'gnome-share', 'json']);
 
 function refuseUnknownOptions(argv) {
     for (const word of argv) {

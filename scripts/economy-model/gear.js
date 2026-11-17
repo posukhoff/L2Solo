@@ -37,7 +37,7 @@ function npcGear({ snapshot, view }) {
         return bodies.get(key);
     };
     return {
-        next(main, town, reserve) {
+        next(main, town, reserve, priced = view) {
             const classId = Table.roleClass(main.line, main.level), body = bodyOf(classId, main.level, Number(main.line));
             const pieces = Object.entries(KitHours.kitInHand(snapshot, main)).filter(([, selfId]) => selfId > 0)
                 .map(([slot, selfId]) => ({ slot: Number(slot), selfId: Number(selfId) }));
@@ -46,7 +46,7 @@ function npcGear({ snapshot, view }) {
             // The NPC that sells the piece: this town's, else the first elsewhere by price and fare.
             const sellers = new Map();
             const findNpcOffer = target => {
-                const seller = Engine.sellerOf(view, target.selfId, town);
+                const seller = Engine.sellerOf(priced, target.selfId, town);
                 if (!seller) return null;
                 sellers.set(Number(target.selfId), seller);
                 return { sourceType: 'npc', price: seller.price, town: seller.town };
@@ -78,7 +78,7 @@ function kitReserve({ snapshot, view }) {
     const Templates = invoke('GameServer/Item/ItemTemplateIndex'), DataCache = invoke('GameServer/DataCache');
     const gradeOf = id => GRADE_ORDER[String(view.items[id]?.grade || 'NONE').toUpperCase()] ?? 0;
     return {
-        next(main, town, reserve) {
+        next(main, town, reserve, priced = view) {
             const rows = view.kits?.[main.line]?.[main.level];
             if (!rows) return null;
             const worn = KitHours.kitInHand(snapshot, main);
@@ -86,7 +86,7 @@ function kitReserve({ snapshot, view }) {
                 const slot = weapon ? Number(Templates.find(DataCache.items, row.selfId)?.etc?.slot || row.slot) : Number(row.slot);
                 return { selfId: Number(row.selfId), slot, price: seller.price, weapon, town: seller.town, fare: seller.fare, channel: seller.channel };
             };
-            const reserveSeller = id => { const seller = Engine.sellerOf(view, id, town); return seller?.channel === 'fixed_wts' ? seller : null; };
+            const reserveSeller = id => { const seller = Engine.sellerOf(priced, id, town); return seller?.channel === 'fixed_wts' || seller?.channel === 'gnome' ? seller : null; };
             const funded = seller => seller.price + seller.fare <= main.money - reserve;
             // The weapon: the kit's weapon of this level, then those of the levels below it while they are above the worn
             // grade (the grade below the kit's first: a C before the B), the highest funded one bought; none funded: it
@@ -119,6 +119,13 @@ function kitReserve({ snapshot, view }) {
     };
 }
 
+// The normal weapon enchant scrolls by grade (C4EnchantScrolls): { grade: scrollId }.
+function weaponScrolls() {
+    const Scrolls = invoke('GameServer/Items/C4EnchantScrolls'), scrollOf = {};
+    for (const [id, row] of Object.entries(Scrolls.ENCHANT_SCROLLS)) if (row.target === 'weapon' && row.scrollType === 'normal') scrollOf[row.grade] = Number(id);
+    return scrollOf;
+}
+
 // kitWeaponGrade(view, line, level): the GRADE_ORDER of the line's kit weapon at the
 // level, at most A (no store sells an S weapon: the A weapon is the S levels' grade weapon).
 function kitWeaponGrade(view, line, level) {
@@ -145,24 +152,29 @@ const ENCHANT_WALLET_WEAPONS = 3;
 const AMBITIOUS_TRAIT = 0.62;
 const ENCHANT_AMBITIOUS_TARGET = 6;
 function weaponEnchant({ view, personas }) {
-    const Rules = invoke('GameServer/Items/C4EnchantRules'), Scrolls = invoke('GameServer/Items/C4EnchantScrolls');
+    const Rules = invoke('GameServer/Items/C4EnchantRules');
     const config = Rules.configWith(globalThis.options?.default?.Enchant || {});
-    const scrollOf = {};
-    for (const [id, row] of Object.entries(Scrolls.ENCHANT_SCROLLS)) if (row.target === 'weapon' && row.scrollType === 'normal') scrollOf[row.grade] = Number(id);
+    const scrollOf = weaponScrolls();
     const gradeName = id => String(view.items[id]?.grade || 'NONE').toUpperCase();
+    // The scroll its weapon takes next while below its target, with the try's chance; null at the target.
+    const wanted = main => {
+        const grade = gradeName(main.weapon), order = GRADE_ORDER[grade] ?? 0, level = main.enchant || 0;
+        if (order < GRADE_ORDER.C || order !== kitWeaponGrade(view, main.line, main.level) || !scrollOf[grade]) return null;
+        const ambitious = Number(personas.get(main.id)?.traits?.ambition) >= AMBITIOUS_TRAIT;
+        const max = Rules.maxFor('weapon', config);
+        if (level >= (ambitious ? ENCHANT_AMBITIOUS_TARGET : Number(config.safeMax)) || (max > 0 && level >= max)) return null;
+        return { scrollId: scrollOf[grade], chance: Rules.isSafe({ isWeapon: () => true }, level, config) ? 100 : Rules.chanceFor('weapon', 'normal', config) };
+    };
     return {
-        next(main, town, reserve) {
-            const grade = gradeName(main.weapon), order = GRADE_ORDER[grade] ?? 0, level = main.enchant || 0;
-            if (order < GRADE_ORDER.C || order !== kitWeaponGrade(view, main.line, main.level) || !scrollOf[grade]) return null;
-            const ambitious = Number(personas.get(main.id)?.traits?.ambition) >= AMBITIOUS_TRAIT;
-            const max = Rules.maxFor('weapon', config);
-            if (level >= (ambitious ? ENCHANT_AMBITIOUS_TARGET : Number(config.safeMax)) || (max > 0 && level >= max)) return null;
-            const weapon = Engine.sellerOf(view, main.weapon), scroll = Engine.sellerOf(view, scrollOf[grade], town);
+        wanted,
+        next(main, town, reserve, priced = view) {
+            const want = wanted(main);
+            if (!want) return null;
+            const weapon = Engine.sellerOf(priced, main.weapon), scroll = Engine.sellerOf(priced, want.scrollId, town);
             if (!weapon || !scroll || !(main.money - reserve - scroll.price - scroll.fare > ENCHANT_WALLET_WEAPONS * weapon.price)) return null;
-            const chance = Rules.isSafe({ isWeapon: () => true }, level, config) ? 100 : Rules.chanceFor('weapon', 'normal', config);
-            return { scrollId: scrollOf[grade], price: scroll.price, town: scroll.town, fare: scroll.fare, channel: scroll.channel, chance };
+            return { scrollId: want.scrollId, price: scroll.price, town: scroll.town, fare: scroll.fare, channel: scroll.channel, chance: want.chance };
         }
     };
 }
 
-module.exports = { npcGear, kitReserve, weaponEnchant, kitWeaponGrade, GRADE_ORDER, ENCHANT_WALLET_WEAPONS };
+module.exports = { npcGear, kitReserve, weaponEnchant, weaponScrolls, kitWeaponGrade, GRADE_ORDER, ENCHANT_WALLET_WEAPONS };

@@ -169,8 +169,9 @@ const UNIT = Object.freeze({ kills: 1, shots: 1, deaths: 1 }), UNITS = Object.fr
 // table: the model's hunting table's levels { range: [from, to], creation(line,
 // level): the creation kit { slot: selfId }, the one kit point it measured }, or none;
 // gear: the game's NPC gear rule (gear.js npcGear: next(main, town, reserve) -> the
-// piece funded now or null), or none (no gear is bought).
-function plane({ view, kitHours, variant, accounts, table = null, gear = null }) {
+// piece funded now or null), or none (no gear is bought);
+// market: the gnome trade stub (reseller.js market()), or none (every main buys from the hidden store at its price).
+function plane({ view, kitHours, variant, accounts, table = null, gear = null, market = null }) {
     if (variant !== 'table' && variant !== 'formula') throw new Error(`no supply variant '${variant}' (table or formula)`);
     const personas = new Map(accounts.map(account => [account.id, account.persona || null]));
     // At the table's levels a row is the hour of the kit point it measured: the creation kit reads it as it is
@@ -190,6 +191,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
     // The row's shots are the measured kit's weapon's at the table's levels (factor 1).
     const scaleOf = (main, row, form) => (measured(main) ? 1 : kitHours.shotScale(main.line, main.level, row.spotId, main.weapon, form === 'blessed'));
     const hunter = Today.hunter(view, factorsOf, scaleOf);
+    // The offers a main reads: the gnome trade's prices for it, else the view's.
+    const pricedOf = main => (market ? market.priced(main) : view);
     const bagsOf = main => {
         const bags = view.bags?.[main.line];
         if (!bags) throw new Error(`no bag row for line ${main.line} in the snapshot`);
@@ -373,10 +376,11 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             const supplyState = (main, row, place, town, spotTown) => {
                 const firing = hunter.firing(main), fill = fillOf(main, row, firing), need = Needs.consumable(main, firing, fill), surplus = Needs.surplus(main, need);
                 const horizon = need ? need.hours : ConsumableTarget.bagHours({ ...fill, stock: [] });
-                const npcBuy = Object.fromEntries(surplus.map(([id]) => [id, view.items[id]?.npcBuy || 0]));
+                const saleTown = place === 'town' ? town : spotTown;
+        const npcBuy = Object.fromEntries(surplus.map(([id]) => [id, market?.bid(main, saleTown, id) ?? (view.items[id]?.npcBuy || 0)]));
                 // Who sells its shots: the town it stands in (in the field the held spot's town) when it sells them, else the
                 // first other town by price plus the fare (Engine.sellerOf); an NPC sells the no-grade shots in every town, the configured city stores the graded ones.
-                const offer = need ? Engine.sellerOf(view, need.id, place === 'town' ? town : spotTown) : null;
+                const offer = need ? Engine.sellerOf(pricedOf(main), need.id, place === 'town' ? town : spotTown) : null;
                 const toHours = Engine.toHoursOf(view, row.spotId), backHours = Engine.backHoursOf(view, row.spotId, spotTown);
                 return { place, town, spotTown, need, fill, horizon, surplus, npcBuy, wallet: main.money, roadMoney: 0, toHours, backHours,
                     offers: offer ? { town: offer.town, price: offer.price, channel: offer.channel } : null, fightsBare: Engine.rowIn(row, 'bare').kills > 0, variant };
@@ -431,18 +435,40 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             // delta of the chain's earlier part when one is given).
             const executed = (main, actions, town, backHours, delta = null, afterHours = 0) => {
                 delta ||= { flows: Engine.emptyFlows(), towns: [town], gearToNpc: 0, gearBought: 0, shotsBoughtFixed: 0, shotsBoughtNpc: 0, shotsSoldNpc: 0,
-                    unsold: 0, missingPieces: 0, missingShots: 0, noTown: 0 };
+                    unsold: 0, missingPieces: 0, missingShots: 0, noTown: 0, gnome: [], hidden: [] };
                 let next = main;
                 for (const action of actions) {
                     if (action.kind === 'back') afterHours = backHours;
-                    else if (EXECUTORS[action.kind]) next = EXECUTORS[action.kind](next, action, delta, view);
+                    else if (EXECUTORS[action.kind]) {
+                        // A material sold at the gnome bid is the gnome's purchase, re-booked from the NPC sale.
+                        const toGnome = action.kind === 'sell' && market && market.bid(next, town, action.id) !== null;
+                        next = EXECUTORS[action.kind](next, action, delta, view);
+                        if (toGnome) market.soldToGnome(delta, town, action);
+                    }
                 }
+                if (market) market.settle(next, delta, town);
                 return { main: next, delta, afterHours };
             };
             // The adena the main keeps from gear: its stock target of the shot it fires at the town's NPC price.
             const reserveOf = (main, row, town, spotTown) => {
                 const { need, offers } = supplyState(main, row, 'town', town, spotTown);
                 return need && offers ? need.target * offers.price : 0;
+            };
+            // The enchant scrolls of its weapon's grade its bag holds (drops) are used first, try by try toward its target.
+            const useDroppedScrolls = main => {
+                let next = main;
+                for (let tries = 0; gear?.enchant?.wanted; tries++) {
+                    const want = gear.enchant.wanted(next);
+                    if (!want || !(next.bag[want.scrollId] > 0)) break;
+                    const success = mulberry(hash(`${seed}:${next.id}:dropscroll:${next.counter}:${tries}`))() * 100 < want.chance;
+                    const bag = { ...next.bag };
+                    if (bag[want.scrollId] > 1) bag[want.scrollId]--; else delete bag[want.scrollId];
+                    next = EXECUTORS.enchant({ ...next, bag }, { channel: 'drop', price: 0, success }, null);
+                    market.droppedScrollUsed();
+                    if (!success) { ledger.counters.enchantFailed++; break; }
+                    ledger.counters.enchantSucceeded++;
+                }
+                return next;
             };
             // The town chain: the supply decision's sales; then the gear the game's NPC rule buys with what the
             // wallet holds above the reserve, piece by piece on the state the last purchase left; when it bought any
@@ -452,7 +478,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             // on (a piece sold in a third town ends it); then, after the gear step, to the seller of the shots it needs
             // when the town it stands in does not sell them (the graded shots are sold in a few towns) and the wallet pays the fare and one unit (Engine.hopSeller). It walks back from where
             // it ends. The chain's answer names that town.
-            const townChain = (main, decided, town, spotTown, full) => {
+            const townChain = (main, decided, town, spotTown, full, now) => {
                 const { actions, row, chain: facts } = decided, backOf = at => (row ? Engine.backHoursOf(view, row.spotId, at) : 0);
                 if (!gear || !decided.decided) return { ...executed(main, actions, town, backOf(town)), town };
                 const sold = executed(main, actions.filter(action => action.kind === 'sell'), town, backOf(town));
@@ -468,11 +494,15 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 // first); a broken weapon leaves the slot empty and the gear step below buys the next one.
                 if (gear.enchant) {
                     for (let tries = 0; ; tries++) {
-                        const step = gear.enchant.next(next, at, reserveOf(next, row, at, spotTown));
+                        const step = gear.enchant.next(next, at, reserveOf(next, row, at, spotTown), pricedOf(next));
                         if (!step || (step.town !== at && hopped)) break;
+                        // The gnome trade's scrolls come from the server's capped stock: none left, no try (the want is counted).
+                        const scroll = market?.kindOf(step.scrollId);
+                        if (scroll && market.scrollStock(scroll.grade) < 1) { market.refused(scroll.grade); break; }
                         if (step.town !== at) hop(step);
                         const success = mulberry(hash(`${seed}:${next.id}:enchant:${next.counter}:${tries}`))() * 100 < step.chance;
-                        next = EXECUTORS.enchant(next, { ...step, success }, sold.delta);
+                        next = EXECUTORS.enchant(next, { ...step, id: step.scrollId, success }, sold.delta);
+                        if (market) market.settle(next, sold.delta, at);
                         ledger.counters.enchantScrolls++;
                         ledger.counters.enchantSpent += step.price;
                         if (!success) { ledger.counters.enchantFailed++; break; }
@@ -481,17 +511,26 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 }
                 // The gear rule's own null ends it: each piece costs more than the NPC pays back for what it replaces.
                 for (;;) {
-                    const keep = reserveOf(next, row, at, spotTown), buy = gear.next(next, at, keep) || (gear.kitReserve ? gear.kitReserve.next(next, at, keep) : null);
-                    if (!buy || (buy.town !== at && hopped)) break;
+                    const keep = reserveOf(next, row, at, spotTown), priced = pricedOf(next);
+                    const buy = gear.next(next, at, keep, priced) || (gear.kitReserve ? gear.kitReserve.next(next, at, keep, priced) : null);
+                    // A main with no weapon (an enchant broke it) may hop again for one.
+                    if (!buy && market && gear.kitReserve && !market.isGnome(next)) {
+                        // A C+ piece the hidden store would fund that no gnome in reach sells: it waits (counted).
+                        const would = gear.kitReserve.next(next, at, keep, view);
+                        if (would && !Engine.sellerOf(priced, would.selfId, at)) market.gearWaits(next, now);
+                    }
+                    if (!buy || (buy.town !== at && hopped && next.weapon)) break;
+                    if (market && buy.channel === 'gnome') market.gearBought(next, now);
                     if (buy.town !== at) hop(buy);
                     next = EXECUTORS.gear(next, { kind: 'gear', id: buy.selfId, slot: buy.slot, price: buy.price, channel: buy.channel }, sold.delta, view);
+                    if (market) market.settle(next, sold.delta, at);
                     ledger.counters.gearSpent += buy.price;
-                    if (buy.channel === 'fixed_wts') { const grade = view.items[buy.selfId]?.grade || '-'; ledger.counters.gearReserve[grade] = (ledger.counters.gearReserve[grade] || 0) + 1; }
+                    if (buy.channel === 'fixed_wts' || buy.channel === 'gnome') { const grade = view.items[buy.selfId]?.grade || '-'; ledger.counters.gearReserve[grade] = (ledger.counters.gearReserve[grade] || 0) + 1; }
                     if (buy.weapon) { ledger.counters.weaponSwaps++; swapped = true; }
                 }
                 {
                     const { need } = supplyState(next, row, 'town', at, spotTown);
-                    const seller = need && need.short > 0 ? Engine.hopSeller(view, [need.id], at, next.money) : null;
+                    const seller = need && need.short > 0 ? Engine.hopSeller(pricedOf(next), [need.id], at, next.money) : null;
                     if (seller) hop(seller);
                 }
                 if (next === sold.main) return { ...executed(next, actions.filter(action => action.kind !== 'sell'), at, backOf(at), sold.delta), town: at };
@@ -543,6 +582,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     return null;
                 },
                 hunt(main, delta) {
+                    if (market) market.seen(main);
                     const first = bareFirst.get(main.index);
                     if (!first?.bought) bareFirst.set(main.index, { hours: (first?.hours || 0) + delta.huntBare, bought: false });
                     let state = stateOf(main);
@@ -576,8 +616,10 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                         return { main: at, delta: { ...executed(at, [], null, 0).delta, towns: [], noTown: 1 } };
                     }
                     state = queueFact(placed(state, 'town'), 'town', at, now);
+                    // A gnome takes the margin the trade holds for it; any main uses the enchant scrolls its bag holds first.
+                    if (market) at = useDroppedScrolls({ ...at, money: at.money + (market.isGnome(at) ? market.credit(at.index) : 0) });
                     const decided = decide(at, state, town), heard = decided.state;
-                    const chain = townChain(at, decided, town, decided.spotTown, state.full);
+                    const chain = townChain(at, decided, town, decided.spotTown, state.full, now);
                     // The chain's end is an outing's start: the held spot is kept or re-picked (on the shots it bought; the
                     // purchases were sized on the spot it held, the next visit sizes on a new one) and it walks back to it.
                     const back = { ...chain.main, spot: holdSpot(chain.main, chain.main.spot === null ? null : String(chain.main.spot)) }, heldRow = Engine.spotRowOf(view, back);
@@ -596,6 +638,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                         }
                     }
                     tally[classOf(done.main.level)].roadHours += done.afterHours;
+                    if (market) market.seen(done.main, [chain.town, townOf(view, done.main)]);
                     const crossed = crossings.get(main.index);
                     if (crossed && wornGradeOf(done.main) >= crossed.grade) { crossHours.push(now - crossed.at); crossings.delete(main.index); }
                     if (chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
@@ -610,6 +653,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     // A new level keeps the held spot; only a spot with no row at this level (the engine's null) is left at once
                     // (it cannot be hunted there).
                     spotChoice.levelUps++;
+                    if (market) market.seen(main);
                     const before = stints.get(main.index)?.spot ?? null, forced = main.spot === null && before !== null;
                     const next = forced ? { ...main, spot: holdSpot(main, before) } : main;
                     if (!forced && (next.spot === null ? null : String(next.spot)) !== before) spotChoice.midFarm++;
@@ -620,7 +664,11 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     return next;
                 },
                 event(event) { throw new Error(`an event of an unknown kind: ${event.kind}`); },
-                hour: () => 0,
+                hour: at => {
+                    if (!market) return 0;
+                    market.close(at);
+                    return market.held();
+                },
                 finish(hours, ended) {
                     // What is still open at the end: wall hours at the level held, stuck episodes, the walk of a trip
                     // on the road and the part of a way back that falls after the run's last hour.
@@ -675,7 +723,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                         returnShare: spotChoice.changes ? spotChoice.returns / spotChoice.changes : null, abaShare: spotChoice.changes ? spotChoice.aba / spotChoice.changes : null,
                         levelsHeld: Object.fromEntries(['all', '1-9', '10-19', '20-39', '40+'].map(band => [band, heldBy(band)])),
                         openStints: open.length, minMaxers: mains.filter(main => OutingSpot.minMaxer(personas.get(main.id))).length, mains: mains.length };
-                    return { design: { variant, levels, spotChoice: spotReport, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
+                    return { money: market ? { start: 0, end: market.held() } : undefined, design: { variant, reseller: market ? market.stats : null, levels, spotChoice: spotReport, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
                         spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution,
                         gear: { weaponSwaps: ledger.counters.weaponSwaps, swapsPerMain: mains.length ? ledger.counters.weaponSwaps / mains.length : null,
                             spent: ledger.counters.gearSpent, reserveBought: ledger.counters.gearReserve, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, hops: ledger.counters.hops, hopFares: ledger.counters.hopFares,
@@ -688,6 +736,14 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             };
         }
     };
+}
+
+// A piece bought (gear or a scroll): a gnome's sale is settled by the trade (its wholesale sink and margin), a hidden
+// store's or an NPC's is its sink.
+function bookPiece(action, delta) {
+    if (action.channel === 'gnome') delta.gnome.push({ id: action.id, count: 1, price: action.price });
+    else if (action.channel === 'fixed_wts') { delta.flows.fixedSellers -= action.price; delta.hidden?.push({ id: action.id, count: 1, price: action.price }); }
+    else delta.flows.npcBuys -= action.price;
 }
 
 // What a supply action does to the main (the closed set's executors; go and
@@ -708,7 +764,9 @@ const EXECUTORS = Object.freeze({
     // Buy from its seller at its price: the NPC, or a configured city store (a fixed seller).
     buy(main, action, delta) {
         const cost = action.count * action.price;
-        if (action.channel === 'fixed_wts') { delta.flows.fixedSellers -= cost; delta.shotsBoughtFixed += action.count; } else { delta.flows.npcBuys -= cost; delta.shotsBoughtNpc += action.count; }
+        if (action.channel === 'gnome') { delta.gnome.push({ id: action.id, count: action.count, price: action.price }); delta.shotsBoughtFixed += action.count; }
+        else if (action.channel === 'fixed_wts') { delta.flows.fixedSellers -= cost; delta.shotsBoughtFixed += action.count; delta.hidden?.push({ id: action.id, count: action.count, price: action.price }); }
+        else { delta.flows.npcBuys -= cost; delta.shotsBoughtNpc += action.count; }
         return { ...main, shots: { ...main.shots, [action.id]: (main.shots[action.id] || 0) + action.count }, money: main.money - cost };
     },
     // Buy a piece of gear from the NPC at its price and wear it in its slot: what it cannot be worn with (the
@@ -717,7 +775,7 @@ const EXECUTORS = Object.freeze({
     gear(main, action, delta, view) {
         const kit = { ...main.kit };
         let money = main.money - action.price;
-        if (action.channel === 'fixed_wts') delta.flows.fixedSellers -= action.price; else delta.flows.npcBuys -= action.price;
+        bookPiece(action, delta);
         delta.gearBought++;
         for (const [slot, selfId] of Object.entries(kit)) {
             if (!selfId || !slotsConflict(action.slot, Number(slot))) continue;
@@ -734,7 +792,7 @@ const EXECUTORS = Object.freeze({
     // Enchant the weapon in hand with a scroll bought from its seller: a success raises its enchant, a failure breaks
     // it (the weapon's slot empties).
     enchant(main, action, delta) {
-        if (action.channel === 'fixed_wts') delta.flows.fixedSellers -= action.price; else delta.flows.npcBuys -= action.price;
+        if (action.channel !== 'drop') bookPiece(action, delta);
         const money = main.money - action.price;
         if (action.success) return { ...main, money, enchant: (main.enchant || 0) + 1 };
         const kit = { ...main.kit };
