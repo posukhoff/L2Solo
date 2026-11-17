@@ -263,6 +263,19 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
             const gradeName = id => String(view.items[id]?.grade || 'NONE').toUpperCase(), wornGradeOf = main => GRADE_ORDER[gradeName(main.weapon)] ?? 0;
             const kitGradeOf = (line, level) => kitWeaponGrade(view, line, level);
             const crossings = new Map(), crossHours = [];
+            // The KPI's time in grade: per main and kit weapon grade (C, B, A; S reads A) the hours its level is in that grade
+            // and of them the hours it wears a weapon of that grade or above; the clock turns at a level-up and a visit's end.
+            const gradeClocks = new Map(), gradeHours = new Map();
+            const gradeTick = (main, now) => {
+                const clock = gradeClocks.get(main.index);
+                if (clock && clock.grade >= GRADE_ORDER.C && now > clock.at) {
+                    const book = gradeHours.get(main.index) || {}, row = book[clock.grade] || [0, 0];
+                    book[clock.grade] = [row[0] + now - clock.at, row[1] + (clock.worn ? now - clock.at : 0)];
+                    gradeHours.set(main.index, book);
+                }
+                const grade = kitGradeOf(main.line, main.level);
+                gradeClocks.set(main.index, { grade, worn: wornGradeOf(main) >= grade, at: now });
+            };
             const bareFirst = new Map(), differs = new Map(), shadowed = { decisions: 0 };
             // The held spot's answers (by reason; fallback: no spot fit), the unsafe candidates refused, the changes heard at a new level other
             // than a spot with no row there (midFarm: must stay 0), and per main its stint on a spot (the level it took it
@@ -639,6 +652,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                     }
                     tally[classOf(done.main.level)].roadHours += done.afterHours;
                     if (market) market.seen(done.main, [chain.town, townOf(view, done.main)]);
+                    gradeTick(done.main, now);
                     const crossed = crossings.get(main.index);
                     if (crossed && wornGradeOf(done.main) >= crossed.grade) { crossHours.push(now - crossed.at); crossings.delete(main.index); }
                     if (chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
@@ -650,6 +664,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                     clocks.set(main.index, { level: main.level, at: now });
                     const grade = kitGradeOf(main.line, main.level);
                     if (grade >= GRADE_ORDER.C && grade > kitGradeOf(main.line, clock.level) && wornGradeOf(main) < grade) crossings.set(main.index, { grade, at: now });
+                    gradeTick(main, now);
                     // A new level keeps the held spot; only a spot with no row at this level (the engine's null) is left at once
                     // (it cannot be hunted there).
                     spotChoice.levelUps++;
@@ -678,6 +693,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                         if (state.trip) tally[classOf(state.trip.level)].roadHours += hours - state.trip.at;
                     }
                     for (const main of ended) if (main.since > hours) tally[classOf(main.level)].roadHours -= main.since - hours;
+                    for (const main of ended) if (!main.station) gradeTick(main, hours);
                     const levels = {}, lines = new Map(), distribution = {};
                     for (const [name, book] of Object.entries(tally)) {
                         // The road share is over the wall hours of mains that hold a spot row (the decision's denominator);
@@ -731,6 +747,17 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                             enchant: { scrolls: ledger.counters.enchantScrolls, succeeded: ledger.counters.enchantSucceeded, failed: ledger.counters.enchantFailed, spent: ledger.counters.enchantSpent } },
                         kpi: { mains: mains.length, atGrade: mains.filter(main => wornGradeOf(main) >= kitGradeOf(main.line, main.level)).length,
                             crossHours: { n: crossHours.length, p50: quantile(crossHours, 0.5), p90: quantile(crossHours, 0.9) }, waiting: crossings.size,
+                            gradeTime: (() => {
+                                const shares = { all: [] }, books = [...gradeHours.values()];
+                                for (const book of books) {
+                                    const rows = Object.entries(book);
+                                    for (const [grade, [total, worn]] of rows) if (total > 0) (shares[grade] ||= []).push(worn / total);
+                                    const total = rows.reduce((sum, [, row]) => sum + row[0], 0), worn = rows.reduce((sum, [, row]) => sum + row[1], 0);
+                                    if (total > 0) shares.all.push(worn / total);
+                                }
+                                const names = Object.keys(GRADE_ORDER);
+                                return Object.fromEntries(Object.entries(shares).map(([grade, values]) => [grade === 'all' ? 'all' : names[grade], { n: values.length, p50: quantile(values, 0.5) }]));
+                            })(),
                             deathsPer1000: botHours > 0 ? ledger.counters.deaths / botHours * 1000 : null, dAt40: mains.filter(main => main.level >= 40 && gradeName(main.weapon) === 'D').length } } };
                 }
             };

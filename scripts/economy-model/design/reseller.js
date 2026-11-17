@@ -20,6 +20,15 @@
 // buy-back and the fixed buyer's 1.5 x the NPC buy-back, start 1.2 x), else to the NPC; the gnome sells them on to
 // the fixed buyer (the faucet) and keeps the spread. The bid falls 5 % in an hour when the materials offered exceed
 // the town's gnome turnover (GEAR_WEAPONS_PER_GNOME C weapons' value per gnome), else rises.
+// Grade and tier gating (maintainer 475): a gnome resells, and buys from the hidden store, only the grades and tiers its
+// level unlocks. A crafter line (its Create Item level grows past 1 in the skill tree) unlocks a piece at the level its
+// Create Item level reaches the piece's recipe craft level, shots and scrolls of a grade at the grade's lowest gear or
+// shot recipe level; a spoiler line a grade at SPOILER_FROM. Inside a grade a piece without a recipe (every piece for a
+// spoiler) unlocks by its tier: its place on the gear table's ladders (entry, mid, late, top: quarters of the grade's
+// pieces of a slot group, worst first; a piece on several ladders takes its highest tier, ours), the tiers spread evenly
+// over the grade's level range (C 40-51: 40, 43, 46, 49). A buyer sees a gnome's offer of a piece in a town only when a
+// gnome serving that town unlocks it: else it buys a lower kit piece that one sells or waits (gear, scrolls), or buys
+// the shots at the safety valve.
 const { GRADE_ORDER } = require('../gear');
 const Engine = require('../engine');
 
@@ -27,11 +36,26 @@ const START = 1.3, STEP = 1.05, VALVE = 2, SCROLL_CEILING = 5;
 const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
+const SPOILER_FROM = Object.freeze({ D: 20, C: 40, B: 52, A: 61, S: 76 }), GRADES = ['D', 'C', 'B', 'A', 'S'], TIERS = 4;
 const SHOT_MAINS_PER_GNOME = Number(process.env.GNOME_SHOT_MAINS || 4), GEAR_WEAPONS_PER_GNOME = Number(process.env.GNOME_GEAR_WEAPONS || 0.3);
 
-// market({ view, gnomeLines, share, scrolls: { grade: scrollId }, recipes }): the trade's state, mutated by the plane
-// in event order (one run, one market).
-function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour }) {
+// The tier of each graded piece on the gear table's ladders (ladders: snapshot.gearLadder.lines, each line's bands with
+// rungs { group: [selfId] } best first; the last band holds every grade): id -> 0..TIERS-1, the highest it takes.
+function tiersOf(view, ladders) {
+    const tiers = new Map();
+    for (const bands of Object.values(ladders || {})) {
+        const top = bands[bands.length - 1];
+        for (const rungs of Object.values(top?.rungs || {})) for (const grade of GRADES) {
+            const ids = rungs.filter(id => String(view.items[id]?.grade || '').toUpperCase() === grade).reverse();
+            ids.forEach((id, at) => tiers.set(id, Math.max(tiers.get(id) ?? 0, Math.floor(at * TIERS / ids.length))));
+        }
+    }
+    return tiers;
+}
+
+// market({ view, gnomeLines, share, scrolls: { grade: scrollId }, recipes, shotsPerHour, craftLevels: { line: [Create
+// Item level by character level] }, ladders }): the trade's state, mutated by the plane in event order (one run, one market).
+function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craftLevels = {}, ladders = {} }) {
     const lines = new Set([...gnomeLines].map(String));
     const scrollGrade = new Map(Object.entries(scrolls).map(([grade, id]) => [Number(id), grade]));
     const shotGrade = new Map();
@@ -55,18 +79,62 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour }) {
     const materials = new Set();
     for (const recipe of recipes || []) if (kindOf(Number(recipe.productId))) for (const m of recipe.materials) materials.add(Number(m.selfId));
 
+    // The level a gnome line unlocks a trade good at (0 for any other item), cached per (line, id).
+    const recipeLevel = new Map((recipes || []).map(recipe => [Number(recipe.productId), Number(recipe.level)]));
+    const tiers = tiersOf(view, ladders), maxLevel = view.maxLevel || 80;
+    const plans = new Map([...lines].map(line => {
+        const craft = craftLevels[line] || [], crafter = craft.some(level => level > 1);
+        const reach = need => { for (let level = 1; level <= maxLevel; level++) if ((craft[level] || 0) >= need) return level; return Infinity; };
+        const lowest = kind => Object.fromEntries(GRADES.map(grade => [grade, Math.min(...(recipes || []).filter(recipe => {
+            const what = kindOf(Number(recipe.productId));
+            return what && what.kind === kind && what.grade === grade;
+        }).map(recipe => Number(recipe.level)))]));
+        const gearNeed = lowest('gear'), shotNeed = lowest('shot');
+        const from = crafter ? Object.fromEntries(GRADES.map(grade => [grade, reach(gearNeed[grade])])) : SPOILER_FROM;
+        const shotFrom = crafter ? Object.fromEntries(GRADES.map(grade => [grade, reach(shotNeed[grade])])) : SPOILER_FROM;
+        const toOf = grade => Math.min(maxLevel, ...GRADES.slice(GRADES.indexOf(grade) + 1).map(next => from[next] - 1));
+        return [line, { crafter, from, shotFrom, toOf, reach, cache: new Map() }];
+    }));
+    const unlockLevel = (line, id) => {
+        const plan = plans.get(String(line));
+        if (plan.cache.has(id)) return plan.cache.get(id);
+        const what = kindOf(id);
+        let level = 0;
+        if (what?.kind === 'shot') level = plan.shotFrom[what.grade];
+        else if (what?.kind === 'scroll') level = plan.from[what.grade];
+        else if (what?.kind === 'gear') {
+            if (plan.crafter && recipeLevel.has(id)) level = plan.reach(recipeLevel.get(id));
+            else { const from = plan.from[what.grade], to = plan.toOf(what.grade); level = from + Math.round((tiers.get(id) || 0) * (to + 1 - from) / TIERS); }
+        }
+        plan.cache.set(id, level ?? Infinity);
+        return plan.cache.get(id);
+    };
+    const unlocks = (line, level, id) => level >= unlockLevel(line, id);
+
     const isGnome = main => lines.has(String(main.line));
     const mult = new Map(), keyOf = (kind, grade, town) => (kind === 'shot' ? `shot|${grade}|${town}` : `${kind}|${grade}`);
     const multOf = key => mult.get(key) ?? START;
     const bids = new Map(), bidOf = town => bids.get(town) ?? BID.start;
     const stock = Object.fromEntries(Object.entries(SCROLLS_PER_HOUR).map(([grade, n]) => [grade, n]));
     const townsOf = new Map(), latest = new Map(), pending = new Map(), pool = new Map();
-    let served = null;
+    let served = null, tops = null;
     const servedTowns = () => {
         if (served) return served;
         served = new Map();
-        for (const [index, towns] of townsOf) for (const town of towns) { if (!served.has(town)) served.set(town, []); served.get(town).push(index); }
+        tops = new Map();
+        for (const [index, towns] of townsOf) for (const town of towns) {
+            if (!served.has(town)) { served.set(town, []); tops.set(town, new Map()); }
+            served.get(town).push(index);
+            const { line, level } = latest.get(index), top = tops.get(town);
+            top.set(line, Math.max(top.get(line) || 0, level));
+        }
         return served;
+    };
+    // Does a gnome serving the town unlock the item (its highest level per gnome line there)?
+    const unlockedIn = (town, id) => {
+        servedTowns();
+        for (const [line, level] of tops.get(town) || []) if (unlocks(line, level, id)) return true;
+        return false;
     };
     // The hour's books: demand and supply by market key, the margin by town.
     let hour = { demand: new Map(), offered: new Map(), stock: { ...stock } };
@@ -76,30 +144,44 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour }) {
     const priceAt = (id, m) => Math.round(ref.get(id) * m);
     const wholesaleMult = m => Math.max(1, share * m);
 
-    // The offers a main reads (a view for Engine.sellerOf): the trade's goods re-priced for gnome or not.
+    // The offers a main reads (a view for Engine.sellerOf): the trade's goods re-priced for a gnome (gnome: { line,
+    // level }: the hidden store's rows of what its level unlocks) or another main (null: the gnome rows of the towns
+    // where a serving gnome unlocks it; for shots the valve where none does).
     const rowsFor = (gnome, id) => {
         const base = view.offers.get(id);
         const what = hidden.has(id) ? kindOf(id) : null;
         if (!what) return base;
         const others = base.filter(row => row.channel !== 'fixed_wts');
-        if (gnome) return [...others, ...hidden.get(id).map(row => ({ ...row, price: priceAt(id, wholesaleMult(multOf(keyOf(what.kind, what.grade, row.town)))) }))];
-        const towns = servedTowns();
-        const gnomeRows = [...towns.keys()].map(town => ({ town, price: priceAt(id, multOf(keyOf(what.kind, what.grade, town))), channel: 'gnome' }));
-        const valve = what.kind !== 'shot' ? [] : hidden.get(id).filter(row => !towns.has(row.town)).map(row => ({ ...row, price: Math.round(ref.get(id) * VALVE) }));
+        if (gnome) {
+            if (!unlocks(gnome.line, gnome.level, id)) return others;
+            return [...others, ...hidden.get(id).map(row => ({ ...row, price: priceAt(id, wholesaleMult(multOf(keyOf(what.kind, what.grade, row.town)))) }))];
+        }
+        const towns = [...servedTowns().keys()].filter(town => unlockedIn(town, id));
+        const gnomeRows = towns.map(town => ({ town, price: priceAt(id, multOf(keyOf(what.kind, what.grade, town))), channel: 'gnome' }));
+        const valve = what.kind !== 'shot' ? [] : hidden.get(id).filter(row => !towns.includes(row.town)).map(row => ({ ...row, price: Math.round(ref.get(id) * VALVE) }));
         return [...others, ...gnomeRows, ...valve];
     };
-    const views = { true: { ...view, offers: { get: id => rowsFor(true, Number(id)) } }, false: { ...view, offers: { get: id => rowsFor(false, Number(id)) } } };
+    const otherView = { ...view, offers: { get: id => rowsFor(null, Number(id)) } }, gnomeViews = new Map();
+    const viewOf = main => {
+        if (!isGnome(main)) return otherView;
+        const key = `${main.line}|${main.level}`;
+        if (!gnomeViews.has(key)) { const gnome = { line: String(main.line), level: main.level }; gnomeViews.set(key, { ...view, offers: { get: id => rowsFor(gnome, Number(id)) } }); }
+        return gnomeViews.get(key);
+    };
 
     return {
         isGnome,
-        priced: main => views[isGnome(main)],
+        priced: viewOf,
         kindOf,
         scrollStock: grade => stock[grade] || 0,
         // A main heard at a hook: its money (the KPI's snapshots, a gnome's wallet for the supply); a gnome's towns.
         seen(main, towns = null) {
-            latest.set(main.index, { money: main.money, level: main.level, gnome: isGnome(main) });
+            const before = latest.get(main.index);
+            latest.set(main.index, { money: main.money, level: main.level, gnome: isGnome(main), line: String(main.line) });
             if (towns && isGnome(main)) { townsOf.set(main.index, [...new Set(towns.filter(Boolean))]); served = null; }
+            else if (isGnome(main) && before && before.level !== main.level && townsOf.has(main.index)) served = null;
         },
+        unlockLevel,
         // The gnome bid for a main's material sale in a town, or null (a gnome main, no gnome there, not a material).
         bid(main, town, id) {
             if (isGnome(main) || !town || !materials.has(Number(id)) || !servedTowns().has(town)) return null;
@@ -196,4 +278,4 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour }) {
     };
 }
 
-module.exports = { market, SCROLLS_PER_HOUR };
+module.exports = { market, tiersOf, SCROLLS_PER_HOUR, SPOILER_FROM };

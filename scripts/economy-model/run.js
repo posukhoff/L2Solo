@@ -154,6 +154,10 @@ function printKpi(out) {
         + `money per main ${marks}; growth last half ${growth === null ? '-' : `${(growth * 100).toFixed(2)} %/h`}; shots used ${(out.shots.usedShareOfWanted * 100).toFixed(1)} %; `
         + `deaths per 1000 bot-h ${kpi.deathsPer1000?.toFixed(1) ?? '-'}; reserve buys ${grades(out.design.gear.reserveBought)}; D weapon at 40+ ${kpi.dAt40}; `
         + `enchant scrolls ${enchant.scrolls}, succeeded ${enchant.succeeded}, failed (weapon broken) ${enchant.failed}, spent ${(enchant.spent / 1e6).toFixed(0)}M`);
+    // The share of a main's hours in a kit weapon grade spent wearing that grade (or above): p50 over the mains, overall and per grade.
+    const pct = row => (row?.p50 === null || row?.p50 === undefined ? '-' : `${(row.p50 * 100).toFixed(1)} %`);
+    console.log(`KPI time in grade wearing its weapon p50 all ${pct(kpi.gradeTime.all)} (${kpi.gradeTime.all.n}) | `
+        + Object.entries(kpi.gradeTime).filter(([grade]) => grade !== 'all').map(([grade, row]) => `${grade} ${pct(row)} (${row.n})`).join(' | '));
     const trade = out.design.reseller;
     if (!trade) return;
     const M = value => `${(value / 1e6).toFixed(0)}M`, share = (a, b) => (a + b > 0 ? `${(a / (a + b) * 100).toFixed(1)} %` : '-');
@@ -284,7 +288,17 @@ function modeOf(argv, snapshot, cohort) {
             for (const [grade, [total, n]] of Object.entries(sums)) shotsPerHour[grade] = total / n;
             shotsPerHour.S = shotsPerHour.A;
         }
-        const trade = share === null ? null : Reseller.market({ view, gnomeLines, share: Number(share), scrolls: Gear.weaponScrolls(), recipes: snapshot.recipes, shotsPerHour });
+        // A gnome line's Create Item level by character level (the game's skill tree through its class at each level).
+        const craftLevels = {};
+        if (share !== null) {
+            const Table = invoke('GameServer/Bot/AI/SpotValueTable'), Craft = invoke('GameServer/Bot/Economy/CraftEligibility');
+            for (const line of gnomeLines) {
+                craftLevels[line] = [0];
+                for (let level = 1; level <= view.maxLevel; level++) craftLevels[line][level] = Craft.craftLevelFor({ classId: Table.roleClass(line, level), level });
+            }
+        }
+        const trade = share === null ? null : Reseller.market({ view, gnomeLines, share: Number(share), scrolls: Gear.weaponScrolls(), recipes: snapshot.recipes, shotsPerHour,
+            craftLevels, ladders: snapshot.gearLadder?.lines });
         return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation }, gear, market: trade }) };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
