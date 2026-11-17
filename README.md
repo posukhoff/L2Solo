@@ -3,6 +3,8 @@
 </a>
 
 
+> **Новая версия L2Solo проектируется отдельно от текущего C4-эмулятора.** Цель и обязательные требования: [Requirements](docs/REQUIREMENTS.md); целевая [Architecture](docs/ARCHITECTURE.md); [ADR](docs/adr/). Описанные ниже функции, цифры и Hot/Cold относятся к **существующей публичной C4 Alpha**, а не к утверждённой архитектуре новой версии.
+
 # L2Solo (C4: Scions of Destiny)
 
 Old-school Lineage 2 solo play, locally in a live world with over 1700 bot population.
