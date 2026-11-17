@@ -68,9 +68,10 @@ function npcGear({ snapshot, view }) {
 // line's reference kit at the main's level (view.kits) of grade C, B or A that the
 // main wears at a lower grade, weapon first, then armour, then jewels, bought from
 // the cheapest reserve offer (Engine.sellerOf, a configured store's gear line) when
-// the wallet above reserve pays its price and the fare to its town; a weapon it
-// does not pay is saved for (nothing else of the kit is bought: null). null when there
-// is none. Same answer shape as npcGear's next.
+// the wallet above reserve pays its price and the fare to its town. The weapon steps
+// by grade: the kit weapons of the levels below count too while above the worn grade
+// (a C before the B), and a weapon none of them pays is saved for (nothing else of the
+// kit is bought: null). null when there is none. Same answer shape as npcGear's next.
 const GRADE_ORDER = { NONE: 0, D: 1, C: 2, B: 3, A: 4, S: 5 };
 const KIT_ORDER = slot => (slot >= 1 && slot <= 5 ? 2 : 1);
 function kitReserve({ snapshot, view }) {
@@ -81,17 +82,37 @@ function kitReserve({ snapshot, view }) {
             const rows = view.kits?.[main.line]?.[main.level];
             if (!rows) return null;
             const worn = KitHours.kitInHand(snapshot, main);
-            const wornGrade = (row, weapon) => (weapon ? gradeOf(main.weapon) : gradeOf(worn[row.slot]));
-            const wanted = rows.map(row => ({ ...row, weapon: Engine.isWeapon(view.items[row.selfId]) }))
-                .filter(row => gradeOf(row.selfId) >= GRADE_ORDER.C && gradeOf(row.selfId) > wornGrade(row, row.weapon))
-                .sort((a, b) => (b.weapon - a.weapon) || (KIT_ORDER(a.slot) - KIT_ORDER(b.slot)));
+            const buyOf = (row, weapon, seller) => {
+                const slot = weapon ? Number(Templates.find(DataCache.items, row.selfId)?.etc?.slot || row.slot) : Number(row.slot);
+                return { selfId: Number(row.selfId), slot, price: seller.price, weapon, town: seller.town, fare: seller.fare, channel: seller.channel };
+            };
+            const reserveSeller = id => { const seller = Engine.sellerOf(view, id, town); return seller?.channel === 'fixed_wts' ? seller : null; };
+            const funded = seller => seller.price + seller.fare <= main.money - reserve;
+            // The weapon: the kit's weapon of this level, then those of the levels below it while they are above the worn
+            // grade (the grade below the kit's first: a C before the B), the highest funded one bought; none funded: it
+            // saves for the best of them that has a seller (nothing else of the kit is bought).
+            const isWeaponRow = row => Engine.isWeapon(view.items[row.selfId]);
+            const above = row => gradeOf(row.selfId) >= GRADE_ORDER.C && gradeOf(row.selfId) > gradeOf(main.weapon);
+            const seen = new Set();
+            let saving = false;
+            for (let level = main.level; level >= 1; level--) {
+                const found = (view.kits?.[main.line]?.[level] || []).filter(row => isWeaponRow(row) && above(row));
+                if (!found.length) break;
+                for (const row of found) {
+                    if (seen.has(row.selfId)) continue;
+                    seen.add(row.selfId);
+                    const seller = reserveSeller(row.selfId);
+                    if (!seller) continue;
+                    if (funded(seller)) return buyOf(row, true, seller);
+                    saving = true;
+                }
+            }
+            if (saving) return null;
+            const wanted = rows.filter(row => !isWeaponRow(row) && gradeOf(row.selfId) >= GRADE_ORDER.C && gradeOf(row.selfId) > gradeOf(worn[row.slot]))
+                .sort((x, y) => KIT_ORDER(x.slot) - KIT_ORDER(y.slot));
             for (const row of wanted) {
-                const seller = Engine.sellerOf(view, row.selfId, town);
-                if (!seller || seller.channel !== 'fixed_wts') continue;
-                // A better weapon the wallet does not pay is saved for: nothing else of the kit is bought until it is.
-                if (!(seller.price + seller.fare <= main.money - reserve)) { if (row.weapon) return null; continue; }
-                const slot = row.weapon ? Number(Templates.find(DataCache.items, row.selfId)?.etc?.slot || row.slot) : Number(row.slot);
-                return { selfId: Number(row.selfId), slot, price: seller.price, weapon: row.weapon, town: seller.town, fare: seller.fare, channel: seller.channel };
+                const seller = reserveSeller(row.selfId);
+                if (seller && funded(seller)) return buyOf(row, false, seller);
             }
             return null;
         }

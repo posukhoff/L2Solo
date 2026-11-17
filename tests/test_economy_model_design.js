@@ -863,6 +863,13 @@ for (const supply of ['table', 'formula']) {
     assert.equal(reader.next(main(1500000), 'Giran', 1000000), null, 'nothing is funded above the reserve');
     assert.equal(reader.next({ ...main(5000000), kit: { 14: CBOW, 10: CSHIRT }, weapon: CBOW }, 'Giran', 0), null, 'the kit is worn');
     assert.equal(reader.next({ ...main(5000000), level: 49 }, 'Giran', 0), null, 'no kit row of that level');
+    // The weapon steps by grade: the B kit weapon of this level, else the C one of the level below.
+    const BBOW = 9003, steps = { ...view, kits: { 9: { 49: [{ selfId: CBOW, slot: 14 }], 50: [{ selfId: BBOW, slot: 14 }] } },
+        offers: new Map([...view.offers, [BBOW, [{ town: 'Giran', price: 9000000, channel: 'fixed_wts' }]]]), items: { ...view.items, [BBOW]: { kind: 'Weapon.Bow', grade: 'B' } } };
+    const stepper = Gear.kitReserve({ snapshot: { gearLadder: { slots: {} } }, view: steps });
+    assert.equal(stepper.next(main(9500000), 'Giran', 0).selfId, BBOW, 'the B when the wallet pays it');
+    assert.equal(stepper.next(main(3000000), 'Giran', 0).selfId, CBOW, 'the C of the level below when the B is not paid');
+    assert.equal(stepper.next(main(1000000), 'Giran', 0), null, 'neither paid: it saves');
 }
 
 console.log('economy model design: ok');
