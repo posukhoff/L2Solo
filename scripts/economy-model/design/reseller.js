@@ -29,6 +29,11 @@
 // over the grade's level range (C 40-51: 40, 43, 46, 49). A buyer sees a gnome's offer of a piece in a town only when a
 // gnome serving that town unlocks it: else it buys a lower kit piece that one sells or waits (gear, scrolls), or buys
 // the shots at the safety valve.
+// A gnome's own gear (a piece it wears) costs it the market price, not the wholesale (maintainer, ours).
+// Shop time (maintainer, ours): a gnome spends part of its hours tending its shop instead of hunting, SHOP.base plus
+// SHOP.busy x its load: its served turnover of the last closed hour (each town it serves: the town's gnome sales at the
+// market price and materials bought, split evenly among the town's gnomes as the margin is) over one gnome's turnover
+// capacity (GEAR_WEAPONS_PER_GNOME C weapons' value), at most 1. The plane reads it at the gnome's visit: the shop hours it spends in town then.
 const { GRADE_ORDER } = require('../gear');
 const Engine = require('../engine');
 
@@ -36,6 +41,7 @@ const START = 1.3, STEP = 1.05, VALVE = 2, SCROLL_CEILING = 5;
 const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
+const SHOP = Object.freeze({ base: 0.3, busy: 0.2 });
 const SPOILER_FROM = Object.freeze({ D: 20, C: 40, B: 52, A: 61, S: 76 }), GRADES = ['D', 'C', 'B', 'A', 'S'], TIERS = 4;
 const SHOT_MAINS_PER_GNOME = Number(process.env.GNOME_SHOT_MAINS || 4), GEAR_WEAPONS_PER_GNOME = Number(process.env.GNOME_GEAR_WEAPONS || 0.3);
 
@@ -116,7 +122,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
     const multOf = key => mult.get(key) ?? START;
     const bids = new Map(), bidOf = town => bids.get(town) ?? BID.start;
     const stock = Object.fromEntries(Object.entries(SCROLLS_PER_HOUR).map(([grade, n]) => [grade, n]));
-    const townsOf = new Map(), latest = new Map(), pending = new Map(), pool = new Map();
+    const townsOf = new Map(), latest = new Map(), pending = new Map(), pool = new Map(), shops = new Map();
     let served = null, tops = null;
     const servedTowns = () => {
         if (served) return served;
@@ -137,9 +143,9 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         return false;
     };
     // The hour's books: demand and supply by market key, the margin by town.
-    let hour = { demand: new Map(), offered: new Map(), stock: { ...stock } };
+    let hour = { demand: new Map(), offered: new Map(), sold: new Map(), stock: { ...stock } };
     const stats = { shotUnits: { gnome: 0, valve: 0, own: 0 }, gearPieces: { gnome: 0, valve: 0, own: 0 }, scrolls: { supplied: 0, bought: 0, refused: 0, dropUsed: 0 },
-        gearWait: { started: 0, ended: [], open: new Map() }, margin: 0, spread: 0, hiddenSpend: { gnomeWholesale: 0, valve: 0, gnomeOwn: 0 }, credited: 0, index: {}, money: {}, shotsPerHour };
+        gearWait: { started: 0, ended: [], open: new Map() }, margin: 0, spread: 0, hiddenSpend: { gnomeWholesale: 0, valve: 0, gnomeOwn: 0 }, credited: 0, index: {}, money: {}, shotsPerHour, shop: { reads: 0, sum: 0 } };
     const add = (map, key, value) => map.set(key, (map.get(key) || 0) + value);
     const priceAt = (id, m) => Math.round(ref.get(id) * m);
     const wholesaleMult = m => Math.max(1, share * m);
@@ -154,7 +160,9 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         const others = base.filter(row => row.channel !== 'fixed_wts');
         if (gnome) {
             if (!unlocks(gnome.line, gnome.level, id)) return others;
-            return [...others, ...hidden.get(id).map(row => ({ ...row, price: priceAt(id, wholesaleMult(multOf(keyOf(what.kind, what.grade, row.town)))) }))];
+            // Its own gear at the market price (maintainer, ours: it gears no earlier than another main); shots and scrolls at the wholesale.
+            const own = m => (what.kind === 'gear' ? m : wholesaleMult(m));
+            return [...others, ...hidden.get(id).map(row => ({ ...row, price: priceAt(id, own(multOf(keyOf(what.kind, what.grade, row.town)))) }))];
         }
         const towns = [...servedTowns().keys()].filter(town => unlockedIn(town, id));
         const gnomeRows = towns.map(town => ({ town, price: priceAt(id, multOf(keyOf(what.kind, what.grade, town))), channel: 'gnome' }));
@@ -182,6 +190,8 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             else if (isGnome(main) && before && before.level !== main.level && townsOf.has(main.index)) served = null;
         },
         unlockLevel,
+        // A gnome's share of its hours spent tending its shop (SHOP), from the last closed hour.
+        shopShare(index) { const share = shops.get(index) ?? SHOP.base; stats.shop.reads++; stats.shop.sum += share; return share; },
         // The gnome bid for a main's material sale in a town, or null (a gnome main, no gnome there, not a material).
         bid(main, town, id) {
             if (isGnome(main) || !town || !materials.has(Number(id)) || !servedTowns().has(town)) return null;
@@ -205,6 +215,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
                 delta.flows.fixedSellers -= entry.count * wholesale;
                 add(pool, town, entry.count * (entry.price - wholesale));
                 stats.margin += entry.count * (entry.price - wholesale);
+                add(hour.sold, town, entry.count * entry.price);
                 stats.hiddenSpend.gnomeWholesale += entry.count * wholesale;
                 add(hour.demand, keyOf(what.kind, what.grade, town), entry.count * (what.kind === 'gear' ? wholesale : 1));
                 if (what.kind === 'shot') stats.shotUnits.gnome += entry.count; else if (what.kind === 'gear') stats.gearPieces.gnome += entry.count;
@@ -250,8 +261,16 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             for (const town of new Set([...bids.keys(), ...hour.offered.keys()])) {
                 bids.set(town, Math.min(BID.high, Math.max(BID.low, bidOf(town) * ((hour.offered.get(town) || 0) > materialCapacity(town) ? 1 / STEP : STEP))));
             }
+            // Each gnome's shop share for its next visits: its served turnover of the hour over one gnome's capacity.
+            const served = new Map(), capacity = GEAR_WEAPONS_PER_GNOME * cWeaponRef;
+            for (const [town, gnomes] of towns) {
+                const each = ((hour.sold.get(town) || 0) + (hour.offered.get(town) || 0)) / gnomes.length;
+                for (const index of gnomes) served.set(index, (served.get(index) || 0) + each);
+            }
+            shops.clear();
+            for (const [index, value] of served) shops.set(index, SHOP.base + SHOP.busy * (capacity > 0 ? Math.min(1, value / capacity) : 0));
             for (const [grade, n] of Object.entries(SCROLLS_PER_HOUR)) { stock[grade] = Math.min(STOCK_HOURS * n, stock[grade] + n); stats.scrolls.supplied += n; }
-            hour = { demand: new Map(), offered: new Map(), stock: { ...stock } };
+            hour = { demand: new Map(), offered: new Map(), sold: new Map(), stock: { ...stock } };
             if (at === 20 || at === 50 || at === 100) this.snapshot(at);
         },
         // The KPI at an hour: the price index per grade (shots: the mean over the towns priced) and the money per main by band.
@@ -274,8 +293,10 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
         // A gnome's credited margin at its visit (taken from the plane's holding).
         credit(index) { const amount = pending.get(index) || 0; pending.delete(index); stats.credited += amount; return amount; },
         held: () => [...pool.values(), ...pending.values()].reduce((a, b) => a + b, 0),
+        // The margin held for a gnome until its next visit (the KPI's money per line).
+        owed: index => pending.get(index) || 0,
         stats
     };
 }
 
-module.exports = { market, tiersOf, SCROLLS_PER_HOUR, SPOILER_FROM };
+module.exports = { market, tiersOf, SCROLLS_PER_HOUR, SPOILER_FROM, SHOP };

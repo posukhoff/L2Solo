@@ -160,6 +160,11 @@ function printKpi(out) {
         + Object.entries(kpi.gradeTime).filter(([grade]) => grade !== 'all').map(([grade, row]) => `${grade} ${pct(row)} (${row.n})`).join(' | '));
     const trade = out.design.reseller;
     if (!trade) return;
+    // The gnome balance: hours to level 60 p50 by group; each gnome line's money rank among the lines and its mean over the other lines' median.
+    const others = kpi.balance.lines.filter(row => !row.gnome).map(row => row.mean).sort((a, b) => a - b), median = others.length ? others[Math.floor(others.length / 2)] : 0;
+    console.log(`KPI gnome balance: hours to 60 p50 ${Object.entries(kpi.balance.to60).sort().map(([group, row]) => `${group} ${row.p50?.toFixed(1) ?? '-'} (${row.n})`).join(' | ')}; `
+        + `money per main by line rank (of ${kpi.balance.lines.length}): ${kpi.balance.lines.map((row, at) => (row.gnome ? `line ${row.line} #${at + 1} ${(row.mean / 1e6).toFixed(0)}M x${median > 0 ? (row.mean / median).toFixed(2) : '-'}` : null)).filter(Boolean).join(', ')} `
+        + `(other lines' median ${(median / 1e6).toFixed(0)}M, top other ${((others[others.length - 1] || 0) / 1e6).toFixed(0)}M); shop share mean ${trade.shop.reads ? (trade.shop.sum / trade.shop.reads * 100).toFixed(1) : '-'} %`);
     const M = value => `${(value / 1e6).toFixed(0)}M`, share = (a, b) => (a + b > 0 ? `${(a / (a + b) * 100).toFixed(1)} %` : '-');
     const money = Object.entries(trade.money).map(([hour, bands]) => `h${hour} ` + Object.entries(bands).sort().map(([band, { gnome, other }]) => {
         const g = gnome[1] ? gnome[0] / gnome[1] : 0, o = other[1] ? other[0] / other[1] : 0;

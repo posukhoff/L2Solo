@@ -266,6 +266,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
             // The KPI's time in grade: per main and kit weapon grade (C, B, A; S reads A) the hours its level is in that grade
             // and of them the hours it wears a weapon of that grade or above; the clock turns at a level-up and a visit's end.
             const gradeClocks = new Map(), gradeHours = new Map();
+            // The KPI's hour a main first reached level 60, by main.
+            const sixty = new Map();
             const gradeTick = (main, now) => {
                 const clock = gradeClocks.get(main.index);
                 if (clock && clock.grade >= GRADE_ORDER.C && now > clock.at) {
@@ -656,6 +658,10 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                     const crossed = crossings.get(main.index);
                     if (crossed && wornGradeOf(done.main) >= crossed.grade) { crossHours.push(now - crossed.at); crossings.delete(main.index); }
                     if (chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
+                    // A gnome tends its shop in town before it walks back (the trade's shopShare, read here): its shop share of the
+                    // hours it hunted and tended since the last visit, the outing's hunting hours x share / (1 - share). Not road hours.
+                    const shop = market && market.isGnome(done.main) ? market.shopShare(main.index) : 0;
+                    if (shop > 0 && visitInfo.outingHours > 0) return { ...done, afterHours: done.afterHours + visitInfo.outingHours * shop / (1 - shop) };
                     return done;
                 },
                 levelUp(main, now) {
@@ -665,6 +671,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                     const grade = kitGradeOf(main.line, main.level);
                     if (grade >= GRADE_ORDER.C && grade > kitGradeOf(main.line, clock.level) && wornGradeOf(main) < grade) crossings.set(main.index, { grade, at: now });
                     gradeTick(main, now);
+                    if (main.level >= 60 && !sixty.has(main.index)) sixty.set(main.index, now);
                     // A new level keeps the held spot; only a spot with no row at this level (the engine's null) is left at once
                     // (it cannot be hunted there).
                     spotChoice.levelUps++;
@@ -757,6 +764,21 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                                 }
                                 const names = Object.keys(GRADE_ORDER);
                                 return Object.fromEntries(Object.entries(shares).map(([grade, values]) => [grade === 'all' ? 'all' : names[grade], { n: values.length, p50: quantile(values, 0.5) }]));
+                            })(),
+                            // The gnome balance: hours to level 60 p50 per gnome line and for the others; mean money per main by line
+                            // at the end (a gnome's held margin counted), ranked richest first.
+                            balance: (() => {
+                                const groupOf = main => (market && market.isGnome(main) ? String(main.line) : 'others');
+                                const to60 = {}, wealth = new Map();
+                                for (const main of mains) {
+                                    if (sixty.has(main.index)) (to60[groupOf(main)] ||= []).push(sixty.get(main.index));
+                                    const row = wealth.get(main.line) || { line: main.line, gnome: groupOf(main) !== 'others', money: 0, n: 0 };
+                                    row.money += main.money + (market ? market.owed(main.index) : 0);
+                                    row.n++;
+                                    wealth.set(main.line, row);
+                                }
+                                return { to60: Object.fromEntries(Object.entries(to60).map(([group, values]) => [group, { n: values.length, p50: quantile(values, 0.5) }])),
+                                    lines: [...wealth.values()].map(row => ({ line: row.line, gnome: row.gnome, n: row.n, mean: row.money / row.n })).sort((a, b) => b.mean - a.mean) };
                             })(),
                             deathsPer1000: botHours > 0 ? ledger.counters.deaths / botHours * 1000 : null, dAt40: mains.filter(main => main.level >= 40 && gradeName(main.weapon) === 'D').length } } };
                 }
