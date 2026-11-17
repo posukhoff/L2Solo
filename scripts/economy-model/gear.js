@@ -119,4 +119,4 @@ function kitReserve({ snapshot, view }) {
     };
 }
 
-module.exports = { npcGear, kitReserve };
+module.exports = { npcGear, kitReserve, GRADE_ORDER };

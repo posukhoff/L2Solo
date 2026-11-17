@@ -87,7 +87,7 @@ function printRun(out, { rates }) {
     console.log(`RATES per band (hunting share, visits per bot-hour): ${Object.entries(rates).map(([band, rate]) => `${band} ${rate.huntShare.toFixed(3)}/${rate.visitsPerBotHour === undefined ? 'by its facts' : rate.visitsPerBotHour.toFixed(2)}`).join(' | ')}`);
     console.log(`POPULATION ${out.population.bots} accounts, ${out.population.botHours} bot-h over ${out.window.hours} h; start bands ${Object.entries(out.population.stageBands).map(([band, n]) => `${band} ${n}`).join(' | ')}`);
     console.log(`FLOWS per bot-hour: ${Object.entries(flows).map(([kind, adena]) => `${kind} ${k(adena)}`).join(' | ')}; faucets ${(out.flows.faucets / 1e6).toFixed(1)}M sinks ${(out.flows.sinks / 1e6).toFixed(1)}M net ${(out.flows.net / 1e6).toFixed(1)}M; fixed buyers ${(out.flows.fixedBuyerShareOfFaucets * 100).toFixed(1)} % of faucets`);
-    console.log(`MONEY ${(out.money.stockStart / 1e6).toFixed(1)}M -> ${(out.money.stockEnd / 1e6).toFixed(1)}M, growth ${(out.money.growthPerHour * 100).toFixed(2)} %/h, closure gap ${out.money.closureGap}`);
+    console.log(`MONEY ${(out.money.stockStart / 1e6).toFixed(1)}M -> ${(out.money.stockEnd / 1e6).toFixed(1)}M, growth ${out.money.stockStart > 0 ? `${(out.money.growthPerHour * 100).toFixed(2)} %/h` : '- (a zero start)'}, closure gap ${out.money.closureGap}`);
     console.log('BANDS by start level, per bot-hour:');
     console.log(`  ${'band'.padEnd(8)}${pad('bots', 6)}${pad('huntAdena', 11)}${pad('npcSales', 10)}${pad('fixedBuy', 10)}${pad('npcBuys', 10)}${pad('fixedSell', 10)}${pad('fares', 9)}${pad('moneyΔ', 10)}${pad('exp', 10)}${pad('lvUps', 7)}`);
     for (const [band, row] of Object.entries(out.progress.stageBands)) {
@@ -135,6 +135,19 @@ function printDesign(design) {
     console.log(`GEAR STEP weapon swaps ${gear.weaponSwaps} (${gear.swapsPerMain === null ? '-' : gear.swapsPerMain.toFixed(2)} per main), adena spent on gear ${gear.spent}, bought from the reserve stores by grade ${grades(gear.reserveBought)}, `
         + `shots sold in a chain that swapped the weapon ${gear.shotsSoldAtSwap}; hops ${gear.hops}, their fares ${gear.hopFares}; weapons at the end by grade ${grades(gear.endWeapons)}; shot units held of a grade the weapon cannot fire ${grades(gear.heldOtherGrade)}`);
     console.log(`  level distribution at the end: ${Object.entries(design.levelDistribution).sort((a, b) => a[0] - b[0]).map(([level, n]) => `${level}:${n}`).join(' ')}`);
+}
+
+// The design run's KPI line: mains wearing a weapon of their level's kit grade and the hours from a grade's crossing
+// to wearing it (p50/p90; still waiting), money per main every 10 h and its real growth an hour over the run's
+// last half, shots used of wanted, deaths per 1000 bot-hours, reserve buys by grade, mains on a D weapon at level 40+.
+function printKpi(out) {
+    const kpi = out.design.kpi, hours = out.window.hours, of = hour => out.hourly.find(row => row.hour === hour);
+    const marks = out.hourly.filter(row => row.hour % 10 === 0 || row.hour === hours).map(row => `h${row.hour} ${(row.money / kpi.mains / 1e6).toFixed(1)}M`).join(' ');
+    const half = of(Math.floor(hours / 2)), end = of(hours), growth = half && end && half.money > 0 && end.hour > half.hour ? (end.money / half.money) ** (1 / (end.hour - half.hour)) - 1 : null;
+    const grades = counts => Object.entries(counts).map(([grade, n]) => `${grade} ${n}`).join(' ') || 'none';
+    console.log(`KPI at grade weapon ${(kpi.atGrade / kpi.mains * 100).toFixed(1)} %, crossing -> worn h p50 ${kpi.crossHours.p50?.toFixed(1) ?? '-'} p90 ${kpi.crossHours.p90?.toFixed(1) ?? '-'} (${kpi.crossHours.n}, waiting ${kpi.waiting}); `
+        + `money per main ${marks}; growth last half ${growth === null ? '-' : `${(growth * 100).toFixed(2)} %/h`}; shots used ${(out.shots.usedShareOfWanted * 100).toFixed(1)} %; `
+        + `deaths per 1000 bot-h ${kpi.deathsPer1000?.toFixed(1) ?? '-'}; reserve buys ${grades(out.design.gear.reserveBought)}; D weapon at 40+ ${kpi.dAt40}`);
 }
 
 function printFooter(design = false) {
@@ -271,7 +284,7 @@ function main(argv) {
     const out = Engine.simulate({ view, accounts: cohort.accounts, bands: STAGE_BANDS, rates, hours, seed, plane,
         onProgress: progress(`${preset} seed=${seed}`), inputs: { snapshot: file, preset, seed, cohort: cohort.source, rates } });
     printRun(out, { rates });
-    if (out.design) printDesign(out.design);
+    if (out.design) { printDesign(out.design); printKpi(out); }
     console.log(`MONEY per start band, mean per bot start -> end: ${Object.entries(out.progress.stageBands).map(([band, row]) => `${band} ${k(row.money.meanStart)} -> ${k(row.money.meanEnd)}`).join(' | ')}`);
     console.log(`RUN ${out.counters.events} events in ${((Date.now() - began) / 1000).toFixed(1)} s, heap ${Math.round(process.memoryUsage().heapUsed / 1e6)} MB`);
     printFooter(Boot.option(argv, 'mode', 'plain') === 'design');

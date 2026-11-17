@@ -38,6 +38,7 @@ const Value = require('./value');
 const Supply = require('./supply');
 const LIMITS = require('./limits');
 const OutingSpot = require('../../../src/GameServer/Bot/AI/OutingSpot');
+const { GRADE_ORDER } = require('../gear');
 const { slotsConflict } = require('../kit-hours');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
@@ -248,6 +249,11 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 stuckUnmeasuredEpisodes: 0, stuckUnmeasuredHours: 0, needDecisions: 0, needHours: 0, needBinds: { slots: 0, dropLoad: 0, stockLoad: 0 } });
             const tally = { low: blank(), high: blank() };
             const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
+            // The KPI's grade crossings: a main whose level-up raises its line's kit weapon grade (C, B or A) above the
+            // grade it wears, from that hour until a visit leaves it wearing that grade; the hours between.
+            const gradeName = id => String(view.items[id]?.grade || 'NONE').toUpperCase(), wornGradeOf = main => GRADE_ORDER[gradeName(main.weapon)] ?? 0;
+            const kitGradeOf = (line, level) => Math.max(0, ...(view.kits?.[line]?.[level] || []).filter(row => Engine.isWeapon(view.items[row.selfId])).map(row => GRADE_ORDER[gradeName(row.selfId)] ?? 0));
+            const crossings = new Map(), crossHours = [];
             const bareFirst = new Map(), differs = new Map(), shadowed = { decisions: 0 };
             // The held spot's answers (by reason; fallback: no spot fit), the unsafe candidates refused, the changes heard at a new level other
             // than a spot with no row there (midFarm: must stay 0), and per main its stint on a spot (the level it took it
@@ -569,6 +575,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                         }
                     }
                     tally[classOf(done.main.level)].roadHours += done.afterHours;
+                    const crossed = crossings.get(main.index);
+                    if (crossed && wornGradeOf(done.main) >= crossed.grade) { crossHours.push(now - crossed.at); crossings.delete(main.index); }
                     if (chain.delta.shotsBoughtNpc + chain.delta.shotsBoughtFixed > 0) bareFirst.set(main.index, { hours: bareFirst.get(main.index)?.hours || 0, bought: true });
                     return done;
                 },
@@ -576,6 +584,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     const clock = clocks.get(main.index);
                     tally[classOf(clock.level)].wallHours += now - clock.at;
                     clocks.set(main.index, { level: main.level, at: now });
+                    const grade = kitGradeOf(main.line, main.level);
+                    if (grade >= GRADE_ORDER.C && grade > kitGradeOf(main.line, clock.level) && wornGradeOf(main) < grade) crossings.set(main.index, { grade, at: now });
                     // A new level keeps the held spot; only a spot with no row at this level (the engine's null) is left at once
                     // (it cannot be hunted there).
                     spotChoice.levelUps++;
@@ -648,7 +658,10 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                         spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution,
                         gear: { weaponSwaps: ledger.counters.weaponSwaps, swapsPerMain: mains.length ? ledger.counters.weaponSwaps / mains.length : null,
                             spent: ledger.counters.gearSpent, reserveBought: ledger.counters.gearReserve, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, hops: ledger.counters.hops, hopFares: ledger.counters.hopFares,
-                            endWeapons: weapons, heldOtherGrade: otherGrade } } };
+                            endWeapons: weapons, heldOtherGrade: otherGrade },
+                        kpi: { mains: mains.length, atGrade: mains.filter(main => wornGradeOf(main) >= kitGradeOf(main.line, main.level)).length,
+                            crossHours: { n: crossHours.length, p50: quantile(crossHours, 0.5), p90: quantile(crossHours, 0.9) }, waiting: crossings.size,
+                            deathsPer1000: botHours > 0 ? ledger.counters.deaths / botHours * 1000 : null, dAt40: mains.filter(main => main.level >= 40 && gradeName(main.weapon) === 'D').length } } };
                 }
             };
         }
