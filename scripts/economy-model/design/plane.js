@@ -39,6 +39,7 @@ const Supply = require('./supply');
 const LIMITS = require('./limits');
 const OutingSpot = require('../../../src/GameServer/Bot/AI/OutingSpot');
 const { GRADE_ORDER } = require('../gear');
+const { hash, mulberry } = require('../../hunt-tables/common');
 const { slotsConflict } = require('../kit-hours');
 
 // The report's frame: levels 1-19 are the design's, 20 and above are counted apart.
@@ -224,7 +225,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
         sinks: [],
         deaths: true,
         born: true,
-        start({ ledger, mains }) {
+        start({ ledger, mains, seed }) {
             ledger.counters.stuckNoBareHour = 0;
             ledger.counters.fullBagHuntHours = 0;
             ledger.counters.fullBagLostDrop = 0;
@@ -239,6 +240,11 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             // The chains' onward hops (one at most per chain: to a piece's seller, else to its shots' seller) and their fares.
             ledger.counters.hops = 0;
             ledger.counters.hopFares = 0;
+            // The weapon enchant stub: scrolls bought, tries that succeeded, failed (each one a weapon broken), adena on scrolls.
+            ledger.counters.enchantScrolls = 0;
+            ledger.counters.enchantSucceeded = 0;
+            ledger.counters.enchantFailed = 0;
+            ledger.counters.enchantSpent = 0;
             const states = new Map();
             // The run report's tallies (each class by the level at the event's start): wall hours from a clock of
             // the level each main holds since an hour; road hours (the walk out, to town and back); trips by the facts in
@@ -458,6 +464,21 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     ledger.counters.hops++;
                     ledger.counters.hopFares += seller.fare;
                 };
+                // The weapon enchant stub (gear.js weaponEnchant) first, try by try while it answers (its hop is the chain's
+                // first); a broken weapon leaves the slot empty and the gear step below buys the next one.
+                if (gear.enchant) {
+                    for (let tries = 0; ; tries++) {
+                        const step = gear.enchant.next(next, at, reserveOf(next, row, at, spotTown));
+                        if (!step || (step.town !== at && hopped)) break;
+                        if (step.town !== at) hop(step);
+                        const success = mulberry(hash(`${seed}:${next.id}:enchant:${next.counter}:${tries}`))() * 100 < step.chance;
+                        next = EXECUTORS.enchant(next, { ...step, success }, sold.delta);
+                        ledger.counters.enchantScrolls++;
+                        ledger.counters.enchantSpent += step.price;
+                        if (!success) { ledger.counters.enchantFailed++; break; }
+                        ledger.counters.enchantSucceeded++;
+                    }
+                }
                 // The gear rule's own null ends it: each piece costs more than the NPC pays back for what it replaces.
                 for (;;) {
                     const keep = reserveOf(next, row, at, spotTown), buy = gear.next(next, at, keep) || (gear.kitReserve ? gear.kitReserve.next(next, at, keep) : null);
@@ -658,7 +679,8 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                         spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution,
                         gear: { weaponSwaps: ledger.counters.weaponSwaps, swapsPerMain: mains.length ? ledger.counters.weaponSwaps / mains.length : null,
                             spent: ledger.counters.gearSpent, reserveBought: ledger.counters.gearReserve, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, hops: ledger.counters.hops, hopFares: ledger.counters.hopFares,
-                            endWeapons: weapons, heldOtherGrade: otherGrade },
+                            endWeapons: weapons, heldOtherGrade: otherGrade,
+                            enchant: { scrolls: ledger.counters.enchantScrolls, succeeded: ledger.counters.enchantSucceeded, failed: ledger.counters.enchantFailed, spent: ledger.counters.enchantSpent } },
                         kpi: { mains: mains.length, atGrade: mains.filter(main => wornGradeOf(main) >= kitGradeOf(main.line, main.level)).length,
                             crossHours: { n: crossHours.length, p50: quantile(crossHours, 0.5), p90: quantile(crossHours, 0.9) }, waiting: crossings.size,
                             deathsPer1000: botHours > 0 ? ledger.counters.deaths / botHours * 1000 : null, dAt40: mains.filter(main => main.level >= 40 && gradeName(main.weapon) === 'D').length } } };
@@ -706,7 +728,18 @@ const EXECUTORS = Object.freeze({
             delta.gearToNpc++;
         }
         kit[action.slot] = action.id;
-        return { ...main, kit, weapon: Engine.isWeapon(view.items[action.id]) ? action.id : main.weapon, money };
+        const weapon = Engine.isWeapon(view.items[action.id]);
+        return { ...main, kit, weapon: weapon ? action.id : main.weapon, enchant: weapon ? 0 : main.enchant, money };
+    },
+    // Enchant the weapon in hand with a scroll bought from its seller: a success raises its enchant, a failure breaks
+    // it (the weapon's slot empties).
+    enchant(main, action, delta) {
+        if (action.channel === 'fixed_wts') delta.flows.fixedSellers -= action.price; else delta.flows.npcBuys -= action.price;
+        const money = main.money - action.price;
+        if (action.success) return { ...main, money, enchant: (main.enchant || 0) + 1 };
+        const kit = { ...main.kit };
+        for (const slot of Object.keys(kit)) if (kit[slot] === main.weapon) kit[slot] = 0;
+        return { ...main, money, kit, weapon: 0, enchant: 0 };
     },
     // Stay: it keeps hunting in the state it is in (without the shots); nothing moves.
     stay: main => main

@@ -48,7 +48,8 @@ const LEFT_OUT = Object.freeze([
 // What the design mode leaves out (its own list: the fresh world is solo, in an NPC world, and travel is events).
 const LEFT_OUT_DESIGN = Object.freeze([
     'a solo bot in an NPC world: no market, no fixed buyers, no party, no twin acting, no bot-to-bot trade or crafting; the configured city stores sell their shots (the graded shots\' only seller)',
-    'potions, enchanting, augments, henna, quests, clans, the player, sessions, entry and retirement (a closed cohort of new characters)',
+    'potions, augments, henna, quests, clans, the player, sessions, entry and retirement (a closed cohort of new characters)',
+    'weapon enchanting is a stub (gear.js weaponEnchant): the money sink only; the hunt reads no enchant and a broken weapon gives no crystals',
     'a main buys only the shots it fires and its gear by the game\'s NPC gear rule (staticNpcUpgradePlan, every town\'s NPCs), in a town chain of its held spot\'s town with one gatekeeper hop to a seller elsewhere (a piece first, else its shots); no gear from craft, drop or the market',
     'the held spot is its line\'s best row at its level (no occupation, no travel to other spots); the walk is the town\'s tripHours both ways (back from the hop\'s town after a hop), not the Scroll of Escape',
     'per-kill item yields at the kill mix beyond the spot row\'s drop and spoil loot (Engine.killMixCorrection)'
@@ -139,15 +140,17 @@ function printDesign(design) {
 
 // The design run's KPI line: mains wearing a weapon of their level's kit grade and the hours from a grade's crossing
 // to wearing it (p50/p90; still waiting), money per main every 10 h and its real growth an hour over the run's
-// last half, shots used of wanted, deaths per 1000 bot-hours, reserve buys by grade, mains on a D weapon at level 40+.
+// last half, shots used of wanted, deaths per 1000 bot-hours, reserve buys by grade, mains on a D weapon at level 40+,
+// the enchant stub's scrolls, successes, failures (each a weapon broken) and adena on scrolls.
 function printKpi(out) {
-    const kpi = out.design.kpi, hours = out.window.hours, of = hour => out.hourly.find(row => row.hour === hour);
+    const kpi = out.design.kpi, enchant = out.design.gear.enchant, hours = out.window.hours, of = hour => out.hourly.find(row => row.hour === hour);
     const marks = out.hourly.filter(row => row.hour % 10 === 0 || row.hour === hours).map(row => `h${row.hour} ${(row.money / kpi.mains / 1e6).toFixed(1)}M`).join(' ');
     const half = of(Math.floor(hours / 2)), end = of(hours), growth = half && end && half.money > 0 && end.hour > half.hour ? (end.money / half.money) ** (1 / (end.hour - half.hour)) - 1 : null;
     const grades = counts => Object.entries(counts).map(([grade, n]) => `${grade} ${n}`).join(' ') || 'none';
     console.log(`KPI at grade weapon ${(kpi.atGrade / kpi.mains * 100).toFixed(1)} %, crossing -> worn h p50 ${kpi.crossHours.p50?.toFixed(1) ?? '-'} p90 ${kpi.crossHours.p90?.toFixed(1) ?? '-'} (${kpi.crossHours.n}, waiting ${kpi.waiting}); `
         + `money per main ${marks}; growth last half ${growth === null ? '-' : `${(growth * 100).toFixed(2)} %/h`}; shots used ${(out.shots.usedShareOfWanted * 100).toFixed(1)} %; `
-        + `deaths per 1000 bot-h ${kpi.deathsPer1000?.toFixed(1) ?? '-'}; reserve buys ${grades(out.design.gear.reserveBought)}; D weapon at 40+ ${kpi.dAt40}`);
+        + `deaths per 1000 bot-h ${kpi.deathsPer1000?.toFixed(1) ?? '-'}; reserve buys ${grades(out.design.gear.reserveBought)}; D weapon at 40+ ${kpi.dAt40}; `
+        + `enchant scrolls ${enchant.scrolls}, succeeded ${enchant.succeeded}, failed (weapon broken) ${enchant.failed}, spent ${(enchant.spent / 1e6).toFixed(0)}M`);
 }
 
 function printFooter(design = false) {
@@ -240,7 +243,9 @@ function modeOf(argv, snapshot, cohort) {
         const kitHours = KitHours.gameKitHours({ snapshot, anchor });
         kitHours.warm();
         // The gear a main buys in a town chain: the game's NPC gear rule, then a stub of the C/B/A reserve purchase.
-        const gear = { ...Gear.npcGear({ snapshot, view }), kitReserve: Gear.kitReserve({ snapshot, view }) };
+        // The weapon enchant stub (the money sink) tries first in the chain.
+        const personas = new Map(cohort.accounts.map(account => [account.id, account.persona || null]));
+        const gear = { ...Gear.npcGear({ snapshot, view }), kitReserve: Gear.kitReserve({ snapshot, view }), enchant: Gear.weaponEnchant({ view, personas }) };
         return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation }, gear }) };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);

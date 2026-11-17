@@ -119,4 +119,41 @@ function kitReserve({ snapshot, view }) {
     };
 }
 
-module.exports = { npcGear, kitReserve, GRADE_ORDER };
+// weaponEnchant({ view }) -> { next(main, town, reserve) }: a stub of a C4 player's
+// weapon enchanting, our cheat for the economy (the money sink: the hunt reads no
+// enchant). A main wearing a weapon of its level's kit weapon grade (C, B or A)
+// enchants it toward its target: the game's safe level (C4EnchantRules safeMax, +3),
+// +6 for an ambitious persona (ambition at the cohort's high trait, 0.62: ours).
+// Each try is one Scroll: Enchant Weapon of the weapon's grade (C4EnchantScrolls,
+// normal) from its cheapest seller (Engine.sellerOf: the reserve store, no C4 NPC
+// sells it), bought while the wallet above the reserve keeps more than
+// ENCHANT_WALLET_WEAPONS times the weapon's price after the scroll and its fare.
+// A try below the safe level succeeds, past it at the game's weapon chance (68 %);
+// a failure breaks the weapon (Enchant.enchant 'break'; its crystals are not modelled).
+// The next try, or null: { scrollId, price, town, fare, channel, chance }.
+const ENCHANT_WALLET_WEAPONS = 3;
+const AMBITIOUS_TRAIT = 0.62;
+const ENCHANT_AMBITIOUS_TARGET = 6;
+function weaponEnchant({ view, personas }) {
+    const Rules = invoke('GameServer/Items/C4EnchantRules'), Scrolls = invoke('GameServer/Items/C4EnchantScrolls');
+    const config = Rules.configWith(globalThis.options?.default?.Enchant || {});
+    const scrollOf = {};
+    for (const [id, row] of Object.entries(Scrolls.ENCHANT_SCROLLS)) if (row.target === 'weapon' && row.scrollType === 'normal') scrollOf[row.grade] = Number(id);
+    const gradeName = id => String(view.items[id]?.grade || 'NONE').toUpperCase();
+    const kitGrade = (line, level) => Math.max(0, ...(view.kits?.[line]?.[level] || []).filter(row => Engine.isWeapon(view.items[row.selfId])).map(row => GRADE_ORDER[gradeName(row.selfId)] ?? 0));
+    return {
+        next(main, town, reserve) {
+            const grade = gradeName(main.weapon), order = GRADE_ORDER[grade] ?? 0, level = main.enchant || 0;
+            if (order < GRADE_ORDER.C || order > GRADE_ORDER.A || order !== kitGrade(main.line, main.level) || !scrollOf[grade]) return null;
+            const ambitious = Number(personas.get(main.id)?.traits?.ambition) >= AMBITIOUS_TRAIT;
+            const max = Rules.maxFor('weapon', config);
+            if (level >= (ambitious ? ENCHANT_AMBITIOUS_TARGET : Number(config.safeMax)) || (max > 0 && level >= max)) return null;
+            const weapon = Engine.sellerOf(view, main.weapon), scroll = Engine.sellerOf(view, scrollOf[grade], town);
+            if (!weapon || !scroll || !(main.money - reserve - scroll.price - scroll.fare > ENCHANT_WALLET_WEAPONS * weapon.price)) return null;
+            const chance = Rules.isSafe({ isWeapon: () => true }, level, config) ? 100 : Rules.chanceFor('weapon', 'normal', config);
+            return { scrollId: scrollOf[grade], price: scroll.price, town: scroll.town, fare: scroll.fare, channel: scroll.channel, chance };
+        }
+    };
+}
+
+module.exports = { npcGear, kitReserve, weaponEnchant, GRADE_ORDER, ENCHANT_WALLET_WEAPONS };
