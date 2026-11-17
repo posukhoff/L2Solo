@@ -38,7 +38,7 @@ const Value = require('./value');
 const Supply = require('./supply');
 const LIMITS = require('./limits');
 const OutingSpot = require('../../../src/GameServer/Bot/AI/OutingSpot');
-const { GRADE_ORDER } = require('../gear');
+const { GRADE_ORDER, kitWeaponGrade } = require('../gear');
 const { hash, mulberry } = require('../../hunt-tables/common');
 const { slotsConflict } = require('../kit-hours');
 
@@ -255,10 +255,10 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 stuckUnmeasuredEpisodes: 0, stuckUnmeasuredHours: 0, needDecisions: 0, needHours: 0, needBinds: { slots: 0, dropLoad: 0, stockLoad: 0 } });
             const tally = { low: blank(), high: blank() };
             const clocks = new Map(mains.map(main => [main.index, { level: main.level, at: 0 }]));
-            // The KPI's grade crossings: a main whose level-up raises its line's kit weapon grade (C, B or A) above the
+            // The KPI's grade crossings: a main whose level-up raises its line's kit weapon grade (C, B or A; S reads A) above the
             // grade it wears, from that hour until a visit leaves it wearing that grade; the hours between.
             const gradeName = id => String(view.items[id]?.grade || 'NONE').toUpperCase(), wornGradeOf = main => GRADE_ORDER[gradeName(main.weapon)] ?? 0;
-            const kitGradeOf = (line, level) => Math.max(0, ...(view.kits?.[line]?.[level] || []).filter(row => Engine.isWeapon(view.items[row.selfId])).map(row => GRADE_ORDER[gradeName(row.selfId)] ?? 0));
+            const kitGradeOf = (line, level) => kitWeaponGrade(view, line, level);
             const crossings = new Map(), crossHours = [];
             const bareFirst = new Map(), differs = new Map(), shadowed = { decisions: 0 };
             // The held spot's answers (by reason; fallback: no spot fit), the unsafe candidates refused, the changes heard at a new level other

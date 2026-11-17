@@ -147,7 +147,7 @@ function printKpi(out) {
     const marks = out.hourly.filter(row => row.hour % 10 === 0 || row.hour === hours).map(row => `h${row.hour} ${(row.money / kpi.mains / 1e6).toFixed(1)}M`).join(' ');
     const half = of(Math.floor(hours / 2)), end = of(hours), growth = half && end && half.money > 0 && end.hour > half.hour ? (end.money / half.money) ** (1 / (end.hour - half.hour)) - 1 : null;
     const grades = counts => Object.entries(counts).map(([grade, n]) => `${grade} ${n}`).join(' ') || 'none';
-    console.log(`KPI at grade weapon ${(kpi.atGrade / kpi.mains * 100).toFixed(1)} %, crossing -> worn h p50 ${kpi.crossHours.p50?.toFixed(1) ?? '-'} p90 ${kpi.crossHours.p90?.toFixed(1) ?? '-'} (${kpi.crossHours.n}, waiting ${kpi.waiting}); `
+    console.log(`KPI at grade weapon (S levels read A) ${(kpi.atGrade / kpi.mains * 100).toFixed(1)} %, crossing -> worn h p50 ${kpi.crossHours.p50?.toFixed(1) ?? '-'} p90 ${kpi.crossHours.p90?.toFixed(1) ?? '-'} (${kpi.crossHours.n}, waiting ${kpi.waiting}); `
         + `money per main ${marks}; growth last half ${growth === null ? '-' : `${(growth * 100).toFixed(2)} %/h`}; shots used ${(out.shots.usedShareOfWanted * 100).toFixed(1)} %; `
         + `deaths per 1000 bot-h ${kpi.deathsPer1000?.toFixed(1) ?? '-'}; reserve buys ${grades(out.design.gear.reserveBought)}; D weapon at 40+ ${kpi.dAt40}; `
         + `enchant scrolls ${enchant.scrolls}, succeeded ${enchant.succeeded}, failed (weapon broken) ${enchant.failed}, spent ${(enchant.spent / 1e6).toFixed(0)}M`);

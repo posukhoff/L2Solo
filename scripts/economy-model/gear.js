@@ -119,6 +119,16 @@ function kitReserve({ snapshot, view }) {
     };
 }
 
+// kitWeaponGrade(view, line, level): the GRADE_ORDER of the line's kit weapon at the
+// level, at most A (no store sells an S weapon: the A weapon is the S levels' grade weapon).
+function kitWeaponGrade(view, line, level) {
+    let grade = 0;
+    for (const row of view.kits?.[line]?.[level] || []) {
+        if (Engine.isWeapon(view.items[row.selfId])) grade = Math.max(grade, GRADE_ORDER[String(view.items[row.selfId]?.grade || 'NONE').toUpperCase()] ?? 0);
+    }
+    return Math.min(grade, GRADE_ORDER.A);
+}
+
 // weaponEnchant({ view }) -> { next(main, town, reserve) }: a stub of a C4 player's
 // weapon enchanting, our cheat for the economy (the money sink: the hunt reads no
 // enchant). A main wearing a weapon of its level's kit weapon grade (C, B or A)
@@ -140,11 +150,10 @@ function weaponEnchant({ view, personas }) {
     const scrollOf = {};
     for (const [id, row] of Object.entries(Scrolls.ENCHANT_SCROLLS)) if (row.target === 'weapon' && row.scrollType === 'normal') scrollOf[row.grade] = Number(id);
     const gradeName = id => String(view.items[id]?.grade || 'NONE').toUpperCase();
-    const kitGrade = (line, level) => Math.max(0, ...(view.kits?.[line]?.[level] || []).filter(row => Engine.isWeapon(view.items[row.selfId])).map(row => GRADE_ORDER[gradeName(row.selfId)] ?? 0));
     return {
         next(main, town, reserve) {
             const grade = gradeName(main.weapon), order = GRADE_ORDER[grade] ?? 0, level = main.enchant || 0;
-            if (order < GRADE_ORDER.C || order > GRADE_ORDER.A || order !== kitGrade(main.line, main.level) || !scrollOf[grade]) return null;
+            if (order < GRADE_ORDER.C || order !== kitWeaponGrade(view, main.line, main.level) || !scrollOf[grade]) return null;
             const ambitious = Number(personas.get(main.id)?.traits?.ambition) >= AMBITIOUS_TRAIT;
             const max = Rules.maxFor('weapon', config);
             if (level >= (ambitious ? ENCHANT_AMBITIOUS_TARGET : Number(config.safeMax)) || (max > 0 && level >= max)) return null;
@@ -156,4 +165,4 @@ function weaponEnchant({ view, personas }) {
     };
 }
 
-module.exports = { npcGear, kitReserve, weaponEnchant, GRADE_ORDER, ENCHANT_WALLET_WEAPONS };
+module.exports = { npcGear, kitReserve, weaponEnchant, kitWeaponGrade, GRADE_ORDER, ENCHANT_WALLET_WEAPONS };
