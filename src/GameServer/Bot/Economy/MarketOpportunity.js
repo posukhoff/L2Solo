@@ -144,11 +144,10 @@ function storeOffer(session, store, item, town) {
         town: town || store.town || null,
         selfId: Number(item.selfId),
         itemName: itemName(item.selfId),
-        price: sellerKind === 'fixed' && (SHOT_IDS.has(Number(item.selfId)) || item.reserve === true)
+        price: sellerKind === 'fixed' && SHOT_IDS.has(Number(item.selfId))
             ? invoke('GameServer/Bot/TradeService').storeItemPrice(store, item, BOT_PRICE_CONTEXT)
             : Number(item.price),
         count: Number(item.count),
-        reserve: item.reserve === true,
         objectId: Number(item.objectId) || null,
         enchant: Number(item.enchant || 0),
         available: true,
@@ -310,7 +309,8 @@ function activeBuyDemandSelfIds() {
 
 // A companion may leave the field for the city that actually sells the
 // requested item.  Checking only the geographically nearest town made a
-// valid item look impossible whenever its NPC list lived elsewhere.
+// valid item look impossible whenever its NPC list lived elsewhere. The gear
+// reserve sells a bot's own plan only: the player's errand never buys from it.
 function bestSupplyOffer(selfId, options = {}) {
     const amount = Math.max(1, Number(options.amount) || 1);
     const towns = options.towns || [...new Set([...Object.keys(TownNpcCatalog.sellersByTown()),
@@ -318,7 +318,7 @@ function bestSupplyOffer(selfId, options = {}) {
     const cost = options.cost || OfferOrder.tripCost(options.state || { loc: options.origin }, { origin: options.origin });
     return bestOffer(selfId, { ...options, towns,
         cost: cost ? (town) => cost(town) / amount : null,
-        accept: (offer) => Number(offer.count) >= amount && Number(offer.price) > 0
+        accept: (offer) => Number(offer.count) >= amount && Number(offer.price) > 0 && offer.reserve !== true
             && (!options.accept || options.accept(offer)) });
 }
 
