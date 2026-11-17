@@ -27,7 +27,7 @@ const START = 1.3, STEP = 1.05, VALVE = 2, SCROLL_CEILING = 5;
 const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
-const SHOT_MAINS_PER_GNOME = 25, GEAR_WEAPONS_PER_GNOME = 2;
+const SHOT_MAINS_PER_GNOME = Number(process.env.GNOME_SHOT_MAINS || 4), GEAR_WEAPONS_PER_GNOME = Number(process.env.GNOME_GEAR_WEAPONS || 0.3);
 
 // market({ view, gnomeLines, share, scrolls: { grade: scrollId }, recipes }): the trade's state, mutated by the plane
 // in event order (one run, one market).
