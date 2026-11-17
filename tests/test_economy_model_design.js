@@ -845,4 +845,23 @@ for (const supply of ['table', 'formula']) {
     assert.equal(gear.next(archer(2000000), 'Gludio', 0), null, 'a town with no route to a seller gives nothing');
 }
 
+// The C/B/A reserve stub: the line's reference kit at the main's level, the pieces of grade C+ the main wears at a
+// lower grade, weapon first, from the reserve store (channel fixed_wts) when the wallet above the reserve pays the
+// price and the fare; nothing for a piece an NPC sells, one already worn at its grade or a wallet that does not pay.
+{
+    const Gear = require('../scripts/economy-model/gear');
+    const CBOW = 9001, CSHIRT = 9002, DSHIRT = 391;
+    const view = { kits: { 9: { 50: [{ selfId: CBOW, slot: 14 }, { selfId: CSHIRT, slot: 10 }] } },
+        offers: new Map([[CBOW, [{ town: 'Giran', price: 2000000, channel: 'fixed_wts' }]], [CSHIRT, [{ town: 'Giran', price: 900000, channel: 'fixed_wts' }]]]),
+        items: { [CBOW]: { kind: 'Weapon.Bow', grade: 'C' }, [CSHIRT]: { kind: 'Armor.Leather', grade: 'C' }, [DSHIRT]: { kind: 'Armor.Leather', grade: 'D' }, 274: { kind: 'Weapon.Bow', grade: 'D' } },
+        fares: {} };
+    const reader = Gear.kitReserve({ snapshot: { gearLadder: { slots: {} } }, view });
+    const main = money => ({ line: 9, level: 50, money, kit: { 14: 274, 10: DSHIRT }, weapon: 274 });
+    assert.equal(reader.next(main(5000000), 'Giran', 1000000).selfId, CBOW, 'the weapon first');
+    assert.equal(reader.next(main(2500000), 'Giran', 1000000).selfId, CSHIRT, 'the weapon is not funded above the reserve, the shirt is');
+    assert.equal(reader.next(main(1500000), 'Giran', 1000000), null, 'nothing is funded above the reserve');
+    assert.equal(reader.next({ ...main(5000000), kit: { 14: CBOW, 10: CSHIRT }, weapon: CBOW }, 'Giran', 0), null, 'the kit is worn');
+    assert.equal(reader.next({ ...main(5000000), level: 49 }, 'Giran', 0), null, 'no kit row of that level');
+}
+
 console.log('economy model design: ok');

@@ -454,7 +454,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                 };
                 // The gear rule's own null ends it: each piece costs more than the NPC pays back for what it replaces.
                 for (;;) {
-                    const buy = gear.next(next, at, reserveOf(next, row, at, spotTown));
+                    const keep = reserveOf(next, row, at, spotTown), buy = gear.next(next, at, keep) || (gear.kitReserve ? gear.kitReserve.next(next, at, keep) : null);
                     if (!buy || (buy.town !== at && hopped)) break;
                     if (buy.town !== at) hop(buy);
                     next = EXECUTORS.gear(next, { kind: 'gear', id: buy.selfId, slot: buy.slot, price: buy.price, channel: buy.channel }, sold.delta, view);

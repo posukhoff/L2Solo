@@ -63,4 +63,36 @@ function npcGear({ snapshot, view }) {
     };
 }
 
-module.exports = { npcGear };
+// kitReserve({ snapshot, view }) -> { next(main, town, reserve) }: a stub of the
+// game's C/B/A gear purchase (the full planner is not modelled): the piece of the
+// line's reference kit at the main's level (view.kits) of grade C, B or A that the
+// main wears at a lower grade, weapon first, then armour, then jewels, bought from
+// the cheapest reserve offer (Engine.sellerOf, a configured store's gear line) when
+// the wallet above reserve pays its price and the fare to its town. null when there
+// is none. Same answer shape as npcGear's next.
+const GRADE_ORDER = { NONE: 0, D: 1, C: 2, B: 3, A: 4, S: 5 };
+const KIT_ORDER = slot => (slot >= 1 && slot <= 5 ? 2 : 1);
+function kitReserve({ snapshot, view }) {
+    const Templates = invoke('GameServer/Item/ItemTemplateIndex'), DataCache = invoke('GameServer/DataCache');
+    const gradeOf = id => GRADE_ORDER[String(view.items[id]?.grade || 'NONE').toUpperCase()] ?? 0;
+    return {
+        next(main, town, reserve) {
+            const rows = view.kits?.[main.line]?.[main.level];
+            if (!rows) return null;
+            const worn = KitHours.kitInHand(snapshot, main);
+            const wornGrade = (row, weapon) => (weapon ? gradeOf(main.weapon) : gradeOf(worn[row.slot]));
+            const wanted = rows.map(row => ({ ...row, weapon: Engine.isWeapon(view.items[row.selfId]) }))
+                .filter(row => gradeOf(row.selfId) >= GRADE_ORDER.C && gradeOf(row.selfId) > wornGrade(row, row.weapon))
+                .sort((a, b) => (b.weapon - a.weapon) || (KIT_ORDER(a.slot) - KIT_ORDER(b.slot)));
+            for (const row of wanted) {
+                const seller = Engine.sellerOf(view, row.selfId, town);
+                if (!seller || seller.channel !== 'fixed_wts' || !(seller.price + seller.fare <= main.money - reserve)) continue;
+                const slot = row.weapon ? Number(Templates.find(DataCache.items, row.selfId)?.etc?.slot || row.slot) : Number(row.slot);
+                return { selfId: Number(row.selfId), slot, price: seller.price, weapon: row.weapon, town: seller.town, fare: seller.fare, channel: seller.channel };
+            }
+            return null;
+        }
+    };
+}
+
+module.exports = { npcGear, kitReserve };

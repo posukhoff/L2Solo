@@ -226,8 +226,8 @@ function modeOf(argv, snapshot, cohort) {
         for (const id of view.offers.keys()) anchor[id] = Engine.sellerOf(view, id).price;
         const kitHours = KitHours.gameKitHours({ snapshot, anchor });
         kitHours.warm();
-        // The gear a main buys in a town chain: the game's NPC gear rule.
-        const gear = Gear.npcGear({ snapshot, view });
+        // The gear a main buys in a town chain: the game's NPC gear rule, then a stub of the C/B/A reserve purchase.
+        const gear = { ...Gear.npcGear({ snapshot, view }), kitReserve: Gear.kitReserve({ snapshot, view }) };
         return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation }, gear }) };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);
