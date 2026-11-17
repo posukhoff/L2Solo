@@ -34,6 +34,8 @@ const HuntRows = require('./rules/hunt-rows');
 const { STAGE_BANDS } = require('../economy/ledger-rules');
 // The dwarf fighter's class: the gnome trade's lines pass through it.
 const DWARF_FIGHTER = 53;
+// The fighter base classes (human, elf, dark elf, orc fighter): the measured lines a dwarf stub row is compared with at 1-19.
+const FIGHTER_BASES = Object.freeze([0, 18, 31, 44]);
 
 // What version 1 of the model leaves out; each number it prints omits these.
 const LEFT_OUT = Object.freeze([
@@ -200,7 +202,7 @@ function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFacto
     if (file.stamp !== expected.stamp) throw new Error(`hunt table ${name}: stamp ${file.stamp}, but the snapshot was built with ${expected.name} (stamp ${expected.stamp})`);
     if (file.range.join('-') !== expected.range.join('-')) throw new Error(`hunt table ${name}: levels ${file.range.join('-')}, but the snapshot was built with ${expected.name} (levels ${expected.range.join('-')})`);
     if (Object.keys(file.spots).sort().join() !== expected.spots.join()) throw new Error(`hunt table ${name}: ${Object.keys(file.spots).length} spots, but the snapshot was built with ${expected.name} (${expected.spots.length} spots, not the same set)`);
-    const hours = { ...snapshot.hours }, cannot = { shots: 0, bare: 0 }, [from, to] = file.range;
+    const hours = { ...snapshot.hours }, cannot = { shots: 0, bare: 0 }, [from, to] = file.range, stubs = [];
     for (const line of lines) {
         if (!snapshot.hours[line]) continue;
         hours[line] = { ...snapshot.hours[line] };
@@ -209,7 +211,7 @@ function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFacto
             if (!held) continue;
             const key = keyOf(line, level), bodies = Object.entries(file.bodies).filter(([body]) => body.startsWith(`${key}|${level}|`));
             // A line the 1-19 table never measured (the dwarf mains of the gnome trade) keeps the game's spot table row (a stub).
-            if (bodies.length === 0) continue;
+            if (bodies.length === 0) { stubs.push([line, level]); continue; }
             if (bodies.length !== 1) throw new Error(`hunt table ${name}: ${bodies.length} kit points for key ${key} at level ${level} (one measured point, the creation kit's)`);
             const read = HuntRows.lineRows({ file, key, level, point: bodies[0][1].point, rates: snapshot.header.rates, speciesYields: snapshot.speciesYields,
                 spoilLevel: spoilLevelOf(line, level), items: snapshot.items, gapFactor });
@@ -217,6 +219,20 @@ function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFacto
             hours[line][level] = { classId: held.classId, shotId: held.shotId, top: read.rows.filter(row => row.kills > 0),
                 bareTop: read.rows.filter(row => row.shotless.kills > 0) };
         }
+    }
+    // A stub row no richer than the measured fighter lines (maintainer, ours): at each level a stub line's rows scale down
+    // to the median of the fighter lines' best rows (FIGHTER_BASES: the line's class there), exp and money (adena and
+    // loot, shots form) apart; a stub at or below the median stays.
+    const bestOf = (rows, field) => rows.reduce((top, row) => Math.max(top, field(row)), 0), money = row => (row.adena || 0) + (row.loot || 0);
+    const median = values => { const sorted = values.filter(value => value > 0).sort((a, b) => a - b); return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0; };
+    for (const [line, level] of stubs) {
+        const fighters = lines.filter(other => hours[other]?.[level]?.top && FIGHTER_BASES.includes(hours[other][level].classId)).map(other => hours[other][level].top);
+        const held = hours[line][level], own = [held.best, ...(held.top || [])].filter(Boolean);
+        const expBy = Math.min(1, median(fighters.map(rows => bestOf(rows, row => row.exp))) / (bestOf(own, row => row.exp) || 1) || 1);
+        const moneyBy = Math.min(1, median(fighters.map(rows => bestOf(rows, money))) / (bestOf(own, money) || 1) || 1);
+        const scaled = row => row && ({ ...row, exp: row.exp * expBy, adena: row.adena * moneyBy, dropLoot: row.dropLoot * moneyBy, spoilLoot: row.spoilLoot * moneyBy, loot: row.loot * moneyBy,
+            ...(row.shotless ? { shotless: scaled(row.shotless) } : {}) });
+        hours[line][level] = Object.fromEntries(Object.entries(held).map(([key, value]) => [key, Array.isArray(value) ? value.map(scaled) : value && typeof value === 'object' ? scaled(value) : value]));
     }
     return { hours, range: [from, to], cannot };
 }
