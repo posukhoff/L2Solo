@@ -27,10 +27,13 @@ const botLines = store => store.items.map(line => ({ selfId: line.selfId, count:
 // moving player prices must not change any retained bot payout or shot price.
 // x10/x50 moved once when the payout cap read the one NPC table (town
 // sellers): 4 jewelry payouts no longer sit under fallback lists no NPC sells.
+// x10/x50 moved again when the gear reserve lines (left out here) joined the
+// repeatable supply: 16 B/A gear payouts of the fixed buyers sit 10 % under
+// the reserve price (a bot sells only materials there, TradeService).
 const baselineBotPrices = {
     1: '650518d7b76a4b21e7dc71255cad60543aee1ca6e291dda45783cfad1cb4f794',
-    10: 'a5f70e02681bb4a84613486029ab153743db24808598334544b08dc7c90057b6',
-    50: '848b3d3cd1d1391201a1df73179ad3653862a2bbf1d80472346e8b8af4e9fa24'
+    10: 'fa985b85f72de9dd4b5d9168d82fcc3c8ddc0e0822ec548a1f8251cad6f86131',
+    50: 'b41535a8fc187ba82e311ecfb7e6ed4ae0530958067f266238088ff1c9ea35f4'
 };
 
 function inventoryItem(selfId, amount) {
@@ -48,7 +51,7 @@ async function run() {
     for (const rate of [1, 10, 50]) {
         ProgressionRates.profile = () => ({ adena: rate, multiplier: rate });
         const retainedPrices = Object.entries(Configs).flatMap(([name, store]) => (
-            store.items.map(line => [name, line.selfId, Pricing.botPriceFor(store, line)])
+            store.items.filter(line => line.reserve !== true).map(line => [name, line.selfId, Pricing.botPriceFor(store, line)])
         ));
         assert.strictEqual(crypto.createHash('sha256').update(JSON.stringify(retainedPrices)).digest('hex'),
             baselineBotPrices[rate], `every retained bot price matches the baseline at x${rate}`);

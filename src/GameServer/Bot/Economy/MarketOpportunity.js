@@ -118,8 +118,9 @@ function npcOffersAll(selfId) {
     return held.all.map(offer => ({ ...offer }));
 }
 
-// Ordinary NPC shops stay; configured city stores provide reserve shots.
-// Execution applies the same policy, including the optional shot switch.
+// Ordinary NPC shops stay; configured city stores provide reserve shots and
+// their reserve gear lines. Execution applies the same policy, including the
+// optional reserve switch.
 function botCanBuy(offer) {
     return !!offer && OfferQuery.sourceAllowed(offer, offer.sourceType === 'configured_store' || offer.sellerKind === 'fixed'
         || (offer.sourceType === 'private_store' && !!MerchantStoreConfigs[offer.sourceName]));
@@ -143,10 +144,11 @@ function storeOffer(session, store, item, town) {
         town: town || store.town || null,
         selfId: Number(item.selfId),
         itemName: itemName(item.selfId),
-        price: sellerKind === 'fixed' && SHOT_IDS.has(Number(item.selfId))
+        price: sellerKind === 'fixed' && (SHOT_IDS.has(Number(item.selfId)) || item.reserve === true)
             ? invoke('GameServer/Bot/TradeService').storeItemPrice(store, item, BOT_PRICE_CONTEXT)
             : Number(item.price),
         count: Number(item.count),
+        reserve: item.reserve === true,
         objectId: Number(item.objectId) || null,
         enchant: Number(item.enchant || 0),
         available: true,
@@ -177,7 +179,8 @@ function privateOffers(selfId, town) {
     });
 }
 
-// The worker and native purchase executor share the same shot-only table.
+// The worker and native purchase executor share the same reserve table (shots
+// and reserve gear).
 const fixedStoreOffers = require('./FixedShotOffers').offers;
 const TownTransitPolicy = invoke('GameServer/Bot/AI/TownTransitPolicy');
 const PartyAdmission = require('../Population/PartyAdmission');
@@ -213,8 +216,8 @@ function hotOffers(selfId, options = {}) {
 
 // The one offer query (OfferQuery) for a buyer on the main thread: what a
 // cold bot can buy without meeting anyone (board records, NPC shops and the
-// configured shot merchants; a player's or a bot's live private store trades
-// face to face only), in `town`, in each of `towns` or in every
+// configured reserve: shots and reserve gear; a player's or a bot's live
+// private store trades face to face only), in `town`, in each of `towns` or in every
 // town (the board and the configured merchants only: an NPC shop is in a
 // town), the first in the one order within `budget` that `accept` takes.
 // The offers are the ones the bot's build quotes (OfferQuery.admits, the build's reader).
