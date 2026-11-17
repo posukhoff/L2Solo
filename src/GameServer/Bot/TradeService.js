@@ -530,14 +530,14 @@ async function sellToStore(actor, store, selfId, qty, options = {}) {
                 if (storeItem.count <= 0) store.items = store.items.filter(item => item !== storeItem);
                 actorItem = sellableCopy(actor, selfId, options.objectId);
                 sellQty = Math.min(left, Number(actorItem?.fetchAmount() || 0));
-                if (quote.npcPrice !== unitPrice) sellQty = 0;
+                if (quote.linePrice !== unitPrice) sellQty = 0;
                 if (!sellQty) {
                     if (!adQty) throw new Error('Store price changed.');
                     const result = staticResult();
                     await runPostCommitCallback('afterTrade', options.afterTrade, result, storeItem);
                     return result;
                 }
-                unitPrice = quote.npcPrice;
+                unitPrice = quote.linePrice;
             }
 
             const totalEarn = unitPrice * sellQty;
