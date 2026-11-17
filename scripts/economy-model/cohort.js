@@ -36,6 +36,7 @@ const ADENA = 57;
 // support by our rule; every other line's role (dps, tank, dagger, archer,
 // mage, healer, buffer) plays a main.
 const DWARF_FIGHTER = 53;
+const DWARF_LINE_SHARE = 0.1;
 // A trait at or above it is high: ours, initial from the game's persona text
 // cards (BotPersona.js: commitment >= 0.62).
 const HIGH_TRAIT = 0.62;
@@ -55,8 +56,8 @@ function linesByClass(snapshot) {
     return out;
 }
 
-function weightedPick(lines, random) {
-    const weights = lines.map(line => Weights.CLASS_WEIGHTS[line] || 0);
+function weightedPick(lines, random, classWeights = Weights.CLASS_WEIGHTS) {
+    const weights = lines.map(line => classWeights[line] || 0);
     const total = weights.reduce((sum, weight) => sum + weight, 0);
     if (!(total > 0)) return lines[Math.floor(random() * lines.length)];
     let roll = random() * total;
@@ -207,10 +208,10 @@ function freshLines(lines, classAtOne) {
 // draw), at the line's class of that level, holding moneyOf(level), the shots
 // shotsOf(classId) gives ({ selfId: count }; none by default) and the kit kitOf(line, level, classId) gives ([{ selfId, slot, amount,
 // equipped }]): the equipped pieces worn in their slots, every piece in the bag.
-function accountsOf({ count, random, lines, levelOf, moneyOf, kitOf, shotsOf = () => ({}) }, snapshot) {
+function accountsOf({ count, random, lines, levelOf, moneyOf, kitOf, shotsOf = () => ({}), weights = Weights.CLASS_WEIGHTS }, snapshot) {
     const accounts = [], types = {};
     for (let i = 0; i < count; i++) {
-        const line = weightedPick(lines, random), level = levelOf(i, random), classId = snapshot.hours[line][level]?.classId ?? Number(line);
+        const line = weightedPick(lines, random, weights), level = levelOf(i, random), classId = snapshot.hours[line][level]?.classId ?? Number(line);
         const kit = kitOf(line, level, classId);
         const account = { id: i + 1, station: false, classId, line, level,
             exp: snapshot.exp[level - 1], money: moneyOf(level), spot: null, shots: shotsOf(classId), held: kit.map(piece => piece.selfId),
@@ -245,17 +246,23 @@ function synthetic({ count, low, high, seed = 1 }, snapshot) {
 // character-creation kit of that class, worn as a new character wears it
 // (StarterItemCatalog.starterRows, the game's one rule for players and bots). Needs the game's data (the hunt tables' boot). A line
 // without its level-1 class in the snapshot throws: no class to start in.
-function fresh({ count, seed = 1 }, snapshot) {
+function fresh({ count, seed = 1, dwarves = false }, snapshot) {
     boot();
     const Data = invoke('GameServer/DataCache');
     const weighted = weightedLines(snapshot);
     for (const line of weighted) if (!snapshot.hours[line][1]) throw new Error(`fresh world: line ${line} has no level-1 class in the snapshot (hours[${line}][1])`);
-    const lines = freshLines(weighted, line => snapshot.hours[line][1].classId);
+    const plain = freshLines(weighted, line => snapshot.hours[line][1].classId);
+    // dwarves (the gnome trade, decision 469): the dwarf lines are mains too, each DWARF_LINE_SHARE of the mains (the
+    // game's 11-11 save: 340 dwarves of 1700, 174 spoilers and 166 crafters), the other lines by their class weights.
+    const dwarfLines = dwarves ? Object.keys(snapshot.hours).filter(line => snapshot.hours[line][1]?.classId === DWARF_FIGHTER && !plain.includes(line)) : [];
+    const plainWeight = plain.reduce((sum, line) => sum + (Weights.CLASS_WEIGHTS[line] || 0), 0);
+    const dwarfWeight = plainWeight * DWARF_LINE_SHARE / (1 - DWARF_LINE_SHARE * dwarfLines.length);
+    const weights = { ...Weights.CLASS_WEIGHTS, ...Object.fromEntries(dwarfLines.map(line => [line, dwarfWeight])) }, lines = [...plain, ...dwarfLines];
     const kitOf = (line, level, classId) => StarterItemCatalog.starterRows(Data.newbieItems, classId, Data.items)
         .map(row => ({ selfId: Number(row.selfId), slot: row.slot, amount: Number(row.amount) || 1, equipped: row.equipped }));
     const ShotStock = invoke('GameServer/Inventory/ShotStock');
     const shotsOf = classId => { const plan = ShotStock.starterPlanFor(classId); return { [plan.selfId]: plan.amount }; };
-    const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), lines, levelOf: () => 1, moneyOf: () => 0, kitOf, shotsOf }, snapshot);
+    const accounts = accountsOf({ count, random: mulberry(hash(`fresh:${seed}`)), lines, levelOf: () => 1, moneyOf: () => 0, kitOf, shotsOf, weights }, snapshot);
     return { accounts, source: `fresh ${count} accounts at level 1, beneficiary lines by class weights, creation kits`, lines: { exact: 0, drawn: count, noLine: 0, stations: 0 } };
 }
 

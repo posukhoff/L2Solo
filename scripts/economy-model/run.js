@@ -61,7 +61,7 @@ const LEFT_OUT_DESIGN = Object.freeze([
 function cohortOf(argv, snapshot) {
     if (Boot.option(argv, 'mode', 'plain') === 'design') {
         for (const name of ['cohort', 'levels']) if (Boot.option(argv, name, null) !== null) throw new Error(`design mode runs a fresh world: --${name} is refused (use --accounts and --seed)`);
-        return Cohort.fresh({ count: Number(Boot.option(argv, 'accounts', 1700)), seed: Number(Boot.option(argv, 'seed', 1)) }, snapshot);
+        return Cohort.fresh({ count: Number(Boot.option(argv, 'accounts', 1700)), seed: Number(Boot.option(argv, 'seed', 1)), dwarves: Boot.option(argv, 'gnome-share', null) !== null }, snapshot);
     }
     const baseline = Boot.option(argv, 'cohort', null);
     if (baseline) {
@@ -170,7 +170,7 @@ function printKpi(out) {
         + `gnome margin ${M(trade.margin)} (credited ${M(trade.credited)}), material spread ${M(trade.spread)}; hidden-store spend ${M(trade.hiddenSpend.gnomeWholesale + trade.hiddenSpend.valve + trade.hiddenSpend.gnomeOwn)} `
         + `(wholesale to gnomes ${M(trade.hiddenSpend.gnomeWholesale)}, valve ${M(trade.hiddenSpend.valve)}, gnomes' own ${M(trade.hiddenSpend.gnomeOwn)}); `
         + `scrolls supplied ${s.supplied}, bought ${s.bought}, refused (no stock) ${s.refused}, drops used ${s.dropUsed}`);
-    console.log(`KPI market price index (x ref) ${index}`);
+    console.log(`KPI market price index (x ref) ${index}; capacity: shots per main-hour ${Object.entries(trade.shotsPerHour || {}).map(([g, v]) => `${g} ${v.toFixed(0)}`).join(' ')}`);
 }
 
 function printFooter(design = false) {
@@ -270,7 +270,19 @@ function modeOf(argv, snapshot, cohort) {
         // of the dwarf fighter's class (53) at some level.
         const share = Boot.option(argv, 'gnome-share', null);
         const gnomeLines = Object.entries(snapshot.hours).filter(([, byLevel]) => Object.values(byLevel).some(hour => hour?.classId === DWARF_FIGHTER)).map(([line]) => line);
-        const trade = share === null ? null : Reseller.market({ view, gnomeLines, share: Number(share), scrolls: Gear.weaponScrolls(), recipes: snapshot.recipes });
+        // A main's shots per hunting hour by shot grade: the mean of the lines' best rows at the levels whose kit weapon is that grade.
+        const shotsPerHour = {};
+        if (share !== null) {
+            const sums = {}, names = Object.keys(Gear.GRADE_ORDER);
+            for (const line of Object.keys(snapshot.hours)) for (let level = 20; level <= view.maxLevel; level++) {
+                const hour = Engine.hourOf(view, { line, level, spot: null, occupied: null, kit: {}, weapon: 0, shots: {}, bag: {} });
+                const grade = names[Gear.kitWeaponGrade(view, line, level)], shots = hour?.best?.shots || 0;
+                if (grade !== 'NONE' && shots > 0) { const sum = sums[grade] ||= [0, 0]; sum[0] += shots; sum[1]++; }
+            }
+            for (const [grade, [total, n]] of Object.entries(sums)) shotsPerHour[grade] = total / n;
+            shotsPerHour.S = shotsPerHour.A;
+        }
+        const trade = share === null ? null : Reseller.market({ view, gnomeLines, share: Number(share), scrolls: Gear.weaponScrolls(), recipes: snapshot.recipes, shotsPerHour });
         return { view, rates: { default: { huntShare: 1 } }, plane: Plane.plane({ view, kitHours, variant, accounts: cohort.accounts, table: { range: table.range, creation: table.creation }, gear, market: trade }) };
     }
     if (mode !== 'today') throw new Error(`unknown mode ${mode} (plain, today or design)`);

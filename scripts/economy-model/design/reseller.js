@@ -12,12 +12,14 @@
 // holds it until then). Scrolls come from a capped server stock per grade (refilled each hour, at most two hours'
 // worth). Market prices float at each hour's close, 5 % up when the hour's demand exceeds the gnome supply, else
 // 5 % down, between ref x1 and the ceiling: shots per (grade, town), gear and scrolls per grade. The gnome supply
-// is the wallets of the gnomes that serve the market (ours: the adena they can front at wholesale; demand is the
-// wholesale value they fronted); for scrolls the hour's stock against the units wanted. Materials: another main
+// is a turnover capacity (decision 469): for shots of a grade in a town, the hour's shot need of SHOT_MAINS_PER_GNOME
+// mains per gnome serving the town (units: shotsPerHour[grade], a main's shots per hunting hour at that grade); for
+// gear of a grade, the wholesale value of GEAR_WEAPONS_PER_GNOME C weapons per gnome of the server (each grade's
+// wholesale demand against it); for scrolls the hour's stock against the units wanted. Materials: another main
 // sells the materials of the gnome goods' recipes to a gnome in its town at the gnome bid (between the NPC
 // buy-back and the fixed buyer's 1.5 x the NPC buy-back, start 1.2 x), else to the NPC; the gnome sells them on to
 // the fixed buyer (the faucet) and keeps the spread. The bid falls 5 % in an hour when the materials offered exceed
-// the town's gnome wallets, else rises.
+// the town's gnome turnover (GEAR_WEAPONS_PER_GNOME C weapons' value per gnome), else rises.
 const { GRADE_ORDER } = require('../gear');
 const Engine = require('../engine');
 
@@ -25,10 +27,11 @@ const START = 1.3, STEP = 1.05, VALVE = 2, SCROLL_CEILING = 5;
 const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
+const SHOT_MAINS_PER_GNOME = 25, GEAR_WEAPONS_PER_GNOME = 2;
 
 // market({ view, gnomeLines, share, scrolls: { grade: scrollId }, recipes }): the trade's state, mutated by the plane
 // in event order (one run, one market).
-function market({ view, gnomeLines, share, scrolls, recipes }) {
+function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour }) {
     const lines = new Set([...gnomeLines].map(String));
     const scrollGrade = new Map(Object.entries(scrolls).map(([grade, id]) => [Number(id), grade]));
     const shotGrade = new Map();
@@ -46,6 +49,8 @@ function market({ view, gnomeLines, share, scrolls, recipes }) {
         const own = rows.filter(row => row.channel === 'fixed_wts');
         if (own.length && kindOf(id)) { hidden.set(id, own); ref.set(id, Math.min(...own.map(row => row.price))); }
     }
+    const cWeapons = [...ref].filter(([id]) => kindOf(id).kind === 'gear' && kindOf(id).grade === 'C' && Engine.isWeapon(view.items[id])).map(([, price]) => price);
+    const cWeaponRef = cWeapons.length ? cWeapons.reduce((a, b) => a + b, 0) / cWeapons.length : 0;
     // The materials of the recipes of the goods the trade covers.
     const materials = new Set();
     for (const recipe of recipes || []) if (kindOf(Number(recipe.productId))) for (const m of recipe.materials) materials.add(Number(m.selfId));
@@ -66,7 +71,7 @@ function market({ view, gnomeLines, share, scrolls, recipes }) {
     // The hour's books: demand and supply by market key, the margin by town.
     let hour = { demand: new Map(), offered: new Map(), stock: { ...stock } };
     const stats = { shotUnits: { gnome: 0, valve: 0, own: 0 }, gearPieces: { gnome: 0, valve: 0, own: 0 }, scrolls: { supplied: 0, bought: 0, refused: 0, dropUsed: 0 },
-        gearWait: { started: 0, ended: [], open: new Map() }, margin: 0, spread: 0, hiddenSpend: { gnomeWholesale: 0, valve: 0, gnomeOwn: 0 }, credited: 0, index: {}, money: {} };
+        gearWait: { started: 0, ended: [], open: new Map() }, margin: 0, spread: 0, hiddenSpend: { gnomeWholesale: 0, valve: 0, gnomeOwn: 0 }, credited: 0, index: {}, money: {}, shotsPerHour };
     const add = (map, key, value) => map.set(key, (map.get(key) || 0) + value);
     const priceAt = (id, m) => Math.round(ref.get(id) * m);
     const wholesaleMult = m => Math.max(1, share * m);
@@ -119,7 +124,7 @@ function market({ view, gnomeLines, share, scrolls, recipes }) {
                 add(pool, town, entry.count * (entry.price - wholesale));
                 stats.margin += entry.count * (entry.price - wholesale);
                 stats.hiddenSpend.gnomeWholesale += entry.count * wholesale;
-                add(hour.demand, keyOf(what.kind, what.grade, town), entry.count * (what.kind === 'scroll' ? 1 : wholesale));
+                add(hour.demand, keyOf(what.kind, what.grade, town), entry.count * (what.kind === 'gear' ? wholesale : 1));
                 if (what.kind === 'shot') stats.shotUnits.gnome += entry.count; else if (what.kind === 'gear') stats.gearPieces.gnome += entry.count;
                 else { stats.scrolls.bought += entry.count; stock[what.grade] -= entry.count; }
             }
@@ -149,18 +154,19 @@ function market({ view, gnomeLines, share, scrolls, recipes }) {
                 for (const index of gnomes) pending.set(index, (pending.get(index) || 0) + each);
                 pool.set(town, amount - each * gnomes.length);
             }
-            const wallet = index => latest.get(index)?.money || 0;
-            const townWallets = town => (towns.get(town) || []).reduce((sum, index) => sum + wallet(index), 0);
-            const allWallets = [...townsOf.keys()].reduce((sum, index) => sum + wallet(index), 0);
+            // The materials a town's gnomes take in an hour: the same turnover, GEAR_WEAPONS_PER_GNOME C weapons' value each.
+            const materialCapacity = town => (towns.get(town)?.length || 0) * GEAR_WEAPONS_PER_GNOME * cWeaponRef;
+            const gearCapacity = townsOf.size * GEAR_WEAPONS_PER_GNOME * cWeaponRef * wholesaleMult(multOf(keyOf('gear', 'C')));
+            const shotCapacity = (grade, town) => (towns.get(town)?.length || 0) * SHOT_MAINS_PER_GNOME * (shotsPerHour[grade] || 0);
             const keys = new Set([...mult.keys(), ...hour.demand.keys()]);
             for (const key of keys) {
                 const [kind, grade, town] = key.split('|');
-                const supply = kind === 'shot' ? townWallets(town) : kind === 'gear' ? allWallets : hour.stock[grade];
+                const supply = kind === 'shot' ? shotCapacity(grade, town) : kind === 'gear' ? gearCapacity : hour.stock[grade];
                 const ceiling = kind === 'scroll' ? SCROLL_CEILING : VALVE;
                 mult.set(key, Math.min(ceiling, Math.max(1, multOf(key) * ((hour.demand.get(key) || 0) > supply ? STEP : 1 / STEP))));
             }
             for (const town of new Set([...bids.keys(), ...hour.offered.keys()])) {
-                bids.set(town, Math.min(BID.high, Math.max(BID.low, bidOf(town) * ((hour.offered.get(town) || 0) > townWallets(town) ? 1 / STEP : STEP))));
+                bids.set(town, Math.min(BID.high, Math.max(BID.low, bidOf(town) * ((hour.offered.get(town) || 0) > materialCapacity(town) ? 1 / STEP : STEP))));
             }
             for (const [grade, n] of Object.entries(SCROLLS_PER_HOUR)) { stock[grade] = Math.min(STOCK_HOURS * n, stock[grade] + n); stats.scrolls.supplied += n; }
             hour = { demand: new Map(), offered: new Map(), stock: { ...stock } };
