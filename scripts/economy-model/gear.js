@@ -52,6 +52,16 @@ function npcGear({ snapshot, view }) {
                 return { sourceType: 'npc', price: seller.price, town: seller.town };
             };
             const plan = Planner.staticNpcUpgradePlan(state, { findNpcOffer, buyOrderEscrow: 0 });
+            // A dual-only class without a dual sword (the game's dual-sword bridge: two NPC blades combined at the
+            // blacksmith): the model buys the combination's product at the bridge's cost (its blades' prices) from the
+            // first blade's seller (ours: the bag between the two blades and the combine are not modelled; bought as the
+            // blade it would wear, each visit replaced the other blade and the line never held a dual).
+            if (plan?.weaponBridge && plan.combine) {
+                const blade = sellers.get(Number(plan.target.selfId)), selfId = Number(plan.combine.resultId), price = Number(plan.bridgeCost);
+                if (!blade || !(price + blade.fare <= PurchaseFunding.spendable(state, 0, { upperBound: true }))) return null;
+                const slot = Number(Templates.find(DataCache.items, selfId)?.etc?.slot || 14);
+                return { selfId, slot, price, weapon: true, town: blade.town, fare: blade.fare, channel: blade.channel };
+            }
             // Funded in the game's terms (npcPurchaseBudget): the price, and here the fare, within the wallet above the reserve.
             const seller = plan?.market ? sellers.get(Number(plan.target.selfId)) : null;
             if (!seller || !(Number(plan.market.price) + seller.fare <= PurchaseFunding.spendable(state, 0, { upperBound: true }))) return null;
