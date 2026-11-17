@@ -1161,6 +1161,11 @@ function buildProjection(state, ctx, deps) {
         // once it closes, the ordinary C weapon/armour/jewellery order resumes.
         if (a.candidate.firstWeaponGrade && b.candidate.firstWeaponGrade && a.readyGear !== b.readyGear)
             return a.readyGear;
+        // Within one progression priority a piece the wallet pays now comes
+        // before a dearer one it waits for (econ decision 453: a C bot with
+        // 3.5M took the 4.3M weapon and waited, a 3.2M one was in reach).
+        if (a.node.progressionPriority > 0 && a.node.progressionPriority === b.node.progressionPriority && a.readyGear !== b.readyGear)
+            return a.readyGear;
         return a.node.progressionPriority !== b.node.progressionPriority
             ? a.node.progressionPriority > b.node.progressionPriority
             : (a.node.key === ctx.completionKey) !== (b.node.key === ctx.completionKey)
