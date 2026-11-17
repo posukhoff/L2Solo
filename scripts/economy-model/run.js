@@ -103,7 +103,7 @@ function printRun(out, { rates }) {
     console.log(`GEAR to NPC ${out.gear.toNpcUnits}, bought ${out.gear.boughtNpcUnits}; RECIPES dropped ${out.recipes.droppedTotal} (${Object.entries(out.recipes.dropped).map(([grade, n]) => `${grade} ${n}`).join(' | ')})`);
     console.log(`VISITS ${out.visits.perHour}/h: ${out.visits.towns.slice(0, 10).map(row => `${row.town} ${row.perHour} (${row.bots})`).join(' | ')}`);
     console.log(`HUNTING HOURS at the mains' own spots ${out.huntHours.ownSpot}, at their line's best ${out.huntHours.bestSpot}`);
-    console.log(`COUNTERS ${Object.entries(out.counters).map(([name, n]) => `${name} ${n}`).join(' | ')}`);
+    console.log(`COUNTERS ${Object.entries(out.counters).filter(([, n]) => typeof n !== 'object').map(([name, n]) => `${name} ${n}`).join(' | ')}`);
 }
 
 // The design run's report: per class of level (1-19 are the design's numbers, 20 and above are printed apart), the

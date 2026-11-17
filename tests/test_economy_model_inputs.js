@@ -110,7 +110,7 @@ const key = keys.find(k => x1.yields[k]);
 assert.ok(Object.values(snapshot.yields[key].drop).reduce((a, b) => a + b, 0)
     > Object.values(x1.yields[key].drop).reduce((a, b) => a + b, 0), 'more items per kill at x50');
 assert.deepEqual(snapshot.npcOffers.x1[1785], x1.npcOffers.preset[1785], 'NPC offers at x1 in every snapshot');
-assert.ok(snapshot.npcOffers.preset[1785][0].price > 2 * x1.npcOffers.preset[1785][0].price, 'and today\'s x50 NPC prices scaled up');
+assert.equal(snapshot.npcOffers.preset[1785][0].price, x1.npcOffers.preset[1785][0].price, 'and the NPC prices of x50 are the x1 prices (the game prices x1 at every preset)');
 
 // The design mode's additions, each the owner's own number: the hour without
 // shots, a twin's max MP and store slots, a line's race, the crystal ids and
