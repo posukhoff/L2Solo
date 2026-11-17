@@ -114,12 +114,17 @@ async function run() {
                 'a limited player lot is refused to bots');
         }
     }
-    // The reserve stores list exactly the gear a bot's planner can target: each
-    // C/B/A weapon or armour piece with a named template, a price and a source.
+    // The reserve stores list exactly the gear a bot's planner can target (each
+    // C/B/A weapon or armour piece with a named template, a price and a source),
+    // the reference kits' pieces of the grade without a source, and the grade's
+    // weapon enchant scroll.
     const Sources = invoke('GameServer/Items/ItemAcquisitionCatalog');
+    const kitOnly = { c: [499, 1120], b: [104, 106, 117, 209, 404, 421, 610, 860, 891, 922], a: [304, 868, 899, 930] };
+    const scroll = { c: 951, b: 947, a: 729 };
     for (const [name, rank] of [['Squeesh', 'c'], ['M3tLa', 'b'], ['Lowfiles', 'a']]) {
         const expected = DataCache.items.filter(item => item.etc?.rank === rank && /^(Weapon|Armor)\./.test(String(item.template?.kind || ''))
-            && item.template?.name && Number(item.template?.price) > 0 && Sources.hasSource(item.selfId)).map(item => item.selfId).sort((a, b) => a - b);
+            && item.template?.name && Number(item.template?.price) > 0 && Sources.hasSource(item.selfId)).map(item => item.selfId)
+            .concat(kitOnly[rank], [scroll[rank]]).sort((a, b) => a - b);
         const listed = Configs[name].items.filter(line => line.reserve === true).map(line => line.selfId).sort((a, b) => a - b);
         assert.deepStrictEqual(listed, expected, `${name} reserve ids follow the rule`);
     }

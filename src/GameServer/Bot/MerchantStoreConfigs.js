@@ -67,6 +67,16 @@ const RESERVE_GEAR_A = [
     5773, 5774, 5775, 5776, 5777, 5778, 5779, 5780, 5781, 5782, 5783, 5784, 5785, 5786,
     5787, 5788, 6323, 6324, 6325, 6326, 6327, 6328
 ];
+// The reference kits' C/B/A pieces with no acquisition source (BotGear wears them;
+// the source rule above leaves them out): the reserve sells every kit piece.
+const RESERVE_KIT_C = [499, 1120];
+const RESERVE_KIT_B = [104, 106, 117, 209, 404, 421, 610, 860, 891, 922];
+const RESERVE_KIT_A = [304, 868, 899, 930];
+// The grade's Scroll: Enchant Weapon (C4EnchantScrolls; no C4 NPC sells it): the
+// reserve sells bots the one of its grade at the same 1.5x the NPC price scale.
+const RESERVE_ENCHANT_C = [951];
+const RESERVE_ENCHANT_B = [947];
+const RESERVE_ENCHANT_A = [729];
 
 module.exports = {
     // Talking Island
@@ -473,14 +483,14 @@ module.exports = {
         town: "Giran",
         storeType: 1,
         locX: 83600, locY: 148300, locZ: -3406,
-        items: [...shotsForGrade(2), ...reserveGear(RESERVE_GEAR_C)]
+        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C, ...RESERVE_ENCHANT_C])]
     },
     "M3tLa": {
         title: "Shots: B Grade",
         town: "Oren",
         storeType: 1,
         locX: 83000, locY: 53400, locZ: -1488,
-        items: [...shotsForGrade(3), ...reserveGear(RESERVE_GEAR_B)]
+        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B, ...RESERVE_ENCHANT_B])]
     },
     "Petec": {
         title: "Shots: B Grade",
@@ -501,7 +511,7 @@ module.exports = {
         town: "Aden",
         storeType: 1,
         locX: 146497, locY: 25807, locZ: -2008,
-        items: [...shotsForGrade(4), ...reserveGear(RESERVE_GEAR_A)]
+        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A, ...RESERVE_ENCHANT_A])]
     },
     "TinWh1skey": {
         title: "Shots: S Grade",
