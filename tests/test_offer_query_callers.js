@@ -168,6 +168,33 @@ function picked(offer) {
     AfkTrade._resetForTests();
 }
 
+{
+    // The gear reserve: a bot buys a C weapon at the Giran reserve line (the
+    // admission and the store's execution agree); a limited player lot of a
+    // gear piece stays closed to bots in both.
+    const Query = invoke('GameServer/Bot/Economy/OfferQuery');
+    const Fixed = invoke('GameServer/Bot/Economy/FixedShotOffers');
+    const Trade = invoke('GameServer/Bot/TradeService');
+    const Configs = invoke('GameServer/Bot/MerchantStoreConfigs');
+    const FLAMBERGE = 71;
+    const [reserveRow] = Fixed.offers(FLAMBERGE);
+    assert.strictEqual(reserveRow?.sourceName, 'Squeesh');
+    assert.strictEqual(Query.sourceAllowed(reserveRow), true, 'the reserve gear row is a bot source');
+    const lot = Configs.Haldise.items.find(line => DataCache.items.find(item => item.selfId === line.selfId)?.etc?.rank === 'c');
+    assert(lot, 'Haldise lists a C piece');
+    assert.strictEqual(Query.sourceAllowed({ sourceType: 'configured_store', sourceName: 'Haldise', selfId: lot.selfId }), false,
+        'a limited store line of a non-shot item is refused');
+    const bot = { session: { accountId: 'bot_991900' }, fetchId: () => 991900, fetchName: () => 'ReserveBuyer',
+        backpack: { fetchItemFromSelfId: () => null, fetchItems: () => [], fetchTotalAdena: () => 0 } };
+    const storeOf = (name, line) => ({ storeType: 1, town: Configs[name].town,
+        items: Trade.normalizeStoreItems({ ...Configs[name], items: [{ ...line, count: 1 }] }, { staticStore: true }) });
+    const reserveLine = Configs.Squeesh.items.find(line => line.selfId === FLAMBERGE);
+    await assert.rejects(Trade.buyFromStore(bot, storeOf('Squeesh', reserveLine), FLAMBERGE, 1,
+        { expectedUnitPrice: reserveRow.price }), /Not enough Adena/, 'the store sells the reserve line to a bot at its reserve price');
+    await assert.rejects(Trade.buyFromStore(bot, storeOf('Haldise', lot), lot.selfId, 1),
+        /unavailable to bots/, 'the limited lot is refused to a bot');
+}
+
 console.log('Offer query callers: pinned');
 
 })().catch(error => { console.error(error); process.exitCode = 1; });

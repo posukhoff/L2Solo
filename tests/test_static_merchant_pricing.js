@@ -12,6 +12,9 @@ const Shops = invoke('GameServer/World/Generics/NpcShopBuyLists');
 const MarketSnapshot = invoke('GameServer/Bot/Economy/MarketSnapshot');
 const PurchaseItems = invoke('GameServer/World/Generics/PurchaseItems');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
+const NpcShopPriceScale = invoke('GameServer/World/Generics/NpcShopPriceScale');
+const Fixed = invoke('GameServer/Bot/Economy/FixedShotOffers');
+const Query = invoke('GameServer/Bot/Economy/OfferQuery');
 
 DataCache.init();
 const originals = {
@@ -93,6 +96,47 @@ async function run() {
         }
         assert.strictEqual(botLines(Configs['4manda']).find((line) => line.selfId === 1864).price,
             TradeService.ratedPrice(1864, 0.8), 'resource liquidity without a cheaper NPC source keeps its authored price');
+        // The gear reserve: a bot pays 1.5x the NPC price scale of the template
+        // price at Giran for a C weapon (Flamberge 71); a C armour piece a
+        // limited player lot lists (Haldise) is bot-buyable only at its reserve line.
+        const reserveC = NpcShopPriceScale.price(templates.get(71).template.price * 1.5, rate);
+        assert.strictEqual(Pricing.cheapestPurchase(71, { forBot: true }), reserveC, `C weapon reserve price at x${rate}`);
+        const flamberge = Fixed.offers(71);
+        assert.deepStrictEqual(flamberge.map(row => [row.sourceName, row.town, row.price]), [['Squeesh', 'Giran', reserveC]]);
+        const haldiseIds = Configs.Haldise.items.map(line => line.selfId).filter(id => templates.get(id)?.etc?.rank === 'c');
+        assert(haldiseIds.length > 0);
+        for (const id of haldiseIds) {
+            const reserve = Configs.Squeesh.items.find(line => line.selfId === id && line.reserve === true);
+            assert.deepStrictEqual(Fixed.offers(id).map(row => row.sourceName), reserve ? ['Squeesh'] : [],
+                `Haldise's limited lot of ${id} is not a bot's reserve at x${rate}`);
+            assert.strictEqual(Fixed.offers(id).every(row => Query.sourceAllowed(row)), true);
+            assert.strictEqual(Query.sourceAllowed({ sourceType: 'configured_store', selfId: id, sourceName: 'Haldise' }), false,
+                'a limited player lot is refused to bots');
+        }
+    }
+    // The reserve stores list exactly the gear a bot's planner can target: each
+    // C/B/A weapon or armour piece with a named template, a price and a source.
+    const Sources = invoke('GameServer/Items/ItemAcquisitionCatalog');
+    for (const [name, rank] of [['Squeesh', 'c'], ['M3tLa', 'b'], ['Lowfiles', 'a']]) {
+        const expected = DataCache.items.filter(item => item.etc?.rank === rank && /^(Weapon|Armor)\./.test(String(item.template?.kind || ''))
+            && item.template?.name && Number(item.template?.price) > 0 && Sources.hasSource(item.selfId)).map(item => item.selfId).sort((a, b) => a - b);
+        const listed = Configs[name].items.filter(line => line.reserve === true).map(line => line.selfId).sort((a, b) => a - b);
+        assert.deepStrictEqual(listed, expected, `${name} reserve ids follow the rule`);
+    }
+    // The player's window leaves the reserve lines out: he keeps C4's stores.
+    ProgressionRates.profile = () => ({ adena: 1, multiplier: 1 });
+    const squeesh = { storeType: 1, items: normalize(Configs.Squeesh) };
+    assert.deepStrictEqual(TradeService.nativeStoreItems(squeesh).map(line => line.selfId), [1464, 2511, 3949],
+        'the player sees only the C shots at Squeesh');
+    // One switch: staticShotsDisabled removes the shot and the gear reserve.
+    const Population = invoke('GameServer/Bot/Population/PopulationConfig');
+    Population.staticShotsDisabled = true;
+    try {
+        assert.strictEqual(Pricing.cheapestPurchase(71, { forBot: true }), Infinity, 'the switch closes the gear reserve');
+        assert.strictEqual(Pricing.cheapestPurchase(1464, { forBot: true }), Infinity, 'the switch closes the shot reserve');
+        assert.strictEqual(Fixed.offers(71).length, 0);
+    } finally {
+        Population.staticShotsDisabled = false;
     }
 
     ProgressionRates.profile = () => ({ adena: 1, multiplier: 1 });
