@@ -57,7 +57,8 @@
 // Shop time (maintainer, ours): a gnome spends part of its hours tending its shop instead of hunting, SHOP.base plus
 // SHOP.busy x its load: its served turnover of the last closed hour (each town it serves: the town's gnome sales at the
 // market price and materials bought, split evenly among the town's gnomes as the margin is) over one gnome's turnover
-// capacity (GEAR_WEAPONS_PER_GNOME C weapons' value), at most 1. The plane reads it at the gnome's visit: the shop hours it spends in town then.
+// capacity (GEAR_WEAPONS_PER_GNOME C weapons' value), at most 1. The plane reads it at a spoiler's visit (a crafter is a
+// merchant or hunts): the shop hours it spends in town then. GNOME_SPOILER_SHOP, when set, is that share instead (a tuning lever).
 const { GRADE_ORDER } = require('../gear');
 const Engine = require('../engine');
 
@@ -67,7 +68,7 @@ const CEILING = Number(process.env.GNOME_CEILING || VALVE);
 const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
-const SHOP = Object.freeze({ base: 0.3, busy: 0.2 });
+const SHOP = Object.freeze({ base: 0.3, busy: 0.2 }), SPOILER_SHOP = process.env.GNOME_SPOILER_SHOP ? Number(process.env.GNOME_SPOILER_SHOP) : null;
 const HUNT_WHEN = 0.7;
 const THERMO = Object.freeze({ wallet: Number(process.env.CRAFTER_WALLET || 1.2), levels: 2, step: 1.05 });
 const SPOILER_FROM = Object.freeze({ D: 20, C: 40, B: 52, A: 61, S: 76 }), GRADES = ['D', 'C', 'B', 'A', 'S'], GEAR_GRADES = ['C', 'B', 'A', 'S'], TIERS = 4;
@@ -311,7 +312,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             return modes.get(main.index).mode;
         },
         // A gnome's share of its hours spent tending its shop (SHOP), from the last closed hour.
-        shopShare(index) { const share = shops.get(index) ?? SHOP.base; stats.shop.reads++; stats.shop.sum += share; return share; },
+        shopShare(index) { const share = SPOILER_SHOP ?? shops.get(index) ?? SHOP.base; stats.shop.reads++; stats.shop.sum += share; return share; },
         // The gnome bid for a main's material sale in a town, or null (a gnome main, no gnome there, not a material).
         bid(main, town, id) {
             if (isGnome(main) || !town || !materials.has(Number(id)) || !servedTowns().has(town)) return null;
