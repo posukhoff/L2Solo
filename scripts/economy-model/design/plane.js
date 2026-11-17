@@ -532,7 +532,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null, m
                     if (!buy && market && gear.kitReserve && !market.isGnome(next)) {
                         // A C+ piece the hidden store would fund that no gnome in reach sells: it waits (counted).
                         const would = gear.kitReserve.next(next, at, keep, view);
-                        if (would && !Engine.sellerOf(priced, would.selfId, at)) market.gearWaits(next, now);
+                        if (would && !Engine.sellerOf(priced, would.selfId, at)) market.gearWaits(next, now, would.selfId);
                     }
                     if (!buy || (buy.town !== at && hopped && next.weapon)) break;
                     if (market && buy.channel === 'gnome') market.gearBought(next, now);

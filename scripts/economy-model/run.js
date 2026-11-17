@@ -177,7 +177,7 @@ function printKpi(out) {
     const s = trade.scrolls;
     console.log(`KPI gnome money per main gnome/other by band ${money}`);
     console.log(`KPI gnome trade: D+ shot units via gnome ${share(trade.shotUnits.gnome, trade.shotUnits.valve)} (gnome ${trade.shotUnits.gnome}, valve ${trade.shotUnits.valve}, gnomes' own ${trade.shotUnits.own}); `
-        + `C+ gear pieces via gnome ${trade.gearPieces.gnome}, gnomes' own ${trade.gearPieces.own}, valve ${trade.gearPieces.valve}; gear waits for no gnome in reach ${trade.gearWait.started} (ended ${ended.length} p50 ${q(0.5)} h p90 ${q(0.9)} h, open ${trade.gearWait.open.size}); `
+        + `C+ gear pieces via gnome ${trade.gearPieces.gnome}, gnomes' own ${trade.gearPieces.own}, valve ${trade.gearPieces.valve}; gear waits for no gnome in reach ${trade.gearWait.started} (wants counted as demand ${trade.gearWanted}) (ended ${ended.length} p50 ${q(0.5)} h p90 ${q(0.9)} h, open ${trade.gearWait.open.size}); `
         + `gnome margin ${M(trade.margin)} (credited ${M(trade.credited)}), material spread ${M(trade.spread)}; hidden-store spend ${M(trade.hiddenSpend.gnomeWholesale + trade.hiddenSpend.valve + trade.hiddenSpend.gnomeOwn)} `
         + `(wholesale to gnomes ${M(trade.hiddenSpend.gnomeWholesale)}, valve ${M(trade.hiddenSpend.valve)}, gnomes' own ${M(trade.hiddenSpend.gnomeOwn)}); `
         + `scrolls supplied ${s.supplied}, bought ${s.bought}, refused (no stock) ${s.refused}, drops used ${s.dropUsed}`);
