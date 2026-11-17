@@ -847,7 +847,7 @@ for (const supply of ['table', 'formula']) {
 
 // The C/B/A reserve stub: the line's reference kit at the main's level, the pieces of grade C+ the main wears at a
 // lower grade, weapon first, from the reserve store (channel fixed_wts) when the wallet above the reserve pays the
-// price and the fare; nothing for a piece an NPC sells, one already worn at its grade or a wallet that does not pay.
+// price and the fare (a weapon not paid is saved for: nothing else of the kit is bought); nothing for a piece an NPC sells, one already worn at its grade or a wallet that does not pay.
 {
     const Gear = require('../scripts/economy-model/gear');
     const CBOW = 9001, CSHIRT = 9002, DSHIRT = 391;
@@ -858,7 +858,8 @@ for (const supply of ['table', 'formula']) {
     const reader = Gear.kitReserve({ snapshot: { gearLadder: { slots: {} } }, view });
     const main = money => ({ line: 9, level: 50, money, kit: { 14: 274, 10: DSHIRT }, weapon: 274 });
     assert.equal(reader.next(main(5000000), 'Giran', 1000000).selfId, CBOW, 'the weapon first');
-    assert.equal(reader.next(main(2500000), 'Giran', 1000000).selfId, CSHIRT, 'the weapon is not funded above the reserve, the shirt is');
+    assert.equal(reader.next(main(2500000), 'Giran', 1000000), null, 'the weapon is saved for: the funded shirt is not bought before it');
+    assert.equal(reader.next({ ...main(2500000), kit: { 14: CBOW, 10: DSHIRT }, weapon: CBOW }, 'Giran', 1000000).selfId, CSHIRT, 'with the weapon worn the shirt is next');
     assert.equal(reader.next(main(1500000), 'Giran', 1000000), null, 'nothing is funded above the reserve');
     assert.equal(reader.next({ ...main(5000000), kit: { 14: CBOW, 10: CSHIRT }, weapon: CBOW }, 'Giran', 0), null, 'the kit is worn');
     assert.equal(reader.next({ ...main(5000000), level: 49 }, 'Giran', 0), null, 'no kit row of that level');

@@ -435,10 +435,10 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             // The town chain: the supply decision's sales; then the gear the game's NPC rule buys with what the
             // wallet holds above the reserve, piece by piece on the state the last purchase left; when it bought any
             // or hopped, the supply decision again on that state where it stands (the older grade is spare now, the
-            // new weapon's shots its need), else the first decision's other actions. One onward hop per chain (a
+            // new weapon's shots its need), else the first decision's other actions. Up to two onward hops per chain (a
             // gatekeeper teleport, as a human takes): to a funded piece sold in another town, where the gear step goes
-            // on (a piece sold in a third town ends it); else, after the gear step, to the seller of the shots it needs
-            // when the town it stands in does not sell them and the wallet pays the fare and one unit (Engine.hopSeller). It walks back from where
+            // on (a piece sold in a third town ends it); then, after the gear step, to the seller of the shots it needs
+            // when the town it stands in does not sell them (the graded shots are sold in a few towns) and the wallet pays the fare and one unit (Engine.hopSeller). It walks back from where
             // it ends. The chain's answer names that town.
             const townChain = (main, decided, town, spotTown, full) => {
                 const { actions, row, chain: facts } = decided, backOf = at => (row ? Engine.backHoursOf(view, row.spotId, at) : 0);
@@ -462,7 +462,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     if (buy.channel === 'fixed_wts') { const grade = view.items[buy.selfId]?.grade || '-'; ledger.counters.gearReserve[grade] = (ledger.counters.gearReserve[grade] || 0) + 1; }
                     if (buy.weapon) { ledger.counters.weaponSwaps++; swapped = true; }
                 }
-                if (!hopped) {
+                {
                     const { need } = supplyState(next, row, 'town', at, spotTown);
                     const seller = need && need.short > 0 ? Engine.hopSeller(view, [need.id], at, next.money) : null;
                     if (seller) hop(seller);

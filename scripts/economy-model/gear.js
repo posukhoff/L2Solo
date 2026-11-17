@@ -68,7 +68,8 @@ function npcGear({ snapshot, view }) {
 // line's reference kit at the main's level (view.kits) of grade C, B or A that the
 // main wears at a lower grade, weapon first, then armour, then jewels, bought from
 // the cheapest reserve offer (Engine.sellerOf, a configured store's gear line) when
-// the wallet above reserve pays its price and the fare to its town. null when there
+// the wallet above reserve pays its price and the fare to its town; a weapon it
+// does not pay is saved for (nothing else of the kit is bought: null). null when there
 // is none. Same answer shape as npcGear's next.
 const GRADE_ORDER = { NONE: 0, D: 1, C: 2, B: 3, A: 4, S: 5 };
 const KIT_ORDER = slot => (slot >= 1 && slot <= 5 ? 2 : 1);
@@ -86,7 +87,9 @@ function kitReserve({ snapshot, view }) {
                 .sort((a, b) => (b.weapon - a.weapon) || (KIT_ORDER(a.slot) - KIT_ORDER(b.slot)));
             for (const row of wanted) {
                 const seller = Engine.sellerOf(view, row.selfId, town);
-                if (!seller || seller.channel !== 'fixed_wts' || !(seller.price + seller.fare <= main.money - reserve)) continue;
+                if (!seller || seller.channel !== 'fixed_wts') continue;
+                // A better weapon the wallet does not pay is saved for: nothing else of the kit is bought until it is.
+                if (!(seller.price + seller.fare <= main.money - reserve)) { if (row.weapon) return null; continue; }
                 const slot = row.weapon ? Number(Templates.find(DataCache.items, row.selfId)?.etc?.slot || row.slot) : Number(row.slot);
                 return { selfId: Number(row.selfId), slot, price: seller.price, weapon: row.weapon, town: seller.town, fare: seller.fare, channel: seller.channel };
             }
