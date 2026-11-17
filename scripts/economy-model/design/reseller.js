@@ -56,7 +56,9 @@
 const { GRADE_ORDER } = require('../gear');
 const Engine = require('../engine');
 
-const START = 1.3, STEP = 1.05, VALVE = 2, SCROLL_CEILING = 5;
+const START = 1.3, STEP = Number(process.env.GNOME_STEP || 1.05), VALVE = 2, SCROLL_CEILING = 5;
+// The market price's ceiling for shots and gear (x ref; shots without a gnome in reach are sold at VALVE).
+const CEILING = Number(process.env.GNOME_CEILING || VALVE);
 const BID = { low: 1, high: 1.5, start: 1.2, buyer: 1.5 };
 const SCROLLS_PER_HOUR = Object.freeze({ C: 20, B: 10, A: 5 });
 const STOCK_HOURS = 2;
@@ -352,7 +354,7 @@ function market({ view, gnomeLines, share, scrolls, recipes, shotsPerHour, craft
             for (const key of keys) {
                 const [kind, grade, town] = key.split('|');
                 const supply = kind === 'shot' ? shotCapacity(grade, town) : kind === 'gear' ? gearCapacity : hour.stock[grade];
-                const ceiling = kind === 'scroll' ? SCROLL_CEILING : VALVE;
+                const ceiling = kind === 'scroll' ? SCROLL_CEILING : CEILING;
                 mult.set(key, Math.min(ceiling, Math.max(1, multOf(key) * ((hour.demand.get(key) || 0) > supply ? STEP : 1 / STEP))));
             }
             for (const town of new Set([...bids.keys(), ...hour.offered.keys()])) {
