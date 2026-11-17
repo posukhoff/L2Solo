@@ -7,15 +7,18 @@ const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Production = require('./ProductionPolicy');
 const SHOT_IDS = [...Production.NO_GRADE_SHOTS, ...Production.GRADED_SHOTS];
 const EMPTY_OFFERS = Object.freeze([]);
-let fixedRate = null, fixedMultiplier = null, fixedConfig = null, fixedRows = null, fixedByItem = new Map();
-function offers(selfId = null) {
-    if (Production.shotsDisabled()) return EMPTY_OFFERS;
+let fixedRate = null, fixedMultiplier = null, fixedConfig = null, fixedRows = null, fixedByItem = new Map(), fixedLowest = new Map();
+// Builds the table once per config, Adena rate and progression multiplier; false
+// while the switch removes the reserve.
+function built() {
+    if (Production.shotsDisabled()) return false;
     const rate = invoke('GameServer/Bot/Economy/BotEconomyPricing').economyRate();
     const multiplier = invoke('GameServer/ProgressionRates').profile().multiplier;
     const stores = invoke('GameServer/Bot/MerchantStoreConfigs');
     if (!fixedRows || fixedRate !== rate || fixedMultiplier !== multiplier || fixedConfig !== stores) {
         fixedRate = rate; fixedMultiplier = multiplier; fixedConfig = stores;
         fixedByItem = new Map();
+        fixedLowest = new Map();
         const rows = [], Pricing = require('./StaticMerchantPricing');
         const items = invoke('GameServer/DataCache').items;
         const reserveIds = Object.values(stores).flatMap(store => (store.items || [])
@@ -31,10 +34,19 @@ function offers(selfId = null) {
                         locX: Number(store?.locX || 0), locY: Number(store?.locY || 0), locZ: Number(store?.locZ || 0) });
                 });
             fixedByItem.set(id, Object.freeze(sources));
+            if (sources.length) fixedLowest.set(id, Math.min(...sources.map(row => Number(row.price))));
             rows.push(...sources);
         }
         fixedRows = Object.freeze(rows);
     }
+    return true;
+}
+function offers(selfId = null) {
+    if (!built()) return EMPTY_OFFERS;
     return selfId === null ? fixedRows : fixedByItem.get(Number(selfId)) || EMPTY_OFFERS;
 }
-module.exports = { offers };
+// The lowest price a bot pays for an item at the configured stores (Infinity: none).
+function lowestPrice(selfId) {
+    return built() ? fixedLowest.get(Number(selfId)) ?? Infinity : Infinity;
+}
+module.exports = { offers, lowestPrice };

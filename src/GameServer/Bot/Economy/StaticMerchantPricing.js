@@ -92,8 +92,7 @@ function refreshFixedOffers() {
 function cheapestPurchase(selfId, { forBot = false } = {}) {
     refreshFixedOffers();
     const id = Number(selfId);
-    const minimum = forBot ? FixedShotOffers.offers(id).reduce((low, row) => Math.min(low, Number(row.price)), Infinity)
-        : fixedMinimums.get(id) ?? Infinity;
+    const minimum = forBot ? FixedShotOffers.lowestPrice(id) : fixedMinimums.get(id) ?? Infinity;
     return forBot && !production.allowsNpcShot(id) ? minimum : Math.min(minimum, npcPriceOf(id));
 }
 
