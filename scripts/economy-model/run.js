@@ -199,6 +199,8 @@ function tableHours({ snapshot, file, name, lines, keyOf, spoilLevelOf, gapFacto
             const held = snapshot.hours[line][level];
             if (!held) continue;
             const key = keyOf(line, level), bodies = Object.entries(file.bodies).filter(([body]) => body.startsWith(`${key}|${level}|`));
+            // A line the 1-19 table never measured (the dwarf mains of the gnome trade) keeps the game's spot table row (a stub).
+            if (bodies.length === 0) continue;
             if (bodies.length !== 1) throw new Error(`hunt table ${name}: ${bodies.length} kit points for key ${key} at level ${level} (one measured point, the creation kit's)`);
             const read = HuntRows.lineRows({ file, key, level, point: bodies[0][1].point, rates: snapshot.header.rates, speciesYields: snapshot.speciesYields,
                 spoilLevel: spoilLevelOf(line, level), items: snapshot.items, gapFactor });
