@@ -18,11 +18,11 @@ const KitHours = require('./kit-hours');
 // game's rule buys next for the main standing in town, among the NPCs of every
 // town (the game's gear errand reads all towns' NPC offers): its seller is the
 // NPC of the town it stands in when that town sells the piece, else the first
-// of the other towns by price plus the fare to its town (Engine.sellerOf; only
-// NPCs sell gear, the configured stores sell shots). Funded now
+// of the other towns by price plus the fare to its town (Engine.sellerOf; the NPCs sell gear
+// up to D, the configured stores their shots and the bot-only C/B/A reserve). Funded now
 // from the adena above reserve, the fare to the seller's town included (our
 // choice: the teleport is paid from the same wallet), or null:
-// { selfId, slot, price, weapon, town, fare }. The answer reads the wallet, so
+// { selfId, slot, price, weapon, town, fare, channel }. The answer reads the wallet, so
 // it is not cached; the line's reference body of a level is (it reads only the
 // class, level and line).
 function npcGear({ snapshot, view }) {
@@ -58,7 +58,7 @@ function npcGear({ snapshot, view }) {
             // The plan names the weapon slot (7) for any weapon; a weapon is worn in its own slot (a two-handed one in 14).
             const selfId = Number(plan.target.selfId), weapon = Engine.isWeapon(view.items[selfId]);
             const slot = weapon ? Number(Templates.find(DataCache.items, selfId)?.etc?.slot || plan.target.slot) : Number(plan.target.slot);
-            return { selfId, slot, price: Number(plan.market.price), weapon, town: seller.town, fare: seller.fare };
+            return { selfId, slot, price: Number(plan.market.price), weapon, town: seller.town, fare: seller.fare, channel: seller.channel };
         }
     };
 }

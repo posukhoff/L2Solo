@@ -9,14 +9,14 @@ const Today = require('../scripts/economy-model/today');
 const Engine = require('../scripts/economy-model/engine');
 const { judged, sharedRows, todayRows, requireSpots, footerOf } = require('../scripts/economy-model/compare');
 
-// The fixed buyer pays the line's rate of the reference price times the adena
-// rate, at most 0.9 of the cheapest repeatable supply.
-const line = { selfId: 200, priceRate: 0.8, count: 999999 };
-assert.equal(Today.configuredPrice(line, 100, 50), 4000, '0.8 x ref x rate');
-assert.equal(Today.fixedBuyerPrice(line, 100, 50, Infinity), 4000, 'nobody supplies it: 40 x ref at x50');
-assert.equal(Today.fixedBuyerPrice(line, 100, 50, 3000), 2700, 'under the buyback share of the cheapest supply');
-assert.equal(Today.configuredPrice(line, 0, 50), 50, 'an item without a reference price: 1 x rate');
-assert.equal(Today.configuredPrice(line, 3, 1), 2, 'floored');
+// A store line is priced as the game prices it at the snapshot's preset (gamePrice,
+// StaticMerchantPricing.botPriceFor); the fixed buyer pays it, at most 0.9 of the
+// cheapest repeatable supply.
+const line = { selfId: 200, gamePrice: 4000, count: 999999 };
+assert.equal(Today.configuredPrice(line), 4000, 'the game\'s price');
+assert.equal(Today.fixedBuyerPrice(line, Infinity), 4000, 'nobody supplies it: the game\'s price');
+assert.equal(Today.fixedBuyerPrice(line, 3000), 2700, 'under the buyback share of the cheapest supply');
+assert.throws(() => Today.configuredPrice({ selfId: 200, priceRate: 1 }), /gamePrice/, 'a snapshot without the game price is refused');
 
 const snapshot = {
     header: { levels: [1, 30], rates: { adena: 50 } },
@@ -25,6 +25,7 @@ const snapshot = {
     kits: { 9: { 25: [] } },
     yields: { 's1@25': { town: 'TownA', drop: {}, spoil: {} } },
     items: {
+        7000: { kind: 'Weapon.Sword', ref: 100, npcBuy: 50 },
         200: { kind: 'Other.Material', ref: 100, npcBuy: 50 },
         202: { kind: 'Other.Material', ref: 100, npcBuy: 50 },
         300: { kind: 'Other.Recipe', ref: 100, npcBuy: 50 },
@@ -32,18 +33,19 @@ const snapshot = {
     },
     npcOffers: { preset: { 202: [{ town: 'TownB', price: 1000 }] }, x1: {} },
     stores: [
-        { town: 'TownA', storeType: Today.BUY, items: [line, { selfId: 202, priceRate: 0.8, count: 999999 }, { selfId: 300, priceRate: 0.8, count: 0 }] },
-        { town: 'TownA', storeType: Today.SELL, items: [{ selfId: 1463, priceRate: 1, count: 5000 }, { selfId: 200, priceRate: 1.2, count: 5000 }] }
+        { town: 'TownA', storeType: Today.BUY, items: [line, { selfId: 202, gamePrice: 4000, count: 999999 }, { selfId: 300, gamePrice: 4000, count: 0 }] },
+        { town: 'TownA', storeType: Today.SELL, items: [{ selfId: 1463, gamePrice: 500, count: 5000 }, { selfId: 200, gamePrice: 6000, count: 5000 }, { selfId: 7000, gamePrice: 900, count: 5000, reserve: true }] }
     ],
     recipes: [],
     fares: { TownA: { TownA: 0, TownB: 100 }, TownB: { TownA: 100, TownB: 0 } }
 };
 
 // The market: buy lines priced by the formula (a sold-out line buys nothing),
-// sell lines for shots only (a city store sells a bot nothing else).
+// sell lines for shots only (reserve gear apart).
 const market = Today.marketOf(snapshot);
-assert.deepEqual(market.buy, { TownA: { 200: 4000, 202: 900 } }, 'material 200: 40 x ref under 0.9 x 60 x ref; 202: 0.9 x the NPC price');
+assert.deepEqual(market.buy, { TownA: { 200: 4000, 202: 900 } }, 'material 200: its line price under 0.9 of the cheapest supply; 202: 0.9 x the NPC price');
 assert.deepEqual(market.sell, { TownA: { 1463: 500 } });
+assert.deepEqual(market.reserve, { TownA: { 7000: 900 } }, 'a bot-only reserve line is a design seller of gear, not a shot line');
 
 // A visiting main sells to its town's fixed buyer, the rest to the NPC, and
 // restocks shots at the static line.

@@ -193,53 +193,54 @@ function plane({ view, hunter }) {
     };
 }
 
-// A configured line's price (StaticMerchantPricing.configuredPrice): the
-// item's reference price times the line's rate, scaled by the adena rate and
-// floored, at least 1.
-function configuredPrice(line, ref, adenaRate) {
-    if (line.price !== undefined) return Number(line.price);
-    const base = ref > 0 ? ref * (line.priceRate ?? 1) : 1;
-    return Math.max(1, Math.floor(base * adenaRate));
+// A configured line's price: the game's own at the snapshot's preset
+// (StaticMerchantPricing.botPriceFor, stored by inputs.js as gamePrice).
+function configuredPrice(line) {
+    if (!Number.isFinite(Number(line.gamePrice))) throw new Error(`store line ${line.selfId} has no gamePrice: rebuild the snapshot (inputs.js)`);
+    return Number(line.gamePrice);
 }
 
 // What a fixed buyer pays a bot (StaticMerchantPricing.botPriceFor): its
 // configured price, at most the buyback share of the cheapest repeatable
 // supply (a fixed sell line or a town NPC), so no bot buys and sells back at a profit.
-function fixedBuyerPrice(line, ref, adenaRate, cheapestSupply, buybackRatio = TODAY.buybackRatio) {
-    return Math.min(configuredPrice(line, ref, adenaRate), Math.floor(cheapestSupply * buybackRatio));
+function fixedBuyerPrice(line, cheapestSupply, buybackRatio = TODAY.buybackRatio) {
+    return Math.min(configuredPrice(line), Math.floor(cheapestSupply * buybackRatio));
 }
 
 const isShot = item => item?.kind === 'Other.Shot';
 
 // The fixed stores as the engine's market: buy { town: { item: price } } from
-// the buy stores, sell { town: { shot: price } } from the sell stores.
+// the buy stores, sell { town: { shot: price } } from the sell stores, reserve
+// { town: { piece: price } } from the bot-only gear lines of the sell stores
+// (the design's sellers add them; today's bots restock shots only).
 function marketOf(snapshot, config = TODAY) {
-    const adenaRate = Math.max(0.01, Number(snapshot.header.rates?.adena || 1));
-    const refOf = id => Number(snapshot.items[id]?.ref || 0);
     const supply = new Map();
     const lower = (id, price) => supply.set(id, Math.min(supply.get(id) ?? Infinity, price));
     for (const store of snapshot.stores) {
         if (store.storeType !== SELL) continue;
-        for (const line of store.items) if (Number(line.count ?? 1) > 0) lower(Number(line.selfId), configuredPrice(line, refOf(line.selfId), adenaRate));
+        for (const line of store.items) if (Number(line.count ?? 1) > 0) lower(Number(line.selfId), configuredPrice(line));
     }
     for (const [id, rows] of Object.entries(snapshot.npcOffers[config.npcPrices] || {})) for (const row of rows) lower(Number(id), row.price);
-    const buy = {}, sell = {};
+    const buy = {}, sell = {}, reserve = {};
     for (const store of snapshot.stores) {
         if (!store.town) continue;
         for (const line of store.items) {
             const id = Number(line.selfId);
             if (!(Number(line.count ?? 1) > 0)) continue;
             if (store.storeType === BUY) {
-                const price = fixedBuyerPrice(line, refOf(id), adenaRate, supply.get(id) ?? Infinity, config.buybackRatio);
+                const price = fixedBuyerPrice(line, supply.get(id) ?? Infinity, config.buybackRatio);
                 const town = buy[store.town] ||= {};
                 town[id] = Math.max(town[id] || 0, price);
             } else if (store.storeType === SELL && isShot(snapshot.items[id])) {
-                const town = sell[store.town] ||= {}, price = configuredPrice(line, refOf(id), adenaRate);
+                const town = sell[store.town] ||= {}, price = configuredPrice(line);
+                town[id] = Math.min(town[id] ?? Infinity, price);
+            } else if (store.storeType === SELL && line.reserve) {
+                const town = reserve[store.town] ||= {}, price = configuredPrice(line);
                 town[id] = Math.min(town[id] ?? Infinity, price);
             }
         }
     }
-    return { buy, sell };
+    return { buy, sell, reserve };
 }
 
 // The hunting share and visits per bot-hour of each stage band, fitted on a

@@ -331,7 +331,7 @@ function staticInputs(owners, spots) {
     const recipes = Recipes.nativeSource().rows.map(row => ({ ...row, quest: questScrolls.has(row.recipeItemId) }));
     const stores = Object.entries(Stores).filter(([, store]) => store && Array.isArray(store.items))
         .map(([name, store]) => ({ name, title: store.title, town: store.town, storeType: store.storeType,
-            items: store.items.map(({ selfId, priceRate, count }) => ({ selfId, priceRate, count })) }));
+            items: store.items.map(({ selfId, priceRate, npcRate, price, count, reserve }) => ({ selfId, priceRate, npcRate, price, count, reserve })) }));
     const world = Capacity.gameWorld(), twins = {};
     for (let level = TWIN_LEVELS[0]; level <= TWIN_LEVELS[1]; level++) twins[level] = twinRow(world.twin(level), level, owners);
     // Reward groups by reward id and each spot's NPCs: the drop rule's inputs.
@@ -684,6 +684,9 @@ function extract({ preset, lines = null, levels = LEVELS, x1Offers = null, base 
     const slots = {};
     for (const row of gearTable.items) if (items[row[0]]) slots[row[0]] = Number(row[3]);
     const { quests, ...kept } = fixed;
+    // Each store line at the game's price at this preset (what a bot pays at a sell line, is paid at a buy line).
+    const Pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
+    kept.stores = fixed.stores.map(store => ({ ...store, items: store.items.map(line => ({ ...line, gamePrice: Pricing.botPriceFor(store, line) })) }));
     const { noMarket, ...trade } = tradeTowns(Object.keys(items).map(Number));
     const fallbacks = { noMarketToC: noMarket };
     return {

@@ -132,7 +132,7 @@ function printDesign(design) {
         + `refusedUnsafe (unsafe candidates richer than the choice) ${spot.refusedUnsafe}, midFarm ${spot.midFarm}, changes per bot-hour ${spot.changesPerBotHour === null ? '-' : spot.changesPerBotHour.toFixed(3)}, levels held p50 ${spot.levelsHeld.all.p50 ?? '-'}, `
         + `returns ${percent(spot.returnShare)}, A-B-A ${percent(spot.abaShare)}, minMaxers ${spot.minMaxers}/${spot.mains} mains`);
     const gear = design.gear, grades = counts => `{${Object.entries(counts).map(([grade, n]) => `${grade} ${n}`).join(', ')}}`;
-    console.log(`GEAR STEP weapon swaps ${gear.weaponSwaps} (${gear.swapsPerMain === null ? '-' : gear.swapsPerMain.toFixed(2)} per main), adena spent on gear ${gear.spent}, `
+    console.log(`GEAR STEP weapon swaps ${gear.weaponSwaps} (${gear.swapsPerMain === null ? '-' : gear.swapsPerMain.toFixed(2)} per main), adena spent on gear ${gear.spent}, bought from the reserve stores by grade ${grades(gear.reserveBought)}, `
         + `shots sold in a chain that swapped the weapon ${gear.shotsSoldAtSwap}; hops ${gear.hops}, their fares ${gear.hopFares}; weapons at the end by grade ${grades(gear.endWeapons)}; shot units held of a grade the weapon cannot fire ${grades(gear.heldOtherGrade)}`);
     console.log(`  level distribution at the end: ${Object.entries(design.levelDistribution).sort((a, b) => a[0] - b[0]).map(([level, n]) => `${level}:${n}`).join(' ')}`);
 }
@@ -195,6 +195,16 @@ function designTable(argv, snapshot, accounts) {
     return { ...table, creation };
 }
 
+// { town: { item: price } } maps joined, the cheaper where both name an item.
+function mergeTowns(...maps) {
+    const out = {};
+    for (const map of maps) for (const [town, lines] of Object.entries(map || {})) for (const [id, price] of Object.entries(lines)) {
+        const at = out[town] ||= {};
+        at[id] = Math.min(at[id] ?? Infinity, price);
+    }
+    return out;
+}
+
 // The view, rates and plane of the run's mode.
 function modeOf(argv, snapshot, cohort) {
     const mode = Boot.option(argv, 'mode', 'plain');
@@ -208,8 +218,9 @@ function modeOf(argv, snapshot, cohort) {
         if (!variant) throw new Error('design mode needs --supply table|formula (the supply variant is named)');
         const table = designTable(argv, snapshot, cohort.accounts);
         // The design's sellers: the NPC shops and the configured city stores' shot lines (the game's D+ shot source
-        // where no crafter sells: its NPCs sell no graded shot); no fixed buyer.
-        const view = Engine.viewOf({ ...snapshot, hours: table.hours }, { market: { sell: Today.marketOf(snapshot).sell } }), anchor = {};
+        // where no crafter sells: its NPCs sell no graded shot) and their bot-only C/B/A gear reserve; no fixed buyer.
+        const market = Today.marketOf(snapshot);
+        const view = Engine.viewOf({ ...snapshot, hours: table.hours }, { market: { sell: mergeTowns(market.sell, market.reserve) } }), anchor = {};
         // The shot's first price is its cheapest offer of the design's sellers (Engine.sellerOf with no trip): the NPC's
         // for a no-grade shot, the configured store's for a graded one, so a graded kit reads its own shots factor.
         for (const id of view.offers.keys()) anchor[id] = Engine.sellerOf(view, id).price;

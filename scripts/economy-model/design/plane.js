@@ -233,6 +233,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
             // shots sold in a chain whose gear step changed the weapon (the older grade, spare after the swap).
             ledger.counters.weaponSwaps = 0;
             ledger.counters.gearSpent = 0;
+            ledger.counters.gearReserve = {};
             ledger.counters.shotsSoldAtSwap = 0;
             // The chains' onward hops (one at most per chain: to a piece's seller, else to its shots' seller) and their fares.
             ledger.counters.hops = 0;
@@ -456,8 +457,9 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     const buy = gear.next(next, at, reserveOf(next, row, at, spotTown));
                     if (!buy || (buy.town !== at && hopped)) break;
                     if (buy.town !== at) hop(buy);
-                    next = EXECUTORS.gear(next, { kind: 'gear', id: buy.selfId, slot: buy.slot, price: buy.price }, sold.delta, view);
+                    next = EXECUTORS.gear(next, { kind: 'gear', id: buy.selfId, slot: buy.slot, price: buy.price, channel: buy.channel }, sold.delta, view);
                     ledger.counters.gearSpent += buy.price;
+                    if (buy.channel === 'fixed_wts') { const grade = view.items[buy.selfId]?.grade || '-'; ledger.counters.gearReserve[grade] = (ledger.counters.gearReserve[grade] || 0) + 1; }
                     if (buy.weapon) { ledger.counters.weaponSwaps++; swapped = true; }
                 }
                 if (!hopped) {
@@ -645,7 +647,7 @@ function plane({ view, kitHours, variant, accounts, table = null, gear = null })
                     return { design: { variant, levels, spotChoice: spotReport, bareBeforeFirstBuy: bare, shadow: { decisions: shadowed.decisions, differ },
                         spotUnstated: kitHours.stats.spotUnstated, offGrid: offGrid.size, levelDistribution: distribution,
                         gear: { weaponSwaps: ledger.counters.weaponSwaps, swapsPerMain: mains.length ? ledger.counters.weaponSwaps / mains.length : null,
-                            spent: ledger.counters.gearSpent, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, hops: ledger.counters.hops, hopFares: ledger.counters.hopFares,
+                            spent: ledger.counters.gearSpent, reserveBought: ledger.counters.gearReserve, shotsSoldAtSwap: ledger.counters.shotsSoldAtSwap, hops: ledger.counters.hops, hopFares: ledger.counters.hopFares,
                             endWeapons: weapons, heldOtherGrade: otherGrade } } };
                 }
             };
@@ -680,7 +682,7 @@ const EXECUTORS = Object.freeze({
     gear(main, action, delta, view) {
         const kit = { ...main.kit };
         let money = main.money - action.price;
-        delta.flows.npcBuys -= action.price;
+        if (action.channel === 'fixed_wts') delta.flows.fixedSellers -= action.price; else delta.flows.npcBuys -= action.price;
         delta.gearBought++;
         for (const [slot, selfId] of Object.entries(kit)) {
             if (!selfId || !slotsConflict(action.slot, Number(slot))) continue;
