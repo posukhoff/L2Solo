@@ -219,10 +219,17 @@ async function run() {
     const stocked = { ...state, inventory: Object.fromEntries(component.materials.map((m) => [m.selfId,
         { selfId: m.selfId, amount: m.amount }])) };
     const spots = [{ id: 'death-knight', avgLevel: 50, npcEntries: [{ selfId: 136, name: 'Death Knight', count: 8 }] }];
-    const route = Planner.farmSourceForMaterial(75, stocked, spots, new Set([component.recipeId]));
+    // The C reserve store sells bots the C blade: a bot that holds its price
+    // buys it before any craft or drop.
+    const bought = Planner.farmSourceForMaterial(75, stocked, spots, new Set([component.recipeId]));
+    assert.strictEqual(bought.kind, 'material_market', 'a funded bot buys the reserve store blade');
+    assert.strictEqual(bought.effort, 4, 'a payable offer costs the bot one shopping trip');
+    // Where no seller offers the blade, the ready craft beats its rare drop.
+    const unsold = { findMarketOffer: () => null };
+    const route = Planner.farmSourceForMaterial(75, stocked, spots, new Set([component.recipeId]), 1, new Set(), unsold);
     assert.strictEqual(route.effort, 8, 'a ready craft must beat a rare direct drop');
     assert(!route.spotId, 'ready ingredients must not send the bot to farm a finished blade');
-    const missingRoutes = Planner.farmSourceForMaterial(75, state, [], new Set([component.recipeId]));
+    const missingRoutes = Planner.farmSourceForMaterial(75, state, [], new Set([component.recipeId]), 1, new Set(), unsold);
     assert.strictEqual(missingRoutes, null, 'a recipe with unavailable pieces is not an available route');
     const needs = invoke('GameServer/Bot/Goals/NeedsEvaluator');
     const nestedState = { ...state, activity: 'hunting', inventory: { 1869: { selfId: 1869, amount: 2 } },
