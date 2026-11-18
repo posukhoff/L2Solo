@@ -273,20 +273,21 @@ function consumedInventory(state = {}, operations = []) {
 // MerchantStoreConfigs enchantReserve) stocks for the board at a town visit, as
 // [{ selfId, amount, money }]: up to RESTOCK_HELD of each normal weapon scroll of a
 // grade its level wears or has passed (C 40, B 52, A 61) that it holds fewer of,
-// sold here (sold(selfId): the reserve admits it in this town), paid from at most
-// `money`: what keeps its money above ENCHANT_WALLET_WEAPONS times its worn
-// weapon's price (weaponPrice(selfId); none: no restock). Its sale listing puts
-// them on the board as a dropper's (ItemDisposition.saleCandidates). Our rule.
+// sold here (sold(selfId): the reserve admits it in this town) at price(selfId)
+// (0: none), as many as leave its money after the purchase at least
+// RESTOCK_WALLET_COSTS times the purchase's cost; money: that cost. Stock for
+// resale: the floor follows its own cost, not the worn weapon. Its sale listing
+// puts them on the board as a dropper's (ItemDisposition.saleCandidates). Our rule.
 const RESTOCK_HELD = 3;
-function scrollRestock(state = {}, sold = () => false, weaponPrice = () => 0) {
-    const weapon = Object.values(state.inventory || {}).find((item) => item?.equipped && itemKind(item).startsWith('Weapon.'));
-    const floor = ENCHANT_WALLET_WEAPONS * Number(weaponPrice(Number(weapon?.selfId)) || 0);
-    const money = Math.floor(Number(state.adena || 0) - floor - 1);
-    if (!(floor > 0) || !(money > 0)) return [];
+const RESTOCK_WALLET_COSTS = 2;
+function scrollRestock(state = {}, sold = () => false, price = () => 0) {
+    const adena = Math.max(0, Number(state.adena || 0));
     return Object.entries(NORMAL_WEAPON_SCROLL).flatMap(([grade, selfId]) => {
-        const amount = RESTOCK_HELD - Math.max(0, Number(state.inventory?.[selfId]?.amount || 0));
-        return Number(state.level || 0) >= GearGrade.levelForGrade(grade.toLowerCase()) && amount > 0 && sold(selfId)
-            ? [{ selfId, amount, money }] : [];
+        const unit = Number(price(selfId) || 0);
+        if (!(unit > 0) || Number(state.level || 0) < GearGrade.levelForGrade(grade.toLowerCase()) || !sold(selfId)) return [];
+        const missing = RESTOCK_HELD - Math.max(0, Number(state.inventory?.[selfId]?.amount || 0));
+        const amount = Math.min(missing, Math.floor(adena / ((1 + RESTOCK_WALLET_COSTS) * unit)));
+        return amount > 0 ? [{ selfId, amount, money: amount * unit }] : [];
     });
 }
 

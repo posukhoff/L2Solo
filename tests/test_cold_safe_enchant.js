@@ -22,9 +22,7 @@ function fixture(predicate, description) {
 }
 
 function restockOf(state) {
-    const kind = (id) => String(invoke('GameServer/DataCache').items.find((item) => Number(item?.selfId) === id)?.template?.kind || '');
-    assert(kind(100).startsWith('Weapon.'), 'item 100 is a weapon fixture');
-    return ColdSafeEnchantService.scrollRestock(state, (id) => id !== 729, (id) => (id === 100 ? 3000000 : 0));
+    return ColdSafeEnchantService.scrollRestock(state, (id) => id !== 729, (id) => ({ 951: 100000, 947: 500000, 729: 2000000 })[id] || 0);
 }
 
 (async () => {
@@ -47,11 +45,13 @@ function restockOf(state) {
     assert.strictEqual(FixedStock.take(951, 1, hour + 1000), 0, 'the 21st C scroll in the hour is refused');
     assert.strictEqual(FixedStock.refused(951), 1);
     assert.strictEqual(FixedStock.take(951, 50, hour + 3 * 3600000), 40, 'the stock refills hourly and holds two hours at most');
-    const restocker = { level: 53, adena: 9000001 + 1000, stats: { classId: 55 }, inventory: {
+    const restocker = { level: 53, adena: 4500000, stats: { classId: 55 }, inventory: {
         100: { selfId: 100, amount: 1, equipped: true }, 951: { selfId: 951, amount: 1 } } };
-    assert.deepStrictEqual(restockOf(restocker), [{ selfId: 951, amount: 2, money: 1000 }, { selfId: 947, amount: 3, money: 1000 }],
-        'a level 53 spoiler stocks C and B scrolls up to three each from the money above 3x its weapon');
-    assert.deepStrictEqual(restockOf({ ...restocker, adena: 9000001 }), [], 'no money above the floor stocks nothing');
+    assert.deepStrictEqual(restockOf(restocker), [{ selfId: 951, amount: 2, money: 200000 }, { selfId: 947, amount: 3, money: 1500000 }],
+        'a level 53 spoiler stocks C and B scrolls up to three each, keeping 2x each purchase after it');
+    assert.deepStrictEqual(restockOf({ ...restocker, adena: 4499999 }), [{ selfId: 951, amount: 2, money: 200000 }, { selfId: 947, amount: 2, money: 1000000 }],
+        'below 3x the three B scrolls\' cost it buys the two its money covers');
+    assert.deepStrictEqual(restockOf({ ...restocker, adena: 299999 }), [], 'money below 3x one scroll stocks nothing');
 
     // A cold bot at a C level wearing a C weapon uses the C weapon scrolls it dropped
     // (951) to the safe +3, and buys the ones it lacks only from the money that keeps
@@ -242,6 +242,43 @@ function restockOf(state) {
     assert.strictEqual(count(afterBatch, 955), 0);
     assert.strictEqual(count([...afterBatch, ...await Database.fetchWarehouseItems(character.id)], 956), 3);
     assert.strictEqual(resumed.state.adena, huntingState.adena);
+
+    // A Bounty Hunter on a town visit in Oren with 5M, wearing a B weapon priced far
+    // above its wallet: the visit's errands buy its three B scrolls (1.5M, 2x left
+    // after) at the reserve (M3tLa) and the purchase is a fixed_wts trade.
+    const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
+    const spoilerWeapon = 91;
+    const spoilerWeaponPrice = Math.min(...MarketOpportunity.fixedStoreOffers(spoilerWeapon, { stats: { classId: 55 } }).map(offer => Number(offer.price)));
+    assert(Number.isFinite(spoilerWeaponPrice) && 3 * spoilerWeaponPrice > 5000000, 'three times the worn weapon is above the wallet');
+    const oren = invoke('GameServer/Bot/Economy/MarketTownPolicy').marketTown('Oren').center;
+    await Database.createAccount('bot_s1c_spoiler', 'secret');
+    await Database.createCharacter('bot_s1c_spoiler', {
+        name: 'SpoilerRestock', race: 4, classId: 55,
+        maxHp: 3000, maxMp: 1200, sex: 0, face: 0, hair: 0, hairColor: 0,
+        locX: oren.locX, locY: oren.locY, locZ: oren.locZ
+    });
+    const bountyHunter = (await Database.fetchCharacters('bot_s1c_spoiler')).find(row => row.name === 'SpoilerRestock');
+    assert(bountyHunter?.id);
+    const adena = 5000000;
+    await Database.setItem(bountyHunter.id, { selfId: 57, name: 'Adena', amount: adena, enchant: 0, equipped: false, slot: 0 });
+    await Database.setItem(bountyHunter.id, { selfId: spoilerWeapon, name: 'Heavy War Axe', amount: 1, enchant: 0, equipped: true,
+        slot: Number(DataCache.items.find(item => Number(item?.selfId) === spoilerWeapon).etc.slot) });
+    const shopping = await LifeState.upsertState({
+        characterId: bountyHunter.id, accountName: 'bot_s1c_spoiler', name: 'SpoilerRestock', level: 55,
+        phase: 'cold', activity: 'shopping', currentRegion: 'Oren', spotId: null, adena, loc: oren,
+        vitals: { hp: 3000, maxHp: 3000, mp: 1200, maxMp: 1200 },
+        inventory: LifeState.inventorySummaryFromItems(await Database.fetchItems(bountyHunter.id)),
+        stats: { classId: 55, generatedCold: true,
+            money: invoke('GameServer/Bot/Economy/StatsPacket').money({ hourAdena: 100000, moneyPrice: 0.00001, refillReserve: 0, firstUnfundedPrice: 0 }),
+            townVisit: { town: 'Oren', startedAt: Date.now() - 60000, reason: 'shopping' } },
+        timing: { activityStartedAt: Date.now() - 60000, lastResolvedAt: Date.now() - 1000, nextResolveAt: Date.now() }
+    }, 'cold_safe_enchant_spoiler');
+    assert(shopping, 'the spoiler is cold and shopping in Oren');
+    await invoke('GameServer/Bot/Economy/ColdMarketService').finishTownErrands(shopping);
+    assert.strictEqual(count(await Database.fetchItems(bountyHunter.id), 947), 3, 'the spoiler holds three B scrolls after the visit');
+    await Database.flushJournals(); await Database.flushHistory();
+    const scrollTrades = await Database.readHistory([`SELECT channel, quantity FROM market_trades WHERE selfId = 947 AND buyerCharacterId = ?`, [bountyHunter.id]]);
+    assert.deepStrictEqual(scrollTrades.map(row => [row.channel, Number(row.quantity)]), [['fixed_wts', 3]], 'the reserve purchase is one fixed_wts trade of three');
 
     console.log('Cold safe enchant checks passed');
 })().catch((error) => {
