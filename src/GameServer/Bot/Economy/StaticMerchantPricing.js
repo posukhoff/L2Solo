@@ -71,12 +71,16 @@ function refreshFixedOffers() {
     fixedMultiplier = multiplier;
     sellers = new Map();
     fixedMinimums = new Map();
+    const openMinimums = new Map();
     for (const [name, store] of Object.entries(config)) {
         if (Number(store?.storeType) !== SELL) continue;
         for (const line of store.items || []) {
             if (!(Number(line.count ?? 1) > 0)) continue;
             const id = Number(line.selfId);
             const price = configuredPrice(line);
+            // A row sold to named classes only (a crafter's gear row) is no buyer's price
+            // where an open row sells the item; a scroll sold to the spoiler line only keeps its.
+            if (!line.buyerClasses) openMinimums.set(id, Math.min(openMinimums.get(id) ?? Infinity, price));
             fixedMinimums.set(id, Math.min(fixedMinimums.get(id) ?? Infinity, price));
             if (store.town) {
                 if (!sellers.has(id)) sellers.set(id, []);
@@ -85,6 +89,7 @@ function refreshFixedOffers() {
             }
         }
     }
+    for (const [id, price] of openMinimums) fixedMinimums.set(id, price);
 }
 
 // The cheapest repeatable supply of an item: NPC shops and the configured city

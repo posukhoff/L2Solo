@@ -27,10 +27,20 @@ const shotsForGrade = (grade) => (SHOT_IDS_BY_GRADE[grade] || SHOT_IDS_BY_GRADE[
 // C/B/A weapon and armour piece their gear planner can target (a named
 // template with a price and an acquisition source), never in the player's
 // window (TradeService.nativeStoreItems): the player keeps C4's stores. Priced
-// at 1.5x the NPC price scale, above crafters by the margin the shot stores
-// keep over crafted shots, so a crafter's or a bot's cheaper sell line wins.
+// at 1.5x the NPC price scale (the store price). Each piece has two rows (our
+// rule, standing for the dwarf craft and resale a C4 server runs on): the
+// crafter row sells to the Artisan/Warsmith line only (classId 56/57,
+// ProductionPolicy.allowsFixed reads buyerClasses) at the grade's crafter ref
+// (C 0.4, B 0.4, A 0.8 of the store price), stock it resells on the board
+// (CrafterStock); the valve row sells to anyone at 2.5x that ref, the ceiling of
+// a crafter's ask, so a crafter's cheaper sell line wins.
 const RESERVE_GEAR_NPC_RATE = 1.5;
-const reserveGear = (ids) => ids.map((selfId) => ({ selfId, npcRate: RESERVE_GEAR_NPC_RATE, count: BUY_CAP, reserve: true }));
+const CRAFTER_REF = { C: 0.4, B: 0.4, A: 0.8 };
+const GEAR_VALVE = 2.5;
+const CRAFTER_CLASSES = Object.freeze([56, 57]);
+const reserveGear = (ids, grade) => ids.flatMap((selfId) => [
+    { selfId, npcRate: RESERVE_GEAR_NPC_RATE * CRAFTER_REF[grade], count: BUY_CAP, reserve: true, buyerClasses: CRAFTER_CLASSES },
+    { selfId, npcRate: RESERVE_GEAR_NPC_RATE * CRAFTER_REF[grade] * GEAR_VALVE, count: BUY_CAP, reserve: true }]);
 const RESERVE_GEAR_C = [
     60, 62, 64, 71, 72, 73, 74, 75, 76, 77, 84, 89, 94, 95,
     96, 103, 107, 119, 131, 133, 134, 135, 145, 160, 161, 162, 173, 174,
@@ -485,14 +495,14 @@ module.exports = {
         town: "Giran",
         storeType: 1,
         locX: 83600, locY: 148300, locZ: -3406,
-        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C]), enchantReserve(951, 20)]
+        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C], "C"), enchantReserve(951, 20)]
     },
     "M3tLa": {
         title: "Shots: B Grade",
         town: "Oren",
         storeType: 1,
         locX: 83000, locY: 53400, locZ: -1488,
-        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B]), enchantReserve(947, 10)]
+        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B], "B"), enchantReserve(947, 10)]
     },
     "Petec": {
         title: "Shots: B Grade",
@@ -513,7 +523,7 @@ module.exports = {
         town: "Aden",
         storeType: 1,
         locX: 146497, locY: 25807, locZ: -2008,
-        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A]), enchantReserve(729, 5)]
+        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A], "A"), enchantReserve(729, 5)]
     },
     "TinWh1skey": {
         title: "Shots: S Grade",

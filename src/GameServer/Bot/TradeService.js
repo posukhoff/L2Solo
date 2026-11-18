@@ -382,7 +382,11 @@ async function buyFromStore(actor, store, selfId, qty, options = {}) {
             if (options.expectedRevision !== undefined && Number(store.revision || 1) !== Number(options.expectedRevision)) {
                 throw new Error("Store listing changed.");
             }
-            const storeItem = store.items.find((item) => Number(item.selfId) === Number(selfId));
+            // A reserve piece has a crafter row (sold to named classes only) and a valve
+            // row: a bot takes the first row of the item sold to it.
+            const storeItem = store.items.find((item) => Number(item.selfId) === Number(selfId)
+                && !(isBotActor(actor) && item[staticPriceSource]?.line?.buyerClasses
+                    && !require('./Economy/ProductionPolicy').allowsFixed(item[staticPriceSource].line, actor)));
             if (!storeItem) {
                 throw new Error("Item is not available.");
             }

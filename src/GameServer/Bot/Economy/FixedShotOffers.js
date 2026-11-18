@@ -34,7 +34,10 @@ function built() {
                         locX: Number(store?.locX || 0), locY: Number(store?.locY || 0), locZ: Number(store?.locZ || 0) });
                 });
             fixedByItem.set(id, Object.freeze(sources));
-            if (sources.length) fixedLowest.set(id, Math.min(...sources.map(row => Number(row.price))));
+            // The price without a buyer: the open rows' (a crafter gear row sells to its line
+            // only), the restricted rows' where no open row sells the item (spoiler scrolls).
+            const open = sources.filter(row => !row.buyerClasses);
+            if (sources.length) fixedLowest.set(id, Math.min(...(open.length ? open : sources).map(row => Number(row.price))));
             rows.push(...sources);
         }
         fixedRows = Object.freeze(rows);

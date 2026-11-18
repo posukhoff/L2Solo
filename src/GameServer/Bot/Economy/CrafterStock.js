@@ -1,0 +1,94 @@
+'use strict';
+// A crafter's gear stock for the board (our rule, standing for the dwarf craft and
+// resale a C4 server runs on): an Artisan or Warsmith (classId 56/57) buys C/B/A
+// pieces at a town visit from the reserve rows sold to its line only
+// (MerchantStoreConfigs reserveGear, ProductionPolicy.allowsFixed) and lists them
+// as ordinary bot sell lines (ItemDisposition.gnomeStock: never deposited, never
+// sold to an NPC; ask between its cost and the open valve row's price).
+// - Gating: only a piece whose recipe level its Create Item level reaches
+//   (CraftEligibility.craftLevelFor; a piece without a recipe is never stocked).
+// - Demand first: the pieces its town wants (MarketDemand.forecast: public buy lines
+//   and recent trades), up to the units wanted.
+// - Display: each weapon type and armour slot with no wanted piece keeps one piece of
+//   its top unlocked recipe level, so new demand finds a listing.
+// - Pace: PIECES_PER_HOUR pieces a grade a game hour, refilled at the read, at most
+//   STOCK_HOURS hours' worth held (stats.gnomeAllowance { grade: { pieces, at } }).
+// - Money: a purchase leaves the crafter at least WALLET_COSTS times its cost.
+// Held = its bag's unequipped units plus its own board sell lines (listed items leave the bag).
+const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
+
+const CRAFTER_CLASSES = Object.freeze([56, 57]);
+const GEAR_GRADES = new Set(['c', 'b', 'a']);
+const PIECES_PER_HOUR = 6, STOCK_HOURS = 2, HOUR_MS = 3600000, WALLET_COSTS = 2;
+
+function isCrafter(state) {
+    return CRAFTER_CLASSES.includes(Number(invoke('GameServer/Bot/AI/BotRoles').classIdOf(state)));
+}
+
+// A grade's allowance at `now`: one hour's worth for a crafter that never stocked it.
+function allowance(state, grade, now) {
+    const held = state?.stats?.gnomeAllowance?.[grade];
+    if (!held) return { pieces: PIECES_PER_HOUR, at: now };
+    const hours = Math.max(0, (now - Number(held.at || 0)) / HOUR_MS);
+    return { pieces: Math.min(PIECES_PER_HOUR * STOCK_HOURS, Number(held.pieces || 0) + PIECES_PER_HOUR * hours), at: now };
+}
+
+// The crafter rows of the reserve in the crafter's town, as plain offers:
+// { selfId, price, ceiling, recipeLevel, grade, group }.
+function townOffers(state) {
+    const Fixed = require('./FixedShotOffers');
+    const Recipes = invoke('GameServer/Items/C4RecipeItems');
+    const items = invoke('GameServer/DataCache').items;
+    return Fixed.offers(null, state).filter(row => Array.isArray(row.buyerClasses) && row.town === state.currentRegion)
+        .flatMap(row => {
+            const found = ItemTemplateIndex.find(items, row.selfId);
+            const grade = String(found?.etc?.rank || '').toLowerCase(), kind = String(found?.template?.kind || '');
+            if (!GEAR_GRADES.has(grade) || !(kind.startsWith('Weapon.') || kind.startsWith('Armor.'))) return [];
+            const ceiling = Fixed.lowestPrice(row.selfId);
+            return [{ selfId: Number(row.selfId), price: Number(row.price), ceiling: Number.isFinite(ceiling) ? ceiling : Number(row.price),
+                recipeLevel: Number(Recipes.resolveByProductId(row.selfId)?.level || 0), grade,
+                group: kind.startsWith('Weapon.') ? kind : `Armor:${Number(found?.etc?.slot || 0)}` }];
+        });
+}
+
+// The purchases of one visit: [{ selfId, amount, money, unit, ceiling }] and the
+// allowance after them. offers: townOffers'; demandFor(selfId): units its town wants;
+// heldFor(selfId): units it holds (bag and own sell lines).
+function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, now = Date.now() } = {}) {
+    if (!isCrafter(state)) return { rows: [], allowance: null };
+    const craftLevel = Number(invoke('GameServer/Bot/Economy/CraftEligibility').craftLevelFor(state) || 0);
+    const unlocked = offers.filter(offer => offer.recipeLevel > 0 && offer.recipeLevel <= craftLevel && offer.price > 0);
+    const targets = [];
+    const wanted = new Set();
+    for (const offer of unlocked) {
+        const units = Math.floor(Number(demandFor(offer.selfId) || 0));
+        if (units > 0) { targets.push({ offer, units }); wanted.add(offer.group); }
+    }
+    targets.sort((a, b) => b.units - a.units || a.offer.selfId - b.offer.selfId);
+    const top = new Map();
+    for (const offer of unlocked) {
+        if (wanted.has(offer.group)) continue;
+        const held = top.get(offer.group);
+        if (!held || offer.recipeLevel > held.recipeLevel
+            || offer.recipeLevel === held.recipeLevel && (offer.price > held.price || offer.price === held.price && offer.selfId < held.selfId))
+            top.set(offer.group, offer);
+    }
+    // Weapons first (most of the board's gear demand), then armour, by item id.
+    const armour = offer => Number(offer.group.startsWith('Armor:'));
+    for (const offer of [...top.values()].sort((a, b) => armour(a) - armour(b) || a.selfId - b.selfId)) targets.push({ offer, units: 1 });
+    const allowances = {};
+    let money = Math.max(0, Number(state.adena || 0));
+    const rows = [];
+    for (const { offer, units } of targets) {
+        const pool = allowances[offer.grade] ||= allowance(state, offer.grade, now);
+        const amount = Math.min(units - Math.max(0, Number(heldFor(offer.selfId) || 0)), Math.floor(pool.pieces),
+            Math.floor(money / ((1 + WALLET_COSTS) * offer.price)));
+        if (!(amount > 0)) continue;
+        rows.push({ selfId: offer.selfId, amount, money: amount * offer.price, unit: offer.price, ceiling: offer.ceiling, grade: offer.grade });
+        pool.pieces -= amount;
+        money -= amount * offer.price;
+    }
+    return { rows, allowance: { ...(state.stats?.gnomeAllowance || {}), ...allowances } };
+}
+
+module.exports = { isCrafter, allowance, townOffers, restock, CRAFTER_CLASSES, PIECES_PER_HOUR, STOCK_HOURS };

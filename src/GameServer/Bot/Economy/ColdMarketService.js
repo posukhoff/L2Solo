@@ -1067,6 +1067,36 @@ const ColdMarketService = {
                 if (bought.hot) return current;
             }
         }
+        // A crafter's board stock of C/B/A gear (CrafterStock.restock): bought here from
+        // the reserve rows sold to its line, marked stats.gnomeStock (its listing sells
+        // it between its cost and the valve), each grade within its hourly allowance.
+        if (!options.raidSupplyOnly && current.stats?.townVisit?.completed !== true) {
+            const Stock = require('./CrafterStock');
+            if (Stock.isCrafter(current)) {
+                const board = invoke('GameServer/AfkTrade/AfkTradeService').boardIndex(), now = Date.now();
+                const { SELL } = require('../../AfkTrade/BoardIndex');
+                const listed = board.ownerLines(Number(current.characterId)).filter(line => line.storeType === SELL);
+                const heldFor = id => Math.max(0, Number(current.inventory?.[id]?.amount || 0)
+                    - Number(current.inventory?.[id]?.equippedCount ?? (current.inventory?.[id]?.equipped ? 1 : 0)))
+                    + listed.filter(line => Number(line.selfId) === Number(id)).reduce((sum, line) => sum + Number(line.count || 0), 0);
+                const plan = Stock.restock(current, { offers: Stock.townOffers(current), heldFor, now,
+                    demandFor: id => require('./MarketDemand').forecast(id, current.currentRegion,
+                        { board, ownerId: Number(current.characterId), timestamp: now })?.applicableUnits || 0 });
+                const allowance = plan.allowance && Object.fromEntries(Object.entries(plan.allowance).map(([grade, pool]) => [grade, { ...pool }]));
+                const stock = { ...(current.stats?.gnomeStock || {}) };
+                for (const row of plan.rows) {
+                    const purchase = planPurchase(current, row.selfId, row.amount, { towns: [current.currentRegion],
+                        money: row.money, npcOnly: true, purpose: 'gnome_stock', side: Number.MAX_SAFE_INTEGER });
+                    const bought = purchase ? await buyHere(current, purchase, { deferRealNpc: true }) : { state: current, units: 0 };
+                    current = bought.state;
+                    if (allowance?.[row.grade]) allowance[row.grade].pieces += row.amount - Number(bought.units || 0);
+                    if (Number(bought.units) > 0) stock[row.selfId] = { cost: Math.round(Number(bought.spent) / Number(bought.units)), ceiling: row.ceiling };
+                    if (bought.hot) break;
+                }
+                if (plan.rows.length) current = { ...current, stats: { ...current.stats, gnomeStock: stock, gnomeAllowance: allowance } };
+                if (LifeState.hotRow(current.characterId)) return current;
+            }
+        }
         // Board deals remain at their own owner. Their current NPC remainders,
         // healing kit and escape scrolls share the exact real seller basket.
         const extras = [];
