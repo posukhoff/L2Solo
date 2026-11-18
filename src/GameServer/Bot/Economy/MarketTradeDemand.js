@@ -2,9 +2,9 @@
 const Uptime = require('../Population/Uptime');
 const HOUR_MS = 3600000;
 // The demand window is an hour of trade at x50 and stretches with the drop rate
-// (ProgressionRates.supplyScale): at x1 deals come about fifty times slower, so the
+// (RateScale.supplyScale): at x1 deals come about fifty times slower, so the
 // same evidence takes fifty hours to gather. Our rule.
-const windowMs = () => HOUR_MS / invoke('GameServer/ProgressionRates').supplyScale();
+const windowMs = () => HOUR_MS / invoke('GameServer/Bot/Economy/RateScale').supplyScale();
 // The receipts a start replays: the last 24 windows (a day at x50).
 const replayMs = () => 24 * windowMs();
 const history = new Map();

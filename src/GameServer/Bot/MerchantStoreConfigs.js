@@ -88,16 +88,16 @@ const RESERVE_GEAR = Object.freeze([
     ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B], "B"),
     ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A], "A")]);
 // The grade's Scroll: Enchant Weapon (C4EnchantScrolls; C4 sells it nowhere: drop,
-// spoil and raid bosses only). The reserve sells it at SCROLL_RATE x the datapack price
-// to the spoiler line only (Scavenger 54, Bounty Hunter 55: ProductionPolicy.allowsFixed
+// spoil and raid bosses only). The reserve sells it to the spoiler line only at
+// SCROLL_MARKUP x the board's median deal price (FixedShotOffers), SCROLL_RATE x the
+// datapack price before the board has deals, (Scavenger 54, Bounty Hunter 55: ProductionPolicy.allowsFixed
 // reads buyerClasses), hourlyStock scrolls a game hour (FixedShotOffers.take).
 // Our rule: the spoiler stocks the board with them (ColdSafeEnchantService.scrollRestock)
-// and sells them at the board's own price, which drifts with its deals under a cap below
-// what it paid (ItemDisposition.gnomeStock): it always pays more than it gets back, the
-// difference is money leaving the world through the spoilers.
-const SCROLL_RATE = 2;
+// and sells them at the board's price like any item: it always pays more than it gets
+// back, the markup is money leaving the world through the spoilers.
+const SCROLL_RATE = 3.4, SCROLL_MARKUP = 1.2;
 const enchantReserve = (selfId, hourlyStock) => ({ selfId, npcRate: SCROLL_RATE, count: BUY_CAP, reserve: true,
-    buyerClasses: Object.freeze([54, 55]), hourlyStock });
+    buyerClasses: Object.freeze([54, 55]), hourlyStock, boardMarkup: SCROLL_MARKUP });
 
 module.exports = {
     // Talking Island

@@ -37,7 +37,7 @@ function isCrafter(state) {
 // A grade's allowance at `now`: one hour's worth for a crafter that never stocked it.
 // PIECES_PER_HOUR is the x50 pace; the server's drop rate scales it (supplyScale).
 function allowance(state, grade, now) {
-    const pace = PIECES_PER_HOUR * invoke('GameServer/ProgressionRates').supplyScale();
+    const pace = PIECES_PER_HOUR * invoke('GameServer/Bot/Economy/RateScale').supplyScale();
     const held = state?.stats?.gnomeAllowance?.[grade];
     if (!held) return { pieces: pace, at: now };
     const hours = Math.max(0, (now - Number(held.at || 0)) / HOUR_MS);

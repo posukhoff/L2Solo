@@ -10,9 +10,9 @@
 // kills either; a bot that does not hunt (town, a party's rest) counts none and needs no
 // stall. Plain stats reads, both threads. No clock.
 // STALL_KILLS is the x50 budget; drops per kill follow the drop rate, so the budget
-// stretches by it (ProgressionRates.supplyScale): 15000 kills at x1.
+// stretches by it (RateScale.supplyScale): 15000 kills at x1.
 const STALL_KILLS = 300;
-const stallBudget = () => Math.round(STALL_KILLS / invoke('GameServer/ProgressionRates').supplyScale());
+const stallBudget = () => Math.round(STALL_KILLS / invoke('GameServer/Bot/Economy/RateScale').supplyScale());
 const killsOf = state => Math.max(0, Number(state?.stats?.fightsWon) || 0);
 // The stall a plan stamps now (kind: 'craft').
 const stallFor = (state, kind) => ({ kills: killsOf(state) + stallBudget(), kind });

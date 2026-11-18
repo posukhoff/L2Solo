@@ -273,18 +273,8 @@ function rollSpoilGroup(group, context = {}, rng = Math.random) {
     return landed;
 }
 
-// The bots' stand-in supply (a crafter's restock pace, the spoilers' scroll stock) is
-// tuned at x50 and follows the drop rate from there, as the drops it stands for do:
-// at x1 a crafter stocks a fiftieth of what it stocks at x50 per hour, while the
-// world levels fifty times slower. Our rule.
-const SUPPLY_TUNED_RATE = 50;
-function supplyScale() {
-    return profile().drop / SUPPLY_TUNED_RATE;
-}
-
 module.exports = {
     PRESETS,
-    supplyScale,
     normalizePreset,
     profile,
     reset,

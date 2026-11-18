@@ -42,14 +42,17 @@ function restockOf(state) {
     const cRow = Market.fixedStoreOffers(951, spoiler)[0];
     assert.strictEqual(OfferQuery.admits(cRow, fighter), false, 'the offer admission refuses a non-spoiler the 951 row');
     assert.strictEqual(OfferQuery.admits(cRow, spoiler), true, 'the offer admission takes a spoiler');
-    // The spoiler pays twice the datapack price and sells at the board's price under 0.9 of it.
+    // The spoiler pays 1.2x the board's median deal price (3.4x the datapack price before
+    // the board has deals): always more than the board pays it back.
     const datapack = Number(invoke('GameServer/Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, 951).template.price);
-    assert.strictEqual(Number(cRow.price), 2 * datapack, 'the reserve sells a C scroll at twice its datapack price');
-    const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
-    const cap = Math.floor(0.9 * cRow.price);
-    assert.strictEqual(Disposition.gnomeAsk(spoiler, 951, 3 * cRow.price), cap, 'a board price above what it paid is capped below it');
-    assert.strictEqual(Disposition.gnomeAsk(spoiler, 951, datapack), datapack, 'a lower board price stands');
-    assert.strictEqual(Disposition.gnomeStock(fighter, 951), null, 'a fighter\'s scrolls sell as asked');
+    assert.strictEqual(Number(cRow.price), Math.round(3.4 * datapack), 'without deals a C scroll costs 3.4x its datapack price');
+    const Counters = invoke('GameServer/Bot/Economy/MarketCounters');
+    const boardPrice = Math.round(2.8 * datapack);
+    Counters.deal(951, boardPrice, 1, Date.now() - 2000, 11, 'Giran', 12);
+    Counters.deal(951, boardPrice, 1, Date.now() - 1000, 13, 'Giran', 14);
+    assert.strictEqual(Number(Market.fixedStoreOffers(951, spoiler)[0].price), Math.round(boardPrice * 1.2),
+        'after board deals at 2.8x it costs 1.2x the board price');
+    assert.strictEqual(FixedStock.lowestPrice(951), Math.round(boardPrice * 1.2), 'the quote follows the board too');
     const hour = Date.now();
     assert.strictEqual(FixedStock.take(951, 20, hour), 20, 'an hour holds 20 C scrolls');
     assert.strictEqual(FixedStock.take(951, 1, hour + 1000), 0, 'the 21st C scroll in the hour is refused');
@@ -253,13 +256,13 @@ function restockOf(state) {
     assert.strictEqual(count([...afterBatch, ...await Database.fetchWarehouseItems(character.id)], 956), 3);
     assert.strictEqual(resumed.state.adena, huntingState.adena);
 
-    // A Bounty Hunter on a town visit in Oren with 9M, wearing a B weapon priced far
-    // above its wallet: the visit's errands buy its three B scrolls (3M at twice the
-    // datapack price, 2x left after) at the reserve (M3tLa) and the purchase is a fixed_wts trade.
+    // A Bounty Hunter on a town visit in Oren with 16M, wearing a B weapon priced far
+    // above its wallet: the visit's errands buy its three B scrolls (5.1M at 3.4x the
+    // datapack price, no board deals yet; 2x left after) at the reserve (M3tLa) and the purchase is a fixed_wts trade.
     const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
     const spoilerWeapon = 91;
     const spoilerWeaponPrice = Math.min(...MarketOpportunity.fixedStoreOffers(spoilerWeapon, { stats: { classId: 55 } }).map(offer => Number(offer.price)));
-    assert(Number.isFinite(spoilerWeaponPrice) && 3 * spoilerWeaponPrice > 9000000, 'three times the worn weapon is above the wallet');
+    assert(Number.isFinite(spoilerWeaponPrice) && 3 * spoilerWeaponPrice > 16000000, 'three times the worn weapon is above the wallet');
     const oren = invoke('GameServer/Bot/Economy/MarketTownPolicy').marketTown('Oren').center;
     await Database.createAccount('bot_s1c_spoiler', 'secret');
     await Database.createCharacter('bot_s1c_spoiler', {
@@ -269,7 +272,7 @@ function restockOf(state) {
     });
     const bountyHunter = (await Database.fetchCharacters('bot_s1c_spoiler')).find(row => row.name === 'SpoilerRestock');
     assert(bountyHunter?.id);
-    const adena = 9000000;
+    const adena = 16000000;
     await Database.setItem(bountyHunter.id, { selfId: 57, name: 'Adena', amount: adena, enchant: 0, equipped: false, slot: 0 });
     await Database.setItem(bountyHunter.id, { selfId: spoilerWeapon, name: 'Heavy War Axe', amount: 1, enchant: 0, equipped: true,
         slot: Number(DataCache.items.find(item => Number(item?.selfId) === spoilerWeapon).etc.slot) });

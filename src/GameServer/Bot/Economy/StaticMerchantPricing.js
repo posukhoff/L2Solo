@@ -86,7 +86,8 @@ function refreshFixedOffers() {
                 if (!sellers.has(id)) sellers.set(id, []);
                 sellers.get(id).push({ town: store.town, price, sourceName: name, reserve: line.reserve === true,
                     ...(line.buyerClasses ? { buyerClasses: line.buyerClasses, hourlyStock: Number(line.hourlyStock) } : {}),
-                    ...(line.valve ? { valve: line.valve } : {}) });
+                    ...(line.valve ? { valve: line.valve } : {}),
+                    ...(line.boardMarkup ? { boardMarkup: Number(line.boardMarkup) } : {}) });
             }
         }
     }

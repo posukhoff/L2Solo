@@ -48,9 +48,18 @@ function built() {
 // a row naming buyerClasses, a valve row); none: every row (quotes and prices).
 function offers(selfId = null, buyer = undefined) {
     if (!built()) return EMPTY_OFFERS;
-    const rows = selfId === null ? fixedRows : fixedByItem.get(Number(selfId)) || EMPTY_OFFERS;
+    let rows = selfId === null ? fixedRows : fixedByItem.get(Number(selfId)) || EMPTY_OFFERS;
+    if (selfId !== null && rows.some(row => row.boardMarkup)) rows = rows.map(priced);
     return buyer === undefined || !rows.some(row => row.buyerClasses || row.valve) ? rows
         : rows.filter(row => Production.allowsFixed(row, buyer));
+}
+// A row marked boardMarkup sells at that markup over the board's median deal price of
+// the item (MarketCounters.itemPriceEvidence), its configured price while the board has
+// none: what a seller would list it at, plus the markup. Our rule (spoiler scrolls).
+function priced(row) {
+    if (!row.boardMarkup) return row;
+    const median = invoke('GameServer/Bot/Economy/MarketCounters').itemPriceEvidence(row.selfId).logMedian;
+    return median === null ? row : Object.freeze({ ...row, price: Math.max(1, Math.round(Math.exp(median) * row.boardMarkup)) });
 }
 // A row's server stock (hourlyStock): the units it sells a game hour, refilled each
 // full hour and held at most STOCK_HOURS hours' worth; in memory on the thread that
@@ -63,7 +72,7 @@ const stocks = new Map();
 // x1 a stock refills a unit in some hours; whole units are granted.
 function stockOf(selfId, now) {
     const cap = Number(offers(selfId).find(row => row.hourlyStock > 0)?.hourlyStock || 0)
-        * invoke('GameServer/ProgressionRates').supplyScale();
+        * invoke('GameServer/Bot/Economy/RateScale').supplyScale();
     if (!cap) return null;
     let stock = stocks.get(selfId);
     if (!stock) stocks.set(selfId, stock = { units: cap, at: now, refused: 0 });
@@ -97,6 +106,9 @@ function refused(selfId) {
 }
 // The lowest price a bot pays for an item at the configured stores (Infinity: none).
 function lowestPrice(selfId) {
-    return built() ? fixedLowest.get(Number(selfId)) ?? Infinity : Infinity;
+    if (!built()) return Infinity;
+    const rows = fixedByItem.get(Number(selfId));
+    if (rows?.some(row => row.boardMarkup) && !rows.some(row => !row.buyerClasses)) return Math.min(...rows.map(row => priced(row).price));
+    return fixedLowest.get(Number(selfId)) ?? Infinity;
 }
 module.exports = { offers, lowestPrice, take, restore, refused };

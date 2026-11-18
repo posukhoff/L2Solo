@@ -156,20 +156,9 @@ function isGradeCrystal(item) {
 // A crafter's board stock of an item (CrafterStock: bought from its reserve row for
 // resale), { cost, ceiling } or null: every unequipped copy it holds is listed, never
 // deposited or sold to an NPC, at an ask between its unit cost and the valve price.
-// A spoiler's enchant scrolls are stock too: an item its class buys from a reserve row
-// with a server stock (MerchantStoreConfigs enchantReserve) is listed at the board's
-// price capped at SCROLL_RESALE of that row's price ({ cost: 1, ceiling }), bought or
-// spoiled, so the spoiler always pays the reserve more than the board pays it. Our rule.
-const SCROLL_RESALE = 0.9;
 function gnomeStock(state, selfId) {
     const row = state?.stats?.gnomeStock?.[Number(selfId)];
-    if (row && Number(row.cost) > 0) return row;
-    const classId = Number(state?.stats?.classId);
-    if (!(classId > 0)) return null;
-    const reserve = invoke('GameServer/Bot/Economy/FixedShotOffers').offers(Number(selfId))
-        .find(entry => entry.hourlyStock > 0 && Array.isArray(entry.buyerClasses) && entry.buyerClasses.includes(classId));
-    const ceiling = Math.floor(SCROLL_RESALE * Number(reserve?.price || 0));
-    return ceiling > 1 ? { cost: 1, ceiling } : null;
+    return row && Number(row.cost) > 0 ? row : null;
 }
 // An ask for a crafter's stock: clamped to [cost, ceiling]; any other item's as asked.
 function gnomeAsk(state, selfId, price) {
