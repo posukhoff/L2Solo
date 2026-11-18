@@ -206,7 +206,7 @@ function linesFor(state, goal, { money = Infinity, watchList, ...options } = {})
     }
     const townFor = options.townFor || (items => invoke('GameServer/Bot/Economy/MarketTownPolicy').targetTownForItems(state, items));
     let town = townFor(candidates.map(group => ({ selfId: Number(group[0].target.itemId) })));
-    const materialBids = require('./CrafterStock').materialBids(state);
+    const materialBids = invoke('GameServer/Bot/Economy/CrafterStock').materialBids(state);
     // Rejected lines can change the grade/town of a mixed order. Price the
     // final town too, before publication; this loop only removes candidates.
     for (let pass = 0; pass <= limit; pass++) {
