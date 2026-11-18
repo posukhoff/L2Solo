@@ -430,7 +430,8 @@ assert.throws(() => KitHours.gameKitHours({ snapshot: wrongBest, anchor }).hour(
 // A worn kit's hunt at one spot row over the level's reference kit's (spotFactors):
 // per form the game's own hunt cycle reader at that row, kills an hour, kills
 // times fight share (the shots fired) and kills times deaths, the worn kit's over
-// the reference's.
+// the reference's. A caster's shots form names the plain spiritshot as the model
+// does: unnamed, the game picks the blessed one when its store price pays.
 const gameRow = (line, level, kit, spotId, form) => {
     Pricing.useBoard(() => null);
     try {
@@ -439,7 +440,8 @@ const gameRow = (line, level, kit, spotId, form) => {
             const key = `kit-${selfId}`, prior = inventory[key], amount = (prior?.amount || 0) + 1;
             inventory[key] = { selfId, amount, equipped: true, equippedCount: amount, equippedSlots: [...(prior?.equippedSlots || []), slot], slot };
         }
-        const state = { ...base, inventory, stats: { ...base.stats, exp: Data.experience[level - 1], ...(form === 'blessed' ? { earning: { shotKind: 'blessedSpiritshot' } } : {}) } };
+        const plain = ShotStock.planForState(base, { blessed: false })?.kind, shotKind = form === 'blessed' ? 'blessedSpiritshot' : form === 'shots' && plain === 'spiritshot' ? plain : null;
+        const state = { ...base, inventory, stats: { ...base.stats, exp: Data.experience[level - 1], ...(shotKind ? { earning: { shotKind } } : {}) } };
         const numbers = KitHours.referenceNumbers(Profile.profileFor(state, 0, { store: false }));
         const reader = HuntCycle.reader(state, { deathHours: 0, hourAdena: 1, hunt: form === 'bare' ? { spotId, useShots: false } : { spotId } });
         const one = reader.hourAt(numbers, reader.spotIds.map(String).indexOf(String(spotId)));
