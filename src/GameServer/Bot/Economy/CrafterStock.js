@@ -144,7 +144,8 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
 // ProductionPolicy.sellsToFixedBuyer): an Artisan or Warsmith bids for the materials
 // of the C/B recipes its Create Item level reaches (their material trees, down to the
 // basic materials), MATERIAL_BID_RATE x the NPC buy-back, up to MATERIAL_BID_UNITS
-// held of each; the materials most of those recipes take come first. Plain lines [{ selfId, count, price }]: BuyAdPolicy.linesFor
+// held of each; the list runs from the materials most of those recipes take, and each
+// crafter starts it at its characterId. Plain lines [{ selfId, count, price }]: BuyAdPolicy.linesFor
 // posts them after the wish's bids, within the bot's buy lines and its adena budget
 // (no consignment). The materials of a craft level are static data, kept per level.
 const MATERIAL_BID_RATE = 1.2, MATERIAL_BID_UNITS = 300, BID_GRADES = new Set(['c', 'b']);
@@ -184,7 +185,10 @@ function materialBids(state) {
     if (!isCrafter(state)) return [];
     const level = Number(invoke('GameServer/Bot/Economy/CraftEligibility').craftLevelFor(state)) || 0;
     if (!(level > 0)) return [];
-    return bidMaterials(level).flatMap(({ selfId, price }) => {
+    // Each crafter starts at its characterId (mod the list, wrapping), so the crafters
+    // of one level together bid on the whole list, not all on its first lines.
+    const rows = bidMaterials(level), start = Math.abs(Number(state?.characterId) || 0) % (rows.length || 1);
+    return [...rows.slice(start), ...rows.slice(0, start)].flatMap(({ selfId, price }) => {
         const count = MATERIAL_BID_UNITS - Math.max(0, Number(state?.inventory?.[String(selfId)]?.amount || 0));
         return count > 0 ? [{ selfId, count, price }] : [];
     });

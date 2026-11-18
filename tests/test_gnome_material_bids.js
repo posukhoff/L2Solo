@@ -58,6 +58,9 @@ assert(cBid, 'a Warsmith bids for a C recipe material');
 assert.strictEqual(cBid.price, Math.floor(1.2 * NpcSell.npcBuyPrice(Number(template(cBid.selfId).template.price))), 'the bid is 1.2x the NPC buy-back');
 assert.strictEqual(cBid.count, Stock.MATERIAL_BID_UNITS, 'it bids for the standing units it lacks');
 assert.deepStrictEqual(Stock.materialBids(gladiator), [], 'a Gladiator keeps no material bids');
+const otherSmith = bot(57, { characterId: warsmith.characterId + 1 });
+assert.notStrictEqual(Stock.materialBids(otherSmith)[0].selfId, bids[0].selfId,
+    'two Warsmiths of one level start their material bids at different materials');
 const lines = BuyAds.linesFor(warsmith, null, { watchList: [], townFor: () => 'Giran' });
 assert(lines.some(line => line.selfId === cBid.selfId && line.price === cBid.price && line.count > 0), 'its buy lines carry the material bid');
 assert(lines.length <= 8, 'within the bot\'s buy lines');
