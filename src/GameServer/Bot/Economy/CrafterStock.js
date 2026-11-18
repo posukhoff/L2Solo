@@ -139,5 +139,56 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
     return { rows, allowance: { ...(state.stats?.gnomeAllowance || {}), ...allowances } };
 }
 
-module.exports = { isCrafter, allowance, townOffers, restock, owed, consignPatch, settlement, CRAFTER_CLASSES, PIECES_PER_HOUR, STOCK_HOURS,
-    OWED_PIECES, OWED_MONEY };
+// A crafter's standing material bids (our rule: the hunters' materials go to the
+// gnomes' buy lines, the fixed buyers take them from gnomes only,
+// ProductionPolicy.sellsToFixedBuyer): an Artisan or Warsmith bids for the materials
+// of the C/B recipes its Create Item level reaches (their material trees, down to the
+// basic materials), MATERIAL_BID_RATE x the NPC buy-back, up to MATERIAL_BID_UNITS
+// held of each; the materials most of those recipes take come first. Plain lines [{ selfId, count, price }]: BuyAdPolicy.linesFor
+// posts them after the wish's bids, within the bot's buy lines and its adena budget
+// (no consignment). The materials of a craft level are static data, kept per level.
+const MATERIAL_BID_RATE = 1.2, MATERIAL_BID_UNITS = 300, BID_GRADES = new Set(['c', 'b']);
+const materialsByLevel = new Map();
+function bidMaterials(level) {
+    if (materialsByLevel.has(level)) return materialsByLevel.get(level);
+    const items = invoke('GameServer/DataCache').items, uses = new Map();
+    const Sources = invoke('GameServer/Items/ItemAcquisitionCatalog');
+    const Recipes = invoke('GameServer/Items/C4RecipeItems');
+    for (const recipe of require('../../Knowledge/RecipeCatalog').recipeItemRows(Recipes)) {
+        if (recipe?.type !== 'dwarven' || !(Number(recipe.level) > 0) || Number(recipe.level) > level
+            || !Array.isArray(recipe.materials) || !Sources.allowsRecipe(recipe)
+            || !BID_GRADES.has(String(ItemTemplateIndex.find(items, recipe.productId)?.etc?.rank || '').toLowerCase())) continue;
+        // The recipe's material tree: an input the crafter crafts itself (a dwarven recipe
+        // its level reaches) adds its own materials.
+        const seen = new Set(), open = recipe.materials.map(input => Number(input.selfId));
+        while (open.length) {
+            const id = open.pop();
+            if (seen.has(id)) continue;
+            seen.add(id); uses.set(id, (uses.get(id) || 0) + 1);
+            const own = Recipes.resolveByProductId(id);
+            if (own?.type === 'dwarven' && Number(own.level) <= level && Array.isArray(own.materials)) {
+                for (const input of own.materials) open.push(Number(input.selfId));
+            }
+        }
+    }
+    const NpcSell = invoke('GameServer/Items/NpcSellRules');
+    const rows = Object.freeze([...uses].flatMap(([selfId, count]) => {
+        const template = ItemTemplateIndex.find(items, selfId)?.template;
+        const price = Math.floor(MATERIAL_BID_RATE * NpcSell.npcBuyPrice(Number(template?.price || 0)));
+        return String(template?.kind || '').startsWith('Other.Material') && price > 0 ? [{ selfId, price, count }] : [];
+    }).sort((a, b) => b.count - a.count || a.selfId - b.selfId).map(({ selfId, price }) => Object.freeze({ selfId, price })));
+    materialsByLevel.set(level, rows);
+    return rows;
+}
+function materialBids(state) {
+    if (!isCrafter(state)) return [];
+    const level = Number(invoke('GameServer/Bot/Economy/CraftEligibility').craftLevelFor(state)) || 0;
+    if (!(level > 0)) return [];
+    return bidMaterials(level).flatMap(({ selfId, price }) => {
+        const count = MATERIAL_BID_UNITS - Math.max(0, Number(state?.inventory?.[String(selfId)]?.amount || 0));
+        return count > 0 ? [{ selfId, count, price }] : [];
+    });
+}
+
+module.exports = { isCrafter, allowance, townOffers, restock, owed, consignPatch, settlement, materialBids, CRAFTER_CLASSES, PIECES_PER_HOUR, STOCK_HOURS,
+    OWED_PIECES, OWED_MONEY, MATERIAL_BID_RATE, MATERIAL_BID_UNITS };

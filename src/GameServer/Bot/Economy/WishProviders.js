@@ -765,7 +765,7 @@ function buildProjection(state, ctx, deps) {
             const material = String(ItemTemplates.find(items, id)?.template?.kind || '').startsWith('Other.Material');
             const shot = need('./ShotTradeDemand').isShot(id);
             const publicBids = ctx.board.list(id, 3);
-            const fixedBids = material ? deps.fixedProductionOffersFor?.(id) || [] : [];
+            const fixedBids = material ? deps.fixedProductionOffersFor?.(id, state) || [] : [];
             let best = exitCeiling(publicBids, ownSales, 0);
             if (material) best = exitCeiling(fixedBids, ownSales, best);
             if (shot && need('./ShotTradeDemand').forecast(id, null, timestamp)) best = Math.max(best, positive(price(id)));
@@ -798,7 +798,7 @@ function buildProjection(state, ctx, deps) {
         for (const { recipe, count, id, ownSales, oldUnits, material, shot, earningPreference } of admitted) {
         const asks = ctx.board.list(id, SELL);
         const publicOffers = ctx.board.list(id, 3).slice(0, 5);
-        const fixedOffers = material ? (deps.fixedProductionOffersFor?.(id) || []).slice(0, 5) : [];
+        const fixedOffers = material ? (deps.fixedProductionOffersFor?.(id, state) || []).slice(0, 5) : [];
         const listingOffers = need('./WealthCraftPolicy').drain(need('./ProductionSalePolicy').exits(state, recipe, {
             board: ctx.board, timestamp, trip: ctx.trip, npcOffersFor: ctx.npcOffersFor, existing: oldUnits }));
         for (const source of [...publicOffers, ...fixedOffers, ...listingOffers]) {

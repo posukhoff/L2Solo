@@ -52,4 +52,16 @@ function allowsFixed(line, buyer = null) {
     return !shotsDisabled() && (NO_GRADE_SHOTS.has(id) || GRADED_SHOTS.has(id) || line?.reserve === true);
 }
 function allowsNpcShot(id) { return !shotsDisabled() || !GRADED_SHOTS.has(Number(id)); }
-module.exports = { buyersDisabled, shotsDisabled, allowsFixed, valveAllowance, valvePatch, allowsNpcShot, NO_GRADE_SHOTS, GRADED_SHOTS };
+// The one seller gate of the configured fixed buyers (static_wtb) for a bot: they
+// take materials only (the gear goes to players through a private store), and from a
+// gnome only (Scavenger, Bounty Hunter, Artisan, Warsmith); every other bot sells its
+// materials to the gnomes' buy lines or the NPC. Our rule: the gnomes stand for the
+// dwarves a C4 server's material trade ran through. A player is admitted by his
+// caller (TradeService.acceptsSellerItem), not here.
+// seller: a bot's state or actor; kind: the item's template kind.
+const GNOME_SELLERS = new Set([54, 55, 56, 57]);
+function sellsToFixedBuyer(seller, kind) {
+    return !buyersDisabled() && String(kind || '').startsWith('Other.Material')
+        && GNOME_SELLERS.has(Number(invoke('GameServer/Bot/AI/BotRoles').classIdOf(seller)));
+}
+module.exports = { buyersDisabled, shotsDisabled, allowsFixed, sellsToFixedBuyer, GNOME_SELLERS, valveAllowance, valvePatch, allowsNpcShot, NO_GRADE_SHOTS, GRADED_SHOTS };

@@ -57,16 +57,15 @@ function nativeStoreItems(store) {
     return (store?.items || []).filter(item => item.reserve !== true && WireD.isRepresentable(item.price));
 }
 
-// The retained static-buyer route until 3.6 is only for bot materials.
-// Preview and queued execution share this gate so neither buyer selection
-// nor a direct/stale arrival can liquidate gear through a static buyer.
+// A static buyer takes anything a player sells it; a bot passes the fixed
+// buyers' one seller gate (ProductionPolicy.sellsToFixedBuyer: a gnome's
+// materials). Preview and queued execution share this gate so neither buyer
+// selection nor a direct/stale arrival bypasses it.
 function acceptsSellerItem(actor, storeItem, inventoryItem) {
     if (BeginnerShots.isRestricted(storeItem.selfId)) return false;
-    if (storeItem[staticPriceSource] && isBotActor(actor)
-        && require('./Economy/ProductionPolicy').buyersDisabled()) return false;
     return !storeItem[staticPriceSource] || !isBotActor(actor)
-        || String(inventoryItem?.fetchKind?.() || itemTemplate(storeItem.selfId)?.template?.kind || '')
-            .startsWith('Other.Material');
+        || require('./Economy/ProductionPolicy').sellsToFixedBuyer(actor,
+            inventoryItem?.fetchKind?.() || itemTemplate(storeItem.selfId)?.template?.kind);
 }
 
 async function withTradeQueues(store, selfId, actors, operation) {
