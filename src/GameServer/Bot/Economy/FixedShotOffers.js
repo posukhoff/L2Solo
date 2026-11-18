@@ -45,11 +45,11 @@ function built() {
     return true;
 }
 // buyer (a bot's state or actor): only the rows it may buy (ProductionPolicy.allowsFixed:
-// a row naming buyerClasses); none: every row (quotes and prices).
+// a row naming buyerClasses, a valve row); none: every row (quotes and prices).
 function offers(selfId = null, buyer = undefined) {
     if (!built()) return EMPTY_OFFERS;
     const rows = selfId === null ? fixedRows : fixedByItem.get(Number(selfId)) || EMPTY_OFFERS;
-    return buyer === undefined || !rows.some(row => row.buyerClasses) ? rows
+    return buyer === undefined || !rows.some(row => row.buyerClasses || row.valve) ? rows
         : rows.filter(row => Production.allowsFixed(row, buyer));
 }
 // A row's server stock (hourlyStock): the units it sells a game hour, refilled each

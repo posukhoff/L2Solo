@@ -8459,7 +8459,8 @@ const Database = {
     purchaseNpcInventoryBasket(characterId, details = {}) {
         if (Array.isArray(details.lines) && details.lines.length > 12) return Promise.reject(Error('invalid npc basket'));
         if (details.lines?.some(line => line.fundingParts?.length > 12 || line.errands?.length > 8)) return Promise.reject(Error('invalid npc basket attribution'));
-        const { economyCommand = null, coldState = null, validate = null } = details;
+        // statsPatch: stats the purchase writes with its receipt (a valve row's piece count).
+        const { economyCommand = null, coldState = null, validate = null, statsPatch = null } = details;
         const seller = details.seller ? { ...details.seller } : null;
         const captured = Array.isArray(details.lines) ? details.lines.map(line => ({ ...line,
             funding: { ...line.funding }, fundingParts: line.fundingParts?.map(part => ({ ...part, funding: { ...part.funding } })),
@@ -8592,7 +8593,7 @@ const Database = {
                         spent: line.amount * line.unitPrice, unitPrice: line.unitPrice,
                         npcId: seller ? Number(seller.sourceId) : undefined, town: seller?.town });
             }
-            const changed = new Set(lines.map(line => line.selfId)), patch = {};
+            const changed = new Set(lines.map(line => line.selfId)), patch = { ...statsPatch };
             if (step) patch.money = remainingPacket;
             // Reconcile the complete purchased bag once, not once per line.
             const gear = lines.find(line => !line.stackable && line.slot > 0

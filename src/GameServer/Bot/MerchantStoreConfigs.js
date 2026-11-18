@@ -32,13 +32,14 @@ const shotsForGrade = (grade) => (SHOT_IDS_BY_GRADE[grade] || SHOT_IDS_BY_GRADE[
 // grade: the crafter row sells to the Artisan/Warsmith line only (classId
 // 56/57, ProductionPolicy.allowsFixed reads buyerClasses) at 0.6x, stock it
 // resells on the board (CrafterStock); the valve row sells to anyone at 1.5x,
-// the ceiling of a crafter's ask, so a crafter's cheaper sell line wins.
+// the ceiling of a crafter's ask, so a crafter's cheaper sell line wins, and one
+// piece of its grade per bot over its life (ProductionPolicy.valveAllowance).
 const CRAFTER_NPC_RATE = 0.6;
 const VALVE_NPC_RATE = 1.5;
 const CRAFTER_CLASSES = Object.freeze([56, 57]);
-const reserveGear = (ids) => ids.flatMap((selfId) => [
+const reserveGear = (ids, grade) => ids.flatMap((selfId) => [
     { selfId, npcRate: CRAFTER_NPC_RATE, count: BUY_CAP, reserve: true, buyerClasses: CRAFTER_CLASSES },
-    { selfId, npcRate: VALVE_NPC_RATE, count: BUY_CAP, reserve: true }]);
+    { selfId, npcRate: VALVE_NPC_RATE, count: BUY_CAP, reserve: true, valve: grade }]);
 const RESERVE_GEAR_C = [
     60, 62, 64, 71, 72, 73, 74, 75, 76, 77, 84, 89, 94, 95,
     96, 103, 107, 119, 131, 133, 134, 135, 145, 160, 161, 162, 173, 174,
@@ -80,6 +81,12 @@ const RESERVE_GEAR_A = [
 const RESERVE_KIT_C = [499, 1120];
 const RESERVE_KIT_B = [104, 106, 117, 209, 404, 421, 610, 860, 891, 922];
 const RESERVE_KIT_A = [304, 868, 899, 930];
+// Every C, B and A reserve row, sold in each grade's shot store (Giran, Oren, Aden):
+// a crafter restocks any grade it crafts in whichever of them it stands.
+const RESERVE_GEAR = Object.freeze([
+    ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C], "C"),
+    ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B], "B"),
+    ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A], "A")]);
 // The grade's Scroll: Enchant Weapon (C4EnchantScrolls; C4 sells it nowhere: drop,
 // spoil and raid bosses only). The reserve sells it at the datapack price to the
 // spoiler line only (Scavenger 54, Bounty Hunter 55: ProductionPolicy.allowsFixed
@@ -493,14 +500,14 @@ module.exports = {
         town: "Giran",
         storeType: 1,
         locX: 83600, locY: 148300, locZ: -3406,
-        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C], "C"), enchantReserve(951, 20)]
+        items: [...shotsForGrade(2), ...RESERVE_GEAR, enchantReserve(951, 20)]
     },
     "M3tLa": {
         title: "Shots: B Grade",
         town: "Oren",
         storeType: 1,
         locX: 83000, locY: 53400, locZ: -1488,
-        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B], "B"), enchantReserve(947, 10)]
+        items: [...shotsForGrade(3), ...RESERVE_GEAR, enchantReserve(947, 10)]
     },
     "Petec": {
         title: "Shots: B Grade",
@@ -521,7 +528,7 @@ module.exports = {
         town: "Aden",
         storeType: 1,
         locX: 146497, locY: 25807, locZ: -2008,
-        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A], "A"), enchantReserve(729, 5)]
+        items: [...shotsForGrade(4), ...RESERVE_GEAR, enchantReserve(729, 5)]
     },
     "TinWh1skey": {
         title: "Shots: S Grade",

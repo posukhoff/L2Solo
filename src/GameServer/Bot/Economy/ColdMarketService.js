@@ -565,6 +565,10 @@ async function buyNpcStack(state, selfId, amount, unitPrice, funding = {}, origi
             offer.town === state.currentRegion && Number(offer.price) === unitPrice);
         const offer = configured();
         if (!offer) return null;
+        // A valve row sells the bot what is left of its pieces of the grade, counted
+        // in its stats with the purchase (ProductionPolicy.valveAllowance).
+        const Production = require('./ProductionPolicy');
+        amount = Math.min(amount, Production.valveAllowance(offer, state));
         // The row's server stock (FixedShotOffers.take): what it does not hold is refused,
         // and what the purchase did not take goes back.
         const FixedStock = require('./FixedShotOffers');
@@ -582,6 +586,7 @@ async function buyNpcStack(state, selfId, amount, unitPrice, funding = {}, origi
             selfId, amount, unitPrice, autoEquip, name: template?.template?.name || `Item ${selfId}`,
             stackable: !!template?.etc?.stackable, slot: Number(template?.etc?.slot || 0),
             coldState: admitted.state, economyCommand: admitted.command,
+            statsPatch: Production.valvePatch(offer, admitted.state, amount),
             errands: attribution.errand ? [{ errand: attribution.errand, units: amount, spent: amount * unitPrice }] : [],
             funding: { ...funding, itemId: selfId }, validate: () => {
                 if (!configured()) throw Error('configured_quote_changed');

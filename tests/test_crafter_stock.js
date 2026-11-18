@@ -48,7 +48,10 @@ const craftLevel = invoke('GameServer/Bot/Economy/CraftEligibility').craftLevelF
 assert.strictEqual(craftLevel, 6, 'a level-50 Warsmith has Create Item 6');
 const t0 = 10 * HOUR_MS;
 const first = Stock.restock(warsmith(), { offers, now: t0 });
-assert.strictEqual(first.rows.length, 6, 'one hour of allowance: six C pieces');
+// Giran sells every C, B and A reserve row: a Create Item 6 Warsmith stocks the B
+// weapons it crafts there (their types' top unlocked level), six an hour.
+const gradeOf = row => offers.find(offer => offer.selfId === row.selfId).grade;
+assert.strictEqual(first.rows.filter(row => gradeOf(row) === 'b').length, 6, 'one hour of allowance: six B pieces in Giran');
 const groups = first.rows.map(row => offers.find(offer => offer.selfId === row.selfId).group);
 assert.strictEqual(new Set(groups).size, groups.length, 'one piece per weapon type');
 assert(groups.every(group => group.startsWith('Weapon.')), 'weapons first');
@@ -67,7 +70,8 @@ assert(again.rows.every(row => !held.has(row.selfId)), 'a held display piece is 
 
 // 3. The allowance: six pieces a grade a game hour, refilled at the read, two hours held.
 const demanded = Stock.restock(warsmith(), { offers, now: t0, demandFor: id => id === weapon.selfId ? 20 : 0 });
-assert.deepStrictEqual(demanded.rows.map(row => [row.selfId, row.amount]), [[weapon.selfId, 6]], 'town demand first, six a grade an hour');
+assert.deepStrictEqual(demanded.rows.filter(row => gradeOf(row) === 'c').map(row => [row.selfId, row.amount]), [[weapon.selfId, 6]],
+    'town demand first, six a grade an hour');
 const spent = warsmith({ stats: { classId: 57, gnomeAllowance: demanded.allowance } });
 assert.strictEqual(Stock.restock(spent, { offers, now: t0, demandFor: () => 20 }).rows.length, 0, 'the seventh piece in the hour is refused');
 assert.strictEqual(Stock.restock(spent, { offers, now: t0 + HOUR_MS / 2, demandFor: id => id === weapon.selfId ? 20 : 0 }).rows[0].amount, 3,
