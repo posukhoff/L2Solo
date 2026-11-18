@@ -1,6 +1,8 @@
 const assert = require('assert');
 const fs = require('fs');
 
+// Pins the x50 scroll stock.
+process.env.L2NODE_PROGRESSION_RATE = 'x50';
 require('./helpers/databaseIsolation');
 const isolated = require('./helpers/isolatedSocialDatabase')('cold-safe-enchant');
 require('../src/Global');

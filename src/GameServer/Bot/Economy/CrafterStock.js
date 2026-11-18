@@ -35,11 +35,14 @@ function isCrafter(state) {
 }
 
 // A grade's allowance at `now`: one hour's worth for a crafter that never stocked it.
+// PIECES_PER_HOUR is the x50 pace; the server's drop rate scales it (supplyScale).
 function allowance(state, grade, now) {
+    const pace = PIECES_PER_HOUR * invoke('GameServer/ProgressionRates').supplyScale();
     const held = state?.stats?.gnomeAllowance?.[grade];
-    if (!held) return { pieces: PIECES_PER_HOUR, at: now };
+    if (!held) return { pieces: pace, at: now };
     const hours = Math.max(0, (now - Number(held.at || 0)) / HOUR_MS);
-    return { pieces: Math.min(PIECES_PER_HOUR * STOCK_HOURS, Number(held.pieces || 0) + PIECES_PER_HOUR * hours), at: now };
+    // At least one piece held, so a slow pace (x1) still reaches a whole piece.
+    return { pieces: Math.min(Math.max(1, pace * STOCK_HOURS), Number(held.pieces || 0) + pace * hours), at: now };
 }
 
 // The crafter rows of the reserve in the crafter's town, as plain offers:

@@ -5,6 +5,8 @@
 const assert = require('assert');
 const fs = require('fs');
 
+// Pins the x50 restock pace.
+process.env.L2NODE_PROGRESSION_RATE = 'x50';
 require('./helpers/databaseIsolation');
 const isolated = require('./helpers/isolatedSocialDatabase')('crafter-consignment');
 require('../src/Global');

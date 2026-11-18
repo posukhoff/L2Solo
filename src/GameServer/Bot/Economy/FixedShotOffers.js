@@ -59,14 +59,17 @@ function offers(selfId = null, buyer = undefined) {
 // a refusal; restore gives back a grant whose purchase failed. Our rule.
 const HOUR_MS = 3600000, STOCK_HOURS = 2;
 const stocks = new Map();
+// hourlyStock is the x50 stock; the server's drop rate scales it (supplyScale), so at
+// x1 a stock refills a unit in some hours; whole units are granted.
 function stockOf(selfId, now) {
-    const cap = Number(offers(selfId).find(row => row.hourlyStock > 0)?.hourlyStock || 0);
+    const cap = Number(offers(selfId).find(row => row.hourlyStock > 0)?.hourlyStock || 0)
+        * invoke('GameServer/ProgressionRates').supplyScale();
     if (!cap) return null;
     let stock = stocks.get(selfId);
     if (!stock) stocks.set(selfId, stock = { units: cap, at: now, refused: 0 });
     const hours = Math.floor((now - stock.at) / HOUR_MS);
     if (hours > 0) {
-        stock.units = Math.min(cap * STOCK_HOURS, stock.units + hours * cap);
+        stock.units = Math.min(Math.max(1, cap * STOCK_HOURS), stock.units + hours * cap);
         stock.at += hours * HOUR_MS;
     }
     return stock;
@@ -75,7 +78,7 @@ function take(selfId, amount, now = Date.now()) {
     const id = Number(selfId), wanted = Math.max(0, Math.floor(Number(amount) || 0));
     const stock = stockOf(id, now);
     if (!stock) return wanted;
-    const granted = Math.min(wanted, stock.units);
+    const granted = Math.min(wanted, Math.floor(stock.units));
     stock.units -= granted;
     if (granted < wanted) {
         stock.refused += wanted - granted;

@@ -5,6 +5,8 @@
 // at most six pieces a grade a game hour, and lists them between its cost and the valve.
 const assert = require('assert');
 
+// Pins the x50 pace (the x1 pace is checked below).
+process.env.L2NODE_PROGRESSION_RATE = 'x50';
 require('./helpers/databaseIsolation');
 const isolated = require('./helpers/isolatedSocialDatabase')('crafter-stock');
 require('../src/Global');
@@ -55,6 +57,16 @@ assert.strictEqual(first.rows.filter(row => gradeOf(row) === 'b').length, 6, 'on
 const groups = first.rows.map(row => offers.find(offer => offer.selfId === row.selfId).group);
 assert.strictEqual(new Set(groups).size, groups.length, 'one piece per weapon type');
 assert(groups.every(group => group.startsWith('Weapon.')), 'weapons first');
+// At x1 the pace is a fiftieth: a fresh crafter stocks nothing in its first hour and
+// its first B piece after about eight and a half hours.
+process.env.L2NODE_PROGRESSION_RATE = 'x1';
+invoke('GameServer/ProgressionRates').reset();
+const slow = Stock.restock(warsmith(), { offers, now: t0 });
+assert.strictEqual(slow.rows.length, 0, 'x1: nothing in the first hour');
+const later = Stock.restock(warsmith({ stats: { classId: 57, generatedCold: true, gnomeAllowance: slow.allowance } }), { offers, now: t0 + 9 * HOUR_MS });
+assert.strictEqual(later.rows.filter(row => gradeOf(row) === 'b').length, 1, 'x1: one B piece after nine hours');
+process.env.L2NODE_PROGRESSION_RATE = 'x50';
+invoke('GameServer/ProgressionRates').reset();
 for (const row of first.rows) {
     const offer = offers.find(entry => entry.selfId === row.selfId);
     assert.strictEqual(row.amount, 1, 'display stock is one piece');
