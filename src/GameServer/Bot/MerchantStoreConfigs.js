@@ -72,11 +72,6 @@ const RESERVE_GEAR_A = [
 const RESERVE_KIT_C = [499, 1120];
 const RESERVE_KIT_B = [104, 106, 117, 209, 404, 421, 610, 860, 891, 922];
 const RESERVE_KIT_A = [304, 868, 899, 930];
-// The grade's Scroll: Enchant Weapon (C4EnchantScrolls; no C4 NPC sells it): the
-// reserve sells bots the one of its grade at the same 1.5x the NPC price scale.
-const RESERVE_ENCHANT_C = [951];
-const RESERVE_ENCHANT_B = [947];
-const RESERVE_ENCHANT_A = [729];
 
 module.exports = {
     // Talking Island
@@ -483,14 +478,14 @@ module.exports = {
         town: "Giran",
         storeType: 1,
         locX: 83600, locY: 148300, locZ: -3406,
-        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C, ...RESERVE_ENCHANT_C])]
+        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C])]
     },
     "M3tLa": {
         title: "Shots: B Grade",
         town: "Oren",
         storeType: 1,
         locX: 83000, locY: 53400, locZ: -1488,
-        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B, ...RESERVE_ENCHANT_B])]
+        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B])]
     },
     "Petec": {
         title: "Shots: B Grade",
@@ -511,7 +506,7 @@ module.exports = {
         town: "Aden",
         storeType: 1,
         locX: 146497, locY: 25807, locZ: -2008,
-        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A, ...RESERVE_ENCHANT_A])]
+        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A])]
     },
     "TinWh1skey": {
         title: "Shots: S Grade",

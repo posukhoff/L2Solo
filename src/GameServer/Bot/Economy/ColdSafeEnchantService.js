@@ -92,25 +92,24 @@ function inventoryScrolls(state = {}) {
 
 // The weapon scrolls a cold bot buys at a town visit, or null: the normal Scroll:
 // Enchant Weapon of its worn C, B or A weapon's grade, for the tries to the safe
-// level its held scrolls do not cover, while its money after the scrolls stays
-// above ENCHANT_WALLET_WEAPONS times the weapon's price. price(selfId): an
-// item's cheapest fixed price, the scroll's and the weapon's (0: not sold,
-// no purchase). Our rule (the model's weaponEnchant).
+// level its held scrolls do not cover, paid from at most `money`: what keeps its
+// money after the scrolls above ENCHANT_WALLET_WEAPONS times the weapon's price.
+// weaponPrice(selfId): the weapon's cheapest fixed price (0: not sold, no
+// purchase). No store sells the scroll (C4: drop, spoil and raid bosses only):
+// the purchase reads the board's asks. Our rule (the model's weaponEnchant).
 const ENCHANT_WALLET_WEAPONS = 3;
 const NORMAL_WEAPON_SCROLL = Object.freeze({ C: 951, B: 947, A: 729 });
-function scrollPurchase(state = {}, price = () => 0) {
+function scrollPurchase(state = {}, weaponPrice = () => 0) {
     const needs = targetNeeds(state), held = inventoryScrolls(state);
     for (const grade of BOUGHT_WEAPON_GRADES) {
         const missing = Math.max(0, Number(needs[`${grade}:weapon`] || 0) - Number(held[`${grade}:weapon`] || 0));
         if (!missing) continue;
-        const scrollId = NORMAL_WEAPON_SCROLL[grade];
         const weapon = Object.values(state.inventory || {}).find((item) => item?.equipped
             && itemRank(item).toUpperCase() === grade && itemKind(item).startsWith('Weapon.'));
-        const unitPrice = Number(price(scrollId) || 0);
-        const floor = ENCHANT_WALLET_WEAPONS * Number(price(Number(weapon?.selfId)) || 0);
-        if (!(unitPrice > 0) || !(floor > 0)) return null;
-        const amount = Math.min(missing, Math.max(0, Math.ceil((Number(state.adena || 0) - floor) / unitPrice) - 1));
-        return amount > 0 ? { selfId: scrollId, amount, unitPrice, weaponSelfId: Number(weapon.selfId) } : null;
+        const floor = ENCHANT_WALLET_WEAPONS * Number(weaponPrice(Number(weapon?.selfId)) || 0);
+        const money = Math.floor(Number(state.adena || 0) - floor - 1);
+        return floor > 0 && money > 0 ? { selfId: NORMAL_WEAPON_SCROLL[grade], amount: missing, money,
+            weaponSelfId: Number(weapon.selfId) } : null;
     }
     return null;
 }

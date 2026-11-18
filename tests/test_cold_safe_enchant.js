@@ -22,30 +22,38 @@ function fixture(predicate, description) {
 }
 
 (async () => {
-    // A cold bot at a C level wearing a C weapon enchants it to the safe +3 with the
-    // normal C weapon scroll (951), and buys the scrolls its held ones do not cover
-    // only while its money after them stays above 3x the weapon's price.
+    // No store sells a bot a weapon enchant scroll (C4: drop, spoil and raid bosses only).
+    const Market = invoke('GameServer/Bot/Economy/MarketOpportunity');
+    for (const id of [951, 947, 729]) {
+        assert.deepStrictEqual([...Market.fixedStoreOffers(id), ...Market.npcOffersAll(id)], [],
+            `no store row sells scroll ${id} to a bot`);
+    }
+    // A cold bot at a C level wearing a C weapon uses the C weapon scrolls it dropped
+    // (951) to the safe +3, and buys the ones it lacks only from the money that keeps
+    // it above 3x the weapon's price.
     const cWeapon = fixture((item) => item?.etc?.rank === 'c'
         && String(item?.template?.kind || '').startsWith('Weapon.')
         && Number(item?.etc?.slot || 0) > 0, 'C-grade weapon');
+    const weaponPrice = 3000000, floor = 3 * weaponPrice;
+    const cBot = (adena, scrolls = 1) => ({ level: 45, adena, inventory: {
+        [cWeapon.selfId]: { selfId: Number(cWeapon.selfId), amount: 1, enchant: 0, equipped: true, slot: Number(cWeapon.etc.slot) },
+        951: { selfId: 951, amount: scrolls }
+    } });
+    assert.strictEqual(ColdSafeEnchantService.hasPotential(cBot(0, 5)), true, 'a dropped C scroll and a worn C weapon start the batch');
     const cOperations = ColdSafeEnchantService.plan([
         { id: 1, selfId: Number(cWeapon.selfId), amount: 1, enchant: 0, equipped: 1, slot: Number(cWeapon.etc.slot) },
         { id: 2, selfId: 951, amount: 5, enchant: 0, equipped: 0, slot: 0 }
     ]);
     assert.deepStrictEqual(cOperations.map((row) => [row.targetId, row.scrollSelfId, row.enchantLevel]),
-        [[1, 951, 1], [1, 951, 2], [1, 951, 3]], 'a worn C weapon takes C scrolls to the safe +3');
-    const scrollPrice = 165000, weaponPrice = 3000000, floor = 3 * weaponPrice;
-    const cBot = (adena) => ({ level: 45, adena, inventory: {
-        [cWeapon.selfId]: { selfId: Number(cWeapon.selfId), amount: 1, enchant: 0, equipped: true, slot: Number(cWeapon.etc.slot) },
-        951: { selfId: 951, amount: 1 }
-    } });
-    const price = (id) => (id === 951 ? scrollPrice : id === Number(cWeapon.selfId) ? weaponPrice : 0);
-    assert.deepStrictEqual(ColdSafeEnchantService.scrollPurchase(cBot(floor + 2 * scrollPrice + 1), price),
-        { selfId: 951, amount: 2, unitPrice: scrollPrice, weaponSelfId: Number(cWeapon.selfId) },
-        'the two tries its held scroll does not cover are bought above the wallet floor');
-    assert.strictEqual(ColdSafeEnchantService.scrollPurchase(cBot(floor + scrollPrice + 1), price).amount, 1);
-    assert.strictEqual(ColdSafeEnchantService.scrollPurchase(cBot(floor + scrollPrice), price), null,
-        'no scroll leaves the money at or below 3x the weapon price');
+        [[1, 951, 1], [1, 951, 2], [1, 951, 3]], 'a worn C weapon takes the dropped C scrolls to the safe +3');
+    const price = (id) => (id === Number(cWeapon.selfId) ? weaponPrice : 0);
+    assert.deepStrictEqual(ColdSafeEnchantService.scrollPurchase(cBot(floor + 500000), price),
+        { selfId: 951, amount: 2, money: 499999, weaponSelfId: Number(cWeapon.selfId) },
+        'the two tries its held scroll does not cover, paid only from money above the floor');
+    assert.strictEqual(ColdSafeEnchantService.scrollPurchase(cBot(floor + 1), price), null,
+        'no money above 3x the weapon price buys no scroll');
+    assert.strictEqual(ColdSafeEnchantService.scrollPurchase(cBot(floor * 10, 3), price), null,
+        'held scrolls covering the safe level buy none');
     assert.strictEqual(ColdSafeEnchantService.scrollPurchase({ ...cBot(floor * 10), level: 55 }, price), null,
         'a C weapon below its level kit grade (B) buys no scroll');
 

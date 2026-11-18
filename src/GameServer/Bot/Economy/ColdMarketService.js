@@ -1016,18 +1016,23 @@ const ColdMarketService = {
             }
         }
         // The weapon scrolls its safe level takes (ColdSafeEnchantService.scrollPurchase),
-        // from the reserve store only, as a side purchase: the money no queue row holds.
-        // The next sale listing's safe batch applies them.
+        // from this town's board asks only (no store sells them), as a side purchase:
+        // the money no queue row holds. A deal staged as a meeting is handled as the
+        // shots' above. The next sale listing's safe batch applies them.
         if (!options.raidSupplyOnly && current.stats?.townVisit?.completed !== true) {
             const cheapest = id => Math.min(Infinity, ...staticOffers(id).map(offer => Number(offer.price)).filter(price => price > 0));
             const scrolls = invoke('GameServer/Bot/Economy/ColdSafeEnchantService').scrollPurchase(current,
                 id => Number.isFinite(cheapest(id)) ? cheapest(id) : 0);
             const purchase = scrolls && planPurchase(current, scrolls.selfId, scrolls.amount, { towns: [current.currentRegion],
-                money: scrolls.amount * scrolls.unitPrice, npcOnly: true, purpose: 'enchant', side: Number.MAX_SAFE_INTEGER });
-            if (purchase) {
-                const bought = await buyHere(current, purchase, { deferRealNpc: true });
+                money: scrolls.money, npc: false, purpose: 'enchant', side: Number.MAX_SAFE_INTEGER });
+            if (purchase?.lines?.length) {
+                if (options.saleVisit) {
+                    const ended = endVisit(current);
+                    current = await LifeState.upsertState(ended, 'market_visit_end') || ended;
+                }
+                const bought = await buyHere(current, purchase, { skipNpc: true });
                 current = bought.state;
-                if (bought.hot) return current;
+                if (bought.hot || bought.pending && !options.saleVisit || bought.preparation) return current;
             }
         }
         // Board deals remain at their own owner. Their current NPC remainders,
