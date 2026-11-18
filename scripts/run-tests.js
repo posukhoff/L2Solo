@@ -137,6 +137,7 @@ const tests = [
     'tests/test_spot_choice.js',
     'tests/test_personal_gear_progression.js',
     'tests/test_weapon_grade_progression.js',
+    'tests/test_funded_gear_before_dearer.js',
     'tests/test_clan_personal_surplus.js',
     'tests/test_c_grade_preparation.js',
     'tests/test_c_grade_purchase.js',
