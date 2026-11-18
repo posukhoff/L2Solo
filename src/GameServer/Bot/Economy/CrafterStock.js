@@ -14,14 +14,21 @@
 //   its top unlocked recipe level, so new demand finds a listing.
 // - Pace: PIECES_PER_HOUR pieces a grade a game hour, refilled at the read, at most
 //   STOCK_HOURS hours' worth held (stats.gnomeAllowance { grade: { pieces, at } }).
-// - Money: a purchase leaves the crafter at least WALLET_COSTS times its cost (run
-//   a9acc9c4a: at 2x the 4M crafters bought 15 C weapons against 832 C armour pieces).
+// - Consignment: the restock costs no adena; stats.gnomeStock[selfId] records
+//   { cost, ceiling, owed } (consignPatch, written with the purchase) and the crafter
+//   pays the store its cost for each owed unit it no longer holds at its next town
+//   visit (settlement), as far as its adena reaches (the rest stays owed). Its wallet
+//   no longer limits its range (run 6eb3afb37: no B/A weapon on the board, a B weapon
+//   cost a crafter 5.2-7.9M against 4M wallets).
+// - Owed limit (our choice): at most OWED_PIECES units and OWED_MONEY adena owed per
+//   crafter (one crafter never holds an unbounded share of the store); a restock row
+//   past it is cut (hit: a crafter at the limit stocks nothing until it pays).
 // Held = its bag's unequipped units plus its own board sell lines (listed items leave the bag).
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 
 const CRAFTER_CLASSES = Object.freeze([56, 57]);
 const GEAR_GRADES = new Set(['c', 'b', 'a']);
-const PIECES_PER_HOUR = 6, STOCK_HOURS = 2, HOUR_MS = 3600000, WALLET_COSTS = 1;
+const PIECES_PER_HOUR = 6, STOCK_HOURS = 2, HOUR_MS = 3600000, OWED_PIECES = 12, OWED_MONEY = 60000000;
 
 function isCrafter(state) {
     return CRAFTER_CLASSES.includes(Number(invoke('GameServer/Bot/AI/BotRoles').classIdOf(state)));
@@ -53,6 +60,43 @@ function townOffers(state) {
         });
 }
 
+// The units and adena a crafter owes the store: { pieces, money }.
+function owed(state) {
+    let pieces = 0, money = 0;
+    for (const row of Object.values(state?.stats?.gnomeStock || {})) {
+        const units = Math.max(0, Number(row?.owed || 0));
+        pieces += units;
+        money += units * Number(row.cost || 0);
+    }
+    return { pieces, money };
+}
+
+// The stats a consigned purchase of `units` from a crafter row (`offer`: its selfId and
+// price) writes with it: its gnomeStock row with the units added to what it owes.
+function consignPatch(state, offer, units) {
+    const id = Number(offer.selfId), ceiling = require('./FixedShotOffers').lowestPrice(id);
+    const owedUnits = Math.max(0, Number(state?.stats?.gnomeStock?.[id]?.owed || 0));
+    return { gnomeStock: { [id]: { cost: Number(offer.price), ceiling: Number.isFinite(ceiling) ? ceiling : Number(offer.price),
+        owed: owedUnits + Number(units) } } };
+}
+
+// The payments of one visit: [{ selfId, units, money, cost }], each owed unit the
+// crafter no longer holds (sold through any channel), as far as its adena reaches.
+// heldFor(selfId): units it holds (bag and own sell lines).
+function settlement(state, heldFor = () => 0) {
+    let adena = Math.max(0, Number(state?.adena || 0));
+    const rows = [];
+    for (const [id, row] of Object.entries(state?.stats?.gnomeStock || {})) {
+        const cost = Number(row?.cost || 0);
+        const gone = Math.max(0, Number(row?.owed || 0)) - Math.max(0, Number(heldFor(Number(id)) || 0));
+        const units = cost > 0 ? Math.min(gone, Math.floor(adena / cost)) : 0;
+        if (!(units > 0)) continue;
+        rows.push({ selfId: Number(id), units, money: units * cost, cost });
+        adena -= units * cost;
+    }
+    return rows;
+}
+
 // The purchases of one visit: [{ selfId, amount, money, unit, ceiling }] and the
 // allowance after them. offers: townOffers'; demandFor(selfId): units its town wants;
 // heldFor(selfId): units it holds (bag and own sell lines).
@@ -80,18 +124,20 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
     const armour = offer => Number(offer.group.startsWith('Armor:'));
     for (const offer of [...top.values()].sort((a, b) => armour(a) - armour(b) || a.selfId - b.selfId)) targets.push({ offer, units: 1 });
     const allowances = {};
-    let money = Math.max(0, Number(state.adena || 0));
+    let { pieces, money } = owed(state);
     const rows = [];
     for (const { offer, units } of targets) {
         const pool = allowances[offer.grade] ||= allowance(state, offer.grade, now);
         const amount = Math.min(units - Math.max(0, Number(heldFor(offer.selfId) || 0)), Math.floor(pool.pieces),
-            Math.floor(money / ((1 + WALLET_COSTS) * offer.price)));
+            OWED_PIECES - pieces, Math.floor((OWED_MONEY - money) / offer.price));
         if (!(amount > 0)) continue;
         rows.push({ selfId: offer.selfId, amount, money: amount * offer.price, unit: offer.price, ceiling: offer.ceiling, grade: offer.grade });
         pool.pieces -= amount;
-        money -= amount * offer.price;
+        pieces += amount;
+        money += amount * offer.price;
     }
     return { rows, allowance: { ...(state.stats?.gnomeAllowance || {}), ...allowances } };
 }
 
-module.exports = { isCrafter, allowance, townOffers, restock, CRAFTER_CLASSES, PIECES_PER_HOUR, STOCK_HOURS };
+module.exports = { isCrafter, allowance, townOffers, restock, owed, consignPatch, settlement, CRAFTER_CLASSES, PIECES_PER_HOUR, STOCK_HOURS,
+    OWED_PIECES, OWED_MONEY };

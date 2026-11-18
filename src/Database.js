@@ -8531,7 +8531,9 @@ const Database = {
                     if (++errandCount > 8) throw Error('invalid npc errand attribution');
                 }
                 if (attributed > count || attributedCost > count * price) throw Error('invalid npc errand attribution');
-                total += count * price; units += count;
+                // A consigned line (a crafter's restock, CrafterStock) moves the item and
+                // no adena: the crafter pays its cost when the unit has left its holdings.
+                total += line.consigned === true ? 0 : count * price; units += count;
                 if (!Number.isSafeInteger(total) || !Number.isSafeInteger(units))
                     throw invalidNpcPurchase(characterId, step, line, lines.length, 'invalid_basket_total',
                         Number.isSafeInteger(total) ? 'units' : 'total', Number.isSafeInteger(total) ? units : total, details, 'invalid npc basket total');
@@ -8553,7 +8555,7 @@ const Database = {
                     if (!Number.isSafeInteger(part.amount) || part.amount <= 0
                         || !Number.isSafeInteger(part.order) || part.order < 0 || part.order >= 12) throw Error('invalid npc funding part');
                     count += part.amount;
-                    parts.push({ ...part, selfId: line.selfId, unitPrice: line.unitPrice });
+                    parts.push({ ...part, selfId: line.selfId, unitPrice: line.consigned === true ? 0 : line.unitPrice });
                 }
                 if (count !== line.amount) throw Error('invalid npc funding part');
             }
@@ -8633,6 +8635,21 @@ const Database = {
             return { ok: true, committed: true, ...receipt, amount: units, lines,
                 ...(row ? { coldLifeRow: row, economyCommit: jsonObject(row.statsJson).economyCommit } : {}) };
         }, 'bot:npc-purchase'));
+    },
+
+    // A crafter pays the store the cost of consigned units it no longer holds
+    // (CrafterStock.settlement): the wallet debit and its stats (statsPatch: the
+    // gnomeStock rows with what it still owes) in one transaction, the cold state following.
+    payConsignment(characterId, { amount, coldState, statsPatch }) {
+        const id = Number(characterId), price = Number(amount);
+        if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(price) || price <= 0)
+            return Promise.resolve({ ok: false, reason: 'invalid_payment' });
+        return withCharacterFlush(id, () => inTransaction(() => {
+            const balance = afkTradeAdenaRowsUnsafe(id).reduce((sum, row) => sum + Number(row.amount || 0), 0);
+            if (balance < price) return { ok: false, reason: 'not_enough_adena' };
+            afkTradeDebitAdenaUnsafe(id, price);
+            return { ok: true, spent: price, coldLifeRow: syncEconomySnapshotUnsafe(id, coldState, [57], null, statsPatch) };
+        }, 'bot:consignment-pay'));
     },
 
     // MP has one source per phase: a cold step's is its bot_life_state row, a hot

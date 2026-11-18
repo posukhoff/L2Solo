@@ -462,6 +462,53 @@ function endVisit(current) {
         townVisit: current.stats?.townVisit ? { ...current.stats.townVisit, completed: true } : null } };
 }
 
+// A crafter's board stock of C/B/A gear (CrafterStock) at a town visit. First it pays
+// the store the cost of the consigned units it no longer holds (sold on the board, in a
+// meeting or while hot), each payment journalled as the fixed_wts purchase it stands
+// for; then it restocks from the reserve rows sold to its line on consignment (no
+// adena; stats.gnomeStock owes the units; its listing sells them between their cost
+// and the valve), each grade within its hourly allowance. Returns the state.
+async function crafterStock(state) {
+    const Stock = require('./CrafterStock');
+    let current = state;
+    if (!Stock.isCrafter(current)) return current;
+    const board = invoke('GameServer/AfkTrade/AfkTradeService').boardIndex(), now = Date.now();
+    const { SELL } = require('../../AfkTrade/BoardIndex');
+    const listed = board.ownerLines(Number(current.characterId)).filter(line => line.storeType === SELL);
+    const heldFor = id => Math.max(0, Number(current.inventory?.[id]?.amount || 0)
+        - Number(current.inventory?.[id]?.equippedCount ?? (current.inventory?.[id]?.equipped ? 1 : 0)))
+        + listed.filter(line => Number(line.selfId) === Number(id)).reduce((sum, line) => sum + Number(line.count || 0), 0);
+    for (const pay of Stock.settlement(current, heldFor)) {
+        const row = current.stats.gnomeStock[pay.selfId];
+        let result;
+        try {
+            result = await invoke('Database').payConsignment(current.characterId, { amount: pay.money, coldState: current,
+                statsPatch: { gnomeStock: { [pay.selfId]: { ...row, owed: Number(row.owed) - pay.units } } } });
+        } catch (error) { result = { ok: false, error }; }
+        if (!result?.ok) {
+            FailureLog.note('economy.consignment_pay', result?.error || Error(result?.reason || 'consignment_pay_refused'));
+            break;
+        }
+        current = require('./NpcPurchaseBasket').acceptResult(current, result);
+        const rows = require('./FixedShotOffers').offers(pay.selfId).filter(entry => Array.isArray(entry.buyerClasses));
+        observePurchase({ ...(rows.find(entry => entry.town === current.currentRegion) || rows[0]),
+            selfId: pay.selfId, price: pay.cost, sellerKind: 'fixed' }, pay.units, current);
+    }
+    const plan = Stock.restock(current, { offers: Stock.townOffers(current), heldFor, now,
+        demandFor: id => require('./MarketDemand').forecast(id, current.currentRegion,
+            { board, ownerId: Number(current.characterId), timestamp: now })?.applicableUnits || 0 });
+    const allowance = plan.allowance && Object.fromEntries(Object.entries(plan.allowance).map(([grade, pool]) => [grade, { ...pool }]));
+    for (const row of plan.rows) {
+        const bought = await buyNpcStack(current, row.selfId, row.amount, row.unit, { free: true }, null, false, { consigned: true })
+            || { state: current, units: 0 };
+        current = bought.state;
+        if (allowance?.[row.grade]) allowance[row.grade].pieces += row.amount - Number(bought.units || 0);
+        if (bought.hot) break;
+    }
+    if (plan.rows.length) current = { ...current, stats: { ...current.stats, gnomeAllowance: allowance } };
+    return current;
+}
+
 // Buys a plan in the town the bot stands in: each board line one deal, then
 // the NPC for the rest (also the units of a line that changed meanwhile),
 // within the plan's money. Returns { state, units, spent, hot }.
@@ -555,9 +602,12 @@ async function buyHere(state, plan, options = {}) {
 // (Database.purchaseNpcInventoryItem, as his cold shot restock made it): the
 // bag and the wallet in one transaction, the cold state following. null when
 // refused.
+// attribution.consigned: a crafter's restock from its crafter row on consignment
+// (CrafterStock): no adena moves, the units owed are written with the purchase.
 async function buyNpcStack(state, selfId, amount, unitPrice, funding = {}, original = null, autoEquip = true, attribution = {}) {
     const Basket = require('./NpcPurchaseBasket');
-    const seller = Basket.sellerFor(selfId, state.currentRegion, unitPrice);
+    const consigned = attribution.consigned === true;
+    const seller = consigned ? null : Basket.sellerFor(selfId, state.currentRegion, unitPrice);
     if (!seller) {
         // Configured town merchants retain their native singleton owner;
         // they cannot be attributed to a physical NPC's shop list.
@@ -583,10 +633,11 @@ async function buyNpcStack(state, selfId, amount, unitPrice, funding = {}, origi
             throw error;
         }
         try { result = await invoke('Database').purchaseNpcInventoryItem(state.characterId, {
-            selfId, amount, unitPrice, autoEquip, name: template?.template?.name || `Item ${selfId}`,
+            selfId, amount, unitPrice, autoEquip, consigned, name: template?.template?.name || `Item ${selfId}`,
             stackable: !!template?.etc?.stackable, slot: Number(template?.etc?.slot || 0),
             coldState: admitted.state, economyCommand: admitted.command,
-            statsPatch: Production.valvePatch(offer, admitted.state, amount),
+            statsPatch: consigned ? require('./CrafterStock').consignPatch(admitted.state, offer, amount)
+                : Production.valvePatch(offer, admitted.state, amount),
             errands: attribution.errand ? [{ errand: attribution.errand, units: amount, spent: amount * unitPrice }] : [],
             funding: { ...funding, itemId: selfId }, validate: () => {
                 if (!configured()) throw Error('configured_quote_changed');
@@ -597,7 +648,8 @@ async function buyNpcStack(state, selfId, amount, unitPrice, funding = {}, origi
         }
         if (!result?.ok) return null;
         const current = Basket.acceptResult(admitted.state, result);
-        if (!result.replayed) observePurchase(offer, result.amount, current);
+        // A consigned unit is journalled when the crafter pays for it (crafterStock).
+        if (!result.replayed && !consigned) observePurchase(offer, result.amount, current);
         return { ...result, state: current, units: Number(result.amount),
             economyCommand: admitted.command, hot: !!LifeState.hotRow(state.characterId) };
     }
@@ -1072,35 +1124,9 @@ const ColdMarketService = {
                 if (bought.hot) return current;
             }
         }
-        // A crafter's board stock of C/B/A gear (CrafterStock.restock): bought here from
-        // the reserve rows sold to its line, marked stats.gnomeStock (its listing sells
-        // it between its cost and the valve), each grade within its hourly allowance.
         if (!options.raidSupplyOnly && current.stats?.townVisit?.completed !== true) {
-            const Stock = require('./CrafterStock');
-            if (Stock.isCrafter(current)) {
-                const board = invoke('GameServer/AfkTrade/AfkTradeService').boardIndex(), now = Date.now();
-                const { SELL } = require('../../AfkTrade/BoardIndex');
-                const listed = board.ownerLines(Number(current.characterId)).filter(line => line.storeType === SELL);
-                const heldFor = id => Math.max(0, Number(current.inventory?.[id]?.amount || 0)
-                    - Number(current.inventory?.[id]?.equippedCount ?? (current.inventory?.[id]?.equipped ? 1 : 0)))
-                    + listed.filter(line => Number(line.selfId) === Number(id)).reduce((sum, line) => sum + Number(line.count || 0), 0);
-                const plan = Stock.restock(current, { offers: Stock.townOffers(current), heldFor, now,
-                    demandFor: id => require('./MarketDemand').forecast(id, current.currentRegion,
-                        { board, ownerId: Number(current.characterId), timestamp: now })?.applicableUnits || 0 });
-                const allowance = plan.allowance && Object.fromEntries(Object.entries(plan.allowance).map(([grade, pool]) => [grade, { ...pool }]));
-                const stock = { ...(current.stats?.gnomeStock || {}) };
-                for (const row of plan.rows) {
-                    const purchase = planPurchase(current, row.selfId, row.amount, { towns: [current.currentRegion],
-                        money: row.money, npcOnly: true, purpose: 'gnome_stock', side: Number.MAX_SAFE_INTEGER });
-                    const bought = purchase ? await buyHere(current, purchase, { deferRealNpc: true }) : { state: current, units: 0 };
-                    current = bought.state;
-                    if (allowance?.[row.grade]) allowance[row.grade].pieces += row.amount - Number(bought.units || 0);
-                    if (Number(bought.units) > 0) stock[row.selfId] = { cost: Math.round(Number(bought.spent) / Number(bought.units)), ceiling: row.ceiling };
-                    if (bought.hot) break;
-                }
-                if (plan.rows.length) current = { ...current, stats: { ...current.stats, gnomeStock: stock, gnomeAllowance: allowance } };
-                if (LifeState.hotRow(current.characterId)) return current;
-            }
+            current = await crafterStock(current);
+            if (LifeState.hotRow(current.characterId)) return current;
         }
         // Board deals remain at their own owner. Their current NPC remainders,
         // healing kit and escape scrolls share the exact real seller basket.
@@ -1123,6 +1149,7 @@ const ColdMarketService = {
     tripFrom,
     planPurchase,
     buyHere,
+    crafterStock,
     acquire,
     acquireMaterials,
     errandGoal,

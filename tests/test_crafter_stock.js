@@ -78,9 +78,13 @@ assert.strictEqual(Stock.restock(spent, { offers, now: t0 + HOUR_MS / 2, demandF
     'half an hour refills three');
 assert.strictEqual(Stock.restock(spent, { offers, now: t0 + 5 * HOUR_MS, demandFor: id => id === weapon.selfId ? 20 : 0 }).rows[0].amount, 12,
     'at most two hours held');
-// The money floor: a purchase leaves at least twice its cost.
-const poor = warsmith({ adena: 3 * weapon.price + 1 });
-assert.deepStrictEqual(Stock.restock(poor, { offers: [weapon], now: t0, demandFor: () => 20 }).rows.map(row => row.amount), [1]);
+// Consignment: its wallet does not limit the restock; what it owes does (OWED_PIECES units).
+const poor = warsmith({ adena: 0 });
+assert.deepStrictEqual(Stock.restock(poor, { offers: [weapon], now: t0, demandFor: () => 20 }).rows.map(row => row.amount), [6],
+    'a crafter without adena stocks its allowance');
+const owing = warsmith({ adena: 0, stats: { classId: 57, gnomeStock: { 1: { cost: 1, ceiling: 2, owed: Stock.OWED_PIECES - 2 } } } });
+assert.deepStrictEqual(Stock.restock(owing, { offers: [weapon], now: t0, demandFor: () => 20 }).rows.map(row => row.amount), [2],
+    'a crafter two units below its owed limit stocks two');
 assert.strictEqual(Stock.restock(warsmith({ stats: { classId: 1 } }), { offers, now: t0 }).rows.length, 0, 'a fighter stocks nothing');
 
 // 4. Its stock is listed on the board between its cost and the valve, never sent to an NPC.
