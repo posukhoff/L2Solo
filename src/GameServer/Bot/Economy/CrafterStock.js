@@ -8,18 +8,20 @@
 // - Gating: only a piece whose recipe level its Create Item level reaches
 //   (CraftEligibility.craftLevelFor; a piece without a recipe is never stocked).
 // - Demand first: the pieces its town wants (MarketDemand.forecast: public buy lines
-//   and recent trades), up to the units wanted.
+//   and recent trades), up to the units wanted; weapons before armour (a bot saves
+//   for its weapon first), then the most wanted.
 // - Display: each weapon type and armour slot with no wanted piece keeps one piece of
 //   its top unlocked recipe level, so new demand finds a listing.
 // - Pace: PIECES_PER_HOUR pieces a grade a game hour, refilled at the read, at most
 //   STOCK_HOURS hours' worth held (stats.gnomeAllowance { grade: { pieces, at } }).
-// - Money: a purchase leaves the crafter at least WALLET_COSTS times its cost.
+// - Money: a purchase leaves the crafter at least WALLET_COSTS times its cost (run
+//   a9acc9c4a: at 2x the 4M crafters bought 15 C weapons against 832 C armour pieces).
 // Held = its bag's unequipped units plus its own board sell lines (listed items leave the bag).
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 
 const CRAFTER_CLASSES = Object.freeze([56, 57]);
 const GEAR_GRADES = new Set(['c', 'b', 'a']);
-const PIECES_PER_HOUR = 6, STOCK_HOURS = 2, HOUR_MS = 3600000, WALLET_COSTS = 2;
+const PIECES_PER_HOUR = 6, STOCK_HOURS = 2, HOUR_MS = 3600000, WALLET_COSTS = 1;
 
 function isCrafter(state) {
     return CRAFTER_CLASSES.includes(Number(invoke('GameServer/Bot/AI/BotRoles').classIdOf(state)));
@@ -64,7 +66,8 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
         const units = Math.floor(Number(demandFor(offer.selfId) || 0));
         if (units > 0) { targets.push({ offer, units }); wanted.add(offer.group); }
     }
-    targets.sort((a, b) => b.units - a.units || a.offer.selfId - b.offer.selfId);
+    const armourOf = offer => (offer.group.startsWith('Weapon.') ? 0 : 1);
+    targets.sort((a, b) => armourOf(a.offer) - armourOf(b.offer) || b.units - a.units || a.offer.selfId - b.offer.selfId);
     const top = new Map();
     for (const offer of unlocked) {
         if (wanted.has(offer.group)) continue;

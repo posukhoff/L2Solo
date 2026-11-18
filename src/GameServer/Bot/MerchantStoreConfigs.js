@@ -27,20 +27,18 @@ const shotsForGrade = (grade) => (SHOT_IDS_BY_GRADE[grade] || SHOT_IDS_BY_GRADE[
 // C/B/A weapon and armour piece their gear planner can target (a named
 // template with a price and an acquisition source), never in the player's
 // window (TradeService.nativeStoreItems): the player keeps C4's stores. Priced
-// at 1.5x the NPC price scale (the store price). Each piece has two rows (our
-// rule, standing for the dwarf craft and resale a C4 server runs on): the
-// crafter row sells to the Artisan/Warsmith line only (classId 56/57,
-// ProductionPolicy.allowsFixed reads buyerClasses) at the grade's crafter ref
-// (C 0.4, B 0.4, A 0.8 of the store price), stock it resells on the board
-// (CrafterStock); the valve row sells to anyone at 2.5x that ref, the ceiling of
-// a crafter's ask, so a crafter's cheaper sell line wins.
-const RESERVE_GEAR_NPC_RATE = 1.5;
-const CRAFTER_REF = { C: 0.4, B: 0.4, A: 0.8 };
-const GEAR_VALVE = 2.5;
+// at the NPC price scale. Each piece has two rows (our rule, standing for the
+// dwarf craft and resale a C4 server runs on), one pair of prices for every
+// grade: the crafter row sells to the Artisan/Warsmith line only (classId
+// 56/57, ProductionPolicy.allowsFixed reads buyerClasses) at 0.6x, stock it
+// resells on the board (CrafterStock); the valve row sells to anyone at 1.5x,
+// the ceiling of a crafter's ask, so a crafter's cheaper sell line wins.
+const CRAFTER_NPC_RATE = 0.6;
+const VALVE_NPC_RATE = 1.5;
 const CRAFTER_CLASSES = Object.freeze([56, 57]);
-const reserveGear = (ids, grade) => ids.flatMap((selfId) => [
-    { selfId, npcRate: RESERVE_GEAR_NPC_RATE * CRAFTER_REF[grade], count: BUY_CAP, reserve: true, buyerClasses: CRAFTER_CLASSES },
-    { selfId, npcRate: RESERVE_GEAR_NPC_RATE * CRAFTER_REF[grade] * GEAR_VALVE, count: BUY_CAP, reserve: true }]);
+const reserveGear = (ids) => ids.flatMap((selfId) => [
+    { selfId, npcRate: CRAFTER_NPC_RATE, count: BUY_CAP, reserve: true, buyerClasses: CRAFTER_CLASSES },
+    { selfId, npcRate: VALVE_NPC_RATE, count: BUY_CAP, reserve: true }]);
 const RESERVE_GEAR_C = [
     60, 62, 64, 71, 72, 73, 74, 75, 76, 77, 84, 89, 94, 95,
     96, 103, 107, 119, 131, 133, 134, 135, 145, 160, 161, 162, 173, 174,
