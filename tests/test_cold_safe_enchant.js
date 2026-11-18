@@ -42,9 +42,14 @@ function restockOf(state) {
     const cRow = Market.fixedStoreOffers(951, spoiler)[0];
     assert.strictEqual(OfferQuery.admits(cRow, fighter), false, 'the offer admission refuses a non-spoiler the 951 row');
     assert.strictEqual(OfferQuery.admits(cRow, spoiler), true, 'the offer admission takes a spoiler');
-    // The spoiler pays twice the datapack price (it sells at the board's price).
+    // The spoiler pays twice the datapack price and sells at the board's price under 0.9 of it.
     const datapack = Number(invoke('GameServer/Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, 951).template.price);
     assert.strictEqual(Number(cRow.price), 2 * datapack, 'the reserve sells a C scroll at twice its datapack price');
+    const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
+    const cap = Math.floor(0.9 * cRow.price);
+    assert.strictEqual(Disposition.gnomeAsk(spoiler, 951, 3 * cRow.price), cap, 'a board price above what it paid is capped below it');
+    assert.strictEqual(Disposition.gnomeAsk(spoiler, 951, datapack), datapack, 'a lower board price stands');
+    assert.strictEqual(Disposition.gnomeStock(fighter, 951), null, 'a fighter\'s scrolls sell as asked');
     const hour = Date.now();
     assert.strictEqual(FixedStock.take(951, 20, hour), 20, 'an hour holds 20 C scrolls');
     assert.strictEqual(FixedStock.take(951, 1, hour + 1000), 0, 'the 21st C scroll in the hour is refused');
