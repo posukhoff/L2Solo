@@ -387,7 +387,7 @@ async function buyFromStore(actor, store, selfId, qty, options = {}) {
                 throw new Error("Item is not available.");
             }
             if (storeItem[staticPriceSource] && isBotActor(actor)
-                && !require('./Economy/ProductionPolicy').allowsFixed(storeItem[staticPriceSource].line)) {
+                && !require('./Economy/ProductionPolicy').allowsFixed(storeItem[staticPriceSource].line, actor)) {
                 throw new Error('Static merchant item is unavailable to bots.');
             }
             const unitPrice = storeItemPrice(store, storeItem, actor);

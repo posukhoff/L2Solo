@@ -18,9 +18,9 @@ let Claims = null;
 // and its reserve gear lines (ProductionPolicy.allowsFixed reads the line's
 // `reserve`). fixed: the offer is a configured merchant's (a live private store
 // says so by its name, MarketOpportunity.botCanBuy).
-function sourceAllowed(offer, fixed = offer.sourceType === 'configured_store' || offer.sellerKind === 'fixed') {
+function sourceAllowed(offer, fixed = offer.sourceType === 'configured_store' || offer.sellerKind === 'fixed', buyer = null) {
     if (offer.sourceType === 'npc' && !Production.allowsNpcShot(offer.selfId)) return false;
-    return !fixed || Production.allowsFixed(offer);
+    return !fixed || Production.allowsFixed(offer, buyer);
 }
 // The units of a sell line a buyer may take: a board line's count less what other
 // bots' trips claim (BoardClaims.unclaimed), another source's count.
@@ -38,7 +38,7 @@ function takeableUnits(line, buyer) {
 // a compatible meeting town, a seller that can pay its way there; the other
 // side's state from the thread's trade lookups). session: a main buyer's live session.
 function admits(line, buyer, session = null) {
-    if (!line || !sourceAllowed(line) || GearMarks.refused(buyer?.stats, line)) return false;
+    if (!line || !sourceAllowed(line, undefined, buyer) || GearMarks.refused(buyer?.stats, line)) return false;
     if (line.recordId && !(takeableUnits(line, buyer) > 0)) return false;
     return PartyAdmission.personalOfferAllowed(line, buyer, undefined, session);
 }

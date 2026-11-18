@@ -41,12 +41,56 @@ function built() {
     }
     return true;
 }
-function offers(selfId = null) {
+// buyer (a bot's state or actor): only the rows it may buy (ProductionPolicy.allowsFixed:
+// a row naming buyerClasses); none: every row (quotes and prices).
+function offers(selfId = null, buyer = undefined) {
     if (!built()) return EMPTY_OFFERS;
-    return selfId === null ? fixedRows : fixedByItem.get(Number(selfId)) || EMPTY_OFFERS;
+    const rows = selfId === null ? fixedRows : fixedByItem.get(Number(selfId)) || EMPTY_OFFERS;
+    return buyer === undefined || !rows.some(row => row.buyerClasses) ? rows
+        : rows.filter(row => Production.allowsFixed(row, buyer));
+}
+// A row's server stock (hourlyStock): the units it sells a game hour, refilled each
+// full hour and held at most STOCK_HOURS hours' worth; in memory on the thread that
+// executes the purchase (main), from one hour's worth at start. take(selfId, amount)
+// grants what the stock holds (an item without hourlyStock: all of it) and counts
+// a refusal; restore gives back a grant whose purchase failed. Our rule.
+const HOUR_MS = 3600000, STOCK_HOURS = 2;
+const stocks = new Map();
+function stockOf(selfId, now) {
+    const cap = Number(offers(selfId).find(row => row.hourlyStock > 0)?.hourlyStock || 0);
+    if (!cap) return null;
+    let stock = stocks.get(selfId);
+    if (!stock) stocks.set(selfId, stock = { units: cap, at: now, refused: 0 });
+    const hours = Math.floor((now - stock.at) / HOUR_MS);
+    if (hours > 0) {
+        stock.units = Math.min(cap * STOCK_HOURS, stock.units + hours * cap);
+        stock.at += hours * HOUR_MS;
+    }
+    return stock;
+}
+function take(selfId, amount, now = Date.now()) {
+    const id = Number(selfId), wanted = Math.max(0, Math.floor(Number(amount) || 0));
+    const stock = stockOf(id, now);
+    if (!stock) return wanted;
+    const granted = Math.min(wanted, stock.units);
+    stock.units -= granted;
+    if (granted < wanted) {
+        stock.refused += wanted - granted;
+        const Diagnostics = require('./EconomyDiagnostics');
+        if (Diagnostics.active()) Diagnostics.count('fixed_stock', 'refused', String(id));
+    }
+    return granted;
+}
+function restore(selfId, amount, now = Date.now()) {
+    const stock = stockOf(Number(selfId), now);
+    if (stock) stock.units += Math.max(0, Math.floor(Number(amount) || 0));
+}
+// The units refused so far for lack of stock (diagnostics, tests).
+function refused(selfId) {
+    return Number(stocks.get(Number(selfId))?.refused || 0);
 }
 // The lowest price a bot pays for an item at the configured stores (Infinity: none).
 function lowestPrice(selfId) {
     return built() ? fixedLowest.get(Number(selfId)) ?? Infinity : Infinity;
 }
-module.exports = { offers, lowestPrice };
+module.exports = { offers, lowestPrice, take, restore, refused };

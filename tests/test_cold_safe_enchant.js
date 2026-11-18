@@ -21,13 +21,38 @@ function fixture(predicate, description) {
     return item;
 }
 
+function restockOf(state) {
+    const kind = (id) => String(invoke('GameServer/DataCache').items.find((item) => Number(item?.selfId) === id)?.template?.kind || '');
+    assert(kind(100).startsWith('Weapon.'), 'item 100 is a weapon fixture');
+    return ColdSafeEnchantService.scrollRestock(state, (id) => id !== 729, (id) => (id === 100 ? 3000000 : 0));
+}
+
 (async () => {
-    // No store sells a bot a weapon enchant scroll (C4: drop, spoil and raid bosses only).
+    // The reserve sells the weapon enchant scrolls to the spoiler line only (Scavenger 54,
+    // Bounty Hunter 55), at most 20 C scrolls a game hour.
     const Market = invoke('GameServer/Bot/Economy/MarketOpportunity');
+    const OfferQuery = invoke('GameServer/Bot/Economy/OfferQuery');
+    const FixedStock = invoke('GameServer/Bot/Economy/FixedShotOffers');
+    const fighter = { level: 45, stats: { classId: 1 } }, spoiler = { level: 45, stats: { classId: 55 } };
     for (const id of [951, 947, 729]) {
-        assert.deepStrictEqual([...Market.fixedStoreOffers(id), ...Market.npcOffersAll(id)], [],
-            `no store row sells scroll ${id} to a bot`);
+        assert.deepStrictEqual([...Market.fixedStoreOffers(id, fighter), ...Market.npcOffersAll(id)], [],
+            `no store row sells scroll ${id} to a non-spoiler`);
+        assert.strictEqual(Market.fixedStoreOffers(id, spoiler).length, 1, `the reserve sells scroll ${id} to a spoiler`);
     }
+    const cRow = Market.fixedStoreOffers(951, spoiler)[0];
+    assert.strictEqual(OfferQuery.admits(cRow, fighter), false, 'the offer admission refuses a non-spoiler the 951 row');
+    assert.strictEqual(OfferQuery.admits(cRow, spoiler), true, 'the offer admission takes a spoiler');
+    const hour = Date.now();
+    assert.strictEqual(FixedStock.take(951, 20, hour), 20, 'an hour holds 20 C scrolls');
+    assert.strictEqual(FixedStock.take(951, 1, hour + 1000), 0, 'the 21st C scroll in the hour is refused');
+    assert.strictEqual(FixedStock.refused(951), 1);
+    assert.strictEqual(FixedStock.take(951, 50, hour + 3 * 3600000), 40, 'the stock refills hourly and holds two hours at most');
+    const restocker = { level: 53, adena: 9000001 + 1000, stats: { classId: 55 }, inventory: {
+        100: { selfId: 100, amount: 1, equipped: true }, 951: { selfId: 951, amount: 1 } } };
+    assert.deepStrictEqual(restockOf(restocker), [{ selfId: 951, amount: 2, money: 1000 }, { selfId: 947, amount: 3, money: 1000 }],
+        'a level 53 spoiler stocks C and B scrolls up to three each from the money above 3x its weapon');
+    assert.deepStrictEqual(restockOf({ ...restocker, adena: 9000001 }), [], 'no money above the floor stocks nothing');
+
     // A cold bot at a C level wearing a C weapon uses the C weapon scrolls it dropped
     // (951) to the safe +3, and buys the ones it lacks only from the money that keeps
     // it above 3x the weapon's price.

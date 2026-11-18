@@ -80,7 +80,8 @@ function refreshFixedOffers() {
             fixedMinimums.set(id, Math.min(fixedMinimums.get(id) ?? Infinity, price));
             if (store.town) {
                 if (!sellers.has(id)) sellers.set(id, []);
-                sellers.get(id).push({ town: store.town, price, sourceName: name, reserve: line.reserve === true });
+                sellers.get(id).push({ town: store.town, price, sourceName: name, reserve: line.reserve === true,
+                    ...(line.buyerClasses ? { buyerClasses: line.buyerClasses, hourlyStock: Number(line.hourlyStock) } : {}) });
             }
         }
     }

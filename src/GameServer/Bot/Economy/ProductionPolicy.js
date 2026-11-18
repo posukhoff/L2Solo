@@ -11,9 +11,13 @@ const GRADED_SHOTS = new Set([1463, 1464, 1465, 1466, 1467, 2510, 2511, 2512, 25
 const config = () => invoke('GameServer/Bot/Population/PopulationConfig');
 function buyersDisabled() { return config().staticBuyersDisabled === true; }
 function shotsDisabled() { return config().staticShotsDisabled === true; }
-// line: a configured store line or an offer of one ({ selfId, reserve }).
-function allowsFixed(line) {
+// line: a configured store line or an offer of one ({ selfId, reserve, buyerClasses }).
+// A line naming buyerClasses sells only to a buyer (a bot's state or actor) of one
+// of those classes; without a buyer it is refused.
+function allowsFixed(line, buyer = null) {
     const id = Number(line?.selfId);
+    if (Array.isArray(line?.buyerClasses)
+        && !line.buyerClasses.includes(Number(invoke('GameServer/Bot/AI/BotRoles').classIdOf(buyer)))) return false;
     return !shotsDisabled() && (NO_GRADE_SHOTS.has(id) || GRADED_SHOTS.has(id) || line?.reserve === true);
 }
 function allowsNpcShot(id) { return !shotsDisabled() || !GRADED_SHOTS.has(Number(id)); }

@@ -72,6 +72,13 @@ const RESERVE_GEAR_A = [
 const RESERVE_KIT_C = [499, 1120];
 const RESERVE_KIT_B = [104, 106, 117, 209, 404, 421, 610, 860, 891, 922];
 const RESERVE_KIT_A = [304, 868, 899, 930];
+// The grade's Scroll: Enchant Weapon (C4EnchantScrolls; C4 sells it nowhere: drop,
+// spoil and raid bosses only). The reserve sells it at the datapack price to the
+// spoiler line only (Scavenger 54, Bounty Hunter 55: ProductionPolicy.allowsFixed
+// reads buyerClasses), hourlyStock scrolls a game hour (FixedShotOffers.take).
+// Our rule: the spoiler stocks the board with them (ColdSafeEnchantService.scrollRestock).
+const enchantReserve = (selfId, hourlyStock) => ({ selfId, npcRate: 1, count: BUY_CAP, reserve: true,
+    buyerClasses: Object.freeze([54, 55]), hourlyStock });
 
 module.exports = {
     // Talking Island
@@ -478,14 +485,14 @@ module.exports = {
         town: "Giran",
         storeType: 1,
         locX: 83600, locY: 148300, locZ: -3406,
-        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C])]
+        items: [...shotsForGrade(2), ...reserveGear([...RESERVE_GEAR_C, ...RESERVE_KIT_C]), enchantReserve(951, 20)]
     },
     "M3tLa": {
         title: "Shots: B Grade",
         town: "Oren",
         storeType: 1,
         locX: 83000, locY: 53400, locZ: -1488,
-        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B])]
+        items: [...shotsForGrade(3), ...reserveGear([...RESERVE_GEAR_B, ...RESERVE_KIT_B]), enchantReserve(947, 10)]
     },
     "Petec": {
         title: "Shots: B Grade",
@@ -506,7 +513,7 @@ module.exports = {
         town: "Aden",
         storeType: 1,
         locX: 146497, locY: 25807, locZ: -2008,
-        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A])]
+        items: [...shotsForGrade(4), ...reserveGear([...RESERVE_GEAR_A, ...RESERVE_KIT_A]), enchantReserve(729, 5)]
     },
     "TinWh1skey": {
         title: "Shots: S Grade",

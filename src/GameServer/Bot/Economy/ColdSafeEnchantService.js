@@ -269,6 +269,27 @@ function consumedInventory(state = {}, operations = []) {
     return inventory;
 }
 
+// The weapon scrolls a bot the reserve sells them to (the spoiler line,
+// MerchantStoreConfigs enchantReserve) stocks for the board at a town visit, as
+// [{ selfId, amount, money }]: up to RESTOCK_HELD of each normal weapon scroll of a
+// grade its level wears or has passed (C 40, B 52, A 61) that it holds fewer of,
+// sold here (sold(selfId): the reserve admits it in this town), paid from at most
+// `money`: what keeps its money above ENCHANT_WALLET_WEAPONS times its worn
+// weapon's price (weaponPrice(selfId); none: no restock). Its sale listing puts
+// them on the board as a dropper's (ItemDisposition.saleCandidates). Our rule.
+const RESTOCK_HELD = 3;
+function scrollRestock(state = {}, sold = () => false, weaponPrice = () => 0) {
+    const weapon = Object.values(state.inventory || {}).find((item) => item?.equipped && itemKind(item).startsWith('Weapon.'));
+    const floor = ENCHANT_WALLET_WEAPONS * Number(weaponPrice(Number(weapon?.selfId)) || 0);
+    const money = Math.floor(Number(state.adena || 0) - floor - 1);
+    if (!(floor > 0) || !(money > 0)) return [];
+    return Object.entries(NORMAL_WEAPON_SCROLL).flatMap(([grade, selfId]) => {
+        const amount = RESTOCK_HELD - Math.max(0, Number(state.inventory?.[selfId]?.amount || 0));
+        return Number(state.level || 0) >= GearGrade.levelForGrade(grade.toLowerCase()) && amount > 0 && sold(selfId)
+            ? [{ selfId, amount, money }] : [];
+    });
+}
+
 async function enchantSafe(state, options = {}) {
     if (!state || state.phase === 'hot' || !state.characterId || !hasPotential(state)) {
         return { state, enchanted: false, operations: [] };
@@ -312,6 +333,7 @@ module.exports = {
     inventoryScrolls,
     plan,
     scrollPurchase,
+    scrollRestock,
     summary,
     targetNeeds,
     warehouseRequests

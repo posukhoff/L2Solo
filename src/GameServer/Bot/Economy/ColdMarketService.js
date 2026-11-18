@@ -239,9 +239,10 @@ function buyOffer(state, offer, options = {}) {
 // What sells an item at a fixed price in each town: the NPC shops and the
 // configured reserve (the city stores' shots and reserve gear lines: their stock
 // never runs out for a cold bot, as the author's cold NPC restock had it).
-function staticOffers(selfId) {
+// buyer: the bot's state (a reserve row naming its buyers: FixedShotOffers.offers).
+function staticOffers(selfId, buyer) {
     return [...MarketOpportunity.npcOffersAll(selfId),
-        ...MarketOpportunity.fixedStoreOffers(selfId)];
+        ...MarketOpportunity.fixedStoreOffers(selfId, buyer)];
 }
 
 // The bot's round trip to a town in Adena, from its farming place
@@ -393,7 +394,7 @@ function planPurchase(state, selfId, amount, options = {}) {
         if (npc && Number.isSafeInteger(Number(source.npc)) && Number(source.npc) > 0) {
             const lineCost = (source.lines || []).reduce((sum, entry) => sum + Number(entry.price) * Number(entry.count), 0);
             const price = Number(source.npcPrice ?? (Number(source.cost) - lineCost) / Number(source.npc));
-            if (staticOffers(selfId).some(offer => offer.town === source.town && Number(offer.price) === price)) npcPrice = price;
+            if (staticOffers(selfId, state).some(offer => offer.town === source.town && Number(offer.price) === price)) npcPrice = price;
         }
         const filled = OfferQuery.fill(quotes, amount, { money: moneyForTown(source.town, npcPrice, quotes), maxPrice, npcPrice,
             excludeOwner: state?.characterId, accept, acceptFill, countOf });
@@ -407,7 +408,7 @@ function planPurchase(state, selfId, amount, options = {}) {
         plan = OfferQuery.cheapestTown(board, selfId, {
             amount, money, moneyForTown, maxPrice, towns, excludeOwner: state?.characterId, accept, acceptFill, countOf,
             requireRepeatable: options.purpose === 'raid_supply',
-            npcOffers: npc ? staticOffers(selfId) : [], cost: cost || tripFrom(state, timestamp),
+            npcOffers: npc ? staticOffers(selfId, state) : [], cost: cost || tripFrom(state, timestamp),
             quoteDepth: options.quoteDepth ? PriceDecision.QUOTE_DEPTH : 0
         });
         // An errand retains its finite quote depth, including a legal NPC
@@ -495,7 +496,7 @@ async function buyHere(state, plan, options = {}) {
     // A saved plan may predate bot shops using these places or a rate change. Only a current
     // NPC/shot-table quote in this town can supply its remainder.
     const quotedPrice = Number(plan.npcPrice || 0);
-    const npcPrice = staticOffers(plan.selfId).some((offer) => offer.town === plan.town
+    const npcPrice = staticOffers(plan.selfId, current).some((offer) => offer.town === plan.town
         && Number(offer.price) === quotedPrice) ? quotedPrice : 0;
     const money = npcPrice > 0 ? purchaseMoney(current, plan, spent) : 0;
     const rest = npcPrice > 0 ? Math.max(0, Math.min(plan.amount - units, Math.floor(money / npcPrice))) : 0;
@@ -560,14 +561,23 @@ async function buyNpcStack(state, selfId, amount, unitPrice, funding = {}, origi
     if (!seller) {
         // Configured town merchants retain their native singleton owner;
         // they cannot be attributed to a physical NPC's shop list.
-        const configured = () => MarketOpportunity.fixedStoreOffers(selfId).find(offer =>
+        const configured = () => MarketOpportunity.fixedStoreOffers(selfId, state).find(offer =>
             offer.town === state.currentRegion && Number(offer.price) === unitPrice);
         const offer = configured();
         if (!offer) return null;
+        // The row's server stock (FixedShotOffers.take): what it does not hold is refused,
+        // and what the purchase did not take goes back.
+        const FixedStock = require('./FixedShotOffers');
+        const granted = FixedStock.take(selfId, amount);
+        if (!(granted > 0)) return null;
+        amount = granted;
         const Commit = require('./EconomyCommit');
         const template = require('../../Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, Number(selfId));
-        const admitted = await Commit.admit(state, Commit.KINDS.npcBuy, original);
-        let result;
+        let result, admitted;
+        try { admitted = await Commit.admit(state, Commit.KINDS.npcBuy, original); } catch (error) {
+            FixedStock.restore(selfId, granted);
+            throw error;
+        }
         try { result = await invoke('Database').purchaseNpcInventoryItem(state.characterId, {
             selfId, amount, unitPrice, autoEquip, name: template?.template?.name || `Item ${selfId}`,
             stackable: !!template?.etc?.stackable, slot: Number(template?.etc?.slot || 0),
@@ -576,7 +586,10 @@ async function buyNpcStack(state, selfId, amount, unitPrice, funding = {}, origi
             funding: { ...funding, itemId: selfId }, validate: () => {
                 if (!configured()) throw Error('configured_quote_changed');
             }
-        }); } finally { Commit.finish(state.characterId, admitted.command); }
+        }); } finally {
+            Commit.finish(state.characterId, admitted.command);
+            FixedStock.restore(selfId, granted - (result?.ok ? Math.min(granted, Number(result.amount) || 0) : 0));
+        }
         if (!result?.ok) return null;
         const current = Basket.acceptResult(admitted.state, result);
         if (!result.replayed) observePurchase(offer, result.amount, current);
@@ -1033,6 +1046,25 @@ const ColdMarketService = {
                 const bought = await buyHere(current, purchase, { skipNpc: true });
                 current = bought.state;
                 if (bought.hot || bought.pending && !options.saleVisit || bought.preparation) return current;
+            }
+        }
+        // A spoiler's board stock of weapon scrolls (ColdSafeEnchantService.scrollRestock):
+        // bought here from the reserve (its rows sell only to the spoiler line, within
+        // their server stock), each grade at the money its last purchase left.
+        if (!options.raidSupplyOnly && current.stats?.townVisit?.completed !== true) {
+            const Enchant = invoke('GameServer/Bot/Economy/ColdSafeEnchantService');
+            const cheapest = id => Math.min(Infinity, ...staticOffers(id).map(offer => Number(offer.price)).filter(price => price > 0));
+            const restock = state => Enchant.scrollRestock(state,
+                id => MarketOpportunity.fixedStoreOffers(id, state).some(offer => offer.town === state.currentRegion),
+                id => Number.isFinite(cheapest(id)) ? cheapest(id) : 0);
+            for (const { selfId } of restock(current)) {
+                const row = restock(current).find(entry => entry.selfId === selfId);
+                const purchase = row && planPurchase(current, selfId, row.amount, { towns: [current.currentRegion],
+                    money: row.money, npcOnly: true, purpose: 'enchant', side: Number.MAX_SAFE_INTEGER });
+                if (!purchase) continue;
+                const bought = await buyHere(current, purchase, { deferRealNpc: true });
+                current = bought.state;
+                if (bought.hot) return current;
             }
         }
         // Board deals remain at their own owner. Their current NPC remainders,
