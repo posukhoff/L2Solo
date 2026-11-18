@@ -2,7 +2,6 @@ const BeginnerShots = require('../Items/C4BeginnerShots');
 const ItemTemplateIndex = require('../Item/ItemTemplateIndex');
 const DataCache = invoke('GameServer/DataCache');
 const Database  = invoke('Database');
-const BotEconomyPricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
 const ItemDisposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 const MarketOpportunity = invoke('GameServer/Bot/Economy/MarketOpportunity');
 const World = invoke('GameServer/World/World');
@@ -119,10 +118,10 @@ function itemBasePrice(selfId) {
     return itemTemplate(selfId)?.template?.price ?? 0;
 }
 
-function ratedPrice(selfId, rate, fallback = 1) {
-    const base = itemBasePrice(selfId);
-    const price = base > 0 ? base * rate : fallback;
-    return BotEconomyPricing.scalePrice(price);
+// A store line priced at rate x the datapack price: the configured store's one
+// price rule (StaticMerchantPricing.configuredPrice).
+function ratedPrice(selfId, rate) {
+    return invoke('GameServer/Bot/Economy/StaticMerchantPricing').configuredPrice({ selfId, priceRate: rate });
 }
 
 function storeLoc(actor) {

@@ -198,5 +198,5 @@ function botBuyPrice(id) {
     return Number.isFinite(npc) ? npc : Math.max(0, Number(ItemTemplateIndex.find(DataCache.items, id)?.template?.price || 0));
 }
 
-module.exports = { BUYBACK_RATIO, botPriceFor, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
+module.exports = { BUYBACK_RATIO, botPriceFor, configuredPrice, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
     priceFor, sellersOf, useBoard: source => { boardSource = source; } };
