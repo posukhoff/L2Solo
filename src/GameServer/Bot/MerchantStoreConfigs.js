@@ -92,9 +92,8 @@ const RESERVE_GEAR = Object.freeze([
 // to the spoiler line only (Scavenger 54, Bounty Hunter 55: ProductionPolicy.allowsFixed
 // reads buyerClasses), hourlyStock scrolls a game hour (FixedShotOffers.take).
 // Our rule: the spoiler stocks the board with them (ColdSafeEnchantService.scrollRestock)
-// and sells every copy it holds at the datapack price (ItemDisposition.gnomeStock): it
-// loses the markup (money leaves the world) and the board gets the rare scroll at its
-// datapack price.
+// and sells them at the board's own price, which drifts with its deals and may sit below
+// what it paid: the markup is money leaving the world through the spoilers.
 const SCROLL_RATE = 2;
 const enchantReserve = (selfId, hourlyStock) => ({ selfId, npcRate: SCROLL_RATE, count: BUY_CAP, reserve: true,
     buyerClasses: Object.freeze([54, 55]), hourlyStock });
