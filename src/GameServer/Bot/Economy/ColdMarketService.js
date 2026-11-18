@@ -255,7 +255,7 @@ function tripFrom(state, timestamp = Date.now()) {
 function fundingTerms(options = {}) {
     const terms = {};
     if (typeof options.raidPreparationId === 'string') terms.raidPreparationId = options.raidPreparationId;
-    for (const name of ['r', 'root', 'valueHours', 'survivalCost', 'survivalShare']) {
+    for (const name of ['r', 'root', 'valueHours', 'survivalCost', 'survivalShare', 'side']) {
         if (options[name] !== undefined && options[name] !== null && Number.isFinite(Number(options[name]))) {
             terms[name] = Number(options[name]);
         }
@@ -1013,6 +1013,21 @@ const ColdMarketService = {
                     // refusal (no preparation) leaves the shortfall to the basket below.
                     if (bought.preparation) return current;
                 }
+            }
+        }
+        // The weapon scrolls its safe level takes (ColdSafeEnchantService.scrollPurchase),
+        // from the reserve store only, as a side purchase: the money no queue row holds.
+        // The next sale listing's safe batch applies them.
+        if (!options.raidSupplyOnly && current.stats?.townVisit?.completed !== true) {
+            const cheapest = id => Math.min(Infinity, ...staticOffers(id).map(offer => Number(offer.price)).filter(price => price > 0));
+            const scrolls = invoke('GameServer/Bot/Economy/ColdSafeEnchantService').scrollPurchase(current,
+                id => Number.isFinite(cheapest(id)) ? cheapest(id) : 0);
+            const purchase = scrolls && planPurchase(current, scrolls.selfId, scrolls.amount, { towns: [current.currentRegion],
+                money: scrolls.amount * scrolls.unitPrice, npcOnly: true, purpose: 'enchant', side: Number.MAX_SAFE_INTEGER });
+            if (purchase) {
+                const bought = await buyHere(current, purchase, { deferRealNpc: true });
+                current = bought.state;
+                if (bought.hot) return current;
             }
         }
         // Board deals remain at their own owner. Their current NPC remainders,
