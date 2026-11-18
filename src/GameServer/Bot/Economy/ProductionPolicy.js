@@ -11,19 +11,32 @@ const GRADED_SHOTS = new Set([1463, 1464, 1465, 1466, 1467, 2510, 2511, 2512, 25
 const config = () => invoke('GameServer/Bot/Population/PopulationConfig');
 function buyersDisabled() { return config().staticBuyersDisabled === true; }
 function shotsDisabled() { return config().staticShotsDisabled === true; }
-// A valve row (`valve`: its grade) sells a buyer VALVE_PIECES pieces of that grade
+// A valve row (`valve`: its grade) sells a buyer VALVE_PIECES weapons of that grade
 // over its life, counted in its stats.valveGear ({ C, B, A }); our rule, bounding
-// the worst wait for a crafter's line without taking the crafters' trade.
+// the worst wait for a crafter's weapon without taking the crafters' trade. Armour
+// and jewels stay open at the valve: a bot needs about ten of them a grade, and
+// limiting them to one starved the market (run 9fbbc5405: C jewel bids at 3x ref,
+// exp per bot-hour of C/B bots -12 %, money growth 2.2 -> 6.6 %/h).
 const VALVE_PIECES = 1;
+const weaponKinds = new Map();
+function limitedValve(line) {
+    if (!line?.valve) return false;
+    const id = Number(line.selfId);
+    if (!weaponKinds.has(id)) {
+        const found = require('../../Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, id);
+        weaponKinds.set(id, String(found?.template?.kind || '').startsWith('Weapon.'));
+    }
+    return weaponKinds.get(id);
+}
 // The units of a line a buyer may still take: a valve row's remaining pieces, else
 // Infinity (without a buyer: a quote, Infinity).
 function valveAllowance(line, buyer = null) {
-    if (!line?.valve || !buyer) return Infinity;
+    if (!limitedValve(line) || !buyer) return Infinity;
     return Math.max(0, VALVE_PIECES - Number(buyer.stats?.valveGear?.[line.valve] || 0));
 }
 // The stats patch a purchase of `units` from a line writes (null: none counted).
 function valvePatch(line, buyer, units) {
-    if (!line?.valve) return null;
+    if (!limitedValve(line)) return null;
     const counted = buyer?.stats?.valveGear || {};
     return { valveGear: { ...counted, [line.valve]: Number(counted[line.valve] || 0) + Number(units) } };
 }

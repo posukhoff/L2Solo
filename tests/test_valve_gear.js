@@ -29,17 +29,19 @@ const Stores = invoke('GameServer/Bot/MerchantStoreConfigs');
         stats: { classId: 57 } });
     const piece = (grade, weapon) => offers.find(offer => offer.grade === grade && offer.group.startsWith('Weapon.') === weapon);
     const cWeapon = piece('c', true), cArmour = piece('c', false), bWeapon = piece('b', true);
-    assert(cWeapon && cArmour && bWeapon, 'Giran sells C weapons, C armour and B weapons');
+    const cWeapon2 = offers.find(offer => offer.grade === 'c' && offer.group.startsWith('Weapon.') && offer.selfId !== cWeapon?.selfId);
+    assert(cWeapon && cWeapon2 && cArmour && bWeapon, 'Giran sells C weapons, C armour and B weapons');
     const row = (id, valve) => Fixed.offers(id.selfId).find(entry => entry.town === 'Giran' && !!entry.valve === valve);
 
-    // 1. Admission: one valve piece per grade; the crafter row ignores the count.
+    // 1. Admission: one valve weapon per grade, armour open; the crafter row ignores the count.
     const fresh = { level: 50, stats: { classId: 1 } };
     const usedC = { level: 50, stats: { classId: 1, valveGear: { C: 1 } } };
     assert.strictEqual(Production.allowsFixed(row(cWeapon, true), fresh), true, 'a fighter buys its first C piece at the valve');
-    assert.strictEqual(Production.allowsFixed(row(cArmour, true), usedC), false, 'its second C piece is refused');
+    assert.strictEqual(Production.allowsFixed(row(cWeapon2, true), usedC), false, 'its second C weapon is refused');
+    assert.strictEqual(Production.allowsFixed(row(cArmour, true), usedC), true, 'C armour stays open at the valve');
     assert.strictEqual(Production.allowsFixed(row(bWeapon, true), usedC), true, 'its first B piece is admitted');
     assert.strictEqual(Production.valveAllowance(row(bWeapon, true), usedC), 1, 'one B piece left to it (two wanted rings buy one)');
-    assert.deepStrictEqual(Market.fixedStoreOffers(cArmour.selfId, usedC), [], 'no store row sells it a second C piece');
+    assert.deepStrictEqual(Market.fixedStoreOffers(cWeapon2.selfId, usedC), [], 'no store row sells it a second C weapon');
     const smith = { level: 50, stats: { classId: 57, valveGear: { C: 1, B: 1, A: 1 } } };
     assert.strictEqual(Production.allowsFixed(row(cArmour, false), smith), true, 'a Warsmith buys at its crafter row regardless');
 
@@ -54,7 +56,7 @@ const Stores = invoke('GameServer/Bot/MerchantStoreConfigs');
     }
 
     // 3. The purchase counts the piece: a cold fighter in Giran buys a C weapon at the
-    // valve, is refused a C armour piece, and buys a B weapon.
+    // valve, is refused a second C weapon, and buys a B weapon.
     const giran = invoke('GameServer/Bot/Economy/MarketTownPolicy').marketTown('Giran').center;
     await Database.createAccount('bot_valve', 'secret');
     await Database.createCharacter('bot_valve', { name: 'ValveFighter', race: 0, classId: 1,
@@ -78,14 +80,14 @@ const Stores = invoke('GameServer/Bot/MerchantStoreConfigs');
     assert.deepStrictEqual(state.stats.valveGear, { C: 1 }, 'the purchase counts one C piece');
     const [saved] = await Database.execute(['SELECT statsJson FROM bot_life_state WHERE characterId = ?', [character.id]]);
     assert.deepStrictEqual(JSON.parse(saved.statsJson).valveGear, { C: 1 }, 'the count is saved with the purchase');
-    const second = await Cold.buyOffer(state, row(cArmour, true), { autoEquip: false, free: true });
-    assert.strictEqual(second.purchased, false, 'a second C piece at the valve is refused');
+    const second = await Cold.buyOffer(state, row(cWeapon2, true), { autoEquip: false, free: true });
+    assert.strictEqual(second.purchased, false, 'a second C weapon at the valve is refused');
     const third = await Cold.buyOffer(second.state || state, row(bWeapon, true), { autoEquip: false, free: true });
     assert.strictEqual(third.purchased, true, `the first B piece is bought (${third.reason})`);
     assert.deepStrictEqual(third.state.stats.valveGear, { C: 1, B: 1 });
     const bag = await Database.fetchItems(character.id);
     assert.strictEqual(bag.filter(item => [cWeapon.selfId, bWeapon.selfId].includes(Number(item.selfId))).length, 2);
-    assert(!bag.some(item => Number(item.selfId) === cArmour.selfId), 'no C armour piece in the bag');
+    assert(!bag.some(item => Number(item.selfId) === cWeapon2.selfId), 'no second C weapon in the bag');
 
     console.log('valve gear: ok');
 })().catch((error) => {
