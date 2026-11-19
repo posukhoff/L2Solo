@@ -30,7 +30,9 @@
 // the same consignment at the cheapest store price a bot pays
 // (StaticMerchantPricing.cheapestPurchase), listed up to SHOT_ASK_RATE x that price
 // (our choice: the premium for not walking to a store town). Units: its town's demand
-// plus SHOT_DISPLAY_UNITS of each (our choice: about an hour of a town's use), one stack
+// plus SHOT_DISPLAY_UNITS of each (our choice: about an hour of a town's use), at most
+// SHOT_STOCK_UNITS of each (our choice: a town's demand counts every hunter's hour, and
+// each crafter there stocks it; ten hunters' hour is a private store's lot), one stack
 // one listing line; a bot fires its shots each fight at any drop rate, so neither the
 // hourly allowance nor the rate scales them, and OWED_MONEY alone bounds them.
 // Held = its bag's unequipped units plus its own board sell lines (listed items leave the bag).
@@ -39,7 +41,7 @@ const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const CRAFTER_CLASSES = Object.freeze([56, 57]);
 const GEAR_GRADES = new Set(['c', 'b', 'a']);
 const PIECES_PER_HOUR = 6, STOCK_HOURS = 2, HOUR_MS = 3600000, OWED_PIECES = 12, OWED_MONEY = 60000000;
-const SHOT_GROUP = 'Shot', SHOT_DISPLAY_UNITS = 2000, SHOT_ASK_RATE = 1.5;
+const SHOT_GROUP = 'Shot', SHOT_DISPLAY_UNITS = 2000, SHOT_STOCK_UNITS = 20000, SHOT_ASK_RATE = 1.5;
 const isShot = selfId => require('./ProductionPolicy').GRADED_SHOTS.has(Number(selfId));
 
 function isCrafter(state) {
@@ -161,7 +163,7 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
     for (const offer of [...top.values()].sort((a, b) => armour(a) - armour(b) || a.selfId - b.selfId)) targets.push({ offer, units: 1 });
     // Shots after the gear, by item id: its town's demand plus the display units.
     for (const offer of reached.filter(entry => entry.group === SHOT_GROUP).sort((a, b) => a.selfId - b.selfId))
-        targets.push({ offer, units: Math.max(0, Math.floor(Number(demandFor(offer.selfId) || 0))) + SHOT_DISPLAY_UNITS });
+        targets.push({ offer, units: Math.min(SHOT_STOCK_UNITS, Math.max(0, Math.floor(Number(demandFor(offer.selfId) || 0))) + SHOT_DISPLAY_UNITS) });
     const allowances = {};
     let { pieces, money } = owed(state);
     const rows = [];
@@ -236,4 +238,4 @@ function materialBids(state) {
 }
 
 module.exports = { isCrafter, allowance, townOffers, consignOffer, restock, owed, consignPatch, settlement, materialBids, CRAFTER_CLASSES, PIECES_PER_HOUR, STOCK_HOURS,
-    OWED_PIECES, OWED_MONEY, SHOT_DISPLAY_UNITS, SHOT_ASK_RATE, MATERIAL_BID_RATE, MATERIAL_BID_UNITS };
+    OWED_PIECES, OWED_MONEY, SHOT_DISPLAY_UNITS, SHOT_STOCK_UNITS, SHOT_ASK_RATE, MATERIAL_BID_RATE, MATERIAL_BID_UNITS };

@@ -128,6 +128,8 @@ assert.deepStrictEqual([...stockedShots.keys()].sort((a, b) => a - b), [1463, 14
 assert(Fixed.offers(B_SS).length > 0 && !stockedShots.has(B_SS), 'a B shot a store sells is still not stocked below its recipe level');
 assert.strictEqual(stockedShots.get(D_SS).amount, 500 + Stock.SHOT_DISPLAY_UNITS, 'the town demand plus the display units');
 assert.strictEqual(stockedShots.get(C_SS).amount, Stock.SHOT_DISPLAY_UNITS, 'the display units without demand');
+assert.strictEqual(shotRows(Stock.restock(journeyman, { offers, now: t0, demandFor: id => id === D_SS ? 1000000 : 0 })).get(D_SS).amount,
+    Stock.SHOT_STOCK_UNITS, 'a store town\'s whole demand is not one crafter\'s lot: the stock is capped');
 assert.deepStrictEqual([stockedShots.get(D_SS).unit, stockedShots.get(D_SS).ceiling], [10, 15],
     'a D soulshot at the store price a bot pays in Gludin, Gludio or Dion, ceiling half again');
 assert.strictEqual(stockedShots.get(D_BSPS).unit, invoke('GameServer/Bot/Economy/StaticMerchantPricing').cheapestPurchase(D_BSPS, { forBot: true }));
