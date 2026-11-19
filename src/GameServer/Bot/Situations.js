@@ -751,7 +751,10 @@ function earningTaken(state, earning, caller) {
     const was = state.stats?.earning;
     const stats = { ...state.stats, woken: decided(state.stats, 'earning_spot', { caller, subject: state.characterId,
         answer: earning.spotId ?? 'none', was: was?.spotId ?? 'none' }) };
-    if ((was?.spotId ?? null) !== (earning.spotId ?? null) || Number(was?.earning) !== Number(earning.earning)) {
+    // The hour at the kit rates' rounding (StatsPacket.roundRate, three digits): a
+    // re-estimate that moves no rounded rate wakes no build.
+    const hour = value => require('./Economy/StatsPacket').roundRate(Number(value));
+    if ((was?.spotId ?? null) !== (earning.spotId ?? null) || hour(was?.earning) !== hour(earning.earning)) {
         raise(stats, 'earning_moved', null, place(state), state.characterId);
     }
     return { woken: stats.woken, waiting: stats.waiting, situationSeq: stats.situationSeq };
