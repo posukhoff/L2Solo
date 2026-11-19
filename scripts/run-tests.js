@@ -266,6 +266,7 @@ const tests = [
     'tests/test_cold_skill_dto_interning.js',
     'tests/test_life_state_cache.js',
     'tests/test_cold_hydrate_downtime_shift.js',
+    'tests/test_rate_change_wake.js',
     'tests/test_boot_life_row_order.js',
     'tests/test_admin_tools.js',
     'tests/test_admin_saved_locations.js',
