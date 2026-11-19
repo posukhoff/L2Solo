@@ -29,6 +29,9 @@ const STAGE_BANDS = (() => {
 const OPERATION_KIND = Object.freeze({
     'inventory:sync-summary:npc_liquidation': 'npcSales',
     'bot:npc-purchase': 'npcBuys',
+    // A crafter paying the store for consigned gear it sold: journalled as the
+    // fixed_wts purchase it stands for, so split out with the fixed sell lines.
+    'bot:consignment-pay': 'npcBuys',
     'bot-life:cold-owner-commit-release-batch/resolve': 'huntCold',
     'inventory:sync-summary:resolve': 'huntCold',
     'inventory:sync-summary:trip_payment': 'fares',
