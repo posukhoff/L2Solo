@@ -1,20 +1,19 @@
-🛠️ **Shot production & supply**
+⚔️ **Clan parties and raids**
 
-- Improved dwarven Soulshot, Spiritshot and Blessed Spiritshot production. Crafters now evaluate repeat batches against funded demand, travel costs and available capital instead of rejecting a profitable production run based on its first batch alone.
-- Fixed shot recipe procurement and learning after market trips. Hunters and spoilers can supply requested shot recipes, and crafters adjust recipe bids when their funds change while keeping money for production materials.
-- Equipment bought for crystals stays reserved for production instead of being equipped or sold during market handoffs. Crystal sourcing also respects the dwarf's Crystallize skill grade.
-- Shot costs and the choice between Spiritshots and Blessed Spiritshots now reflect available market offers and recent paid trades, with a crafting-cost estimate when neither is available.
+- Clan leaders can command several bot parties against the same raid boss. The parties share targets and loot distribution, and each party handles its own healing, buffs and resurrection.
+- Save your main and additional parties with `.partysave` and assemble them again with `.partyrestore`, including after a server restart. Restoring reports how many members actually joined each party.
+- Autonomous clans can field raid expeditions of up to 40 bots. Companions in player-led raids stay with their party during combat.
+- Queen Ant, Core and Orfen now use C4 encounter mechanics, including guards, healers, Orfen's retreat and pull, and their original respawn windows. They drop epic jewelry and can be fought by player parties and autonomous clans.
 
-🤖 **Bot recovery, inventory & trade**
+🛠️ **Crafting, combat and travel**
 
-- Fixed background bots getting stuck without a valid hunting spot. They can complete economic tasks and select a suitable hunting ground again, including after market visits.
-- Completed market visits without a suitable hunting ground now wait in town and retry instead of remaining stuck shopping.
-- Background loot now preserves individual equipment copies, enchantments and equipped slots. Improved repair of affected inventories in older saves.
-- Fixed live-bot trading and warehouse cleanup when no saved background state is available.
-- Bot buy shops and purchase advertisements now share the actual available budget, so money reserved in a shop cannot also fund a separate purchase.
+- Helvetia in Giran now sells A- and S-grade gemstones. Clan crafting can hand off ready components correctly, and World Observer shows which materials are ready.
+- Mages favor usable spells already in range and check for Cursed Bone before choosing Death Spike. Hunting and combat tables were refreshed.
+- Summons and pets are protected from attacks and skills that fail the owner's PvP rules. Damage over time stops at 1 HP.
+- Bots without an escape scroll can use mapped walking routes between hunting grounds and town. Bots approach service NPCs independently.
+- Improved character switching and recovery when returning to the world.
 
-⚔️ **Combat & loot**
+🗺️ **World Observer and clan AI**
 
-- Area attacks now check height and line of sight, preventing damage and aggression through floors or blocked geometry.
-- Bots and parties stop retaining combat targets on distant floors, allowing them to resume hunting and collect ground loot.
-- Quest Monsters are excluded from routine bot hunting. Monsters with explicitly empty drop tables no longer receive fallback loot in background combat.
+- World Observer shows C4 item icons, links to raid boss details and lets you filter bosses by level.
+- If AI title management is enabled, clans can generate titles for several members in one request.

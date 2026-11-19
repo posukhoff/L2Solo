@@ -83,6 +83,7 @@ function deathCleanupFor(actor) {
 
 async function terminalRequest(request) {
     const player = sessionAt(origin);
+    const previousActor = player.actor;
     deathCleanupFor(player.actor);
     player.persistCharacterStatus = () => Promise.reject(new Error('fixture_persist_failed'));
     await assert.rejects(request(player), /fixture_persist_failed/);
@@ -98,14 +99,14 @@ async function terminalRequest(request) {
         release();
         await pending;
         expectNear(origin, 9000, []);
-        player.actor.setLocXYZ(origin);
-        player.actor.setIsOnline(true);
+        previousActor.setLocXYZ(origin);
+        previousActor.setIsOnline(true);
         expectNear(origin, 9000, []);
     } finally { release(); Shared.fetchCharacters = fetchCharacters; }
 }
 
 const originalConfig = { activationRadius: Config.activationRadius, activationFloorDirectZ: Config.activationFloorDirectZ };
-const originalGeo = { hasGeo: Geodata.hasGeo, hasLineOfSight: Geodata.hasLineOfSight };
+const originalGeo = { hasGeo: Geodata.hasGeo, canWalkStraight: Geodata.canWalkStraight };
 
 async function run() {
     World.user = { sessions: [], revision: 0 };
@@ -113,7 +114,7 @@ async function run() {
     Config.activationRadius = 9000;
     Config.activationFloorDirectZ = 1200;
     Geodata.hasGeo = () => true;
-    Geodata.hasLineOfSight = () => false;
+    Geodata.canWalkStraight = () => false;
 
     const unrelated = [];
     for (let i = 0; i < 20; i++) {
@@ -155,14 +156,14 @@ async function run() {
     player.actor.setLocXYZ({ ...remote, locZ: remote.locZ + 3000 });
     expectNear(remote, 0, [player]);
     assert.strictEqual(visible(remote), false, 'Z-only setter uses fresh height in native blocked-floor policy');
-    Geodata.hasLineOfSight = () => true;
+    Geodata.canWalkStraight = () => true;
     Floor.resetCache();
     assert.strictEqual(visible(remote), true, 'native visible-slope exception remains accepted');
     Geodata.hasGeo = () => false;
     Floor.resetCache();
     assert.strictEqual(visible(remote), true, 'missing-geodata fallback remains permissive');
     Geodata.hasGeo = () => true;
-    Geodata.hasLineOfSight = () => false;
+    Geodata.canWalkStraight = () => false;
     Floor.resetCache();
     player.actor.setIsOnline(false);
     expectNear(remote, 9000, []);

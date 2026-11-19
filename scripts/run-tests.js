@@ -7,6 +7,13 @@ const path = require('node:path');
 const notRunTests = new Map([]);
 
 const tests = [
+    'tests/test_character_entry_recovery.js',
+    'tests/test_character_relogin.js',
+    'tests/test_clan_leader_party_invite.js',
+    'tests/test_clan_command_parties.js',
+    'tests/test_party_presets.js',
+    'tests/test_command_party_casts.js',
+    'tests/test_command_party_allies.js',
     'tests/test_bot_buy_shop_free_wallet.js',
     'tests/test_cold_loot_item_instances.js',
     'tests/test_cold_missing_spot_occupation.js',
@@ -263,6 +270,7 @@ const tests = [
     'tests/test_cold_commit_admission.js',
     'tests/test_cold_message_pages.js',
     'tests/test_cold_message_bytes.js',
+    'tests/test_cold_reply_refusal.js',
     'tests/test_cold_skill_dto_interning.js',
     'tests/test_life_state_cache.js',
     'tests/test_cold_hydrate_downtime_shift.js',
@@ -317,6 +325,7 @@ const tests = [
     'tests/test_town_traffic.js',
     'tests/test_town_movement.js',
     'tests/test_town_trade_navigation.js',
+    'tests/test_town_ways_geodata.js',
     'tests/test_openrouter_gateway.js',
     'tests/test_ai_config_surface.js',
     'tests/test_bot_inference_budget.js',
@@ -429,6 +438,7 @@ const tests = [
     'tests/test_bot_chat_voice.js',
     'tests/test_bot_clan_chat.js',
     'tests/test_clan_production.js',
+    'tests/test_clan_warehouse_personal_stock.js',
     'tests/test_clan_membership_recovery.js',
     'tests/test_clan_party_help.js',
     'tests/test_clan_party_rescue.js',
@@ -898,6 +908,8 @@ const tests = [
     'tests/test_c4_group_leader_minions.js',
     'tests/test_raid_boss_curse.js',
     'tests/test_raid_boss_minions.js',
+    'tests/test_c4_grand_bosses.js',
+    'tests/test_grand_boss_raid_lifecycle.js',
     'tests/test_group_leader_minions.js',
     'tests/test_raid_boss_respawn_persistence.js',
     'tests/test_item_skill_use.js',
@@ -941,6 +953,7 @@ const tests = [
     'tests/test_party_capacity.js',
     'tests/test_party_rewards.js',
     'tests/test_npc_died_progress.js',
+    'tests/test_kill_failure_boundary.js',
     'tests/test_party_buff_targets.js',
     'tests/test_party_member_reader.js',
     'tests/test_party_bot_loot.js',
@@ -969,6 +982,7 @@ const tests = [
     'tests/test_native_ui_character_switch.js',
     'tests/test_party_pull_pause.js',
     'tests/test_party_revival.js',
+    'tests/test_party_revival_handoff.js',
     'tests/test_path_obstacle.js',
     'tests/test_pathfinding_worker_pool.js',
     'tests/test_companion_pathfinding_worker.js',
@@ -1032,6 +1046,7 @@ const tests = [
     'tests/test_recipe_book.js',
     'tests/test_common_craft_skill_migration.js',
     'tests/test_recipe_crafting.js',
+    'tests/test_recipe_data_path.js',
     'tests/test_recipe_persistence.js',
     'tests/test_manufacture_shop.js',
     'tests/test_restart_point_revive.js',
@@ -1054,6 +1069,7 @@ const tests = [
     'tests/test_sword_dancer_spellsinger_skills.js',
     'tests/test_skill_damage_formulas.js',
     'tests/test_town_pathfinder.js',
+    'tests/test_town_ways.js',
     'tests/test_town_guard_pk.js',
     'tests/test_town_respawn.js',
     'tests/test_tcp_packet_framing.js',
@@ -1334,6 +1350,7 @@ const geodataTests = new Set([
     'tests/test_town_gate_routing.js',
     'tests/test_town_movement.js',
     'tests/test_town_trade_navigation.js',
+    'tests/test_town_ways_geodata.js',
     'tests/test_town_navigation.js',
     'tests/test_town_npc_routing.js'
 ]);
@@ -1366,6 +1383,8 @@ const optionalGeodataTests = new Set([
 const geodataOnly = process.argv.includes('--geodata');
 // Disposable recovery and market fixtures use the default configuration.
 const defaultConfigTests = new Set([
+    'tests/test_bot_background_drops.js',
+    'tests/test_spot_value_table.js',
     'tests/test_opportunistic_raids.js',
     'tests/test_raid_search_coverage.js',
     'tests/test_raid_target_selection.js',

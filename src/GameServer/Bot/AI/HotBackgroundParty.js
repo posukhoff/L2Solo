@@ -240,7 +240,7 @@ function searchGround(session, owner, members, party, legal, now, present) {
         const to = { locX: point.locX, locY: point.locY, locZ: cell.z };
         // Exploration must not reintroduce an unseen monster as a movement
         // goal after the combat scan rejected it through a wall.
-        if (!Geo.hasLineOfSight(origin.locX, origin.locY, origin.locZ, to.locX, to.locY, to.locZ)) continue;
+        if (!Geo.canWalkStraight(origin.locX, origin.locY, origin.locZ, to.locX, to.locY, to.locZ)) continue;
         session.backgroundSearchDestination = to;
         session.lastDecision = { action: 'party_search', partyId: party.partyId, destination: to, at: now };
         // Native bounded pathfinding still owns movement to the visible
@@ -481,6 +481,24 @@ function tick(session, bot, Generics, AI, now = Date.now()) {
     if (raidObjective && !incoming && !groupOwner.raidPreparationComplete
         && holdForRaidPreparation(session, groupOwner, group, Generics, now)) {
         return true;
+    }
+    // Orfen can spawn at three field points, retreat to her lair, and return
+    // to another field point after healing. Follow the authoritative position.
+    if (raidObjective && !incoming && require('../../RaidBoss/GrandBossRules').templateId(party.stats.objective) === 12169) {
+        const boss = invoke('GameServer/World/RaidEntityIndex').bossByTemplateId(World, 12169);
+        if (Threats.alive(boss) && legal(boss)) {
+            owner.backgroundHuntTarget = boss;
+            if (Threats.distance(bot, boss) > 1000) {
+                if ((session === owner || Threats.distance(owner.actor, boss) <= 1000)
+                    && !session.pendingPathRequest && !bot.state.fetchTowards?.()
+                    && Restrictions.canMove(bot)) {
+                    Tactics.stop(session, bot);
+                    bot.moveTo({ from: loc(bot), to: loc(boss) });
+                }
+                session.lastDecision = { action: 'raid_follow_orfen', partyId: party.partyId, at: now };
+                return true;
+            }
+        }
     }
     let target = incoming || owner.backgroundHuntTarget;
     const allowedHunt = npc => legal(npc) && (RaidSafety.canEngageBotClanRaid(session, npc)

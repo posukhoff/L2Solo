@@ -22,6 +22,7 @@ const Actions = invoke('GameServer/Clan/ClanActionService');
 const Events = require('../src/GameServer/Clan/ClanReviewEvents');
 const done = label => console.log('PASS ' + label);
 const warehouse = amount => [{ selfId: 57, amount, reservedAmount: 0 }];
+const operatingReserve = 1000;
 const persona = { primaryDrive: 'status', traits: { ambition: 0.8, empathy: 0.8, commitment: 0.5, sociability: 0.7 } };
 
 async function seedBot(id, clanId, adena = 10000) {
@@ -35,8 +36,8 @@ async function seedBot(id, clanId, adena = 10000) {
     // authoritative packet even when a treasury supplies most of the price.
     // The reserve is published as the packet's own number (the rule under test is that a member keeps what its
     // packet reserves); a kit line read off the spot table would make it 0 where the table's best cell drinks none.
-    const reserve = Math.floor(adena / 20);
-    const money = invoke('GameServer/Bot/Economy/PurchaseFunding').packetFor({ queue: [], moneyPrice: 0, gap: null }, 0, reserve);
+    const money = invoke('GameServer/Bot/Economy/PurchaseFunding')
+        .packetFor({ queue: [], moneyPrice: 0, gap: null }, 0, operatingReserve);
     await Database.execute([`INSERT INTO bot_life_state(characterId,accountName,characterName,level,exp,sp,hp,maxHp,mp,maxMp,adena,phase,activity,currentRegion,
         locX,locY,locZ,inventorySummary,statsJson,updatedAt) VALUES (?,?,?,40,100000,700000,500,500,250,250,?,'cold','shopping','Giran',83000,148000,-3400,?,?,1)`,
         [id, account, `ClanMember${id}`, adena, JSON.stringify(inventory), JSON.stringify({ classId: 1, clanId, money })]]);
@@ -142,7 +143,7 @@ async function main() {
 
     const buyer = current.members.find(member => Number(member.characterId) === Number(current.state.goal.assignedMemberIds[0]));
     const memberPart = Math.floor(invoke('GameServer/Bot/Economy/PurchaseFunding').spendable(buyer, 0, { free: true }));
-    assert(memberPart > 0 && memberPart < 10000, 'the member retains its native operating reserve');
+    assert.equal(memberPart, 10000 - operatingReserve, 'the member retains its native operating reserve');
     const purchase = await Market.resolveClan(current);
     assert(purchase.purchased, JSON.stringify(purchase));
     assert(purchase.advanced.ok, JSON.stringify(purchase.advanced));

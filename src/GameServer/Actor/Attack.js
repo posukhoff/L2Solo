@@ -18,6 +18,7 @@ const RaidCurse = invoke('GameServer/RaidBoss/RaidCurse');
 const ChargeLifecycle = invoke('GameServer/Skills/ChargeLifecycle');
 const AttackRange = invoke('GameServer/Actor/AttackRange');
 const HotPartyCastTracker = invoke('GameServer/Bot/AI/HotPartyCastTracker');
+const SummonPvp = require('./SummonPvp');
 
 const { weaponMaskFor } = invoke('GameServer/Skills/WeaponMask');
 
@@ -87,14 +88,14 @@ class Attack {
         this.repeatTarget = null;
     }
 
-    abortCast(session, actor) {
+    abortCast(session, actor, { preserveQueue = false } = {}) {
         HotPartyCastTracker.clear(actor);
         if (!actor?.state?.fetchCasts?.()) {
             return false;
         }
 
         this.clearTimers();
-        this.resetQueuedEvent();
+        if (!preserveQueue) this.resetQueuedEvent();
         actor.state.setCasts(false);
         // clearTimers also cancels a weapon swing that overlapped this cast.
         // Its completion callback can no longer release the movement blocker.
@@ -111,8 +112,12 @@ class Attack {
     }
 
     meleeHit(session, creature) {
+        if (!invoke('GameServer/Bot/AI/ClanCommandParty').canAttack(session, creature)) return;
+        const commandScope = HotPartyCastTracker.scopeFor(session);
+        if (session?.partyCompanion && commandScope && HotPartyCastTracker.protectedControl(commandScope, creature)) return;
         if (session?.pvpHandoffPending) return;
         const actor = session.actor;
+        if (SummonPvp.blockReason(actor, creature)) return;
         const raidParty = invoke('GameServer/Clan/ClanRaidRoster').offensiveParty(session);
 
         // A swing is already in flight: its end timer owns the next swing and
@@ -242,6 +247,7 @@ class Attack {
 
             hits.forEach((entry, index) => {
                 const target = entry.target;
+                if (!this.commandImpactAllowed(session, actor, target)) return;
                 if (index > 0 && RaidCurse.normalAttackBlocked(session, actor, target)) return;
                 if (target?.state?.fetchDead?.() || target?.isDead?.()) return;
                 // A target that stepped away still takes a started swing or a
@@ -323,6 +329,7 @@ class Attack {
             return;
         }
         if (!this.validateSkillTarget(session, actor, creature, skill)) return;
+        if (!HotPartyCastTracker.mayCast(session, creature, skill)) return;
 
         if (actor.canUseSkill?.(skill) === false) {
             invoke('GameServer/Bot/AI/BotActionFeedback').record(session, actor, creature, skill, 'rejected', 'reuse');
@@ -371,6 +378,9 @@ class Attack {
         // not shift impact past the original deadline or a pet's follow timer.
         // Cancellation clears both native timers, and casting stays active.
         this.queueTimer(land, castTime);
+        // Orfen may pull and interrupt the caster. Install both timers first
+        // so the native teleport cancellation also clears this cast's impact.
+        invoke('GameServer/RaidBoss/GrandBossRuntime').skillSeen(actor, skill, Math.random, session);
 
     }
 
@@ -398,6 +408,9 @@ class Attack {
         // Tactical readers need the accepted cast, not skill availability:
         // reuse starts above, before this cast has dealt any damage.
         this.activeCast = { target: creature, skill, landsAt: Date.now() + skill.fetchCalculatedHitTime() };
+        if (skill.fetchTargetKind?.() === 'corpse_player') {
+            invoke('GameServer/Bot/AI/PartyRevivalService').noteCastStarted(session, actor, creature);
+        }
         HotPartyCastTracker.begin(session, actor, creature, skill);
         return magicSkill;
     }
@@ -411,6 +424,7 @@ class Attack {
             invoke('GameServer/Bot/AI/BotPartyChat').cancelExpectedSkillResult(session, actor, creature, skill);
             return;
         }
+        if (this.cancelCastOnProtectedSummon(session, actor, creature, skill)) return;
         const targets = this.resolveSkillTargets(session, actor, creature, skill);
         const semantic = skill.fetchSemantic?.() || {};
         const animationTargets = !targets.length && semantic.sourceTarget === 'aura' && semantic.selfEffect
@@ -431,6 +445,7 @@ class Attack {
             invoke('GameServer/Bot/AI/BotPartyChat').cancelExpectedSkillResult(session, actor, creature, skill);
             return;
         }
+        if (this.cancelCastOnProtectedSummon(session, actor, creature, skill)) return;
 
         const { corpseAreaCast, selfEffectOnly, executionTargets, emptyEnemyAuraCast } = this.remoteCastTargets(session, actor, creature, skill);
 
@@ -485,6 +500,17 @@ class Attack {
         else finish();
     }
 
+    cancelCastOnProtectedSummon(session, actor, target, skill) {
+        if (skill.fetchTargetKind?.() !== 'enemy' || !SummonPvp.blockReason(actor, target)) return false;
+        if (this.abortCast(session, actor, { preserveQueue: true })) {
+            invoke('GameServer/Bot/AI/BotPartyChat').cancelExpectedSkillResult(session, actor, target, skill);
+            if (!invoke('GameServer/Bot/AI/PartyCompanionService').startQueuedGroundPickup(session) && this.queue.name) {
+                this.dequeueEvent(session);
+            }
+        }
+        return true;
+    }
+
     remoteCastTargets(session, actor, creature, skill) {
         const semantic = skill.fetchSemantic?.() || {};
         const targets = this.resolveSkillTargets(session, actor, creature, skill);
@@ -531,6 +557,8 @@ class Attack {
     }
 
     applyRemoteCastEffect(session, actor, target, skill, { corpseAreaCast, raidParty, shotState, magicSkill, selfEffectOnly, castWeapon, openingPayment }) {
+        if ((skill.fetchTargetKind?.() === 'enemy' || corpseAreaCast)
+            && !this.commandImpactAllowed(session, actor, target, skill)) return;
         if ((skill.fetchTargetKind?.() === 'enemy' || corpseAreaCast)
             && !invoke('GameServer/Clan/ClanRaidRoster').beforeOffensiveEffect(session, actor, target, raidParty, openingPayment)) return;
         if (skill.fetchTargetKind?.() === 'enemy') {
@@ -785,7 +813,10 @@ class Attack {
                     && this.distance2d(actor, target) <= radius);
         }
         if (this.isNpcCombatant(actor)) {
-            return (World.user?.sessions || []).map((session) => session?.actor).filter(Boolean);
+            const players = (World.user?.sessions || []).map((session) => session?.actor).filter(Boolean);
+            return require('../RaidBoss/GrandBossRules').isGrandBoss(actor)
+                ? [...players, ...(World.npc?.spawns || []).filter(target => target.fetchIsSummon?.())]
+                : players;
         }
 
         return typeof World.fetchNpcsInRadius === 'function'
@@ -847,9 +878,11 @@ class Attack {
     // Auras instead use the caster as centre and filter their affected targets.
     validateSkillTarget(session, actor, target, skill) {
         const semantic = skill.fetchSemantic?.();
-        const restricted = skill.fetchTargetKind?.() === 'corpse_player'
+        const targetKind = skill.fetchTargetKind?.();
+        const protectedSummon = targetKind === 'enemy' && SummonPvp.blockReason(actor, target);
+        const restricted = targetKind === 'corpse_player'
             || (semantic?.undeadOnly && semantic.sourceTarget !== 'aura');
-        if (!restricted || this.isValidSkillTarget(target, skill, actor)) return true;
+        if (!protectedSummon && (!restricted || this.isValidSkillTarget(target, skill, actor))) return true;
         ConsoleText.transmit(session, ConsoleText.caption.incorrectTarget);
         session.dataSendToMe(ServerResponse.actionFailed());
         invoke('GameServer/Bot/AI/BotActionFeedback').record(session, actor, target, skill, 'rejected', 'invalid_target');
@@ -861,6 +894,7 @@ class Attack {
     isValidSkillTarget(target, skill, actor = null) {
         if (!target) return false;
         const targetKind = skill.fetchTargetKind?.();
+        if (targetKind === 'enemy' && SummonPvp.blockReason(actor, target)) return false;
 
         const semantic = skill.fetchSemantic?.();
         if (semantic?.undeadOnly) {
@@ -886,7 +920,9 @@ class Attack {
                 if (ArenaCombatRules.canInteract(actor, target)) return true;
             }
             if (this.isNpcCombatant(actor)) {
-                return target !== actor && !target.fetchKind && target.state?.fetchDead?.() !== true && target.isDead?.() !== true;
+                const ownedSummon = target.fetchIsSummon?.() && require('../RaidBoss/GrandBossRules').isGrandBoss(actor);
+                return target !== actor && (!target.fetchKind || ownedSummon)
+                    && target.state?.fetchDead?.() !== true && target.isDead?.() !== true;
             }
             return target.fetchAttackable?.() === true && target.state?.fetchDead?.() !== true && target.isDead?.() !== true;
         }
@@ -1388,7 +1424,27 @@ class Attack {
         return false;
     }
 
+    commandImpactAllowed(session, actor, target, skill = null) {
+        if (SummonPvp.blockReason(actor, target)) return false;
+        if (this.blockedPvpDefense(session, actor, target, skill)) return false;
+        if (session?.partyCompanion && session.actor === actor) {
+            const Commands = invoke('GameServer/Bot/AI/ClanCommandParty');
+            if (!Commands.canAttack(session, target)) return false;
+            if (skill?.fetchSkillType?.() === C4SkillRules.AGGRO_DAMAGE && !Commands.canTaunt(session, target)) return false;
+            const scope = HotPartyCastTracker.scopeFor(session);
+            if (scope && (!skill || HotPartyCastTracker.isDamageSkill(skill))
+                && HotPartyCastTracker.protectedControl(scope, target)) return false;
+        }
+        return true;
+    }
+
     blockedPvpDefense(session, actor, target, skill = null) {
+        if (session?.partyCompanion && session.actor === actor && actor !== target
+            && (!skill || skill.fetchTargetKind?.() === 'enemy')
+            && invoke('GameServer/Bot/AI/PartyAwareness').isCombatAlly(session.followPlayerSession, target)) {
+            invoke('GameServer/Bot/AI/BotPvpTactics').stop(session, actor);
+            return true;
+        }
         if (actor?.fetchOwnerId?.() && target && !target.fetchKind && actor !== target &&
             (!skill || skill.fetchTargetKind?.() === 'enemy')) {
             const owner = invoke('GameServer/Bot/AI/BotPvpThreats').character(actor);

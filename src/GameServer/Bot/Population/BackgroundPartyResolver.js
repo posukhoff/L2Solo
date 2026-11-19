@@ -423,7 +423,7 @@ const BackgroundPartyResolver = {
         }
         if (party.stats?.assemblyAt) (Situations ||= require('../Situations')).note('party:assembly:done');
 
-        if (party.stats?.objective?.opportunisticRaid) {
+        if (party.stats?.objective?.opportunisticRaid || require('../../RaidBoss/GrandBossRules').isGrandBoss(spot)) {
             // Travel/rest are simulated; this roster opens its encounter only
             // as native actors, including actual adds, healing and shot use.
             // Main's raid director activates it (the members turn hot) or
@@ -500,6 +500,7 @@ const BackgroundPartyResolver = {
         let losses = 0;
         let combatActions = 0;
         let combatMs = 0;
+        let raidActionBound = false;
         let skillUses = 0;
         let heals = 0;
         let petHeals = 0;
@@ -625,6 +626,7 @@ const BackgroundPartyResolver = {
             if (encounter.won || !pending) fights += 1;
             for (const help of encounter.help || []) combatHelp.set(`${help.sourceId}:${help.targetId}:${help.type}`, help);
             combatActions += Number(encounter.debug?.actions || 0);
+            raidActionBound ||= raid && encounter.debug?.actionBound === true;
             // A kill costs at least its killing action, as solo's: the swing or
             // cast that killed ends after the kill (the members' actions end by then).
             const foughtMs = Math.max(Number(encounter.debug?.durationMs || 0),
@@ -737,6 +739,10 @@ const BackgroundPartyResolver = {
                 (source, target) => huntActivity.pending[HuntActivity.pairKey(source, target)]) : [];
         const memoryEvents = [...helpEvents, ...huntEvents].slice(0, 64);
         HuntActivity.consumeCold(huntActivity, memoryEvents);
+        // Native attack/cast times remain fractional; durable deadlines are
+        // integral milliseconds and must never resume before the slice ends.
+        const raidNextResolveAt = Math.ceil(timestamp + (raidActionBound
+            ? Math.max(1000, Math.min(RAID_RESOLVE_INTERVAL_MS, combatMs)) : RAID_RESOLVE_INTERVAL_MS));
 
         rewards.forEach(({ state, exp, sp, adena, items }, index) => {
             const recovery = helperRecoveries.get(state.characterId);
@@ -801,12 +807,11 @@ const BackgroundPartyResolver = {
                     memoryEvents: memoryEvents.filter(event => event.sourceId === Number(state.characterId)),
                     materialize: { exp, sp, adena, items },
                     soulCrystals: memberSoulCrystals.get(Number(state.characterId)) || [],
-                    // One cold raid slice represents fifteen seconds of real
-                    // combat. Keep an active boss on that cadence so a remote
-                    // raid does not spend most of its lifetime sleeping
-                    // between otherwise continuous combat rounds.
+                    // Every member and its party share the time this slice
+                    // actually covered, including an action-limited rotation;
+                    // a hunt round resumes at its own end (doneAt).
                     doneAt,
-                    nextResolveAt: raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS),
+                    nextResolveAt: raid ? raidNextResolveAt : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS),
                     debug: {
                         partyId: party.partyId,
                         partyRoster: members.map(member => Number(member.characterId)).sort((a, b) => a - b).join(','),
@@ -1005,7 +1010,7 @@ const BackgroundPartyResolver = {
             },
             nextResolveAt: raidFailed || raidDefeated
                 ? null
-                : partyRestUntil || (raid ? timestamp + RAID_RESOLVE_INTERVAL_MS : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS)),
+                : partyRestUntil || (raid ? raidNextResolveAt : ended ? doneAt : doneAt + PARTY_RESOLVE_MIN_MS + Math.round(rng() * PARTY_RESOLVE_SPREAD_MS)),
             debug: {
                 fights,
                 attemptedFights,

@@ -1105,7 +1105,7 @@ function applyColdPotionTicks(fighter, time) {
 
 // After a won fight the background time jumps past the tails still running
 // on a survivor: its potion HoT and a monster's damage over time tick on in
-// their order, as hot (the poison outlives the kill and can kill). Returns
+// their order, as hot (the poison outlives the kill, down to 1 HP). Returns
 // the DoT damage taken.
 function settleColdTails(fighter) {
     let taken = 0;
@@ -1114,8 +1114,8 @@ function settleColdTails(fighter) {
         for (const dot of fighter.dots) if (dot.left > 0 && dot.next < next) next = dot.next;
         if (next === Infinity) break;
         applyColdPotionTicks(fighter, next);
-        const damage = dotDamage(fighter, next);
-        fighter.vitals.hp = Math.max(0, fighter.vitals.hp - damage);
+        const damage = dotDamage(fighter, next, fighter.vitals.hp);
+        fighter.vitals.hp -= damage;
         taken += damage;
     }
     if (fighter.vitals.hp > 0) applyColdPotionTicks(fighter, Number.MAX_SAFE_INTEGER);
@@ -1849,14 +1849,13 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
         applyPartyHotTicks(soloFighter, timestamp + time);
         // Damage over time on both sides (ColdMobAction.dotDamage): a monster's
         // poison or bleed on the bot, the bot's on the monster.
-        const dotTaken = dotDamage(soloFighter, time);
+        const dotTaken = dotDamage(soloFighter, time, vitals.hp);
         vitals.hp -= dotTaken;
         taken += dotTaken;
         // The bot's own damage over time adds its hate, tick by tick (hot EffectTicker -> ReceivedHit).
-        const dotDealt = dotDamage(mobFight, time);
+        const dotDealt = dotDamage(mobFight, time, mobHp);
         mobHp -= dotDealt;
         soloFighter.hate = addHate(soloFighter.hate, dotDealt);
-        if (vitals.hp <= 0 || mobHp <= 0) break;
         actions += 1;
 
         if (summonActs) {
@@ -2007,7 +2006,6 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
         timestamp
     });
 
-    // A DoT that outlived the kill may still kill the winner.
     return {
         won: true,
         fled: !!flight && !died,
@@ -2030,7 +2028,7 @@ function resolveFight({ state, spot, targetNpcId = 0, rng, timestamp = Date.now(
         effects: soloFighter.profile.effects,
         inventory: soloFighter.state.inventory,
         soulCrystals: soloFighter.soulCrystals || [],
-        // Won before the bot's first turn (a DoT tick): its saved pet was never loaded.
+        // A fight won before the bot's first turn never loaded its pet: the saved one stays.
         summon: soloFighter.summon === undefined ? soloFighter.state.stats?.coldCombat?.summon ?? null : soloFighter.summon,
         debug: { actions, durationMs: time, skillUses: soloFighter.skillUses, shotActions: soloFighter.shotActions, heals: soloFighter.heals,
             musicUses: soloFighter.musicUses, summonUses: soloFighter.summonUses, summonActions: soloFighter.summonActions, petTaken, petHeals: soloFighter.petHeals || 0, summonDeaths: soloFighter.summonDeaths || 0, petWaits: soloFighter.petWaits || 0,
@@ -2185,6 +2183,10 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
     let actions = 0;
     let overhitContext = null;
     const fightLimitMs = 15000;
+    // A raid slice represents the whole expedition's time, not 96 actions
+    // shared between every party. Keep a finite per-member allowance; unusually
+    // fast rotations that still exhaust it resume at their actual covered time.
+    const actionLimit = sharedEncounter ? Math.max(96, 32 * Math.min(Expedition.MAX_MEMBERS, fighters.length)) : 96;
     const raidControlCapacity = coldRaidControlCapacity(fighters, mob);
     const Help = invoke('GameServer/Social/CombatHelpPolicy');
     const help = new Map();
@@ -2198,7 +2200,7 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
         }
     };
 
-    while (mobHp > 0 && fighters.some((fighter) => fighter.vitals.hp > 0) && time < fightLimitMs && actions < 96) {
+    while (mobHp > 0 && fighters.some((fighter) => fighter.vitals.hp > 0) && time < fightLimitMs && actions < actionLimit) {
         const alive = fighters.filter((fighter) => fighter.vitals.hp > 0);
         const next = alive.sort((a, b) => a.readyAt - b.readyAt)[0];
         const nextSummon = alive
@@ -2214,19 +2216,14 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
         // Damage over time (ColdMobAction.dotDamage); a party member's own
         // poison ends with the slice (only the monster's effects are saved).
         for (const fighter of fighters) {
-            if (fighter.vitals.hp > 0) fighter.vitals.hp = Math.max(0, fighter.vitals.hp - dotDamage(fighter, time));
+            if (fighter.vitals.hp > 0) fighter.vitals.hp -= dotDamage(fighter, time, fighter.vitals.hp);
         }
-        const dotDealt = dotDamage(mobFight, time);
+        const dotDealt = dotDamage(mobFight, time, mobHp);
         mobHp -= dotDealt;
         // A DoT adds its caster's hate, tick by tick (hot EffectTicker -> ReceivedHit).
         if (dotDealt > 0) {
             const dotter = fighters.find((fighter) => fighter.state.characterId === mobFight.dotBy);
             if (dotter) dotter.hate = addHate(dotter.hate, dotDealt);
-        }
-        if (mobHp <= 0) {
-            // A DoT's kill is its caster's last hit (the soul crystal reads it).
-            lastKiller = fighters.find((fighter) => fighter.vitals.hp > 0 && fighter.state.characterId === mobFight.dotBy) || null;
-            break;
         }
         if (!fighters.some((fighter) => fighter.vitals.hp > 0)) break;
         actions += 1;
@@ -2347,6 +2344,8 @@ function resolvePartyFight({ members, spot, targetNpcId = 0, rng = Math.random, 
         help: [...help.values()],
         debug: {
             actions,
+            actionLimit,
+            actionBound: actions >= actionLimit && time < fightLimitMs && mobHp > 0,
             durationMs: time,
             skillUses: fighters.reduce((sum, fighter) => sum + fighter.skillUses, 0),
             musicUses: fighters.reduce((sum, fighter) => sum + fighter.musicUses, 0),

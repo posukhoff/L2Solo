@@ -143,6 +143,7 @@ class Npc extends NpcModel {
     }
 
     destructor(session) {
+        invoke('GameServer/RaidBoss/GrandBossRuntime').stop(this);
         const timer = this.#timer;
         if (timer) {
             clearInterval(timer.babyHeal);
@@ -199,6 +200,7 @@ class Npc extends NpcModel {
     }
 
     canEngageCombat() {
+        if (require('../RaidBoss/GrandBossRules').isPassive(this)) return false;
         // Lisvus gives ordinary L2NpcInstance/L2FolkInstance no retaliatory
         // AI. Guards inherit L2Attackable; owned summons have their own AI.
         return this.fetchAttackable() || TownGuard.isTownGuard(this) || this.fetchIsSummon();
@@ -504,7 +506,18 @@ class Npc extends NpcModel {
                 }
                 const actionRange = combatSkill ? this.fetchSkillCastRange(combatSkill, actor) : this.fetchCombatAttackRange(actor);
 
-                if (!this.hasCombatLineOfSight(actor)) {
+                // An attack needs the target in sight, a move needs a walk
+                // (Lisvus L2Character.doAttack): a mob that sees its target in
+                // range acts where it stands, one that sees it and can walk
+                // straight to it closes in, any other routes to it. In range is
+                // the 3D test actionStopCoords stops at, so that branch does
+                // not move.
+                const sees = this.hasCombatLineOfSight(actor);
+                const inRange = sees && Math.hypot(newDstX - this.fetchLocX(), newDstY - this.fetchLocY(),
+                    newDstZ - this.fetchLocZ()) <= actionRange;
+                if (this.fetchSelfId() === 12052 && !inRange) return;
+                if (!sees || !(inRange || GeodataEngine.canWalkStraight(this.fetchLocX(), this.fetchLocY(),
+                    this.fetchLocZ(), newDstX, newDstY, newDstZ))) {
                     const now = Date.now();
                     if (activePathTargetCoords) {
                         const pathTargetDrift = new SpeckMath.Point3D(
@@ -904,7 +917,12 @@ class Npc extends NpcModel {
                 World.npc.threatRevision = Number(World.npc.threatRevision || 0) + 1;
             }
         }
-        if (!preserveAggro) this.clearAggroList();
+        if (!preserveAggro) {
+            this.clearAggroList();
+            // A living grand boss's hate reset ends its damage ownership.
+            // Death teardown precedes loot in this runtime: retain it at 0 HP.
+            if (this.fetchHp() > 0) this.grandBossDamage?.clear();
+        }
         else if (this.aggroList.size > 0) hateStats.idleWithHate += 1;
         this.state.setCombatEnded();
         this.automation.abortAll(this);

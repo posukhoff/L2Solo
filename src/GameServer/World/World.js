@@ -626,30 +626,36 @@ const World = {
     },
 
     inviteBotCompanion(session, actor, targetSession, distribution, source = 'invite', options = {}) {
+        const partyOwner = options.partyOwner || session;
+        const invitationCurrent = () => session?.actor === actor && (!options.isCurrent || options.isCurrent());
         const BotAvailability = invoke('GameServer/Bot/AI/BotAvailability');
         const BotManager = invoke('GameServer/Bot/BotManager');
         const BotSocialMemory = invoke('GameServer/Bot/AI/BotSocialMemory');
         const PartyCompanionService = invoke('GameServer/Bot/AI/PartyCompanionService');
         const capacityReservation = options.capacityReservation || targetSession;
-        if (!actor || session?.actor !== actor) {
-            PartyCompanionService.releaseCapacity(session, capacityReservation);
+        if (!actor || !invitationCurrent()) {
+            PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
             return false;
         }
         const availability = BotAvailability.evaluate(session, targetSession, options);
         const bot = targetSession.actor;
 
+        if (availability.available && availability.clanLeader && !options.clanLeaderPrepared && !options.constParty) {
+            return invoke('GameServer/Bot/AI/ClanLeaderPartyInvite').request(session, actor, targetSession, distribution, source);
+        }
+
         // Load remembered grievances before answering a hot invitation, just
         // as the remote path does. An unloaded preview is not a refusal.
         if (availability.reason === 'relationship_unloaded' && !options.relationshipLoaded) {
             return invoke('GameServer/Social/InteractionMemoryRuntime').ensureMany([bot.fetchId()]).then(() => {
-                if (session.actor !== actor || targetSession.actor !== bot) {
-                    PartyCompanionService.releaseCapacity(session, capacityReservation);
+                if (!invitationCurrent() || targetSession.actor !== bot) {
+                    PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                     return false;
                 }
                 return this.inviteBotCompanion(session, actor, targetSession, distribution, source,
                     { ...options, relationshipLoaded: true });
             }).catch((error) => {
-                PartyCompanionService.releaseCapacity(session, capacityReservation);
+                PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                 utils.infoWarn('BotParty', 'relationship load failed for %s: %s', bot.fetchName(), error.message);
                 if (session.actor === actor) session.dataSendToMe(ServerResponse.actionFailed());
                 return false;
@@ -658,7 +664,7 @@ const World = {
 
         if (!availability.available) {
             BotSocialMemory.recordEvent(session, targetSession, 'invite_attempt', source);
-            PartyCompanionService.releaseCapacity(session, capacityReservation);
+            PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
             BotSocialMemory.recordEvent(session, targetSession, 'party_refused', availability.reason);
             session.dataSendToMe(ServerResponse.joinParty(0));
             BotManager.botTell(targetSession, session, `I can't join right now: ${availability.reasonText}.`);
@@ -672,7 +678,8 @@ const World = {
             return false;
         }
 
-        if (!PartyCompanionService.reserveCapacity(session, capacityReservation)) {
+        if (!PartyCompanionService.isActiveCompanion(targetSession, partyOwner)
+            && !PartyCompanionService.reserveCapacity(partyOwner, capacityReservation)) {
             BotSocialMemory.recordEvent(session, targetSession, 'invite_attempt', source);
             BotSocialMemory.recordEvent(session, targetSession, 'party_refused', 'party_full');
             session.dataSendToMe(ServerResponse.joinParty(0));
@@ -683,14 +690,14 @@ const World = {
         const TradeMeetings = invoke('GameServer/AfkTrade/TradeMeetingService');
         if (!TradeMeetings.canJoinParty(bot.fetchId(), targetSession.coldLifeState, targetSession)) {
             return TradeMeetings.prepareForPlayerParty(bot.fetchId()).then((ready) => {
-                if (!ready || session.actor !== actor || targetSession.actor !== bot) {
-                    PartyCompanionService.releaseCapacity(session, capacityReservation);
+                if (!ready || !invitationCurrent() || targetSession.actor !== bot) {
+                    PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                     return false;
                 }
                 return this.inviteBotCompanion(session, actor, targetSession, distribution, source,
                     { ...options, capacityReservation });
             }).catch((error) => {
-                PartyCompanionService.releaseCapacity(session, capacityReservation);
+                PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                 utils.infoWarn('BotParty', 'trade interruption failed for %s: %s', bot.fetchName(), error.message);
                 if (session.actor === actor) session.dataSendToMe(ServerResponse.actionFailed());
                 return false;
@@ -708,11 +715,11 @@ const World = {
 
             // Store/trade work can outlive the inviter or another party's
             // invitation. Recheck the same admission rules before attachment.
-            const current = session.actor === actor && targetSession.actor === bot;
+            const current = invitationCurrent() && targetSession.actor === bot;
             const latest = current ? BotAvailability.evaluate(session, targetSession, options) : null;
             const refusal = latest && !latest.available ? latest : null;
-            if (!current || refusal || !PartyCompanionService.attach(session, targetSession, attachOptions)) {
-                PartyCompanionService.releaseCapacity(session, capacityReservation);
+            if (!current || refusal || !PartyCompanionService.attach(partyOwner, targetSession, attachOptions)) {
+                PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                 if (current) {
                     BotSocialMemory.recordEvent(session, targetSession, 'party_refused', refusal?.reason || 'party_full');
                     session.dataSendToMe(ServerResponse.joinParty(0));
@@ -730,7 +737,7 @@ const World = {
             BotSocialMemory.recordEvent(session, targetSession, 'party_formed', source);
             setTimeout(() => {
                 // The bot may be dismissed within this second.
-                if (session.actor !== actor || !PartyCompanionService.isActiveCompanion(targetSession, session)) return;
+                if (!invitationCurrent() || !PartyCompanionService.isActiveCompanion(targetSession, partyOwner)) return;
                 BotManager.botTell(
                     targetSession,
                     session,
@@ -746,14 +753,14 @@ const World = {
         return BotMerchantStoreService.withdrawForParty(targetSession).then((withdrawal) => {
             completedWithdrawal = withdrawal;
             if (withdrawal.ok) return attachCompanion(withdrawal);
-            PartyCompanionService.releaseCapacity(session, capacityReservation);
-            if (session.actor !== actor) return false;
+            PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
+            if (!invitationCurrent()) return false;
             BotSocialMemory.recordEvent(session, targetSession, 'party_refused', withdrawal.reason || 'store_withdrawal_failed');
             session.dataSendToMe(ServerResponse.joinParty(0));
             BotManager.botTell(targetSession, session, "Give me a moment to finish this trade, then ask me again.");
             return false;
         }).catch(async (error) => {
-            PartyCompanionService.releaseCapacity(session, capacityReservation);
+            PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
             if (completedWithdrawal?.withdrawn) {
                 try {
                     await BotMerchantStoreService.restoreAfterPartyFailure(targetSession, completedWithdrawal);
@@ -768,7 +775,9 @@ const World = {
     },
 
     inviteBotByName(session, actor, name, distribution, source = 'named_invite', options = {}) {
-        if (!actor || session?.actor !== actor) return Promise.resolve(false);
+        const partyOwner = options.partyOwner || session;
+        const invitationCurrent = () => session?.actor === actor && (!options.isCurrent || options.isCurrent());
+        if (!actor || !invitationCurrent()) return Promise.resolve(false);
         const lookup = String(name || '').trim();
         if (!lookup) {
             session.dataSendToMe(ServerResponse.actionFailed());
@@ -790,14 +799,19 @@ const World = {
 
         ConsoleText.transmit(session, ConsoleText.caption.waitForResponse);
         return LifeState.findByName(lookup).then(async (state) => {
-            if (session.actor !== actor) return false;
+            if (!invitationCurrent()) return false;
             if (!state) {
                 session.dataSendToMe(ServerResponse.actionFailed());
                 return false;
             }
 
-            await invoke('GameServer/Social/InteractionMemoryRuntime').ensureMany([Number(state.characterId)]);
-            if (session.actor !== actor) return false;
+            const preview = BotAvailability.evaluateState(session, state, { ...options, loadMemory: false });
+            if (preview.available && preview.clanLeader && !options.clanLeaderPrepared && !options.constParty) {
+                return invoke('GameServer/Bot/AI/ClanLeaderPartyInvite').request(session, actor, state, distribution, source);
+            }
+
+            if (!preview.clanLeader) await invoke('GameServer/Social/InteractionMemoryRuntime').ensureMany([Number(state.characterId)]);
+            if (!invitationCurrent()) return false;
             const availability = BotAvailability.evaluateState(session, state, options);
             if (!availability.available) {
                 BotSocialMemory.recordEvent(session, state, 'invite_attempt', source);
@@ -814,7 +828,7 @@ const World = {
             }
 
             capacityReservation ||= state;
-            if (!PartyCompanionService.reserveCapacity(session, capacityReservation)) {
+            if (!PartyCompanionService.reserveCapacity(partyOwner, capacityReservation)) {
                 BotSocialMemory.recordEvent(session, state, 'party_refused', 'party_full');
                 session.dataSendToMe(ServerResponse.actionFailed());
                 coldBotTell(session, state, `Your party is full. Ask me again after making room.`);
@@ -824,11 +838,11 @@ const World = {
             const TradeMeetings = invoke('GameServer/AfkTrade/TradeMeetingService');
             if (!TradeMeetings.canJoinParty(state.characterId, state)) {
                 if (!await TradeMeetings.prepareForPlayerParty(state.characterId)) {
-                    PartyCompanionService.releaseCapacity(session, capacityReservation);
+                    PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                     return false;
                 }
-                if (session.actor !== actor) {
-                    PartyCompanionService.releaseCapacity(session, capacityReservation);
+                if (!invitationCurrent()) {
+                    PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                     return false;
                 }
                 state = LifeState.cachedState(state.characterId) || state;
@@ -838,14 +852,15 @@ const World = {
                 playerLoc: actorLoc(actor),
                 forceNearPlayer: true,
                 interruptBackgroundActivity: true,
+                clanLeaderInvite: options.clanLeaderPrepared === true && availability.clanLeader,
                 constParty: options.constParty === true
             }).then((result) => {
-                if (session.actor !== actor) {
-                    PartyCompanionService.releaseCapacity(session, capacityReservation);
+                if (!invitationCurrent()) {
+                    PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                     return false;
                 }
                 if (!result.ok) {
-                    PartyCompanionService.releaseCapacity(session, capacityReservation);
+                    PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                     BotSocialMemory.recordEvent(session, state, 'invite_attempt', source);
                     BotSocialMemory.recordEvent(session, state, 'party_refused', result.reason || 'activation_failed');
                     session.dataSendToMe(ServerResponse.actionFailed());
@@ -856,12 +871,12 @@ const World = {
                 }
 
                 return waitForBotSession(BotManager, state.name || lookup).then((targetSession) => {
-                    if (session.actor !== actor) {
-                        PartyCompanionService.releaseCapacity(session, capacityReservation);
+                    if (!invitationCurrent()) {
+                        PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                         return false;
                     }
                     if (!targetSession) {
-                        PartyCompanionService.releaseCapacity(session, capacityReservation);
+                        PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
                         session.dataSendToMe(ServerResponse.actionFailed());
                         coldBotTell(session, state, `I tried to come over, but something went wrong.`);
                         return false;
@@ -874,7 +889,7 @@ const World = {
                 });
             });
         }).catch((err) => {
-            PartyCompanionService.releaseCapacity(session, capacityReservation);
+            PartyCompanionService.releaseCapacity(partyOwner, capacityReservation);
             utils.infoWarn('BotParty', 'remote invite failed for %s: %s', lookup, err.message);
             if (session.actor === actor) session.dataSendToMe(ServerResponse.actionFailed());
             return false;

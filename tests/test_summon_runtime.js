@@ -11,7 +11,6 @@ DataCache.init();
 const Attack = invoke('GameServer/Actor/Attack');
 const EffectStats = invoke('GameServer/Effects/EffectStats');
 const BasicAction = invoke('GameServer/Actor/Generics/BasicAction');
-const AttackExec = invoke('GameServer/Actor/Generics/AttackExec');
 const Backpack = invoke('GameServer/Actor/Backpack');
 const Item = invoke('GameServer/Item/Item');
 const Npc = invoke('GameServer/Npc/Npc');
@@ -21,7 +20,6 @@ const Skill = invoke('GameServer/Model/Skill');
 const SkillEffects = invoke('GameServer/Skills/C4SkillEffects');
 const CubicControl = invoke('GameServer/Skills/CubicControl');
 const SummonControl = invoke('GameServer/Npc/SummonControl');
-const SkillExec = invoke('GameServer/Actor/Generics/SkillExec');
 const World = invoke('GameServer/World/World');
 const { registerSessions } = require('./helpers/worldSessions');
 const Database = invoke('Database');
@@ -277,8 +275,7 @@ async function checkPhantomActions(session, summon, summonSkillId) {
     assert.strictEqual(World.npc.spawns[0].fetchSelfId(), 12006, 'Summon Kat level 1 should spawn sourced npcId 12006');
     assert.strictEqual(World.npc.spawns[0].fetchOwnerId(), session.actor.fetchId(), 'summoned servitor should keep owner id');
     assert.strictEqual(World.npc.spawns[0].fetchIsSummon(), true, 'summoned servitor should be marked as summon');
-    assert.strictEqual(AttackExec.canAttackNpc(World.npc.spawns[0]), true, 'player attack path should treat an active servitor as damageable');
-    assert.strictEqual(SkillExec.canTargetEnemyNpc(World.npc.spawns[0]), true, 'player skill path should treat an active servitor as an enemy target');
+    assert.strictEqual(World.npc.spawns[0].fetchIsKillable(), true, 'an active servitor can take damage');
     assert.strictEqual(session.actor.summon, World.npc.spawns[0], 'actor should retain active summon reference');
     assert.strictEqual(World.npc.spawns[0].controlMode, 'follow', 'summoned servitor should enter native follow mode on spawn');
     assert.strictEqual(World.npc.spawns[0].followOwner, true, 'summoned servitor should follow owner by default');
@@ -925,6 +922,36 @@ async function checkPhantomActions(session, summon, summonSkillId) {
             BotAI.promoteForPlayerInteraction = saved.promote; Flag.mark = saved.mark;
             utils.isInPeaceZone = saved.peace;
             World.user = previousPvpWorld;
+        }
+    }
+    // A servitor's poison is its hit while its owner, in the world, has it out;
+    // after the unsummon its next tick is nobody's: the servitor gains no hate,
+    // the monster still loses the HP (C4: the effect outlives its caster).
+    {
+        const EffectTicker = invoke('GameServer/Effects/EffectTicker');
+        const EffectStore = invoke('GameServer/Effects/EffectStore');
+        const previousWorld = World.user;
+        registerSessions([boxerSession]);
+        const poisoned = npc(1, 990055);
+        poisoned.setHp(1000);
+        // The cast relay SummonControl.useSkillAction builds: its body is the servitor.
+        const relay = { actor: soulless, dataSendToMe() {}, dataSendToMeAndOthers() {} };
+        const smoke = (key) => EffectTicker.applyDot(relay, soulless, poisoned, EffectStore.apply(poisoned, {
+            key, id: 4259, level: 1, type: 'debuff', dot: { damage: 10, count: 1, intervalMs: 5 }, durationMs: 50 }));
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        try {
+            smoke('held_smoke');
+            await wait(30);
+            const held = poisoned.getHating(soulless);
+            assert(held > 0, 'a held servitor\'s poison tick is its hit');
+            SummonControl.unsummon(boxerSession, boxerSession.actor, soulless);
+            smoke('gone_smoke');
+            await wait(30);
+            assert.strictEqual(poisoned.getHating(soulless), held, 'an unsummoned servitor\'s tick gains it no hate');
+            assert.strictEqual(poisoned.fetchHp(), 980, 'the poison still takes its HP');
+        } finally {
+            poisoned.destructor(boxerSession);
+            World.user = previousWorld;
         }
     }
     soulless.destructor(boxerSession);

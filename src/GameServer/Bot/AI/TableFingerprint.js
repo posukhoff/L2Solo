@@ -3,7 +3,8 @@
 // The files each precomputed bot table is simulated by, and their fingerprint:
 // a change in one of these files makes the table stale. Read by the generators
 // (scripts/generate-spot-table.js writes the spot table's header.fingerprint,
-// scripts/hunt-tables/common.js each hunt table's), by scripts/check-tables.js
+// scripts/hunt-tables/common.js each hunt table's, scripts/generate-town-ways.js
+// the town ways'), by scripts/check-tables.js
 // (`npm run check` fails on a stale committed table) and by SpotValueTable
 // (one log line at the first read, main thread). Readers only (SpotValueTable,
 // SpotEconomics, ...) are no input; SpotRewardExpectation (the expected drop
@@ -47,10 +48,11 @@ const REFERENCE_BOT = ['src/GameServer/Bot/AI/BotGear.js', 'src/GameServer/Bot/A
 // by: the cell size, the dungeon areas (an id's `:area`, a spot's tags) and the
 // assist height that splits a cell into floors.
 const CATALOGUE = ['src/GameServer/World/Generics/SpawnNpcs.js', 'src/GameServer/Bot/AI/SpotService.js',
+    'src/GameServer/RaidBoss/GrandBossRules.js', 'data/RaidBoss',
     'src/GameServer/Bot/AI/SpotIndex.js', 'src/GameServer/Bot/Population/SpotProfiles.js', 'scripts/geodata-release.json',
     'src/GameServer/World/WorldConstants.js', 'src/GameServer/World/WorldAreaCatalog.js',
     'src/GameServer/World/C4SevenSignsDungeonTeleports.js', 'src/GameServer/Npc/SocialAggro.js'];
-const GAME_DATA = ['data/Npcs', 'data/Items', 'data/Skills', 'data/Templates'];
+const GAME_DATA = ['data/Npcs', 'data/Items', 'data/Skills', 'data/Templates', 'data/RaidBoss'];
 // Gear ladders, item sources and hennas (hunt gear/sources/henna; the spot table's kit surface reads gear.json).
 const GEAR_LADDERS = ['src/GameServer/Bot/AI/GearAcquisitionPlanner.js', 'src/GameServer/Bot/AI/BotEquipmentCompatibility.js',
     'src/GameServer/World/Generics/NpcShopBuyLists.js', 'src/GameServer/Bot/Economy/BotLuxuryExchange.js',
@@ -64,12 +66,28 @@ const HUNT_GENERATOR = ['scripts/hunt-tables/build.js', 'scripts/hunt-tables/rot
     // Its mob and spot list (no header: it moves only with the catalogue), its nearest towns.
     'data/Bots/spot-reward-npcs.json', 'src/GameServer/World/TownRespawn.js'];
 
+// The town ways: the walk search and its step rule, the towns, the spot ids and
+// centres the catalogue cuts (the spot generator builds it; the hunting filter
+// decides which spawns make a spot) and the service NPCs whose spurs it stores
+// (the catalogue's rows read DataCache.npcSpawns: its spawn sources, and the
+// gatekeeper ids of NativeServiceIndex).
+const WAYS_GENERATOR = ['scripts/generate-town-ways.js', 'scripts/generate-spot-table.js', 'src/GameServer/World/TownRespawn.js',
+    'src/GameServer/Geodata/GeodataEngine.js', 'src/GameServer/Geodata/GardenOfEvaBarriers.js', 'src/GameServer/Geodata/VirtualObstacles',
+    'src/GameServer/Bot/AI/BotHuntingTargetPolicy.js', 'src/GameServer/Bot/Travel/TownWays.js',
+    'src/GameServer/Bot/Economy/TownServiceCatalog.js', 'src/GameServer/World/Generics/NpcShopBuyLists.js',
+    'src/GameServer/World/C4GatekeeperTeleports.js', 'src/GameServer/DataCache.js',
+    'src/GameServer/World/C4LateTownGatekeepers.js', 'src/GameServer/World/C4SevenSignsDungeonTeleports.js',
+    'src/GameServer/World/GiranMammon.js', 'src/GameServer/World/GiranCrystallizationStation.js',
+    'data/Pets/c4-quest-npcs.json', 'src/GameServer/Knowledge/NativeServiceIndex.js'];
+
 const INPUTS = Object.freeze({
     spot: [...COLD_COMBAT, ...REFERENCE_BOT, ...CATALOGUE, ...GAME_DATA, ...GEAR_LADDERS, ...SHARED_GENERATOR],
-    hunt: [...COLD_COMBAT, ...REFERENCE_BOT, ...CATALOGUE, ...GAME_DATA, ...GEAR_LADDERS, ...SHARED_GENERATOR, ...HUNT_GENERATOR]
+    hunt: [...COLD_COMBAT, ...REFERENCE_BOT, ...CATALOGUE, ...GAME_DATA, ...GEAR_LADDERS, ...SHARED_GENERATOR, ...HUNT_GENERATOR],
+    ways: [...CATALOGUE, 'data/Npcs', ...WAYS_GENERATOR]
 });
 // header.generator -> its inputs.
-const GENERATORS = Object.freeze({ 'scripts/generate-spot-table.js': 'spot', 'scripts/hunt-tables/build.js': 'hunt' });
+const GENERATORS = Object.freeze({ 'scripts/generate-spot-table.js': 'spot', 'scripts/hunt-tables/build.js': 'hunt',
+    'scripts/generate-town-ways.js': 'ways' });
 
 function walk(root, relative, out) {
     const full = path.join(root, relative);

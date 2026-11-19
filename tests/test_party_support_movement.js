@@ -39,7 +39,7 @@ function fixture() {
 
 const originals = {
     world: World.user, fetchNpcs: World.fetchNpcsInRadius,
-    findPath: Geodata.findPath, los: Geodata.hasLineOfSight, height: Geodata.getHeight,
+    findPath: Geodata.findPath, los: Geodata.hasLineOfSight, walk: Geodata.canWalkStraight, height: Geodata.getHeight,
     now: Date.now, timeout: global.setTimeout, clearTimeout: global.clearTimeout, clearInterval: global.clearInterval
 };
 let hazards = [];
@@ -54,6 +54,7 @@ global.clearTimeout = global.clearInterval = handle => timers.delete(handle);
 Date.now = () => clock;
 World.fetchNpcsInRadius = () => hazards;
 Geodata.hasLineOfSight = () => true;
+Geodata.canWalkStraight = () => true;
 Geodata.getHeight = (_x, _y, z) => z;
 Geodata.findPath = () => { throw new Error('support routes must keep pathfinding off the game thread'); };
 
@@ -207,12 +208,33 @@ async function nativeRoute(member, path, beforeReply = () => {}) {
     assert.deepStrictEqual(member.position, { locX: 0, locY: 40, locZ: 0 });
     assert.strictEqual(member.packets.length, 1, 'only the safe first leg may be announced');
     assert.strictEqual(member.bot.state.fetchTowards(), false);
+    {
+        const member = fixture();
+        hazards = [];
+        const commander = member.session.followPlayerSession;
+        commander.actor.fetchClanId = () => 77;
+        const captain = { actor: actor(7003, { locX: 5000, locY: 0, locZ: 0 }), partyCompanion: true };
+        const group = { active: true, number: 1, owner: captain, commander, commanderActor: commander.actor,
+            members: new Set([captain, member.session]) };
+        captain.followPlayerSession = captain;
+        captain.clanCommandParty = member.session.clanCommandParty = group;
+        member.session.followPlayerSession = captain;
+        commander.commandParties = new Map([[1, group]]);
+        const Clans = invoke('GameServer/Clan/ClanService'), originalClan = Clans.findById;
+        Clans.findById = id => id === 77 ? { leaderId: 7001 } : null;
+        try {
+            const destination = Movement.followDestination(member.session, member.bot, formation);
+            assert(destination && destination.locX < 1000,
+                'an additional party support stays at its commander formation when the bot captain is away');
+        } finally { Clans.findById = originalClan; }
+    }
     console.log('Party support formation, cast range, leash and native worker route regressions passed');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
     World.user = originals.world;
     World.fetchNpcsInRadius = originals.fetchNpcs;
     Geodata.findPath = originals.findPath;
     Geodata.hasLineOfSight = originals.los;
+    Geodata.canWalkStraight = originals.walk;
     Geodata.getHeight = originals.height;
     Date.now = originals.now;
     global.setTimeout = originals.timeout;

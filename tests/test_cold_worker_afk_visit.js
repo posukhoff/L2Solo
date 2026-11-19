@@ -242,7 +242,8 @@ const STATIC_BOUGHT = [1864, 1865, 1866, 1867, 1868, 1869, 1870, 1871];
         // the town that sells it (Gludio) and sells its arrows there, not on this errand.
         const dKit = [[890, 4], [890, 5], [847, 1], [847, 2], [910, 3], [604, 9], [40, 12], [45, 6], [391, 10], [413, 11]]
             .map(([selfId, slot]) => ({ selfId, amount: 1, equipped: 1, slot }));
-        const arrows = await showcaseRunsFor(archerId, 'arrow_cleanup_visit', {}, 9,
+        const arrows = await showcaseRunsFor(archerId, 'arrow_cleanup_visit',
+            { townVisit: { town: 'Elven Village', startedAt, reason: 'restock' } }, 9,
             [{ selfId: 1341, amount: 5000 }, { selfId: 1343, amount: 100 }, ...dKit]);
         assert.equal(invoke('GameServer/Inventory/ArrowStock').keptAmounts(arrows.visitState)[1341], 2000);
         assert.equal(arrows.runs, 1, 'unused arrows do not cost the visit its worker showcase');

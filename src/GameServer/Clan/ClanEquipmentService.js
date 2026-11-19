@@ -24,6 +24,7 @@ const RosterDemand = require('./ClanRosterDemand');
 const RaidEncounterScope = require('../RaidBoss/RaidEncounterScope');
 const ClanMembershipPolicy = require('./ClanMembershipPolicy');
 const ClanEquipmentPartyPolicy = require('../Bot/Population/ClanEquipmentPartyPolicy');
+const PersonalWarehouse = invoke('GameServer/Bot/Economy/PersonalWarehouseIndex');
 
 const metrics = {
     resolves: 0,
@@ -72,6 +73,7 @@ function planningFingerprint(clan) {
 function beneficiaryFingerprint(member) {
     return JSON.stringify(member && {
         inventory: member.inventory, adena: member.adena, region: member.currentRegion,
+        warehouse: PersonalWarehouse.contentIdentity(member),
         plan: member.stats?.equipmentPlan
     });
 }
@@ -255,9 +257,7 @@ function clanPartyObjective(plan, goal, priority = 'preferred', clanId = 0) {
 }
 
 function fullRosterIdentity(marker) {
-    return marker ? [marker.clanId, marker.ownerSection, marker.goalKey, marker.generation,
-        [...(marker.memberIds || [])].map(number).sort((a, b) => a - b), marker.sourceId, marker.npcId, marker.raidInstanceId,
-        require('./ClanRaidExpedition').coreIds(marker), marker.unchargedHelperIds || []] : null;
+    return marker ? require('./ClanRaidRoster').identity(marker) : null;
 }
 function sameRosterRequirement(left, right) {
     return number(left?.minPartySize) === number(right?.minPartySize)
@@ -394,7 +394,10 @@ async function suspendWaitingAssignments(clan, goal, previousGoal) {
 }
 
 async function handoffWarehouseMaterials(current, plan, clan, goal) {
-    const materials = (plan?.warehouseMaterials || [])
+    // A worker plan can precede a purchase or a personal warehouse transfer.
+    // Recheck ownership now and cap each handoff to the planned available stock.
+    const materials = Crafting.warehouseMaterials(plan, current.inventory || {}, plan?.warehouseMaterials || [],
+        PersonalWarehouse.inventory(current))
         .map((entry) => ({ selfId: number(entry.selfId), amount: Math.floor(number(entry.amount)) }))
         .filter((entry) => entry.selfId > 0 && entry.amount > 0);
     if (!materials.length) return { state: current, results: [] };
@@ -568,8 +571,11 @@ async function assignPlan(member, plan, clan, goal) {
     if (!current) return { ok: false, code: 'member_state_missing', memberId: id };
     // The member's request for this goal closed (its party never formed): the goal's
     // route waits for the member's next build, no reassignment hands it back meanwhile.
+    // Stocked crafts need no farming party: the closed request must not prevent
+    // the warehouse handoff or the transition to the ready component/final craft.
+    const readyCraft = plan?.strategy === 'craft' && ['ready_to_craft', 'component_ready'].includes(plan.status);
     if (current.stats?.partyRequest?.clanGoalKey === goal.goalKey
-        && require('../Bot/Population/PartyRequestPlanner').closed(current)) {
+        && require('../Bot/Population/PartyRequestPlanner').closed(current) && !readyCraft) {
         return { ok: true, changed: false, closedRequest: true, memberId: id };
     }
 
@@ -594,6 +600,7 @@ async function assignPlan(member, plan, clan, goal) {
     if (samePlanTarget(currentPlan, plan)
         && number(currentPlan.clanGoal?.clanId) === number(clan.id)
         && String(currentPlan.clanGoal?.goalKey || '') === String(goal.goalKey)
+        && (!readyCraft || !currentState.stats?.partyRequest && !currentState.stats?.clanPartyObjective)
         && (!goal.fullRoster || stateHasSameClanObjective(currentState, clanPartyObjective(plan, goal, 'required', clan.id)))
         && samePlanRoute(currentPlan, plan)
         && ['status', 'strategy', 'recipeId', 'materials', 'craftProviders', 'componentRecipes', 'next'].every(key => (

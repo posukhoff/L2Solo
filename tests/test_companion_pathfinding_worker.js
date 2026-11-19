@@ -88,7 +88,7 @@ function stopMove(fixture) {
 
 async function run() {
     const originalFindPath = GeodataEngine.findPath;
-    const originalHasLineOfSight = GeodataEngine.hasLineOfSight;
+    const originalHasLineOfSight = GeodataEngine.canWalkStraight;
     let synchronousFindPathCalls = 0;
     const originalUser = RuntimeWorld.user;
     const fixtures = new Set(), pools = new Set();
@@ -107,7 +107,7 @@ async function run() {
         synchronousFindPathCalls++;
         throw new Error('companion path must not execute A* on the game thread');
     };
-    GeodataEngine.hasLineOfSight = () => false;
+    GeodataEngine.canWalkStraight = () => false;
 
     try {
         const realPool = makePool({ size: 1, queueLimit: 4 });
@@ -301,6 +301,31 @@ async function run() {
         );
         stopMove(budgetFixture);
 
+        // A real Resurrection request must keep its dead target valid while
+        // the geodata worker computes the detour around an obstacle.
+        const resFixture = fixture(budgetPool, { locX: 95227, locY: 22455, locZ: -2904 });
+        const corpse = { fetchId: () => 2001894, fetchIsOnline: () => true, isDead: () => true,
+            fetchLocX: () => 95400, fetchLocY: () => 22136, fetchLocZ: () => -2880 };
+        const resurrection = { fetchTargetKind: () => 'corpse_player', fetchDistance: () => 600 };
+        const originalNpcLookup = RuntimeWorld.fetchNpc, originalUserLookup = RuntimeWorld.fetchUser;
+        try {
+            RuntimeWorld.fetchNpc = async () => { throw new Error('not_npc'); };
+            RuntimeWorld.fetchUser = async () => corpse;
+            resFixture.actor.skillset = { fetchSkill: () => resurrection };
+            resFixture.actor.attack = { validateSkillTarget: () => true };
+            resFixture.actor.moveTo = coords => moveTo(resFixture.session, resFixture.actor, coords);
+            invoke('GameServer/Actor/Generics/SkillExec')(resFixture.session, resFixture.actor, { selfId: 1016, id: corpse.fetchId() });
+            await new Promise(setImmediate);
+            assert.strictEqual(resFixture.session.lastPathfinding.strategy, 'worker_geodata',
+                'a Resurrection corpse must not invalidate its own finished worker path');
+            assert.strictEqual(resFixture.actor.state.towards, 'move',
+                'a blocked Resurrection must start the valid detour toward its corpse');
+        } finally {
+            stopMove(resFixture);
+            RuntimeWorld.fetchNpc = originalNpcLookup;
+            RuntimeWorld.fetchUser = originalUserLookup;
+        }
+
         const abortedFixture = fixture(delayedPool, { locX: 0, locY: 0, locZ: 0 });
         issueMove(abortedFixture, { locX: 1000, locY: 0, locZ: 0 });
         const abortedPromise = abortedFixture.session.pendingPathRequest.promise;
@@ -319,7 +344,7 @@ async function run() {
             cancel() { return false; }
         };
         const fallbackFixture = fixture(rejectedPool, { locX: 0, locY: 0, locZ: 0 });
-        GeodataEngine.hasLineOfSight = () => true;
+        GeodataEngine.canWalkStraight = () => true;
         issueMove(fallbackFixture, { locX: 1000, locY: 0, locZ: 0 });
         await fallbackFixture.session.pendingPathRequest.promise;
         assert.strictEqual(fallbackFixture.session.lastPathfinding.strategy, 'worker_geodata_error_fallback');
@@ -350,7 +375,7 @@ async function run() {
             for (const value of fixtures) stopMove(value);
             RuntimeWorld.user = originalUser;
             GeodataEngine.findPath = originalFindPath;
-            GeodataEngine.hasLineOfSight = originalHasLineOfSight;
+            GeodataEngine.canWalkStraight = originalHasLineOfSight;
         }
     }
 
