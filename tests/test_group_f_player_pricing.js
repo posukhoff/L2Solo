@@ -340,7 +340,7 @@ test('fixed supply is cached by configuration/rate without world session reads',
         assert.strictEqual(reads, 2, 'a newly loaded config invalidates the supply table');
         ProgressionRates.profile = () => ({ multiplier: 1, adena: 2 });
         assert.strictEqual(Pricing.sellersOf(990001)[0].price, 19, 'explicit author price stays absolute');
-        assert.strictEqual(reads, 2, 'store prices are x1 at every preset: the Adena rate keeps the supply table');
+        assert.strictEqual(reads, 3, 'effective Adena rate invalidates the supply table');
         line(70, 1, 1234);
         assert(Pricing.priceFor(Configs.IslandMats, materialLine(Configs.IslandMats)) >= 1234);
     } finally {

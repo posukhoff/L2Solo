@@ -11,8 +11,6 @@ const production = require('./ProductionPolicy');
 const FixedShotOffers = require('./FixedShotOffers');
 const { SELL, BUY } = require('../../AfkTrade/BoardIndex');
 const { isMainThread } = require('node:worker_threads');
-const NpcShopPriceScale = require('../../World/Generics/NpcShopPriceScale');
-const ProgressionRates = invoke('GameServer/ProgressionRates');
 
 const BUYBACK_RATIO = 0.9;
 let boardSource = null;
@@ -21,14 +19,15 @@ function basePrice(selfId) {
     return Number(ItemTemplateIndex.find(DataCache.items, selfId)?.template?.price || 0);
 }
 
-// A configured store sells at the datapack price, x1 at every preset (the
-// maintainer's rule, econ decision 450: shop prices do not follow the server's
-// adena rate). The gear reserve (npcRate) sells at npcRate x the datapack price.
+// A configured store line sells at the datapack price x its coefficient (priceRate,
+// or npcRate on a reserve row) x the server's Adena rate (BotEconomyPricing): x50
+// at x50, like the hunt Adena that pays for it. Our rule; the NPC shops keep C4's
+// datapack price.
 function configuredPrice(line) {
     if (line.price !== undefined) return Number(line.price);
     const base = basePrice(line.selfId);
-    if (line.npcRate !== undefined) return Math.max(1, Math.round(base * line.npcRate));
-    return Math.max(1, Math.round(base > 0 ? base * (line.priceRate ?? 1) : 1));
+    const coefficient = line.npcRate ?? line.priceRate ?? 1;
+    return BotEconomyPricing.scalePrice(Math.max(1, Math.round(base > 0 ? base * coefficient : 1)));
 }
 
 // What a fixed buy line pays, one price for a bot and a player. Our choice,
@@ -54,21 +53,17 @@ function botPriceFor(store, line) {
 }
 
 // Configured supply is independent of the board: bots keep its original
-// price until 3.6. Index it once per loaded config, effective Adena rate and
-// progression multiplier (the NPC price scale of npcRate lines).
+// price until 3.6. Index it once per loaded config and effective Adena rate.
 let fixedConfig = null;
 let fixedRate = null;
-let fixedMultiplier = null;
 let sellers = new Map();
 let fixedMinimums = new Map();
 function refreshFixedOffers() {
     const config = invoke('GameServer/Bot/MerchantStoreConfigs');
     const rate = BotEconomyPricing.economyRate();
-    const multiplier = ProgressionRates.profile().multiplier;
-    if (fixedConfig === config && fixedRate === rate && fixedMultiplier === multiplier) return;
+    if (fixedConfig === config && fixedRate === rate) return;
     fixedConfig = config;
     fixedRate = rate;
-    fixedMultiplier = multiplier;
     sellers = new Map();
     fixedMinimums = new Map();
     const openMinimums = new Map();

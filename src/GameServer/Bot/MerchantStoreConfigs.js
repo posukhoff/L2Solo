@@ -7,7 +7,7 @@ const b = (selfId, count = BUY_CAP) => ({ selfId, count });
 // Resource sellers carry raw and refined stock; permanent resource buyers
 // take raw materials only. Crafted intermediates need actual market demand,
 // otherwise their guaranteed payouts displace shot production.
-// The active Adena rate is applied by TradeService.
+// The active Adena rate is applied by StaticMerchantPricing.configuredPrice.
 const RESOURCE_SELL_RATE = 1.20;
 const rs = (selfId, count) => s(selfId, RESOURCE_SELL_RATE, count);
 
@@ -28,7 +28,7 @@ const shotsForGrade = (grade) => (SHOT_IDS_BY_GRADE[grade] || SHOT_IDS_BY_GRADE[
 // template with a price and an acquisition source; never a grand boss's jewel,
 // which C4 drops from its boss alone), never in the player's
 // window (TradeService.nativeStoreItems): the player keeps C4's stores. Priced
-// at the NPC price scale. Each piece has two rows (our rule, standing for the
+// at the datapack price x the row's rate x the Adena rate. Each piece has two rows (our rule, standing for the
 // dwarf craft and resale a C4 server runs on), one pair of prices for every
 // grade: the crafter row sells to the Artisan/Warsmith line only (classId
 // 56/57, ProductionPolicy.allowsFixed reads buyerClasses) at 0.6x, stock it
@@ -91,7 +91,7 @@ const RESERVE_GEAR = Object.freeze([
 // The grade's Scroll: Enchant Weapon (C4EnchantScrolls; C4 sells it nowhere: drop,
 // spoil and raid bosses only). The reserve sells it to the spoiler line only at
 // SCROLL_MARKUP x the board's median deal price (FixedShotOffers), SCROLL_RATE x the
-// datapack price before the board has deals, (Scavenger 54, Bounty Hunter 55: ProductionPolicy.allowsFixed
+// datapack price x the Adena rate before the board has deals, (Scavenger 54, Bounty Hunter 55: ProductionPolicy.allowsFixed
 // reads buyerClasses), hourlyStock scrolls a game hour (FixedShotOffers.take).
 // Our rule: the spoiler stocks the board with them (ColdSafeEnchantService.scrollRestock)
 // and sells them at the board's price like any item: it always pays more than it gets

@@ -12,9 +12,10 @@ const Shops = invoke('GameServer/World/Generics/NpcShopBuyLists');
 const MarketSnapshot = invoke('GameServer/Bot/Economy/MarketSnapshot');
 const PurchaseItems = invoke('GameServer/World/Generics/PurchaseItems');
 const NpcSellRules = invoke('GameServer/Items/NpcSellRules');
-const NpcShopPriceScale = invoke('GameServer/World/Generics/NpcShopPriceScale');
 const Fixed = invoke('GameServer/Bot/Economy/FixedShotOffers');
 const Query = invoke('GameServer/Bot/Economy/OfferQuery');
+const Crafters = invoke('GameServer/Bot/Economy/CrafterStock');
+const Disposition = invoke('GameServer/Bot/Economy/ItemDisposition');
 
 DataCache.init();
 const originals = {
@@ -29,9 +30,9 @@ const botLines = store => store.items.map(line => ({ selfId: line.selfId, count:
 // The 189 sell lines (shots, resources, gear; the bot-only reserve gear lines
 // are left out and pinned below): moving the buy line price must not change
 // any sell price a bot or a player pays on an empty board. A store sells at
-// priceRate x the datapack price, rounded, at every preset: one baseline.
+// priceRate x the datapack price, rounded, x the server's Adena rate: the x1
+// baseline, each price x the rate at x10 and x50.
 const sellBaseline = '3d81dcf7bec480cb4011b45369ce33f5ef411fc3cd8e442ec7e122914e3d16c0';
-const baselineSellPrices = { 1: sellBaseline, 10: sellBaseline, 50: sellBaseline };
 const sha = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 function inventoryItem(selfId, amount) {
@@ -46,15 +47,27 @@ function inventoryItem(selfId, amount) {
 }
 
 async function run() {
+    let x1SellRows = null;
     for (const rate of [1, 10, 50]) {
         ProgressionRates.profile = () => ({ adena: rate, multiplier: rate });
         const sellStores = Object.entries(Configs).filter(([, store]) => store.storeType !== 3);
-        assert.strictEqual(sha(sellStores.flatMap(([name, store]) => (
-            store.items.filter(line => line.reserve !== true).map(line => [name, line.selfId, Pricing.botPriceFor(store, line)])))),
-        baselineSellPrices[rate], `every bot sell price matches the baseline at x${rate}`);
-        assert.strictEqual(sha(sellStores.flatMap(([name, store]) => (
-            normalize(store).filter(line => line.reserve !== true).map(line => [name, line.selfId, line.price])))),
-        baselineSellPrices[rate], `every player sell price on an empty board matches the baseline at x${rate}`);
+        const botRows = sellStores.flatMap(([name, store]) => (
+            store.items.filter(line => line.reserve !== true).map(line => [name, line.selfId, Pricing.botPriceFor(store, line)])));
+        const playerRows = sellStores.flatMap(([name, store]) => (
+            normalize(store).filter(line => line.reserve !== true).map(line => [name, line.selfId, line.price])));
+        if (rate === 1) {
+            assert.strictEqual(sha(botRows), sellBaseline, 'every bot sell price matches the baseline at x1');
+            x1SellRows = botRows;
+        }
+        const expected = x1SellRows.map(([name, selfId, price]) => [name, selfId, price * rate]);
+        assert.deepStrictEqual(botRows, expected, `every bot sell price is the x1 price x${rate}`);
+        assert.deepStrictEqual(playerRows, expected, `every player sell price on an empty board is the x1 price x${rate}`);
+        // The Heine B/A materials store: Tallum Blade at 0.6 x 18,300,000 x the rate.
+        const heine = Object.values(Configs).find(store => store.town === 'Heine' && store.title === 'B/A materials');
+        const tallum = heine.items.find(line => line.selfId === 80);
+        assert.strictEqual(Pricing.botPriceFor(heine, tallum), 10980000 * rate, `Heine Tallum Blade at x${rate}`);
+        assert.strictEqual(normalize(heine).find(line => line.selfId === 80).price, 10980000 * rate,
+            `a player pays Heine's Tallum Blade at 0.6 x the datapack price x${rate}`);
         const cheapest = new Map();
         const addOffer = (id, price) => cheapest.set(id, Math.min(cheapest.get(id) ?? Infinity, price));
         // Enumerate actual NPC lists independently of the policy's NPC price table.
@@ -71,8 +84,8 @@ async function run() {
         }
         for (const offer of Pricing.sellersOf(1835)) {
             const line = Configs[offer.sourceName].items.find(item => item.selfId === 1835);
-            assert.strictEqual(offer.price, Math.round(templates.get(1835).template.price * line.priceRate),
-                `shot trip supply stays authored at x${rate}: priceRate x the datapack price`);
+            assert.strictEqual(offer.price, Math.round(templates.get(1835).template.price * line.priceRate) * rate,
+                `shot trip supply stays authored at x${rate}: priceRate x the datapack price x the rate`);
         }
         const snapshot = MarketSnapshot.fixedStores();
         for (const [name, store] of Object.entries(Configs)) {
@@ -95,16 +108,24 @@ async function run() {
         }
         const base = templates.get(1864).template.price;
         assert.strictEqual(botLines(Configs['4manda']).find((line) => line.selfId === 1864).price,
-            Math.max(Math.floor(NpcSellRules.npcBuyPrice(base) * 1.5), Math.floor(base * 0.25)),
-            `a raw material no NPC sells pays 1.5x the NPC buy-back or 0.25x its price, x1 at every preset (x${rate})`);
-        // The gear reserve: an ordinary bot pays the valve row, 1.5x the NPC price
-        // scale of the template price, for a C weapon (Flamberge 71); each of the
-        // Giran, Oren and Aden reserve stores also lists the crafter row at 0.6x
-        // (Artisan/Warsmith only). A C armour piece a limited player lot lists
-        // (Haldise) is bot-buyable only at its reserve rows.
-        const reserveC = NpcShopPriceScale.price(templates.get(71).template.price * 1.5, rate);
-        const crafterC = NpcShopPriceScale.price(templates.get(71).template.price * 0.6, rate);
+            Math.max(Math.floor(NpcSellRules.npcBuyPrice(base) * 1.5), Math.floor(base * 0.25 * rate)),
+            `a raw material no NPC sells pays 1.5x the NPC buy-back or 0.25x its price x the rate (x${rate})`);
+        // The gear reserve: an ordinary bot pays the valve row, 1.5x the template
+        // price x the rate, for a C weapon (Flamberge 71); each of the Giran, Oren
+        // and Aden reserve stores also lists the crafter row at 0.6x the template
+        // price x the rate (Artisan/Warsmith only). A C armour piece a limited
+        // player lot lists (Haldise) is bot-buyable only at its reserve rows.
+        const reserveC = Math.round(templates.get(71).template.price * 1.5) * rate;
+        const crafterC = Math.round(templates.get(71).template.price * 0.6) * rate;
         assert.strictEqual(Pricing.cheapestPurchase(71, { forBot: true }), reserveC, `C weapon reserve price at x${rate}`);
+        // A crafter starts its ask at its cost (the crafter row) and asks at most the
+        // valve row: between 0.6x and 1.5x the template price x the rate.
+        const crafter = { characterId: 1, currentRegion: 'Giran', stats: { classId: 56 } };
+        const consigned = Crafters.townOffers(crafter).find(offer => offer.selfId === 71);
+        assert.deepStrictEqual([consigned.price, consigned.ceiling], [crafterC, reserveC], `a crafter's Flamberge cost and ceiling at x${rate}`);
+        const stocked = { ...crafter, stats: { ...crafter.stats, gnomeStock: { 71: { cost: consigned.price, ceiling: consigned.ceiling, owed: 0 } } } };
+        assert.deepStrictEqual([1, reserveC * 10].map(ask => Disposition.gnomeAsk(stocked, 71, ask)), [crafterC, reserveC],
+            `a crafter's Flamberge ask lies between its cost and the valve row at x${rate}`);
         const reserveStores = [['Squeesh', 'Giran'], ['M3tLa', 'Oren'], ['Lowfiles', 'Aden']];
         const flamberge = Fixed.offers(71);
         assert.deepStrictEqual(flamberge.map(row => [row.sourceName, row.town, row.price]),
@@ -175,8 +196,8 @@ async function run() {
     assert.strictEqual(TradeService.normalizeStoreItems({ storeType: 3, items: [inflated] })[0].price,
         inflated.price, 'dynamic stores retain their negotiated prices');
     ProgressionRates.profile = () => ({ adena: 10, multiplier: 10 });
-    assert.strictEqual(Pricing.botPriceFor(Configs.Veteranas, { selfId: 219 }), 138348,
-        'at x10 the buy line pays as at x1: 0.9 of the cheapest NPC row of Sword Breaker, NPC prices x1 at every preset');
+    assert.strictEqual(Pricing.botPriceFor(Configs.Veteranas, { selfId: 219 }), 241560,
+        'at x10 the buy line pays 0.9 of the NPC row of Sword Breaker (268400, x1 at every preset), its cheapest supply once CraftStash sells at x10');
     ProgressionRates.profile = () => ({ adena: 1, multiplier: 1 });
 
     // Reproduce purchase -> inventory delivery -> static buyback with real

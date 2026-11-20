@@ -1,8 +1,13 @@
+const ProgressionRates = invoke('GameServer/ProgressionRates');
 
-// Prices are x1 at every preset: the adena
-// rate multiplies hunt adena only, never a store, fee or buyer price.
+// The server's Adena rate multiplies every player-like price as it multiplies
+// hunt Adena: configured bot stores (sell, buy, reserve and crafter rows), the
+// fixed buyers' rate leg, craft fees and bot deal references, so a bot's store
+// spend keeps its x1 share of its hunt income at every preset. An NPC shop and
+// the NPC buy-back stay at the C4 datapack price (NpcShopPriceScale, NpcSellRules).
+// Hot and cold read this one function.
 function economyRate() {
-    return 1;
+    return Math.max(0.01, Number(ProgressionRates.profile().adena || 1));
 }
 
 function scalePrice(value, minimum = 1) {
