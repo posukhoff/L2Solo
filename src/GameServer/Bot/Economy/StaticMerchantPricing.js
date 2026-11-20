@@ -43,7 +43,14 @@ function buyLinePrice(line) {
     const base = basePrice(line.selfId);
     const price = line.price !== undefined ? Number(line.price)
         : Math.max(Math.floor(NpcSellRules.npcBuyPrice(base) * BUY_OVER_NPC), BotEconomyPricing.scalePrice(base * BUY_BASE_SHARE));
-    return Math.min(price, Math.floor(cheapestPurchase(line.selfId) * BUYBACK_RATIO));
+    return Math.min(price, buyCeiling(line.selfId));
+}
+
+// The most any standing bid pays for an item (a fixed buy line, a crafter's material
+// bid): under 0.9 of its cheapest repeatable NPC or fixed-store supply, so nobody buys
+// it to sell it straight back; Infinity where nothing sells it.
+function buyCeiling(selfId) {
+    return Math.floor(cheapestPurchase(selfId) * BUYBACK_RATIO);
 }
 
 // A bot is paid the line price alone: it reaches a board bid through its own
@@ -193,5 +200,5 @@ function botBuyPrice(id) {
     return Number.isFinite(npc) ? npc : Math.max(0, Number(ItemTemplateIndex.find(DataCache.items, id)?.template?.price || 0));
 }
 
-module.exports = { BUYBACK_RATIO, botPriceFor, configuredPrice, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
+module.exports = { BUYBACK_RATIO, botPriceFor, buyCeiling, configuredPrice, buyQuote, cheapestPurchase, botPurchasePrice: id => cheapestPurchase(id, { forBot: true }), botNpcListPrice, botBuyPrice,
     priceFor, sellersOf, useBoard: source => { boardSource = source; } };

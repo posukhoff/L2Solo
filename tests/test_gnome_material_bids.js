@@ -61,8 +61,19 @@ assert.strictEqual(cBid.count, Stock.MATERIAL_BID_UNITS, 'it bids for the standi
 const Rates = invoke('GameServer/ProgressionRates'), profile = Rates.profile;
 try {
     Rates.profile = () => ({ ...profile(), adena: 50 });
+    assert.strictEqual(invoke('GameServer/Bot/Economy/BotMarketPricing').npcPriceOf(cBid.selfId), Infinity, 'no NPC sells this material: its bid is uncapped');
     assert.strictEqual(Stock.materialBids(warsmith).find(line => line.selfId === cBid.selfId).price, cBid.price * 50,
         'x50: the bid is 1.2x the NPC buy-back x the Adena rate');
+    // A gemstone the NPC sells (D, C, B: 2130-2132): at x50 the bid stays at most 0.9 x
+    // the NPC price, so nobody buys it from the NPC to sell it to the crafter.
+    const NpcPrices = invoke('GameServer/Bot/Economy/BotMarketPricing');
+    const capped = invoke('GameServer/Bot/Economy/CrafterStock').materialBids(bot(57, { level: 76, characterId: warsmith.characterId }))
+        .filter(line => [2130, 2131, 2132].includes(line.selfId));
+    assert.deepStrictEqual(capped.map(line => line.selfId).sort(), [2130, 2131, 2132], 'a Create Item 10 Warsmith bids for the D, C and B gemstones');
+    for (const line of capped) {
+        assert(line.price <= Math.floor(0.9 * NpcPrices.npcPriceOf(line.selfId)),
+            `x50: the gemstone ${line.selfId} bid ${line.price} stays under 0.9 x the NPC price ${NpcPrices.npcPriceOf(line.selfId)}`);
+    }
 } finally { Rates.profile = profile; }
 assert.deepStrictEqual(Stock.materialBids(gladiator), [], 'a Gladiator keeps no material bids');
 const otherSmith = bot(57, { characterId: warsmith.characterId + 1 });

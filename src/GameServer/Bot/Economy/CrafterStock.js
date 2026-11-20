@@ -189,7 +189,8 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
 // ProductionPolicy.sellsToFixedBuyer): an Artisan or Warsmith bids for the materials
 // of the C/B recipes its Create Item level reaches (their material trees, down to the
 // basic materials), MATERIAL_BID_RATE x the NPC buy-back x the server's Adena rate
-// (a player-like bid follows the rate as the fixed buy line does), up to MATERIAL_BID_UNITS
+// (a player-like bid follows the rate as the fixed buy line does) and, like that line,
+// never above StaticMerchantPricing.buyCeiling (0.9 of the cheapest supply), up to MATERIAL_BID_UNITS
 // held of each; the list runs from the materials most of those recipes take, and each
 // crafter starts it at its characterId. Plain lines [{ selfId, count, price }]: BuyAdPolicy.linesFor
 // posts them after the wish's bids, within the bot's buy lines and its adena budget
@@ -236,9 +237,10 @@ function materialBids(state) {
     // of one level together bid on the whole list, not all on its first lines.
     const rows = bidMaterials(level), start = Math.abs(Number(state?.characterId) || 0) % (rows.length || 1);
     const Pricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
+    const Static = require('./StaticMerchantPricing');
     return [...rows.slice(start), ...rows.slice(0, start)].flatMap(({ selfId, price }) => {
         const count = MATERIAL_BID_UNITS - Math.max(0, Number(state?.inventory?.[String(selfId)]?.amount || 0));
-        return count > 0 ? [{ selfId, count, price: Pricing.scalePrice(price) }] : [];
+        return count > 0 ? [{ selfId, count, price: Math.min(Pricing.scalePrice(price), Static.buyCeiling(selfId)) }] : [];
     });
 }
 
