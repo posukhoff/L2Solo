@@ -47,8 +47,8 @@ assert.strictEqual(sold(actor(2, true), gladiator), 0, 'the fixed buyer refuses 
 assert(sold(actor(57, true), warsmith) > 0, 'the fixed buyer buys a Warsmith bot\'s material');
 assert(sold(actor(2, false), null) > 0, 'the fixed buyer buys a player\'s material');
 
-// 3. A level-50 Warsmith bids for a C recipe's material at 1.2x the NPC buy-back,
-// and its buy lines carry the bids.
+// 3. A level-50 Warsmith bids for a C recipe's material at 1.2x the NPC buy-back
+// x the Adena rate, and its buy lines carry the bids.
 const Recipes = require('../src/GameServer/Knowledge/RecipeCatalog').recipeItemRows(invoke('GameServer/Items/C4RecipeItems'));
 const bids = Stock.materialBids(warsmith);
 const cMaterials = new Set(Recipes.filter(recipe => recipe.type === 'dwarven' && Number(recipe.level) <= invoke('GameServer/Bot/Economy/CraftEligibility').craftLevelFor(warsmith)
@@ -57,6 +57,13 @@ const cBid = bids.find(line => cMaterials.has(line.selfId));
 assert(cBid, 'a Warsmith bids for a C recipe material');
 assert.strictEqual(cBid.price, Math.floor(1.2 * NpcSell.npcBuyPrice(Number(template(cBid.selfId).template.price))), 'the bid is 1.2x the NPC buy-back');
 assert.strictEqual(cBid.count, Stock.MATERIAL_BID_UNITS, 'it bids for the standing units it lacks');
+// At x50 the bid follows the Adena rate, as the fixed buy line does.
+const Rates = invoke('GameServer/ProgressionRates'), profile = Rates.profile;
+try {
+    Rates.profile = () => ({ ...profile(), adena: 50 });
+    assert.strictEqual(Stock.materialBids(warsmith).find(line => line.selfId === cBid.selfId).price, cBid.price * 50,
+        'x50: the bid is 1.2x the NPC buy-back x the Adena rate');
+} finally { Rates.profile = profile; }
 assert.deepStrictEqual(Stock.materialBids(gladiator), [], 'a Gladiator keeps no material bids');
 const otherSmith = bot(57, { characterId: warsmith.characterId + 1 });
 assert.notStrictEqual(Stock.materialBids(otherSmith)[0].selfId, bids[0].selfId,

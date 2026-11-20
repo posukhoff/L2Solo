@@ -51,7 +51,8 @@ async function seed({ classId, level, adena, items = [], stats = {} }) {
     const now = Date.now();
     // No gear allowance: the visit stocks shots only.
     const noGear = { c: { pieces: 0, at: now }, b: { pieces: 0, at: now }, a: { pieces: 0, at: now } };
-    const adena = 50000;
+    // An x50 crafter's wallet: it settles the shots at the x50 store price.
+    const adena = 50000 * 50;
     let crafter = await seed({ classId: 57, level: 40, adena, stats: { gnomeAllowance: noGear } });
     const id = crafter.characterId;
     assert(!Fixed.offers(D_SS).some(row => row.town === 'Giran'), 'Giran has no D shot store row');
@@ -64,8 +65,8 @@ async function seed({ classId, level, adena, items = [], stats = {} }) {
         'the D and C shots in its bag, no B shot');
     assert.strictEqual(units(bag, D_SS), Stock.SHOT_DISPLAY_UNITS, 'the display units of D soulshots');
     assert.strictEqual(units(bag, 57), adena, 'the consigned shots cost no adena');
-    assert.deepStrictEqual(crafter.stats.gnomeStock[D_SS], { cost: 10, ceiling: 15, owed: Stock.SHOT_DISPLAY_UNITS },
-        'it owes the D soulshots at the store price a bot pays');
+    assert.deepStrictEqual(crafter.stats.gnomeStock[D_SS], { cost: 500, ceiling: 750, owed: Stock.SHOT_DISPLAY_UNITS },
+        'it owes the D soulshots at the store price a bot pays (10 x the x50 Adena rate)');
 
     // 2. Its sale lists the D soulshots on the board, one line, between the store price and half again.
     const market = ListingPolicy.evaluate(crafter, { now, decisionPoint: 'stock' });
@@ -73,14 +74,15 @@ async function seed({ classId, level, adena, items = [], stats = {} }) {
     assert.strictEqual(lines.length, 1, `one D soulshot line (${market.decisions.filter(entry => Number(entry.item?.selfId) === D_SS)
         .map(entry => `${entry.action}/${entry.reason}`)})`);
     const [line] = lines;
-    assert(line.price >= 10 && line.price <= 15, `ask ${line.price} within [10, 15]`);
+    assert(line.price >= 500 && line.price <= 750, `ask ${line.price} within [500, 750]`);
     assert(!market.npc.some(entry => Number(entry.selfId) === D_SS), 'never sold to an NPC');
     const lot = bag.find(item => Number(item.selfId) === D_SS);
     await Afk.publishBot(id, { kind: 'shop', storeType: Afk.SELL, town: 'Giran', title: 'Shots',
         lines: [{ objectId: lot.id, selfId: D_SS, name: lot.name, count: line.count, price: line.price, enchant: 0, stackable: true, slot: 0 }] });
 
     // 3. A hunter in Giran buys its D soulshots there.
-    const hunterAdena = 100000;
+    // An x50 hunter's wallet: the shots it buys are priced at the x50 Adena rate.
+    const hunterAdena = 100000 * 50;
     // A D-grade sword: its kit fires D soulshots.
     let hunter = await seed({ classId: 0, level: 25, adena: hunterAdena,
         items: [{ selfId: 129, name: 'Sword of Revolution', amount: 1, equipped: true, slot: 7 }] });
@@ -98,21 +100,21 @@ async function seed({ classId, level, adena, items = [], stats = {} }) {
     assert.strictEqual(units(await Database.fetchItems(hunter.characterId), D_SS), 1000, 'in its bag');
     assert.strictEqual(bought.spent, 1000 * line.price, 'at the crafter\'s ask');
 
-    // 4. The crafter's next visit pays the store 10 a unit for the 1000 sold, out of the
+    // 4. The crafter's next visit pays the store 500 a unit for the 1000 sold, out of the
     // sale's proceeds.
     const wallet = async () => units(await Database.fetchItems(id), 57);
     crafter = await LifeState.upsertState({ ...crafter, adena: await wallet(),
         inventory: LifeState.inventorySummaryFromItems(await Database.fetchItems(id)) }, 'crafter_shot_sale') || crafter;
     crafter = await Cold.crafterStock(crafter);
-    assert.strictEqual(await wallet(), adena + bought.spent - 1000 * 10, 'the visit pays the store price of the sold units');
-    assert.strictEqual(crafter.adena, adena + bought.spent - 1000 * 10, 'its state follows the wallet');
+    assert.strictEqual(await wallet(), adena + bought.spent - 1000 * 500, 'the visit pays the store price of the sold units');
+    assert.strictEqual(crafter.adena, adena + bought.spent - 1000 * 500, 'its state follows the wallet');
     let trades = [];
     for (let attempt = 0; attempt < 50 && !trades.length; attempt++) {
         trades = await Database.readHistory(['SELECT * FROM market_trades WHERE channel = ? AND buyerCharacterId = ?', ['fixed_wts', id]]);
         if (!trades.length) await new Promise(resolve => setTimeout(resolve, 20));
     }
     assert.deepStrictEqual(trades.map(trade => [Number(trade.selfId), Number(trade.quantity), Number(trade.unitPrice)]),
-        [[D_SS, 1000, 10]], 'one fixed_wts purchase journalled at the store price');
+        [[D_SS, 1000, 500]], 'one fixed_wts purchase journalled at the store price');
 
     console.log('crafter shot stock: ok');
 })().catch((error) => {

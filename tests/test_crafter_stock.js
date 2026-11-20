@@ -130,8 +130,8 @@ assert.strictEqual(stockedShots.get(D_SS).amount, 500 + Stock.SHOT_DISPLAY_UNITS
 assert.strictEqual(stockedShots.get(C_SS).amount, Stock.SHOT_DISPLAY_UNITS, 'the display units without demand');
 assert.strictEqual(shotRows(Stock.restock(journeyman, { offers, now: t0, demandFor: id => id === D_SS ? 1000000 : 0 })).get(D_SS).amount,
     Stock.SHOT_STOCK_UNITS, 'a store town\'s whole demand is not one crafter\'s lot: the stock is capped');
-assert.deepStrictEqual([stockedShots.get(D_SS).unit, stockedShots.get(D_SS).ceiling], [10, 15],
-    'a D soulshot at the store price a bot pays in Gludin, Gludio or Dion, ceiling half again');
+assert.deepStrictEqual([stockedShots.get(D_SS).unit, stockedShots.get(D_SS).ceiling], [500, 750],
+    'a D soulshot at the store price a bot pays in Gludin, Gludio or Dion (10 x the x50 Adena rate), ceiling half again');
 assert.strictEqual(stockedShots.get(D_BSPS).unit, invoke('GameServer/Bot/Economy/StaticMerchantPricing').cheapestPurchase(D_BSPS, { forBot: true }));
 assert(!Fixed.offers(D_SS).some(row => row.town === 'Giran'), 'Giran has no D shot store row');
 assert(shotRows(Stock.restock(warsmith(), { offers, now: t0 })).has(B_SS), 'Create Item 6 stocks the B shots');
@@ -142,6 +142,10 @@ assert.strictEqual(shotRows(Stock.restock(journeyman, { offers, now: t0, heldFor
 process.env.L2NODE_PROGRESSION_RATE = 'x1';
 invoke('GameServer/ProgressionRates').reset();
 assert.strictEqual(shotRows(Stock.restock(journeyman, { offers, now: t0 })).get(D_SS).amount, Stock.SHOT_DISPLAY_UNITS, 'x1: the same shot units');
+// The owed limit is OWED_MONEY at x1: 1000 adena below it buys 100 D soulshots at 10.
+const nearMoneyX1 = warsmith({ level: 40, stats: { classId: 57, gnomeStock: { 1: { cost: Stock.OWED_MONEY - 1000, ceiling: 1, owed: 1 } } } });
+assert.deepStrictEqual([...shotRows(Stock.restock(nearMoneyX1, { offers: Stock.townOffers(nearMoneyX1), now: t0 })).values()].map(row => [row.selfId, row.amount]),
+    [[D_SS, 100]], 'x1: 1000 adena below the owed money, 100 D soulshots, then nothing');
 process.env.L2NODE_PROGRESSION_RATE = 'x50';
 invoke('GameServer/ProgressionRates').reset();
 // Owed: shot units are not gear pieces; the owed adena bounds them.
@@ -151,9 +155,10 @@ assert(shotRows(owedPlan).size === 6 && gear(owedPlan).length === 0, 'at the gea
 const owesShots = warsmith({ stats: { classId: 57, gnomeStock: { [D_SS]: { cost: 10, ceiling: 15, owed: 100000 } } } });
 assert.strictEqual(Stock.owed(owesShots).pieces, 0, '100000 owed shots are no gear piece');
 assert(gear(Stock.restock(owesShots, { offers, now: t0 })).length > 0, 'owed shots leave the gear restock open');
-const nearMoney = warsmith({ level: 40, stats: { classId: 57, gnomeStock: { 1: { cost: Stock.OWED_MONEY - 1000, ceiling: 1, owed: 1 } } } });
+// At x50 the owed limit is OWED_MONEY x 50, as the store prices it bounds.
+const nearMoney = warsmith({ level: 40, stats: { classId: 57, gnomeStock: { 1: { cost: Stock.OWED_MONEY * 50 - 50000, ceiling: 1, owed: 1 } } } });
 assert.deepStrictEqual([...shotRows(Stock.restock(nearMoney, { offers, now: t0 })).values()].map(row => [row.selfId, row.amount]), [[D_SS, 100]],
-    '1000 adena below the owed money: 100 D soulshots, then nothing');
+    '50000 adena below the x50 owed money: 100 D soulshots at 500, then nothing');
 
 console.log('crafter stock: ok');
 process.exit(0);

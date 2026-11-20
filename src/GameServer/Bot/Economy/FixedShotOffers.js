@@ -7,16 +7,15 @@ const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 const Production = require('./ProductionPolicy');
 const SHOT_IDS = [...Production.NO_GRADE_SHOTS, ...Production.GRADED_SHOTS];
 const EMPTY_OFFERS = Object.freeze([]);
-let fixedRate = null, fixedMultiplier = null, fixedConfig = null, fixedRows = null, fixedByItem = new Map(), fixedLowest = new Map();
-// Builds the table once per config, Adena rate and progression multiplier; false
+let fixedRate = null, fixedConfig = null, fixedRows = null, fixedByItem = new Map(), fixedLowest = new Map();
+// Builds the table once per config and Adena rate (what its row prices read); false
 // while the switch removes the reserve.
 function built() {
     if (Production.shotsDisabled()) return false;
     const rate = invoke('GameServer/Bot/Economy/BotEconomyPricing').economyRate();
-    const multiplier = invoke('GameServer/ProgressionRates').profile().multiplier;
     const stores = invoke('GameServer/Bot/MerchantStoreConfigs');
-    if (!fixedRows || fixedRate !== rate || fixedMultiplier !== multiplier || fixedConfig !== stores) {
-        fixedRate = rate; fixedMultiplier = multiplier; fixedConfig = stores;
+    if (!fixedRows || fixedRate !== rate || fixedConfig !== stores) {
+        fixedRate = rate; fixedConfig = stores;
         fixedByItem = new Map();
         fixedLowest = new Map();
         const rows = [], Pricing = require('./StaticMerchantPricing');

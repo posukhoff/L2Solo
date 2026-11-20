@@ -20,7 +20,8 @@
 //   visit (settlement), as far as its adena reaches (the rest stays owed). Its wallet
 //   no longer limits its range (run 6eb3afb37: no B/A weapon on the board, a B weapon
 //   cost a crafter 5.2-7.9M against 4M wallets).
-// - Owed limit (our choice): at most OWED_PIECES gear units and OWED_MONEY adena owed
+// - Owed limit (our choice): at most OWED_PIECES gear units and OWED_MONEY adena x the
+//   server's Adena rate (the rate the store rows follow, BotEconomyPricing) owed
 //   per crafter (one crafter never holds an unbounded share of the store); a restock row
 //   past it is cut (hit: a crafter at the limit stocks nothing until it pays).
 // Shots (C4: dwarves craft soulshots and spiritshots and sell them in private stores;
@@ -34,7 +35,7 @@
 // SHOT_STOCK_UNITS of each (our choice: a town's demand counts every hunter's hour, and
 // each crafter there stocks it; ten hunters' hour is a private store's lot), one stack
 // one listing line; a bot fires its shots each fight at any drop rate, so neither the
-// hourly allowance nor the rate scales them, and OWED_MONEY alone bounds them.
+// hourly allowance nor the drop rate scales them, and the owed limit alone bounds them.
 // Held = its bag's unequipped units plus its own board sell lines (listed items leave the bag).
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
 
@@ -166,12 +167,13 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
         targets.push({ offer, units: Math.min(SHOT_STOCK_UNITS, Math.max(0, Math.floor(Number(demandFor(offer.selfId) || 0))) + SHOT_DISPLAY_UNITS) });
     const allowances = {};
     let { pieces, money } = owed(state);
+    const owedLimit = invoke('GameServer/Bot/Economy/BotEconomyPricing').scalePrice(OWED_MONEY);
     const rows = [];
     for (const { offer, units } of targets) {
         const shot = offer.group === SHOT_GROUP;
         const pool = shot ? null : allowances[offer.grade] ||= allowance(state, offer.grade, now);
         const amount = Math.min(units - Math.max(0, Number(heldFor(offer.selfId) || 0)), shot ? Infinity : Math.floor(pool.pieces),
-            shot ? Infinity : OWED_PIECES - pieces, Math.floor((OWED_MONEY - money) / offer.price));
+            shot ? Infinity : OWED_PIECES - pieces, Math.floor((owedLimit - money) / offer.price));
         if (!(amount > 0)) continue;
         rows.push({ selfId: offer.selfId, amount, money: amount * offer.price, unit: offer.price, ceiling: offer.ceiling, grade: offer.grade });
         money += amount * offer.price;
@@ -186,11 +188,13 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
 // gnomes' buy lines, the fixed buyers take them from gnomes only,
 // ProductionPolicy.sellsToFixedBuyer): an Artisan or Warsmith bids for the materials
 // of the C/B recipes its Create Item level reaches (their material trees, down to the
-// basic materials), MATERIAL_BID_RATE x the NPC buy-back, up to MATERIAL_BID_UNITS
+// basic materials), MATERIAL_BID_RATE x the NPC buy-back x the server's Adena rate
+// (a player-like bid follows the rate as the fixed buy line does), up to MATERIAL_BID_UNITS
 // held of each; the list runs from the materials most of those recipes take, and each
 // crafter starts it at its characterId. Plain lines [{ selfId, count, price }]: BuyAdPolicy.linesFor
 // posts them after the wish's bids, within the bot's buy lines and its adena budget
-// (no consignment). The materials of a craft level are static data, kept per level.
+// (no consignment). The materials of a craft level are static data, kept per level
+// at the x1 bid; the rate applies when the bids are read.
 const MATERIAL_BID_RATE = 1.2, MATERIAL_BID_UNITS = 300, BID_GRADES = new Set(['c', 'b']);
 const materialsByLevel = new Map();
 function bidMaterials(level) {
@@ -231,9 +235,10 @@ function materialBids(state) {
     // Each crafter starts at its characterId (mod the list, wrapping), so the crafters
     // of one level together bid on the whole list, not all on its first lines.
     const rows = bidMaterials(level), start = Math.abs(Number(state?.characterId) || 0) % (rows.length || 1);
+    const Pricing = invoke('GameServer/Bot/Economy/BotEconomyPricing');
     return [...rows.slice(start), ...rows.slice(0, start)].flatMap(({ selfId, price }) => {
         const count = MATERIAL_BID_UNITS - Math.max(0, Number(state?.inventory?.[String(selfId)]?.amount || 0));
-        return count > 0 ? [{ selfId, count, price }] : [];
+        return count > 0 ? [{ selfId, count, price: Pricing.scalePrice(price) }] : [];
     });
 }
 
