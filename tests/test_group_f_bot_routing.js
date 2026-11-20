@@ -138,8 +138,8 @@ function privateSession(name, id, selfId) {
                 World.user = { sessions: [] };
             }
         });
-        // Store prices are x1 at every preset: the Adena rate multiplies hunt adena only.
-        await check('fixed bot shot table keeps the x1 store price at every effective Adena', () => {
+        // Store prices follow the Adena rate, as the hunt adena that pays them does.
+        await check('fixed bot shot table follows effective Adena at the same progression multiplier', () => {
             const progression = invoke('GameServer/ProgressionRates');
             const pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
             const originalProfile = progression.profile;
@@ -150,7 +150,8 @@ function privateSession(name, id, selfId) {
                 progression.profile = () => ({ ...profile, multiplier: 1, adena: 2 });
                 const second = Market.fixedStoreOffers(SHOT);
                 assert(second.length > 0);
-                assert.deepStrictEqual(second.map(row => [row.sourceName, row.price]), first, 'the Adena rate leaves store prices');
+                assert.deepStrictEqual(second.map(row => [row.sourceName, row.price]), first.map(([name, price]) => [name, price * 2]),
+                    'twice the Adena rate doubles each store price');
                 for (const row of second) {
                     assert.strictEqual(row.price, pricing.sellersOf(SHOT).find(offer => offer.sourceName === row.sourceName).price);
                 }

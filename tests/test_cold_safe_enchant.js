@@ -42,10 +42,10 @@ function restockOf(state) {
     const cRow = Market.fixedStoreOffers(951, spoiler)[0];
     assert.strictEqual(OfferQuery.admits(cRow, fighter), false, 'the offer admission refuses a non-spoiler the 951 row');
     assert.strictEqual(OfferQuery.admits(cRow, spoiler), true, 'the offer admission takes a spoiler');
-    // The spoiler pays 1.2x the board's median deal price (3.4x the datapack price before
-    // the board has deals): always more than the board pays it back.
+    // The spoiler pays 1.2x the board's median deal price (3.4x the datapack price x the
+    // Adena rate before the board has deals): always more than the board pays it back.
     const datapack = Number(invoke('GameServer/Item/ItemTemplateIndex').find(invoke('GameServer/DataCache').items, 951).template.price);
-    assert.strictEqual(Number(cRow.price), Math.round(3.4 * datapack), 'without deals a C scroll costs 3.4x its datapack price');
+    assert.strictEqual(Number(cRow.price), Math.round(3.4 * datapack) * 50, 'without deals a C scroll costs 3.4x its datapack price x the x50 Adena rate');
     const Counters = invoke('GameServer/Bot/Economy/MarketCounters');
     const boardPrice = Math.round(2.8 * datapack);
     Counters.deal(951, boardPrice, 1, Date.now() - 2000, 11, 'Giran', 12);
@@ -272,7 +272,8 @@ function restockOf(state) {
     });
     const bountyHunter = (await Database.fetchCharacters('bot_s1c_spoiler')).find(row => row.name === 'SpoilerRestock');
     assert(bountyHunter?.id);
-    const adena = 16000000;
+    // Three B scrolls at 3.4x the datapack price x the x50 Adena rate, with 2x each purchase kept after it.
+    const adena = 16000000 * 50;
     await Database.setItem(bountyHunter.id, { selfId: 57, name: 'Adena', amount: adena, enchant: 0, equipped: false, slot: 0 });
     await Database.setItem(bountyHunter.id, { selfId: spoilerWeapon, name: 'Heavy War Axe', amount: 1, enchant: 0, equipped: true,
         slot: Number(DataCache.items.find(item => Number(item?.selfId) === spoilerWeapon).etc.slot) });
