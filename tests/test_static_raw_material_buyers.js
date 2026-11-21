@@ -45,23 +45,22 @@ const originalBoard = Afk.boardIndex;
     const timestamp = Date.now(), board = new BoardIndex();
     Afk.boardIndex = () => board;
     // A player and a bot selling Iron Ore to SoulLess are quoted one price: with no
-    // bid the larger of 1.5x the NPC buy-back and 0.25x its price at the adena
-    // rate: 0.25x at the rate at x50, 1.5x the NPC buy-back at x1. A higher bot
-    // bid raises the player's quote only.
+    // bid 1.5x the NPC buy-back x the Adena rate. A higher bot bid raises the
+    // player's quote only.
     const Pricing = invoke('GameServer/Bot/Economy/StaticMerchantPricing');
     const Rates = invoke('GameServer/ProgressionRates');
     const ore = Configs.SoulLess.items.find(line => line.selfId === 1869);
     const quotes = () => ({ bot: Pricing.botPriceFor(Configs.SoulLess, ore), player: Pricing.priceFor(Configs.SoulLess, ore) });
-    assert.deepEqual(quotes(), { bot: 2500, player: 2500 }, 'x50: a player and a bot get one Iron Ore price');
+    assert.deepEqual(quotes(), { bot: 7500, player: 7500 }, 'x50: a player and a bot get one Iron Ore price');
     const profile = Rates.profile;
     try {
         Rates.profile = () => ({ adena: 1, multiplier: 1 });
         assert.deepEqual(quotes(), { bot: 150, player: 150 }, 'x1: a player and a bot get one Iron Ore price');
     } finally { Rates.profile = profile; }
     const oreBid = { id: 910825, ownerId: 910826, storeType: 3, kind: 'shop', custodyPolicy: 0, town: 'Gludio',
-        revision: 1, escrowAdena: 3000000, lines: [{ id: 9108250, lineId: 9108250, selfId: 1869, count: 1000, price: 3000, enchant: 0 }] };
+        revision: 1, escrowAdena: 9000000, lines: [{ id: 9108250, lineId: 9108250, selfId: 1869, count: 1000, price: 9000, enchant: 0 }] };
     board.put(oreBid);
-    assert.deepEqual(quotes(), { bot: 2500, player: 3000 }, 'a higher bot bid raises only the player quote');
+    assert.deepEqual(quotes(), { bot: 7500, player: 9000 }, 'a higher bot bid raises only the player quote');
     board.remove(oreBid.id);
     Market.reset();
     const material = Recipes.resolveByRecipeId(35), shot = Recipes.resolveByRecipeId(20);

@@ -32,17 +32,15 @@ function configuredPrice(line) {
 
 // What a fixed buy line pays, one price for a bot and a player. Our choice,
 // not C4 (C4 gives only the NPC buy-back at half the datapack price): the
-// merchant pays half again the NPC buy-back, or a quarter of the datapack
-// price at the adena rate where that is more, so a buy store reads as a
-// plausible buyer at x1 and at x50 alike. An explicit line price replaces
-// both. It stays under 0.9 of the cheapest repeatable NPC or fixed-store
-// supply, so nobody buys an item to sell it straight back here.
+// merchant pays half again the NPC buy-back x the server's Adena rate, so a
+// buy store reads as a plausible buyer at x1 and at x50 alike. An explicit
+// line price replaces it. It stays under 0.9 of the cheapest repeatable NPC or
+// fixed-store supply, so nobody buys an item to sell it straight back here.
 const BUY_OVER_NPC = 1.5;
-const BUY_BASE_SHARE = 0.25;
 function buyLinePrice(line) {
     const base = basePrice(line.selfId);
     const price = line.price !== undefined ? Number(line.price)
-        : Math.max(Math.floor(NpcSellRules.npcBuyPrice(base) * BUY_OVER_NPC), BotEconomyPricing.scalePrice(base * BUY_BASE_SHARE));
+        : BotEconomyPricing.scalePrice(Math.floor(NpcSellRules.npcBuyPrice(base) * BUY_OVER_NPC));
     return Math.min(price, buyCeiling(line.selfId));
 }
 

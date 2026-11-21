@@ -157,8 +157,18 @@ assert.strictEqual(Stock.owed(owesShots).pieces, 0, '100000 owed shots are no ge
 assert(gear(Stock.restock(owesShots, { offers, now: t0 })).length > 0, 'owed shots leave the gear restock open');
 // At x50 the owed limit is OWED_MONEY x 50, as the store prices it bounds.
 const nearMoney = warsmith({ level: 40, stats: { classId: 57, gnomeStock: { 1: { cost: Stock.OWED_MONEY * 50 - 50000, ceiling: 1, owed: 1 } } } });
-assert.deepStrictEqual([...shotRows(Stock.restock(nearMoney, { offers, now: t0 })).values()].map(row => [row.selfId, row.amount]), [[D_SS, 100]],
+// Each row the owed money cuts is counted (developer diagnostics).
+const Diagnostics = invoke('GameServer/Bot/Economy/EconomyDiagnostics');
+invoke('GameServer/Bot/Population/PopulationConfig').developerDiagnostics = true;
+const moneyCuts = () => Diagnostics.metrics().counts?.['crafter_stock:owed_limit:money'] || 0;
+const cutsBefore = moneyCuts();
+const nearMoneyRows = [...shotRows(Stock.restock(nearMoney, { offers, now: t0 })).values()];
+assert.deepStrictEqual(nearMoneyRows.map(row => [row.selfId, row.amount]), [[D_SS, 100]],
     '50000 adena below the x50 owed money: 100 D soulshots at 500, then nothing');
+assert(moneyCuts() - cutsBefore >= 6, 'each row the owed money cuts is counted (the six shot rows among them)');
+const freeBefore = moneyCuts();
+Stock.restock(warsmith({ level: 40 }), { offers, now: t0 });
+assert.strictEqual(moneyCuts() - freeBefore, 0, 'a crafter that owes nothing has no row cut by the owed money');
 
 console.log('crafter stock: ok');
 process.exit(0);

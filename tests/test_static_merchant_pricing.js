@@ -108,8 +108,8 @@ async function run() {
         }
         const base = templates.get(1864).template.price;
         assert.strictEqual(botLines(Configs['4manda']).find((line) => line.selfId === 1864).price,
-            Math.max(Math.floor(NpcSellRules.npcBuyPrice(base) * 1.5), Math.floor(base * 0.25 * rate)),
-            `a raw material no NPC sells pays 1.5x the NPC buy-back or 0.25x its price x the rate (x${rate})`);
+            Math.floor(NpcSellRules.npcBuyPrice(base) * 1.5) * rate,
+            `a raw material no NPC sells pays 1.5x the NPC buy-back x the rate (x${rate})`);
         // The gear reserve: an ordinary bot pays the valve row, 1.5x the template
         // price x the rate, for a C weapon (Flamberge 71); each of the Giran, Oren
         // and Aden reserve stores also lists the crafter row at 0.6x the template
@@ -146,6 +146,21 @@ async function run() {
                 'a limited player lot is refused to bots');
         }
     }
+    // C4 carries Adena as a 32-bit count: the dearest row, the Dragon Slayer valve
+    // (1.5 x 27,000,000), is 2,025,000,000 at x50; at x60 it and every other row a
+    // bot or a player meets stop at 2,147,483,647.
+    const MAX_ADENA = 2147483647;
+    ProgressionRates.profile = () => ({ adena: 50, multiplier: 50 });
+    const valveOf = () => Fixed.offers(81).filter(row => row.sourceName === 'Squeesh' && !row.buyerClasses).map(row => row.price);
+    assert.deepStrictEqual(valveOf(), [2025000000], 'the Squeesh Dragon Slayer valve row at x50');
+    ProgressionRates.profile = () => ({ adena: 60, multiplier: 60 });
+    assert.deepStrictEqual(valveOf(), [MAX_ADENA], 'the Squeesh Dragon Slayer valve row at x60 stops at the Adena maximum');
+    for (const [name, store] of Object.entries(Configs)) {
+        const prices = [...store.items.map(line => Pricing.botPriceFor(store, line)), ...normalize(store).map(line => line.price),
+            ...store.items.flatMap(line => Fixed.offers(line.selfId).map(row => row.price))];
+        assert(prices.every(price => price <= MAX_ADENA), `${name}: every row at x60 at or under the Adena maximum`);
+    }
+    ProgressionRates.profile = () => ({ adena: 50, multiplier: 50 });
     // Each reserve store (Giran, Oren, Aden) lists exactly the gear a bot's
     // planner can target of every grade C, B and A (each weapon or armour piece
     // with a named template, a price and a source) and the reference kits' pieces

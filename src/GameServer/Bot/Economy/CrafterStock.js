@@ -23,7 +23,8 @@
 // - Owed limit (our choice): at most OWED_PIECES gear units and OWED_MONEY adena x the
 //   server's Adena rate (the rate the store rows follow, BotEconomyPricing) owed
 //   per crafter (one crafter never holds an unbounded share of the store); a restock row
-//   past it is cut (hit: a crafter at the limit stocks nothing until it pays).
+//   past it is cut (hit: a crafter at the limit stocks nothing until it pays; each cut
+//   row counted `crafter_stock:owed_limit:<pieces|money>`).
 // Shots (C4: dwarves craft soulshots and spiritshots and sell them in private stores;
 // the consignment stands for that craft, our choice): the graded soulshots,
 // spiritshots and blessed spiritshots whose recipe level its Create Item level reaches
@@ -38,6 +39,7 @@
 // hourly allowance nor the drop rate scales them, and the owed limit alone bounds them.
 // Held = its bag's unequipped units plus its own board sell lines (listed items leave the bag).
 const ItemTemplateIndex = require('../../Item/ItemTemplateIndex');
+const Diagnostics = require('./EconomyDiagnostics');
 
 const CRAFTER_CLASSES = Object.freeze([56, 57]);
 const GEAR_GRADES = new Set(['c', 'b', 'a']);
@@ -167,13 +169,17 @@ function restock(state, { offers = [], demandFor = () => 0, heldFor = () => 0, n
         targets.push({ offer, units: Math.min(SHOT_STOCK_UNITS, Math.max(0, Math.floor(Number(demandFor(offer.selfId) || 0))) + SHOT_DISPLAY_UNITS) });
     const allowances = {};
     let { pieces, money } = owed(state);
-    const owedLimit = invoke('GameServer/Bot/Economy/BotEconomyPricing').scalePrice(OWED_MONEY);
+    // A bound, not a price: x50 passes the Adena maximum a price stops at.
+    const owedLimit = OWED_MONEY * invoke('GameServer/Bot/Economy/BotEconomyPricing').economyRate();
     const rows = [];
     for (const { offer, units } of targets) {
         const shot = offer.group === SHOT_GROUP;
         const pool = shot ? null : allowances[offer.grade] ||= allowance(state, offer.grade, now);
-        const amount = Math.min(units - Math.max(0, Number(heldFor(offer.selfId) || 0)), shot ? Infinity : Math.floor(pool.pieces),
-            shot ? Infinity : OWED_PIECES - pieces, Math.floor((owedLimit - money) / offer.price));
+        const wanted = Math.min(units - Math.max(0, Number(heldFor(offer.selfId) || 0)), shot ? Infinity : Math.floor(pool.pieces));
+        const piecesRoom = shot ? Infinity : OWED_PIECES - pieces, moneyRoom = Math.floor((owedLimit - money) / offer.price);
+        const amount = Math.min(wanted, piecesRoom, moneyRoom);
+        if (wanted > 0 && amount < wanted && Diagnostics.active())
+            Diagnostics.count('crafter_stock', 'owed_limit', moneyRoom < piecesRoom ? 'money' : 'pieces');
         if (!(amount > 0)) continue;
         rows.push({ selfId: offer.selfId, amount, money: amount * offer.price, unit: offer.price, ceiling: offer.ceiling, grade: offer.grade });
         money += amount * offer.price;
