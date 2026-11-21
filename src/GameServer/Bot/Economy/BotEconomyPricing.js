@@ -10,11 +10,12 @@ function economyRate() {
     return Math.max(0.01, Number(ProgressionRates.profile().adena || 1));
 }
 
-// C4 carries Adena as a 32-bit signed count: no price a client sees passes it.
+// C4 writes a store price and the Adena count as 32-bit fields (PrivateStoreListSell
+// writeD(row.price), writeD(fetchTotalAdena())): no price a client sees passes it.
 const MAX_ADENA = 2147483647;
 function scalePrice(value, minimum = 1) {
     const price = Math.floor(Math.max(0, Number(value) || 0) * economyRate());
     return Math.min(MAX_ADENA, Math.max(minimum, price));
 }
 
-module.exports = { economyRate, scalePrice };
+module.exports = { MAX_ADENA, economyRate, scalePrice };
